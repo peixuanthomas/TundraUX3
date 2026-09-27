@@ -157,10 +157,11 @@ fn upward_pointing_hands_do_not_overwrite_the_large_twelve() {
 }
 
 #[test]
-fn create_dialog_renders_placeholder_error_and_both_focusable_actions() {
+fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
-        input: String::new(),
+        values: [0; 3],
+        active_field: 0,
         error: Some("Use hh mm ss".to_string()),
         focus: ClockCreateDialogFocus::CreateCountdown,
     });
@@ -172,8 +173,8 @@ fn create_dialog_renders_placeholder_error_and_both_focusable_actions() {
         .expect("dialog layout");
 
     assert!(output.contains("New Alarm or Countdown"));
-    assert!(output.contains("Enter time (hh mm ss)"));
-    assert!(output.contains("[ hh mm ss ]"));
+    assert!(output.contains("↑↓/click: adjust"));
+    assert_eq!(output.matches("[ 00 ]").count(), 3);
     assert!(output.contains("Use hh mm ss"));
     assert!(output.contains("[ Create Alarm ]"));
     assert!(output.contains("[ Create Countdown ]"));
@@ -185,10 +186,11 @@ fn create_dialog_renders_placeholder_error_and_both_focusable_actions() {
 }
 
 #[test]
-fn focused_create_input_uses_underscore_cursor_before_the_non_editable_suffix() {
+fn focused_create_input_shows_two_digit_modules_and_arrows() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
-        input: "01 02 03".to_string(),
+        values: [1, 2, 3],
+        active_field: 0,
         error: None,
         focus: ClockCreateDialogFocus::Input,
     });
@@ -196,15 +198,68 @@ fn focused_create_input_uses_underscore_cursor_before_the_non_editable_suffix() 
     let (terminal, _) = render(100, 30, &model);
     let output = terminal_output(&terminal);
 
-    assert!(output.contains("[ 01 02 03_ ]"));
+    assert!(output.contains("[ 01 ]"));
+    assert!(output.contains("[ 02 ]"));
+    assert!(output.contains("[ 03 ]"));
+    assert_eq!(output.matches('▲').count(), 3);
+    assert_eq!(output.matches('▼').count(), 3);
     assert!(!output.contains("01 02 03|"));
 }
 
 #[test]
-fn focused_empty_create_input_keeps_the_placeholder_and_suffix() {
+fn create_dialog_highlights_only_the_selected_module_in_both_languages() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for locale in ["en-US", "zh-CN"] {
+        let language = std::sync::Arc::new(
+            i18n::LanguageSnapshot::load(&root, locale, 1)
+                .unwrap()
+                .snapshot,
+        );
+        i18n::with_snapshot(&language, || {
+            for active_field in 0..3 {
+                let mut model = clock_model();
+                model.create_dialog = Some(ClockCreateDialogViewModel {
+                    active_field,
+                    ..ClockCreateDialogViewModel::default()
+                });
+                let (terminal, main) = render(100, 30, &model);
+                let layout = clock_page_layout(main, &model).create_dialog.unwrap();
+                assert!(
+                    region_text(&terminal, layout.prompt)
+                        .replace(' ', "")
+                        .contains(if locale == "zh-CN" {
+                            "数字输入"
+                        } else {
+                            "0–9:type"
+                        })
+                );
+                for field in 0..3 {
+                    for area in [
+                        layout.values[field],
+                        layout.increments[field],
+                        layout.decrements[field],
+                    ] {
+                        assert_eq!(
+                            region_has_fg(
+                                &terminal,
+                                area,
+                                TundraTheme::default_dark().accent_color
+                            ),
+                            field == active_field
+                        );
+                    }
+                }
+            }
+        });
+    }
+}
+
+#[test]
+fn focused_empty_create_input_shows_zeroes() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
-        input: String::new(),
+        values: [0; 3],
+        active_field: 0,
         error: None,
         focus: ClockCreateDialogFocus::Input,
     });
@@ -212,7 +267,7 @@ fn focused_empty_create_input_keeps_the_placeholder_and_suffix() {
     let (terminal, _) = render(100, 30, &model);
     let output = terminal_output(&terminal);
 
-    assert!(output.contains("[ hh mm ss ]"));
+    assert_eq!(output.matches("[ 00 ]").count(), 3);
     assert!(!output.contains("[ _ ]"));
 }
 
@@ -236,12 +291,13 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
 fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
-        input: "01 02 03".to_string(),
+        values: [1, 2, 3],
+        active_field: 0,
         error: Some("Example error".to_string()),
         focus: ClockCreateDialogFocus::Input,
     });
 
-    let (_terminal, main) = render(50, 12, &model);
+    let (terminal, main) = render(50, 12, &model);
     let layout = clock_page_layout(main, &model);
     let dialog = layout.create_dialog.expect("dialog layout");
 
@@ -253,6 +309,13 @@ fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
     assert!(dialog.input.bottom() <= dialog.error.y);
     assert!(dialog.error.bottom() <= dialog.create_alarm.y);
     assert_eq!(dialog.create_alarm.y, dialog.create_countdown.y);
+    assert!(terminal_output(&terminal).contains("Example error"));
+    for index in 0..3 {
+        assert!(region_text(&terminal, dialog.increments[index]).contains('▲'));
+        assert!(region_text(&terminal, dialog.decrements[index]).contains('▼'));
+        assert!(region_text(&terminal, dialog.values[index]).contains(&format!("0{}", index + 1)));
+        assert!(dialog.decrements[index].bottom() <= dialog.create_alarm.y);
+    }
 }
 
 #[test]

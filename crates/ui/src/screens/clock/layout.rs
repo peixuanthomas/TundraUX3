@@ -31,7 +31,12 @@ pub struct ClockEntryRowLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClockCreateDialogLayout {
     pub dialog: Rect,
+    pub prompt: Rect,
     pub input: Rect,
+    pub labels: [Rect; 3],
+    pub increments: [Rect; 3],
+    pub values: [Rect; 3],
+    pub decrements: [Rect; 3],
     pub error: Rect,
     pub create_alarm: Rect,
     pub create_countdown: Rect,
@@ -243,21 +248,35 @@ fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
         area.height.min(CLOCK_CREATE_DIALOG_HEIGHT),
     );
     let inner = inset_rect(dialog, 1);
-    let (input_offset, error_offset, button_offset) = if inner.height >= 7 {
-        (2, Some(4), 6)
-    } else {
-        let input_offset = u16::from(inner.height >= 2);
-        let button_offset = inner.height.saturating_sub(1);
-        let error_offset = (button_offset > input_offset.saturating_add(1))
-            .then_some(button_offset.saturating_sub(1));
-        (input_offset, error_offset, button_offset)
+    let prompt_height = u16::from(inner.height >= 7);
+    let prompt = Rect::new(inner.x, inner.y, inner.width, prompt_height);
+    let input_y = inner.y.saturating_add(prompt_height);
+    let button_y = inner.bottom().saturating_sub(1);
+    let separate_labels = inner.height >= 6;
+    let input_height = (if separate_labels { 4 } else { 3 }).min(button_y.saturating_sub(input_y));
+    let input = Rect::new(inner.x, input_y, inner.width, input_height);
+    let field_row = |row: u16| {
+        std::array::from_fn(|index| {
+            let start = inner.width * index as u16 / 3;
+            let end = inner.width * (index as u16 + 1) / 3;
+            let column = Rect::new(inner.x + start, input.y, end - start, input.height);
+            line_in_rect(column, input.y.saturating_add(row))
+        })
     };
-    let input = line_in_rect(inner, inner.y.saturating_add(input_offset));
-    let button_y = inner.y.saturating_add(button_offset);
-    let error = error_offset.map_or_else(
-        || Rect::new(inner.x, button_y, 0, 0),
-        |offset| line_in_rect(inner, inner.y.saturating_add(offset)),
-    );
+    let labels = if separate_labels {
+        field_row(0)
+    } else {
+        [Rect::default(); 3]
+    };
+    let offset = u16::from(separate_labels);
+    let increments = field_row(offset);
+    let values = field_row(offset + 1);
+    let decrements = field_row(offset + 2);
+    let error = if input.bottom() < button_y {
+        line_in_rect(inner, input.bottom())
+    } else {
+        Rect::new(inner.x, button_y, 0, 0)
+    };
     let buttons_width = inner.width.saturating_sub(2);
     let alarm_width = buttons_width / 2;
     let countdown_width = buttons_width.saturating_sub(alarm_width);
@@ -271,7 +290,12 @@ fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
 
     ClockCreateDialogLayout {
         dialog,
+        prompt,
         input,
+        labels,
+        increments,
+        values,
+        decrements,
         error,
         create_alarm,
         create_countdown,

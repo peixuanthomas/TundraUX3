@@ -274,6 +274,8 @@ pub enum ShellCommand {
     ClockCreateFocusNext,
     ClockCreateFocusPrevious,
     ClockCreateSetFocus(ui::ClockCreateDialogFocus),
+    ClockCreateSelectField(usize),
+    ClockCreateAdjust(usize, i8),
     ClockCreateAppend(char),
     ClockCreateBackspace,
     ClockCreateAlarm,

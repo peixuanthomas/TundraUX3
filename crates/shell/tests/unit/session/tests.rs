@@ -4214,6 +4214,106 @@ fn clock_storage_retry_keeps_the_due_summary_visible() {
 }
 
 #[test]
+fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (100, 30),
+        ShellHomeMode::User,
+    );
+    state.screen_stack = vec![ShellScreen::Clock];
+    state.clock_create_state = Some(ClockCreateState::default());
+    state.refresh_hit_map();
+    for key in ["2", "3", "5", "9", "5", "9"] {
+        state.apply_input(InputEvent::from_key_label(key));
+    }
+    assert_eq!(
+        state.clock_create_state.as_ref().unwrap().values,
+        [23, 59, 59]
+    );
+    state.apply_input(InputEvent::from_key_label("Up"));
+    assert_eq!(
+        state.clock_create_state.as_ref().unwrap().values,
+        [23, 59, 0]
+    );
+    state.apply_input(InputEvent::from_key_label("Down"));
+    assert_eq!(
+        state.clock_create_state.as_ref().unwrap().values,
+        [23, 59, 59]
+    );
+    state.apply_input(InputEvent::from_key_label("Left"));
+    state.apply_input(InputEvent::from_key_label("Backspace"));
+    state.apply_input(InputEvent::from_key_label("4"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.clock_create_state.as_ref().unwrap().values,
+        [23, 4, 59]
+    );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component,
+        ShellComponent::ClockCreateAlarmButton
+    );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.focused_component,
+        ShellComponent::ClockCreateCountdownButton
+    );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.clock_create_state.as_ref().unwrap().active_field, 0);
+    state.apply_input(InputEvent::from_key_label("2"));
+    state.apply_input(InputEvent::from_key_label("9"));
+    assert_eq!(state.clock_create_state.as_ref().unwrap().values[0], 2);
+    state.apply_input(InputEvent::from_key_label("3"));
+    assert_eq!(state.clock_create_state.as_ref().unwrap().values[0], 23);
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert!(state.clock_create_state.is_none());
+}
+
+#[test]
+fn clock_create_arrows_are_clickable_once_and_fields_accept_replacement_digits() {
+    for size in [(100, 30), (50, 12)] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            size,
+            ShellHomeMode::User,
+        );
+        state.screen_stack = vec![ShellScreen::Clock];
+        state.clock_create_state = Some(ClockCreateState::default());
+        state.refresh_hit_map();
+        let ui::ShellLayout::Full { main, .. } =
+            state.shell_layout_for(Rect::new(0, 0, size.0, size.1))
+        else {
+            panic!("full layout");
+        };
+        let layout = ui::clock_page_layout(main, &state.to_clock_view_model())
+            .create_dialog
+            .unwrap();
+        for field in 0..3 {
+            for (area, expected) in [
+                (layout.decrements[field], if field == 0 { 23 } else { 59 }),
+                (layout.increments[field], 0),
+            ] {
+                assert_eq!(area.height, 1);
+                let point = (area.x + area.width / 2, area.y);
+                state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+                state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+                let create = state.clock_create_state.as_ref().unwrap();
+                assert_eq!(create.values[field], expected);
+                assert_eq!(create.active_field, field);
+            }
+            let area = layout.values[field];
+            let point = (area.x + area.width / 2, area.y);
+            state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+            for digit in ['1', '2'] {
+                state.apply_input(InputEvent::key(InputKey::Char(digit)));
+            }
+            assert_eq!(state.clock_create_state.as_ref().unwrap().values[field], 12);
+        }
+    }
+}
+
+#[test]
 fn compact_clock_routes_only_escape_and_does_not_open_hidden_controls() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (49, 11));
     state.screen_stack = vec![ShellScreen::Clock];

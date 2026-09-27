@@ -6,7 +6,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use super::layout::{ClockEntryKind, ClockPageLayout, clock_page_layout};
 use super::model::{ClockCreateDialogFocus, ClockEntryViewModel, ClockViewModel};
-use crate::components::{Button, List, ListItem, Surface, TextInput};
+use crate::components::{Button, List, ListItem, Surface};
 use crate::{ClockFontAsset, RenderContext, TundraTheme};
 
 const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
@@ -181,27 +181,28 @@ fn render_clock_create_dialog(
     }
     frame.render_widget(Clear, layout.dialog);
     let theme = &context.compatibility_theme();
+    let title = if layout.error.is_empty() {
+        model
+            .error
+            .clone()
+            .unwrap_or_else(|| i18n::tr!("ui-clock-new-alarm-or-countdown"))
+    } else {
+        i18n::tr!("ui-clock-new-alarm-or-countdown")
+    };
     Surface::new()
-        .titled(i18n::tr!("ui-clock-new-alarm-or-countdown"))
+        .titled(title)
         .bordered(true)
         .raised(true)
         .render_frame(frame, layout.dialog, context);
 
-    let prompt = Rect::new(
-        layout.dialog.x.saturating_add(1),
-        layout.dialog.y.saturating_add(1),
-        layout.dialog.width.saturating_sub(2),
-        u16::from(layout.dialog.height > 2),
-    );
     render_clock_line(
         frame,
-        prompt,
-        i18n::tr!("ui-clock-enter-time-hh-mm-ss"),
+        layout.prompt,
+        i18n::tr!("ui-clock-time-help"),
         theme.body_style(),
-        HorizontalAlignment::Left,
+        HorizontalAlignment::Center,
     );
-
-    render_clock_create_input(frame, layout.input, model, theme);
+    render_clock_create_input(frame, layout, model, theme);
     if let Some(error) = &model.error {
         render_clock_line(
             frame,
@@ -231,70 +232,36 @@ fn render_clock_create_dialog(
 
 fn render_clock_create_input(
     frame: &mut Frame<'_>,
-    area: Rect,
+    layout: crate::ClockCreateDialogLayout,
     model: &crate::ClockCreateDialogViewModel,
     theme: &TundraTheme,
 ) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let input_is_empty = model.input.is_empty();
-    let prefix = "[ ";
-    let focused = model.focus == ClockCreateDialogFocus::Input;
-    let mut input = TextInput::new("clock.create-input")
-        .with_placeholder(i18n::tr!("ui-clock-time-placeholder"))
-        .with_placeholder_when_focused(true)
-        .with_cursor_symbol("_");
-    input.set_value(&model.input);
-    input.set_focused(focused);
-    input.state.hovered = focused;
-
-    let mut input_theme = theme.clone();
-    if input_is_empty && !focused {
-        input_theme.foreground = theme.muted;
-    }
-    if area.width <= 2 {
-        input.render_borderless_frame_with_prefix(frame, area, &input_theme, prefix);
-        return;
-    }
-    let input_area = Rect::new(area.x, area.y, area.width.saturating_sub(2), area.height);
-    input.render_borderless_frame_with_prefix(frame, input_area, &input_theme, prefix);
-
-    let visible_value_width = if input_is_empty {
-        unicode_width::UnicodeWidthStr::width(i18n::tr!("ui-clock-time-placeholder").as_str())
-    } else {
-        model
-            .input
-            .chars()
-            .count()
-            .saturating_add(usize::from(focused))
-    };
-    let input_capacity =
-        usize::from(input_area.width).saturating_sub(unicode_width::UnicodeWidthStr::width(prefix));
-    let suffix_x = area
-        .x
-        .saturating_add(unicode_width::UnicodeWidthStr::width(prefix) as u16)
-        .saturating_add(visible_value_width.min(input_capacity) as u16)
-        .min(area.right().saturating_sub(2));
-    render_clock_line(
-        frame,
-        Rect::new(
-            suffix_x,
-            area.y,
-            area.right().saturating_sub(suffix_x),
-            area.height,
-        ),
-        " ]".to_string(),
-        if focused {
+    let labels = [
+        i18n::tr!("ui-clock-hours"),
+        i18n::tr!("ui-clock-minutes"),
+        i18n::tr!("ui-clock-seconds"),
+    ];
+    for (index, label) in labels.into_iter().enumerate() {
+        let focused = model.focus == ClockCreateDialogFocus::Input && model.active_field == index;
+        let style = if focused {
             theme.title_style()
-        } else if input_is_empty {
-            theme.muted_style()
         } else {
             theme.body_style()
-        },
-        HorizontalAlignment::Left,
-    );
+        };
+        let value = if layout.labels[index].is_empty() {
+            format!("[ {:02} ] {}", model.values[index], label)
+        } else {
+            format!("[ {:02} ]", model.values[index])
+        };
+        for (area, text) in [
+            (layout.labels[index], label),
+            (layout.increments[index], "▲".to_string()),
+            (layout.values[index], value),
+            (layout.decrements[index], "▼".to_string()),
+        ] {
+            render_clock_line(frame, area, text, style, HorizontalAlignment::Center);
+        }
+    }
 }
 
 fn render_clock_button(

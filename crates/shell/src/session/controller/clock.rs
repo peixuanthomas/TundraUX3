@@ -342,18 +342,17 @@ impl ShellSession {
         let Some(state) = self.clock_create_state.as_mut() else {
             return;
         };
-        let order = [
-            ui::ClockCreateDialogFocus::Input,
-            ui::ClockCreateDialogFocus::CreateAlarm,
-            ui::ClockCreateDialogFocus::CreateCountdown,
-        ];
-        let current = order
-            .iter()
-            .position(|focus| *focus == state.focus)
-            .unwrap_or(0);
-        let next =
-            (current as isize + direction as isize).rem_euclid(order.len() as isize) as usize;
-        self.set_clock_create_focus(order[next]);
+        let current = match state.focus {
+            ui::ClockCreateDialogFocus::Input => state.active_field,
+            ui::ClockCreateDialogFocus::CreateAlarm => 3,
+            ui::ClockCreateDialogFocus::CreateCountdown => 4,
+        };
+        let next = (current as isize + direction as isize).rem_euclid(5) as usize;
+        match next {
+            0..=2 => self.select_clock_create_field(next),
+            3 => self.set_clock_create_focus(ui::ClockCreateDialogFocus::CreateAlarm),
+            _ => self.set_clock_create_focus(ui::ClockCreateDialogFocus::CreateCountdown),
+        }
     }
 
     pub(in crate::session) fn set_clock_create_focus(&mut self, focus: ui::ClockCreateDialogFocus) {
@@ -361,6 +360,7 @@ impl ShellSession {
             return;
         };
         state.focus = focus;
+        state.pending_digit = false;
         self.focused_component = match focus {
             ui::ClockCreateDialogFocus::Input => ShellComponent::ClockCreateInput,
             ui::ClockCreateDialogFocus::CreateAlarm => ShellComponent::ClockCreateAlarmButton,
@@ -370,18 +370,57 @@ impl ShellSession {
         };
     }
 
+    pub(in crate::session) fn select_clock_create_field(&mut self, field: usize) {
+        if field >= 3 {
+            return;
+        }
+        self.set_clock_create_focus(ui::ClockCreateDialogFocus::Input);
+        if let Some(state) = self.clock_create_state.as_mut() {
+            state.active_field = field;
+        }
+    }
+
+    pub(in crate::session) fn adjust_clock_create_field(&mut self, field: usize, delta: i8) {
+        if field >= 3 {
+            return;
+        }
+        self.select_clock_create_field(field);
+        if let Some(state) = self.clock_create_state.as_mut() {
+            let limit = if field == 0 { 24 } else { 60 };
+            state.values[field] =
+                (i16::from(state.values[field]) + i16::from(delta)).rem_euclid(limit) as u8;
+            state.error = None;
+        }
+    }
+
     pub(in crate::session) fn append_clock_create_char(&mut self, character: char) {
         let Some(state) = self.clock_create_state.as_mut() else {
             return;
         };
-        if state.focus != ui::ClockCreateDialogFocus::Input
-            || state.input.len() >= 8
-            || !(character.is_ascii_digit() || character == ' ')
-        {
+        if state.focus != ui::ClockCreateDialogFocus::Input || !character.is_ascii_digit() {
             return;
         }
-        state.input.push(character);
+        let field = state.active_field;
+        let digit = character as u8 - b'0';
+        let limit = if field == 0 { 23 } else { 59 };
+        let value = if state.pending_digit {
+            state.values[field] * 10 + digit
+        } else {
+            digit
+        };
+        if value > limit {
+            return;
+        }
+        state.values[field] = value;
         state.error = None;
+        if state.pending_digit {
+            state.pending_digit = false;
+            if field < 2 {
+                state.active_field += 1;
+            }
+        } else {
+            state.pending_digit = true;
+        }
     }
 
     pub(in crate::session) fn clock_create_backspace(&mut self) {
@@ -389,17 +428,19 @@ impl ShellSession {
             return;
         };
         if state.focus == ui::ClockCreateDialogFocus::Input {
-            state.input.pop();
+            state.values[state.active_field] = 0;
+            state.pending_digit = false;
             state.error = None;
         }
     }
 
     pub(in crate::session) fn create_clock_entry(&mut self, kind: ScheduledClockEntryKind) {
-        let Some(input) = self
-            .clock_create_state
-            .as_ref()
-            .map(|state| state.input.clone())
-        else {
+        let Some(input) = self.clock_create_state.as_ref().map(|state| {
+            format!(
+                "{:02} {:02} {:02}",
+                state.values[0], state.values[1], state.values[2]
+            )
+        }) else {
             return;
         };
         let snapshot = self.app.snapshot().clock;

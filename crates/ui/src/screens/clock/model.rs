@@ -27,15 +27,17 @@ impl ClockEntryViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockCreateDialogViewModel {
-    pub input: String,
+    pub values: [u8; 3],
+    pub active_field: usize,
     pub error: Option<String>,
     pub focus: ClockCreateDialogFocus,
 }
 
 impl ClockCreateDialogViewModel {
-    pub fn new(input: impl Into<String>) -> Self {
+    pub fn new(values: [u8; 3]) -> Self {
         Self {
-            input: input.into(),
+            values,
+            active_field: 0,
             error: None,
             focus: ClockCreateDialogFocus::Input,
         }
@@ -44,7 +46,7 @@ impl ClockCreateDialogViewModel {
 
 impl Default for ClockCreateDialogViewModel {
     fn default() -> Self {
-        Self::new("")
+        Self::new([0; 3])
     }
 }
 

@@ -1635,6 +1635,14 @@ impl ShellSession {
                 self.set_clock_create_focus(focus);
                 ShellAction::Redraw
             }
+            ShellCommand::ClockCreateSelectField(field) => {
+                self.select_clock_create_field(field);
+                ShellAction::Redraw
+            }
+            ShellCommand::ClockCreateAdjust(field, delta) => {
+                self.adjust_clock_create_field(field, delta);
+                ShellAction::Redraw
+            }
             ShellCommand::ClockCreateAppend(character) => {
                 self.append_clock_create_char(character);
                 ShellAction::Redraw

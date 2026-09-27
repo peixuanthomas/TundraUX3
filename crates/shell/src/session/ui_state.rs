@@ -500,7 +500,9 @@ pub(super) struct LauncherDragState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ClockCreateState {
-    pub(super) input: String,
+    pub(super) values: [u8; 3],
+    pub(super) active_field: usize,
+    pub(super) pending_digit: bool,
     pub(super) error: Option<i18n::LocalizedText>,
     pub(super) focus: ui::ClockCreateDialogFocus,
 }
@@ -508,7 +510,9 @@ pub(super) struct ClockCreateState {
 impl Default for ClockCreateState {
     fn default() -> Self {
         Self {
-            input: String::new(),
+            values: [0; 3],
+            active_field: 0,
+            pending_digit: false,
             error: None,
             focus: ui::ClockCreateDialogFocus::Input,
         }

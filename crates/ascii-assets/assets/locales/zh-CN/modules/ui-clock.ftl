@@ -8,8 +8,10 @@ ui-clock-alarms = 闹钟
 ui-clock-countdowns-none = 倒计时（无）
 ui-clock-countdowns = 倒计时
 ui-clock-new-alarm-or-countdown = 新建闹钟或倒计时
-ui-clock-enter-time-hh-mm-ss = 输入时间（时 分 秒）
 ui-clock-create-alarm-button = { "[" } 创建闹钟 ]
 ui-clock-create-countdown-button = { "[" } 创建倒计时 ]
 
-ui-clock-time-placeholder = 时 分 秒
+ui-clock-time-help = ←→/Tab 切换 · ↑↓/点按箭头调节 · 数字输入
+ui-clock-hours = 时
+ui-clock-minutes = 分
+ui-clock-seconds = 秒

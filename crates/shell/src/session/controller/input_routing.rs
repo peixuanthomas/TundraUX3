@@ -540,6 +540,14 @@ impl ShellSession {
                     (target, ShellCommand::ClockCreateFocusPrevious)
                 }
                 InputKey::Tab => (target, ShellCommand::ClockCreateFocusNext),
+                InputKey::Up if create.focus == ui::ClockCreateDialogFocus::Input => (
+                    target,
+                    ShellCommand::ClockCreateAdjust(create.active_field, 1),
+                ),
+                InputKey::Down if create.focus == ui::ClockCreateDialogFocus::Input => (
+                    target,
+                    ShellCommand::ClockCreateAdjust(create.active_field, -1),
+                ),
                 InputKey::Up | InputKey::Left => (target, ShellCommand::ClockCreateFocusPrevious),
                 InputKey::Down | InputKey::Right => (target, ShellCommand::ClockCreateFocusNext),
                 InputKey::Enter => match create.focus {
@@ -2146,7 +2154,8 @@ impl ShellSession {
                 ui::MouseEventKind::Down(PointerButton::Left) => match hit_target {
                     Some(ShellComponent::ClockCreateInput) => (
                         modal_target,
-                        ShellCommand::ClockCreateSetFocus(ui::ClockCreateDialogFocus::Input),
+                        self.clock_create_control_at(coordinates)
+                            .unwrap_or(ShellCommand::CaptureOverlayInput),
                     ),
                     Some(ShellComponent::ClockCreateAlarmButton) => {
                         (modal_target, ShellCommand::ClockCreateAlarm)
@@ -2575,6 +2584,30 @@ impl ShellSession {
             }
             _ => (target, ShellCommand::CaptureOverlayInput),
         }
+    }
+
+    fn clock_create_control_at(&self, coordinates: CellPosition) -> Option<ShellCommand> {
+        let (width, height) = self.terminal_size;
+        let ui::ShellLayout::Full { main, .. } =
+            self.shell_layout_for(Rect::new(0, 0, width, height))
+        else {
+            return None;
+        };
+        let layout = ui::clock_page_layout(main, &self.to_clock_view_model()).create_dialog?;
+        for field in 0..3 {
+            if rect_contains(layout.increments[field], coordinates) {
+                return Some(ShellCommand::ClockCreateAdjust(field, 1));
+            }
+            if rect_contains(layout.decrements[field], coordinates) {
+                return Some(ShellCommand::ClockCreateAdjust(field, -1));
+            }
+            if rect_contains(layout.values[field], coordinates)
+                || rect_contains(layout.labels[field], coordinates)
+            {
+                return Some(ShellCommand::ClockCreateSelectField(field));
+            }
+        }
+        None
     }
 
     pub(in crate::session) fn clock_entry_id_at(&self, coordinates: CellPosition) -> Option<u64> {

@@ -1356,7 +1356,8 @@ impl ShellSession {
             self.clock_create_state
                 .as_ref()
                 .map(|state| ui::ClockCreateDialogViewModel {
-                    input: state.input.clone(),
+                    values: state.values,
+                    active_field: state.active_field,
                     error: state
                         .error
                         .as_ref()
