@@ -27,6 +27,7 @@ pub struct ButtonRegion {
 /// they paint without a second, potentially divergent button layout.
 #[derive(Debug, Clone)]
 pub struct ButtonFrame {
+    pub keyboard_focus_visible: bool,
     pub background: ratatui::style::Color,
     pub accent: ratatui::style::Color,
     pub hover_color: ratatui::style::Color,
@@ -38,6 +39,7 @@ pub struct ButtonFrame {
 impl PartialEq for ButtonFrame {
     fn eq(&self, other: &Self) -> bool {
         self.background == other.background
+            && self.keyboard_focus_visible == other.keyboard_focus_visible
             && self.accent == other.accent
             && self.hover_color == other.hover_color
             && self.hovered == other.hovered
@@ -54,6 +56,7 @@ impl ButtonFrame {
         theme: &TundraTheme,
     ) -> Self {
         Self {
+            keyboard_focus_visible: true,
             background: theme.background,
             accent: theme.accent_color,
             hover_color: theme.button_hover_color(),
@@ -290,6 +293,7 @@ impl Button {
     fn render_state(&self, area: Rect, theme: &TundraTheme) -> ComponentState {
         let mut state = self.state;
         if let Some(frame) = &theme.buttons {
+            state.focused &= frame.keyboard_focus_visible;
             let region = ButtonRegion {
                 id: self.id.clone(),
                 area,

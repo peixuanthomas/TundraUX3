@@ -5,6 +5,7 @@ fn id(screen: &str, focus: &str, overlay: Option<&str>) -> RedrawIdentity {
         language_generation: 1,
         screen: screen.into(),
         focus: focus.into(),
+        keyboard_focus_visible: false,
         overlay: overlay.map(|id| RedrawOverlayIdentity {
             kind: if id.contains("toast") {
                 ui::MotionOverlayKind::Toast
@@ -40,6 +41,10 @@ fn all_shell_identity_changes_redraw_immediately_without_transitions() {
     for changed in [
         id("settings", "one", None),
         id("home", "two", None),
+        RedrawIdentity {
+            keyboard_focus_visible: true,
+            ..id("home", "one", None)
+        },
         id("home", "one", Some("dialog")),
         id("home", "one", Some("popover:menu")),
         id("home", "one", Some("toast:notice")),

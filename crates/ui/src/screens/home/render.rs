@@ -61,7 +61,7 @@ fn render_user_main(
         .zip(home_entry_tile_areas(area, home.entries().len()))
         .enumerate()
     {
-        let selected = index == home.selected_entry_index();
+        let selected = theme.keyboard_focus_visible() && index == home.selected_entry_index();
         let style = if selected {
             theme.title_style()
         } else {

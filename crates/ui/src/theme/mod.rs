@@ -774,9 +774,15 @@ impl TundraTheme {
         solid_border_style(Style::default().fg(self.border_color).bg(self.background))
     }
 
+    pub fn keyboard_focus_visible(&self) -> bool {
+        self.buttons
+            .as_ref()
+            .is_none_or(|frame| frame.keyboard_focus_visible)
+    }
+
     pub fn selectable_border_style(&self, selected: bool) -> Style {
         let tokens = self.tokens();
-        let color = if selected {
+        let color = if selected && self.keyboard_focus_visible() {
             tokens.focus
         } else {
             tokens.border

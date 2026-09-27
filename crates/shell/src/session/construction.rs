@@ -290,6 +290,7 @@ impl ShellSession {
             terminal_text_sizing_support: false,
             pending_default_ascii_icon_fallback: false,
             focused_component: initial_focus,
+            keyboard_focus_visible: false,
             button_regions: Vec::new(),
             button_pointer_capture: None,
             hovered_component: None,

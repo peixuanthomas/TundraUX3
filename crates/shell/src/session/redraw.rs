@@ -8,6 +8,7 @@ pub(super) struct RedrawIdentity {
     language_generation: u64,
     screen: String,
     focus: String,
+    keyboard_focus_visible: bool,
     overlay: Option<RedrawOverlayIdentity>,
 }
 
@@ -29,6 +30,7 @@ impl RedrawIdentity {
             language_generation: state.language.generation(),
             screen: format!("{:?}", state.active_screen()),
             focus: format!("{:?}", state.focused_component()),
+            keyboard_focus_visible: state.keyboard_focus_visible,
             overlay,
         }
     }

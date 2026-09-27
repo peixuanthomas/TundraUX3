@@ -48,6 +48,25 @@ impl ShellSession {
         input: InputEvent,
         received_at: Instant,
     ) -> Option<InputEvent> {
+        // Inspect physical input before a released button can become a
+        // synthetic key (for example, the chrome Back button becomes Escape).
+        match &input {
+            InputEvent::Mouse(_) | InputEvent::FocusLost => {
+                self.keyboard_focus_visible = false;
+            }
+            InputEvent::Key(key) if key.phase.is_press_like() => {
+                let (_, command) = self.route_key_input(key);
+                if !matches!(
+                    command,
+                    ShellCommand::Noop
+                        | ShellCommand::RecordInput
+                        | ShellCommand::CaptureOverlayInput
+                ) {
+                    self.keyboard_focus_visible = true;
+                }
+            }
+            _ => {}
+        }
         let InputEvent::Mouse(mouse) = input else {
             if matches!(
                 input,

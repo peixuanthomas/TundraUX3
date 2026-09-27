@@ -58,6 +58,117 @@ fn text(buffer: &Buffer, area: Rect) -> String {
 }
 
 #[test]
+fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
+    for mode in 0..3 {
+        let launcher = mode != 0;
+        let mut state = session();
+        if launcher {
+            state.screen_stack.push(ShellScreen::Launcher);
+            if mode == 2 {
+                state.launcher_view_mode = ui::LauncherViewMode::Details;
+            }
+            state.refresh_hit_map();
+        }
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let render = |state: &mut ShellSession,
+                      compositor: &mut ScreenCompositor,
+                      terminal: &mut Terminal<TestBackend>| {
+            let mut prepared = home_frame(state, 0, true);
+            if launcher {
+                prepared.page = ScreenViewModel::Launcher(Box::new(state.to_launcher_view_model()));
+            }
+            draw(compositor, terminal, state, &prepared);
+        };
+        render(&mut state, &mut compositor, &mut terminal);
+        assert!(!state.keyboard_focus_visible);
+        state.apply_input(InputEvent::key(InputKey::Home));
+        assert!(state.keyboard_focus_visible);
+        render(&mut state, &mut compositor, &mut terminal);
+        let id = if launcher {
+            format!("launcher.item.{}", app::EDITOR_APPLICATION.id)
+        } else {
+            "home.entry.0".to_string()
+        };
+        let area = if mode == 2 {
+            let ui::ShellLayout::Full { main, .. } =
+                state.shell_layout_for(Rect::new(0, 0, 120, 40))
+            else {
+                panic!("full layout required");
+            };
+            ui::launcher_layout(main, &state.to_launcher_view_model()).items[0].area
+        } else {
+            state
+                .button_regions
+                .iter()
+                .find(|region| region.id.as_str() == id)
+                .unwrap()
+                .area
+        };
+        let border = (area.x, area.y);
+        let focused_color = terminal.backend().buffer()[border].fg;
+        let selection = if launcher {
+            state.launcher_selected_index
+        } else {
+            state.selected_home_entry_index
+        };
+        for pointer in [
+            InputEvent::mouse_moved((0, 0)),
+            InputEvent::mouse_down(PointerButton::Left, (0, 0)),
+        ] {
+            state.apply_input(pointer);
+            assert!(!state.keyboard_focus_visible);
+            render(&mut state, &mut compositor, &mut terminal);
+            assert_ne!(terminal.backend().buffer()[border].fg, focused_color);
+            assert_eq!(
+                if launcher {
+                    state.launcher_selected_index
+                } else {
+                    state.selected_home_entry_index
+                },
+                selection
+            );
+            for ignored in [
+                InputEvent::Key(KeyInput::new(InputKey::Home).released()),
+                InputEvent::key(InputKey::Char('z')),
+                InputEvent::Tick,
+                InputEvent::FocusGained,
+            ] {
+                state.apply_input(ignored);
+                assert!(!state.keyboard_focus_visible);
+            }
+            state.apply_input(InputEvent::key(InputKey::Home));
+            render(&mut state, &mut compositor, &mut terminal);
+            assert_eq!(terminal.backend().buffer()[border].fg, focused_color);
+        }
+        state.apply_input(InputEvent::FocusLost);
+        assert!(!state.keyboard_focus_visible);
+    }
+}
+
+#[test]
+fn pointer_back_button_does_not_restore_keyboard_focus() {
+    let mut state = session();
+    state.apply_input(InputEvent::key(InputKey::Home));
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let prepared = home_frame(&state, 0, true);
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let area = state
+        .button_regions
+        .iter()
+        .find(|region| region.id.as_str() == "shell.back")
+        .unwrap()
+        .area;
+    let point = (area.x, area.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(!state.keyboard_focus_visible);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+    assert!(!state.keyboard_focus_visible);
+}
+
+#[test]
 fn animated_toast_leaves_clock_pixels_and_mouse_target_intact() {
     let mut state = session();
     let mut compositor = ScreenCompositor::default();

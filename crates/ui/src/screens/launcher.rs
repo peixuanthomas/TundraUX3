@@ -787,8 +787,9 @@ fn render_launcher_grid(
         let Some(item) = model.items.get(item_layout.index) else {
             continue;
         };
-        let focused = model.selected_index == Some(item_layout.index);
-        let selected = focused || item.selected;
+        let focused =
+            theme.keyboard_focus_visible() && model.selected_index == Some(item_layout.index);
+        let selected = focused || (theme.keyboard_focus_visible() && item.selected);
         let style = item_style(item.status, selected, theme).bg(theme.tokens().raised);
         let mut surface = Button::new(format!("launcher.item.{}", item.id), "");
         surface.set_focused(focused);
@@ -905,7 +906,11 @@ fn render_launcher_details(
         .iter()
         .enumerate()
         .map(|(index, item)| match item.status {
-            _ if model.selected_index == Some(index) || item.selected => ComponentTone::Accent,
+            _ if theme.keyboard_focus_visible()
+                && (model.selected_index == Some(index) || item.selected) =>
+            {
+                ComponentTone::Accent
+            }
             LauncherItemStatus::Ready => ComponentTone::Default,
             _ => ComponentTone::Warning,
         })
@@ -915,7 +920,9 @@ fn render_launcher_details(
         .with_viewport_start(layout.visible_start)
         .with_row_tones(tones)
         .bordered(false);
-    table.selected = model.selected_index;
+    table.selected = model
+        .selected_index
+        .filter(|_| theme.keyboard_focus_visible());
     table.state.focused = false;
     let table_context = RenderContext {
         theme: crate::ThemeTokens {

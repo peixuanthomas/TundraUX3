@@ -678,6 +678,7 @@ pub struct UiSessionState {
     pub(super) terminal_text_sizing_support: bool,
     pub(super) pending_default_ascii_icon_fallback: bool,
     pub(super) focused_component: ShellComponent,
+    pub(super) keyboard_focus_visible: bool,
     pub(super) button_regions: Vec<ui::components::ButtonRegion>,
     pub(super) button_pointer_capture: Option<ButtonPointerCapture>,
     pub(super) hovered_component: Option<ShellComponent>,
