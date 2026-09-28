@@ -1089,10 +1089,11 @@ pub fn apply_update_transaction(
     {
         // A terminal Ctrl-C also reaches the helper. Let Shell finish its own
         // cleanup before the foreground job ends; exec resets these handlers.
-        #[cfg(target_os = "linux")]
         let _terminal_control = platform::TerminalControlHandler::install();
         // Linux execs the helper in place, preserving the foreground process group.
-        if !cfg!(target_os = "linux") || parent_pid != std::process::id() {
+        // Windows synchronous launchers pass zero: their UI has already stopped,
+        // but the original process must stay alive to keep PowerShell waiting.
+        if parent_pid != 0 && (!cfg!(target_os = "linux") || parent_pid != std::process::id()) {
             wait_for_process_exit(parent_pid, Duration::from_secs(30))?;
         }
         let mut manifest = load_manifest(manifest_path)?;
@@ -1100,7 +1101,6 @@ pub fn apply_update_transaction(
         let operations = NativeTransactionOperations::default();
         run_update_transaction(manifest_path, &mut manifest, recover_only, &operations)?;
         // Keep the foreground job alive until the new (or restored) Shell exits.
-        #[cfg(target_os = "linux")]
         if let Some(mut child) = operations.child.borrow_mut().take() {
             child.wait()?;
         }
@@ -1123,14 +1123,12 @@ trait TransactionOperations {
 #[cfg(any(windows, target_os = "linux"))]
 #[derive(Default)]
 struct NativeTransactionOperations {
-    #[cfg(target_os = "linux")]
     child: std::cell::RefCell<Option<std::process::Child>>,
 }
 
 #[cfg(any(windows, target_os = "linux"))]
 impl TransactionOperations for NativeTransactionOperations {
     fn stop_new_shell(&self) {
-        #[cfg(target_os = "linux")]
         if let Some(mut child) = self.child.borrow_mut().take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -1154,10 +1152,7 @@ impl TransactionOperations for NativeTransactionOperations {
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while std::time::Instant::now() < deadline {
             if paths.ready.is_file() {
-                #[cfg(target_os = "linux")]
-                {
-                    *self.child.borrow_mut() = Some(child);
-                }
+                *self.child.borrow_mut() = Some(child);
                 return Ok(());
             }
             if let Some(status) = child.try_wait().map_err(|error| {
@@ -1183,17 +1178,12 @@ impl TransactionOperations for NativeTransactionOperations {
             .map_err(|error| {
                 UpdateError::new(format!("could not restart restored Shell: {error}"))
             })?;
-        #[cfg(target_os = "linux")]
-        {
-            *self.child.borrow_mut() = Some(child);
-        }
-        #[cfg(not(target_os = "linux"))]
-        let _ = child;
+        *self.child.borrow_mut() = Some(child);
         Ok(())
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(windows, target_os = "linux"))]
 impl Drop for NativeTransactionOperations {
     fn drop(&mut self) {
         self.stop_new_shell();
@@ -1377,12 +1367,9 @@ fn rollback_files_with_operations(
     fs::create_dir_all(manifest.transaction_dir.join("failed"))?;
 
     if paths.backup_shell.is_file() {
+        let source = rollback_source(&paths.backup_shell)?;
         operations
-            .replace(
-                &paths.installed_shell,
-                &paths.backup_shell,
-                &paths.failed_shell,
-            )
+            .replace(&paths.installed_shell, &source, &paths.failed_shell)
             .map_err(|error| {
                 UpdateError::new(format!("could not restore TundraUX Shell: {error}"))
             })?;
@@ -1398,8 +1385,9 @@ fn rollback_files_with_operations(
         write_manifest(manifest_path, manifest)?;
     }
     if paths.backup_cli.is_file() {
+        let source = rollback_source(&paths.backup_cli)?;
         operations
-            .replace(&paths.installed_cli, &paths.backup_cli, &paths.failed_cli)
+            .replace(&paths.installed_cli, &source, &paths.failed_cli)
             .map_err(|error| {
                 UpdateError::new(format!("could not restore TundraUX CLI: {error}"))
             })?;
@@ -1416,6 +1404,23 @@ fn rollback_files_with_operations(
     }
     manifest.state = TransactionState::RolledBack;
     write_manifest(manifest_path, manifest)
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn rollback_source(backup: &Path) -> Result<PathBuf, UpdateError> {
+    #[cfg(windows)]
+    {
+        // The original Shell is still running from the backup image while it
+        // waits for the helper. ReplaceFileW needs write access to its source,
+        // so restore a copy and retain the loaded image until a later cleanup.
+        let source = backup.with_extension("restore");
+        fs::copy(backup, &source).map_err(|error| {
+            UpdateError::new(format!("could not copy rollback backup: {error}"))
+        })?;
+        Ok(source)
+    }
+    #[cfg(not(windows))]
+    Ok(backup.to_owned())
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -1457,10 +1462,13 @@ fn launch_helper_mode(
         "__apply-update"
     };
     let mut process = std::process::Command::new(helper);
+    // The Windows caller has released the terminal and watchdog already. It
+    // waits for this helper instead of exiting; do not wait for it in return.
+    let helper_parent_pid = if cfg!(windows) { 0 } else { parent_pid };
     process
         .arg(command)
         .arg(manifest_path)
-        .arg(parent_pid.to_string())
+        .arg(helper_parent_pid.to_string())
         .env_remove(UPDATE_READY_FILE_ENV)
         .env_remove(UPDATE_TARGET_SHA_ENV)
         .env_remove(UPDATE_ROLLBACK_ENV);
@@ -1472,7 +1480,18 @@ fn launch_helper_mode(
             process.exec()
         )))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let _terminal_control = platform::TerminalControlHandler::install();
+        let status = process.status().map_err(|error| {
+            UpdateError::new(format!("could not launch update helper: {error}"))
+        })?;
+        if !status.success() {
+            return Err(UpdateError::new(format!("update helper failed: {status}")));
+        }
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     process
         .spawn()
         .map(|_| ())
