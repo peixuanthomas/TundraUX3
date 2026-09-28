@@ -223,6 +223,7 @@ impl ShellSession {
             system_status_dashboard_feedback: None,
             system_status_widget_drag: None,
             system_status_history: SystemStatusMetricHistory::default(),
+            system_status_process_sort: ui::SystemStatusProcessSort::default(),
             system_status_selected_row: 0,
             system_status_scroll_offset: 0,
             system_status_refresh_requested_revision: None,

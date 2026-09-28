@@ -370,12 +370,42 @@ pub enum SystemStatusContentViewModel {
     Admin(AdminSystemStatusViewModel),
     User(UserSystemStatusViewModel),
 }
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SystemStatusProcessSortColumn {
+    #[default]
+    Cpu,
+    Memory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemStatusProcessSort {
+    pub column: SystemStatusProcessSortColumn,
+    pub descending: bool,
+}
+
+impl Default for SystemStatusProcessSort {
+    fn default() -> Self {
+        Self {
+            column: SystemStatusProcessSortColumn::Cpu,
+            descending: true,
+        }
+    }
+}
+
+impl SystemStatusProcessSort {
+    pub fn toggle(&mut self, column: SystemStatusProcessSortColumn) {
+        self.descending = self.column != column || !self.descending;
+        self.column = column;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemStatusViewModel {
     pub content: SystemStatusContentViewModel,
     pub diagnostics: DiagnosticsViewModel,
     pub route: SystemStatusRoute,
     pub dashboard: SystemStatusDashboardViewModel,
+    pub process_sort: SystemStatusProcessSort,
     pub selected_row: usize,
     pub scroll_offset: usize,
     pub refreshing: bool,

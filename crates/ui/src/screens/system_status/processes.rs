@@ -1,13 +1,11 @@
 use super::{layout::SystemStatusLayout, model::*};
 use crate::RenderContext;
-use crate::components::terminal_width;
 use crate::screens::editor::terminal_safe_text;
-use crate::screens::shell::fit_cell;
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Cell, Paragraph, Row, Table};
 
 pub(super) fn render_processes(
     frame: &mut Frame<'_>,
@@ -63,31 +61,49 @@ pub(super) fn render_processes(
     if area.is_empty() {
         return;
     }
+    let sort_header = |label: String, column| {
+        if model.process_sort.column == column {
+            format!(
+                "{label} {}",
+                if model.process_sort.descending {
+                    "↓"
+                } else {
+                    "↑"
+                }
+            )
+        } else {
+            label
+        }
+    };
     let headers = [
         i18n::tr!("ui-system-status-pid"),
-        "CPU%".into(),
-        i18n::tr!("ui-system-status-memory"),
-        i18n::tr!("ui-system-status-sort"),
+        sort_header("CPU%".into(), SystemStatusProcessSortColumn::Cpu),
+        sort_header(
+            i18n::tr!("ui-system-status-memory"),
+            SystemStatusProcessSortColumn::Memory,
+        ),
         i18n::tr!("ui-system-status-process"),
     ];
-    let header = row_line(&headers, [context.theme.text; 5], area.width);
-    frame.render_widget(
-        Paragraph::new(header).style(
-            Style::default()
-                .bg(context.theme.raised)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Rect::new(area.x, area.y, area.width, 1),
+    let header = Row::new(
+        headers
+            .into_iter()
+            .enumerate()
+            .map(|(index, text)| process_cell(text, index, context.theme.text)),
+    )
+    .style(
+        Style::default()
+            .bg(context.theme.raised)
+            .add_modifier(Modifier::BOLD),
     );
-    for row_layout in &layout.rows {
+    let rows = layout.rows.iter().map(|row_layout| {
         let Some(row) = processes
             .compact_rows
             .get(row_layout.index)
-            .filter(|row| row.len() >= 5)
+            .filter(|row| row.len() >= 4)
         else {
-            continue;
+            return Row::default();
         };
-        let cpu = row[3].trim_end_matches('%').parse::<f32>().ok();
+        let cpu = row[2].trim_end_matches('%').parse::<f32>().ok();
         let cpu_color = match cpu {
             Some(value) if value >= 80.0 => Color::Red,
             Some(value) if value >= 40.0 => Color::Yellow,
@@ -95,19 +111,12 @@ pub(super) fn render_processes(
             None => context.theme.muted,
         };
         let fields = [
-            row[1].clone(),
-            row[3].clone(),
-            row[4].clone(),
             row[0].clone(),
             row[2].clone(),
+            row[3].clone(),
+            row[1].clone(),
         ];
-        let colors = [
-            Color::Cyan,
-            cpu_color,
-            Color::Magenta,
-            context.theme.muted,
-            context.theme.text,
-        ];
+        let colors = [Color::Cyan, cpu_color, Color::Magenta, context.theme.text];
         let selected = model.selected_index() == Some(row_layout.index);
         let mut style = Style::default().bg(if selected {
             context.theme.accent_soft
@@ -117,35 +126,32 @@ pub(super) fn render_processes(
         if selected {
             style = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
         }
-        frame.render_widget(
-            Paragraph::new(row_line(&fields, colors, area.width)).style(style),
-            row_layout.area,
-        );
-    }
+        Row::new(
+            fields
+                .into_iter()
+                .zip(colors)
+                .enumerate()
+                .map(|(index, (text, color))| process_cell(text, index, color)),
+        )
+        .style(style)
+    });
+    frame.render_widget(
+        Table::new(rows, super::layout::PROCESS_COLUMN_WIDTHS)
+            .column_spacing(1)
+            .header(header),
+        area,
+    );
 }
 
-fn row_line(fields: &[String; 5], colors: [Color; 5], width: u16) -> Line<'static> {
-    // Keep numeric fields compact and right aligned; leave the rest for names.
-    let widths = [7usize, 8, 11, 6, usize::from(width).saturating_sub(32)];
-    let spans = fields
-        .iter()
-        .zip(colors)
-        .zip(widths)
-        .enumerate()
-        .map(|(index, ((text, color), width))| {
-            let text = terminal_safe_text(text);
-            let fitted = fit_cell(&text, width.saturating_sub(1));
-            let value = if index < 3 {
-                let text = fitted.trim_end();
-                let padding = width.saturating_sub(1 + terminal_width(text));
-                format!("{}{text} ", " ".repeat(padding))
-            } else {
-                format!("{fitted} ")
-            };
-            Span::styled(value, Style::default().fg(color))
-        })
-        .collect::<Vec<_>>();
-    Line::from(spans)
+fn process_cell(text: String, column: usize, color: Color) -> Cell<'static> {
+    Cell::from(
+        Line::from(terminal_safe_text(&text).into_owned()).alignment(if column < 3 {
+            HorizontalAlignment::Right
+        } else {
+            HorizontalAlignment::Left
+        }),
+    )
+    .style(Style::default().fg(color))
 }
 
 fn render_meter(

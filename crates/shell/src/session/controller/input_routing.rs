@@ -816,6 +816,20 @@ impl ShellSession {
         if let ui::SystemStatusRoute::Detail(_) = self.system_status_route {
             let command = match &key.key {
                 InputKey::Escape => ShellCommand::SystemStatusBack,
+                InputKey::Char('c' | 'C')
+                    if self.system_status_route
+                        == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Processes) =>
+                {
+                    ShellCommand::SystemStatusSortProcesses(ui::SystemStatusProcessSortColumn::Cpu)
+                }
+                InputKey::Char('m' | 'M')
+                    if self.system_status_route
+                        == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Processes) =>
+                {
+                    ShellCommand::SystemStatusSortProcesses(
+                        ui::SystemStatusProcessSortColumn::Memory,
+                    )
+                }
                 InputKey::Char('r' | 'R') if diagnostics_active => ShellCommand::DiagnosticsRescan,
                 InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
                 InputKey::Up if diagnostics_active => ShellCommand::DiagnosticsPrevious,
@@ -2434,6 +2448,9 @@ impl ShellSession {
                 }
                 Some(ui::SystemStatusHitTarget::Cancel) if editing => {
                     ShellCommand::SystemStatusRequestCancelEdit
+                }
+                Some(ui::SystemStatusHitTarget::ProcessSort(column)) => {
+                    ShellCommand::SystemStatusSortProcesses(column)
                 }
                 Some(ui::SystemStatusHitTarget::Row(index)) => {
                     ShellCommand::SystemStatusSelectRow(index)

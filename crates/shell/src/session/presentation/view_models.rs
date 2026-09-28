@@ -196,6 +196,7 @@ impl ShellSession {
             diagnostics,
             route: self.system_status_route,
             dashboard,
+            process_sort: self.system_status_process_sort,
             selected_row: self.system_status_selected_row,
             scroll_offset: self.system_status_scroll_offset,
             refreshing: self.system_status_refresh_requested_revision.is_some(),
@@ -959,28 +960,43 @@ impl ShellSession {
                             )
                         })
                         .collect();
-                    model.compact_rows = processes
+                    // The sampler supplies overlapping top CPU and memory lists.
+                    // Merge by PID before sorting raw values, never formatted units.
+                    let mut seen = std::collections::HashSet::new();
+                    let mut rows = processes
                         .top_cpu
                         .iter()
                         .take(20)
+                        .chain(processes.top_memory.iter().take(20))
+                        .filter(|process| seen.insert(process.pid))
+                        .collect::<Vec<_>>();
+                    let sort = self.system_status_process_sort;
+                    rows.sort_by(|a, b| {
+                        let order = match sort.column {
+                            ui::SystemStatusProcessSortColumn::Cpu => {
+                                a.cpu_percent.total_cmp(&b.cpu_percent)
+                            }
+                            ui::SystemStatusProcessSortColumn::Memory => {
+                                a.memory_bytes.cmp(&b.memory_bytes)
+                            }
+                        };
+                        let order = if sort.descending {
+                            order.reverse()
+                        } else {
+                            order
+                        };
+                        order.then_with(|| a.pid.cmp(&b.pid))
+                    });
+                    model.compact_rows = rows
+                        .into_iter()
                         .map(|process| {
                             vec![
-                                i18n::tr!("shell-cpu"),
                                 process.pid.to_string(),
                                 process.name.clone(),
                                 format!("{:.1}%", process.cpu_percent),
                                 format_bytes(process.memory_bytes),
                             ]
                         })
-                        .chain(processes.top_memory.iter().take(20).map(|process| {
-                            vec![
-                                i18n::tr!("shell-memory"),
-                                process.pid.to_string(),
-                                process.name.clone(),
-                                format!("{:.1}%", process.cpu_percent),
-                                format_bytes(process.memory_bytes),
-                            ]
-                        }))
                         .collect();
                 }
             }
