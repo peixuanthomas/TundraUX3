@@ -6,7 +6,14 @@ use crate::{
     diagnostics_content_hit_test, diagnostics_content_layout, diagnostics_repair_dialog_hit_test,
     diagnostics_repair_dialog_layout,
 };
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
+
+pub(super) const PROCESS_COLUMN_WIDTHS: [Constraint; 4] = [
+    Constraint::Length(6),
+    Constraint::Length(7),
+    Constraint::Length(10),
+    Constraint::Fill(1),
+];
 
 pub const LOGICAL_ROW_HEIGHT: u16 = 2;
 pub const LOGICAL_ROW_GAP: u16 = 1;
@@ -31,6 +38,7 @@ pub enum SystemStatusHitTarget {
     PickerItem(usize),
     SizePickerItem(usize),
     Row(usize),
+    ProcessSort(SystemStatusProcessSortColumn),
     Diagnostics(DiagnosticsHitTarget),
     Refresh,
     Edit,
@@ -72,6 +80,7 @@ pub struct SystemStatusLayout {
     pub detail_summary_area: Rect,
     pub detail_trend_area: Rect,
     pub rows_area: Rect,
+    pub process_sort_headers: Vec<(SystemStatusProcessSortColumn, Rect)>,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
     pub visible_capacity: usize,
@@ -361,6 +370,19 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             .saturating_sub(u16::from(detail_has_scroll) * 2),
         table_inner.height,
     );
+    let process_sort_headers =
+        if detail == Some(SystemStatusDetail::Processes) && !rows_area.is_empty() {
+            let columns = Layout::horizontal(PROCESS_COLUMN_WIDTHS)
+                .spacing(1)
+                .flex(Flex::Start)
+                .split(Rect::new(rows_area.x, rows_area.y, rows_area.width, 1));
+            vec![
+                (SystemStatusProcessSortColumn::Cpu, columns[1]),
+                (SystemStatusProcessSortColumn::Memory, columns[2]),
+            ]
+        } else {
+            Vec::new()
+        };
     let rows = (visible_start..item_count)
         .take(visible_capacity)
         .enumerate()
@@ -532,6 +554,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         detail_summary_area,
         detail_trend_area,
         rows_area,
+        process_sort_headers,
         rows,
         visible_start,
         visible_capacity,
@@ -600,6 +623,13 @@ pub fn system_status_hit_test(
         .find(|w| !w.preview && rect_contains(w.area, x, y))
     {
         return Some(SystemStatusHitTarget::Widget(w.kind));
+    }
+    if let Some((column, _)) = l
+        .process_sort_headers
+        .iter()
+        .find(|(_, area)| rect_contains(*area, x, y))
+    {
+        return Some(SystemStatusHitTarget::ProcessSort(*column));
     }
     l.rows
         .iter()

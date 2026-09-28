@@ -615,6 +615,7 @@ pub struct UiSessionState {
     pub(super) system_status_dashboard_feedback: Option<i18n::LocalizedText>,
     pub(super) system_status_widget_drag: Option<SystemStatusWidgetDragState>,
     pub(super) system_status_history: SystemStatusMetricHistory,
+    pub(super) system_status_process_sort: ui::SystemStatusProcessSort,
     pub(super) system_status_selected_row: usize,
     pub(super) system_status_scroll_offset: usize,
     pub(super) system_status_refresh_requested_revision: Option<u64>,

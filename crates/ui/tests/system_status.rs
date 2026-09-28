@@ -20,7 +20,6 @@ fn processes_show_colored_aligned_values_and_keep_selection_and_scrolling() {
     processes.compact_rows = (0..25)
         .map(|i| {
             vec![
-                "CPU".into(),
                 (1234 + i).to_string(),
                 format!("worker-{i}"),
                 ["12.0%", "45.0%", "90.0%"][i % 3].into(),
@@ -48,6 +47,10 @@ fn processes_show_colored_aligned_values_and_keep_selection_and_scrolling() {
                 .draw(|f| render_system_status(f, f.area(), &chrome(width, 24), &m, &theme))
                 .unwrap();
             let buffer = terminal.backend().buffer();
+            let header = (layout.rows_area.x..layout.rows_area.right())
+                .map(|x| buffer[(x, layout.rows_area.y)].symbol())
+                .collect::<String>();
+            assert!(!header.contains(&i18n::tr!("ui-system-status-sort")));
             for (i, cpu_color) in [Color::Green, Color::Yellow, Color::Red]
                 .into_iter()
                 .enumerate()
@@ -56,7 +59,7 @@ fn processes_show_colored_aligned_values_and_keep_selection_and_scrolling() {
                 assert_eq!(buffer[(row.x + 5, row.y)].fg, Color::Cyan);
                 assert_eq!(buffer[(row.x + 13, row.y)].fg, cpu_color);
                 assert_eq!(buffer[(row.x + 24, row.y)].fg, Color::Magenta);
-                assert_eq!(buffer[(row.x + 32, row.y)].symbol(), "w");
+                assert_eq!(buffer[(row.x + 26, row.y)].symbol(), "w");
                 if i == 0 {
                     assert!(
                         buffer[(row.x, row.y)]
@@ -76,6 +79,46 @@ fn processes_show_colored_aligned_values_and_keep_selection_and_scrolling() {
     let layout = system_status_layout(full_main(100, 24), &m);
     assert_eq!(layout.rows.last().unwrap().index, 24);
     assert!(render(100, 24, &m).contains("worker-24"));
+}
+
+#[test]
+fn process_headers_show_sort_direction_and_only_metric_headers_are_clickable() {
+    let mut m = model();
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Processes);
+    m.dashboard.wide_widgets.push(widget(
+        SystemStatusWidgetKind::TopProcesses,
+        SystemStatusWidgetSize::Large,
+        0,
+        0,
+    ));
+    for (width, height) in [(50, 12), (100, 24), (208, 55)] {
+        let layout = system_status_layout(full_main(width, height), &m);
+        assert_eq!(layout.process_sort_headers.len(), 2);
+        for (column, area) in &layout.process_sort_headers {
+            for x in area.x..area.right() {
+                assert_eq!(
+                    system_status_hit_test(&layout, (x, area.y)),
+                    Some(SystemStatusHitTarget::ProcessSort(*column))
+                );
+            }
+        }
+        assert_eq!(
+            system_status_hit_test(&layout, (layout.rows_area.x, layout.rows_area.y)),
+            None
+        );
+        let text = render(width, height, &m);
+        assert!(text.contains("CPU% ↓"), "{text}");
+    }
+    m.process_sort.toggle(SystemStatusProcessSortColumn::Memory);
+    assert!(render(100, 24, &m).contains(&format!("{} ↓", i18n::tr!("ui-system-status-memory"))));
+    m.process_sort.toggle(SystemStatusProcessSortColumn::Memory);
+    assert!(render(100, 24, &m).contains(&format!("{} ↑", i18n::tr!("ui-system-status-memory"))));
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Storage);
+    assert!(
+        system_status_layout(full_main(100, 24), &m)
+            .process_sort_headers
+            .is_empty()
+    );
 }
 
 #[test]
@@ -436,6 +479,7 @@ fn model() -> SystemStatusViewModel {
             updated: "now".into(),
             ..Default::default()
         },
+        process_sort: SystemStatusProcessSort::default(),
         selected_row: 0,
         scroll_offset: 0,
         refreshing: false,

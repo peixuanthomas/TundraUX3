@@ -742,6 +742,95 @@ fn diagnostics_is_integrated_into_system_status_tabs() {
 }
 
 #[test]
+fn system_status_process_sort_handles_clicks_keys_duplicates_units_and_refresh() {
+    use ui::SystemStatusProcessSortColumn::{Cpu, Memory};
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.app.dispatch_at(
+        app::AppCommand::SetActiveSystemStatusDashboard(Some(
+            storage::SystemStatusDashboardConfig::for_role("Admin"),
+        )),
+        Instant::now(),
+    );
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.open_system_status_detail(storage::SystemStatusWidgetKind::TopProcesses);
+    let process = |pid, cpu_percent, memory_bytes| system_services::ProcessMetricSnapshot {
+        pid,
+        name: format!("worker-{pid}"),
+        cpu_percent,
+        memory_bytes,
+    };
+    let a = process(1, 9.0, 2 * 1024 * 1024 * 1024);
+    let b = process(2, 80.0, 900 * 1024 * 1024);
+    let c = process(3, 9.0, 50 * 1024 * 1024);
+    let d = process(4, 20.0, 1024 * 1024 * 1024);
+    let mut snapshot = system_status_metric_snapshot(1);
+    snapshot.metrics.processes =
+        system_services::MetricState::Ready(system_services::ProcessRankingsSnapshot {
+            top_cpu: vec![b.clone(), a.clone(), c.clone()],
+            top_memory: vec![a, d, b, c],
+        });
+    state.apply_system_status_snapshot(snapshot.clone());
+    let pids = |state: &ShellSession| {
+        state
+            .to_system_status_view_model()
+            .unwrap()
+            .detail_widget(ui::SystemStatusDetail::Processes)
+            .unwrap()
+            .compact_rows
+            .iter()
+            .map(|row| row[0].parse::<u32>().unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(pids(&state), vec![2, 4, 1, 3]);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!("full layout required");
+    };
+    for (column, expected, descending) in [
+        (Cpu, vec![1, 3, 4, 2], false),
+        (Cpu, vec![2, 4, 1, 3], true),
+        (Memory, vec![1, 4, 2, 3], true),
+        (Memory, vec![3, 2, 4, 1], false),
+    ] {
+        state.system_status_selected_row = 2;
+        state.system_status_scroll_offset = 2;
+        let layout = ui::system_status_layout(main, &state.to_system_status_view_model().unwrap());
+        let area = layout
+            .process_sort_headers
+            .iter()
+            .find(|(col, _)| *col == column)
+            .unwrap()
+            .1;
+        let at = Instant::now();
+        state.apply_input_at(
+            InputEvent::mouse_down(PointerButton::Left, (area.x, area.y)),
+            at,
+        );
+        state.apply_input_at(
+            InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)),
+            at + Duration::from_millis(20),
+        );
+        assert_eq!(pids(&state), expected);
+        assert_eq!(state.system_status_process_sort.descending, descending);
+        assert_eq!(state.system_status_selected_row, 0);
+        assert_eq!(state.system_status_scroll_offset, 0);
+    }
+    snapshot.revision += 1;
+    state.apply_system_status_snapshot(snapshot);
+    assert_eq!(pids(&state), vec![3, 2, 4, 1]);
+    state.apply_input(InputEvent::key(InputKey::Char('m')));
+    assert_eq!(pids(&state), vec![1, 4, 2, 3]);
+    state.apply_input(InputEvent::key(InputKey::Char('c')));
+    assert_eq!(pids(&state), vec![2, 4, 1, 3]);
+}
+
+#[test]
 fn system_status_widget_double_click_from_terminal_events_opens_detail() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

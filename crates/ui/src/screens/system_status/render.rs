@@ -461,7 +461,6 @@ fn detail_headers(kind: SystemStatusWidgetKind) -> Vec<String> {
         ],
         SystemStatusWidgetKind::TopProcesses => {
             vec![
-                i18n::tr!("ui-system-status-sort"),
                 i18n::tr!("ui-system-status-pid"),
                 i18n::tr!("ui-system-status-process"),
                 i18n::tr!("ui-system-status-cpu"),

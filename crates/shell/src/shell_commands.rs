@@ -240,6 +240,7 @@ pub enum ShellCommand {
     SystemStatusFirst,
     SystemStatusLast,
     SystemStatusSelectRow(usize),
+    SystemStatusSortProcesses(ui::SystemStatusProcessSortColumn),
     SystemStatusScroll(i8),
     SystemStatusRefresh,
     SystemStatusScrollbarPointerDown(CellPosition),
