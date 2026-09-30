@@ -552,7 +552,9 @@ impl ShellSession {
             | ExplorerInputMode::NewTextFile
             | ExplorerInputMode::RestoreDestination => String::new(),
         };
-        self.explorer_input_replace_all = mode == ExplorerInputMode::Address;
+        self.explorer_input_replace_all = false;
+        self.explorer_address_cursor = self.explorer_input.chars().count();
+        self.explorer_address_selection_anchor = None;
         let _ = self.update_explorer_state(|state| {
             state.error = None;
         });
@@ -564,6 +566,10 @@ impl ShellSession {
         character: char,
         platform: &dyn Platform,
     ) {
+        if self.explorer_input_mode == ExplorerInputMode::Address {
+            self.edit_explorer_address(InputEvent::key(InputKey::Char(character)));
+            return;
+        }
         if self.explorer_input_replace_all {
             self.explorer_input.clear();
             self.explorer_input_replace_all = false;
@@ -573,6 +579,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn explorer_backspace(&mut self, platform: &dyn Platform) {
+        if self.explorer_input_mode == ExplorerInputMode::Address {
+            self.edit_explorer_address(InputEvent::key(InputKey::Backspace));
+            return;
+        }
         if self.explorer_input_replace_all {
             self.explorer_input.clear();
             self.explorer_input_replace_all = false;
@@ -580,6 +590,30 @@ impl ShellSession {
             self.explorer_input.pop();
         }
         self.apply_live_explorer_search(platform);
+    }
+
+    pub(in crate::session) fn edit_explorer_address(&mut self, mut event: InputEvent) {
+        if self.explorer_input_mode != ExplorerInputMode::Address {
+            return;
+        }
+        match &mut event {
+            InputEvent::Key(key) if matches!(key.key, InputKey::Char('/' | '\\')) => {
+                key.key = InputKey::Char(std::path::MAIN_SEPARATOR);
+            }
+            InputEvent::Paste(value) => {
+                *value = value.replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
+            }
+            _ => {}
+        }
+        let mut input = ui::components::TextInput::new("explorer.address.input");
+        input.set_value(&self.explorer_input);
+        input.set_cursor(self.explorer_address_cursor);
+        input.set_selection_anchor(self.explorer_address_selection_anchor);
+        input.set_focused(true);
+        input.handle_event_borderless(event, Rect::default());
+        self.explorer_input = input.value().to_string();
+        self.explorer_address_cursor = input.cursor();
+        self.explorer_address_selection_anchor = input.selection_anchor();
     }
 
     pub(in crate::session) fn apply_live_explorer_search(&mut self, platform: &dyn Platform) {

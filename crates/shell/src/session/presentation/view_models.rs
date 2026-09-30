@@ -1613,6 +1613,10 @@ impl ShellSession {
         } else {
             display_path
         };
+        if model.address_editing {
+            model.address_cursor = Some(self.explorer_address_cursor);
+            model.address_selection_anchor = self.explorer_address_selection_anchor;
+        }
         model.entry_presentations = state
             .entries
             .iter()

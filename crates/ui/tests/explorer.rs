@@ -127,6 +127,62 @@ fn explorer_address_editor_renders_the_controlled_value_and_cursor() {
 }
 
 #[test]
+fn explorer_address_editor_shows_selection_and_scrolls_to_the_cursor() {
+    let theme = TundraTheme::default();
+    for width in [50, 110] {
+        for cursor_at_end in [false, true] {
+            let mut model = sample_model();
+            model.address_editing = true;
+            model.address_value = format!("/{}中文ab", "long-directory/".repeat(12));
+            let end = model.address_value.chars().count();
+            model.address_cursor = Some(if cursor_at_end { end } else { end - 4 });
+            model.address_selection_anchor = Some(if cursor_at_end { end - 4 } else { end });
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_explorer(frame, frame.area(), &chrome_for("Explorer"), &model, &theme)
+                })
+                .unwrap();
+            let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, 24))
+            else {
+                panic!("address test requires full layout");
+            };
+            let area = explorer_layout(main, &model).address_input;
+            let buffer = terminal.backend().buffer();
+            let cells: Vec<_> = (area.x..area.right())
+                .map(|x| buffer.cell((x, area.y)).unwrap())
+                .collect();
+            // Wide glyphs occupy a second, blank terminal cell.
+            let visible: String = cells
+                .iter()
+                .filter(|cell| cell.symbol() != " ")
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                cells.iter().any(|cell| cell.symbol() == "_"),
+                "caret must remain visible"
+            );
+            if cursor_at_end {
+                assert!(visible.contains("中文ab_"));
+            } else {
+                assert!(visible.contains("_中文ab"));
+            }
+            for selected in ["中", "文", "a", "b"] {
+                assert_eq!(
+                    cells
+                        .iter()
+                        .rev()
+                        .find(|cell| cell.symbol() == selected)
+                        .unwrap()
+                        .bg,
+                    theme.tokens().focus
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn explorer_first_entry_line_accounts_for_wrapped_header_text() {
     let model = sample_model();
 

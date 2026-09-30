@@ -241,6 +241,8 @@ impl ShellSession {
             explorer_input_mode: ExplorerInputMode::Browse,
             explorer_input: String::new(),
             explorer_input_replace_all: false,
+            explorer_address_cursor: 0,
+            explorer_address_selection_anchor: None,
             explorer_overlay_mode: None,
             explorer_overlay_selection: 0,
             explorer_conflict_apply_to_remaining: false,

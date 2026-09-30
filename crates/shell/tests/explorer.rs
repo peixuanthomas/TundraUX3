@@ -1224,6 +1224,7 @@ fn batch_copy_cut_paste_and_delete_use_the_selected_files() {
     state.apply_input_with_platform(ctrl_key('a'), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("x"), &platform);
     state.apply_input_with_platform(ctrl_key('l'), &platform);
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
     type_text(&mut state, &platform, &moved.to_string_lossy());
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("v"), &platform);
@@ -1266,6 +1267,166 @@ fn batch_copy_cut_paste_and_delete_use_the_selected_files() {
 }
 
 #[test]
+fn explorer_address_edit_appends_mixed_separators_and_navigates() {
+    let fixture = FixtureRoot::new("address-append");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let documents = fixture.path().join("Documents");
+    let target = documents.join("子目录/child");
+    fs::create_dir_all(&target).unwrap();
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+
+    let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
+        panic!("address edit test requires a full layout");
+    };
+    let button = ui::explorer_layout(main, &state.to_explorer_view_model()).address_button;
+    let point = (button.x + 1, button.y);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, point),
+        &platform,
+    );
+    state.apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, point), &platform);
+    let model = state.to_explorer_view_model();
+    assert!(model.address_editing);
+    assert_eq!(model.address_value, documents.to_string_lossy());
+    assert_eq!(
+        model.address_cursor,
+        Some(model.address_value.chars().count())
+    );
+    assert_eq!(model.address_selection_anchor, None);
+
+    type_text(&mut state, &platform, "/子目录\\child");
+    assert_eq!(
+        state.to_explorer_view_model().address_value,
+        target.to_string_lossy()
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    let model = state.to_explorer_view_model();
+    assert!(!model.address_editing);
+    assert!(model.error.is_none(), "{:?}", model.error);
+    assert_eq!(PathBuf::from(model.current_path), target);
+
+    state.apply_input_with_platform(ctrl_key('l'), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Backspace"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().address_value,
+        format!("{}", target.display()).trim_end_matches('d')
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert_eq!(
+        PathBuf::from(state.to_explorer_view_model().current_path),
+        target
+    );
+}
+
+#[test]
+fn explorer_address_selection_edits_unicode_and_pasted_paths() {
+    let fixture = FixtureRoot::new("address-selection");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(ctrl_key('l'), &platform);
+    let original = state.to_explorer_view_model().address_value;
+    let prefix = format!("{original}{}", std::path::MAIN_SEPARATOR);
+    type_text(&mut state, &platform, "/中文ab");
+    let end = state.to_explorer_view_model().address_value.chars().count();
+
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_phase(
+            InputKey::Left,
+            InputModifiers {
+                shift: true,
+                ..InputModifiers::none()
+            },
+            InputPhase::Release,
+        )),
+        &platform,
+    );
+    assert_eq!(state.to_explorer_view_model().address_cursor, Some(end));
+    for phase in [InputPhase::Press, InputPhase::Repeat, InputPhase::Repeat] {
+        state.apply_input_with_platform(
+            InputEvent::Key(KeyInput::with_phase(
+                InputKey::Left,
+                InputModifiers {
+                    shift: true,
+                    ..InputModifiers::none()
+                },
+                phase,
+            )),
+            &platform,
+        );
+    }
+    state.apply_input_with_platform(modified_key(InputKey::Right, false, true), &platform);
+    let model = state.to_explorer_view_model();
+    assert_eq!(model.address_cursor, Some(end - 2));
+    assert_eq!(model.address_selection_anchor, Some(end));
+    state.apply_input_with_platform(InputEvent::from_key_label("Left"), &platform);
+    let model = state.to_explorer_view_model();
+    assert_eq!(model.address_cursor, Some(end - 2));
+    assert_eq!(model.address_selection_anchor, None);
+    for _ in 0..2 {
+        state.apply_input_with_platform(modified_key(InputKey::Right, false, true), &platform);
+    }
+    type_text(&mut state, &platform, "界");
+    assert_eq!(
+        state.to_explorer_view_model().address_value,
+        format!("{prefix}中文界")
+    );
+
+    state.apply_input_with_platform(InputEvent::from_key_label("Left"), &platform);
+    type_text(&mut state, &platform, "x");
+    state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Backspace"), &platform);
+    assert_eq!(
+        state.to_explorer_view_model().address_value,
+        format!("{prefix}中文")
+    );
+
+    // Both deletion keys remove a selected range, including a multibyte character.
+    for delete in [InputKey::Backspace, InputKey::Delete] {
+        type_text(&mut state, &platform, "界ab");
+        for _ in 0..3 {
+            state.apply_input_with_platform(modified_key(InputKey::Left, false, true), &platform);
+        }
+        state.apply_input_with_platform(InputEvent::key(delete), &platform);
+        assert_eq!(
+            state.to_explorer_view_model().address_value,
+            format!("{prefix}中文")
+        );
+    }
+
+    state.apply_input_with_platform(modified_key(InputKey::Home, false, true), &platform);
+    state.apply_input_with_platform(
+        InputEvent::Paste(format!("{original}/子目录\\child")),
+        &platform,
+    );
+    let expected = fixture.path().join("Documents/子目录/child");
+    assert_eq!(
+        state.to_explorer_view_model().address_value,
+        expected.to_string_lossy()
+    );
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    state.apply_input_with_platform(InputEvent::Paste(original.clone()), &platform);
+    assert_eq!(state.to_explorer_view_model().address_value, original);
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Backspace"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
+    assert_eq!(state.to_explorer_view_model().address_value, original);
+
+    // Escape cancels edits; reopening restores the directory with no selection.
+    state.apply_input_with_platform(modified_key(InputKey::Home, false, true), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(ctrl_key('l'), &platform);
+    let model = state.to_explorer_view_model();
+    assert_eq!(model.address_cursor, Some(original.chars().count()));
+    assert_eq!(model.address_selection_anchor, None);
+}
+
+#[test]
 fn file_action_letters_are_text_in_name_search_and_address_inputs() {
     let fixture = FixtureRoot::new("action-letters-as-text");
     let platform = mock_platform(fixture.path());
@@ -1304,7 +1465,10 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
     type_text(&mut state, &platform, "cCxXvVdDntro");
     let model = state.to_explorer_view_model();
     assert!(model.address_editing);
-    assert_eq!(model.address_value, "cCxXvVdDntro");
+    assert_eq!(
+        model.address_value,
+        format!("{}cCxXvVdDntro", documents.display())
+    );
     assert!(model.pending_dialog.is_none());
     assert!(model.operation.is_none());
     assert!(!model.entry_presentations.iter().any(|entry| entry.cut));

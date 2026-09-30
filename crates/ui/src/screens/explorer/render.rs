@@ -98,8 +98,14 @@ fn render_explorer_path_bar(
         theme,
     );
     if model.address_editing || model.breadcrumbs.is_empty() {
-        let mut input = TextInput::new("explorer.address.input").with_cursor_symbol("_");
+        let mut input = TextInput::new("explorer.address.input")
+            .with_cursor_symbol("_")
+            .with_horizontal_scroll(true);
         input.set_value(&model.address_value);
+        if let Some(cursor) = model.address_cursor {
+            input.set_cursor(cursor);
+        }
+        input.set_selection_anchor(model.address_selection_anchor);
         input.set_focused(model.address_editing);
         input.state.hovered = model.address_editing;
         input.render_borderless_frame_with_prefix(

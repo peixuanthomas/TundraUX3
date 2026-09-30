@@ -99,6 +99,16 @@ impl ShellSession {
                 RoutedTarget::Component(ShellComponent::CommandLine),
                 ShellCommand::CommandLinePaste(value.clone()),
             ),
+            InputEvent::Paste(_)
+                if self.active_screen() == ShellScreen::Explorer
+                    && self.explorer_input_mode == ExplorerInputMode::Address
+                    && self.active_overlay_descriptor().is_none() =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::Explorer),
+                    ShellCommand::ExplorerEditAddress(input.clone()),
+                )
+            }
             InputEvent::FocusGained | InputEvent::FocusLost | InputEvent::Paste(_) => {
                 (RoutedTarget::Global, ShellCommand::RecordInput)
             }
@@ -1251,6 +1261,10 @@ impl ShellSession {
             }
             ShellCommand::ExplorerBackspace => {
                 self.explorer_backspace(platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerEditAddress(input) => {
+                self.edit_explorer_address(input);
                 ShellAction::Redraw
             }
             ShellCommand::SubmitExplorerInput => {

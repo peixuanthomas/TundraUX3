@@ -632,6 +632,8 @@ pub struct UiSessionState {
     pub(super) launcher_refresh_request: Option<u64>,
     pub(super) explorer_input_mode: ExplorerInputMode,
     pub(super) explorer_input: String,
+    pub(super) explorer_address_cursor: usize,
+    pub(super) explorer_address_selection_anchor: Option<usize>,
     pub(super) explorer_input_replace_all: bool,
     pub(super) explorer_overlay_mode: Option<ExplorerOverlayMode>,
     pub(super) explorer_overlay_selection: usize,

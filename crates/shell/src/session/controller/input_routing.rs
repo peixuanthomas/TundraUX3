@@ -1242,6 +1242,29 @@ impl ShellSession {
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
                 InputKey::Enter => (target, ShellCommand::SubmitExplorerInput),
+                InputKey::Left
+                | InputKey::Right
+                | InputKey::Home
+                | InputKey::End
+                | InputKey::Delete
+                    if self.explorer_input_mode == ExplorerInputMode::Address
+                        && !key.has_non_shift_modifier() =>
+                {
+                    (
+                        target,
+                        ShellCommand::ExplorerEditAddress(InputEvent::Key(key.clone())),
+                    )
+                }
+                InputKey::Char('a' | 'A')
+                    if self.explorer_input_mode == ExplorerInputMode::Address
+                        && (key.modifiers.control || key.modifiers.super_key)
+                        && !key.modifiers.alt =>
+                {
+                    (
+                        target,
+                        ShellCommand::ExplorerEditAddress(InputEvent::Key(key.clone())),
+                    )
+                }
                 InputKey::Backspace | InputKey::Delete => (target, ShellCommand::ExplorerBackspace),
                 InputKey::Char(character) if !key.has_non_shift_modifier() => {
                     (target, ShellCommand::AppendExplorerChar(*character))
