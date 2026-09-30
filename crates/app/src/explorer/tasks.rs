@@ -2292,7 +2292,7 @@ impl<'a> ExecutionContext<'a> {
                             "target": node.target.display().to_string(),
                         }),
                     )?;
-                    remove_path_no_follow(self.platform, &node.source)?;
+                    remove_copied_source_no_follow(self.platform, node)?;
                     self.checkpoint(
                         "source_removed",
                         serde_json::json!({
@@ -2492,10 +2492,7 @@ impl<'a> ExecutionContext<'a> {
     ) -> Result<(), ExplorerTaskError> {
         let mut input =
             File::open(source).map_err(|error| io_error("open copy source", source, error))?;
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(staging)
+        let mut output = open_staging_file(staging)
             .map_err(|error| io_error("create staged copy", staging, error))?;
         let mut buffer = vec![0_u8; self.chunk_size];
         loop {
@@ -2704,23 +2701,48 @@ fn path_is_within(child: &Path, parent: &Path, windows_paths: bool) -> bool {
     }
 }
 
-fn remove_path_no_follow(platform: &dyn Platform, path: &Path) -> Result<(), ExplorerTaskError> {
+fn open_staging_file(path: &Path) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    // A copy can contain private bytes before its final source permissions
+    // are applied. Never expose those bytes through the process umask.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+fn remove_copied_source_no_follow(
+    platform: &dyn Platform,
+    node: &PreparedNode,
+) -> Result<(), ExplorerTaskError> {
+    let path = &node.source;
     let attributes = platform.file_attributes(path)?;
     if is_unsafe_link(&attributes) {
         return Err(ExplorerTaskError::UnsafeLink {
             path: path.to_path_buf(),
         });
     }
-    if attributes.is_dir {
-        let directory = fs::read_dir(path)
-            .map_err(|error| io_error("read moved source directory", path, error))?;
-        for entry in directory {
-            let entry = entry.map_err(|error| io_error("read moved source entry", path, error))?;
-            remove_path_no_follow(platform, &entry.path())?;
+    match &node.disposition {
+        PreparedDisposition::Directory { children, .. } if attributes.is_dir => {
+            // Only the prepared children were copied. A live directory scan
+            // here could delete files created while the transfer was running.
+            for child in children {
+                remove_copied_source_no_follow(platform, child)?;
+            }
+            // New entries keep the source directory nonempty and turn the
+            // operation into a partial move rather than being discarded.
+            fs::remove_dir(path)
+                .map_err(|error| io_error("remove moved source directory", path, error))
         }
-        fs::remove_dir(path).map_err(|error| io_error("remove moved source directory", path, error))
-    } else {
-        fs::remove_file(path).map_err(|error| io_error("remove moved source file", path, error))
+        PreparedDisposition::File { .. } if attributes.is_file => {
+            fs::remove_file(path).map_err(|error| io_error("remove moved source file", path, error))
+        }
+        _ => Err(ExplorerTaskError::PartialMove {
+            path: path.to_path_buf(),
+        }),
     }
 }
 
@@ -2826,3 +2848,7 @@ fn send_event(sender: &mpsc::Sender<ExplorerTaskEvent>, event: ExplorerTaskEvent
 #[cfg(test)]
 #[path = "../../tests/unit/explorer/tasks/recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(all(test, unix))]
+#[path = "../../tests/unit/explorer/tasks/staging_tests.rs"]
+mod staging_tests;

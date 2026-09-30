@@ -1376,6 +1376,90 @@ fn unsaved_document_is_recovered_dirty_after_a_new_login_session() {
 }
 
 #[test]
+fn undo_to_saved_checkpoint_removes_stale_recovery_before_shutdown() {
+    for opened_file in [false, true] {
+        let fixture = FixtureRoot::new("undo-stale-recovery");
+        let platform = mock_platform(fixture.path());
+        bootstrap_with_shell(&platform);
+        let path = fixture.path().join("Documents/note.txt");
+        if opened_file {
+            fs::write(&path, b"saved text").unwrap();
+        }
+        let mut state = logged_in_state(&platform);
+        if opened_file {
+            open_only_document_in_editor(&mut state, &platform);
+        } else {
+            open_editor_from_home(&mut state, &platform);
+        }
+        let user_key = state.auth_session().unwrap().user_id.clone();
+        let paths = app_paths(fixture.path());
+        type_text(&mut state, &platform, "X");
+        state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+        assert!(
+            app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key)
+                .unwrap()
+                .is_some()
+        );
+
+        state.apply_input_with_platform(ctrl('z'), &platform);
+
+        assert!(!state.to_editor_view_model().dirty);
+        assert_eq!(
+            state.to_editor_view_model().source_lines.join("\n"),
+            if opened_file { "saved text" } else { "" }
+        );
+        assert!(
+            app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            state.apply_input_with_platform(InputEvent::Shutdown, &platform),
+            ShellAction::Exit
+        );
+        drop(state);
+
+        let mut restored = logged_in_state(&platform);
+        open_editor_from_home(&mut restored, &platform);
+        assert!(!restored.to_editor_view_model().dirty);
+        assert_eq!(restored.to_editor_view_model().source_lines.join("\n"), "");
+        if opened_file {
+            assert_eq!(fs::read(&path).unwrap(), b"saved text");
+        }
+    }
+}
+
+#[test]
+fn clean_editor_navigation_does_not_clear_another_sessions_recovery() {
+    let fixture = FixtureRoot::new("clean-keeps-other-recovery");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut clean = logged_in_state(&platform);
+    open_editor_from_home(&mut clean, &platform);
+    let user_key = clean.auth_session().unwrap().user_id.clone();
+    let paths = app_paths(fixture.path());
+
+    let mut dirty = logged_in_state(&platform);
+    open_editor_from_home(&mut dirty, &platform);
+    type_text(&mut dirty, &platform, "other draft");
+    dirty.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let recovery = app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key)
+        .unwrap()
+        .expect("other session persisted its draft");
+
+    clean.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
+    // Even a dirty-to-clean transition must not clear a draft when this
+    // session never wrote recovery of its own.
+    type_text(&mut clean, &platform, "X");
+    clean.apply_input_with_platform(ctrl('z'), &platform);
+    assert!(!clean.to_editor_view_model().dirty);
+    assert_eq!(
+        app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key).unwrap(),
+        Some(recovery)
+    );
+}
+
+#[test]
 fn shutdown_flushes_recovery_without_waiting_for_the_autosave_tick() {
     let fixture = FixtureRoot::new("shutdown-recovery");
     let platform = mock_platform(fixture.path());

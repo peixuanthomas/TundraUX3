@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use crate::PlatformError;
 
 /// Default hard limit for document reads performed by the editor.
@@ -776,11 +779,13 @@ where
 
     for attempt in 0..64_u8 {
         let temporary = temporary_path(path, attempt);
-        let file = match OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-        {
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        // A reader can retain an open descriptor after chmod or rename. Keep
+        // the temporary file private from creation, before writing any data.
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = match options.open(&temporary) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {

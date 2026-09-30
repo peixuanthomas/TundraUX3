@@ -17,7 +17,7 @@ CALL = re.compile(r'(?:i18n::(?:msg|tr)!\s*\(\s*|localize!\s*\([^,]+,\s*)"([A-Za
 def entries(code):
     result = set()
     for path in sorted((LOCALES / code).rglob("*.ftl")):
-        for identifier in ENTRY.findall(path.read_text()):
+        for identifier in ENTRY.findall(path.read_text(encoding="utf-8")):
             if identifier in result:
                 raise ValueError(f"{path.relative_to(ROOT)}: duplicate message {identifier}")
             result.add(identifier)
@@ -36,7 +36,7 @@ def main():
     for path in sorted((ROOT / "crates").glob("*/src/**/*.rs")):
         if "tests" in path.parts or path.name == "tests.rs":
             continue
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         # Inline test fixtures intentionally reference synthetic resource IDs.
         source = source.split("#[cfg(test)]\nmod tests", 1)[0]
         for match in CALL.finditer(source):

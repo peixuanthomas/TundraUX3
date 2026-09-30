@@ -96,6 +96,7 @@ impl Drop for TempTree {
 #[derive(Debug, Default)]
 struct TestPlatform {
     cross_device_source_root: Option<PathBuf>,
+    create_on_cross_device: Option<PathBuf>,
     unsafe_path: Option<PathBuf>,
     system_trash_root: Option<PathBuf>,
 }
@@ -104,6 +105,7 @@ impl TestPlatform {
     fn cross_device(source_root: PathBuf) -> Self {
         Self {
             cross_device_source_root: Some(source_root),
+            create_on_cross_device: None,
             unsafe_path: None,
             system_trash_root: None,
         }
@@ -112,6 +114,7 @@ impl TestPlatform {
     fn unsafe_path(path: PathBuf) -> Self {
         Self {
             cross_device_source_root: None,
+            create_on_cross_device: None,
             unsafe_path: Some(path),
             system_trash_root: None,
         }
@@ -120,6 +123,7 @@ impl TestPlatform {
     fn with_system_trash(root: PathBuf) -> Self {
         Self {
             cross_device_source_root: None,
+            create_on_cross_device: None,
             unsafe_path: None,
             system_trash_root: Some(root),
         }
@@ -217,6 +221,12 @@ impl Platform for TestPlatform {
             .as_ref()
             .is_some_and(|root| source.starts_with(root))
         {
+            if let Some(path) = &self.create_on_cross_device {
+                // The worker has finished planning but has not begun its
+                // cross-volume copy. This reproduces a concurrent addition
+                // without depending on thread timing or file size.
+                fs::write(path, b"created after planning").unwrap();
+            }
             return Err(PlatformError::CrossDevice {
                 source: source.to_path_buf(),
                 target: target.to_path_buf(),
@@ -484,6 +494,73 @@ fn move_uses_cross_device_copy_commit_delete_fallback() {
         b"cross volume"
     );
     assert_eq!(summary.processed_bytes, summary.total_bytes);
+}
+
+#[test]
+fn cross_device_move_preserves_source_files_added_after_planning() {
+    for added_relative in ["new.txt", "nested/new.txt"] {
+        let tree = TempTree::new("cross-device-new-child");
+        let source_root = tree.path("source");
+        let source = source_root.join("folder");
+        let destination = tree.path("destination");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(source.join("nested/item.txt"), b"copied bytes").unwrap();
+        let added = source.join(added_relative);
+
+        let platform = Arc::new(TestPlatform {
+            cross_device_source_root: Some(fs::canonicalize(&source_root).unwrap()),
+            create_on_cross_device: Some(added.clone()),
+            ..TestPlatform::default()
+        });
+        let engine = engine(platform, tree.path("trash"));
+        let plan = ExplorerTransferPlan::new(
+            ExplorerTransferOperation::Move,
+            vec![source.clone()],
+            &destination,
+        );
+        engine.submit(ExplorerTaskPlan::Transfer(plan)).unwrap();
+        let (_, summary) = finished(&engine);
+
+        assert_eq!(fs::read(&added).unwrap(), b"created after planning");
+        assert_eq!(
+            fs::read(destination.join("folder/nested/item.txt")).unwrap(),
+            b"copied bytes"
+        );
+        assert!(!destination.join("folder").join(added_relative).exists());
+        assert!(summary.succeeded_sources.is_empty());
+        assert_eq!(
+            summary.failed_sources,
+            vec![fs::canonicalize(&source).unwrap()]
+        );
+        assert!(!summary.failures.is_empty());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn staged_copy_preserves_final_source_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tree = TempTree::new("copy-permissions");
+    let source = tree.path("private.txt");
+    let destination = tree.path("destination");
+    fs::write(&source, b"private bytes").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).unwrap();
+    fs::create_dir_all(&destination).unwrap();
+    let engine = engine(Arc::new(TestPlatform::default()), tree.path("trash"));
+    let plan =
+        ExplorerTransferPlan::new(ExplorerTransferOperation::Copy, vec![source], &destination);
+    engine.submit(ExplorerTaskPlan::Transfer(plan)).unwrap();
+    let (_, summary) = finished(&engine);
+
+    assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    let target = destination.join("private.txt");
+    assert_eq!(fs::read(&target).unwrap(), b"private bytes");
+    assert_eq!(
+        fs::metadata(target).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
 }
 
 #[test]
