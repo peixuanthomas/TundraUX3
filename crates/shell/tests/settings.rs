@@ -150,7 +150,14 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
     press(&mut state, &platform, "Shift+Tab");
     let update = state.to_settings_view_model().unwrap();
     assert_eq!(update.selected_category, SettingsCategory::Update);
-    assert_eq!(update.selected_field, SettingsField::InstalledVersion);
+    assert_eq!(
+        update.selected_field,
+        if cfg!(target_os = "linux") {
+            SettingsField::UpdateMode
+        } else {
+            SettingsField::InstalledVersion
+        }
+    );
 
     press(&mut state, &platform, "Shift+Tab");
     let editor = state.to_settings_view_model().unwrap();
@@ -161,6 +168,68 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
     let editor = state.to_settings_view_model().unwrap();
     assert_eq!(editor.selected_category, SettingsCategory::Editor);
     assert_eq!(editor.selected_field, SettingsField::CursorAcceleration);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_update_mode_saves_keyboard_and_mouse_choices_across_reopen() {
+    let fixture = FixtureRoot::new("update-mode");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    assert_eq!(
+        manager.load_config().unwrap().linux_update_mode,
+        storage::LinuxUpdateMode::Release
+    );
+    open_settings_from_home(&mut state, &platform);
+    press(&mut state, &platform, "Shift+Tab");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::UpdateMode
+    );
+    press(&mut state, &platform, "Right");
+    assert_eq!(
+        manager.load_config().unwrap().linux_update_mode,
+        storage::LinuxUpdateMode::Beta
+    );
+    press(&mut state, &platform, "Esc");
+    open_settings_from_home(&mut state, &platform);
+    press(&mut state, &platform, "Shift+Tab");
+    let model = state.to_settings_view_model().unwrap();
+    assert!(
+        model
+            .cards
+            .iter()
+            .flat_map(|c| &c.items)
+            .any(|i| i.field == SettingsField::UpdateMode && i.value.contains("Beta"))
+    );
+    let main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
+        ui::ShellLayout::Compact(main) | ui::ShellLayout::Full { main, .. } => main,
+    };
+    let layout = ui::settings_layout(main, &model);
+    let field = layout
+        .fields
+        .iter()
+        .find(|f| f.field == SettingsField::UpdateMode)
+        .unwrap();
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(ui::MouseButton::Left, (field.area.x, field.area.y)),
+        &platform,
+    );
+    assert_eq!(
+        manager.load_config().unwrap().linux_update_mode,
+        storage::LinuxUpdateMode::Release
+    );
+    press(&mut state, &platform, "Left");
+    assert_eq!(
+        manager.load_config().unwrap().linux_update_mode,
+        storage::LinuxUpdateMode::Beta
+    );
+    press(&mut state, &platform, "Enter");
+    assert_eq!(
+        manager.load_config().unwrap().linux_update_mode,
+        storage::LinuxUpdateMode::Release
+    );
 }
 
 #[test]

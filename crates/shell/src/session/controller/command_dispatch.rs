@@ -810,14 +810,6 @@ impl ShellSession {
                 self.handle_settings_pointer(mouse, platform);
                 ShellAction::Redraw
             }
-            ShellCommand::SettingsRpmUpdateConfirmed => {
-                self.confirm_rpm_update();
-                ShellAction::Redraw
-            }
-            ShellCommand::SettingsRpmUpdateCancelled => {
-                self.cancel_rpm_confirmation();
-                ShellAction::Redraw
-            }
             ShellCommand::SettingsRestoreDefaultsConfirmed => {
                 self.restore_settings_defaults();
                 ShellAction::Redraw

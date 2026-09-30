@@ -43,6 +43,9 @@ fn check_in(
         "--filter=tree:0",
         "--single-branch",
         "--no-tags",
+        // Linux beta updates always follow master, even if the remote default changes.
+        #[cfg(target_os = "linux")]
+        "--branch=master",
         "--",
         remote,
         "history",
@@ -93,6 +96,7 @@ fn check_in(
         Vec::new()
     };
     Ok(UpdateCheckResult {
+        release: None,
         default_branch,
         head_sha,
         relation,

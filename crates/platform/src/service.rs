@@ -10,7 +10,6 @@ pub enum ServiceError {
     NetworkError,
     BackendDisconnected,
     Unsupported,
-    UntrustedTransaction,
     Timeout,
     Unknown,
     AccountPasswordSetupFailed,
@@ -26,10 +25,11 @@ impl fmt::Display for ServiceError {
             Self::NetworkError => "The system service could not reach the network",
             Self::BackendDisconnected => "Connection to the system service was lost",
             Self::Unsupported => "This operation is unsupported",
-            Self::UntrustedTransaction => "The transaction cannot be safely previewed or requires additional trust, removal, or license acceptance",
             Self::Timeout => "The system service did not respond in time",
             Self::Unknown => "The system service could not complete the operation",
-            Self::AccountPasswordSetupFailed => "Account created, but password setup failed. Set its password before use.",
+            Self::AccountPasswordSetupFailed => {
+                "Account created, but password setup failed. Set its password before use."
+            }
         })
     }
 }

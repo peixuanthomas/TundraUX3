@@ -3,35 +3,14 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateBackend {
-    SystemRpm,
-    SystemDeb,
-    SystemArch,
     PortableUser,
     Unavailable,
-}
-
-impl UpdateBackend {
-    pub fn builds_system_package(self) -> bool {
-        matches!(self, Self::SystemDeb | Self::SystemArch)
-    }
-
-    pub fn uses_source_updates(self) -> bool {
-        self == Self::PortableUser || self.builds_system_package()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RpmIdentity {
-    pub name: String,
-    pub version: String,
-    pub architecture: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installation {
     pub backend: UpdateBackend,
     pub directory: Option<PathBuf>,
-    pub rpm: Option<RpmIdentity>,
     pub reason: Option<String>,
 }
 
@@ -40,7 +19,6 @@ impl Installation {
         Self {
             backend: UpdateBackend::Unavailable,
             directory: None,
-            rpm: None,
             reason: Some(reason.into()),
         }
     }
@@ -56,6 +34,8 @@ pub fn current_installation() -> Installation {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        Installation::unavailable("Linux package provenance is unavailable on this platform")
+        Installation::unavailable(
+            "Linux portable installation detection is unavailable on this platform",
+        )
     }
 }

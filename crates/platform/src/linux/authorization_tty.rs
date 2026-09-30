@@ -107,7 +107,7 @@ impl Drop for TextAgent {
         if self.child.try_wait().is_ok_and(|status| status.is_some()) {
             return;
         }
-        // Reap only our authentication agent. PackageKit/RPM processes are never touched.
+        // Reap only our authentication agent. System service processes are never touched.
         unsafe {
             libc::kill(self.child.id() as libc::pid_t, libc::SIGTERM);
         }

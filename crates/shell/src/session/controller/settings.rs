@@ -56,6 +56,8 @@ pub(in crate::session) const EDITOR_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::RestoreDefaults,
 ];
 pub(in crate::session) const UPDATE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
+    #[cfg(target_os = "linux")]
+    ui::SettingsField::UpdateMode,
     ui::SettingsField::InstalledVersion,
     ui::SettingsField::RemoteVersion,
     ui::SettingsField::CheckUpdates,
@@ -102,6 +104,12 @@ impl ShellSession {
             }
         };
 
+        if self.settings_update_state.mode != config.linux_update_mode {
+            self.settings_update_state = SettingsUpdateState {
+                mode: config.linux_update_mode,
+                ..Default::default()
+            };
+        }
         self.replace_storage_config(config);
         self.app.dispatch_at(
             app::AppCommand::SetActiveAppearance(Some(appearance)),
@@ -256,15 +264,7 @@ impl ShellSession {
                 let last = self
                     .settings_state
                     .as_ref()
-                    .map(|state| {
-                        if state.category == ui::SettingsCategory::Update
-                            && self.uses_rpm_settings_cards()
-                        {
-                            RPM_SETTINGS_FIELDS.len().saturating_sub(1)
-                        } else {
-                            settings_fields(state.category).len().saturating_sub(1)
-                        }
-                    })
+                    .map(|state| settings_fields(state.category).len().saturating_sub(1))
                     .unwrap_or(0);
                 self.select_settings_field_at(last);
             }
@@ -394,12 +394,7 @@ impl ShellSession {
         let Some(state) = self.settings_state.as_ref() else {
             return;
         };
-        let fields =
-            if state.category == ui::SettingsCategory::Update && self.uses_rpm_settings_cards() {
-                RPM_SETTINGS_FIELDS
-            } else {
-                settings_fields(state.category)
-            };
+        let fields = settings_fields(state.category);
         let index = fields
             .iter()
             .position(|field| *field == state.selected_field)
@@ -409,16 +404,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_settings_field_at(&mut self, index: usize) {
-        let rpm = self.uses_rpm_settings_cards();
         {
             let Some(state) = self.settings_state.as_mut() else {
                 return;
             };
-            let fields = if state.category == ui::SettingsCategory::Update && rpm {
-                RPM_SETTINGS_FIELDS
-            } else {
-                settings_fields(state.category)
-            };
+            let fields = settings_fields(state.category);
             state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
         }
         if let Some(layout) = self.current_settings_layout()
@@ -505,33 +495,9 @@ impl ShellSession {
             ui::SettingsField::ExplorerOpenExtensions => self.open_settings_file_extensions(),
             ui::SettingsField::ResetAnimationSpeed => self.reset_settings_animation_speed(),
             ui::SettingsField::RestoreDefaults => self.request_settings_restore_defaults(),
+            ui::SettingsField::UpdateMode => self.switch_update_mode(),
             ui::SettingsField::CheckUpdates => self.begin_update_check(),
             ui::SettingsField::StartUpdate => self.open_update_confirmation(),
-            ui::SettingsField::CancelRpmUpdate => self.request_rpm_cancellation(),
-            ui::SettingsField::QueryRpmUpdate => self.start_rpm_task(RpmTask::Query),
-            ui::SettingsField::RestartAfterRpmUpdate => {
-                if self.settings_update_state.rpm.as_ref().is_some_and(|rpm| {
-                    matches!(
-                        rpm.result,
-                        Some(platform::updates::UpdateResult::Installed { .. })
-                    )
-                }) {
-                    self.notify_modal(
-                        i18n::msg!("settings-rpm-restart"),
-                        i18n::msg!("settings-rpm-restart-help"),
-                        ui::NotificationTone::Warning,
-                        vec![
-                            ShellNotificationAction::new(
-                                "restart",
-                                i18n::msg!("settings-rpm-restart"),
-                            )
-                            .with_follow_up(ShellCommand::Restart),
-                            ShellNotificationAction::new("cancel", i18n::msg!("settings-cancel"))
-                                .cancel(),
-                        ],
-                    );
-                }
-            }
             ui::SettingsField::InstalledVersion | ui::SettingsField::RemoteVersion => {}
             _ => self.adjust_selected_setting(1, platform),
         }
@@ -562,6 +528,7 @@ impl ShellSession {
                 | ui::SettingsField::WeatherLocation
                 | ui::SettingsField::ExplorerOpenExtensions
                 | ui::SettingsField::TimeSyncServer
+                | ui::SettingsField::UpdateMode
                 | ui::SettingsField::CheckUpdates
                 | ui::SettingsField::StartUpdate
         ) {
@@ -1486,16 +1453,42 @@ impl ShellSession {
         }
     }
 
+    pub(in crate::session) fn switch_update_mode(&mut self) {
+        if !cfg!(target_os = "linux")
+            || !self.can_change_global_settings()
+            || self.settings_update_state.busy
+            || self.settings_task_runtime.update_busy()
+        {
+            return;
+        }
+        let Some(storage) = self.storage_manager.clone() else {
+            self.set_update_error(i18n::msg!("settings-storage-unavailable"));
+            return;
+        };
+        let result = (|| {
+            let mut config = storage.load_config()?;
+            config.linux_update_mode = match config.linux_update_mode {
+                storage::LinuxUpdateMode::Release => storage::LinuxUpdateMode::Beta,
+                storage::LinuxUpdateMode::Beta => storage::LinuxUpdateMode::Release,
+            };
+            self.save_settings_config_logged(&storage, &config)?;
+            Ok::<_, storage::StorageError>(config)
+        })();
+        match result {
+            Ok(config) => {
+                self.settings_update_state = SettingsUpdateState {
+                    mode: config.linux_update_mode,
+                    ..Default::default()
+                };
+                self.replace_storage_config(config);
+                self.begin_update_check();
+            }
+            Err(error) => self.set_update_error(error.to_string()),
+        }
+    }
+
     pub(in crate::session) fn begin_update_check(&mut self) {
-        if self.settings_update_state.package_installed {
-            self.settings_update_state.status = i18n::msg!("settings-package-installed").into();
-            return;
-        }
         self.settings_update_state.checked_once = true;
-        if self.uses_native_linux_updates() {
-            self.start_rpm_task(RpmTask::Check);
-            return;
-        }
         self.settings_update_state.confirmation_open = false;
         self.settings_update_state.error = None;
         if !self.settings_task_runtime.update_supported() {
@@ -1507,10 +1500,12 @@ impl ShellSession {
             self.settings_update_state.status = i18n::msg!("settings-update-running").into();
             return;
         }
-        match self
-            .settings_task_runtime
-            .submit_update_check(app::update::current_build_identity())
-        {
+        self.settings_update_state.check_result = None;
+        self.settings_update_state.checked_at = None;
+        match self.settings_task_runtime.submit_update_check(
+            app::update::current_build_identity(),
+            self.settings_update_state.mode,
+        ) {
             Ok(()) => {
                 self.settings_update_state.busy = true;
                 self.settings_update_state.phase = Some(app::update::UpdatePhase::Checking);
@@ -1522,23 +1517,6 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_update_confirmation(&mut self) {
-        if self.settings_update_state.package_installed {
-            self.notify_modal(
-                i18n::msg!("settings-rpm-restart"),
-                i18n::msg!("settings-package-installed"),
-                ui::NotificationTone::Warning,
-                vec![
-                    ShellNotificationAction::new("restart", i18n::msg!("settings-rpm-restart"))
-                        .with_follow_up(ShellCommand::Restart),
-                    ShellNotificationAction::new("cancel", i18n::msg!("settings-cancel")).cancel(),
-                ],
-            );
-            return;
-        }
-        if self.uses_rpm_settings_cards() {
-            self.start_rpm_task(RpmTask::Preview);
-            return;
-        }
         if !self.settings_task_runtime.update_supported() {
             self.set_update_error(i18n::msg!("settings-update-unsupported"));
             return;
@@ -1556,10 +1534,7 @@ impl ShellSession {
             return;
         };
         let identity = app::update::current_build_identity();
-        if matches!(check.relation, app::update::UpdateRelation::Identical)
-            && !identity.dirty
-            && !self.builds_system_package()
-        {
+        if matches!(check.relation, app::update::UpdateRelation::Identical) && !identity.dirty {
             self.settings_update_state.status = i18n::msg!("settings-update-current-build").into();
             return;
         }
@@ -1674,7 +1649,6 @@ impl ShellSession {
 
         for event in self.settings_task_runtime.drain_update_events() {
             match event {
-                SettingsUpdateTaskEvent::Rpm(event) => self.apply_rpm_event(event),
                 SettingsUpdateTaskEvent::Progress(progress) => {
                     self.settings_update_state.apply_progress(progress);
                 }
@@ -1683,24 +1657,12 @@ impl ShellSession {
                     self.settings_update_state.phase = None;
                     self.settings_update_state.error = None;
                     self.settings_update_state.checked_at = Some(Utc::now());
-                    self.settings_update_state.status =
-                        update_relation_label(&result.relation).into();
+                    self.settings_update_state.status = checked_update_label(&result).into();
                     self.settings_update_state.check_result = Some(result);
                 }
                 SettingsUpdateTaskEvent::CheckCompleted(Err(error))
-                | SettingsUpdateTaskEvent::PrepareCompleted(Err(error))
-                | SettingsUpdateTaskEvent::PackageInstalled(Err(error)) => {
+                | SettingsUpdateTaskEvent::PrepareCompleted(Err(error)) => {
                     self.set_update_error(error);
-                }
-                SettingsUpdateTaskEvent::PackageInstalled(Ok(())) => {
-                    self.settings_update_state.busy = false;
-                    self.settings_update_state.package_installed = true;
-                    self.settings_update_state.phase =
-                        Some(app::update::UpdatePhase::WaitingForRestart);
-                    self.settings_update_state.error = None;
-                    self.settings_update_state.status =
-                        i18n::msg!("settings-package-installed").into();
-                    self.open_update_confirmation();
                 }
                 SettingsUpdateTaskEvent::PrepareCompleted(Ok(manifest_path)) => {
                     self.settings_update_state.busy = false;
@@ -2287,9 +2249,9 @@ impl ShellSession {
                     !matches!(result.relation, app::update::UpdateRelation::Behind { .. })
                 });
             ui::SettingsUpdateViewModel {
-                summary_title: self
-                    .uses_rpm_settings_cards()
-                    .then(|| i18n::tr!("settings-rpm-details-title")),
+                summary_title: check
+                    .filter(|result| result.release.is_some())
+                    .map(|_| i18n::tr!("settings-release-latest")),
                 activity: self.settings_update_state.activity.clone(),
                 commits: check
                     .map(|result| {
@@ -2311,16 +2273,14 @@ impl ShellSession {
                         } else {
                             i18n::tr!("settings-install-update")
                         },
-                        body: if self.builds_system_package() {
-                            i18n::tr!("settings-package-install-body")
+                        body: if check.is_some_and(|value| value.release.is_some()) {
+                            i18n::tr!("settings-release-install-body")
                         } else if replacement {
                             i18n::tr!("settings-update-replace-body")
                         } else {
                             i18n::tr!("settings-update-install-body")
                         },
-                        confirm_label: if self.builds_system_package() {
-                            i18n::tr!("settings-package-build-install")
-                        } else if replacement {
+                        confirm_label: if replacement {
                             i18n::tr!("settings-replace-restart")
                         } else {
                             i18n::tr!("settings-update-restart")
@@ -2384,13 +2344,8 @@ fn update_settings_cards(
         SettingsCardViewModel as Card, SettingsControlKind as Kind, SettingsField as Field,
         SettingsItemViewModel as Item,
     };
-    if update.rpm.as_ref().is_some_and(|rpm| {
-        rpm.installation
-            .as_ref()
-            .is_none_or(|value| !value.backend.uses_source_updates())
-    }) {
-        return rpm_settings_cards(update);
-    }
+    let release_mode =
+        cfg!(target_os = "linux") && update.mode == storage::LinuxUpdateMode::Release;
     let local_sha = identity
         .commit_sha
         .as_deref()
@@ -2419,7 +2374,7 @@ fn update_settings_cards(
                     "settings-remote-build-details",
                     sha = result.head_sha.clone(),
                     checked = checked,
-                    relation = update_relation_label(&result.relation).render_current()
+                    relation = checked_update_label(result).render_current()
                 ),
             )
         })
@@ -2439,25 +2394,13 @@ fn update_settings_cards(
                     | app::update::UpdateRelation::Unknown
             )
         });
-    let package_build = update
-        .rpm
-        .as_ref()
-        .and_then(|rpm| rpm.installation.as_ref())
-        .is_some_and(|installation| installation.backend.builds_system_package());
-    let can_start = update.package_installed
-        || (supported
-            && admin
-            && !update.busy
-            && update.check_result.as_ref().is_some_and(|result| {
-                package_build
-                    || identity.dirty
-                    || !matches!(result.relation, app::update::UpdateRelation::Identical)
-            }));
-    let start_label = if update.package_installed {
-        i18n::tr!("settings-rpm-restart")
-    } else if package_build {
-        i18n::tr!("settings-package-build-install")
-    } else if update
+    let can_start = supported
+        && admin
+        && !update.busy
+        && update.check_result.as_ref().is_some_and(|result| {
+            identity.dirty || !matches!(result.relation, app::update::UpdateRelation::Identical)
+        });
+    let start_label = if update
         .check_result
         .as_ref()
         .is_some_and(|result| matches!(result.relation, app::update::UpdateRelation::Identical))
@@ -2469,7 +2412,7 @@ fn update_settings_cards(
     } else {
         i18n::tr!("settings-start-update")
     };
-    vec![
+    let mut cards = vec![
         Card::new(
             i18n::tr!("settings-installed-build"),
             vec![Item::new(
@@ -2485,10 +2428,20 @@ fn update_settings_cards(
             )],
         ),
         Card::new(
-            i18n::tr!("settings-github-default-branch"),
+            if release_mode {
+                i18n::tr!("settings-release-latest")
+            } else if cfg!(target_os = "linux") {
+                "GitHub master".into()
+            } else {
+                i18n::tr!("settings-github-default-branch")
+            },
             vec![Item::new(
                 Field::RemoteVersion,
-                i18n::tr!("settings-latest-commit"),
+                if release_mode {
+                    i18n::tr!("settings-version")
+                } else {
+                    i18n::tr!("settings-latest-commit")
+                },
                 remote_value,
                 remote_description,
                 Kind::ReadOnly,
@@ -2505,10 +2458,14 @@ fn update_settings_cards(
                     } else {
                         i18n::tr!("settings-check-github")
                     },
-                    i18n::tr!("settings-check-description"),
+                    if cfg!(target_os = "linux") {
+                        i18n::tr!("settings-check-mode-description")
+                    } else {
+                        i18n::tr!("settings-check-description")
+                    },
                     Kind::Action,
                 )
-                .enabled(supported && !update.busy && !update.package_installed),
+                .enabled(supported && !update.busy),
                 Item::new(
                     Field::StartUpdate,
                     start_label,
@@ -2523,11 +2480,49 @@ fn update_settings_cards(
                 .enabled(can_start),
             ],
         ),
-    ]
+    ];
+    if cfg!(target_os = "linux") {
+        cards.insert(
+            0,
+            Card::new(
+                i18n::tr!("settings-update-mode"),
+                vec![
+                    Item::new(
+                        Field::UpdateMode,
+                        i18n::tr!("settings-update-mode"),
+                        match update.mode {
+                            storage::LinuxUpdateMode::Release => {
+                                i18n::tr!("settings-update-mode-release")
+                            }
+                            storage::LinuxUpdateMode::Beta => {
+                                i18n::tr!("settings-update-mode-beta")
+                            }
+                        },
+                        i18n::tr!("settings-update-mode-help"),
+                        Kind::Action,
+                    )
+                    .enabled(admin && !update.busy),
+                ],
+            ),
+        );
+    }
+    cards
 }
 
 fn short_sha(value: &str) -> String {
     value.chars().take(7).collect()
+}
+
+fn checked_update_label(result: &app::update::UpdateCheckResult) -> i18n::LocalizedMessage {
+    if result.release.is_some() {
+        match result.relation {
+            app::update::UpdateRelation::Identical => i18n::msg!("settings-up-to-date"),
+            app::update::UpdateRelation::Behind { .. } => i18n::msg!("settings-release-available"),
+            _ => i18n::msg!("settings-release-different"),
+        }
+    } else {
+        update_relation_label(&result.relation)
+    }
 }
 
 fn update_relation_label(relation: &app::update::UpdateRelation) -> i18n::LocalizedMessage {

@@ -42,7 +42,7 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 - [语言资源与恢复](docs/LOCALIZATION.md)与 [i18n crate](docs/crates/i18n/README.md)
 - [Watchdog 运行与恢复约定](docs/crates/watchdog/README.md)
 - [UI 图形资源说明](docs/crates/ui/assets/README.md)
-- [PackageKit 与打包测试指南](docs/scripts/tests/README.md)
+- [Linux 更新测试指南](docs/scripts/tests/README.md)
 - [Linux 验证记录](docs/packaging/linux/)与[发布记录](docs/packaging/releases/)
 
 ## 许可证
@@ -59,9 +59,11 @@ Copyright (c) 2026 HanPeixuan。项目自身代码采用 [GNU GPL v3](LICENSE)�
 账号、密码、系统登录和系统授权由 Fedora 管理，Tundra 不提供内部 Linux 登录、锁屏、
 切换用户或注销系统会话，也不自动执行 sudo。
 
-Fedora RPM 安装版在设置中通过 PackageKit 检查并更新已安装的 `tundraux3` 及必要依赖；
-安装前展示事务预览。正式的用户可写便携版使用独立的用户级更新流程。
-源码构建、无法确认归属的安装，以及本阶段的 Debian 系统安装版显示更新不可用。
+Linux 后续只提供便携包，不再通过包管理器更新。在“设置 → 更新”中切换更新模式：
+默认正式版下载 GitHub Releases 上的 Linux 便携包并校验后替换；测试版按 master 最新提交哈希
+检查更新，下载源码并用本机 Rust 编译后替换。两种模式均保留首次启动失败回退和中断恢复。
+模式会保存，个人数据和主题不参与替换。更新目录必须属于当前用户、可写且保留便携标记；
+旧系统包安装不会被自动改写。正式版不需要 Rust，测试版需要先安装 Rust 和项目构建依赖。
 依赖、数据目录和验证说明见 [Linux 运行说明](docs/packaging/linux/README-LINUX.txt)。
 
 运行日志与诊断导出请参阅 [Logs APP 使用与存储说明](docs/LOGS.md)。

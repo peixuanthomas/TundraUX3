@@ -14,9 +14,19 @@ pub const MIN_ANIMATION_SPEED_PERCENT: u16 = 50;
 pub const MAX_ANIMATION_SPEED_PERCENT: u16 = 200;
 pub const ANIMATION_SPEED_STEP_PERCENT: u16 = 25;
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LinuxUpdateMode {
+    #[default]
+    Release,
+    Beta,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub schema_version: u32,
+    #[serde(default)]
+    pub linux_update_mode: LinuxUpdateMode,
     #[serde(default = "default_theme")]
     pub theme: String,
     #[serde(default = "default_language")]
@@ -77,6 +87,7 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            linux_update_mode: LinuxUpdateMode::default(),
             theme: default_theme(),
             language: default_language(),
             timezone: default_timezone(),
@@ -776,3 +787,29 @@ mod glacier_migration_tests;
 #[cfg(test)]
 #[path = "../tests/unit/config_document/runtime_log_config_tests.rs"]
 mod runtime_log_config_tests;
+
+#[cfg(test)]
+mod update_mode_tests {
+    use super::*;
+
+    #[test]
+    fn old_configuration_defaults_to_release_and_beta_roundtrips() {
+        let mut config = StorageConfig::default();
+        let old = toml::to_string(&config)
+            .unwrap()
+            .replace("linux_update_mode = \"release\"\n", "");
+        assert_eq!(
+            toml::from_str::<StorageConfig>(&old)
+                .unwrap()
+                .linux_update_mode,
+            LinuxUpdateMode::Release
+        );
+        config.linux_update_mode = LinuxUpdateMode::Beta;
+        assert_eq!(
+            toml::from_str::<StorageConfig>(&toml::to_string(&config).unwrap())
+                .unwrap()
+                .linux_update_mode,
+            LinuxUpdateMode::Beta
+        );
+    }
+}

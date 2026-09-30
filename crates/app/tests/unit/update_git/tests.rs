@@ -32,6 +32,14 @@ fn update_git_reads_history_without_a_checkout_or_api() {
     let third = commit("third", Some(&second));
     git.repo(&["update-ref", "refs/heads/master", &third])
         .unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        // Beta must still follow master if GitHub's default branch changes.
+        git.repo(&["update-ref", "refs/heads/other", &second])
+            .unwrap();
+        git.repo(&["symbolic-ref", "HEAD", "refs/heads/other"])
+            .unwrap();
+    }
     let remote = reqwest::Url::from_directory_path(root.join("history"))
         .expect("absolute repository path must convert to a file URL");
     for (index, (local, expected, count)) in [

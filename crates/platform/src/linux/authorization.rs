@@ -12,14 +12,12 @@ use zbus::{
 
 #[derive(Clone, Copy)]
 pub enum Action {
-    Update,
     ManageAccounts,
     ChangeOwnAccount,
 }
 impl Action {
     fn policy(self) -> &'static str {
         match self {
-            Self::Update => "org.freedesktop.packagekit.system-update",
             Self::ManageAccounts => "org.freedesktop.accounts.user-administration",
             Self::ChangeOwnAccount => "org.freedesktop.accounts.change-own-user-data",
         }
@@ -28,13 +26,6 @@ impl Action {
 
 /// Implemented by the terminal owner. No password or prompt response crosses this interface.
 pub trait Interaction: Send + Sync {
-    /// Give the foreground terminal to sudo and the native package manager.
-    fn install_package(
-        &self,
-        _package: super::source_packages::PackageInstall,
-    ) -> Result<(), String> {
-        Err("Package installation requires an interactive terminal".into())
-    }
     fn begin(&self) -> Result<(), ServiceError>;
     fn fallback(&self) -> Result<(), ServiceError>;
     fn finish(&self);

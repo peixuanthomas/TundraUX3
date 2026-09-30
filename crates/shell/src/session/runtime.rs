@@ -64,9 +64,7 @@ pub fn run_shell_blocking_managed(
 ) -> io::Result<()> {
     match run_shell_blocking_managed_with_outcome(output, process)? {
         ShellRunOutcome::Exit => Ok(()),
-        ShellRunOutcome::RestartRequested | ShellRunOutcome::RestartInstalledPackage => {
-            Err(restart_requires_binary_entrypoint())
-        }
+        ShellRunOutcome::RestartRequested => Err(restart_requires_binary_entrypoint()),
         ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
         ShellRunOutcome::UpdatePrepared(_) => Err(update_requires_binary_entrypoint()),
     }
@@ -76,7 +74,6 @@ pub fn run_shell_blocking_managed(
 pub enum ShellRunOutcome {
     Exit,
     RestartRequested,
-    RestartInstalledPackage,
     ResetRequested,
     UpdatePrepared(std::path::PathBuf),
 }
@@ -144,9 +141,7 @@ pub fn run_fullscreen_blocking_managed(
 ) -> io::Result<()> {
     match run_fullscreen_blocking_managed_with_outcome(output, process)? {
         ShellRunOutcome::Exit => Ok(()),
-        ShellRunOutcome::RestartRequested | ShellRunOutcome::RestartInstalledPackage => {
-            Err(restart_requires_binary_entrypoint())
-        }
+        ShellRunOutcome::RestartRequested => Err(restart_requires_binary_entrypoint()),
         ShellRunOutcome::ResetRequested => Err(reset_requires_binary_entrypoint()),
         ShellRunOutcome::UpdatePrepared(_) => Err(update_requires_binary_entrypoint()),
     }
@@ -354,9 +349,6 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     FullscreenShellSessionOutcome::RestartRequested => {
                         return Ok(ShellRunOutcome::RestartRequested);
                     }
-                    FullscreenShellSessionOutcome::RestartInstalledPackage => {
-                        return Ok(ShellRunOutcome::RestartInstalledPackage);
-                    }
                     FullscreenShellSessionOutcome::ReturnToLockscreen => {
                         force_lockscreen = true;
                     }
@@ -397,7 +389,6 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
 pub(super) enum FullscreenShellSessionOutcome {
     Exit,
     RestartRequested,
-    RestartInstalledPackage,
     ReturnToLockscreen,
     ResetRequested,
     UpdatePrepared(std::path::PathBuf),
@@ -1375,8 +1366,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         FullscreenShellSessionOutcome::UpdatePrepared(manifest)
     } else if reset_requested {
         FullscreenShellSessionOutcome::ResetRequested
-    } else if state.restart_requested && state.settings_update_state.package_installed {
-        FullscreenShellSessionOutcome::RestartInstalledPackage
     } else if state.restart_requested {
         FullscreenShellSessionOutcome::RestartRequested
     } else if state.return_to_lockscreen_requested() {

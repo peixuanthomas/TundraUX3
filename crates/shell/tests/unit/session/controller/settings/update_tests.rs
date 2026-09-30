@@ -1,26 +1,21 @@
 use super::*;
 
 #[test]
-fn installed_source_package_disables_reinstall_and_offers_restart() {
-    let state = SettingsUpdateState {
-        package_installed: true,
-        ..Default::default()
-    };
+fn busy_update_disables_mode_switch_and_start() {
+    let mut state = checked_update_state(app::update::UpdateRelation::Behind { remote_ahead: 1 });
+    state.busy = true;
     let cards = update_settings_cards(&app::update::current_build_identity(), &state, true, true);
-    let items: Vec<_> = cards.iter().flat_map(|card| &card.items).collect();
     assert!(
-        !items
+        cards
             .iter()
-            .find(|item| item.field == ui::SettingsField::CheckUpdates)
-            .unwrap()
-            .enabled
-    );
-    assert!(
-        items
-            .iter()
-            .find(|item| item.field == ui::SettingsField::StartUpdate)
-            .unwrap()
-            .enabled
+            .flat_map(|c| &c.items)
+            .filter(|i| matches!(
+                i.field,
+                ui::SettingsField::UpdateMode
+                    | ui::SettingsField::StartUpdate
+                    | ui::SettingsField::CheckUpdates
+            ))
+            .all(|i| !i.enabled)
     );
 }
 
@@ -161,10 +156,10 @@ fn update_cards_and_picker_labels_rerender_without_changing_action_or_color_valu
 
 fn checked_update_state(relation: app::update::UpdateRelation) -> SettingsUpdateState {
     SettingsUpdateState {
-        package_installed: false,
-        rpm: None,
+        mode: storage::LinuxUpdateMode::default(),
         activity: None,
         check_result: Some(app::update::UpdateCheckResult {
+            release: None,
             default_branch: "master".to_string(),
             head_sha: "abcdef1234567890".to_string(),
             relation,

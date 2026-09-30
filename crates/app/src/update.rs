@@ -20,7 +20,7 @@ const USER_AGENT: &str = "TundraUX3-updater/1";
 #[path = "update_git.rs"]
 mod git;
 #[cfg(target_os = "linux")]
-pub mod package;
+mod release;
 #[path = "update_toolchain.rs"]
 mod toolchain;
 const SHELL_FILE: &str = if cfg!(windows) {
@@ -43,13 +43,13 @@ pub fn supports_updates(kind: PlatformKind) -> bool {
     matches!(kind, PlatformKind::Windows | PlatformKind::Linux)
 }
 
-fn require_current_source_installation() -> Result<(), UpdateError> {
+fn require_current_portable_installation() -> Result<(), UpdateError> {
     #[cfg(target_os = "linux")]
     {
         let installation = platform::installation::current_installation();
-        if !installation.backend.uses_source_updates() {
+        if installation.backend != platform::installation::UpdateBackend::PortableUser {
             return Err(UpdateError::new(installation.reason.unwrap_or_else(|| {
-                "System RPM installations must be updated through PackageKit".into()
+                "Updates require a writable, user-owned portable installation".into()
             })));
         }
     }
@@ -89,10 +89,19 @@ pub struct UpdateCommit {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateCheckResult {
+    pub release: Option<ReleaseUpdate>,
     pub default_branch: String,
     pub head_sha: String,
     pub relation: UpdateRelation,
     pub commits: Vec<UpdateCommit>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseUpdate {
+    pub version: String,
+    pub archive_name: String,
+    pub archive_url: String,
+    pub checksum_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,8 +111,6 @@ pub enum UpdatePhase {
     CheckingToolchain,
     Compiling,
     Staging,
-    Packaging,
-    InstallingPackage,
     PreparingReplacement,
     WaitingForRestart,
     Failed,
@@ -231,7 +238,19 @@ struct Compare {
 }
 
 pub fn check_for_updates(identity: &BuildIdentity) -> Result<UpdateCheckResult, UpdateError> {
-    require_current_source_installation()?;
+    check_for_updates_in_mode(identity, storage::LinuxUpdateMode::default())
+}
+
+pub fn check_for_updates_in_mode(
+    identity: &BuildIdentity,
+    mode: storage::LinuxUpdateMode,
+) -> Result<UpdateCheckResult, UpdateError> {
+    require_current_portable_installation()?;
+    #[cfg(target_os = "linux")]
+    if mode == storage::LinuxUpdateMode::Release {
+        return release::check(identity, API_ROOT);
+    }
+    let _ = mode;
     check_with_fallback(identity, API_ROOT, || git::check(identity))
 }
 
@@ -256,10 +275,15 @@ fn check_using_api(
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| UpdateError::new(format!("could not create GitHub client: {e}")))?;
+    #[cfg(not(target_os = "linux"))]
     let repository: Repository = get_json(
         &client,
         &format!("{api_root}/repos/{GITHUB_OWNER}/{GITHUB_REPO}"),
     )?;
+    #[cfg(target_os = "linux")]
+    let repository = Repository {
+        default_branch: "master".into(),
+    };
     let branch: Branch = get_json(
         &client,
         &format!(
@@ -283,6 +307,7 @@ fn check_using_api(
         )
     };
     Ok(UpdateCheckResult {
+        release: None,
         default_branch: repository.default_branch,
         head_sha: branch.commit.sha,
         relation,
@@ -409,11 +434,15 @@ pub fn prepare_update(
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
 ) -> Result<PreparedUpdate, UpdateError> {
-    require_current_source_installation()?;
+    require_current_portable_installation()?;
     if !supports_updates(platform.kind()) {
         return Err(UpdateError::new(
             "automatic updates are supported only on Windows and Linux",
         ));
+    }
+    #[cfg(target_os = "linux")]
+    if check.release.is_some() {
+        return release::prepare(platform, check, progress);
     }
     prepare_portable_update(platform, check, progress)
 }

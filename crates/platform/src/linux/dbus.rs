@@ -32,8 +32,6 @@ pub fn map_error(error: zbus::Error) -> ServiceError {
         zbus::Error::MethodError(name, _, _) => match name.as_str() {
             "org.freedesktop.DBus.Error.AccessDenied"
             | "org.freedesktop.PolicyKit1.Error.NotAuthorized"
-            | "org.freedesktop.PackageKit.Transaction.NotAuthorized"
-            | "org.freedesktop.PackageKit.Transaction.RefusedByPolicy"
             | "org.freedesktop.login1.NotAuthorized" => ServiceError::PermissionDenied,
             "org.freedesktop.DBus.Error.ServiceUnknown"
             | "org.freedesktop.DBus.Error.NameHasNoOwner"
@@ -44,16 +42,8 @@ pub fn map_error(error: zbus::Error) -> ServiceError {
                 ServiceError::Timeout
             }
             "org.freedesktop.DBus.Error.Disconnected" => ServiceError::BackendDisconnected,
-            "org.freedesktop.PackageKit.Transaction.NoSuchTransaction" => {
-                ServiceError::BackendDisconnected
-            }
-            "org.freedesktop.PackageKit.Transaction.CannotCancel"
-            | "org.freedesktop.PackageKit.Transaction.TransactionExistsWithRole" => {
-                ServiceError::Busy
-            }
             "org.freedesktop.DBus.Error.UnknownMethod"
-            | "org.freedesktop.DBus.Error.NotSupported"
-            | "org.freedesktop.PackageKit.Transaction.NotSupported" => ServiceError::Unsupported,
+            | "org.freedesktop.DBus.Error.NotSupported" => ServiceError::Unsupported,
             _ => ServiceError::Unknown,
         },
         zbus::Error::InputOutput(error) => match error.kind() {

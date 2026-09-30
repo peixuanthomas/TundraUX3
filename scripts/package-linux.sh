@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Produce the portable x86_64 tarball and a Debian or Fedora RPM package
-# from the same locked release build.
+# Produce only the portable x86_64 tarball from a locked release build.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
@@ -11,25 +10,8 @@ if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
   exit 1
 fi
 
-build_deb=true
-build_rpm=false
-case "${1:-}" in
-  "")
-    ;;
-  --rpm)
-    build_deb=false
-    build_rpm=true
-    ;;
-  --tar-only)
-    build_deb=false
-    ;;
-  *)
-    echo "Usage: $0 [--tar-only|--rpm]" >&2
-    exit 2
-    ;;
-esac
-if [[ $# -gt 1 ]]; then
-  echo "Usage: $0 [--tar-only|--rpm]" >&2
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--tar-only" ) ]]; then
+  echo "Usage: $0 [--tar-only]" >&2
   exit 2
 fi
 
@@ -37,12 +19,6 @@ version="${TUNDRAUX3_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.tom
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Expected a numeric major.minor.patch package version: $version" >&2
   exit 1
-fi
-
-if [[ "$build_deb" == true ]]; then
-  command -v dpkg-deb >/dev/null
-elif [[ "$build_rpm" == true ]]; then
-  command -v rpmbuild >/dev/null
 fi
 
 out_dir="${TUNDRAUX3_DIST_DIR:-$repo_root/dist}"
@@ -53,7 +29,6 @@ if [[ "$out_dir" == "/" || "$out_dir" == "$repo_root" ]]; then
   exit 1
 fi
 release_dir="${CARGO_TARGET_DIR:-$repo_root/target}/release"
-package_name="tundraux3_${version}_amd64"
 portable_name="tundraux3-${version}-linux-x86_64"
 stage_root="$out_dir/.stage"
 
@@ -71,42 +46,12 @@ done
 install -Dm644 LICENSE "$stage_root/$portable_name/LICENSE"
 install -Dm644 crates/weathr/LICENSE.weathr "$stage_root/$portable_name/LICENSE.weathr"
 install -Dm644 docs/packaging/linux/README-LINUX.txt "$stage_root/$portable_name/README-LINUX.txt"
-# Explicit provenance for ordinary-user portable updates. RPM/DEB install only
-# their listed system files and must never install this marker beside /usr/bin.
+# The updater requires this marker beside both portable binaries.
 install -Dm644 packaging/linux/tundra-installation.json "$stage_root/$portable_name/tundra-installation.json"
 
 tar -C "$stage_root" -czf "$out_dir/$portable_name.tar.gz" "$portable_name"
 
 artifacts=("$portable_name.tar.gz")
-if [[ "$build_deb" == true ]]; then
-  deb_root="$stage_root/deb"
-  install -Dm755 "$release_dir/tundra-shell" "$deb_root/usr/bin/tundra-shell"
-  install -Dm755 "$release_dir/tundra-cli" "$deb_root/usr/bin/tundra-cli"
-  install -d "$deb_root/usr/share/tundraux3"
-  cp -a crates/ascii-assets/assets "$deb_root/usr/share/tundraux3/assets"
-  install -Dm644 packaging/debian/tundraux3.desktop "$deb_root/usr/share/applications/tundraux3.desktop"
-  install -Dm644 LICENSE "$deb_root/usr/share/doc/tundraux3/copyright"
-  install -Dm644 crates/weathr/LICENSE.weathr "$deb_root/usr/share/doc/tundraux3/LICENSE.weathr"
-  install -Dm644 docs/packaging/linux/README-LINUX.txt "$deb_root/usr/share/doc/tundraux3/README-LINUX.txt"
-
-  install -d "$deb_root/DEBIAN"
-  sed "s/@VERSION@/$version/g" packaging/debian/control > "$deb_root/DEBIAN/control"
-  dpkg-deb --build --root-owner-group "$deb_root" "$out_dir/$package_name.deb"
-  artifacts+=("$package_name.deb")
-fi
-
-if [[ "$build_rpm" == true ]]; then
-  rpm_root="$stage_root/rpmbuild"
-  mkdir -p "$rpm_root"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-  cp "$out_dir/$portable_name.tar.gz" "$rpm_root/SOURCES/"
-  cp packaging/debian/tundraux3.desktop "$rpm_root/SOURCES/"
-  rpmbuild -bb --define "_topdir $rpm_root" --define "tundra_version $version" \
-    packaging/rpm/tundraux3.spec
-  rpm_name="tundraux3-${version}-1.x86_64.rpm"
-  cp "$rpm_root/RPMS/x86_64/$rpm_name" "$out_dir/$rpm_name"
-  artifacts+=("$rpm_name")
-fi
-
 (
   cd "$out_dir"
   sha256sum "${artifacts[@]}" > SHA256SUMS

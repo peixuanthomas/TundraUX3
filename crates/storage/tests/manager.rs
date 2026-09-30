@@ -113,6 +113,7 @@ fn toml_and_json_documents_round_trip() {
     shortcuts.insert("open_launcher".to_string(), "Ctrl+Space".to_string());
     let config = StorageConfig {
         schema_version: SCHEMA_VERSION,
+        linux_update_mode: storage::LinuxUpdateMode::Beta,
         theme: "light".to_string(),
         language: "zh-Hans".to_string(),
         timezone: "Asia/Shanghai".to_string(),

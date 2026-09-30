@@ -88,11 +88,6 @@ pub fn checks() -> Vec<EnvironmentCheck> {
     let system = dbus::system();
     for (id, label, name) in [
         ("linux-logind", "logind", "org.freedesktop.login1"),
-        (
-            "linux-packagekit",
-            "PackageKit",
-            "org.freedesktop.PackageKit",
-        ),
         ("linux-polkit", "polkit", "org.freedesktop.PolicyKit1"),
     ] {
         let available = system
@@ -150,13 +145,6 @@ pub fn checks() -> Vec<EnvironmentCheck> {
                 .unwrap_or_default()
         ),
     );
-    if let Some(rpm) = installation.rpm {
-        add(
-            "linux-installed-rpm",
-            "Installed RPM",
-            CheckStatus::Pass,
-            format!("{} {} {}", rpm.name, rpm.version, rpm.architecture),
-        );
-    }
+
     checks
 }

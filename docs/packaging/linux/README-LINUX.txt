@@ -9,8 +9,7 @@ KDE, under Wayland or X11.  Run the two binaries from a real terminal:
 
 The portable archive keeps `assets` next to the binaries.  Do not move the
 binaries without moving that directory too.  It includes the root GNU GPL v3
-and the Weathr component license.  The Debian and RPM packages install assets under
-/usr/share/tundraux3/assets automatically.
+and the Weathr component license. Future releases provide only portable archives.
 
 Required: xdg-open (xdg-utils) and gio (libglib2.0-bin on Debian/Ubuntu,
 glib2 on Fedora).  Recommended for full
@@ -28,10 +27,7 @@ This release provides only the Linux x86_64 portable archive, built on Ubuntu
 assets/ and tundra-installation.json beside the binaries. No DEB or RPM
 installer is published for V1.3.2.
 
-For locally built system packages, use scripts/package-linux.sh on the target
-distribution (default: DEB, --rpm: RPM, --tar-only: portable archive).
-The Fedora RPM updater uses PackageKit and verifies the resulting installed RPM
-version. Ubuntu and Arch can build and install local system packages as described below.
+For local builds, scripts/package-linux.sh produces only a portable archive.
 
 Ordinary Linux user session
 --------------------------
@@ -87,51 +83,27 @@ the service or environment they require is absent.
 
 Updates and system authorization
 --------------------------------
-SystemDeb / SystemArch (Ubuntu / Arch x86_64): check the GitHub default branch,
-download the selected commit and compile as the ordinary user. Ubuntu builds a
-DEB with dpkg-deb and shared-library dependencies from dpkg-shlibdeps; Arch builds
-a .pkg.tar.zst with makepkg. Install Rust and the project's build dependencies
-first, plus dpkg-dev on Ubuntu or base-devel on Arch, and sudo on either system.
-Source builds owned by the current user can also use this workflow for their
-first system installation. Their original source/build directory is unchanged.
+Linux updates require a writable portable directory owned by the current user,
+with tundra-installation.json and both binaries. Old system package installations
+are not updated or overwritten. PackageKit, apt, pacman and RPM update support has
+been removed.
 
-After confirmation, the terminal is handed to sudo apt-get --no-remove install
-or sudo pacman -U. The package manager displays its own confirmation; passwords
-go directly to sudo. Only installation is privileged. The package contains the
-programs and bundled assets, never personal settings or themes. Existing target
-executables must belong to tundraux3. Success requires the recorded package
-version and both program commit probes to match. Restart into /usr/bin/tundra-shell
-is explicit, after the existing unsaved-document checks. No automatic rollback
-or retry is promised after a failed/interrupted package-manager transaction.
+Settings -> Update -> Update mode is saved between runs; Release is the default.
+Release checks the latest published stable GitHub release, downloads the Linux
+x86_64 portable archive and verifies its SHA-256 checksum. Rust is not required.
+Beta checks the latest master commit and displays its hash as the build identifier.
+It downloads that exact source commit and builds locally with your existing Rust
+compiler and development libraries. Neither mode installs Rust or invokes sudo.
+Switching modes clears the previous check and checks the new source. Switching is
+disabled during an update. A beta build can explicitly return to the stable release.
 
-SystemRpm: the running executable must actually belong to the installed tundraux3
-RPM on Fedora. PackageKit checks configured repositories for a newer target and
-simulates its dependency changes before confirmation. Only tundraux3 and necessary
-dependencies are updated; no Update All, repository management, local RPM install,
-or operating-system upgrade is provided. Missing candidates are a normal result.
-Removals, downgrades, unknown sources, new signing-key trust, and EULA acceptance
-are refused. Success requires both PackageKit success and a fresh matching RPM
-version. A disconnect or lost result stays Unknown until a fresh history/RPM
-query can establish the outcome; Tundra never automatically repeats the update.
+Both modes replace only Shell and CLI, preserving personal data and themes. The
+helper retains the previous executables until the new Shell reports readiness.
+Failed replacement, first startup failure or timeout restores the previous build.
+Interrupted updates are recovered on the next launch. Downloads/builds use the
+user cache. Keep assets/ and the portable marker beside the executables.
 
-Cancel is available only when PackageKit says the transaction can be cancelled.
-It invokes the backend Cancel operation and never kills PackageKit, rpm, or dnf.
-Late cancellation can leave already installed packages and does not promise
-rollback. Recheck the installed version afterward.
-
-After a successful update, Restart Tundra is explicit. Unsaved editor documents
-are preserved through the existing recovery checks before restart. System reboot
-requirements are displayed as advice, without an automatic system reboot.
-
-PortableUser: the formal portable directory includes tundra-installation.json,
-is owned and writable by the current user, and is not RPM-owned. Its existing
-source-build/replacement updater operates only within this verified user-level
-installation. Keep the marker and both binaries with the portable installation.
-SystemRpm never enters this replacement path; PortableUser never enters RPM
-installation. Unrecognized installs report updates unavailable.
-
-Fedora RPM runtime dependencies include PackageKit and polkit; Fedora's polkit
-package supplies /usr/bin/pkttyagent. An existing system authentication agent is
+An existing system authentication agent is
 used first. Only a required authorization with no available agent and a safe
 foreground controlling TTY can start the pkttyagent fallback. Password input goes
 directly to the system agent, never to Tundra's input events or logs. The TUI pauses
@@ -143,8 +115,7 @@ strategy. No privileged shell-command fallback is provided.
 Diagnostics and validation
 --------------------------
 `tundra-cli debug doctor` reports real/effective UID/GID, NSS user, HOME, XDG paths,
-user/system buses, logind, PackageKit, polkit, pkttyagent, installation backend,
-and installed RPM identity. Diagnosis only observes state and never elevates.
+user/system buses, logind, polkit, pkttyagent and portable installation status. Diagnosis only observes state and never elevates.
 
 Run cargo fmt --check, cargo check --workspace --locked, and
 cargo test --workspace --locked for development validation. Linux-specific tests
@@ -153,8 +124,5 @@ id -u, id -ru, id -g, HOME, and USER in Tundra Terminal. Root launch must fail b
 entering the UI. Test forged USER/HOME, missing buses, first/repeated Appearance,
 file permissions, and terminal restoration as well as successful paths.
 
-The reproducible signed PackageKit fixture is documented in
-docs/scripts/tests/README.md in the source repository. RPM writes and authorization
-failure tests belong in disposable, recoverable Fedora environments, never the
-test host's current Tundra installation. Containers do not substitute for all
-host desktop-session, hardware, or systemd confinement checks.
+Automated rollback tests use temporary portable directories. WSL tests do not
+substitute for host desktop-session, hardware or physical-terminal checks.

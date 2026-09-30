@@ -402,25 +402,13 @@ shell 命令。缺少 XDG_RUNTIME_DIR、logind 或用户/系统 D-Bus 不阻止�
 
 ### Linux 系统服务和更新
 
-`platform/linux/{dbus,updates,power,diagnostics}` 提供本阶段的系统服务接口，UI 不解析原始
+`platform/linux/{dbus,power,diagnostics}` 提供本阶段的系统服务接口，UI 不解析原始
 D-Bus 错误字符串。统一错误包括权限拒绝、授权取消、服务不可用、忙碌、网络错误、连接中断、
-不支持、不可信事务及未知结果。常规 D-Bus 请求有超时，授权等待使用单独的有界等待。
+不支持及未知结果。常规 D-Bus 请求有超时，授权等待使用单独的有界等待。
 
-安装识别以运行中 executable 的真实 RPM 归属为依据。Fedora `tundraux3` RPM 使用
-`SystemRpm`；显式带 `tundra-installation.json` 标记、当前用户拥有且可写的正式目录使用
-`PortableUser`。Ubuntu x86_64 的 DEB 和 Arch x86_64 的 pacman 安装分别使用 `SystemDeb`、
-`SystemArch`；这两个发行版中当前用户拥有的源码构建也可通过相同流程首次安装系统包。
-其他源码构建、归属不可靠或不支持的系统安装返回 `Unavailable`。便携更新的检查、
-准备、替换和恢复分别校验安装边界，RPM 不进入 GitHub 构建或直接 executable 替换。
-
-PackageKit API 只检查、预览、更新已安装的 `tundraux3` 及求解出的必要依赖，支持后端 Cancel
-与结果查询。确认弹窗复用可滚动通知组件，展示旧版本到新版本及新增依赖。移除、降级、未知软件源、
-新 GPG 信任或 EULA 需求都会拒绝。没有候选版本是正常结果。事务 Finished 成功后还必须重新查询
-RPM 并匹配预期版本才能显示成功。取消只调用 PackageKit Cancel；取消并不保证已安装的软件包回滚。
-
-断线或结果丢失保持 Unknown，不自动重试写事务。UID 私有状态目录中的 journal 仅保存预期版本、
-时间和事务路径提示；恢复通过新的 PackageKit history 与 RPM 查询交叉确认，不复用旧 object path。
-成功后显式提供 Restart Tundra，复用未保存编辑器恢复检查；系统重启需求只显示提示。
+Linux 自更新只支持当前用户拥有且可写的便携目录，目录中必须有 `tundra-installation.json`、
+`tundra-shell` 和 `tundra-cli`。检查、准备、替换和恢复均校验目录与文件权限。
+不再提供 PackageKit、apt、pacman 或 RPM 更新；系统目录中的旧安装不会被直接替换。
 
 系统授权优先使用已有 polkit agent。确有授权挑战且交互检查确认没有可用 agent 时，才在安全前台
 controlling TTY 上启动 Fedora 的 `pkttyagent`。它绑定当前请求进程的 PID 与启动时间，保持原请求连接存活，并用
@@ -428,13 +416,9 @@ controlling TTY 上启动 Fedora 的 `pkttyagent`。它绑定当前请求进程�
 完成、失败、取消和 agent 退出时恢复正常 termios 基线，再恢复 raw、alternate screen、鼠标、
 焦点、粘贴、光标和重绘。Tundra 不记录密码或认证响应。logind 电源操作复用同一终端与代理交接；由 logind 选择基础、多会话或抑制器策略，只有其明确返回 `InteractiveAuthorizationRequired` 才在注册 fallback 后重试同一请求一次。拒绝、取消、超时和断线不会重放电源操作。日志读取遵守普通用户权限，不执行 root 命令回退。
 
-RPM 依赖 PackageKit 和 polkit（其中包含 pkttyagent），不安装 Tundra PAM policy 或 sudo
-运行依赖。DEB 同样使用普通用户身份；Ubuntu/Arch 的源码包更新见下文。Portable 不安装任何系统账户、
-PAM 配置或 system service。诊断仅观察 UID/GID、NSS、HOME/XDG、总线、logind、PackageKit、
-polkit、pkttyagent 及安装/RPM 归属，不自动提权。
-
-依赖与运行说明见 [Linux 运行说明](packaging/linux/README-LINUX.txt)，隔离签名 RPM 事务测试见
-[PackageKit 测试夹具](scripts/tests/README.md)。真实系统集成测试和 mock 测试各自保留，不能互相替代。
+便携包不安装系统账户、PAM 配置或 system service。诊断只观察身份、目录权限、总线、
+logind、polkit、pkttyagent 和便携安装条件，不自动提权。
+运行依赖与说明见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
 ### Linux 桌面集成
 
@@ -459,24 +443,16 @@ Linux 文件管理器不会只凭可执行权限把文件送入 Launcher。普�
 
 ### 程序自更新
 
-Ubuntu/Arch 的系统包更新先检查 GitHub 默认分支，在用户缓存目录下载指定提交并用已有 Rust 工具链编译。
-Ubuntu 使用 `dpkg-shlibdeps` 计算共享库依赖、`dpkg-deb --root-owner-group` 生成 DEB；
-Arch 使用固定的 PKGBUILD 和 `makepkg` 生成 `.pkg.tar.zst`，不自动安装构建依赖。
-Ubuntu 需要 `dpkg-dev`，Arch 需要 `base-devel`，两者均需要 Rust、项目的编译依赖和 `sudo`。
-包版本包含源码版本、构建时间和 Git 提交号，因此同一源码版本的不同提交也会更新系统记录。
+Linux 的“设置 → 更新 → 更新模式”保存到 `config.toml` 的 `linux_update_mode`，默认 `release`。
 
-用户确认编译安装后，界面暂停读取键盘，将终端交给 `sudo apt-get --no-remove install` 或
-`sudo pacman -U`。密码由 sudo 直接读取，包管理器保留自己的安装确认；不以 root 编译，
-不传递自动确认、强制覆盖或跳过依赖检查的安装参数，也不修改软件源。
-系统包包含两个程序、随附资源、desktop entry 和许可证，个人设置、主题和源码目录不参与替换。
-`/usr/bin` 下已有同名程序必须归 `tundraux3` 软件包所有，否则拒绝安装。
-安装结束后重新查询软件包版本，并探测两个程序的提交号；只有全部一致才显示成功。
-成功后用户可显式重启到 `/usr/bin/tundra-shell`，沿用编辑器未保存文件的恢复检查。
-安装失败或中断不承诺回滚，需检查 apt/pacman 状态；程序不会自动重试安装或杀掉正在安装的软件包进程。
-该流程也支持把 Ubuntu/Arch 上的源码构建首次安装为系统包；正式便携安装仍使用原来的便携更新方式。
-验证命令、实际安装结果及尚未覆盖的部分见 [源码包更新验证记录](packaging/linux/VALIDATION-SOURCE-UPDATES.md)。
+- 正式版：读取 GitHub 最新已发布正式 Release，按版本号和提交判断是否需要更新。下载 Linux x86_64
+  便携包及对应校验文件，校验 SHA-256，仅提取 Shell 与 CLI，检查提交号和更新协议后替换。不需要 Rust。
+- 测试版（`beta`）：固定检查 `master` 最新提交，界面显示提交哈希作为小版本标识；下载该提交的源码，
+  使用本机已有 Rust 工具链编译后替换。保留 API 失败时的 Git 查询后备方式，不安装编译器或调用 sudo。
+- 切换模式会清除旧检查结果并重新检查；同版本号但提交不同的测试构建可以明确选择替换为正式版。
+  下载或编译过程中不可切换。所有下载与编译都写入用户缓存目录。
 
-以下源码构建与二进制替换流程仅用于 Windows 的现有更新方式及已验证为 `PortableUser` 的 Linux 正式便携安装。确认后从 GitHub 下载已检查的指定提交，在本机用已有 Rust 工具链编译，再替换该便携目录中的 Shell 和 CLI；不自动安装 Rust 或使用 sudo。安装目录必须属于当前用户且可写，Linux 还需要项目构建所需的编译器和开发库。Fedora `SystemRpm` 使用前述 PackageKit 事务，其他未支持安装显示不可用。
+Windows 继续使用已有的默认分支源码编译更新，不显示 Linux 模式开关。
 
 更新助手保存旧程序，等新 Shell 报告启动成功后才清理备份。替换失败、启动失败或启动超时会恢复旧版本；更新中断后，下次启动会按安装目录内的记录继续或恢复。更新阶段只校验两个程序及其提交和更新协议，不要求源码目录或安装目录下存在 assets；默认主题、自定义主题和用户数据均不参与复制、替换或回滚。启动时仍按原有方式加载本地资源。更新记录使用协议 v2，助手取自已校验的新 CLI，避免旧助手继续要求替换资源；旧协议记录会明确拒绝，保留原文件。Linux 使用无 `.exe` 后缀的程序名并保留执行权限；助手通过 exec 接替原进程，在新 Shell 退出前持续等待，使更新后的程序继续使用前台终端。
 
@@ -669,7 +645,7 @@ CI 覆盖如下：
 | --- | --- |
 | Windows | `cargo test --workspace --locked` |
 | macOS | `cargo test --workspace --locked --no-run` |
-| Ubuntu | `cargo build/test/clippy --workspace --locked`、PTY smoke、打包与 `.deb` 安装验证 |
+| Ubuntu | `cargo build/test/clippy --workspace --locked`、PTY smoke、便携打包与更新回退验证 |
 | Fedora | 普通用户 `cargo build --workspace --locked`，身份、日志、平台与系统服务定向测试；发布工作流执行 workspace tests |
 
 Linux 的自动测试不触碰用户真实 Trash。发布候选可在 GNOME/KDE 普通用户会话运行原生往返 smoke；它只创建临时项，并在成功后恢复和清理：
@@ -721,12 +697,11 @@ scripts/tests/                     打包、授权 PTY 和系统服务测试夹�
 
 ## Linux 打包
 
-Linux 发行物面向 x86_64。Ubuntu/Debian 可生成 tarball 与 `.deb`；Fedora 可生成 tarball 与 `.rpm`，其他 Linux 可仅生成 tarball：
+Linux 后续发行只提供 x86_64 便携包，不再生成 DEB 或 RPM：
 
 ```console
-bash scripts/package-linux.sh            # Ubuntu/Debian: tar.gz + .deb
-bash scripts/package-linux.sh --rpm      # Fedora: tar.gz + .rpm（需要 rpm-build）
-bash scripts/package-linux.sh --tar-only # 其他 Linux: tar.gz
+bash scripts/package-linux.sh
+# --tar-only 仍可用于现有发布脚本，行为相同
 ```
 
 打包前可先执行：
@@ -742,10 +717,8 @@ cargo build --locked -p shell -p cli -p weathr
 
 `scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认将产物写入 `dist/`；版本可由 `TUNDRAUX3_VERSION` 覆盖，否则读取 workspace 版本。脚本执行 `cargo build --release --locked -p shell -p cli`，并拒绝将 `/` 或仓库根目录作为输出目录。
 
-- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`assets/`（包含主题和语言包）、安装类型标记、根许可证、Weathr 许可证和 Linux 说明。标记仅用于便携包，不安装到 RPM/DEB 系统目录。
-- Debian 包 `tundraux3_<version>_amd64.deb` 将二进制安装到 `/usr/bin`、资源安装到 `/usr/share/tundraux3/assets`，并附带 desktop entry 与许可证；`--tar-only` 和 `--rpm` 跳过这一产物。
-- RPM 包 `tundraux3-<version>-1.x86_64.rpm` 复用相同程序、资源和 desktop entry；依赖 `xdg-utils`、`glib2`、`glibc`、`PackageKit`、`polkit`，并由 RPM 自动扫描共享库依赖。Fedora 的 polkit 包提供 pkttyagent。包内没有 Tundra PAM 配置、sudo 运行依赖、系统账户或 seat/session 服务。目标验证环境是 Fedora 43 x86_64；不承诺旧版 RHEL 系兼容。
-- 所有产物在 `SHA256SUMS` 中记录校验和。`.deb` 依赖 `xdg-utils` 与 `libglib2.0-bin`，并推荐 D-Bus 用户会话、portal、polkit 与 XWayland。
+- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`assets/`（包含主题和语言包）、安装类型标记、根许可证、Weathr 许可证和 Linux 说明。标记与两个程序一起保留，用于验证便携更新目录。
+- 便携包在 `SHA256SUMS` 中记录校验和。运行依赖见 Linux 运行说明。
 
 ## third_party
 

@@ -173,8 +173,7 @@ pub(super) struct SystemStatusAddPickerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsUpdateState {
-    pub(super) package_installed: bool,
-    pub(super) rpm: Option<RpmSettingsState>,
+    pub(super) mode: storage::LinuxUpdateMode,
     pub(super) activity: Option<ui::components::UpdateActivityViewModel>,
     pub(super) check_result: Option<app::update::UpdateCheckResult>,
     pub(super) checked_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -190,8 +189,7 @@ pub(super) struct SettingsUpdateState {
 impl Default for SettingsUpdateState {
     fn default() -> Self {
         Self {
-            package_installed: false,
-            rpm: None,
+            mode: storage::LinuxUpdateMode::default(),
             activity: None,
             check_result: None,
             checked_at: None,
@@ -297,8 +295,6 @@ impl SettingsUpdateState {
             app::update::UpdatePhase::CheckingToolchain => "progress-phase-toolchain",
             app::update::UpdatePhase::Compiling => "progress-phase-compiling",
             app::update::UpdatePhase::Staging => "progress-phase-staging",
-            app::update::UpdatePhase::Packaging => "progress-phase-packaging",
-            app::update::UpdatePhase::InstallingPackage => "progress-phase-installing-package",
             app::update::UpdatePhase::PreparingReplacement => "progress-phase-replacing",
             app::update::UpdatePhase::WaitingForRestart => "progress-phase-restart",
             app::update::UpdatePhase::Failed => "progress-phase-failed",

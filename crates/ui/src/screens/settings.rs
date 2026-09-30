@@ -146,9 +146,7 @@ pub enum SettingsField {
     RemoteVersion,
     CheckUpdates,
     StartUpdate,
-    CancelRpmUpdate,
-    QueryRpmUpdate,
-    RestartAfterRpmUpdate,
+    UpdateMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
