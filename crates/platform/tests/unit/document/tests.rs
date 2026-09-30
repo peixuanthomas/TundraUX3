@@ -570,6 +570,78 @@ fn streaming_write_error_keeps_the_target_and_cleans_up_the_temporary_file() {
 
 #[cfg(unix)]
 #[test]
+fn temporary_document_is_private_before_and_during_streaming() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::os::unix::process::CommandExt;
+
+    const PROBE_ENV: &str = "TUNDRA_DOCUMENT_PRIVATE_TEMP_PROBE";
+    if std::env::var_os(PROBE_ENV).is_none() {
+        // Set a permissive umask only in an isolated child, never in the
+        // multi-threaded test process. This also reproduces under umask 077.
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "document::tests::temporary_document_is_private_before_and_during_streaming",
+                "--nocapture",
+            ])
+            .env(PROBE_ENV, "1");
+        unsafe {
+            command.pre_exec(|| {
+                libc::umask(0o022);
+                Ok(())
+            });
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "private temporary file probe failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "the private temporary file probe must run exactly one test"
+        );
+        return;
+    }
+
+    for permissions in [Some(0o600), Some(0o640), None] {
+        let directory = unique_temp_dir();
+        let path = directory.join("private.md");
+        let expected = permissions.map(|mode| {
+            fs::write(&path, b"original private contents\n").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            document_fingerprint(&path).unwrap()
+        });
+
+        atomic_write_document_if_unchanged_with(&path, expected, |writer| {
+            let temporary = fs::read_dir(&directory)?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<io::Result<Vec<_>>>()?
+                .into_iter()
+                .find(|entry| entry != &path)
+                .expect("the streaming writer has a temporary sibling file");
+            assert_eq!(fs::metadata(&temporary)?.mode() & 0o077, 0);
+            writer.write_all(b"replacement private contents\n")?;
+            writer.flush()?;
+            assert_eq!(fs::metadata(&temporary)?.mode() & 0o077, 0);
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"replacement private contents\n");
+        assert_eq!(
+            fs::metadata(&path).unwrap().mode() & 0o777,
+            permissions.unwrap_or(0o600)
+        );
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn replacement_preserves_existing_unix_permissions() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 

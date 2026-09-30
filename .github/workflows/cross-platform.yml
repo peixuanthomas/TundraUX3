@@ -27,6 +27,13 @@ jobs:
       - name: Compile workspace
         shell: bash
         run: cargo build --workspace --locked
+      - name: Test document and Explorer file safety
+        shell: bash
+        run: |
+          cargo test --locked -p platform --lib document::
+          cargo test --locked -p app --lib explorer::tasks::
+          cargo test --locked -p app --test explorer_tasks
+          cargo test --locked -p shell --test editor
       - name: Test localization and resource recovery
         shell: bash
         run: |

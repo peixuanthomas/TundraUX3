@@ -755,7 +755,16 @@ impl ShellSession {
             self.editor_recovery_dirty_since = Some(now);
         }
         if !is_dirty {
-            self.editor_recovery_dirty_since = None;
+            if revision_after != revision_before && self.editor_last_recovery_write.is_some() {
+                // Undo/redo can return to the saved checkpoint after a dirty
+                // draft was persisted. Leaving that draft on disk would
+                // resurrect the undone edits at the next launch. Limit this
+                // to an actual edit transition and a draft this session wrote;
+                // merely viewing a clean document must not erase recovery.
+                self.clear_editor_recovery();
+            } else {
+                self.editor_recovery_dirty_since = None;
+            }
         }
         if mode_changed {
             self.editor_table_column_widths.clear();

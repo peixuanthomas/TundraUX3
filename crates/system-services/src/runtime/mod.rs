@@ -263,13 +263,18 @@ async fn run(
     let mut pending_validation = None;
     let mut system_monitor = platform.create_system_monitor();
     'main: loop {
-        let tick = tokio::time::sleep(
+        // Validation is an interactive request with its own bounded timeout.
+        // A refresh interrupted for validation must not add an idle tick before
+        // starting it, or consume that timeout on unrelated network work.
+        let tick = tokio::time::sleep(if pending_validation.is_some() {
+            Duration::ZERO
+        } else {
             system_status_due
                 .min(system_fast_due)
                 .min(system_slow_due)
                 .saturating_duration_since(Instant::now())
-                .min(Duration::from_secs(1)),
-        );
+                .min(Duration::from_secs(1))
+        });
         tokio::pin!(tick);
         tokio::select! {
             _ = &mut tick => {},
@@ -357,8 +362,8 @@ async fn run(
                     command = commands.recv() => {
                         match apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) {
                             CommandDisposition::Shutdown => break 'main,
-                            CommandDisposition::Reconfigured | CommandDisposition::RefreshWeather => continue 'main,
-                            CommandDisposition::SyncTime | CommandDisposition::ReplaceValidation | CommandDisposition::Continue => {}
+                            CommandDisposition::Reconfigured | CommandDisposition::RefreshWeather | CommandDisposition::ReplaceValidation => continue 'main,
+                            CommandDisposition::SyncTime | CommandDisposition::Continue => {}
                         }
                     }
                     _ = &mut system_tick => refresh_due_system_sources(
@@ -445,8 +450,8 @@ async fn run(
                     command = commands.recv() => {
                         match apply_command(command, &mut config, &mut weather_due, &mut time_due, &mut location_due, &mut system_status_due, &mut system_fast_due, &mut system_slow_due, &mut system_status_active, &mut pending_validation) {
                             CommandDisposition::Shutdown => break 'main,
-                            CommandDisposition::Reconfigured | CommandDisposition::SyncTime => continue 'main,
-                            CommandDisposition::RefreshWeather | CommandDisposition::ReplaceValidation | CommandDisposition::Continue => {}
+                            CommandDisposition::Reconfigured | CommandDisposition::SyncTime | CommandDisposition::ReplaceValidation => continue 'main,
+                            CommandDisposition::RefreshWeather | CommandDisposition::Continue => {}
                         }
                     }
                     _ = &mut system_tick => refresh_due_system_sources(

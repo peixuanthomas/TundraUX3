@@ -860,6 +860,87 @@ async fn active_metrics_progress_while_weather_provider_is_pending() {
     );
 }
 
+#[test]
+fn time_validation_preempts_pending_weather_and_refresh_resumes() {
+    let mut runtime_config = config();
+    runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+    runtime_config.request_timeout = Duration::from_secs(60);
+    let (started_tx, started_rx) = std_mpsc::channel();
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let (handle, mut snapshots) = SystemServicesRuntime::start_with_platform_and_provider(
+        runtime_config.clone(),
+        watchdog(),
+        Arc::new(mock_platform()),
+        Arc::new(GatedProvider {
+            started: started_tx,
+            calls: provider_calls.clone(),
+        }),
+    );
+    let interrupted = started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("weather refresh must be pending before validation");
+
+    // The candidate uses the local clock, so no network or gate completion is
+    // needed. Its response budget must not be spent waiting for the unrelated
+    // weather refresh, whose timeout is deliberately much longer.
+    let mut candidate = runtime_config;
+    candidate.request_timeout = Duration::from_millis(100);
+    let validated = handle.validate_time_source(candidate);
+    assert!(
+        validated.is_ok(),
+        "local clock validation failed: {validated:?}"
+    );
+    assert!(interrupted.complete.is_closed());
+
+    let resumed = started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("interrupted weather refresh must resume after validation");
+    resumed.complete.send(()).unwrap();
+    wait_until(&mut snapshots, |snapshot| {
+        matches!(snapshot.weather, WeatherState::Ready(_))
+            && matches!(snapshot.time, TimeState::Synced { .. })
+    });
+    assert_eq!(provider_calls.load(Ordering::SeqCst), 2);
+    handle.shutdown().unwrap();
+}
+
+#[test]
+fn time_validation_keeps_candidate_errors_while_weather_is_pending() {
+    let mut runtime_config = config();
+    runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+    runtime_config.request_timeout = Duration::from_secs(60);
+    let (started_tx, started_rx) = std_mpsc::channel();
+    let (handle, _) = SystemServicesRuntime::start_with_platform_and_provider(
+        runtime_config.clone(),
+        watchdog(),
+        Arc::new(mock_platform()),
+        Arc::new(GatedProvider {
+            started: started_tx,
+            calls: Arc::new(AtomicUsize::new(0)),
+        }),
+    );
+    let interrupted = started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("weather refresh must be pending before validation");
+
+    // URL validation fails before creating a client or making a request. The
+    // runtime must still validate the candidate and preserve that failure.
+    let mut candidate = runtime_config;
+    candidate.request_timeout = Duration::from_millis(100);
+    candidate.time_sync_mode = TimeSyncMode::Network;
+    candidate.time_server_url = Some("not a valid URL".into());
+    let validated = handle.validate_time_source(candidate);
+    assert!(
+        matches!(
+            validated,
+            Err(SystemServicesError::Validation(ref error)) if error.contains("invalid time server URL")
+        ),
+        "unexpected validation result: {validated:?}"
+    );
+    assert!(interrupted.complete.is_closed());
+    handle.shutdown().unwrap();
+}
+
 #[tokio::test]
 async fn ready_stale_unavailable_and_manual_refresh_are_published() {
     let provider = Arc::new(FakeProvider {
