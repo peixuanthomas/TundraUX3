@@ -32,6 +32,7 @@ jobs:
           cargo test --locked -p shell --test settings linux_personal_settings_work_without_system_account_service
       - name: Test localization and resource recovery
         run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_check_localization.py'
           python3 scripts/check-localization.py
           cargo test --locked -p i18n -p ascii-assets
           cargo test --locked -p ui --test localization
