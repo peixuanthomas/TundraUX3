@@ -150,15 +150,6 @@ fn render_dashboard(
             model.dashboard.focus == SystemStatusDashboardFocus::Save,
             theme,
         );
-        button(
-            frame,
-            l.cancel_button,
-            "system-status.cancel",
-            &i18n::tr!("ui-system-status-cancel"),
-            model.dashboard.actions.cancel_disabled,
-            model.dashboard.focus == SystemStatusDashboardFocus::Cancel,
-            theme,
-        )
     } else {
         button(
             frame,
@@ -317,13 +308,7 @@ fn render_detail(
             if let Some(dl) = &l.diagnostics_content {
                 render_diagnostics_content(frame, dl, &diagnostics, theme, context)
             }
-            render_diagnostics_footer(
-                frame,
-                l.footer,
-                &diagnostics,
-                theme,
-                &i18n::tr!("ui-system-status-esc-dashboard"),
-            );
+            render_diagnostics_footer(frame, l.footer, &diagnostics, theme);
         }
         _ => {
             if let Some(vm) = model.detail_widget(d) {

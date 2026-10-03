@@ -169,6 +169,79 @@ fn pointer_back_button_does_not_restore_keyboard_focus() {
 }
 
 #[test]
+fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
+    for (width, height) in [(49, 11), (30, 8)] {
+        let mut state = session();
+        state.apply_input(InputEvent::Resize { width, height });
+        state.screen_stack.push(ShellScreen::Clock);
+        state.refresh_hit_map();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut prepared = home_frame(&state, 0, true);
+        prepared.page = ScreenViewModel::Clock(Box::new(
+            state.to_clock_view_model_at(&state.app.snapshot().clock, Instant::now()),
+        ));
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let back = state.frame_layout.unwrap().back_button.unwrap();
+        assert!(text(terminal.backend().buffer(), back).contains("[◀]"));
+        assert_eq!(
+            back.intersection(state.frame_layout.unwrap().main).area(),
+            0
+        );
+        let point = (back.x + back.width / 2, back.y);
+        let now = Instant::now();
+        state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
+        assert_eq!(state.active_screen(), ShellScreen::Clock);
+        state.apply_input_at(
+            InputEvent::mouse_up(PointerButton::Left, point),
+            now + Duration::from_millis(10),
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+
+        // Home still reaches the exit dialog through the same global button.
+        let prepared = home_frame(&state, 0, true);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        state.apply_input_at(
+            InputEvent::mouse_up(PointerButton::Left, point),
+            now + Duration::from_millis(10),
+        );
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        let mut prepared = home_frame(&state, 0, true);
+        prepared.notification = state.to_notification_view_model();
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        assert!(text(terminal.backend().buffer(), back).contains("[◀]"));
+        assert_eq!(
+            state.hit_map().target_at(point),
+            Some(ShellComponent::BackButton)
+        );
+        if let ui::NotificationLayout::Dialog(dialog) = ui::notification_layout(
+            state.frame_layout.unwrap().modal_area(),
+            prepared.notification.as_ref().unwrap(),
+        ) {
+            assert_eq!(dialog.dialog.intersection(back).area(), 0);
+            for action in &dialog.actions {
+                assert_eq!(
+                    state.notification_action_index_at((action.area.x, action.area.y)),
+                    Some(action.index)
+                );
+            }
+        } else {
+            assert_eq!((width, height), (30, 8));
+        }
+        state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        state.apply_input_at(
+            InputEvent::mouse_up(PointerButton::Left, point),
+            now + Duration::from_millis(10),
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert!(!state.shutdown_requested());
+    }
+}
+
+#[test]
 fn animated_toast_leaves_clock_pixels_and_mouse_target_intact() {
     let mut state = session();
     let mut compositor = ScreenCompositor::default();

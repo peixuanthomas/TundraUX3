@@ -205,7 +205,7 @@ fn logs_detail_drag_and_cancel_do_not_move_the_event_selection() {
 }
 
 #[test]
-fn touch_logs_back_returns_to_launcher_and_global_overlays_hide_background_buttons() {
+fn escape_returns_logs_to_launcher_and_global_overlays_hide_background_buttons() {
     let mut state = state(UserRole::User);
     state.screen_stack.push(ShellScreen::Launcher);
     state.focused_component = ShellComponent::Launcher;
@@ -214,7 +214,7 @@ fn touch_logs_back_returns_to_launcher_and_global_overlays_hide_background_butto
     let area = layout
         .controls
         .iter()
-        .find(|control| control.target == ui::LogsHitTarget::Back)
+        .find(|control| control.target == ui::LogsHitTarget::Refresh)
         .unwrap()
         .area;
     let point = (area.x, area.y);
@@ -228,11 +228,16 @@ fn touch_logs_back_returns_to_launcher_and_global_overlays_hide_background_butto
     });
     assert!(state.logs_button_at(point).is_none());
     state.active_popup = None;
-    state.handle_logs_pointer(MouseInput {
-        position: ui::Point::new(point.0, point.1),
-        kind: ui::MouseEventKind::Click(PointerButton::Left),
-        modifiers: ui::KeyModifiers::NONE,
-    });
+    state.handle_logs_key(&KeyInput::new(InputKey::Escape));
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     assert_eq!(state.focused_component, ShellComponent::Launcher);
+}
+
+#[test]
+fn compact_logs_uses_the_reserved_shell_content_area() {
+    let mut state = state(UserRole::User);
+    state.terminal_size = (49, 11);
+    state.open_logs();
+    assert_eq!(state.logs_main_area(), Some(Rect::new(0, 1, 49, 10)));
+    assert!(state.logs_button_at((48, 0)).is_none());
 }

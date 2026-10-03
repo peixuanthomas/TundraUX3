@@ -11,7 +11,13 @@ pub enum ShellLayout {
 
 pub fn compute_shell_layout(area: Rect) -> ShellLayout {
     if area.width < MIN_SHELL_TERMINAL_WIDTH || area.height < MIN_SHELL_TERMINAL_HEIGHT {
-        return ShellLayout::Compact(area);
+        let header_height = area.height.min(1);
+        return ShellLayout::Compact(Rect::new(
+            area.x,
+            area.y.saturating_add(header_height),
+            area.width,
+            area.height.saturating_sub(header_height),
+        ));
     }
 
     let top = Rect::new(area.x, area.y, area.width, 3);
@@ -92,7 +98,10 @@ impl ShellFrameLayout {
                 7,
                 top.height,
             )),
-            ShellLayout::Compact(_) => None,
+            ShellLayout::Compact(_) => (!bounds.is_empty()).then(|| {
+                let width = bounds.width.min(7);
+                Rect::new(bounds.right().saturating_sub(width), bounds.y, width, 1)
+            }),
         };
         let (main, status_message, time_button) = match shell {
             ShellLayout::Compact(main) => (main, None, None),
@@ -124,6 +133,15 @@ impl ShellFrameLayout {
 
     pub fn is_compact(self) -> bool {
         matches!(self.shell, ShellLayout::Compact(_))
+    }
+
+    /// Keep the compact Escape button available even while a shell dialog is open.
+    pub fn modal_area(self) -> Rect {
+        if self.is_compact() {
+            self.main
+        } else {
+            self.bounds
+        }
     }
 }
 

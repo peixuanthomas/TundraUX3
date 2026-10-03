@@ -31,13 +31,7 @@ pub fn render_diagnostics_page_content(
     render_diagnostics_header(frame, layout.header, model, theme);
     render_diagnostics_tabs(frame, &layout, model, context);
     render_diagnostics_content(frame, &layout.content_layout(), model, theme, context);
-    render_diagnostics_footer(
-        frame,
-        layout.footer,
-        model,
-        theme,
-        &i18n::tr!("ui-diagnostics-esc-system-status"),
-    );
+    render_diagnostics_footer(frame, layout.footer, model, theme);
 }
 
 pub(crate) fn render_diagnostics_header(
@@ -599,7 +593,6 @@ pub(crate) fn render_diagnostics_footer(
     area: Rect,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
-    _close_hint: &str,
 ) {
     let mut actions_area = area;
     if let Some(feedback) = &model.feedback {
@@ -610,30 +603,23 @@ pub(crate) fn render_diagnostics_footer(
         actions_area.y = actions_area.y.saturating_add(1);
         actions_area.height = actions_area.height.saturating_sub(1);
     }
-    for (key, label, rect) in
-        diagnostics_toolbar_buttons(actions_area, model, &i18n::tr!("ui-diagnostics-touch-back"))
-    {
+    for (key, label, rect) in diagnostics_toolbar_buttons(actions_area, model) {
         let mut button = Button::new(format!("diagnostics.toolbar.{}", key as u32), label);
-        button.set_disabled(model.scanning && key != '\u{1b}');
+        button.set_disabled(model.scanning);
         button.render_borderless_frame(frame, rect, theme);
     }
 }
 
 pub fn diagnostics_toolbar_height(width: u16, model: &DiagnosticsViewModel) -> u16 {
-    diagnostics_toolbar_buttons(
-        Rect::new(0, 0, width, u16::MAX),
-        model,
-        &i18n::tr!("ui-diagnostics-touch-back"),
-    )
-    .last()
-    .map_or(1, |(_, _, r)| r.bottom())
-    .saturating_add(u16::from(model.feedback.is_some()))
+    diagnostics_toolbar_buttons(Rect::new(0, 0, width, u16::MAX), model)
+        .last()
+        .map_or(1, |(_, _, r)| r.bottom())
+        .saturating_add(u16::from(model.feedback.is_some()))
 }
 
 pub fn diagnostics_toolbar_buttons(
     area: Rect,
     model: &DiagnosticsViewModel,
-    close: &str,
 ) -> Vec<(char, String, Rect)> {
     use unicode_width::UnicodeWidthStr;
     let mut actions = vec![
@@ -656,7 +642,6 @@ pub fn diagnostics_toolbar_buttons(
         actions.push(('e', i18n::tr!("ui-diagnostics-e-log-folder")));
     }
     actions.push(('x', i18n::tr!("ui-diagnostics-x-restart")));
-    actions.push(('\u{1b}', close.to_owned()));
     let mut x = area.x;
     let mut y = area.y;
     actions

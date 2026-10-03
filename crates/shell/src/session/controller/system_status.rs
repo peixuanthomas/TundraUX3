@@ -603,7 +603,7 @@ impl ShellSession {
                 .system_status_selected_widget
                 .map(ui_widget_kind)
                 .map(ui::SystemStatusDashboardFocus::Widget)
-                .unwrap_or(ui::SystemStatusDashboardFocus::Cancel);
+                .unwrap_or(ui::SystemStatusDashboardFocus::Add);
             if let Some(selected) = self.system_status_selected_widget {
                 self.scroll_system_status_focused_widget_into_view(ui_widget_kind(selected));
             }
@@ -787,7 +787,7 @@ impl ShellSession {
         if widgets.is_empty() {
             self.system_status_selected_widget = None;
             self.system_status_dashboard_focus = if self.system_status_dashboard_draft.is_some() {
-                ui::SystemStatusDashboardFocus::Cancel
+                ui::SystemStatusDashboardFocus::Add
             } else {
                 ui::SystemStatusDashboardFocus::Edit
             };
@@ -879,7 +879,6 @@ impl ShellSession {
                     order.push(focus);
                 }
             }
-            order.push(ui::SystemStatusDashboardFocus::Cancel);
         } else {
             if !actions.edit_disabled {
                 order.push(ui::SystemStatusDashboardFocus::Edit);
@@ -961,7 +960,6 @@ impl ShellSession {
             (true, Focus::Size) => self.open_system_status_size_picker(),
             (true, Focus::Remove) => self.remove_selected_system_status_widget(),
             (true, Focus::Save) => self.save_system_status_dashboard(),
-            (true, Focus::Cancel) => self.request_cancel_system_status_dashboard_edit(),
             _ => {}
         }
     }
@@ -1183,7 +1181,7 @@ impl ShellSession {
             .map(ui_widget_kind)
             .map(ui::SystemStatusDashboardFocus::Widget)
             .unwrap_or(if self.system_status_dashboard_draft.is_some() {
-                ui::SystemStatusDashboardFocus::Cancel
+                ui::SystemStatusDashboardFocus::Add
             } else {
                 ui::SystemStatusDashboardFocus::Edit
             });

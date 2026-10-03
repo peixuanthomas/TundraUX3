@@ -78,7 +78,6 @@ pub enum UserManagementAction {
     ToggleEnabled,
     ToggleRole,
     Delete,
-    Back,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,10 +224,6 @@ impl UserManagementViewModel {
                     'X',
                     true,
                 ),
-                UserManagementActionViewModel::new(
-                    UserManagementAction::Back,
-                    i18n::tr!("ui-user-management-back"),
-                ),
             ];
         }
 
@@ -316,10 +311,6 @@ impl UserManagementViewModel {
             toggle_enabled,
             toggle_role,
             delete,
-            UserManagementActionViewModel::new(
-                UserManagementAction::Back,
-                i18n::tr!("ui-user-management-back"),
-            ),
         ]
     }
 }

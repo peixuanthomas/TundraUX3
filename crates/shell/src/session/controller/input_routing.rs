@@ -250,11 +250,7 @@ impl ShellSession {
                 .and_then(|value| value.parse::<u32>().ok())
                 .and_then(char::from_u32)
         {
-            return InputEvent::Key(KeyInput::new(if code == '\u{1b}' {
-                InputKey::Escape
-            } else {
-                InputKey::Char(code)
-            }));
+            return InputEvent::Key(KeyInput::new(InputKey::Char(code)));
         }
         if let InputEvent::Mouse(mouse) = &input
             && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
@@ -2050,16 +2046,6 @@ impl ShellSession {
                         );
                     }
                     if self.active_screen() == ShellScreen::Home && target == ShellComponent::Home {
-                        if let Some(control) = self.home_control_at(coordinates) {
-                            let command = match control {
-                                ui::HomeToolbarAction::OpenSelected => {
-                                    ShellCommand::ActivateSelectedHomeEntry
-                                }
-                                ui::HomeToolbarAction::Launcher => ShellCommand::OpenLauncher,
-                                ui::HomeToolbarAction::Exit => ShellCommand::RequestExit,
-                            };
-                            return (RoutedTarget::Component(target), command);
-                        }
                         return (
                             RoutedTarget::Component(target),
                             ShellCommand::ActivateHomeEntryAt(coordinates, click),
@@ -2549,9 +2535,6 @@ impl ShellSession {
                     if editing && !model.dashboard.actions.save_disabled =>
                 {
                     ShellCommand::SystemStatusSaveDashboard
-                }
-                Some(ui::SystemStatusHitTarget::Cancel) if editing => {
-                    ShellCommand::SystemStatusRequestCancelEdit
                 }
                 Some(ui::SystemStatusHitTarget::ProcessSort(column)) => {
                     ShellCommand::SystemStatusSortProcesses(column)

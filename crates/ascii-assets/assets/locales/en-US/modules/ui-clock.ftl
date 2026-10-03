@@ -18,7 +18,6 @@ ui-clock-seconds = Seconds
 ui-clock-touch-manage = Manage
 ui-clock-touch-help = Manage: delete/strong
 ui-clock-touch-cancel = Cancel
-ui-clock-touch-back = Back
 ui-clock-touch-new = New
 ui-clock-touch-alarm = Alarm
 ui-clock-touch-timer = Timer

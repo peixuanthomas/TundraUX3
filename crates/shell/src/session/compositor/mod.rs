@@ -213,7 +213,7 @@ impl ScreenCompositor {
                 icons.map(|v| v as &dyn ui::LauncherIconRenderer),
             );
         } else {
-            ui::render_compact_home(frame, bounds, &chrome, &context.compatibility_theme());
+            ui::render_compact_home(frame, layout.main, &chrome, &context.compatibility_theme());
         }
         let shell_modal = self.motion.needs_shell_modal_base();
         if !shell_modal {
@@ -221,8 +221,8 @@ impl ScreenCompositor {
         }
         if visible_content {
             content.render_overlay(frame, &layout, context);
-            ui::render_shell_chrome(frame, &layout, &chrome, context);
         }
+        ui::render_shell_chrome(frame, &layout, &chrome, context);
         if prepared.notification.is_none()
             && prepared.chrome.status.error.is_none()
             && let (Some(toast), Some(area)) = (&self.toast, layout.status_message)
@@ -233,9 +233,19 @@ impl ScreenCompositor {
             self.motion.capture_base(frame.buffer_mut(), state);
         }
         if let Some(notification) = &prepared.notification {
-            ui::render_notification_overlay_with_context(frame, bounds, notification, context);
+            ui::render_notification_overlay_with_context(
+                frame,
+                layout.modal_area(),
+                notification,
+                context,
+            );
         } else if let Some(dialog) = &prepared.time_sync {
-            ui::render_time_sync_failure_dialog_with_context(frame, bounds, dialog, context);
+            ui::render_time_sync_failure_dialog_with_context(
+                frame,
+                layout.modal_area(),
+                dialog,
+                context,
+            );
         }
         state.button_regions = buttons.regions();
         self.motion.capture_overlay(frame.buffer_mut(), state);

@@ -59,33 +59,43 @@ mod tests {
     }
 
     #[test]
-    fn compact_clock_and_setup_keep_back_or_exit_commands() {
+    fn compact_page_routes_leave_the_shared_header_and_keep_setup_previous_step() {
         let mut clock = state(ShellScreen::Clock);
         let model = clock.to_clock_view_model_at(&clock.app.snapshot().clock, Instant::now());
-        let back = ui::clock_page_layout(clock.touch_main(), &model).back_button;
+        let main = clock.touch_main();
+        let new = ui::clock_page_layout(main, &model).new_button;
         assert!(matches!(
             clock.route_touch_pages_pointer(MouseInput::new(
-                back.x,
-                back.y,
+                new.x,
+                new.y,
                 ui::MouseEventKind::Down(PointerButton::Left)
             )),
-            Some(ShellCommand::CloseClock)
+            Some(ShellCommand::ClockOpenCreate)
         ));
+        assert!(
+            clock
+                .route_touch_pages_pointer(MouseInput::new(
+                    main.right() - 1,
+                    main.y.saturating_sub(1),
+                    ui::MouseEventKind::Down(PointerButton::Left)
+                ))
+                .is_none()
+        );
         clock.cancel_touch_pages_pointer();
         let mut setup = state(ShellScreen::FirstRunSetup);
+        setup.setup_step = ui::SetupStep::Timezone;
         setup.page_touch.setup_scroll = u16::MAX;
         let page = setup.touch_setup_viewport();
-        let exit = page
-            .project(ui::setup_exit_area(page.content, setup.setup_step))
+        let previous = page
+            .project(ui::setup_navigation_areas(page.content)[0])
             .unwrap();
-        assert!(matches!(
-            setup.route_touch_pages_pointer(MouseInput::new(
-                exit.x,
-                exit.y,
-                ui::MouseEventKind::Down(PointerButton::Left)
-            )),
-            Some(ShellCommand::RequestExit)
+        setup.handle_touch_pages_pointer(MouseInput::new(
+            previous.x,
+            previous.y,
+            ui::MouseEventKind::Down(PointerButton::Left),
         ));
+        assert_eq!(setup.active_screen(), ShellScreen::FirstRunSetup);
+        assert_eq!(setup.setup_step, ui::SetupStep::Language);
     }
 }
 
@@ -300,36 +310,17 @@ impl ShellSession {
         if !rect_contains(self.touch_main(), point) {
             return None;
         }
-        if self.active_screen() == ShellScreen::FirstRunSetup
-            && self.setup_custom_color_target.is_none()
-            && matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
-        {
-            let model = self.to_setup_view_model();
-            let page = ui::setup_viewport(self.touch_main(), &model);
-            if page
-                .project(ui::setup_exit_area(page.content, model.step))
-                .is_some_and(|area| rect_contains(area, point))
-            {
-                return Some(ShellCommand::RequestExit);
-            }
-        }
         if self.active_screen() == ShellScreen::BootstrapAdmin
             && matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
         {
             let page =
                 ui::bootstrap_viewport(self.touch_main(), &self.to_bootstrap_admin_view_model());
-            let [submit, exit] = ui::bootstrap_action_areas(page.content);
+            let submit = ui::bootstrap_submit_area(page.content);
             if page
                 .project(submit)
                 .is_some_and(|area| rect_contains(area, point))
             {
                 return Some(ShellCommand::SubmitBootstrapAdmin);
-            }
-            if page
-                .project(exit)
-                .is_some_and(|area| rect_contains(area, point))
-            {
-                return Some(ShellCommand::RequestExit);
             }
         }
         if self.active_screen() == ShellScreen::Login
@@ -338,12 +329,6 @@ impl ShellSession {
             let model = self.to_login_view_model();
             let page = ui::login_viewport(self.touch_main(), &model);
             let layout = ui::login_layout(page.content);
-            if page
-                .project(layout.exit)
-                .is_some_and(|area| rect_contains(area, point))
-            {
-                return Some(ShellCommand::RequestExit);
-            }
             if page
                 .project(layout.submit)
                 .is_some_and(|area| rect_contains(area, point))
@@ -396,9 +381,6 @@ impl ShellSession {
             } else {
                 if rect_contains(layout.new_button, point) {
                     return Some(ShellCommand::ClockOpenCreate);
-                }
-                if rect_contains(layout.back_button, point) {
-                    return Some(ShellCommand::CloseClock);
                 }
                 if rect_contains(layout.manage_button, point) {
                     return self
@@ -702,7 +684,7 @@ impl ShellSession {
                 } else {
                     main
                 };
-                let [back, next, _] = ui::setup_navigation_areas(controls);
+                let [back, next] = ui::setup_navigation_areas(controls);
                 if page.project(next).is_some() && rect_contains(next, point) {
                     self.page_touch.setup_scroll = 0;
                     self.setup_continue();

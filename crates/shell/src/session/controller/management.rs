@@ -998,8 +998,7 @@ impl ShellSession {
     fn management_main(&self) -> Rect {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         match self.shell_layout_for(bounds) {
-            ui::ShellLayout::Full { main, .. } => main,
-            _ => bounds,
+            ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
         }
     }
     pub(in crate::session) fn resize_management_terminal(&mut self) {

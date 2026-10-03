@@ -1,7 +1,6 @@
 # UI diagnostics messages.
 
 ui-diagnostics-system-status-diagnostics = 系统状态 / 诊断
-ui-diagnostics-esc-system-status = Esc 系统状态
 ui-diagnostics-restart-required = 需要重启
 ui-diagnostics-scanning-health-checks = 正在扫描健康检查项…
 ui-diagnostics-no-health-checks-available = 没有可用的健康检查项
@@ -87,4 +86,3 @@ ui-diagnostics-attention-failures = 系统需要关注 — { $warnings } 条警�
 ui-diagnostics-attention-warnings = 系统需要关注 — { $count } 条警告
 
 ui-diagnostics-unsupported-count = 系统状态正常 — { $count } 项能力不受支持
-ui-diagnostics-touch-back = Esc 返回

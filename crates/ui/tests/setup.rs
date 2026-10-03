@@ -22,6 +22,92 @@ const WIDE_SETUP_HEIGHT: u16 = 34;
 const SETUP_CONTROLS_WIDTH: u16 = 48;
 
 #[test]
+fn auth_pages_keep_their_submit_controls_without_duplicate_exit_buttons() {
+    let login = ui::LoginViewModel::new(Vec::new(), 0, 0, 0, ui::LoginField::Password, None);
+    let buttons = page_button_regions(|frame, area, context| {
+        ui::render_login_content(frame, area, &login, context);
+    });
+    assert!(
+        buttons
+            .iter()
+            .any(|button| button.id.as_str() == "login.submit")
+    );
+    assert!(
+        buttons
+            .iter()
+            .all(|button| button.id.as_str() != "login.exit")
+    );
+    let layout = ui::login_layout(Rect::new(3, 2, 60, 36));
+    assert_eq!(layout.submit.width, layout.selected_username.width);
+
+    let bootstrap = ui::BootstrapAdminViewModel::new("", 0, ui::AuthField::Username, None);
+    let buttons = page_button_regions(|frame, area, context| {
+        ui::render_bootstrap_admin_content(frame, area, &bootstrap, context);
+    });
+    assert!(
+        buttons
+            .iter()
+            .any(|button| button.id.as_str() == "bootstrap.submit")
+    );
+    assert!(
+        buttons
+            .iter()
+            .all(|button| button.id.as_str() != "bootstrap.exit")
+    );
+    assert_eq!(ui::bootstrap_submit_area(Rect::new(3, 2, 60, 36)).width, 58);
+
+    for step in [
+        SetupStep::Language,
+        SetupStep::Timezone,
+        SetupStep::Admin,
+        SetupStep::Appearance,
+    ] {
+        let model = sample_model(step, None);
+        let buttons = page_button_regions(|frame, area, context| {
+            ui::render_setup_content(frame, area, &model, context);
+        });
+        assert!(
+            buttons
+                .iter()
+                .all(|button| button.id.as_str() != "setup.exit")
+        );
+        if matches!(step, SetupStep::Language | SetupStep::Timezone) {
+            let previous = buttons
+                .iter()
+                .find(|button| button.id.as_str() == "setup.back")
+                .expect("previous step remains available");
+            assert_eq!(previous.disabled, step == SetupStep::Language);
+            assert!(
+                buttons
+                    .iter()
+                    .any(|button| button.id.as_str() == "setup.continue")
+            );
+        } else {
+            let submit = if step == SetupStep::Admin {
+                "setup.admin.submit"
+            } else {
+                "setup.appearance.finish"
+            };
+            assert!(buttons.iter().any(|button| button.id.as_str() == submit));
+        }
+    }
+}
+
+fn page_button_regions(
+    mut paint: impl FnMut(&mut ratatui::Frame<'_>, Rect, &ui::RenderContext),
+) -> Vec<ui::components::ButtonRegion> {
+    let theme = TundraTheme::default_dark();
+    let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+    let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    context.buttons = Some(buttons.clone());
+    let mut terminal = Terminal::new(TestBackend::new(70, 40)).unwrap();
+    terminal
+        .draw(|frame| paint(frame, Rect::new(3, 2, 60, 36), &context))
+        .unwrap();
+    buttons.regions()
+}
+
+#[test]
 fn short_setup_projects_only_visible_buttons_to_the_scrolled_rows() {
     let area = Rect::new(3, 2, 40, 10);
     let mut model = sample_model(SetupStep::Admin, None);
@@ -60,7 +146,7 @@ fn short_setup_projects_only_visible_buttons_to_the_scrolled_rows() {
         buttons
             .regions()
             .iter()
-            .any(|button| button.id.as_str() == "setup.exit")
+            .all(|button| button.id.as_str() != "setup.exit")
     );
     assert!(viewport.scrollbar.is_some());
     assert_eq!(

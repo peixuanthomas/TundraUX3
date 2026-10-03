@@ -20,7 +20,6 @@ pub enum LogsHitTarget {
     ClearFilters,
     RelatedIncident,
     RelatedEvents,
-    Back,
     DetailScrollbar,
     Scrollbar,
 }
@@ -94,7 +93,6 @@ pub(super) fn controls() -> Vec<(LogsHitTarget, String)> {
             LogsHitTarget::RelatedEvents,
             i18n::tr!("ui-logs-show-events"),
         ),
-        (LogsHitTarget::Back, i18n::tr!("ui-logs-back")),
     ]
 }
 

@@ -272,6 +272,88 @@ fn too_short_uses_empty_state_but_keeps_footer() {
 }
 
 #[test]
+fn editing_footer_uses_reclaimed_width_for_operations_and_keeps_dialog_cancel() {
+    use ui::components::ButtonFrame;
+    let mut m = model();
+    m.dashboard.editing = true;
+    m.dashboard.dirty = true;
+    for width in [50, 80, 120] {
+        let main = Rect::new(0, 1, width, 22);
+        let layout = system_status_layout(main, &m);
+        assert_eq!(layout.save_button.right(), layout.footer.right());
+        for (area, target) in [
+            (layout.add_button, SystemStatusHitTarget::Add),
+            (layout.size_button, SystemStatusHitTarget::Size),
+            (layout.remove_button, SystemStatusHitTarget::Remove),
+            (layout.save_button, SystemStatusHitTarget::Save),
+        ] {
+            assert!(!area.is_empty());
+            assert_eq!(
+                system_status_hit_test(&layout, (area.x, area.y)),
+                Some(target)
+            );
+        }
+        let theme = TundraTheme::default_dark();
+        let buttons = ButtonFrame::new(None, None, &theme);
+        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        context.buttons = Some(buttons.clone());
+        let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+        terminal
+            .draw(|frame| render_system_status_content(frame, main, &m, &context))
+            .unwrap();
+        let regions = buttons.regions();
+        for id in [
+            "system-status.add",
+            "system-status.size",
+            "system-status.remove",
+            "system-status.save",
+        ] {
+            assert!(regions.iter().any(|region| region.id.as_str() == id));
+        }
+        assert!(
+            !regions
+                .iter()
+                .any(|region| region.id.as_str() == "system-status.cancel")
+        );
+    }
+
+    m.dashboard.dialog = Some(SystemStatusDialogViewModel {
+        title: "Discard changes?".into(),
+        message: "Unsaved layout changes will be lost.".into(),
+        ..Default::default()
+    });
+    let main = full_main(100, 24);
+    let layout = system_status_layout(main, &m);
+    let cancel = layout
+        .dialog_actions
+        .iter()
+        .find(|action| action.index == 1)
+        .unwrap();
+    assert_eq!(
+        system_status_hit_test(&layout, (cancel.area.x, cancel.area.y)),
+        Some(SystemStatusHitTarget::DialogCancel)
+    );
+    assert_eq!(
+        system_status_hit_test(&layout, (layout.save_button.x, layout.save_button.y)),
+        None
+    );
+    let theme = TundraTheme::default_dark();
+    let buttons = ButtonFrame::new(None, None, &theme);
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    context.buttons = Some(buttons.clone());
+    let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+    terminal
+        .draw(|frame| render_system_status_overlay(frame, main, &m, &context))
+        .unwrap();
+    assert!(
+        buttons
+            .regions()
+            .iter()
+            .any(|region| region.id.as_str() == "cancel" && region.area == cancel.area)
+    );
+}
+
+#[test]
 fn storage_network_and_diagnostics_details_remain_integrated() {
     let mut m = model();
     m.route = SystemStatusRoute::Detail(SystemStatusDetail::Storage);

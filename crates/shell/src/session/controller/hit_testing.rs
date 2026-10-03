@@ -46,7 +46,8 @@ pub(in crate::session) fn build_shell_hit_map(
 ) -> ShellHitMap {
     let terminal_area = frame_layout.bounds;
     let terminal_size = (terminal_area.width, terminal_area.height);
-    let (width, height) = terminal_size;
+    let modal_area = frame_layout.modal_area();
+    let (width, height) = (modal_area.width, modal_area.height);
     let motion_context = ui::RenderContext {
         transitions: motion,
         ..ui::RenderContext::default()
@@ -93,13 +94,6 @@ pub(in crate::session) fn build_shell_hit_map(
                 area: top,
                 layer: ShellHitLayer::ShellChrome,
             });
-            if let Some(area) = frame_layout.back_button {
-                regions.push(ShellHitRegion {
-                    component: ShellComponent::BackButton,
-                    area,
-                    layer: ShellHitLayer::ShellChrome,
-                });
-            }
             match content_screen {
                 ShellScreen::FirstRunSetup => {
                     regions.extend(setup_hit_regions(main, setup_step, language_count));
@@ -320,6 +314,14 @@ pub(in crate::session) fn build_shell_hit_map(
         }
     }
 
+    if let Some(area) = frame_layout.back_button {
+        regions.push(ShellHitRegion {
+            component: ShellComponent::BackButton,
+            area,
+            layer: ShellHitLayer::ShellChrome,
+        });
+    }
+
     let overlay_interaction_ready =
         !overlay_blocks_interaction || motion_context.overlay_interaction_ready();
     if !overlay_interaction_ready {
@@ -360,7 +362,7 @@ pub(in crate::session) fn build_shell_hit_map(
     if exit_confirmation_visible && overlay_interaction_ready {
         regions.push(ShellHitRegion {
             component: ShellComponent::ExitDialog,
-            area: centered_rect(terminal_area, width.min(46), height.min(7)),
+            area: centered_rect(modal_area, width.min(46), height.min(7)),
             layer: ShellHitLayer::ShellModal,
         });
     }
@@ -368,15 +370,14 @@ pub(in crate::session) fn build_shell_hit_map(
     if time_sync_dialog_visible && overlay_interaction_ready {
         regions.push(ShellHitRegion {
             component: ShellComponent::TimeSyncDialog,
-            area: centered_rect(terminal_area, width.min(34), height.min(5)),
+            area: centered_rect(modal_area, width.min(34), height.min(5)),
             layer: ShellHitLayer::ShellModal,
         });
     }
 
     if overlay_interaction_ready
         && let (Some(component), Some(model)) = (notification_modal_component, notification_model)
-        && let ui::NotificationLayout::Dialog(layout) =
-            ui::notification_layout(terminal_area, model)
+        && let ui::NotificationLayout::Dialog(layout) = ui::notification_layout(modal_area, model)
     {
         regions.push(ShellHitRegion {
             component,

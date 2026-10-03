@@ -352,7 +352,6 @@ impl ShellSession {
                 size_disabled: self.system_status_selected_widget.is_none(),
                 remove_disabled: self.system_status_selected_widget.is_none(),
                 save_disabled: !dirty,
-                cancel_disabled: false,
             },
             updated: refreshed.to_string(),
         }
@@ -2062,14 +2061,6 @@ impl ShellSession {
             selected.is_some() && !last_enabled_admin,
             None,
             true,
-        ));
-        actions.push(user_management_action_model(
-            UserManagementAction::Back,
-            i18n::tr!("shell-back"),
-            None,
-            true,
-            None,
-            false,
         ));
         if self.identity_backend == identity::IdentityBackend::Linux {
             actions.retain(|action| {

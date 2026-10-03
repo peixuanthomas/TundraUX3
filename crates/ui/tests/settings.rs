@@ -20,14 +20,12 @@ use ui::{
 };
 
 #[test]
-fn settings_back_and_editor_actions_are_hittable_without_crossing_an_overlay() {
+fn settings_editor_actions_are_hittable_without_a_duplicate_page_back() {
     let mut model = sample_model();
     let area = Rect::new(0, 0, 40, 10);
     let layout = settings_layout(area, &model);
-    assert_eq!(
-        settings_hit_test(&layout, (layout.back_button.x, layout.back_button.y)),
-        Some(SettingsHitTarget::Back)
-    );
+    let footer = (area.right() - 2, area.bottom() - 2);
+    assert_eq!(settings_hit_test(&layout, footer), None);
     model.color_editor = Some(SettingsColorEditorViewModel {
         title: "Color".into(),
         value: "#123456".into(),
@@ -44,9 +42,10 @@ fn settings_back_and_editor_actions_are_hittable_without_crossing_an_overlay() {
         settings_hit_test(&overlay, (cancel.x, cancel.y)),
         Some(SettingsHitTarget::OverlayCancel)
     );
-    assert_ne!(
-        settings_hit_test(&overlay, (layout.back_button.x, layout.back_button.y)),
-        Some(SettingsHitTarget::Back)
+    assert_eq!(
+        settings_hit_test(&overlay, footer),
+        Some(SettingsHitTarget::ColorEditor),
+        "the dialog consumes clicks over the former page footer"
     );
 }
 
@@ -845,7 +844,7 @@ fn compact_settings_keep_the_complete_unavailable_reason_in_the_scrollable_detai
             .contains(&reason.replace(' ', "")),
         "{output}"
     );
-    assert!(output.contains("[Back]"));
+    assert!(!output.contains("[Back]"));
 }
 
 #[test]

@@ -369,7 +369,7 @@ fn touch_choice_list_selects_without_cycling_or_submitting() {
 }
 
 #[test]
-fn touch_back_returns_management_to_launcher_without_cancelling_task() {
+fn escape_returns_management_to_launcher_without_cancelling_task() {
     let mut state = state();
     state.screen_stack = vec![
         ShellScreen::Home,
@@ -378,21 +378,18 @@ fn touch_back_returns_management_to_launcher_without_cancelling_task() {
     ];
     let (job, _) = state.management_job();
     state.management_state.operation_job = Some(job);
-    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
-    let area = layout
-        .controls
-        .iter()
-        .find(|(control, _)| *control == ui::ManagementControl::Back)
-        .unwrap()
-        .1;
-    state.handle_management_pointer(MouseInput {
-        position: ui::Point::new(area.x, area.y),
-        kind: ui::MouseEventKind::Click(PointerButton::Left),
-        modifiers: ui::KeyModifiers::NONE,
-    });
+    state.handle_management_key(&KeyInput::new(InputKey::Escape));
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     assert_eq!(state.focused_component, ShellComponent::Launcher);
     assert!(state.management_state.operation_job.is_some());
+}
+
+#[test]
+fn compact_management_uses_the_reserved_shell_content_area() {
+    let mut state = state();
+    state.terminal_size = (49, 11);
+    assert_eq!(state.management_main(), Rect::new(0, 1, 49, 10));
+    assert!(state.management_button_at((48, 0)).is_none());
 }
 
 #[test]

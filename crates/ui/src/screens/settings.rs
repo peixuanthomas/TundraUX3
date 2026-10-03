@@ -381,7 +381,6 @@ pub struct SettingsPickerOptionLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsHitTarget {
-    Back,
     OverlayApply,
     OverlayCancel,
     AdjustField(SettingsField, i8),
@@ -400,7 +399,6 @@ pub enum SettingsHitTarget {
 pub struct SettingsLayout {
     pub main: Rect,
     pub detail: Rect,
-    pub back_button: Rect,
     pub scrollbar: Option<Rect>,
     pub content_height: usize,
     pub max_scroll_offset: u16,
@@ -617,14 +615,6 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     SettingsLayout {
         main: area,
         detail: detail_area,
-        back_button: Rect::new(
-            raw_detail_area
-                .right()
-                .saturating_sub(raw_detail_area.width.min(8)),
-            raw_detail_area.bottom().saturating_sub(1),
-            raw_detail_area.width.min(8),
-            u16::from(raw_detail_area.height > 0),
-        ),
         scrollbar,
         content_height,
         max_scroll_offset,
@@ -725,9 +715,6 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
         || layout.time_sync_server_editor.is_some()
     {
         return None;
-    }
-    if contains(layout.back_button, point) {
-        return Some(SettingsHitTarget::Back);
     }
     if let Some(field) = layout
         .fields
@@ -842,11 +829,6 @@ pub fn render_settings_content(
         .render_frame(frame, scrollbar, context);
     }
     render_settings_footer(frame, settings_raw_detail_area(layout), model, context);
-    Button::new("settings.back", i18n::tr!("ui-settings-touch-back")).render_inline_frame(
-        frame,
-        layout.back_button,
-        theme,
-    );
 }
 
 pub fn render_settings_overlay(
@@ -1072,7 +1054,7 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
 }
 
 /// Keep the complete failure reason inside the draggable detail viewport.
-/// The fixed footer may abbreviate its copy to leave room for Back.
+/// The fixed footer may abbreviate its copy to fit the current width.
 fn settings_unavailable_lines(width: u16, model: &SettingsViewModel) -> Vec<String> {
     let Some(reason) = model
         .cards
@@ -1253,12 +1235,7 @@ fn render_settings_footer(
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("  |  ");
-    let area = Rect::new(
-        detail.x,
-        detail.bottom().saturating_sub(1),
-        detail.width.saturating_sub(8),
-        1,
-    );
+    let area = Rect::new(detail.x, detail.bottom().saturating_sub(1), detail.width, 1);
     frame.render_widget(
         Paragraph::new(Line::styled(
             truncate(&text, usize::from(area.width)),

@@ -8,9 +8,3 @@ ui-home-unknown-user = Unknown user
 ui-home-logout-button = { "[" }Logout]
 
 ui-home-current-user = User: { $user }
-ui-home-open-button = { "[" }Enter Open]
-ui-home-launcher-button = { "[" }Launcher]
-ui-home-exit-button = { "[" }Q Exit & power]
-ui-home-open-description = Open the selected entry
-ui-home-launcher-description = Apps, logs and system tools
-ui-home-exit-description = Exit, restart or shut down

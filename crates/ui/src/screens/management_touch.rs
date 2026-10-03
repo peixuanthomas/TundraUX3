@@ -70,7 +70,6 @@ pub struct ManagementViewModel {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagementControl {
-    Back,
     Refresh,
     Search,
     ApplySearch,
@@ -80,7 +79,6 @@ pub enum ManagementControl {
 }
 pub fn management_controls() -> Vec<(ManagementControl, String)> {
     [
-        (ManagementControl::Back, "back"),
         (ManagementControl::Refresh, "refresh"),
         (ManagementControl::Search, "search"),
         (ManagementControl::ApplySearch, "apply"),

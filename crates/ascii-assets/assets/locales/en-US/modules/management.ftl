@@ -104,7 +104,6 @@ management-background-question = { $application } is waiting for input. Return t
 management-config-needs-answer = Package configuration cannot be forcibly cancelled. Choose whether to keep the current file or install the package version.
 management-connection-lost = Task connection failed or was lost: { $reason }. The background operation may still be running; reconnect to verify its result before retrying.
 
-management-touch-back = Back
 management-touch-refresh = Refresh list
 management-touch-search = Focus search
 management-touch-apply = Apply search

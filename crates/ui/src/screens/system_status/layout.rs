@@ -46,7 +46,6 @@ pub enum SystemStatusHitTarget {
     Size,
     Remove,
     Save,
-    Cancel,
     DialogConfirm,
     DialogCancel,
     Scrollbar,
@@ -75,7 +74,6 @@ pub struct SystemStatusLayout {
     pub size_button: Rect,
     pub remove_button: Rect,
     pub save_button: Rect,
-    pub cancel_button: Rect,
     pub notice_area: Option<Rect>,
     pub detail_summary_area: Rect,
     pub detail_trend_area: Rect,
@@ -177,11 +175,6 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         localized_button_width(&(i18n::tr!("ui-system-status-edit"))),
     );
     right = footer.right();
-    let mut cancel_button = button_from_right(
-        footer,
-        &mut right,
-        localized_button_width(&(i18n::tr!("ui-system-status-cancel"))),
-    );
     let mut save_button = button_from_right(
         footer,
         &mut right,
@@ -210,7 +203,6 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         size_button = Rect::default();
         remove_button = Rect::default();
         save_button = Rect::default();
-        cancel_button = Rect::default();
     }
     let empty_canvas = canvas.height < 5;
     let visible_rows =
@@ -563,7 +555,6 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         size_button,
         remove_button,
         save_button,
-        cancel_button,
         notice_area: None,
         detail_summary_area,
         detail_trend_area,
@@ -621,7 +612,6 @@ pub fn system_status_hit_test(
         (l.size_button, SystemStatusHitTarget::Size),
         (l.remove_button, SystemStatusHitTarget::Remove),
         (l.save_button, SystemStatusHitTarget::Save),
-        (l.cancel_button, SystemStatusHitTarget::Cancel),
     ] {
         if rect_contains(a, x, y) {
             return Some(t);

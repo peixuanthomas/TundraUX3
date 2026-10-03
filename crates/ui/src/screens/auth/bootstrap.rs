@@ -25,18 +25,10 @@ pub fn bootstrap_viewport(main: Rect, model: &BootstrapAdminViewModel) -> super:
     super::auth_viewport(main, 10, model.scroll_offset)
 }
 
-pub fn bootstrap_action_areas(main: Rect) -> [Rect; 2] {
+pub fn bootstrap_submit_area(main: Rect) -> Rect {
     let inner = Surface::new().bordered(true).inner(main);
     let y = inner.bottom().saturating_sub(1);
-    [
-        Rect::new(inner.x, y, inner.width / 2, u16::from(inner.height > 0)),
-        Rect::new(
-            inner.x + inner.width / 2,
-            y,
-            inner.width - inner.width / 2,
-            u16::from(inner.height > 0),
-        ),
-    ]
+    Rect::new(inner.x, y, inner.width, u16::from(inner.height > 0))
 }
 
 fn render_bootstrap_unscrolled(
@@ -84,11 +76,11 @@ fn render_bootstrap_unscrolled(
         model.focused_field == AuthField::Password,
         theme,
     );
-    let [submit, exit] = bootstrap_action_areas(area);
-    Button::new("bootstrap.submit", i18n::tr!("ui-auth-touch-create-admin"))
-        .render_inline_frame(frame, submit, theme);
-    Button::new("bootstrap.exit", i18n::tr!("ui-auth-touch-exit"))
-        .render_inline_frame(frame, exit, theme);
+    Button::new("bootstrap.submit", i18n::tr!("ui-auth-touch-create-admin")).render_inline_frame(
+        frame,
+        bootstrap_submit_area(area),
+        theme,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

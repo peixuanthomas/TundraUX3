@@ -18,7 +18,6 @@ ui-clock-seconds = 秒
 ui-clock-touch-manage = 管理
 ui-clock-touch-help = 管理：删除/强提醒
 ui-clock-touch-cancel = 取消
-ui-clock-touch-back = 返回
 ui-clock-touch-new = 新建
 ui-clock-touch-alarm = 闹钟
 ui-clock-touch-timer = 倒计时

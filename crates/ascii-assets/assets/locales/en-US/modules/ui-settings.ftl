@@ -51,4 +51,3 @@ ui-settings-bluetooth = Bluetooth
 ui-settings-bluetooth-description = Bluetooth devices, pairing and connections
 ui-settings-touch-apply = Apply
 ui-settings-touch-cancel = Cancel
-ui-settings-touch-back = Back

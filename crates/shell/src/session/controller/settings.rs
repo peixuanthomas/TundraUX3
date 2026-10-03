@@ -323,7 +323,6 @@ impl ShellSession {
         };
         let layout = ui::settings_layout(app_area, &model);
         match ui::settings_hit_test(&layout, coordinates) {
-            Some(ui::SettingsHitTarget::Back) => self.close_settings(),
             Some(ui::SettingsHitTarget::OverlayApply) => {
                 self.handle_settings_key(&KeyInput::new(InputKey::Enter), platform)
             }

@@ -339,8 +339,7 @@ impl ShellSession {
     }
     fn logs_main_area(&self) -> Option<Rect> {
         match self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)) {
-            ui::ShellLayout::Full { main, .. } => Some(main),
-            _ => Some(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)),
+            ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => Some(main),
         }
     }
     fn logs_move(&mut self, delta: isize) {

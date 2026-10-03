@@ -130,6 +130,11 @@ fn default_admin_actions_protect_the_last_enabled_administrator() {
         None,
     );
 
+    assert_eq!(model.actions.len(), 6);
+    assert!(
+        model.actions.iter().all(|action| action.shortcut.is_some()),
+        "page actions must contain account operations only"
+    );
     for action in [
         UserManagementAction::ToggleEnabled,
         UserManagementAction::ToggleRole,

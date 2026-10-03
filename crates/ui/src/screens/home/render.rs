@@ -14,46 +14,14 @@ const HOME_TILE_MIN_HEIGHT: u16 = 3;
 const HOME_TILE_GAP: u16 = crate::SpringStyle::CARD_GAP;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HomeToolbarAction {
-    OpenSelected,
-    Launcher,
-    Exit,
-}
-
-impl HomeToolbarAction {
-    fn label(self) -> String {
-        match self {
-            Self::OpenSelected => i18n::tr!("ui-home-open-button"),
-            Self::Launcher => i18n::tr!("ui-home-launcher-button"),
-            Self::Exit => i18n::tr!("ui-home-exit-button"),
-        }
-    }
-
-    fn description(self) -> String {
-        match self {
-            Self::OpenSelected => i18n::tr!("ui-home-open-description"),
-            Self::Launcher => i18n::tr!("ui-home-launcher-description"),
-            Self::Exit => i18n::tr!("ui-home-exit-description"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HomeItemLayout {
     pub index: usize,
-    pub area: Rect,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HomeControlLayout {
-    pub action: HomeToolbarAction,
     pub area: Rect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HomeLayout {
     pub items: Vec<HomeItemLayout>,
-    pub controls: Vec<HomeControlLayout>,
     pub scrollbar: Option<Rect>,
     pub visible_start: usize,
     pub visible_capacity: usize,
@@ -67,12 +35,6 @@ impl HomeLayout {
         self.items
             .iter()
             .find_map(|item| rect_contains(item.area, coordinates).then_some(item.index))
-    }
-
-    pub fn control_at(&self, coordinates: (u16, u16)) -> Option<HomeToolbarAction> {
-        self.controls
-            .iter()
-            .find_map(|control| rect_contains(control.area, coordinates).then_some(control.action))
     }
 }
 
@@ -206,29 +168,6 @@ fn render_user_main(
         }
     }
 
-    for control in &layout.controls {
-        let mut button = Button::new(
-            format!("home.toolbar.{:?}", control.action),
-            truncate_to_terminal_width(&control.action.label(), usize::from(control.area.width)),
-        );
-        button.set_disabled(home.entries().is_empty() && control.action != HomeToolbarAction::Exit);
-        button.render_borderless_frame(frame, control.area, theme);
-        if control.area.height > 1 {
-            frame.render_widget(
-                Paragraph::new(truncate_to_terminal_width(
-                    &control.action.description(),
-                    usize::from(control.area.width),
-                ))
-                .style(theme.muted_style()),
-                Rect::new(
-                    control.area.x,
-                    control.area.y.saturating_add(1),
-                    control.area.width,
-                    1,
-                ),
-            );
-        }
-    }
     if let Some(area) = layout.scrollbar {
         Scrollbar::new(
             layout.scroll_content_len,
@@ -307,21 +246,6 @@ fn home_layout_for_entries(
     selected: usize,
     requested: usize,
 ) -> HomeLayout {
-    let controls_area = home_controls_area(main);
-    let control_width = controls_area.width.min(32);
-    let control_height = controls_area.height.min(2);
-    let controls = [HomeToolbarAction::Exit]
-        .into_iter()
-        .filter_map(|action| {
-            let area = Rect::new(
-                controls_area.right().saturating_sub(control_width),
-                controls_area.y,
-                control_width,
-                control_height,
-            );
-            (area.width > 0 && area.height > 0).then_some(HomeControlLayout { action, area })
-        })
-        .collect();
     let mut grid = home_entry_grid_area(main);
     let mut columns = home_entry_column_count(grid.width, entry_count);
     let max_rows = usize::from(
@@ -382,7 +306,6 @@ fn home_layout_for_entries(
     };
     HomeLayout {
         items,
-        controls,
         scrollbar,
         visible_start: start,
         visible_capacity: capacity,
@@ -465,26 +388,17 @@ fn home_summary_area(main: Rect) -> Rect {
     )
 }
 
-fn home_controls_area(main: Rect) -> Rect {
-    let content = home_content_area(main);
-    let height = 2_u16.min(content.height.saturating_sub(HOME_SUMMARY_HEIGHT));
-    Rect::new(
-        content.x,
-        content
-            .y
-            .saturating_add(content.height.saturating_sub(height)),
-        content.width,
-        height,
-    )
-}
-
 fn home_entry_grid_area(main: Rect) -> Rect {
     let content = home_content_area(main);
-    let controls = home_controls_area(main);
     let y = content
         .y
         .saturating_add(HOME_SUMMARY_HEIGHT.min(content.height));
-    Rect::new(content.x, y, content.width, controls.y.saturating_sub(y))
+    Rect::new(
+        content.x,
+        y,
+        content.width,
+        content.bottom().saturating_sub(y),
+    )
 }
 
 fn home_entry_column_count(width: u16, entry_count: usize) -> usize {

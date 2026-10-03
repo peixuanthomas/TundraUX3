@@ -560,7 +560,6 @@ impl ShellSession {
                 ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
                 ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
                 ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
-                ui::LauncherToolbarAction::Back => self.close_launcher(),
             },
             Some(ui::LauncherHitTarget::Confirm) => self.confirm_launcher_action(platform),
             Some(ui::LauncherHitTarget::Cancel) => self.launcher_pending_confirmation = None,

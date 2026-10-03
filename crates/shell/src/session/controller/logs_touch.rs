@@ -84,7 +84,6 @@ impl ShellSession {
             ui::LogsHitTarget::RelatedEvents => {
                 self.handle_logs_key(&KeyInput::new(InputKey::Char('e')))
             }
-            ui::LogsHitTarget::Back => self.handle_logs_key(&KeyInput::new(InputKey::Escape)),
             _ => {}
         }
     }

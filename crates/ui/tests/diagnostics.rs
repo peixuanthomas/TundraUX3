@@ -36,6 +36,22 @@ fn long_diagnostic_details_can_show_the_last_line_with_a_scrollbar() {
 }
 
 #[test]
+fn diagnostic_toolbar_keeps_operations_without_a_page_escape_button() {
+    let mut model = health_model();
+    model.can_repair = true;
+    let controls = ui::diagnostics_toolbar_buttons(Rect::new(0, 0, 108, 5), &model);
+    assert_eq!(
+        controls.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(),
+        vec!['r', 'c', 'f', 'a', 'x']
+    );
+    assert!(controls.iter().all(|(key, _, _)| *key != '\u{1b}'));
+    model.can_repair = false;
+    assert_eq!(ui::diagnostics_toolbar_height(38, &model), 1);
+    let layout = diagnostics_layout(Rect::new(0, 0, 40, 20), &model);
+    assert_eq!(layout.footer.height, 1);
+}
+
+#[test]
 fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targets() {
     let mut model = health_model();
     model.checks = (0..12)

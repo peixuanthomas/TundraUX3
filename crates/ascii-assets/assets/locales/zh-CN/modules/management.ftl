@@ -104,7 +104,6 @@ management-background-question = { $application } 正在等待输入。请从启
 management-config-needs-answer = 软件安装正在写入配置，不能强制取消。请选择保留当前文件或采用软件包版本。
 management-connection-lost = 任务连接未完成或已断开：{ $reason }。这不代表后台操作失败；请先重新连接核对结果，再决定是否重试。
 
-management-touch-back = 返回
 management-touch-refresh = 刷新列表
 management-touch-search = 聚焦搜索
 management-touch-apply = 应用搜索

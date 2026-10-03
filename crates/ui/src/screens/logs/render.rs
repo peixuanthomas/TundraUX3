@@ -33,9 +33,6 @@ pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
 }
 
 pub(super) fn control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> bool {
-    if target == LogsHitTarget::Back {
-        return true;
-    }
     if unavailable_reason(model).is_some() || model.loading {
         return false;
     }

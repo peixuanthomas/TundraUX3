@@ -10,7 +10,9 @@ fn compact_toolbar_keeps_every_basic_touch_action_visible() {
     for size in [(64, 14), (60, 18), (80, 24)] {
         let area = Rect::new(0, 0, size.0, size.1);
         let layout = management_layout(area, &model);
-        assert_eq!(layout.controls.len(), 7);
+        assert_eq!(layout.controls.len(), 6);
+        assert_eq!(layout.controls[0].0, ManagementControl::Refresh);
+        assert_eq!(layout.controls[0].1.x, area.x);
         assert!(layout.controls.iter().all(|(_, rect)| rect.width > 0
             && rect.height > 0
             && rect.right() <= area.right()

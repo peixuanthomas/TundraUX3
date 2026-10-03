@@ -17,7 +17,6 @@ ui-system-status-edit = Edit
 ui-system-status-refreshing = Refreshing
 ui-system-status-refresh = Refresh
 ui-system-status-widget-size = Widget size
-ui-system-status-esc-dashboard = Esc Dashboard
 ui-system-status-no-data = No data
 ui-system-status-this-metric-is-not-available = This metric is not available.
 ui-system-status-esc-dashboard-r-refresh = Esc Dashboard · R Refresh

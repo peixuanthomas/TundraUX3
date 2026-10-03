@@ -103,7 +103,6 @@ ui-auth-timezone-item = { $name } ({ $id })
 
 ui-auth-timezone-description = { $name } - { $description }
 ui-auth-touch-sign-in = 登录
-ui-auth-touch-exit = 退出
 ui-auth-touch-back = 上一步
 ui-auth-touch-continue = 继续
 ui-auth-touch-apply = 应用

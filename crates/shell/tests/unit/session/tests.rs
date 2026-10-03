@@ -1084,17 +1084,40 @@ fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
 
     state.begin_system_status_dashboard_edit();
     state.system_status_selected_widget = None;
+    let first_edit_focus = state.system_status_dashboard_focus_order()[0];
     state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
     state.move_system_status_dashboard_focus(1);
     assert_eq!(
+        state.system_status_dashboard_focus, first_edit_focus,
+        "disabled Size, Remove, and clean Save are skipped before wrapping"
+    );
+    assert!(state.system_status_selected_widget.is_some());
+    state.move_system_status_dashboard_focus(-1);
+    assert_eq!(
         state.system_status_dashboard_focus,
-        ui::SystemStatusDashboardFocus::Cancel,
-        "disabled Size, Remove, and clean Save are skipped"
+        ui::SystemStatusDashboardFocus::Remove,
+        "focusing a widget enables Size and Remove; clean Save remains skipped"
+    );
+    state.system_status_selected_widget = None;
+    state.system_status_dashboard_focus = first_edit_focus;
+    state.move_system_status_dashboard_focus(-1);
+    assert_eq!(
+        state.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Add,
+        "without a selected widget reverse wrapping skips Size, Remove, and clean Save"
     );
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert!(
+        state.system_status_add_picker.is_some(),
+        "focused Add activates"
+    );
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert!(state.system_status_add_picker.is_none());
+    assert!(state.system_status_dashboard_draft.is_some());
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert!(
         state.system_status_dashboard_draft.is_none(),
-        "focused Cancel activates"
+        "Escape cancels clean dashboard edits"
     );
 }
 
@@ -1482,10 +1505,7 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
         ShellCommand::SystemStatusSaveDashboard
     );
     state.apply_input_at(
-        InputEvent::mouse_down(
-            PointerButton::Left,
-            (layout.cancel_button.x, layout.cancel_button.y),
-        ),
+        InputEvent::from_key_label("Esc"),
         started_at + Duration::from_millis(80),
     );
     assert!(state.system_status_discard_dialog);
@@ -4065,35 +4085,38 @@ fn command_line_keeps_the_shell_clock_button_visible_and_clickable() {
 
 #[test]
 fn back_button_routes_the_same_escape_for_every_screen() {
-    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    set_test_auth_role(&mut state, UserRole::Admin);
-    while state.notification_dismiss_active_modal_without_response() {}
-    for screen in [
-        ShellScreen::FirstRunSetup,
-        ShellScreen::Login,
-        ShellScreen::BootstrapAdmin,
-        ShellScreen::Home,
-        ShellScreen::Clock,
-        ShellScreen::Diagnostics,
-        ShellScreen::SystemStatus,
-        ShellScreen::Logs,
-        ShellScreen::Explorer,
-        ShellScreen::Launcher,
-        ShellScreen::Editor,
-        ShellScreen::Settings,
-        ShellScreen::UserManagement,
-        ShellScreen::ExitConfirm,
-        ShellScreen::CommandLine,
-    ] {
-        state.screen_stack = vec![ShellScreen::Home, screen];
-        state.refresh_hit_map();
-        let back = hit_region_center(&state, ShellComponent::BackButton);
-        let escape = state.route_input_at(InputEvent::key(InputKey::Escape), Instant::now());
-        let click = state.route_input_at(
-            InputEvent::mouse_down(PointerButton::Left, back),
-            Instant::now(),
-        );
-        assert_eq!(click, escape, "{screen:?}");
+    for size in [(120, 40), (49, 11), (30, 8)] {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), size);
+        set_test_auth_role(&mut state, UserRole::Admin);
+        while state.notification_dismiss_active_modal_without_response() {}
+        for screen in [
+            ShellScreen::FirstRunSetup,
+            ShellScreen::Login,
+            ShellScreen::BootstrapAdmin,
+            ShellScreen::Home,
+            ShellScreen::Clock,
+            ShellScreen::Diagnostics,
+            ShellScreen::SystemStatus,
+            ShellScreen::Logs,
+            ShellScreen::Management,
+            ShellScreen::Explorer,
+            ShellScreen::Launcher,
+            ShellScreen::Editor,
+            ShellScreen::Settings,
+            ShellScreen::UserManagement,
+            ShellScreen::ExitConfirm,
+            ShellScreen::CommandLine,
+        ] {
+            state.screen_stack = vec![ShellScreen::Home, screen];
+            state.refresh_hit_map();
+            let back = hit_region_center(&state, ShellComponent::BackButton);
+            let escape = state.route_input_at(InputEvent::key(InputKey::Escape), Instant::now());
+            let click = state.route_input_at(
+                InputEvent::mouse_down(PointerButton::Left, back),
+                Instant::now(),
+            );
+            assert_eq!(click, escape, "{screen:?} at {size:?}");
+        }
     }
 }
 
@@ -4136,9 +4159,9 @@ fn back_button_cancels_the_overlay_before_leaving_the_page_and_only_activates_on
 }
 
 #[test]
-fn back_button_hit_region_tracks_resize_and_disappears_in_compact_mode() {
+fn back_button_hit_region_tracks_resize_including_compact_mode() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    for (width, height) in [(80, 24), (50, 12), (49, 12), (120, 40)] {
+    for (width, height) in [(80, 24), (50, 12), (49, 12), (30, 8), (120, 40)] {
         state.apply_input(InputEvent::Resize { width, height });
         let layout = ui::ShellFrameLayout::new(
             Rect::new(0, 0, width, height),
@@ -4151,6 +4174,7 @@ fn back_button_hit_region_tracks_resize_and_disappears_in_compact_mode() {
             .iter()
             .find(|region| region.component == ShellComponent::BackButton);
         assert_eq!(hit.map(|region| region.area), layout.back_button);
+        assert!(hit.is_some());
         if let Some(region) = hit {
             for position in region.area.positions() {
                 assert_eq!(
@@ -5419,7 +5443,6 @@ fn linux_ordinary_user_has_no_create_role_lock_or_delete_action() {
         vec![
             ui::UserManagementAction::EditInfo,
             ui::UserManagementAction::SetPassword,
-            ui::UserManagementAction::Back
         ]
     );
 }

@@ -8,9 +8,3 @@ ui-home-unknown-user = 未知用户
 ui-home-logout-button = { "[" }注销]
 
 ui-home-current-user = 用户：{ $user }
-ui-home-open-button = { "[" }Enter 打开]
-ui-home-launcher-button = { "[" }启动器]
-ui-home-exit-button = { "[" }Q 退出与电源]
-ui-home-open-description = 打开选中的入口
-ui-home-launcher-description = 应用、日志和系统工具
-ui-home-exit-description = 退出、重启或关机

@@ -17,12 +17,12 @@ fn compose(
     let layout = ShellFrameLayout::new(area, chrome.status.time_button_label.as_deref(), &context);
     components::Surface::new().render_frame(frame, area, &context);
     if layout.is_compact() && !content.renders_in_compact() {
-        render_compact_home(frame, area, chrome, &context.compatibility_theme());
+        render_compact_home(frame, layout.main, chrome, &context.compatibility_theme());
     } else {
         content.render_content(frame, &layout, &context, home_icons, launcher_icons);
         content.render_overlay(frame, &layout, &context);
-        render_shell_chrome(frame, &layout, chrome, &context);
     }
+    render_shell_chrome(frame, &layout, chrome, &context);
     layout
 }
 

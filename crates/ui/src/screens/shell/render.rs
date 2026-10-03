@@ -145,23 +145,33 @@ pub fn render_shell_chrome(
     chrome: &ShellChromeViewModel,
     context: &RenderContext,
 ) {
-    if let ShellLayout::Compact(area) = layout.shell {
-        if area.is_empty() || (chrome.status.error.is_none() && chrome.status.toast.is_none()) {
+    if layout.is_compact() {
+        if layout.bounds.is_empty() {
             return;
         }
         let theme = context.compatibility_theme();
-        let (message, style) = status_presentation(&chrome.status, &theme);
-        let line = Rect::new(area.x, area.y, area.width, 1);
-        // Compact pages use the whole terminal. Paint the shell notification
-        // after their content and dialogs so the highest-priority text survives.
+        let (message, style) = if chrome.status.error.is_some() || chrome.status.toast.is_some() {
+            status_presentation(&chrome.status, &theme)
+        } else {
+            (chrome.app_name.clone(), theme.title_style())
+        };
+        let width = layout.back_button.map_or(layout.bounds.width, |button| {
+            button.x.saturating_sub(layout.bounds.x)
+        });
+        let line = Rect::new(layout.bounds.x, layout.bounds.y, width, 1);
         frame.render_widget(Clear, line);
         frame.render_widget(
             Paragraph::new(Line::styled(
-                truncate_status_text(&message, area.width),
+                truncate_status_text(&message, line.width),
                 style,
             )),
             line,
         );
+        if let Some(area) = layout.back_button {
+            let mut button = Button::new("shell.back", crate::assets::BACK_ICON.trim());
+            button.state.hovered = chrome.back_button_hovered;
+            button.render_borderless_frame(frame, area, &theme);
+        }
         return;
     }
     let ShellLayout::Full { top, status, .. } = layout.shell else {

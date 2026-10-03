@@ -748,7 +748,6 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             ui::LauncherToolbarAction::Remove,
             ui::LauncherToolbarAction::Refresh,
             ui::LauncherToolbarAction::ToggleView,
-            ui::LauncherToolbarAction::Back,
         ]
     );
 

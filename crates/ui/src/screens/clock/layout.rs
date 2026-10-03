@@ -56,7 +56,6 @@ pub struct ClockPageLayout {
     pub panel: Rect,
     pub new_button: Rect,
     pub manage_button: Rect,
-    pub back_button: Rect,
     pub help: Rect,
     pub scrollbar: Option<Rect>,
     pub alarms_heading: Rect,
@@ -154,13 +153,14 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     };
 
     let mut panel_inner = inset_rect(panel, 1);
-    let initial_capacity = usize::from(panel_inner.height.saturating_sub(
-        if model.is_read_only() || panel_inner.height < 7 {
+    let initial_capacity =
+        usize::from(panel_inner.height.saturating_sub(if model.is_read_only() {
+            2
+        } else if panel_inner.height < 7 {
             3
         } else {
             4
-        },
-    ));
+        }));
     let scrollbar = (model.alarms.len().saturating_add(model.countdowns.len()) > initial_capacity
         && initial_capacity > 0
         && panel_inner.width > 1
@@ -168,9 +168,9 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         .then(|| {
             Rect::new(
                 panel_inner.right() - 1,
-                panel_inner.y + 1,
+                panel_inner.y + u16::from(!model.is_read_only()),
                 1,
-                panel_inner.height - 1,
+                panel_inner.height - u16::from(!model.is_read_only()),
             )
         });
     panel_inner.width = panel_inner
@@ -179,11 +179,11 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     let new_button = if model.is_read_only() {
         Rect::new(panel_inner.x, panel_inner.y, 0, 0)
     } else {
-        Rect::new(panel_inner.x, panel_inner.y, panel_inner.width / 3, 1)
+        Rect::new(panel_inner.x, panel_inner.y, panel_inner.width / 2, 1)
     };
     let condensed_panel = panel_inner.height < 7;
     let reserved_lines = if model.is_read_only() {
-        3
+        2
     } else if condensed_panel {
         3
     } else {
@@ -195,22 +195,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         Rect::new(
             new_button.right(),
             new_button.y,
-            new_button.width,
-            new_button.height,
-        )
-    };
-    let back_button = if model.is_read_only() {
-        Rect::new(
-            panel_inner.right().saturating_sub(8),
-            panel_inner.y,
-            panel_inner.width.min(8),
-            u16::from(panel_inner.height > 0),
-        )
-    } else {
-        Rect::new(
-            manage_button.right(),
-            new_button.y,
-            panel_inner.width - new_button.width - manage_button.width,
+            panel_inner.width.saturating_sub(new_button.width),
             new_button.height,
         )
     };
@@ -237,7 +222,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     let alarms_heading = line_in_rect(
         panel_inner,
         panel_inner.y.saturating_add(if model.is_read_only() {
-            1
+            0
         } else if condensed_panel {
             1
         } else {
@@ -286,7 +271,6 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         panel,
         new_button,
         manage_button,
-        back_button,
         help,
         scrollbar,
         alarms_heading,

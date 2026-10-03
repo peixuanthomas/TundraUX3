@@ -17,7 +17,6 @@ ui-system-status-edit = 编辑
 ui-system-status-refreshing = 正在刷新
 ui-system-status-refresh = 刷新
 ui-system-status-widget-size = 组件大小
-ui-system-status-esc-dashboard = Esc 仪表盘
 ui-system-status-no-data = 没有数据
 ui-system-status-this-metric-is-not-available = 此指标不可用。
 ui-system-status-esc-dashboard-r-refresh = Esc 仪表盘 · R 刷新

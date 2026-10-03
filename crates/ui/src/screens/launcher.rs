@@ -113,7 +113,6 @@ pub enum LauncherToolbarAction {
     Remove,
     Refresh,
     ToggleView,
-    Back,
 }
 
 impl LauncherToolbarAction {
@@ -123,7 +122,6 @@ impl LauncherToolbarAction {
             Self::Remove => i18n::tr!("ui-launcher-remove"),
             Self::Refresh => i18n::tr!("ui-launcher-refresh"),
             Self::ToggleView => i18n::tr!("ui-launcher-view"),
-            Self::Back => i18n::tr!("ui-launcher-back"),
         }
     }
 
@@ -133,7 +131,6 @@ impl LauncherToolbarAction {
             Self::Remove => "Del",
             Self::Refresh => "R",
             Self::ToggleView => "V",
-            Self::Back => "Esc",
         }
     }
 
@@ -143,7 +140,6 @@ impl LauncherToolbarAction {
             Self::Remove => i18n::tr!("ui-launcher-remove-description"),
             Self::Refresh => i18n::tr!("ui-launcher-refresh-description"),
             Self::ToggleView => i18n::tr!("ui-launcher-view-description"),
-            Self::Back => i18n::tr!("ui-launcher-back-description"),
         }
     }
 }
@@ -281,10 +277,6 @@ impl LauncherViewModel {
         ));
         toolbar.push(LauncherToolbarButtonViewModel::new(
             LauncherToolbarAction::ToggleView,
-            true,
-        ));
-        toolbar.push(LauncherToolbarButtonViewModel::new(
-            LauncherToolbarAction::Back,
             true,
         ));
 

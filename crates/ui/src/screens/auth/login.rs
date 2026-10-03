@@ -23,7 +23,6 @@ pub struct LoginLayout {
     pub password_visibility: Rect,
     pub help: Rect,
     pub submit: Rect,
-    pub exit: Rect,
 }
 
 pub fn login_viewport(main: Rect, model: &LoginViewModel) -> super::AuthViewport {
@@ -90,16 +89,11 @@ fn render_login_unscrolled(
         model.focused_field == LoginField::PasswordVisibility,
         theme,
     );
-    for (id, label, area) in [
-        (
-            "login.submit",
-            i18n::tr!("ui-auth-touch-sign-in"),
-            layout.submit,
-        ),
-        ("login.exit", i18n::tr!("ui-auth-touch-exit"), layout.exit),
-    ] {
-        Button::new(id, label).render_inline_frame(frame, area, theme);
-    }
+    Button::new("login.submit", i18n::tr!("ui-auth-touch-sign-in")).render_inline_frame(
+        frame,
+        layout.submit,
+        theme,
+    );
     if layout.help.height > 0 {
         let mut lines = vec![
             Line::from(i18n::tr!(
@@ -384,18 +378,7 @@ pub fn login_layout(main: Rect) -> LoginLayout {
     let actions_y = form.bottom().saturating_sub(1);
     let help_height = actions_y.saturating_sub(help_y);
     let help = Rect::new(form.x, help_y, form.width, help_height);
-    let submit = Rect::new(
-        form.x,
-        actions_y,
-        form.width / 2,
-        u16::from(form.height > 0),
-    );
-    let exit = Rect::new(
-        submit.right(),
-        actions_y,
-        form.width - submit.width,
-        submit.height,
-    );
+    let submit = Rect::new(form.x, actions_y, form.width, u16::from(form.height > 0));
 
     LoginLayout {
         user_list,
@@ -404,7 +387,6 @@ pub fn login_layout(main: Rect) -> LoginLayout {
         password_visibility,
         help,
         submit,
-        exit,
     }
 }
 

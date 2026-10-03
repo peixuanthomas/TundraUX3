@@ -94,33 +94,19 @@ pub fn setup_viewport(main: Rect, model: &SetupViewModel) -> super::AuthViewport
     super::auth_viewport(main, minimum, model.scroll_offset)
 }
 
-pub fn setup_navigation_areas(main: Rect) -> [Rect; 3] {
+pub fn setup_navigation_areas(main: Rect) -> [Rect; 2] {
     let inner = setup_inner_area(main);
     let y = inner.bottom().saturating_sub(1);
-    let width = inner.width / 3;
+    let width = inner.width / 2;
     [
         Rect::new(inner.x, y, width, u16::from(inner.height > 0)),
-        Rect::new(inner.x + width, y, width, u16::from(inner.height > 0)),
         Rect::new(
-            inner.x + width * 2,
+            inner.x + width,
             y,
-            inner.width - width * 2,
+            inner.width - width,
             u16::from(inner.height > 0),
         ),
     ]
-}
-
-pub fn setup_exit_area(main: Rect, step: SetupStep) -> Rect {
-    let row = match step {
-        SetupStep::Language => return setup_navigation_areas(main)[2],
-        SetupStep::Timezone => {
-            return setup_navigation_areas(setup_timezone_controls_area(main))[2];
-        }
-        SetupStep::Admin => setup_admin_line_area(main, SETUP_ADMIN_SUBMIT_LINE, 1),
-        SetupStep::Appearance => setup_line_area(main, SETUP_APPEARANCE_SUBMIT_LINE, 1),
-    };
-    let width = row.width.min(12);
-    Rect::new(row.right().saturating_sub(width), row.y, width, row.height)
 }
 
 pub fn setup_timezone_scrollbar(main: Rect, model: &SetupViewModel) -> Option<Rect> {
@@ -174,7 +160,7 @@ fn render_setup_unscrolled(
         render_setup_controls(frame, area, area, model, context);
     }
     if matches!(model.step, SetupStep::Language | SetupStep::Timezone) {
-        let [back, next, _] = setup_navigation_areas(if model.step == SetupStep::Timezone {
+        let [back, next] = setup_navigation_areas(if model.step == SetupStep::Timezone {
             setup_timezone_controls_area(area)
         } else {
             area
@@ -186,11 +172,6 @@ fn render_setup_unscrolled(
         Button::new("setup.continue", i18n::tr!("ui-auth-touch-continue"))
             .render_inline_frame(frame, next, theme);
     }
-    Button::new("setup.exit", i18n::tr!("ui-auth-touch-exit")).render_inline_frame(
-        frame,
-        setup_exit_area(area, model.step),
-        &context.compatibility_theme(),
-    );
 }
 
 fn render_setup_controls(
@@ -1085,11 +1066,7 @@ pub fn setup_admin_field_area(main: Rect, field: SetupField) -> Rect {
         | SetupField::AppearanceAccentCustom
         | SetupField::AppearanceSubmit => (SETUP_ADMIN_USERNAME_LINE, SETUP_ADMIN_FIELD_HEIGHT),
     };
-    let mut area = setup_admin_line_area(main, line, height);
-    if field == SetupField::Submit {
-        area.width = area.width.saturating_sub(12);
-    }
-    area
+    setup_admin_line_area(main, line, height)
 }
 
 pub fn setup_appearance_field_area(main: Rect, field: SetupField) -> Rect {
@@ -1107,11 +1084,7 @@ pub fn setup_appearance_field_area(main: Rect, field: SetupField) -> Rect {
         SetupField::AppearanceSubmit => (SETUP_APPEARANCE_SUBMIT_LINE, 1),
         _ => (SETUP_APPEARANCE_SHAPE_LINE, 0),
     };
-    let mut area = setup_line_area(main, line, height);
-    if field == SetupField::AppearanceSubmit {
-        area.width = area.width.saturating_sub(12);
-    }
-    area
+    setup_line_area(main, line, height)
 }
 
 pub fn setup_appearance_shape_option_areas(main: Rect) -> [(crate::BorderShape, Rect); 2] {

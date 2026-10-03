@@ -5,12 +5,10 @@ ui-launcher-remove = Remove
 ui-launcher-refresh = Refresh
 ui-launcher-view = View
 ui-launcher-open = Open
-ui-launcher-back = Back
 ui-launcher-open-description = Open the selected app
 ui-launcher-remove-description = Keep the file on disk
 ui-launcher-refresh-description = Check application files
 ui-launcher-view-description = Switch icons and list
-ui-launcher-back-description = Return to previous page
 ui-launcher-name = Name
 ui-launcher-type = Type
 ui-launcher-integrity = Integrity
@@ -27,6 +25,6 @@ ui-launcher-unsupported = Unsupported
 ui-launcher-title = Launcher · { $mode }
 
 ui-launcher-item-count = { $count ->
-        [one] { $count } item · Enter launch · Esc Home
-       *[other] { $count } items · Enter launch · Esc Home
+        [one] { $count } item · Enter launch · Esc back
+       *[other] { $count } items · Enter launch · Esc back
     }

@@ -203,7 +203,7 @@ fn short_login_reserves_space_at_the_stacked_layout_boundary() {
 }
 
 #[test]
-fn home_scrolling_keeps_tail_entries_and_touch_controls_reachable() {
+fn home_scrolling_keeps_tail_entries_and_uses_the_freed_footer_space() {
     let entries = (0..30)
         .map(|index| ShellEntry::new(format!("App {index}"), "Open this app"))
         .collect();
@@ -213,21 +213,13 @@ fn home_scrolling_keeps_tail_entries_and_touch_controls_reachable() {
     let layout = ui::home_layout(main, &home);
     assert!(layout.scrollbar.is_some());
     assert!(layout.items.iter().any(|item| item.index == 29));
-    assert!(layout.controls.len() == 1);
-    assert_eq!(layout.controls[0].action, ui::HomeToolbarAction::Exit);
+    assert_eq!(layout.scrollbar.unwrap().bottom(), main.bottom() - 1);
     for item in &layout.items {
         assert!(item.area.x >= main.x && item.area.right() <= main.right());
         assert!(item.area.y >= main.y && item.area.bottom() <= main.bottom());
         assert_eq!(
             layout.entry_at((item.area.x, item.area.y)),
             Some(item.index)
-        );
-    }
-    for control in &layout.controls {
-        assert!(control.area.right() <= main.right() && control.area.bottom() <= main.bottom());
-        assert_eq!(
-            layout.control_at((control.area.x, control.area.y)),
-            Some(control.action)
         );
     }
 }
@@ -398,7 +390,7 @@ fn compact_home_clock_login_bootstrap_and_user_management_show_highest_priority_
 }
 
 #[test]
-fn extremely_small_compact_layout_uses_borderless_notification_fallback() {
+fn extremely_small_compact_layout_keeps_escape_above_borderless_notification() {
     let home = HomeViewModel::user("User", "Now", Vec::new());
     let chrome = compact_alert_chrome("Home");
     let mut terminal = Terminal::new(TestBackend::new(2, 2)).expect("test terminal");
@@ -415,7 +407,8 @@ fn extremely_small_compact_layout_uses_borderless_notification_fallback() {
         })
         .expect("render tiny compact notification");
 
-    assert!(terminal_output(&terminal).contains("[E"));
+    assert!(buffer_row_text(&terminal, 0, 0, 2).contains('◀'));
+    assert_eq!(buffer_row_text(&terminal, 0, 1, 2), "[E");
 }
 
 #[test]

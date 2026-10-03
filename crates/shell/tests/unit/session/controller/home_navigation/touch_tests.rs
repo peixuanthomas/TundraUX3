@@ -62,25 +62,34 @@ fn draw_buttons(state: &mut ShellSession) {
 }
 
 #[test]
-fn home_exit_button_requires_matching_release_and_cancels_after_drag() {
-    let mut state = state((72, 20));
+fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
+    // Three card rows need 13 cells: three 3-cell cards and two 2-cell gaps.
+    // At this height they fit only after the old 2-cell Exit footer is removed.
+    let mut state = state((72, 22));
     draw_buttons(&mut state);
-    let area = ui::home_layout(main_area(&state), &state.to_home_view_model()).controls[0].area;
-    let point = (area.x + 1, area.y);
-    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (0, 0)));
-    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(
+        state
+            .button_regions
+            .iter()
+            .all(|button| !button.id.as_str().starts_with("home.toolbar."))
+    );
+    let model = state.to_home_view_model();
+    let layout = ui::home_layout(main_area(&state), &model);
+    assert_eq!(layout.items.len(), model.entries().len());
+    assert!(layout.scrollbar.is_none());
+    assert_eq!(
+        layout.items.last().expect("last Home card").area.bottom(),
+        main_area(&state).bottom() - 1,
+        "the last card uses the space formerly reserved for Exit"
+    );
+    state.apply_input(InputEvent::key(InputKey::Escape));
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
     assert!(!state.shutdown_requested());
 }
 
 #[test]
 fn home_scrollbar_reaches_tail_without_opening_a_card() {
-    let mut state = state((72, 20));
+    let mut state = state((72, 16));
     let main = main_area(&state);
     let layout = ui::home_layout(main, &state.to_home_view_model());
     let track = layout.scrollbar.expect("narrow Home overflows");

@@ -16,17 +16,19 @@ use ui::{
 };
 
 #[test]
-fn short_clock_has_its_own_basic_buttons_and_scrollbar() {
+fn short_clock_keeps_new_manage_and_scrollbar_without_a_page_back() {
     let mut model = clock_model();
     model.alarms = (0..20)
         .map(|id| ClockEntryViewModel::new(id, "Alarm", false))
         .collect();
     let area = Rect::new(0, 0, 30, 10);
     let layout = clock_page_layout(area, &model);
-    for button in [layout.new_button, layout.manage_button, layout.back_button] {
+    for button in [layout.new_button, layout.manage_button] {
         assert!(!button.is_empty());
         assert!(button.right() <= area.right() && button.bottom() <= area.bottom());
     }
+    assert_eq!(layout.new_button.right(), layout.manage_button.x);
+    assert_eq!(layout.manage_button.right(), layout.panel.right() - 2);
     assert!(layout.scrollbar.is_some());
     model.create_dialog = Some(ClockCreateDialogViewModel::default());
     let dialog = clock_page_layout(area, &model).create_dialog.unwrap();

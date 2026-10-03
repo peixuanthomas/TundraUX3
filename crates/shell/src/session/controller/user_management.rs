@@ -785,7 +785,6 @@ impl ShellSession {
             }
             UserManagementAction::ToggleRole => self.cycle_selected_role(),
             UserManagementAction::Delete => self.request_delete_selected_user(),
-            UserManagementAction::Back => self.close_user_management(),
         }
         self.normalize_user_management_focus();
     }
@@ -795,9 +794,6 @@ impl ShellSession {
         action: ui::UserManagementAction,
     ) -> Option<i18n::LocalizedText> {
         use ui::UserManagementAction as Action;
-        if action == Action::Back {
-            return None;
-        }
         #[cfg(target_os = "linux")]
         if self.user_management_job.is_some() {
             return Some(i18n::msg!("shell-linux-accounts-working").into());

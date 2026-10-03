@@ -24,7 +24,6 @@ ui-user-management-no-user-selected = 未选择用户
 ui-user-management-edit-profile = 编辑资料
 ui-user-management-change-password = 修改密码
 ui-user-management-delete-account = 删除账户
-ui-user-management-back = 返回
 ui-user-management-the-last-enabled-administrator-must-remain-available = 必须保留最后一个已启用的管理员账户
 ui-user-management-enable = 启用
 ui-user-management-unlock = 解锁

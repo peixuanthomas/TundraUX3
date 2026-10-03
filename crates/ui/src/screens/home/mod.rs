@@ -3,7 +3,6 @@ mod render;
 
 pub use model::{HomeDisplayMode, HomeViewModel, ShellEntry};
 pub use render::{
-    HomeControlLayout, HomeIconRenderer, HomeItemLayout, HomeLayout, HomeToolbarAction,
-    home_entry_icon_area, home_entry_index_at, home_entry_tile_areas, home_layout,
-    home_logout_area, render_home_content,
+    HomeIconRenderer, HomeItemLayout, HomeLayout, home_entry_icon_area, home_entry_index_at,
+    home_entry_tile_areas, home_layout, home_logout_area, render_home_content,
 };

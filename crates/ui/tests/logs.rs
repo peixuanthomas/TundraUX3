@@ -199,7 +199,7 @@ fn restricted_and_unsupported_sources_hide_rows_and_disable_actions() {
     for control in logs_layout(main_area(), &model).controls {
         assert_eq!(
             logs_hit_test(main_area(), &model, (control.area.x, control.area.y)),
-            (control.target == LogsHitTarget::Back).then_some(control.target)
+            None
         );
     }
 }
@@ -272,16 +272,14 @@ fn narrow_log_toolbar_keeps_all_controls_inside_the_page() {
     for size in [(40, 20), (60, 20), (80, 24)] {
         let area = Rect::new(0, 0, size.0, size.1);
         let layout = logs_layout(area, &model);
-        assert_eq!(layout.controls.len(), 9);
+        assert_eq!(layout.controls.len(), 8);
         assert!(layout.controls.iter().all(|control| control.area.width > 0
             && control.area.height > 0
             && control.area.right() <= area.right()
             && control.area.bottom() <= area.bottom()));
-        assert!(
-            layout
-                .controls
-                .iter()
-                .any(|control| control.target == LogsHitTarget::Back)
+        assert_eq!(
+            layout.controls.last().unwrap().target,
+            LogsHitTarget::RelatedEvents
         );
     }
 }

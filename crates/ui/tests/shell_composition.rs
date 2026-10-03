@@ -87,7 +87,7 @@ fn long_chinese_title_is_clipped_to_top_inner_row() {
     assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
 }
 #[test]
-fn compact_threshold_exposes_no_shell_hit_regions() {
+fn compact_threshold_keeps_escape_above_the_content() {
     for (width, height, compact) in [
         (49, 12, true),
         (50, 11, true),
@@ -97,10 +97,19 @@ fn compact_threshold_exposes_no_shell_hit_regions() {
         let (terminal, layout) = render(&chrome(width, height), &RenderContext::default());
         assert_eq!(layout.is_compact(), compact);
         assert_eq!(layout.time_button.is_none(), compact);
-        assert_eq!(layout.back_button.is_none(), compact);
+        assert!(layout.back_button.is_some());
         assert_eq!(layout.status_message.is_none(), compact);
         if compact {
-            assert!(!row(&terminal, 1).contains("TundraUX"));
+            assert_eq!(layout.main.y, 1);
+            assert_eq!(layout.main.height, height - 1);
+            assert!(row(&terminal, 0).contains("TundraUX"));
+            assert!(row(&terminal, 0).contains("[◀]"));
+            assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
+            assert_eq!(
+                layout.back_button.unwrap().intersection(layout.main).area(),
+                0
+            );
+            assert_eq!(layout.modal_area(), layout.main);
         }
     }
 }

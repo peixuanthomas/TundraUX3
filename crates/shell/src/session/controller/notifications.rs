@@ -1,6 +1,14 @@
 use super::super::*;
 use i18n::LocalizedText;
 impl ShellSession {
+    pub(in crate::session) fn shell_modal_area(&self) -> Rect {
+        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        match self.shell_layout_for(bounds) {
+            ui::ShellLayout::Compact(main) => main,
+            ui::ShellLayout::Full { .. } => bounds,
+        }
+    }
+
     fn cancel_pointer_gestures_for_modal(&mut self) {
         self.button_pointer_capture = None;
         self.notification_pointer_capture = None;
@@ -31,7 +39,7 @@ impl ShellSession {
         let Some(model) = self.notification_active_modal_view_model() else {
             return false;
         };
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let area = self.shell_modal_area();
         let ui::NotificationLayout::Dialog(layout) = ui::notification_layout(area, &model) else {
             return false;
         };
@@ -282,7 +290,7 @@ impl ShellSession {
             self.ui.notification_message_scroll = 0;
             return ShellAction::Redraw;
         };
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let area = self.shell_modal_area();
         let ui::NotificationLayout::Dialog(layout) = ui::notification_layout(area, &model) else {
             return ShellAction::Redraw;
         };

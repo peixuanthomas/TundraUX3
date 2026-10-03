@@ -37,7 +37,11 @@ fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
         model
             .toolbar
             .iter()
-            .any(|button| button.action == LauncherToolbarAction::Back)
+            .all(|button| button.action.shortcut() != "Esc")
+    );
+    assert_eq!(
+        layout.toolbar.height, 4,
+        "four actions use two rows of buttons"
     );
     assert!(
         model
@@ -257,7 +261,6 @@ fn toolbar_management_actions_are_admin_only() {
             LauncherToolbarAction::Remove,
             LauncherToolbarAction::Refresh,
             LauncherToolbarAction::ToggleView,
-            LauncherToolbarAction::Back,
         ]
     );
     assert!(admin.toolbar[0].enabled);
@@ -270,7 +273,6 @@ fn toolbar_management_actions_are_admin_only() {
             LauncherToolbarAction::Open,
             LauncherToolbarAction::Refresh,
             LauncherToolbarAction::ToggleView,
-            LauncherToolbarAction::Back,
         ]
     );
 }

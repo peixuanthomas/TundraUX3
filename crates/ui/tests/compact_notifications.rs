@@ -75,11 +75,11 @@ fn compact_chrome_shows_toasts_and_preserves_page_header_without_notifications()
         terminal
             .draw(|frame| {
                 let area = frame.area();
+                let layout = ShellFrameLayout::new(area, None, &context);
                 frame.render_widget(
                     Paragraph::new("Page header"),
-                    Rect::new(area.x, area.y, area.width, 1),
+                    Rect::new(layout.main.x, layout.main.y, layout.main.width, 1),
                 );
-                let layout = ShellFrameLayout::new(area, None, &context);
                 render_shell_chrome(frame, &layout, &chrome, &context);
             })
             .unwrap();
@@ -88,10 +88,15 @@ fn compact_chrome_shows_toasts_and_preserves_page_header_without_notifications()
             line.starts_with(if has_toast {
                 "Compact toast"
             } else {
-                "Page header"
+                "TundraUX 3"
             }),
             "{line}"
         );
+        assert!(line.contains("[◀]"));
+        let content: String = (0..49)
+            .map(|x| terminal.backend().buffer()[(x, 1)].symbol())
+            .collect();
+        assert!(content.starts_with("Page header"));
     }
 }
 
@@ -108,7 +113,13 @@ fn compact_notification_respects_empty_and_tiny_terminal_bounds() {
             })
             .unwrap();
         if width > 0 && height > 0 {
-            assert!(first_line(&terminal, width).starts_with('['));
+            let line = first_line(&terminal, width);
+            if width == 1 {
+                // A single cell can only show the opening button bracket.
+                assert_eq!(line, "[");
+            } else {
+                assert!(line.contains('◀'), "{width}x{height}: {line}");
+            }
         }
     }
 }

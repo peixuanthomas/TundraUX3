@@ -51,4 +51,3 @@ ui-settings-bluetooth = 蓝牙
 ui-settings-bluetooth-description = 蓝牙设备、配对与连接
 ui-settings-touch-apply = 应用
 ui-settings-touch-cancel = 取消
-ui-settings-touch-back = 返回

@@ -148,7 +148,6 @@ pub enum SystemStatusDashboardFocus {
     Size,
     Remove,
     Save,
-    Cancel,
 }
 impl Default for SystemStatusDashboardFocus {
     fn default() -> Self {
@@ -163,7 +162,6 @@ pub struct SystemStatusActionState {
     pub size_disabled: bool,
     pub remove_disabled: bool,
     pub save_disabled: bool,
-    pub cancel_disabled: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemStatusPickerItemViewModel {

@@ -24,7 +24,6 @@ ui-user-management-no-user-selected = No user selected
 ui-user-management-edit-profile = Edit profile
 ui-user-management-change-password = Change password
 ui-user-management-delete-account = Delete account
-ui-user-management-back = Back
 ui-user-management-the-last-enabled-administrator-must-remain-available = The last enabled administrator must remain available
 ui-user-management-enable = Enable
 ui-user-management-unlock = Unlock

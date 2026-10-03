@@ -297,13 +297,6 @@ impl ShellSession {
         self.home_content_layout()?.entry_at(coordinates)
     }
 
-    pub(in crate::session) fn home_control_at(
-        &self,
-        coordinates: CellPosition,
-    ) -> Option<ui::HomeToolbarAction> {
-        self.home_content_layout()?.control_at(coordinates)
-    }
-
     fn home_content_layout(&self) -> Option<ui::HomeLayout> {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
@@ -411,7 +404,7 @@ impl ShellSession {
         coordinates: CellPosition,
     ) -> Option<usize> {
         let model = self.notification_active_modal_view_model()?;
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let area = self.shell_modal_area();
         let ui::NotificationLayout::Dialog(layout) = ui::notification_layout(area, &model) else {
             return None;
         };
@@ -427,7 +420,7 @@ impl ShellSession {
         let Some(model) = self.notification_active_modal_view_model() else {
             return false;
         };
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let area = self.shell_modal_area();
         matches!(
             ui::notification_layout(area, &model),
             ui::NotificationLayout::Dialog(_)

@@ -1044,10 +1044,10 @@ fn login_mouse_click_selects_user_and_focuses_password() {
     let user_point = login_user_row_coordinates(&state, 1);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, user_point));
     assert_eq!(state.focused_component(), ShellComponent::LoginPassword);
-    let page = ui::login_viewport(
-        ratatui::layout::Rect::new(0, 0, 39, 12),
-        &state.to_login_view_model(),
-    );
+    let main = match ui::compute_shell_layout(ratatui::layout::Rect::new(0, 0, 39, 12)) {
+        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+    };
+    let page = ui::login_viewport(main, &state.to_login_view_model());
     assert!(
         page.project(ui::login_layout(page.content).password)
             .is_some(),
@@ -1182,7 +1182,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
 }
 
 #[test]
-fn compact_user_management_supports_touch_forms_and_its_own_back_action() {
+fn compact_user_management_supports_touch_forms_and_the_shared_escape() {
     let fixture = FixtureRoot::new("user-management-compact");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -1245,14 +1245,7 @@ fn compact_user_management_supports_touch_forms_and_its_own_back_action() {
     state.apply_input(InputEvent::from_key_label("Esc"));
     assert_eq!(state.active_screen(), ShellScreen::UserManagement);
     assert!(state.to_user_management_view_model().form.is_none());
-    let layout = user_management_layout_for(&state);
-    let back = layout
-        .actions
-        .iter()
-        .find(|action| action.action == ui::UserManagementAction::Back)
-        .expect("compact back button");
-    assert!(!back.area.is_empty());
-    let back_point = rect_center(back.area);
+    let back_point = component_center(&state, ShellComponent::BackButton);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, back_point));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, back_point));
     assert_eq!(state.active_screen(), ShellScreen::Home);
@@ -1506,7 +1499,7 @@ fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
     }
     assert_eq!(
         state.to_user_management_view_model().focus,
-        ui::UserManagementFocus::Action(ui::UserManagementAction::Back)
+        ui::UserManagementFocus::UserList
     );
     state.apply_input(InputEvent::from_key_label("x"));
     assert!(state.to_notification_view_model().is_none());

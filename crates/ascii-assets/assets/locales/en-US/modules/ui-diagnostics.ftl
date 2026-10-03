@@ -1,7 +1,6 @@
 # UI diagnostics messages.
 
 ui-diagnostics-system-status-diagnostics = System Status / Diagnostics
-ui-diagnostics-esc-system-status = Esc System Status
 ui-diagnostics-restart-required = Restart required
 ui-diagnostics-scanning-health-checks = Scanning health checks...
 ui-diagnostics-no-health-checks-available = No health checks available
@@ -99,4 +98,3 @@ ui-diagnostics-unsupported-count = { $count ->
         [one] System healthy — { $count } unsupported capability
        *[other] System healthy — { $count } unsupported capabilities
     }
-ui-diagnostics-touch-back = Esc Back

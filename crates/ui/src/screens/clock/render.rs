@@ -133,11 +133,6 @@ fn render_clock_panel(
     let mut manage = Button::new("clock.manage", i18n::tr!("ui-clock-touch-manage"));
     manage.set_disabled(model.selected_entry_id.is_none());
     manage.render_inline_frame(frame, layout.manage_button, theme);
-    Button::new("clock.back", i18n::tr!("ui-clock-touch-back")).render_inline_frame(
-        frame,
-        layout.back_button,
-        theme,
-    );
     if let Some(track) = layout.scrollbar {
         Scrollbar::new(
             model.alarms.len() + model.countdowns.len(),

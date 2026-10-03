@@ -89,12 +89,6 @@ impl ShellSession {
     }
     fn management_touch_control(&mut self, control: ui::ManagementControl) {
         match control {
-            ui::ManagementControl::Back => {
-                self.management_state.terminal_mode = false;
-                self.management_state.filtering = false;
-                self.cancel_management_pointer_gesture();
-                self.handle_management_key(&KeyInput::new(InputKey::Escape));
-            }
             ui::ManagementControl::Refresh => {
                 self.management_state.outcome = None;
                 self.refresh_management();
