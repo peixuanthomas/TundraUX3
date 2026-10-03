@@ -12,7 +12,7 @@ ui-explorer-hidden = hidden
 ui-explorer-an-item-with-this-name-already-exists = An item with this name already exists.
 ui-explorer-on = On
 ui-explorer-off = Off
-ui-explorer-search = Search: /
+ui-explorer-search = S Search
 ui-explorer-empty = <empty>
 ui-explorer-search-padded = Search:{ " " }
 ui-explorer-entries = Entries
@@ -87,7 +87,7 @@ ui-explorer-search-matches = { " " }({ $count ->
        *[other] { $count } matches
     }, { $mode })
 
-ui-explorer-help = Ctrl+A: select all    Space: toggle    Shift+arrows: select range    Ctrl+arrows: move focus    C/X/V: copy/cut/paste    Del: delete    Ctrl+I: invert    Ctrl+Shift+A: clear selection    Home/End/PgUp/PgDn: jump (Shift: select)    Shift+F10: menu    Enter: open    Backspace: parent    N/T: folder/text    F2: rename    F5: refresh    /: search    S/O: sort/options    Esc: back
+ui-explorer-help = Ctrl+A: select all    Space: toggle    Shift+arrows: select range    Ctrl+arrows: move focus    C/X/V: copy/cut/paste    Del: delete    Ctrl+I: invert    Ctrl+Shift+A: clear selection    Home/End/PgUp/PgDn: jump (Shift: select)    Shift+F10: menu    Enter: open    Backspace: parent    N/T: folder/text    F2: rename    F5: refresh    S/Ctrl+F: search    F6/O: sort/options    Esc: back
 
 ui-explorer-compact-help = Ctrl+A: select all | Space: toggle | C/X/V: copy/cut/paste | Del: delete | Shift+F10: menu | Hidden: { $hidden }{ $quick }
 

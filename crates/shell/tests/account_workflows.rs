@@ -26,6 +26,156 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn setup_primary_shortcut_and_previous_step_preserve_text_and_disabled_submit() {
+    let fixture = FixtureRoot::new("setup-primary-shortcuts");
+    let platform = mock_platform(fixture.path());
+    let startup = prepare_shell_startup(&platform).expect("startup");
+    let mut state = ShellSession::new_with_startup(default_config(), (49, 12), startup);
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Timezone);
+    state.apply_input(account_modified_key(InputKey::Left, InputModifiers::ALT));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Language);
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Admin);
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Admin);
+    assert!(!state.to_setup_view_model().can_submit);
+    type_text(&mut state, "AdminUser");
+    state.apply_input(account_modified_key(
+        InputKey::Char('n'),
+        InputModifiers::CTRL,
+    ));
+    assert_eq!(state.to_setup_view_model().admin_username, "AdminUser");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert_eq!(
+        state.focused_component(),
+        ShellComponent::SetupAdminPasswordConfirm
+    );
+    assert_eq!(
+        state.to_setup_view_model().error.as_deref(),
+        Some("Passwords do not match")
+    );
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+}
+
+#[test]
+fn login_and_user_form_shortcuts_do_not_steal_text_or_repeat_actions() {
+    let fixture = FixtureRoot::new("account-primary-shortcuts");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let startup = prepare_shell_startup(&platform).expect("startup");
+    let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(account_modified_key(
+        InputKey::Char('n'),
+        InputModifiers::CTRL,
+    ));
+    assert_eq!(state.to_login_view_model().password_len, 13);
+    for phase in [InputPhase::Repeat, InputPhase::Release] {
+        state.apply_input(InputEvent::Key(KeyInput::with_phase(
+            InputKey::Enter,
+            InputModifiers::CTRL,
+            phase,
+        )));
+        assert_eq!(state.active_screen(), ShellScreen::Login);
+        state.apply_input(InputEvent::Key(KeyInput::with_phase(
+            InputKey::F(2),
+            InputModifiers::none(),
+            phase,
+        )));
+        assert!(!state.to_login_view_model().password_is_visible());
+    }
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    state.apply_input(InputEvent::from_key_label("u"));
+    for phase in [InputPhase::Repeat, InputPhase::Release] {
+        state.apply_input(InputEvent::Key(KeyInput::with_phase(
+            InputKey::Char('n'),
+            InputModifiers::none(),
+            phase,
+        )));
+        assert!(state.to_user_management_view_model().form.is_none());
+    }
+    state.apply_input(InputEvent::from_key_label("n"));
+    type_text(&mut state, "nerducx");
+    state.apply_input(account_modified_key(
+        InputKey::Char('n'),
+        InputModifiers::CTRL,
+    ));
+    assert_eq!(
+        state.to_user_management_view_model().form.unwrap().username,
+        "nerducx"
+    );
+    let before = state.to_user_management_view_model().users;
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert!(state.to_user_management_view_model().form.is_some());
+    assert_eq!(state.to_user_management_view_model().users, before);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "Shortcut User");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "ManagedPass123!");
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    assert!(state.to_user_management_view_model().form.is_none());
+    assert!(
+        state
+            .to_user_management_view_model()
+            .users
+            .iter()
+            .any(|user| user.username == "nerducx")
+    );
+}
+
+#[test]
+fn clock_direct_create_and_manage_shortcuts_require_a_fresh_press() {
+    let fixture = FixtureRoot::new("clock-direct-shortcuts");
+    let platform = mock_platform(fixture.path());
+    let startup = prepare_shell_startup(&platform).expect("startup");
+    let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
+    complete_first_run_setup(&mut state, 0, 0, "AdminUser", "StrongPass123", "");
+    open_clock(&mut state);
+    state.apply_input(InputEvent::from_key_label("n"));
+    type_text(&mut state, "07 30 00");
+    for phase in [InputPhase::Repeat, InputPhase::Release] {
+        state.apply_input(InputEvent::Key(KeyInput::with_phase(
+            InputKey::F(3),
+            InputModifiers::none(),
+            phase,
+        )));
+        assert!(state.to_clock_view_model().alarms.is_empty());
+        assert!(state.to_clock_view_model().create_dialog.is_some());
+    }
+    state.apply_input(function_key(3));
+    assert_eq!(state.to_clock_view_model().alarms.len(), 1);
+    state.apply_input(InputEvent::Key(KeyInput::with_phase(
+        InputKey::Char('m'),
+        InputModifiers::none(),
+        InputPhase::Repeat,
+    )));
+    assert!(state.to_notification_view_model().is_none());
+    state.apply_input(InputEvent::from_key_label("m"));
+    assert_eq!(
+        state.to_notification_view_model().unwrap().title,
+        "Manage Alarm"
+    );
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    state.apply_input(InputEvent::from_key_label("n"));
+    type_text(&mut state, "00 00 05");
+    state.apply_input(function_key(4));
+    assert_eq!(state.to_clock_view_model().countdowns.len(), 1);
+}
+
+#[test]
 fn fresh_startup_requires_first_run_setup_even_for_debug_test_state() {
     let fixture = FixtureRoot::new("fresh-bootstrap");
     let platform = mock_platform(fixture.path());
@@ -208,7 +358,7 @@ fn appearance_setup_prevents_matching_theme_and_accent_colors() {
     assert!(model.custom_color_conflicts_with_theme);
     assert!(!model.custom_color_valid);
 
-    state.apply_input(InputEvent::from_key_label("Enter"));
+    state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
     assert_eq!(
         state.focused_component(),
         ShellComponent::SetupCustomColorDialog
@@ -1738,6 +1888,10 @@ fn function_key(number: u8) -> InputEvent {
         InputModifiers::none(),
         InputPhase::Press,
     ))
+}
+
+fn account_modified_key(key: InputKey, modifiers: InputModifiers) -> InputEvent {
+    InputEvent::Key(KeyInput::with_modifiers(key, modifiers))
 }
 
 fn read_optional_file(path: &Path) -> Option<Vec<u8>> {

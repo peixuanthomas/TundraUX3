@@ -5,6 +5,9 @@ impl ShellSession {
         let Some(index) = self.management_state.choice_field else {
             return false;
         };
+        if key.has_non_shift_modifier() {
+            return true;
+        }
         let selected = self.management_state.choice_selected;
         let count = self
             .management_state
@@ -30,6 +33,8 @@ impl ShellSession {
                 self.management_state.choice_selected =
                     (self.management_state.choice_selected + 8).min(count.saturating_sub(1))
             }
+            InputKey::Home => self.management_state.choice_selected = 0,
+            InputKey::End => self.management_state.choice_selected = count.saturating_sub(1),
             InputKey::Enter if key.phase != InputPhase::Repeat => {
                 if let Some(form) = &mut self.management_state.form {
                     if let Some(field) = form.fields.get_mut(index) {
@@ -45,6 +50,28 @@ impl ShellSession {
         self.management_state.choice_scroll =
             self.management_state.choice_selected.saturating_sub(3);
         true
+    }
+    pub(super) fn open_management_choice_field(&mut self, index: usize) {
+        let Some(field) = self
+            .management_state
+            .form
+            .as_ref()
+            .and_then(|form| form.fields.get(index))
+        else {
+            return;
+        };
+        if field.choices.is_empty() {
+            return;
+        }
+        let selected = field
+            .choices
+            .iter()
+            .position(|value| value == &field.value)
+            .unwrap_or(0);
+        self.management_state.choice_field = Some(index);
+        self.management_state.choice_selected = selected;
+        self.management_state.choice_scroll = selected.saturating_sub(3);
+        self.management_state.choice_columns = 0;
     }
     pub(in crate::session) fn cancel_management_pointer_gesture(&mut self) {
         self.management_state.scrollbar_grab = None;
@@ -77,7 +104,7 @@ impl ShellSession {
             .into_iter()
             .find(|button| rect_contains(button.area, point))
     }
-    fn apply_management_filter(&mut self) {
+    pub(super) fn apply_management_filter(&mut self) {
         let filter = self.management_state.filter_input.clone();
         if let Some(query) = &mut self.management_state.query {
             query.filter = filter;
@@ -87,7 +114,7 @@ impl ShellSession {
         self.management_state.list_scroll_explicit = false;
         self.refresh_management();
     }
-    fn management_touch_control(&mut self, control: ui::ManagementControl) {
+    pub(super) fn management_touch_control(&mut self, control: ui::ManagementControl) {
         match control {
             ui::ManagementControl::Refresh => {
                 self.management_state.outcome = None;
@@ -100,6 +127,9 @@ impl ShellSession {
                 self.apply_management_filter();
             }
             ui::ManagementControl::Details => {
+                if self.management_state.snapshot.rows.is_empty() {
+                    return;
+                }
                 self.management_state.details_only = !self.management_state.details_only;
                 self.management_state.details_scroll = 0;
                 self.management_state.actions_focused = true;
@@ -121,6 +151,28 @@ impl ShellSession {
                 self.resize_management_terminal();
             }
         }
+    }
+    pub(super) fn page_management_actions(&mut self, next: bool) {
+        let model = self.to_management_view_model();
+        let layout = ui::management_layout(self.management_main(), &model);
+        let button = if next {
+            layout.action_next
+        } else {
+            layout.action_previous
+        };
+        if button.is_empty()
+            || (!next && layout.action_start == 0)
+            || (next && layout.action_start + layout.actions.len() >= model.actions.len())
+        {
+            return;
+        }
+        let end = model.actions.len().saturating_sub(layout.actions.len());
+        self.management_state.action_scroll = Some(
+            layout
+                .action_start
+                .saturating_add_signed(if next { 1 } else { -1 })
+                .min(end),
+        );
     }
     fn set_management_scroll(
         &mut self,
@@ -392,14 +444,7 @@ impl ShellSession {
             return;
         }
         if layout.action_previous.contains(position) || layout.action_next.contains(position) {
-            let next = layout.action_next.contains(position);
-            let end = model.actions.len().saturating_sub(layout.actions.len());
-            self.management_state.action_scroll = Some(
-                layout
-                    .action_start
-                    .saturating_add_signed(if next { 1 } else { -1 })
-                    .min(end),
-            );
+            self.page_management_actions(layout.action_next.contains(position));
             return;
         }
         if let Some(index) = layout

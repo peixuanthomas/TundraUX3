@@ -619,6 +619,14 @@ impl ShellSession {
             .allowed
     }
 
+    pub(in crate::session) fn diagnostics_is_busy(&self) -> bool {
+        self.diagnostics_scanning
+            || self
+                .diagnostics_task_runtime
+                .as_ref()
+                .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
+    }
+
     pub(in crate::session) fn diagnostics_can_repair(&self) -> bool {
         !self.diagnostics_restart_is_required()
             && !self.diagnostics_scanning

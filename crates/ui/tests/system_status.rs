@@ -6,6 +6,60 @@ use ui::components::ComponentTone;
 use ui::*;
 
 #[test]
+fn narrow_dashboard_buttons_and_discard_dialog_keep_shortcuts_visible() {
+    let mut m = model();
+    m.dashboard.editing = true;
+    m.dashboard.dirty = true;
+    let main = Rect::new(0, 0, 50, 24);
+    let theme = TundraTheme::default_dark();
+    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
+    terminal
+        .draw(|frame| render_system_status_content(frame, main, &m, &context))
+        .unwrap();
+    let layout = system_status_layout(main, &m);
+    let buffer = terminal.backend().buffer();
+    for (area, key) in [
+        (layout.add_button, "A"),
+        (layout.size_button, "F4"),
+        (layout.remove_button, "Del"),
+        (layout.save_button, "Ctrl+S"),
+    ] {
+        let text = (area.x..area.right())
+            .map(|x| buffer[(x, area.y)].symbol())
+            .collect::<String>();
+        assert!(
+            text.contains(&format!("[{key} ")),
+            "missing {key} in {text}"
+        );
+        assert!(text.contains(']'), "button label was clipped: {text}");
+    }
+    assert!(layout.add_button.right() <= layout.size_button.x);
+    assert!(layout.size_button.right() <= layout.remove_button.x);
+    assert!(layout.remove_button.right() <= layout.save_button.x);
+    m.dashboard.dialog = Some(SystemStatusDialogViewModel {
+        title: "Discard changes?".into(),
+        message: "Unsaved changes will be lost.".into(),
+        confirm_label: "Discard".into(),
+        cancel_label: "Continue editing".into(),
+        selected_action: 1,
+    });
+    terminal
+        .draw(|frame| render_system_status_overlay(frame, main, &m, &context))
+        .unwrap();
+    let text = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(text.contains("Y Discard"));
+    assert!(text.contains("Esc Continue editing"));
+    assert!(text.contains("Enter Selected"));
+}
+
+#[test]
 fn processes_show_colored_aligned_values_and_keep_selection_and_scrolling() {
     use ratatui::style::{Color, Modifier};
     let mut m = model();

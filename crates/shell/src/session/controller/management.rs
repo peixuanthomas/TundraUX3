@@ -80,6 +80,7 @@ pub(in crate::session) struct ManagementState {
     actions_focused: bool,
     filtering: bool,
     filter_input: String,
+    shortcut_repeat_guard: Option<InputKey>,
     status: String,
     outcome: Option<String>,
     received_snapshot: bool,
@@ -114,6 +115,67 @@ fn management_label(id: &str, fallback: &str) -> String {
     } else {
         result
     }
+}
+
+fn management_action_shortcut(
+    kind: Option<ManagementKind>,
+    id: &str,
+) -> Option<(&'static str, InputKey)> {
+    let letter = match id {
+        "start" | "upgrade_all" | "scan" => 'a',
+        "stop" if kind == Some(ManagementKind::Processes) => 'p',
+        "stop" | "remove" => 'x',
+        "restart" | "term" => 't',
+        "enable" | "refresh" => 'e',
+        "disable" | "disconnect" | "wifi-disconnect" => 'd',
+        "view_logs" => 'l',
+        "set_view" => 'v',
+        "kill" => 'k',
+        "cont" | "configure" => 'c',
+        "nice" | "check" => 'n',
+        "install" | "inspect_network" => 'i',
+        "upgrade" | "unmount" => 'u',
+        "wifi-connect" => 'w',
+        "forget" | "wifi-forget" | "forget_saved_wifi" => 'f',
+        "mount" => 'm',
+        "open_directory" => 'o',
+        "scope_search" => return Some(("F6", InputKey::F(6))),
+        "scope_installed" => return Some(("F7", InputKey::F(7))),
+        "scope_updates" => return Some(("F8", InputKey::F(8))),
+        "recover" => return Some(("F9", InputKey::F(9))),
+        "cancel_operation" => return Some(("F10", InputKey::F(10))),
+        _ => return None,
+    };
+    let label = match letter {
+        'a' => "A",
+        'c' => "C",
+        'd' => "D",
+        'e' => "E",
+        'f' => "F",
+        'i' => "I",
+        'k' => "K",
+        'l' => "L",
+        'm' => "M",
+        'n' => "N",
+        'o' => "O",
+        'p' => "P",
+        't' => "T",
+        'u' => "U",
+        'v' => "V",
+        'w' => "W",
+        'x' => "X",
+        _ => unreachable!(),
+    };
+    Some((label, InputKey::Char(letter)))
+}
+
+fn management_control_modifier(key: &KeyInput) -> bool {
+    key.modifiers.is_control()
+        && !key.modifiers.shift
+        && !key.modifiers.alt
+        && !key.modifiers.super_key
+        && !key.modifiers.hyper
+        && !key.modifiers.meta
 }
 fn management_text(prefix: &str, id: &str, fallback: &str) -> String {
     let id = id
@@ -728,6 +790,30 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn handle_management_key(&mut self, key: &KeyInput) {
+        if key.phase == InputPhase::Release {
+            if self.management_state.shortcut_repeat_guard.as_ref() == Some(&key.key) {
+                self.management_state.shortcut_repeat_guard = None;
+            }
+            return;
+        }
+        if self.notification_has_active_modal()
+            || self.time_sync_dialog_visible
+            || self.active_popup.is_some()
+        {
+            return;
+        }
+        if key.phase == InputPhase::Repeat
+            && self.management_state.shortcut_repeat_guard.as_ref() == Some(&key.key)
+        {
+            return;
+        }
+        if key.phase == InputPhase::Press {
+            self.management_state.shortcut_repeat_guard = None;
+        }
+        if key.phase == InputPhase::Repeat && matches!(key.key, InputKey::Enter | InputKey::Escape)
+        {
+            return;
+        }
         if self.handle_management_choice_key(key) {
             return;
         }
@@ -751,22 +837,13 @@ impl ShellSession {
         if key.key == InputKey::Escape {
             self.cancel_management_pointer_gesture();
         }
-        if key.phase == InputPhase::Repeat
-            && (matches!(key.key, InputKey::Enter | InputKey::Escape)
-                || (!self.management_state.filtering
-                    && self.management_state.form.is_none()
-                    && matches!(key.key, InputKey::Char('1'..='9' | 'r' | 'R'))))
-        {
-            return;
-        }
         if key.is_ctrl_c() && !self.management_state.terminal_mode {
             return;
         }
-        if (key.modifiers.control || key.modifiers.ctrl)
-            && matches!(key.key, InputKey::Char('t' | 'T'))
-        {
-            self.management_state.terminal_mode = !self.management_state.terminal_mode;
-            self.resize_management_terminal();
+        if management_control_modifier(key) && matches!(key.key, InputKey::Char('t' | 'T')) {
+            if key.phase == InputPhase::Press {
+                self.management_touch_control(ui::ManagementControl::Terminal);
+            }
             return;
         }
         if self.management_state.terminal_mode && self.management_state.form.is_some() {
@@ -775,16 +852,26 @@ impl ShellSession {
             }
             return;
         }
+        if self.management_state.form.is_some()
+            && management_control_modifier(key)
+            && key.key == InputKey::Enter
+        {
+            if key.phase == InputPhase::Press {
+                self.submit_management_form();
+            }
+            return;
+        }
         if let Some(form) = &mut self.management_state.form {
-            if (key.modifiers.control || key.modifiers.ctrl)
-                && matches!(key.key, InputKey::Char('u' | 'U'))
-            {
+            if management_control_modifier(key) && matches!(key.key, InputKey::Char('u' | 'U')) {
                 if let Some(field) = form.fields.get_mut(form.selected) {
                     if field.choices.is_empty() {
                         use zeroize::Zeroize;
                         field.value.zeroize();
                     }
                 }
+                return;
+            }
+            if key.has_non_shift_modifier() {
                 return;
             }
             match key.key {
@@ -809,6 +896,9 @@ impl ShellSession {
                 InputKey::Enter => {
                     if form.selected >= form.fields.len() {
                         self.submit_management_form();
+                    } else if !form.fields[form.selected].choices.is_empty() {
+                        let selected = form.selected;
+                        self.open_management_choice_field(selected);
                     } else {
                         form.selected += 1;
                     }
@@ -859,16 +949,23 @@ impl ShellSession {
             return;
         }
         if self.management_state.filtering {
+            if management_control_modifier(key) && key.key == InputKey::Enter {
+                self.apply_management_filter();
+                return;
+            }
+            if management_control_modifier(key) && matches!(key.key, InputKey::Char('u' | 'U')) {
+                if key.phase == InputPhase::Press {
+                    self.management_touch_control(ui::ManagementControl::ClearSearch);
+                }
+                return;
+            }
+            if key.has_non_shift_modifier() {
+                return;
+            }
             match key.key {
                 InputKey::Escape => self.management_state.filtering = false,
                 InputKey::Enter => {
-                    let filter = self.management_state.filter_input.clone();
-                    if let Some(query) = &mut self.management_state.query {
-                        query.filter = filter;
-                        query.target = None;
-                    }
-                    self.management_state.filtering = false;
-                    self.refresh_management();
+                    self.apply_management_filter();
                 }
                 InputKey::Backspace => {
                     self.management_state.filter_input.pop();
@@ -929,6 +1026,65 @@ impl ShellSession {
             });
             return;
         }
+        if management_control_modifier(key) {
+            if key.phase == InputPhase::Press {
+                match key.key {
+                    InputKey::Enter => {
+                        self.management_touch_control(ui::ManagementControl::ApplySearch)
+                    }
+                    InputKey::Char('u' | 'U') => {
+                        self.management_touch_control(ui::ManagementControl::ClearSearch)
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+        if key.modifiers.alt
+            && !key.modifiers.is_control()
+            && !key.modifiers.shift
+            && !key.modifiers.super_key
+            && !key.modifiers.hyper
+            && !key.modifiers.meta
+            && matches!(key.key, InputKey::Left | InputKey::Right)
+        {
+            self.page_management_actions(key.key == InputKey::Right);
+            return;
+        }
+        if key.has_non_shift_modifier() {
+            return;
+        }
+        if key.modifiers.shift && matches!(key.key, InputKey::F(_)) {
+            return;
+        }
+        let action_key = match key.key {
+            InputKey::Char(c) => InputKey::Char(c.to_ascii_lowercase()),
+            _ => key.key.clone(),
+        };
+        if let Some(index) = self.management_actions().iter().position(|(action, _)| {
+            management_action_shortcut(self.management_state.kind, &action.id)
+                .is_some_and(|(_, shortcut)| shortcut == action_key)
+        }) {
+            if key.phase == InputPhase::Press {
+                self.activate_management_action(index);
+                self.management_state.shortcut_repeat_guard = Some(key.key.clone());
+            }
+            return;
+        }
+        if key.phase == InputPhase::Repeat
+            && matches!(
+                key.key,
+                InputKey::Char('0'..='9' | '/' | 'r' | 'R' | 's' | 'S') | InputKey::F(4 | 5)
+            )
+        {
+            return;
+        }
+        if matches!(
+            key.key,
+            InputKey::Char('0'..='9' | '/' | 'r' | 'R' | 's' | 'S') | InputKey::F(4 | 5)
+        ) {
+            self.management_state.shortcut_repeat_guard = Some(key.key.clone());
+        }
         match key.key {
             InputKey::Escape => {
                 self.screen_stack.pop();
@@ -938,11 +1094,13 @@ impl ShellSession {
                     ShellComponent::Home
                 };
             }
-            InputKey::Char('/') => self.management_state.filtering = true,
-            InputKey::Char('r' | 'R') => {
-                self.management_state.outcome = None;
-                self.refresh_management();
+            InputKey::Char('/' | 's' | 'S') => {
+                self.management_touch_control(ui::ManagementControl::Search)
             }
+            InputKey::Char('r' | 'R') | InputKey::F(5) => {
+                self.management_touch_control(ui::ManagementControl::Refresh)
+            }
+            InputKey::F(4) => self.management_touch_control(ui::ManagementControl::Details),
             InputKey::Tab | InputKey::BackTab => {
                 self.management_state.actions_focused = !self.management_state.actions_focused
             }
@@ -968,6 +1126,7 @@ impl ShellSession {
             InputKey::Char(c) if ('1'..='9').contains(&c) => {
                 self.activate_management_action(c as usize - '1' as usize)
             }
+            InputKey::Char('0') => self.activate_management_action(9),
             InputKey::Up
             | InputKey::Down
             | InputKey::PageUp
@@ -1075,10 +1234,15 @@ impl ShellSession {
                 .unwrap_or_else(|| s.snapshot.notices.join("\n")),
             actions: actions
                 .iter()
-                .map(|(a, _)| {
+                .enumerate()
+                .map(|(index, (a, _))| {
+                    let shortcut = management_action_shortcut(s.kind, &a.id).filter(|(_, key)| {
+                        !actions[..index].iter().any(|(previous, _)| management_action_shortcut(s.kind, &previous.id).is_some_and(|(_, previous_key)| previous_key == *key))
+                    });
+                    let label = management_label(&a.id, &a.label);
                     (
-                        management_label(&a.id, &a.label),
-                        a.disabled_reason.is_none(),
+                        shortcut.map_or(label.clone(), |(key, _)| format!("[{key}] {label}")),
+                        a.disabled_reason.is_none() && (s.operation_job.is_none() || a.id == "cancel_operation"),
                     )
                 })
                 .collect(),
@@ -1086,7 +1250,9 @@ impl ShellSession {
                 .iter()
                 .map(|(action, _)| {
                     action.disabled_reason.clone().unwrap_or_else(|| {
-                        if action.privileged {
+                        if s.operation_job.is_some() && action.id != "cancel_operation" {
+                            i18n::tr!("management-operation-running")
+                        } else if action.privileged {
                             i18n::tr!("management-touch-authorization")
                         } else if action.confirm || !action.fields.is_empty() {
                             i18n::tr!("management-touch-review")

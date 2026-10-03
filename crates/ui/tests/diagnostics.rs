@@ -17,6 +17,54 @@ use ui::{
 };
 
 #[test]
+fn restart_required_toolbar_shows_the_actions_that_its_keys_execute() {
+    let mut model = health_model();
+    model.restart_required = true;
+    let controls = ui::diagnostics_toolbar_buttons(Rect::new(0, 0, 50, 4), &model);
+    assert_eq!(
+        controls.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(),
+        vec!['r', 'e']
+    );
+    assert!(controls[0].1.contains("Restart"));
+    assert!(controls[1].1.contains("Safe exit"));
+    assert!(controls.iter().all(|(_, _, rect)| rect.right() <= 50));
+}
+
+#[test]
+fn narrow_repair_dialog_keeps_all_action_keys_visible() {
+    let mut model = health_model();
+    model.repair_dialog = Some(DiagnosticsRepairDialogViewModel {
+        items: vec![DiagnosticsRepairItemViewModel {
+            id: "create-folder".into(),
+            label: "Create missing folder".into(),
+        }],
+        confirm_selected: false,
+        ..Default::default()
+    });
+    let main = full_main(50, 20);
+    let dialog = diagnostics_layout(main, &model).repair_dialog.unwrap();
+    let theme = TundraTheme::default_dark();
+    let context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut terminal = Terminal::new(TestBackend::new(50, 20)).unwrap();
+    terminal
+        .draw(|frame| {
+            ui::render_diagnostics_overlay(frame, main, &model, &context);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let row_text = |area: Rect| {
+        (area.x..area.right())
+            .map(|x| buffer[(x, area.y)].symbol())
+            .collect::<String>()
+    };
+    assert!(row_text(dialog.confirm).contains("[Y Repair]"));
+    assert!(row_text(dialog.restart).contains("[R Restart]"));
+    assert!(row_text(dialog.cancel).contains("[Esc Cancel]"));
+    assert!(dialog.confirm.right() <= dialog.restart.x);
+    assert!(dialog.restart.right() <= dialog.cancel.x);
+}
+
+#[test]
 fn long_diagnostic_details_can_show_the_last_line_with_a_scrollbar() {
     let mut model = health_model();
     model.can_view_details = true;
@@ -249,7 +297,7 @@ fn repair_preview_renders_items_and_modal_hit_geometry() {
     assert!(output.contains("Repair preview"));
     assert!(output.contains("Create missing applications directory"));
     assert!(output.contains("Back up and rebuild config document"));
-    assert!(output.contains("Confirm repair"));
+    assert!(output.contains("Y Repair"));
     assert!(output.contains("Restart"));
     assert!(output.contains("Cancel"));
 }

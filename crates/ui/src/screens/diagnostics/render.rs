@@ -622,15 +622,22 @@ pub fn diagnostics_toolbar_buttons(
     model: &DiagnosticsViewModel,
 ) -> Vec<(char, String, Rect)> {
     use unicode_width::UnicodeWidthStr;
-    let mut actions = vec![
-        ('r', i18n::tr!("ui-diagnostics-r-rescan")),
-        ('c', i18n::tr!("ui-diagnostics-c-copy")),
-    ];
-    if model.can_repair && model.tab == DiagnosticsTab::Health {
+    let mut actions = if model.restart_required {
+        vec![
+            ('r', i18n::tr!("ui-diagnostics-r-restart")),
+            ('e', i18n::tr!("ui-diagnostics-e-safe-exit")),
+        ]
+    } else {
+        vec![
+            ('r', i18n::tr!("ui-diagnostics-r-rescan")),
+            ('c', i18n::tr!("ui-diagnostics-c-copy")),
+        ]
+    };
+    if !model.restart_required && model.can_repair && model.tab == DiagnosticsTab::Health {
         actions.push(('f', i18n::tr!("ui-diagnostics-f-repair")));
         actions.push(('a', i18n::tr!("ui-diagnostics-a-repair-all")));
     }
-    if model.can_view_details && model.tab != DiagnosticsTab::Health {
+    if !model.restart_required && model.can_view_details && model.tab != DiagnosticsTab::Health {
         actions.push((
             'o',
             if model.tab == DiagnosticsTab::Logs {
@@ -641,7 +648,9 @@ pub fn diagnostics_toolbar_buttons(
         ));
         actions.push(('e', i18n::tr!("ui-diagnostics-e-log-folder")));
     }
-    actions.push(('x', i18n::tr!("ui-diagnostics-x-restart")));
+    if !model.restart_required {
+        actions.push(('x', i18n::tr!("ui-diagnostics-x-restart")));
+    }
     let mut x = area.x;
     let mut y = area.y;
     actions

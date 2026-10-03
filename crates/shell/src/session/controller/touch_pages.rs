@@ -686,16 +686,12 @@ impl ShellSession {
                 };
                 let [back, next] = ui::setup_navigation_areas(controls);
                 if page.project(next).is_some() && rect_contains(next, point) {
-                    self.page_touch.setup_scroll = 0;
-                    self.setup_continue();
+                    self.setup_primary_action();
                 } else if page.project(back).is_some()
                     && rect_contains(back, point)
                     && model.step == ui::SetupStep::Timezone
                 {
-                    self.setup_step = ui::SetupStep::Language;
-                    self.setup_focused_field = ui::SetupField::LanguageList;
-                    self.focused_component = ShellComponent::SetupLanguage;
-                    self.page_touch.setup_scroll = 0;
+                    self.setup_previous_step();
                 } else if rect_contains(list, point) {
                     let index = usize::from(point.1 - list.y);
                     if model.step == ui::SetupStep::Language {
@@ -730,11 +726,12 @@ impl ShellSession {
                     if rect_contains(ui::setup_admin_field_area(main, field), point) {
                         self.focus_setup_component(component);
                         if field == ui::SetupField::Submit
+                            && model.can_submit
                             && page
                                 .project(ui::setup_admin_field_area(main, field))
                                 .is_some()
                         {
-                            self.submit_first_run_setup();
+                            self.setup_primary_action();
                         }
                         break;
                     }

@@ -198,7 +198,8 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
     assert!(output.contains("Role: User"));
     assert!(output.contains("Password: ************"));
     assert!(output.contains("[ Create ]"));
-    assert!(output.contains("[ Cancel ]"));
+    assert!(output.contains("[ Esc Cancel ]"));
+    assert!(output.contains("Ctrl+Enter: Create"));
     assert!(region_has_fg(
         &terminal,
         form.submit,

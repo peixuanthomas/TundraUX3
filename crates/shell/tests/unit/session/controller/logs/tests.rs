@@ -34,6 +34,101 @@ fn state(role: UserRole) -> ShellSession {
 fn key(state: &mut ShellSession, value: &str) {
     state.apply_input(InputEvent::from_key_label(value));
 }
+
+fn press_log_control(state: &mut ShellSession, target: ui::LogsHitTarget) {
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    let area = layout
+        .controls
+        .iter()
+        .find(|control| control.target == target)
+        .unwrap()
+        .area;
+    state.handle_logs_pointer(MouseInput::down(area.x, area.y, PointerButton::Left));
+}
+
+#[test]
+fn log_action_shortcuts_ignore_modifiers_release_and_repeated_presses() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.query.min_level = Some(LogLevel::Warning);
+    let before = state.logs_state.clone();
+    for phase in [InputPhase::Release, InputPhase::Repeat] {
+        for key in [
+            InputKey::Char('c'),
+            InputKey::Char('l'),
+            InputKey::Enter,
+            InputKey::F(5),
+        ] {
+            state.handle_logs_key(&KeyInput::with_phase(key, InputModifiers::none(), phase));
+            assert_eq!(state.logs_state, before);
+        }
+    }
+    state.handle_logs_key(&KeyInput::from_label("Ctrl+C"));
+    assert_eq!(state.logs_state, before);
+    state.handle_logs_key(&KeyInput::from_label("C"));
+    assert_eq!(state.logs_state.query.min_level, None);
+}
+
+#[test]
+fn disabled_log_controls_cannot_be_activated_by_shortcuts() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.handle_logs_key(&KeyInput::from_label("Enter"));
+    assert!(
+        state.logs_state.last_document.is_none(),
+        "an empty list cannot be opened"
+    );
+    state.handle_logs_key(&KeyInput::from_label("I"));
+    assert_eq!(state.logs_state.section, ui::LogsSection::Events);
+
+    state.logs_state.query.min_level = Some(LogLevel::Warning);
+    state.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+        cancelled: Arc::new(AtomicBool::new(false)),
+        result: Mutex::new(None),
+        worker: Mutex::new(None),
+    })));
+    let before = state.logs_state.clone();
+    for label in ["R", "F5", "L", "M", "T", "C", "I", "E", "Enter"] {
+        state.handle_logs_key(&KeyInput::from_label(label));
+        assert_eq!(
+            state.logs_state, before,
+            "{label} must respect the loading state"
+        );
+    }
+    state.logs_state.job = None;
+    state.logs_state.category = ui::LogsCategory::Linux;
+    let before = state.logs_state.clone();
+    for label in ["C", "L", "F5", "Enter"] {
+        state.handle_logs_key(&KeyInput::from_label(label));
+        assert_eq!(
+            state.logs_state, before,
+            "{label} must respect Linux log permissions"
+        );
+    }
+}
+
+#[test]
+fn f5_refresh_and_clear_filters_match_their_log_buttons() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.feedback = None;
+    state.handle_logs_key(&KeyInput::from_label("F5"));
+    let feedback = state.logs_state.feedback.clone();
+    assert!(
+        feedback.is_some(),
+        "the fixture has no storage, so a real refresh reports that prerequisite"
+    );
+    state.logs_state.feedback = None;
+    press_log_control(&mut state, ui::LogsHitTarget::Refresh);
+    assert_eq!(state.logs_state.feedback, feedback);
+    state.logs_state.query.min_level = Some(LogLevel::Warning);
+    press_log_control(&mut state, ui::LogsHitTarget::ClearFilters);
+    assert_eq!(state.logs_state.query.min_level, None);
+    state.logs_state.query.min_level = Some(LogLevel::Warning);
+    state.handle_logs_key(&KeyInput::from_label("C"));
+    assert_eq!(state.logs_state.query.min_level, None);
+}
+
 #[test]
 fn logs_launcher_entry_and_direct_route_enforce_guest_gate() {
     for role in [UserRole::Admin, UserRole::User, UserRole::Guest] {

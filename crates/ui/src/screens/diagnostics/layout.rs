@@ -403,8 +403,28 @@ pub fn diagnostics_repair_dialog_layout(
         .collect();
     let button_gap = u16::from(inner.width >= 5).saturating_mul(2);
     let buttons_width = inner.width.saturating_sub(button_gap.saturating_mul(2));
-    let confirm_width = buttons_width / 3;
-    let restart_width = buttons_width.saturating_sub(confirm_width) / 2;
+    let desired = [
+        i18n::tr!("ui-diagnostics-confirm-repair-button"),
+        i18n::tr!("ui-diagnostics-restart-button"),
+        i18n::tr!("ui-diagnostics-cancel-button"),
+    ]
+    .map(|label| {
+        usize_to_u16(
+            crate::components::Button::new("diagnostics.repair", label).rendered_label_width(),
+        )
+    });
+    let desired_width = desired.iter().copied().fold(0_u16, u16::saturating_add);
+    let extra = buttons_width.saturating_sub(desired_width) / 3;
+    let confirm_width = if desired_width <= buttons_width {
+        desired[0].saturating_add(extra)
+    } else {
+        buttons_width / 3
+    };
+    let restart_width = if desired_width <= buttons_width {
+        desired[1].saturating_add(extra)
+    } else {
+        buttons_width.saturating_sub(confirm_width) / 2
+    };
     let cancel_width = buttons_width
         .saturating_sub(confirm_width)
         .saturating_sub(restart_width);

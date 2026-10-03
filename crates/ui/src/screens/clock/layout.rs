@@ -309,8 +309,10 @@ fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
     let prompt_height = u16::from(inner.height >= 7);
     let prompt = Rect::new(inner.x, inner.y, inner.width, prompt_height);
     let input_y = inner.y.saturating_add(prompt_height);
-    let button_y = inner.bottom().saturating_sub(1);
-    let separate_labels = inner.height >= 6;
+    let stacked_buttons = inner.width < 36 && inner.height >= 6;
+    let button_rows = if stacked_buttons { 3 } else { 1 };
+    let button_y = inner.bottom().saturating_sub(button_rows);
+    let separate_labels = button_y.saturating_sub(input_y) >= 4;
     let input_height = (if separate_labels { 4 } else { 3 }).min(button_y.saturating_sub(input_y));
     let input = Rect::new(inner.x, input_y, inner.width, input_height);
     let field_row = |row: u16| {
@@ -336,21 +338,30 @@ fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
         Rect::new(inner.x, button_y, 0, 0)
     };
     let buttons_width = inner.width;
-    let alarm_width = buttons_width / 3;
-    let countdown_width = alarm_width;
-    let create_alarm = Rect::new(inner.x, button_y, alarm_width, u16::from(inner.height > 0));
-    let create_countdown = Rect::new(
-        inner.x.saturating_add(alarm_width),
-        button_y,
-        countdown_width,
-        u16::from(inner.height > 0),
-    );
-    let cancel = Rect::new(
-        create_countdown.right(),
-        button_y,
-        buttons_width.saturating_sub(alarm_width + countdown_width),
-        create_alarm.height,
-    );
+    let (create_alarm, create_countdown, cancel) = if stacked_buttons {
+        (
+            Rect::new(inner.x, button_y, inner.width, 1),
+            Rect::new(inner.x, button_y + 1, inner.width, 1),
+            Rect::new(inner.x, button_y + 2, inner.width, 1),
+        )
+    } else {
+        let alarm_width = buttons_width / 3;
+        let countdown_width = alarm_width;
+        let create_alarm = Rect::new(inner.x, button_y, alarm_width, u16::from(inner.height > 0));
+        let create_countdown = Rect::new(
+            inner.x.saturating_add(alarm_width),
+            button_y,
+            countdown_width,
+            u16::from(inner.height > 0),
+        );
+        let cancel = Rect::new(
+            create_countdown.right(),
+            button_y,
+            buttons_width.saturating_sub(alarm_width + countdown_width),
+            create_alarm.height,
+        );
+        (create_alarm, create_countdown, cancel)
+    };
 
     ClockCreateDialogLayout {
         dialog,

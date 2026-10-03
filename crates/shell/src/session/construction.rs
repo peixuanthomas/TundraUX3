@@ -241,6 +241,7 @@ impl ShellSession {
             launcher_task_runtime: None,
             launcher_refresh_request: None,
             explorer_input_mode: ExplorerInputMode::Browse,
+            explorer_search_shortcut_held: None,
             explorer_input: String::new(),
             explorer_input_replace_all: false,
             explorer_address_cursor: 0,

@@ -232,7 +232,7 @@ pub fn logs_hit_test(
         .iter()
         .find(|control| rect_contains(control.area, x, y))
     {
-        if !super::render::control_enabled(model, control.target) {
+        if !super::render::logs_control_enabled(model, control.target) {
             return None;
         }
         return Some(control.target);

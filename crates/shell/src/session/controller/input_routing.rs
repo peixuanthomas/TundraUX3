@@ -66,6 +66,25 @@ impl ShellSession {
         input: InputEvent,
         received_at: Instant,
     ) -> Option<InputEvent> {
+        // Holding the key that opens Search must not type into the newly focused input.
+        match &input {
+            InputEvent::Key(key)
+                if key.phase == InputPhase::Repeat
+                    && self.explorer_search_shortcut_held.as_ref() == Some(&key.key) =>
+            {
+                return None;
+            }
+            InputEvent::Key(key) if key.phase == InputPhase::Press => {
+                self.explorer_search_shortcut_held = None;
+            }
+            InputEvent::Key(key) if key.phase == InputPhase::Release => {
+                self.explorer_search_shortcut_held = None;
+            }
+            InputEvent::Mouse(_) | InputEvent::FocusLost | InputEvent::Paste(_) => {
+                self.explorer_search_shortcut_held = None;
+            }
+            _ => {}
+        }
         // Inspect physical input before a released button can become a
         // synthetic key (for example, the chrome Back button becomes Escape).
         match &input {
@@ -74,6 +93,9 @@ impl ShellSession {
             }
             InputEvent::Key(key) if key.phase.is_press_like() => {
                 let (_, command) = self.route_key_input(key);
+                if key.phase == InputPhase::Press && command == ShellCommand::BeginExplorerSearch {
+                    self.explorer_search_shortcut_held = Some(key.key.clone());
+                }
                 if !matches!(
                     command,
                     ShellCommand::Noop
@@ -333,6 +355,10 @@ impl ShellSession {
             return self.route_explorer_key(key);
         }
 
+        if self.active_popup.is_some() {
+            return self.route_popup_key(key);
+        }
+
         if self.active_screen() == ShellScreen::Clock {
             return self.route_clock_key(key);
         }
@@ -372,10 +398,6 @@ impl ShellSession {
             return self.route_user_management_key(key);
         }
 
-        if self.active_popup.is_some() {
-            return self.route_popup_key(key);
-        }
-
         if self.active_screen() == ShellScreen::Explorer {
             return self.route_explorer_key(key);
         }
@@ -396,6 +418,52 @@ impl ShellSession {
                 RoutedTarget::Component(ShellComponent::Settings),
                 ShellCommand::SettingsKey(key.clone()),
             );
+        }
+
+        if self.active_screen() == ShellScreen::Home
+            && key.phase == InputPhase::Press
+            && self.identity_backend != identity::IdentityBackend::Linux
+            && self.current_home_username().is_some()
+            && key.modifiers.is_control()
+            && !key.modifiers.alt
+            && !key.modifiers.super_key
+            && !key.modifiers.hyper
+            && !key.modifiers.meta
+            && !key.modifiers.shift
+            && matches!(key.key, InputKey::Char('l' | 'L'))
+        {
+            return (RoutedTarget::Global, ShellCommand::Logout);
+        }
+        if self.active_screen() == ShellScreen::Home
+            && key.phase == InputPhase::Press
+            && !key.has_non_shift_modifier()
+            && let InputKey::Char(character) = key.key
+            && let Some(entry) = self.user_home_entries().into_iter().find(|entry| {
+                entry
+                    .shortcut()
+                    .is_some_and(|shortcut| shortcut.eq_ignore_ascii_case(&character))
+            })
+        {
+            let command = match entry.icon_identity() {
+                "explorer" => ShellCommand::OpenExplorer,
+                "launcher" => ShellCommand::OpenLauncher,
+                "settings" => ShellCommand::OpenSettings,
+                "system_status" => ShellCommand::OpenSystemStatus,
+                "user_management" | "user_profile" => ShellCommand::OpenUserManagement,
+                _ => ShellCommand::Noop,
+            };
+            return (RoutedTarget::Global, command);
+        }
+
+        if self.active_screen() == ShellScreen::Home
+            && (key.has_non_shift_modifier()
+                || (key.phase != InputPhase::Press
+                    && matches!(
+                        key.key,
+                        InputKey::Char(_) | InputKey::Enter | InputKey::Escape
+                    )))
+        {
+            return (RoutedTarget::Global, ShellCommand::RecordInput);
         }
 
         if matches!(&key.key, InputKey::BackTab)
@@ -453,12 +521,6 @@ impl ShellSession {
                 RoutedTarget::Component(ShellComponent::Home),
                 ShellCommand::ActivateSelectedHomeEntry,
             ),
-            ShellScreen::Home if key.is_character('e') || key.is_character('E') => {
-                (RoutedTarget::Global, ShellCommand::OpenExplorer)
-            }
-            ShellScreen::Home if key.is_character('u') || key.is_character('U') => {
-                (RoutedTarget::Global, ShellCommand::OpenUserManagement)
-            }
             ShellScreen::Home
                 if self.identity_backend != identity::IdentityBackend::Linux
                     && self.current_home_username().is_some()
@@ -481,6 +543,34 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(self.focused_component);
+        if key.phase == InputPhase::Release {
+            return (target, ShellCommand::Noop);
+        }
+        if key.has_non_shift_modifier() {
+            return (
+                target,
+                if key.modifiers.is_control()
+                    && !key.modifiers.alt
+                    && !key.modifiers.super_key
+                    && !key.modifiers.hyper
+                    && !key.modifiers.meta
+                    && key.key == InputKey::Enter
+                    && key.phase == InputPhase::Press
+                    && !self.login_users.is_empty()
+                {
+                    ShellCommand::SubmitLogin
+                } else {
+                    ShellCommand::RecordInput
+                },
+            );
+        }
+        if key.phase != InputPhase::Press
+            && (matches!(key.key, InputKey::Enter | InputKey::Escape | InputKey::F(2))
+                || (key.key == InputKey::Char(' ')
+                    && self.focused_component == ShellComponent::LoginPasswordVisibility))
+        {
+            return (target, ShellCommand::RecordInput);
+        }
         if matches!(&key.key, InputKey::Escape) {
             return (RoutedTarget::Global, ShellCommand::RequestExit);
         }
@@ -533,6 +623,32 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(self.focused_component);
+        if key.phase == InputPhase::Release {
+            return (target, ShellCommand::Noop);
+        }
+        if key.has_non_shift_modifier() {
+            return (
+                target,
+                if key.modifiers.is_control()
+                    && !key.modifiers.alt
+                    && !key.modifiers.super_key
+                    && !key.modifiers.hyper
+                    && !key.modifiers.meta
+                    && key.key == InputKey::Enter
+                    && key.phase == InputPhase::Press
+                {
+                    match self.active_screen() {
+                        ShellScreen::BootstrapAdmin => ShellCommand::SubmitBootstrapAdmin,
+                        _ => ShellCommand::SubmitLogin,
+                    }
+                } else {
+                    ShellCommand::RecordInput
+                },
+            );
+        }
+        if key.phase != InputPhase::Press && matches!(key.key, InputKey::Enter | InputKey::Escape) {
+            return (target, ShellCommand::RecordInput);
+        }
         if matches!(&key.key, InputKey::BackTab)
             || (matches!(&key.key, InputKey::Tab) && key.modifiers.shift)
         {
@@ -576,6 +692,23 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(self.focused_component);
+        if key.phase == InputPhase::Release {
+            return (target, ShellCommand::Noop);
+        }
+        if key.has_non_shift_modifier()
+            || (key.phase != InputPhase::Press
+                && (matches!(
+                    key.key,
+                    InputKey::Enter | InputKey::Escape | InputKey::F(3) | InputKey::F(4)
+                ) || (matches!(key.key, InputKey::Char(_))
+                    && !self
+                        .clock_create_state
+                        .as_ref()
+                        .is_some_and(|create| create.focus == ui::ClockCreateDialogFocus::Input))))
+        {
+            return (target, ShellCommand::RecordInput);
+        }
         if self.is_strict_guest() {
             let target = RoutedTarget::Component(ShellComponent::ClockButton);
             return match &key.key {
@@ -588,6 +721,8 @@ impl ShellSession {
         if let Some(create) = &self.clock_create_state {
             let target = RoutedTarget::Modal(ShellComponent::ClockCreateDialog);
             return match &key.key {
+                InputKey::F(3) => (target, ShellCommand::ClockCreateAlarm),
+                InputKey::F(4) => (target, ShellCommand::ClockCreateCountdown),
                 InputKey::Escape => (target, ShellCommand::ClockCloseCreate),
                 InputKey::BackTab => (target, ShellCommand::ClockCreateFocusPrevious),
                 InputKey::Tab if key.modifiers.shift => {
@@ -640,6 +775,7 @@ impl ShellSession {
             InputKey::Tab if key.modifiers.shift => (target, ShellCommand::FocusPrevious),
             InputKey::Tab => (target, ShellCommand::FocusNext),
             InputKey::Char('n' | 'N') => (target, ShellCommand::ClockOpenCreate),
+            InputKey::Char('m' | 'M') => (target, ShellCommand::ClockActivateSelected),
             InputKey::Enter | InputKey::Char(' ')
                 if self.focused_component == ShellComponent::ClockNewButton =>
             {
@@ -676,6 +812,22 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::Diagnostics);
+        if !key.phase.is_press_like()
+            || key.has_non_shift_modifier()
+            || (key.phase != InputPhase::Press
+                && matches!(
+                    key.key,
+                    InputKey::Char(_)
+                        | InputKey::Enter
+                        | InputKey::Escape
+                        | InputKey::Tab
+                        | InputKey::BackTab
+                        | InputKey::F(_)
+                ))
+        {
+            return (target, ShellCommand::Noop);
+        }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return if matches!(&key.key, InputKey::Escape) {
@@ -692,6 +844,7 @@ impl ShellSession {
             let target = RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog);
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::DiagnosticsCancelRepair),
+                InputKey::Char('y' | 'Y') => (target, ShellCommand::DiagnosticsConfirmRepair),
                 InputKey::Char('r' | 'R') => (RoutedTarget::Global, ShellCommand::Restart),
                 InputKey::Up => (target, ShellCommand::DiagnosticsRepairPrevious),
                 InputKey::Down => (target, ShellCommand::DiagnosticsRepairNext),
@@ -710,7 +863,14 @@ impl ShellSession {
             };
         }
 
-        let target = RoutedTarget::Component(ShellComponent::Diagnostics);
+        if self.diagnostics_is_busy()
+            && matches!(
+                key.key,
+                InputKey::Char(_) | InputKey::Enter | InputKey::F(_)
+            )
+        {
+            return (target, ShellCommand::Noop);
+        }
         if self.diagnostics_restart_is_required() {
             return match &key.key {
                 InputKey::Enter | InputKey::Char('r' | 'R') => {
@@ -732,7 +892,7 @@ impl ShellSession {
             InputKey::PageDown => (target, ShellCommand::DiagnosticsPageDown),
             InputKey::Home => (target, ShellCommand::DiagnosticsFirst),
             InputKey::End => (target, ShellCommand::DiagnosticsLast),
-            InputKey::Char('r' | 'R') => (target, ShellCommand::DiagnosticsRescan),
+            InputKey::Char('r' | 'R') | InputKey::F(5) => (target, ShellCommand::DiagnosticsRescan),
             InputKey::Char('x' | 'X') if !self.diagnostics_scanning => {
                 (RoutedTarget::Global, ShellCommand::Restart)
             }
@@ -745,6 +905,12 @@ impl ShellSession {
             InputKey::Char('c' | 'C') => (target, ShellCommand::DiagnosticsCopySummary),
 
             InputKey::Char('o' | 'O') => (target, ShellCommand::DiagnosticsOpenReport),
+            InputKey::Char('e' | 'E')
+                if self.diagnostics_tab != ui::DiagnosticsTab::Health
+                    && self.diagnostics_can_view_details() =>
+            {
+                (target, ShellCommand::DiagnosticsOpenLogsInExplorer)
+            }
             InputKey::Enter
                 if matches!(
                     self.diagnostics_tab,
@@ -762,6 +928,30 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::SystemStatus);
+        let save_shortcut = self.system_status_dashboard_draft.is_some()
+            && matches!(key.key, InputKey::Char('s' | 'S'))
+            && key.modifiers.is_control()
+            && !key.modifiers.alt
+            && !key.modifiers.super_key
+            && !key.modifiers.hyper
+            && !key.modifiers.meta;
+        if !key.phase.is_press_like()
+            || (key.has_non_shift_modifier() && !save_shortcut)
+            || (key.phase != InputPhase::Press
+                && matches!(
+                    key.key,
+                    InputKey::Char(_)
+                        | InputKey::Enter
+                        | InputKey::Escape
+                        | InputKey::Tab
+                        | InputKey::BackTab
+                        | InputKey::Delete
+                        | InputKey::Backspace
+                        | InputKey::F(_)
+                ))
+        {
+            return (target, ShellCommand::Noop);
+        }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
             return if matches!(&key.key, InputKey::Escape) {
@@ -778,6 +968,7 @@ impl ShellSession {
             let modal = RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog);
             return match &key.key {
                 InputKey::Escape => (modal, ShellCommand::DiagnosticsCancelRepair),
+                InputKey::Char('y' | 'Y') => (modal, ShellCommand::DiagnosticsConfirmRepair),
                 InputKey::Char('r' | 'R') => (RoutedTarget::Global, ShellCommand::Restart),
                 InputKey::Up => (modal, ShellCommand::DiagnosticsRepairPrevious),
                 InputKey::Down => (modal, ShellCommand::DiagnosticsRepairNext),
@@ -799,6 +990,7 @@ impl ShellSession {
         if self.system_status_discard_dialog {
             let modal = RoutedTarget::Modal(ShellComponent::SystemStatus);
             return match &key.key {
+                InputKey::Char('y' | 'Y') => (modal, ShellCommand::SystemStatusDiscardEdit),
                 InputKey::Enter | InputKey::Char(' ')
                     if self.system_status_discard_confirm_selected =>
                 {
@@ -855,6 +1047,15 @@ impl ShellSession {
             )
         );
         let diagnostics_tab = diagnostics_active.then_some(self.diagnostics_tab);
+        if diagnostics_active
+            && self.diagnostics_is_busy()
+            && matches!(
+                key.key,
+                InputKey::Char(_) | InputKey::Enter | InputKey::F(_)
+            )
+        {
+            return (target, ShellCommand::Noop);
+        }
         if diagnostics_active && self.diagnostics_restart_is_required() {
             return match &key.key {
                 InputKey::Enter | InputKey::Char('r' | 'R') => {
@@ -892,8 +1093,16 @@ impl ShellSession {
                         ui::SystemStatusProcessSortColumn::Memory,
                     )
                 }
-                InputKey::Char('r' | 'R') if diagnostics_active => ShellCommand::DiagnosticsRescan,
-                InputKey::Char('r' | 'R') => ShellCommand::SystemStatusRefresh,
+                InputKey::Char('r' | 'R') | InputKey::F(5) if diagnostics_active => {
+                    ShellCommand::DiagnosticsRescan
+                }
+                InputKey::Char('r' | 'R') | InputKey::F(5) => {
+                    if self.system_status_refresh_requested_revision.is_some() {
+                        ShellCommand::Noop
+                    } else {
+                        ShellCommand::SystemStatusRefresh
+                    }
+                }
                 InputKey::Up if diagnostics_active => ShellCommand::DiagnosticsPrevious,
                 InputKey::Down if diagnostics_active => ShellCommand::DiagnosticsNext,
                 InputKey::PageUp if diagnostics_active => ShellCommand::DiagnosticsPageUp,
@@ -930,6 +1139,14 @@ impl ShellSession {
                 {
                     ShellCommand::DiagnosticsOpenReport
                 }
+                InputKey::Char('e' | 'E')
+                    if matches!(
+                        diagnostics_tab,
+                        Some(ui::DiagnosticsTab::Logs | ui::DiagnosticsTab::Incidents)
+                    ) && self.diagnostics_can_view_details() =>
+                {
+                    ShellCommand::DiagnosticsOpenLogsInExplorer
+                }
                 InputKey::Enter
                     if matches!(
                         diagnostics_tab,
@@ -963,6 +1180,9 @@ impl ShellSession {
                 InputKey::Char('s' | 'S') if !key.modifiers.has_non_shift_modifier() => {
                     ShellCommand::SystemStatusCycleWidgetSize
                 }
+                InputKey::F(4) if self.system_status_selected_widget.is_some() => {
+                    ShellCommand::SystemStatusOpenSizePicker
+                }
                 InputKey::Delete | InputKey::Backspace => ShellCommand::SystemStatusRemoveWidget,
                 InputKey::Left if key.modifiers.shift => {
                     ShellCommand::SystemStatusMoveWidget(-1, 0)
@@ -989,7 +1209,7 @@ impl ShellSession {
 
         let command = match &key.key {
             InputKey::Escape => ShellCommand::CloseSystemStatus,
-            InputKey::Char('r' | 'R') => {
+            InputKey::Char('r' | 'R') | InputKey::F(5) => {
                 if self.system_status_refresh_requested_revision.is_some() {
                     ShellCommand::Noop
                 } else {
@@ -1104,6 +1324,49 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target_component = self.setup_active_key_component();
         let target = RoutedTarget::Component(target_component);
+        if key.phase == InputPhase::Release {
+            return (target, ShellCommand::Noop);
+        }
+        if key.has_non_shift_modifier() {
+            if key.phase == InputPhase::Press
+                && key.modifiers.is_control()
+                && !key.modifiers.alt
+                && !key.modifiers.super_key
+                && !key.modifiers.hyper
+                && !key.modifiers.meta
+                && key.key == InputKey::Enter
+            {
+                return (
+                    target,
+                    if self.setup_custom_color_target.is_some() {
+                        ShellCommand::ApplySetupCustomColor
+                    } else {
+                        ShellCommand::SetupPrimaryAction
+                    },
+                );
+            }
+            if key.phase == InputPhase::Press
+                && key.modifiers.alt
+                && !key.modifiers.is_control()
+                && !key.modifiers.super_key
+                && !key.modifiers.hyper
+                && !key.modifiers.meta
+                && key.key == InputKey::Left
+                && self.setup_custom_color_target.is_none()
+                && self.setup_step == ui::SetupStep::Timezone
+            {
+                return (target, ShellCommand::SetupPreviousStep);
+            }
+            return (target, ShellCommand::RecordInput);
+        }
+        if key.phase != InputPhase::Press
+            && (matches!(key.key, InputKey::Enter | InputKey::Escape)
+                || (key.key == InputKey::Char(' ')
+                    && self.setup_custom_color_target.is_none()
+                    && self.setup_step != ui::SetupStep::Admin))
+        {
+            return (target, ShellCommand::RecordInput);
+        }
 
         if self.setup_custom_color_target.is_some() {
             return match &key.key {
@@ -1148,7 +1411,7 @@ impl ShellSession {
                     (target, ShellCommand::SetupAdminBackspace)
                 }
                 InputKey::Enter if self.setup_focused_field == ui::SetupField::Submit => {
-                    (target, ShellCommand::SubmitSetup)
+                    (target, ShellCommand::SetupPrimaryAction)
                 }
                 InputKey::Enter => (target, ShellCommand::SetupFocusNext),
                 InputKey::Char(character) if setup_admin_text_field(self.setup_focused_field) => {
@@ -1411,7 +1674,7 @@ impl ShellSession {
                 target,
                 ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::DumpTrash),
             ),
-            InputKey::Char('s' | 'S') if !key.has_non_shift_modifier() => (
+            InputKey::F(6) if key.phase == InputPhase::Press && key.is_unmodified_action_key() => (
                 target,
                 ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Sort),
             ),
@@ -1430,27 +1693,60 @@ impl ShellSession {
             InputKey::Char('a' | 'A') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::ExplorerSelectAll)
             }
-            InputKey::Char('a' | 'A') if !is_trash && self.can_manage_launcher() => {
+            InputKey::Char('a' | 'A')
+                if !is_trash && self.can_manage_launcher() && !key.has_non_shift_modifier() =>
+            {
                 (target, ShellCommand::ExplorerAddToLauncher)
             }
             InputKey::Char(' ') => (target, ShellCommand::ExplorerToggleFocused),
             InputKey::Char('f' | 'F') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::BeginExplorerSearch)
             }
-            InputKey::Char('h' | 'H') => (target, ShellCommand::ExplorerToggleHidden),
-            InputKey::Char('r' | 'R') if is_trash => (target, ShellCommand::ExplorerRestore),
-            InputKey::Char('c' | 'C') if !is_trash => (target, ShellCommand::ExplorerCopy),
-            InputKey::Char('x' | 'X') if !is_trash => (target, ShellCommand::ExplorerCut),
-            InputKey::Char('v' | 'V') if !is_trash => (target, ShellCommand::ExplorerPaste),
-            InputKey::Char('d' | 'D') if !is_trash => (target, ShellCommand::ExplorerDelete),
-            InputKey::Char('n' | 'N' | 'f' | 'F') if !is_trash => {
+            InputKey::Char('h' | 'H') if !key.has_non_shift_modifier() => {
+                (target, ShellCommand::ExplorerToggleHidden)
+            }
+            InputKey::Char('r' | 'R') if is_trash && !key.has_non_shift_modifier() => {
+                (target, ShellCommand::ExplorerRestore)
+            }
+            InputKey::Char('c' | 'C')
+                if !is_trash
+                    && !key.modifiers.alt
+                    && !key.modifiers.hyper
+                    && !key.modifiers.meta =>
+            {
+                (target, ShellCommand::ExplorerCopy)
+            }
+            InputKey::Char('x' | 'X')
+                if !is_trash
+                    && !key.modifiers.alt
+                    && !key.modifiers.hyper
+                    && !key.modifiers.meta =>
+            {
+                (target, ShellCommand::ExplorerCut)
+            }
+            InputKey::Char('v' | 'V')
+                if !is_trash
+                    && !key.modifiers.alt
+                    && !key.modifiers.hyper
+                    && !key.modifiers.meta =>
+            {
+                (target, ShellCommand::ExplorerPaste)
+            }
+            InputKey::Char('d' | 'D') if !is_trash && !key.has_non_shift_modifier() => {
+                (target, ShellCommand::ExplorerDelete)
+            }
+            InputKey::Char('n' | 'N' | 'f' | 'F') if !is_trash && !key.has_non_shift_modifier() => {
                 (target, ShellCommand::BeginExplorerNewFolder)
             }
-            InputKey::Char('t' | 'T') if !is_trash => {
+            InputKey::Char('t' | 'T') if !is_trash && !key.has_non_shift_modifier() => {
                 (target, ShellCommand::BeginExplorerNewTextFile)
             }
-            InputKey::Char('r' | 'R') if !is_trash => (target, ShellCommand::BeginExplorerRename),
-            InputKey::Char('/') => (target, ShellCommand::BeginExplorerSearch),
+            InputKey::Char('r' | 'R') if !is_trash && !key.has_non_shift_modifier() => {
+                (target, ShellCommand::BeginExplorerRename)
+            }
+            InputKey::Char('s' | 'S' | '/') if !key.has_non_shift_modifier() => {
+                (target, ShellCommand::BeginExplorerSearch)
+            }
             _ => (target, ShellCommand::RecordInput),
         }
     }
@@ -1489,6 +1785,9 @@ impl ShellSession {
         if self.launcher_drag.is_some() && matches!(key.key, InputKey::Escape) {
             return (target, ShellCommand::LauncherCancelDrag);
         }
+        if key.has_non_shift_modifier() {
+            return (target, ShellCommand::RecordInput);
+        }
         match key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseLauncher),
             InputKey::Left | InputKey::Up => (target, ShellCommand::LauncherPrevious),
@@ -1497,10 +1796,18 @@ impl ShellSession {
             InputKey::PageDown => (target, ShellCommand::LauncherPageDown),
             InputKey::Home => (target, ShellCommand::LauncherFirst),
             InputKey::End => (target, ShellCommand::LauncherLast),
-            InputKey::Enter => (target, ShellCommand::LauncherActivate),
-            InputKey::Delete => (target, ShellCommand::LauncherRemove),
-            InputKey::Char('v' | 'V') => (target, ShellCommand::LauncherToggleView),
-            InputKey::Char('r' | 'R') => (target, ShellCommand::LauncherRefresh),
+            InputKey::Enter | InputKey::Char(' ') if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherActivate)
+            }
+            InputKey::Delete if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherRemove)
+            }
+            InputKey::Char('v' | 'V') if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherToggleView)
+            }
+            InputKey::Char('r' | 'R') | InputKey::F(5) if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherRefresh)
+            }
             _ => (target, ShellCommand::RecordInput),
         }
     }
@@ -1510,6 +1817,42 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
+        if key.phase == InputPhase::Release {
+            return (target, ShellCommand::Noop);
+        }
+        if key.has_non_shift_modifier() {
+            return (
+                target,
+                if key.modifiers.is_control()
+                    && !key.modifiers.alt
+                    && !key.modifiers.super_key
+                    && !key.modifiers.hyper
+                    && !key.modifiers.meta
+                    && key.key == InputKey::Enter
+                    && key.phase == InputPhase::Press
+                    && self.user_management_mode != UserManagementMode::Browse
+                {
+                    ShellCommand::SubmitUserManagementForm
+                } else {
+                    ShellCommand::RecordInput
+                },
+            );
+        }
+        let editing_text = self.user_management_mode != UserManagementMode::Browse
+            && matches!(
+                self.user_management_form_field(),
+                Some(
+                    UserManagementFormField::Username
+                        | UserManagementFormField::DisplayName
+                        | UserManagementFormField::Password
+                )
+            );
+        if key.phase != InputPhase::Press
+            && (matches!(key.key, InputKey::Enter | InputKey::Escape)
+                || (matches!(key.key, InputKey::Char(_)) && !editing_text))
+        {
+            return (target, ShellCommand::RecordInput);
+        }
 
         if self.user_management_mode != UserManagementMode::Browse {
             let field = self.user_management_form_field();

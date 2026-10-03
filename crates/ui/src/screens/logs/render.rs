@@ -32,7 +32,7 @@ pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
     None
 }
 
-pub(super) fn control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> bool {
+pub fn logs_control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> bool {
     if unavailable_reason(model).is_some() || model.loading {
         return false;
     }
@@ -258,7 +258,7 @@ pub fn render_logs_content(
     let content = content_model(model);
     for (control, (target, label)) in layout.controls.iter().zip(controls()) {
         let mut button = Button::new(logs_control_id(model, target), label);
-        button.set_disabled(!control_enabled(model, target));
+        button.set_disabled(!logs_control_enabled(model, target));
         button.render_borderless_frame(frame, control.area, &theme);
     }
     frame.render_widget(

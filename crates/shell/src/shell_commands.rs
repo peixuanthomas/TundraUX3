@@ -43,6 +43,8 @@ pub enum ShellCommand {
     SetupPreviousLanguage,
     SetupNextLanguage,
     SetupContinue,
+    SetupPreviousStep,
+    SetupPrimaryAction,
     SetupPreviousTimezone,
     SetupNextTimezone,
     SetupPageTimezoneUp,

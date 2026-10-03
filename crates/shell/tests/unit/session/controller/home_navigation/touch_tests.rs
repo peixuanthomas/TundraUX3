@@ -88,6 +88,79 @@ fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
 }
 
 #[test]
+fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
+    let mut state = state((120, 40));
+    for (key, modifiers) in [
+        (InputKey::Char('l'), InputModifiers::ALT),
+        (InputKey::Char('l'), InputModifiers::CTRL_SHIFT),
+        (InputKey::Char('q'), InputModifiers::ALT),
+        (InputKey::Enter, InputModifiers::ALT),
+    ] {
+        assert_eq!(
+            state
+                .route_key_input(&KeyInput::with_modifiers(key, modifiers))
+                .1,
+            ShellCommand::RecordInput,
+        );
+    }
+    for (label, command) in [
+        ("E", ShellCommand::OpenExplorer),
+        ("A", ShellCommand::OpenLauncher),
+        ("S", ShellCommand::OpenSettings),
+        ("M", ShellCommand::OpenSystemStatus),
+        ("U", ShellCommand::OpenUserManagement),
+    ] {
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label(label)).1,
+            command
+        );
+        assert_eq!(
+            state
+                .route_key_input(&KeyInput::from_label(&label.to_lowercase()))
+                .1,
+            command
+        );
+        assert_ne!(
+            state
+                .route_key_input(&KeyInput::with_modifiers(
+                    KeyInput::from_label(label).key,
+                    InputModifiers::ALT
+                ))
+                .1,
+            command
+        );
+        let mut repeated = KeyInput::from_label(label);
+        repeated.phase = InputPhase::Repeat;
+        assert_ne!(state.route_key_input(&repeated).1, command);
+    }
+    state.screen_stack.push(ShellScreen::Launcher);
+    for (label, command) in [
+        ("R", ShellCommand::LauncherRefresh),
+        ("F5", ShellCommand::LauncherRefresh),
+        ("V", ShellCommand::LauncherToggleView),
+        ("Enter", ShellCommand::LauncherActivate),
+        ("Delete", ShellCommand::LauncherRemove),
+    ] {
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label(label)).1,
+            command
+        );
+        assert_ne!(
+            state
+                .route_key_input(&KeyInput::with_modifiers(
+                    KeyInput::from_label(label).key,
+                    InputModifiers::ALT
+                ))
+                .1,
+            command
+        );
+        let mut repeated = KeyInput::from_label(label);
+        repeated.phase = InputPhase::Repeat;
+        assert_ne!(state.route_key_input(&repeated).1, command);
+    }
+}
+
+#[test]
 fn home_scrollbar_reaches_tail_without_opening_a_card() {
     let mut state = state((72, 16));
     let main = main_area(&state);

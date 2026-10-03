@@ -8,7 +8,7 @@ ui-user-management-create-a-user-or-admin-account = Create a User or Admin accou
 ui-user-management-username = Username
 ui-user-management-display-name = Display name
 ui-user-management-password = Password
-ui-user-management-cancel-button = { "[" } Cancel ]
+ui-user-management-cancel-button = { "[" } Esc Cancel ]
 ui-user-management-disabled = Disabled
 ui-user-management-locked = Locked
 ui-user-management-enabled = Enabled
@@ -47,3 +47,4 @@ ui-user-management-summary = { $count ->
 
 ui-user-management-current-status = { $status } · You
 ui-user-management-touch-help = Select an account, then tap an action. Drag the bar to see more. Tab/Enter also work.
+ui-user-management-form-shortcuts = Ctrl+Enter: { $action } · Tab: field · Esc: cancel

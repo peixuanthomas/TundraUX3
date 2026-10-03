@@ -33,6 +33,22 @@ impl ShellEntry {
     pub fn icon_identity(&self) -> &str {
         self.icon_key.as_deref().unwrap_or(&self.label)
     }
+
+    pub fn shortcut(&self) -> Option<char> {
+        match self.icon_key.as_deref()? {
+            "explorer" => Some('E'),
+            "launcher" => Some('A'),
+            "settings" => Some('S'),
+            "system_status" => Some('M'),
+            "user_management" | "user_profile" => Some('U'),
+            _ => None,
+        }
+    }
+
+    pub fn label_with_shortcut(&self) -> String {
+        self.shortcut()
+            .map_or_else(|| self.label.clone(), |key| format!("{key} {}", self.label))
+    }
 }
 
 #[derive(Debug, Clone)]

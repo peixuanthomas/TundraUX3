@@ -436,12 +436,42 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn handle_logs_key(&mut self, key: &KeyInput) {
+        if !key.phase.is_press_like() {
+            return;
+        }
+        let detail_navigation = (key.modifiers.shift || key.modifiers.is_control())
+            && !key.modifiers.alt
+            && !key.modifiers.super_key
+            && !key.modifiers.hyper
+            && !key.modifiers.meta
+            && matches!(key.key, InputKey::PageUp | InputKey::PageDown);
+        if key.has_non_shift_modifier() && !detail_navigation {
+            return;
+        }
+        let control = match key.key {
+            InputKey::Enter | InputKey::Char('o' | 'O') => Some(ui::LogsHitTarget::Open),
+            InputKey::Char('r' | 'R') | InputKey::F(5) => Some(ui::LogsHitTarget::Refresh),
+            InputKey::Char('l' | 'L') => Some(ui::LogsHitTarget::FilterLevel),
+            InputKey::Char('m' | 'M') => Some(ui::LogsHitTarget::FilterModule),
+            InputKey::Char('t' | 'T') => Some(ui::LogsHitTarget::FilterTime),
+            InputKey::Char('c' | 'C') => Some(ui::LogsHitTarget::ClearFilters),
+            InputKey::Char('i' | 'I') => Some(ui::LogsHitTarget::RelatedIncident),
+            InputKey::Char('e' | 'E') => Some(ui::LogsHitTarget::RelatedEvents),
+            _ => None,
+        };
+        if control.is_some_and(|control| {
+            key.phase != InputPhase::Press
+                || !ui::logs_control_enabled(&self.to_logs_view_model(), control)
+        }) {
+            return;
+        }
+        if key.phase != InputPhase::Press && matches!(key.key, InputKey::Escape | InputKey::Tab) {
+            return;
+        }
         if key.key == InputKey::Escape {
             self.cancel_logs_pointer_gesture();
         }
-        if (key.modifiers.shift || key.modifiers.control || key.modifiers.ctrl)
-            && matches!(key.key, InputKey::PageUp | InputKey::PageDown)
-        {
+        if detail_navigation {
             self.logs_state.detail_scroll = self
                 .logs_state
                 .detail_scroll
@@ -500,7 +530,7 @@ impl ShellSession {
                 self.logs_state.explicit_scroll = false;
             }
             InputKey::Enter | InputKey::Char('o' | 'O') => self.logs_open_selected(),
-            InputKey::Char('r' | 'R') => self.request_logs_job(None),
+            InputKey::Char('r' | 'R') | InputKey::F(5) => self.request_logs_job(None),
             InputKey::Char('l' | 'L') => self.logs_filter_level(),
             InputKey::Char('m' | 'M') => self.logs_filter_module(),
             InputKey::Char('t' | 'T') => self.logs_filter_time(),
@@ -598,7 +628,7 @@ impl ShellSession {
             selected_incident: state.selected,
             list_window_start: state.scroll,
             list_window_is_explicit: state.explicit_scroll,
-            can_view_details: true,
+            can_view_details: self.logs_access().is_some(),
             scanning: state.job.is_some(),
             ..Default::default()
         };

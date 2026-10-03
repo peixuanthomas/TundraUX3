@@ -431,7 +431,9 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         raw_detail_area.x,
         raw_detail_area.y,
         raw_detail_area.width,
-        raw_detail_area.height.saturating_sub(1),
+        raw_detail_area
+            .height
+            .saturating_sub(if raw_detail_area.height >= 3 { 2 } else { 1 }),
     );
     let mut content_height = settings_content_height(detail_area.width, model);
     let scrollbar = (content_height > usize::from(detail_area.height)
@@ -1244,6 +1246,17 @@ fn render_settings_footer(
         .alignment(HorizontalAlignment::Left),
         area,
     );
+    if detail.height >= 3 {
+        let hint = if detail.width >= 62 {
+            i18n::tr!("ui-settings-keyboard-help")
+        } else {
+            i18n::tr!("ui-settings-keyboard-help-short")
+        };
+        frame.render_widget(
+            Paragraph::new(hint).style(theme.muted_style()),
+            Rect::new(detail.x, area.y.saturating_sub(1), detail.width, 1),
+        );
+    }
 }
 
 fn render_picker(

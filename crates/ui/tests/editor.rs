@@ -347,7 +347,12 @@ fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
     assert!(output.contains("Cursor acceleration"));
     assert!(output.contains("2000 ms"));
     assert!(output.contains("Horizontal maximum"));
-    assert!(output.contains("Restore defaults"));
+    for width in [52, 64, 100] {
+        let output = terminal_output(&render(&model, width, 24));
+        for hint in ["[T On]", "[R Reset]", "[Ctrl+S Save]", "[Esc Cancel]"] {
+            assert!(output.contains(hint), "{hint} must fit at width {width}");
+        }
+    }
 }
 
 #[test]

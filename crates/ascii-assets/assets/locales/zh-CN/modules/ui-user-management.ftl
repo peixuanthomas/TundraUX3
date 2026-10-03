@@ -8,7 +8,7 @@ ui-user-management-create-a-user-or-admin-account = 创建普通用户或管理�
 ui-user-management-username = 用户名
 ui-user-management-display-name = 显示名称
 ui-user-management-password = 密码
-ui-user-management-cancel-button = { "[" } 取消 ]
+ui-user-management-cancel-button = { "[" } Esc 取消 ]
 ui-user-management-disabled = 已禁用
 ui-user-management-locked = 已锁定
 ui-user-management-enabled = 已启用
@@ -44,3 +44,4 @@ ui-user-management-summary = 已登录：{ $user }    { $count } 位用户
 
 ui-user-management-current-status = { $status } · 当前用户
 ui-user-management-touch-help = 点击账号后选择下方操作，拖动滚动条查看更多；也可用 Tab/Enter。
+ui-user-management-form-shortcuts = Ctrl+Enter：{ $action } · Tab：下一项 · Esc：取消

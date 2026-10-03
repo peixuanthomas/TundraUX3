@@ -5,8 +5,8 @@ ui-logs-linux-log = Linux 日志
 ui-logs-events = 事件
 ui-logs-files = 文件
 ui-logs-incidents = 故障事件
-ui-logs-r-refresh = R 刷新
-ui-logs-o-open = O 打开
+ui-logs-r-refresh = R/F5 刷新
+ui-logs-o-open = Enter/O 打开
 ui-logs-l-level = L 级别
 ui-logs-m-module = M 模块
 ui-logs-t-time = T 时间
@@ -21,7 +21,7 @@ ui-logs-log-files = 日志文件
 ui-logs-loading-events = 正在加载事件…
 ui-logs-no-events-match-the-current-query = 没有符合当前查询的事件
 ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers = 选择事件以查看其操作和关联标识。
-ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link = Esc 返回 · ←/→ 类别 · Tab 分区 · Enter/O 只读打开 · R 刷新 · I/E 关联
+ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link = ←/→ 类别 · Tab 分区 · Enter/O 打开 · R/F5 刷新 · Esc 返回
 
 ui-logs-event-detail = 时间：{ $time }
     级别：{ $level }
@@ -31,6 +31,6 @@ ui-logs-event-detail = 时间：{ $time }
 
 ui-logs-incident-link = { "\u000A" }故障事件：{ $id }
 
-ui-logs-clear-filters = 清除过滤
-ui-logs-show-incident = 查看故障
-ui-logs-show-events = 关联事件
+ui-logs-clear-filters = C 清除过滤
+ui-logs-show-incident = I 查看故障
+ui-logs-show-events = E 关联事件

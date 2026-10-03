@@ -8,7 +8,7 @@ use super::layout::{
     user_management_layout,
 };
 use super::model::{
-    UserManagementFeedbackTone, UserManagementField, UserManagementFocus, UserManagementFormKind,
+    UserManagementFeedbackTone, UserManagementField, UserManagementFocus,
     UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };
 use crate::components::{Button, ComponentTone, DataTable, Scrollbar, Surface, TextInput};
@@ -166,9 +166,13 @@ fn render_user_management_actions(
             continue;
         };
         let focused = model.focus == UserManagementFocus::Action(action.action);
+        let label = action.shortcut.map_or_else(
+            || action.label.clone(),
+            |key| format!("{} {}", key.to_ascii_uppercase(), action.label),
+        );
         let mut button = Button::new(
             format!("user-management.action.{:?}", action.action),
-            fit_cell(&action.label, usize::from(action_layout.area.width)),
+            fit_cell(&label, usize::from(action_layout.area.width)),
         );
         button.set_disabled(!action.enabled);
         button.set_focused(focused);
@@ -206,25 +210,10 @@ fn render_user_management_form(
         .render_frame(frame, track, context);
     }
 
-    let prompt = match (layout.compact, form.kind) {
-        (true, UserManagementFormKind::Create) => {
-            i18n::tr!("ui-user-management-create-user-user-or-admin-account")
-        }
-        (true, _) => form.title.clone(),
-        (false, UserManagementFormKind::Create) => {
-            i18n::tr!("ui-user-management-create-a-user-or-admin-account")
-        }
-        (false, UserManagementFormKind::EditInfo) => i18n::tr!(
-            "ui-user-management-editing",
-            username = form.username.clone()
-        ),
-        (false, UserManagementFormKind::Password) => {
-            i18n::tr!(
-                "ui-user-management-password-for",
-                username = form.username.clone()
-            )
-        }
-    };
+    let prompt = i18n::tr!(
+        "ui-user-management-form-shortcuts",
+        action = form.submit_label()
+    );
     render_clock_line(
         frame,
         layout.prompt,

@@ -473,24 +473,10 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             let dialog = Dialog::new(
                 "system-status.dialog",
                 &dialog_model.title,
-                &dialog_model.message,
+                dialog_model.message_with_shortcuts(),
                 vec![
-                    DialogAction::new(
-                        "confirm",
-                        if dialog_model.confirm_label.is_empty() {
-                            i18n::tr!("ui-system-status-confirm")
-                        } else {
-                            dialog_model.confirm_label.clone()
-                        },
-                    ),
-                    DialogAction::new(
-                        "cancel",
-                        if dialog_model.cancel_label.is_empty() {
-                            i18n::tr!("ui-system-status-cancel")
-                        } else {
-                            dialog_model.cancel_label.clone()
-                        },
-                    ),
+                    DialogAction::new("confirm", dialog_model.confirm_button_label()),
+                    DialogAction::new("cancel", dialog_model.cancel_button_label()),
                 ],
             );
             dialog
@@ -642,7 +628,7 @@ pub fn system_status_hit_test(
 }
 
 fn localized_button_width(label: &str) -> u16 {
-    u16::try_from(unicode_width::UnicodeWidthStr::width(label))
-        .unwrap_or(u16::MAX)
-        .saturating_add(4)
+    usize_to_u16(
+        crate::components::Button::new("system-status.action", label).rendered_label_width(),
+    )
 }

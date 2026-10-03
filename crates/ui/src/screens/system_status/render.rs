@@ -232,7 +232,10 @@ fn render_overlays(
             .collect();
         let mut list = List::new("system-status.add-list", items)
             .with_viewport_start(l.picker_viewport_start)
-            .titled(&p.title);
+            .titled(i18n::tr!(
+                "ui-system-status-picker-title",
+                title = p.title.clone()
+            ));
         list.set_selected(Some(p.selected));
         list.set_focused(true);
         list.render_frame(frame, area, &context.compatibility_theme())
@@ -249,24 +252,10 @@ fn render_overlays(
         let mut dialog = Dialog::new(
             "system-status.dialog",
             &d.title,
-            &d.message,
+            d.message_with_shortcuts(),
             vec![
-                DialogAction::new(
-                    "confirm",
-                    if d.confirm_label.is_empty() {
-                        i18n::tr!("ui-system-status-confirm")
-                    } else {
-                        d.confirm_label.clone()
-                    },
-                ),
-                DialogAction::new(
-                    "cancel",
-                    if d.cancel_label.is_empty() {
-                        i18n::tr!("ui-system-status-cancel")
-                    } else {
-                        d.cancel_label.clone()
-                    },
-                ),
+                DialogAction::new("confirm", d.confirm_button_label()),
+                DialogAction::new("cancel", d.cancel_button_label()),
             ],
         );
         dialog.open();

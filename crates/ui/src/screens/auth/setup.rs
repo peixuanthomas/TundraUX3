@@ -96,6 +96,12 @@ pub fn setup_viewport(main: Rect, model: &SetupViewModel) -> super::AuthViewport
 
 pub fn setup_navigation_areas(main: Rect) -> [Rect; 2] {
     let inner = setup_inner_area(main);
+    if inner.width < 40 && inner.height > 1 {
+        return [
+            Rect::new(inner.x, inner.bottom() - 2, inner.width, 1),
+            Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
+        ];
+    }
     let y = inner.bottom().saturating_sub(1);
     let width = inner.width / 2;
     [

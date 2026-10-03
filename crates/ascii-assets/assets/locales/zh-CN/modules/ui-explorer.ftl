@@ -12,7 +12,7 @@ ui-explorer-hidden = 隐藏
 ui-explorer-an-item-with-this-name-already-exists = 已存在同名项目。
 ui-explorer-on = 开
 ui-explorer-off = 关
-ui-explorer-search = 搜索：/
+ui-explorer-search = S 搜索
 ui-explorer-empty = <空>
 ui-explorer-search-padded = 搜索：{ " " }
 ui-explorer-entries = 条目
@@ -78,7 +78,7 @@ ui-explorer-search-query = 搜索：{ $query }{ $suffix }
 
 ui-explorer-search-matches = { " " }（{ $count } 个匹配，{ $mode }）
 
-ui-explorer-help = Ctrl+A：全选    空格：勾选    Shift+方向键：连续选择    Ctrl+方向键：仅移动焦点    C/X/V：复制/剪切/粘贴    Del：删除    Ctrl+I：反选    Ctrl+Shift+A：取消选择    Home/End/PageUp/PageDown：跳转（Shift：选择）    Shift+F10：菜单    Enter：打开    Backspace：上级    N/T：新文件夹/文本    F2：重命名    F5：刷新    /：搜索    S/O：排序/选项    Esc：返回
+ui-explorer-help = Ctrl+A：全选    空格：勾选    Shift+方向键：连续选择    Ctrl+方向键：仅移动焦点    C/X/V：复制/剪切/粘贴    Del：删除    Ctrl+I：反选    Ctrl+Shift+A：取消选择    Home/End/PageUp/PageDown：跳转（Shift：选择）    Shift+F10：菜单    Enter：打开    Backspace：上级    N/T：新文件夹/文本    F2：重命名    F5：刷新    S/Ctrl+F：搜索    F6/O：排序/选项    Esc：返回
 
 ui-explorer-compact-help = Ctrl+A：全选 | 空格：勾选 | C/X/V：复制/剪切/粘贴 | Del：删除 | Shift+F10：菜单 | 隐藏文件：{ $hidden }{ $quick }
 

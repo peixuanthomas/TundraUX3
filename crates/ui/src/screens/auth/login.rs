@@ -11,7 +11,7 @@ const LOGIN_USER_LIST_WIDTH: u16 = 30;
 const LOGIN_USERNAME_FIELD_HEIGHT: u16 = 5;
 const LOGIN_PASSWORD_FIELD_HEIGHT: u16 = 3;
 const LOGIN_FORM_GAP: u16 = 1;
-const LOGIN_PASSWORD_VISIBILITY_WIDTH: u16 = 6;
+const LOGIN_PASSWORD_VISIBILITY_WIDTH: u16 = 10;
 const LOGIN_CONTROL_GAP: u16 = 1;
 
 /// Shared Login page geometry for rendering and input hit-testing.

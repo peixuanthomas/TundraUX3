@@ -10,8 +10,8 @@ use platform::{
 };
 use ratatui::layout::Rect;
 use shell::{
-    HomeModeOverride, InputEvent, ShellLaunchConfig, ShellScreen, ShellSession,
-    prepare_shell_startup,
+    HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
+    ShellLaunchConfig, ShellScreen, ShellSession, prepare_shell_startup,
 };
 use storage::{BorderShape, IconDisplayMode, MotionPreference, StorageManager, TimeSyncSource};
 use ui::{SettingsCategory, SettingsField, SettingsPickerKind};
@@ -20,6 +20,41 @@ fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
         home_mode_override: HomeModeOverride::BuildDefault,
     }
+}
+
+#[test]
+fn settings_action_repeat_is_ignored_and_shift_tab_goes_to_previous_section() {
+    let fixture = FixtureRoot::new("settings-key-phases");
+    let platform = mock_platform(fixture.path());
+    initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    for phase in [InputPhase::Repeat, InputPhase::Release] {
+        for key in [InputKey::Enter, InputKey::Char(' ')] {
+            state.apply_input_with_platform(
+                InputEvent::Key(KeyInput::with_phase(key, InputModifiers::none(), phase)),
+                &platform,
+            );
+            assert!(state.to_settings_view_model().unwrap().picker.is_none());
+        }
+    }
+    press(&mut state, &platform, "Shift+Tab");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_category,
+        SettingsCategory::Update
+    );
+    press(&mut state, &platform, "Tab");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_category,
+        SettingsCategory::Appearance
+    );
+    press(&mut state, &platform, "Enter");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().picker.unwrap().kind,
+        SettingsPickerKind::Theme
+    );
+    press(&mut state, &platform, "Esc");
+    assert_eq!(state.active_screen(), ShellScreen::Settings);
 }
 
 #[cfg(target_os = "linux")]

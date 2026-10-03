@@ -950,9 +950,9 @@ pub(super) fn settings_layout(
     let mut controls = vec![EditorSettingsControlLayout {
         control: EditorSettingsControl::ToggleEnabled,
         area: Rect::new(
-            dialog.right().saturating_sub(9),
+            dialog.right().saturating_sub(10),
             dialog.y.saturating_add(3),
-            6,
+            7,
             1,
         ),
     }];

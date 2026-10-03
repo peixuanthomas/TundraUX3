@@ -540,7 +540,12 @@ fn system_status_clean_save_is_inert_for_shortcut_mouse_and_direct_call() {
     let focus = state.system_status_dashboard_focus;
     let feedback = state.system_status_dashboard_feedback.clone();
     assert_eq!(
-        state.route_key_input(&KeyInput::from_label("Ctrl+S")).1,
+        state
+            .route_key_input(&KeyInput::with_modifiers(
+                InputKey::Char('s'),
+                InputModifiers::CTRL
+            ))
+            .1,
         ShellCommand::Noop
     );
     let model = state.to_system_status_view_model().unwrap();
@@ -5282,6 +5287,105 @@ fn explorer_routing_test_state() -> ShellSession {
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
     state.refresh_hit_map();
     state
+}
+
+#[test]
+fn explorer_search_shortcut_preserves_text_input_and_sort() {
+    let mut state = explorer_routing_test_state();
+    for (character, modifiers) in [
+        ('d', InputModifiers::ALT),
+        ('d', InputModifiers::CTRL),
+        ('s', InputModifiers::ALT),
+        ('n', InputModifiers::ALT),
+        ('r', InputModifiers::ALT),
+        ('c', InputModifiers::ALT),
+        ('x', InputModifiers::ALT),
+        ('v', InputModifiers::ALT),
+    ] {
+        assert_eq!(
+            state
+                .route_key_input(&KeyInput::with_modifiers(
+                    InputKey::Char(character),
+                    modifiers
+                ))
+                .1,
+            ShellCommand::RecordInput,
+            "{character}: {modifiers:?}"
+        );
+    }
+    for label in ["s", "S", "/"] {
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label(label)).1,
+            ShellCommand::BeginExplorerSearch
+        );
+    }
+    assert_eq!(
+        state
+            .route_key_input(&KeyInput::with_modifiers(
+                InputKey::Char('f'),
+                InputModifiers::CTRL
+            ))
+            .1,
+        ShellCommand::BeginExplorerSearch
+    );
+    assert_eq!(
+        state.route_key_input(&KeyInput::from_label("F6")).1,
+        ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Sort)
+    );
+    for mode in [
+        ExplorerInputMode::Address,
+        ExplorerInputMode::Search,
+        ExplorerInputMode::NewFolder,
+        ExplorerInputMode::Rename,
+    ] {
+        state.explorer_input_mode = mode;
+        for character in ['s', 'S', 'r', 'c', 'x', 'v', 'd'] {
+            assert_eq!(
+                state
+                    .route_key_input(&KeyInput::new(InputKey::Char(character)))
+                    .1,
+                ShellCommand::AppendExplorerChar(character),
+                "{mode:?}: {character}"
+            );
+        }
+    }
+}
+
+#[test]
+fn holding_explorer_search_key_does_not_type_into_the_new_search() {
+    let mut state = explorer_routing_test_state();
+    state.apply_input(InputEvent::from_key_label("s"));
+    assert_eq!(state.explorer_input_mode, ExplorerInputMode::Search);
+    let repeated = KeyInput::with_phase(
+        InputKey::Char('s'),
+        InputModifiers::NONE,
+        InputPhase::Repeat,
+    );
+    for _ in 0..3 {
+        assert!(
+            state
+                .prepare_button_input(InputEvent::Key(repeated.clone()), Instant::now())
+                .is_none()
+        );
+    }
+    let press = InputEvent::from_key_label("s");
+    assert!(state.prepare_button_input(press, Instant::now()).is_some());
+    assert!(
+        state
+            .prepare_button_input(InputEvent::Key(repeated), Instant::now())
+            .is_some()
+    );
+    state.explorer_input_mode = ExplorerInputMode::Browse;
+    assert_ne!(
+        state
+            .route_key_input(&KeyInput::with_phase(
+                InputKey::F(6),
+                InputModifiers::NONE,
+                InputPhase::Repeat
+            ))
+            .1,
+        ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Sort)
+    );
 }
 
 fn explorer_overlay_surface(state: &ShellSession) -> Rect {

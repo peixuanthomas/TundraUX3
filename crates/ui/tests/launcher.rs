@@ -425,5 +425,9 @@ fn confirmation_overlay_takes_precedence_in_hit_testing_and_rendering() {
     );
     let output = render(&model, 100, 30);
     assert!(output.contains("Launch application?"));
-    assert!(output.contains("[Launch]"));
+    for width in [50, 100] {
+        let output = render(&model, width, 30);
+        assert!(output.contains("[Y Launch]"));
+        assert!(output.contains("[Esc Cancel]"));
+    }
 }

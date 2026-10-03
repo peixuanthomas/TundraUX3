@@ -184,7 +184,25 @@ impl ShellSession {
         key: &KeyInput,
         platform: &dyn Platform,
     ) {
-        if self.settings_state.is_none() {
+        if self.settings_state.is_none() || key.phase == InputPhase::Release {
+            return;
+        }
+        let editing_text = self.settings_state.as_ref().is_some_and(|state| {
+            state.time_sync_server_editor.is_some()
+                || state.file_extensions_editor.is_some()
+                || state.weather_location_editor.is_some()
+                || state.color_editor.is_some()
+                || state.picker.as_ref().is_some_and(|picker| {
+                    matches!(
+                        picker.kind,
+                        ui::SettingsPickerKind::Language | ui::SettingsPickerKind::Timezone
+                    )
+                })
+        });
+        if key.phase == InputPhase::Repeat
+            && (matches!(key.key, InputKey::Enter | InputKey::Escape)
+                || (key.key == InputKey::Char(' ') && !editing_text))
+        {
             return;
         }
         if self.settings_update_state.confirmation_open {
@@ -255,6 +273,7 @@ impl ShellSession {
 
         match &key.key {
             InputKey::Escape => self.close_settings(),
+            InputKey::Tab if key.modifiers.shift => self.select_settings_category_delta(-1),
             InputKey::Tab => self.select_settings_category_delta(1),
             InputKey::BackTab => self.select_settings_category_delta(-1),
             InputKey::Up => self.select_settings_field_delta(-1),

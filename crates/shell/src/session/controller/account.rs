@@ -296,6 +296,29 @@ impl ShellSession {
         ui::setup_timezone_visible_rows(self.touch_setup_viewport().content).max(1)
     }
 
+    pub(in crate::session) fn setup_previous_step(&mut self) {
+        if self.setup_custom_color_target.is_some() || self.setup_step != ui::SetupStep::Timezone {
+            return;
+        }
+        self.setup_step = ui::SetupStep::Language;
+        self.setup_focused_field = ui::SetupField::LanguageList;
+        self.focused_component = ShellComponent::SetupLanguage;
+        self.page_touch.setup_scroll = 0;
+        self.error_message = None;
+        self.refresh_hit_map();
+    }
+
+    pub(in crate::session) fn setup_primary_action(&mut self) {
+        if self.setup_custom_color_target.is_some() {
+            return;
+        }
+        match self.setup_step {
+            ui::SetupStep::Language | ui::SetupStep::Timezone => self.setup_continue(),
+            ui::SetupStep::Admin => self.submit_first_run_setup(),
+            ui::SetupStep::Appearance => self.finish_first_run_setup(),
+        }
+    }
+
     pub(in crate::session) fn setup_continue(&mut self) {
         self.page_touch.setup_scroll = 0;
         match self.setup_step {
@@ -572,7 +595,7 @@ impl ShellSession {
             }
             ShellComponent::SetupAppearanceSubmit => {
                 self.focus_setup_component(target);
-                self.finish_first_run_setup();
+                self.setup_primary_action();
             }
             ShellComponent::SetupCustomColorDialog => {}
             _ => {}

@@ -654,11 +654,7 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
         &platform,
         EditorSettingsControl::Increase(EditorSettingsField::ActivationDelay),
     );
-    click_editor_setting(
-        &mut state,
-        &platform,
-        EditorSettingsControl::RestoreDefaults,
-    );
+    state.apply_input_with_platform(InputEvent::from_key_label("R"), &platform);
     let restored = state
         .to_editor_view_model()
         .settings
@@ -666,13 +662,10 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
     assert!(restored.enabled);
     assert_eq!(restored.activation_delay_ms, 750);
 
-    click_editor_setting(&mut state, &platform, EditorSettingsControl::ToggleEnabled);
-    click_editor_setting(
-        &mut state,
-        &platform,
-        EditorSettingsControl::Increase(EditorSettingsField::ActivationDelay),
-    );
-    click_editor_setting(&mut state, &platform, EditorSettingsControl::Save);
+    state.apply_input_with_platform(InputEvent::from_key_label("T"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    state.apply_input_with_platform(InputEvent::key(InputKey::Char('+')), &platform);
+    state.apply_input_with_platform(ctrl('s'), &platform);
     assert!(state.to_editor_view_model().settings.is_none());
 
     let stored = storage::StorageManager::open(app_paths(fixture.path()))

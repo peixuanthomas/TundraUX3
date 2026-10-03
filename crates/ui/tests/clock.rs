@@ -33,7 +33,32 @@ fn short_clock_keeps_new_manage_and_scrollbar_without_a_page_back() {
     model.create_dialog = Some(ClockCreateDialogViewModel::default());
     let dialog = clock_page_layout(area, &model).create_dialog.unwrap();
     assert!(!dialog.cancel.is_empty());
-    assert!(dialog.create_countdown.right() <= dialog.cancel.x);
+    assert!(dialog.create_alarm.bottom() <= dialog.create_countdown.y);
+    assert!(dialog.create_countdown.bottom() <= dialog.cancel.y);
+    assert!(dialog.decrements.iter().all(|field| !field.is_empty()));
+}
+
+#[test]
+fn narrow_clock_create_shows_both_direct_shortcuts_and_cancel() {
+    let mut model = clock_model();
+    model.create_dialog = Some(ClockCreateDialogViewModel::default());
+    let chrome = chrome(30, 10);
+    let mut terminal = Terminal::new(TestBackend::new(30, 10)).unwrap();
+    terminal
+        .draw(|frame| {
+            render_clock(
+                frame,
+                frame.area(),
+                &chrome,
+                &model,
+                &TundraTheme::default_dark(),
+            )
+        })
+        .unwrap();
+    let output = terminal_output(&terminal);
+    assert!(output.contains("[F3 Alarm]"));
+    assert!(output.contains("[F4 Timer]"));
+    assert!(output.contains("[Esc Cancel]"));
 }
 
 #[test]
@@ -104,7 +129,7 @@ fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
     assert!(output.contains("2026-07-10"));
     assert!(output.contains("14:32:08"));
     assert!(output.contains("Alarms & Timers"));
-    assert!(output.contains("[New]"));
+    assert!(output.contains("[N New]"));
     assert!(output.contains("ALARMS"));
     assert!(output.contains("COUNTDOWNS"));
     assert!(output.contains("[A] 07:30:00 Daily"));
@@ -197,8 +222,9 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
     assert!(output.contains("↑↓/click: adjust"));
     assert_eq!(output.matches("[ 00 ]").count(), 3);
     assert!(output.contains("Use hh mm ss"));
-    assert!(output.contains("[Alarm]"));
-    assert!(output.contains("[Timer]"));
+    assert!(output.contains("[F3 Alarm]"));
+    assert!(output.contains("[F4 Timer]"));
+    assert!(output.contains("[Esc Cancel]"));
     assert!(region_has_fg(
         &terminal,
         dialog.create_countdown,
@@ -304,7 +330,7 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
     assert!(layout.digital.height > 0);
     assert!(layout.new_button.height > 0);
     assert!(output.contains("14:32:08"));
-    assert!(output.contains("[New]"));
+    assert!(output.contains("[N New]"));
     assert!(output.contains("[A] 07:30:00 Daily"));
 }
 
@@ -352,7 +378,7 @@ fn read_only_clock_hides_new_control_and_ignores_create_dialog_model() {
     assert_eq!(layout.new_button.width, 0);
     assert_eq!(layout.new_button.height, 0);
     assert!(layout.create_dialog.is_none());
-    assert!(!output.contains("[New]"));
+    assert!(!output.contains("[N New]"));
     assert!(!output.contains("New Alarm or Countdown"));
     assert!(output.contains("ALARMS"));
     assert!(output.contains("COUNTDOWNS"));

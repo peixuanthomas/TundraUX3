@@ -889,16 +889,19 @@ impl ShellSession {
                                 "save",
                                 i18n::LocalizedText::from(i18n::msg!("shell-save")),
                             )
+                            .with_shortcut(InputKey::Char('s'))
                             .with_follow_up(ShellCommand::EditorSaveAndClose),
                             ShellNotificationAction::new(
                                 "discard",
                                 i18n::LocalizedText::from(i18n::msg!("shell-discard")),
                             )
+                            .with_shortcut(InputKey::Char('d'))
                             .with_follow_up(ShellCommand::EditorDiscardAndClose),
                             ShellNotificationAction::new(
                                 "cancel",
                                 i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
                             )
+                            .with_shortcut(InputKey::Escape)
                             .cancel()
                             .with_follow_up(ShellCommand::EditorCancelClose),
                         ],
@@ -1221,6 +1224,21 @@ impl ShellSession {
         else {
             return;
         };
+        if key.modifiers.is_control()
+            && !key.modifiers.alt
+            && !key.modifiers.super_key
+            && !key.modifiers.hyper
+            && !key.modifiers.meta
+            && !key.modifiers.shift
+            && matches!(key.key, InputKey::Char('s' | 'S'))
+            && !repeated
+        {
+            self.activate_editor_settings_control(ui::EditorSettingsControl::Save);
+            return;
+        }
+        if key.has_non_shift_modifier() {
+            return;
+        }
         match key.key {
             InputKey::Escape if !repeated => self.editor_settings_dialog = None,
             InputKey::Tab | InputKey::Down => {
@@ -1229,8 +1247,14 @@ impl ShellSession {
             InputKey::BackTab | InputKey::Up => {
                 self.select_editor_setting(selected.previous());
             }
-            InputKey::Left => self.adjust_editor_setting(selected, -1),
-            InputKey::Right => self.adjust_editor_setting(selected, 1),
+            InputKey::Left | InputKey::Char('-') => self.adjust_editor_setting(selected, -1),
+            InputKey::Right | InputKey::Char('+' | '=') => self.adjust_editor_setting(selected, 1),
+            InputKey::Char('t' | 'T') if !repeated => {
+                self.activate_editor_settings_control(ui::EditorSettingsControl::ToggleEnabled)
+            }
+            InputKey::Char('r' | 'R') if !repeated => {
+                self.activate_editor_settings_control(ui::EditorSettingsControl::RestoreDefaults)
+            }
             InputKey::Enter | InputKey::Char(' ') if !repeated => {
                 self.activate_editor_setting(selected)
             }

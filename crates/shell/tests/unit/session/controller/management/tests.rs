@@ -1,5 +1,418 @@
 use super::*;
 
+fn shortcut_action_state(kind: ManagementKind, id: &str) -> ShellSession {
+    let mut session = state();
+    session.management_state.kind = Some(kind);
+    session.management_state.query = Some(ManagementQuery::new(kind));
+    session.management_state.snapshot.rows.push(ManagementRow {
+        id: "mock-selected-item".into(),
+        identity: BTreeMap::from([("identity".into(), "mock".into())]),
+        actions: vec![ManagementAction {
+            id: id.into(),
+            label: id.into(),
+            confirm: true,
+            privileged: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    session
+}
+
+fn click_management_point(session: &mut ShellSession, point: (u16, u16)) {
+    let now = Instant::now();
+    assert!(
+        session
+            .prepare_button_input(InputEvent::mouse_down(PointerButton::Left, point), now)
+            .is_none()
+    );
+    let released = session.prepare_button_input(
+        InputEvent::mouse_up(PointerButton::Left, point),
+        now + Duration::from_millis(30),
+    );
+    let Some(InputEvent::Mouse(mouse)) = released else {
+        panic!("button must capture matching release")
+    };
+    session.handle_management_pointer(mouse);
+}
+
+#[test]
+fn management_action_shortcuts_match_clicks_and_preserve_confirmation_and_identity() {
+    for (kind, ids) in [
+        (
+            ManagementKind::Services,
+            vec![
+                "start",
+                "stop",
+                "restart",
+                "enable",
+                "disable",
+                "view_logs",
+                "set_view",
+            ],
+        ),
+        (
+            ManagementKind::Processes,
+            vec!["term", "kill", "stop", "cont", "nice", "set_view"],
+        ),
+        (
+            ManagementKind::Packages,
+            vec![
+                "install",
+                "remove",
+                "upgrade",
+                "upgrade_all",
+                "refresh",
+                "scope_search",
+                "scope_installed",
+                "scope_updates",
+            ],
+        ),
+        (
+            ManagementKind::Network,
+            vec![
+                "inspect_network",
+                "configure",
+                "wifi-connect",
+                "wifi-disconnect",
+                "wifi-forget",
+                "forget_saved_wifi",
+                "check",
+            ],
+        ),
+        (
+            ManagementKind::Disks,
+            vec!["mount", "unmount", "scan", "open_directory"],
+        ),
+    ] {
+        for id in ids {
+            let mut keyed = shortcut_action_state(kind, id);
+            let mut clicked = shortcut_action_state(kind, id);
+            let (hint, key) = management_action_shortcut(Some(kind), id)
+                .expect("each current action has a shortcut");
+            assert!(
+                keyed.to_management_view_model().actions[0]
+                    .0
+                    .starts_with(&format!("[{hint}]"))
+            );
+            keyed.handle_management_key(&KeyInput::new(key));
+            let layout = ui::management_layout(
+                clicked.management_main(),
+                &clicked.to_management_view_model(),
+            );
+            click_management_point(&mut clicked, (layout.actions[0].x, layout.actions[0].y));
+            assert_eq!(
+                keyed.management_state.form, clicked.management_state.form,
+                "{kind:?}/{id}"
+            );
+            assert!(
+                keyed.management_state.form.is_some(),
+                "{id} still requires confirmation"
+            );
+            assert!(
+                keyed.management_state.operation_job.is_none(),
+                "no real Linux operation in shortcut test"
+            );
+        }
+    }
+}
+
+#[test]
+fn management_toolbar_shortcuts_match_clicks() {
+    for (control, key) in [
+        (
+            ui::ManagementControl::Search,
+            KeyInput::new(InputKey::Char('s')),
+        ),
+        (
+            ui::ManagementControl::Search,
+            KeyInput::new(InputKey::Char('/')),
+        ),
+        (
+            ui::ManagementControl::Refresh,
+            KeyInput::new(InputKey::Char('r')),
+        ),
+        (
+            ui::ManagementControl::Refresh,
+            KeyInput::new(InputKey::F(5)),
+        ),
+        (
+            ui::ManagementControl::ApplySearch,
+            KeyInput::with_modifiers(InputKey::Enter, ui::KeyModifiers::CTRL),
+        ),
+        (
+            ui::ManagementControl::ClearSearch,
+            KeyInput::with_modifiers(InputKey::Char('u'), ui::KeyModifiers::CTRL),
+        ),
+        (
+            ui::ManagementControl::Details,
+            KeyInput::new(InputKey::F(4)),
+        ),
+        (
+            ui::ManagementControl::Terminal,
+            KeyInput::with_modifiers(InputKey::Char('t'), ui::KeyModifiers::CTRL),
+        ),
+    ] {
+        let mut keyed = shortcut_action_state(ManagementKind::Services, "start");
+        let mut clicked = shortcut_action_state(ManagementKind::Services, "start");
+        keyed.management_state.filter_input = "needle".into();
+        clicked.management_state.filter_input = "needle".into();
+        keyed.handle_management_key(&key);
+        let layout = ui::management_layout(
+            clicked.management_main(),
+            &clicked.to_management_view_model(),
+        );
+        let area = layout
+            .controls
+            .iter()
+            .find(|(id, _)| *id == control)
+            .unwrap()
+            .1;
+        click_management_point(&mut clicked, (area.x, area.y));
+        assert_eq!(
+            keyed.management_state.query, clicked.management_state.query,
+            "{control:?}"
+        );
+        assert_eq!(
+            keyed.management_state.filter_input,
+            clicked.management_state.filter_input
+        );
+        assert_eq!(
+            keyed.management_state.filtering,
+            clicked.management_state.filtering
+        );
+        assert_eq!(
+            keyed.management_state.details_only,
+            clicked.management_state.details_only
+        );
+        assert_eq!(
+            keyed.management_state.terminal_mode,
+            clicked.management_state.terminal_mode
+        );
+    }
+}
+
+#[test]
+fn management_shortcuts_cannot_bypass_disabled_actions_or_unrelated_modifiers() {
+    let mut session = shortcut_action_state(ManagementKind::Processes, "kill");
+    session.management_state.snapshot.rows[0].actions[0].disabled_reason =
+        Some("Protected process".into());
+    for key in [InputKey::Char('k'), InputKey::Char('1')] {
+        session.handle_management_key(&KeyInput::new(key));
+        assert!(session.management_state.form.is_none());
+        assert_eq!(session.management_state.status, "Protected process");
+    }
+    session.management_state.snapshot.rows[0].actions[0].disabled_reason = None;
+    for modifiers in [
+        ui::KeyModifiers::CTRL,
+        ui::KeyModifiers::ALT,
+        ui::KeyModifiers {
+            super_key: true,
+            ..Default::default()
+        },
+        ui::KeyModifiers {
+            meta: true,
+            ..Default::default()
+        },
+    ] {
+        for key in [
+            InputKey::Char('k'),
+            InputKey::Char('s'),
+            InputKey::Char('1'),
+            InputKey::F(5),
+        ] {
+            session.handle_management_key(&KeyInput::with_modifiers(key, modifiers));
+            assert!(session.management_state.form.is_none());
+            assert!(!session.management_state.filtering);
+            assert!(session.management_state.query_job.is_none());
+        }
+    }
+    let (job, _) = session.management_job();
+    session.management_state.operation_job = Some(job);
+    assert!(!session.to_management_view_model().actions[0].1);
+    session.handle_management_key(&KeyInput::new(InputKey::Char('k')));
+    assert!(session.management_state.form.is_none());
+    session.handle_management_key(&KeyInput::new(InputKey::F(10)));
+    assert!(
+        matches!(session.management_state.form.as_ref().unwrap().purpose, FormPurpose::Action(ref action, _) if action.id == "cancel_operation")
+    );
+}
+
+#[test]
+fn management_text_input_and_shortcut_repeats_do_not_trigger_actions() {
+    let mut session = shortcut_action_state(ManagementKind::Services, "start");
+    session.handle_management_key(&KeyInput::new(InputKey::Char('s')));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('s')).repeated());
+    assert!(
+        session.management_state.filter_input.is_empty(),
+        "held Search does not type into its new field"
+    );
+    for c in "srak1".chars() {
+        session.handle_management_key(&KeyInput::new(InputKey::Char(c)));
+    }
+    assert_eq!(session.management_state.filter_input, "srak1");
+    assert!(session.management_state.form.is_none());
+    session.handle_management_key(&KeyInput::new(InputKey::Escape));
+    session.management_state.snapshot.rows[0].actions[0]
+        .fields
+        .push(ManagementField {
+            id: "text".into(),
+            ..Default::default()
+        });
+    session.handle_management_key(&KeyInput::new(InputKey::Char('a')));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('a')).repeated());
+    assert!(
+        session.management_state.form.as_ref().unwrap().fields[0]
+            .value
+            .is_empty()
+    );
+    for c in "srak1".chars() {
+        session.handle_management_key(&KeyInput::new(InputKey::Char(c)));
+    }
+    assert_eq!(
+        session.management_state.form.as_ref().unwrap().fields[0].value,
+        "srak1"
+    );
+    assert!(session.management_state.operation_job.is_none());
+    session.handle_management_key(&KeyInput::with_modifiers(
+        InputKey::Char('t'),
+        ui::KeyModifiers::CTRL,
+    ));
+    assert!(session.management_state.terminal_mode);
+    session.handle_management_key(
+        &KeyInput::with_modifiers(InputKey::Char('t'), ui::KeyModifiers::CTRL).repeated(),
+    );
+    assert!(
+        session.management_state.terminal_mode,
+        "held Output does not toggle again"
+    );
+}
+
+#[test]
+fn management_choice_enter_and_form_control_enter_preserve_input_and_required_checks() {
+    let mut session = state();
+    let (job, responses) = session.management_job();
+    session.management_state.operation_job = Some(job);
+    session.management_state.form = Some(ManagementEditor {
+        title: "Mock question".into(),
+        message: String::new(),
+        message_scroll: 0,
+        selected: 0,
+        purpose: FormPurpose::Answer("mock-question".into()),
+        fields: vec![ManagementField {
+            id: "answer".into(),
+            value: "No".into(),
+            choices: vec!["No".into(), "Yes".into()],
+            required: true,
+            ..Default::default()
+        }],
+    });
+    session.handle_management_key(&KeyInput::new(InputKey::Enter));
+    assert_eq!(session.management_state.choice_field, Some(0));
+    session.handle_management_key(&KeyInput::new(InputKey::End));
+    session.handle_management_key(&KeyInput::new(InputKey::Enter));
+    session.handle_management_key(&KeyInput::new(InputKey::Enter).repeated());
+    assert!(session.management_state.form.is_some());
+    assert!(responses.try_recv().is_err());
+    assert_eq!(
+        session.management_state.form.as_ref().unwrap().fields[0].value,
+        "Yes"
+    );
+    session.handle_management_key(&KeyInput::with_modifiers(
+        InputKey::Enter,
+        ui::KeyModifiers::CTRL,
+    ));
+    assert!(
+        matches!(responses.try_recv().unwrap(), OperationInput::Answer { id, value } if id == "mock-question" && value == "Yes")
+    );
+    assert!(session.management_state.form.is_none());
+
+    let mut session = shortcut_action_state(ManagementKind::Services, "start");
+    session.management_state.snapshot.rows[0].actions[0]
+        .fields
+        .push(ManagementField {
+            id: "required".into(),
+            required: true,
+            ..Default::default()
+        });
+    session.handle_management_key(&KeyInput::new(InputKey::Char('a')));
+    session.handle_management_key(&KeyInput::with_modifiers(
+        InputKey::Enter,
+        ui::KeyModifiers::CTRL,
+    ));
+    assert!(session.management_state.form.is_some());
+    assert!(session.management_state.operation_job.is_none());
+    assert_eq!(
+        session.management_state.status,
+        i18n::tr!("management-required")
+    );
+}
+
+#[test]
+fn duplicate_action_mnemonics_use_first_target_and_keep_number_access() {
+    let mut session = shortcut_action_state(ManagementKind::Disks, "scan");
+    session
+        .management_state
+        .snapshot
+        .actions
+        .push(ManagementAction {
+            id: "scan".into(),
+            confirm: true,
+            ..Default::default()
+        });
+    let model = session.to_management_view_model();
+    assert!(model.actions[0].0.starts_with("[A]"));
+    assert!(!model.actions[1].0.starts_with("[A]"));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('a')));
+    assert!(matches!(
+        session.management_state.form.as_ref().unwrap().purpose,
+        FormPurpose::Action(_, Some(_))
+    ));
+    session.handle_management_key(&KeyInput::new(InputKey::Escape));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('2')));
+    assert!(matches!(
+        session.management_state.form.as_ref().unwrap().purpose,
+        FormPurpose::Action(_, None)
+    ));
+}
+
+#[test]
+fn management_paging_keys_follow_buttons_without_activating_actions() {
+    let mut session = shortcut_action_state(ManagementKind::Services, "start");
+    session.terminal_size = (60, 18);
+    session.management_state.snapshot.rows[0].actions = (0..8)
+        .map(|index| ManagementAction {
+            id: format!("mock-{index}"),
+            confirm: true,
+            ..Default::default()
+        })
+        .collect();
+    let layout = ui::management_layout(
+        session.management_main(),
+        &session.to_management_view_model(),
+    );
+    assert!(!layout.action_next.is_empty());
+    let mut clicked = shortcut_action_state(ManagementKind::Services, "start");
+    clicked.terminal_size = session.terminal_size;
+    clicked.management_state.snapshot = session.management_state.snapshot.clone();
+    click_management_point(&mut clicked, (layout.action_next.x, layout.action_next.y));
+    session.handle_management_key(&KeyInput::with_modifiers(
+        InputKey::Right,
+        ui::KeyModifiers::ALT,
+    ));
+    assert_eq!(
+        session.management_state.action_scroll,
+        clicked.management_state.action_scroll
+    );
+    assert_eq!(session.management_state.action_scroll, Some(1));
+    assert!(session.management_state.form.is_none());
+    session.handle_management_key(&KeyInput::with_modifiers(
+        InputKey::Left,
+        ui::KeyModifiers::ALT,
+    ));
+    assert_eq!(session.management_state.action_scroll, Some(0));
+}
+
 #[test]
 fn compact_management_routes_mouse_to_the_visible_page() {
     let mut state = state();
@@ -406,6 +819,33 @@ fn management_touch_buttons_are_hidden_by_global_overlays() {
         anchor: point,
     });
     assert!(state.management_button_at(point).is_none());
+}
+
+#[test]
+fn management_shortcuts_route_to_the_foreground_popup_and_escape_closes_it() {
+    let mut session = shortcut_action_state(ManagementKind::Services, "start");
+    session.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Management),
+        anchor: (5, 5),
+    });
+    for key in [
+        KeyInput::new(InputKey::Char('s')),
+        KeyInput::new(InputKey::Char('a')),
+        KeyInput::new(InputKey::F(5)),
+        KeyInput::with_modifiers(InputKey::Enter, ui::KeyModifiers::CTRL),
+    ] {
+        assert_eq!(
+            session.route_key_input(&key).0,
+            RoutedTarget::Popup(ShellComponent::ContextMenu)
+        );
+        session.apply_input(InputEvent::Key(key));
+        assert!(session.management_state.form.is_none());
+        assert!(!session.management_state.filtering);
+        assert!(session.management_state.query_job.is_none());
+    }
+    session.apply_input(InputEvent::from_key_label("Esc"));
+    assert!(session.active_popup.is_none());
+    assert_eq!(session.active_screen(), ShellScreen::Management);
 }
 
 #[test]

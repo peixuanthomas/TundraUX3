@@ -2,6 +2,88 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn management_shortcut_hints_fit_touch_regions_in_small_windows() {
+    use unicode_width::UnicodeWidthStr;
+    let mut model = ManagementViewModel {
+        actions: vec![("[A] Start".into(), true)],
+        ..Default::default()
+    };
+    for (width, height) in [(50, 14), (60, 18), (80, 24)] {
+        let area = Rect::new(0, 0, width, height);
+        let theme = TundraTheme::default_dark();
+        let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        let layout = management_layout(area, &model);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_management_content(frame, area, &model, &context))
+            .unwrap();
+        for (index, ((_, rect), (_, label))) in layout
+            .controls
+            .iter()
+            .zip(management_controls())
+            .enumerate()
+        {
+            assert!(rect.height > 0 && usize::from(rect.width) >= label.width());
+            let painted = (rect.x..rect.right())
+                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+                .collect::<String>();
+            let hint = label.split(']').next().unwrap().to_owned() + "]";
+            assert!(painted.contains(&hint));
+            for (_, other) in layout.controls.iter().skip(index + 1) {
+                assert!(rect.intersection(*other).is_empty());
+            }
+        }
+        model.form = Some(ManagementForm {
+            title: "Review".into(),
+            fields: vec![ManagementFormField {
+                label: "Choice".into(),
+                choices: vec!["No".into(), "Yes".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let form_layout = management_layout(area, &model);
+        terminal
+            .draw(|frame| render_management_overlay(frame, area, &model, &context))
+            .unwrap();
+        for (rect, hint) in [
+            (form_layout.submit, "[Ctrl+Enter]"),
+            (form_layout.cancel, "[Esc]"),
+        ] {
+            let painted = (rect.x..rect.right())
+                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+                .collect::<String>();
+            assert!(painted.contains(hint), "{width}x{height}: {hint}");
+        }
+        assert!(
+            form_layout
+                .submit
+                .intersection(form_layout.cancel)
+                .is_empty()
+        );
+        model.form.as_mut().unwrap().choice = Some(ManagementChoices {
+            values: vec!["No".into(), "Yes".into()],
+            selected: 1,
+            ..Default::default()
+        });
+        let choice_layout = management_layout(area, &model);
+        terminal
+            .draw(|frame| render_management_overlay(frame, area, &model, &context))
+            .unwrap();
+        let cancel = choice_layout.choice_cancel;
+        let painted = (cancel.x..cancel.right())
+            .map(|x| terminal.backend().buffer()[(x, cancel.y)].symbol())
+            .collect::<String>();
+        assert!(painted.contains("[Esc]"));
+        let guide = (cancel.x..cancel.right())
+            .map(|x| terminal.backend().buffer()[(x, cancel.y - 1)].symbol())
+            .collect::<String>();
+        assert!(guide.contains("Enter"));
+        model.form = None;
+    }
+}
+
+#[test]
 fn compact_toolbar_keeps_every_basic_touch_action_visible() {
     let model = ManagementViewModel {
         actions: vec![("Start selected service".into(), true)],

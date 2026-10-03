@@ -67,6 +67,41 @@ fn render(
     terminal
 }
 #[test]
+fn log_controls_show_working_shortcuts_without_overlap_in_a_narrow_page() {
+    let model = model();
+    let main = Rect::new(0, 0, 50, 24);
+    let layout = logs_layout(main, &model);
+    let theme = TundraTheme::default_dark();
+    let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    context.buttons = Some(buttons.clone());
+    let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
+    terminal
+        .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
+        .unwrap();
+    let output = terminal_output(&terminal);
+    for hint in ["R/F5", "Enter/O", "C Clear", "I Show", "E Related"] {
+        assert!(output.contains(hint), "missing shortcut {hint}");
+    }
+    for (index, control) in layout.controls.iter().enumerate() {
+        let region = buttons
+            .regions()
+            .into_iter()
+            .find(|button| button.id.as_str() == ui::logs_control_id(&model, control.target))
+            .unwrap();
+        assert_eq!(
+            region.disabled,
+            !ui::logs_control_enabled(&model, control.target)
+        );
+        assert!(control.area.right() <= main.right());
+        assert!(control.area.bottom() <= main.bottom());
+        for other in &layout.controls[index + 1..] {
+            assert!(control.area.intersection(other.area).is_empty());
+        }
+    }
+}
+
+#[test]
 fn event_list_uses_shared_scrolling_geometry_and_exposes_correlation() {
     let mut model = model();
     model.selected_event = 29;

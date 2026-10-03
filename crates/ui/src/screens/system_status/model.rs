@@ -188,6 +188,33 @@ pub struct SystemStatusDialogViewModel {
     pub cancel_label: String,
     pub selected_action: usize,
 }
+impl SystemStatusDialogViewModel {
+    pub(super) fn message_with_shortcuts(&self) -> String {
+        format!(
+            "{}\n{}",
+            self.message,
+            i18n::tr!("ui-system-status-dialog-help")
+        )
+    }
+
+    pub(super) fn confirm_button_label(&self) -> String {
+        let label = if self.confirm_label.is_empty() {
+            i18n::tr!("ui-system-status-confirm")
+        } else {
+            self.confirm_label.clone()
+        };
+        i18n::tr!("ui-system-status-confirm-shortcut", label = label)
+    }
+
+    pub(super) fn cancel_button_label(&self) -> String {
+        let label = if self.cancel_label.is_empty() {
+            i18n::tr!("ui-system-status-cancel")
+        } else {
+            self.cancel_label.clone()
+        };
+        i18n::tr!("ui-system-status-cancel-shortcut", label = label)
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemStatusDragPreview {
     pub kind: SystemStatusWidgetKind,

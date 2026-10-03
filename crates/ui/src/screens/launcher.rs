@@ -129,7 +129,7 @@ impl LauncherToolbarAction {
         match self {
             Self::Open => "Enter",
             Self::Remove => "Del",
-            Self::Refresh => "R",
+            Self::Refresh => "R/F5",
             Self::ToggleView => "V",
         }
     }
@@ -1137,14 +1137,14 @@ fn render_launcher_confirmation(
     );
     let mut confirm = Button::new(
         "launcher.confirmation.confirm",
-        format!("[{}]", dialog.confirm_label),
+        format!("[Y {}]", dialog.confirm_label),
     );
     confirm.state.selected = dialog.confirm_selected;
     confirm.render_borderless_frame(frame, layout.confirm, theme);
 
     let mut cancel = Button::new(
         "launcher.confirmation.cancel",
-        format!("[{}]", dialog.cancel_label),
+        format!("[Esc {}]", dialog.cancel_label),
     );
     cancel.state.selected = !dialog.confirm_selected;
     cancel.render_borderless_frame(frame, layout.cancel, theme);

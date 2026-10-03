@@ -194,7 +194,7 @@ fn explorer_arrow_history_and_toolbar_keys_perform_actions() {
         ));
         state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     }
-    state.apply_input_with_platform(InputEvent::from_key_label("s"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("F6"), &platform);
     assert!(matches!(
         state.to_explorer_view_model().overlay,
         Some(ui::ExplorerOverlayViewModel::ContextMenu(_))

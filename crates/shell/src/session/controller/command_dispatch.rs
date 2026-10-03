@@ -253,6 +253,7 @@ impl ShellSession {
                 | ShellCommand::OpenLauncher
                 | ShellCommand::OpenEditor
                 | ShellCommand::OpenSettings
+                | ShellCommand::OpenSystemStatus
                 | ShellCommand::OpenUserManagement
                 | ShellCommand::OpenClock
                 | ShellCommand::OpenDiagnostics
@@ -541,6 +542,14 @@ impl ShellSession {
             }
             ShellCommand::SetupContinue => {
                 self.setup_continue();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupPreviousStep => {
+                self.setup_previous_step();
+                ShellAction::Redraw
+            }
+            ShellCommand::SetupPrimaryAction => {
+                self.setup_primary_action();
                 ShellAction::Redraw
             }
             ShellCommand::SetupPreviousTimezone => {

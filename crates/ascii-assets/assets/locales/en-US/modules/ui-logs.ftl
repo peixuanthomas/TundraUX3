@@ -5,8 +5,8 @@ ui-logs-linux-log = Linux log
 ui-logs-events = Events
 ui-logs-files = Files
 ui-logs-incidents = Incidents
-ui-logs-r-refresh = R Refresh
-ui-logs-o-open = O Open
+ui-logs-r-refresh = R/F5 Refresh
+ui-logs-o-open = Enter/O Open
 ui-logs-l-level = L Level
 ui-logs-m-module = M Module
 ui-logs-t-time = T Time
@@ -21,7 +21,7 @@ ui-logs-log-files = Log files
 ui-logs-loading-events = Loading events...
 ui-logs-no-events-match-the-current-query = No events match the current query
 ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers = Select an event to inspect its operation and correlation identifiers.
-ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link = Esc Back · ←/→ Category · Tab Section · Enter/O Open read-only · R Refresh · I/E Link
+ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link = ←/→ Category · Tab Section · Enter/O Open · R/F5 Refresh · Esc Back
 
 ui-logs-event-detail = Time: { $time }
     Level: { $level }
@@ -31,6 +31,6 @@ ui-logs-event-detail = Time: { $time }
 
 ui-logs-incident-link = { "\u000A" }Incident: { $id }
 
-ui-logs-clear-filters = Clear filters
-ui-logs-show-incident = Show incident
-ui-logs-show-events = Related events
+ui-logs-clear-filters = C Clear filters
+ui-logs-show-incident = I Show incident
+ui-logs-show-events = E Related events

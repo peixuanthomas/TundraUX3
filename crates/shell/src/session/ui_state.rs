@@ -638,6 +638,7 @@ pub struct UiSessionState {
     pub(super) launcher_task_runtime: Option<ShellLauncherTaskRuntime>,
     pub(super) launcher_refresh_request: Option<u64>,
     pub(super) explorer_input_mode: ExplorerInputMode,
+    pub(super) explorer_search_shortcut_held: Option<InputKey>,
     pub(super) explorer_input: String,
     pub(super) explorer_address_cursor: usize,
     pub(super) explorer_address_selection_anchor: Option<usize>,

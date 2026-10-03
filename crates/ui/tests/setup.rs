@@ -156,6 +156,29 @@ fn short_setup_projects_only_visible_buttons_to_the_scrolled_rows() {
 }
 
 #[test]
+fn narrow_setup_navigation_keeps_previous_and_primary_shortcuts_visible() {
+    let area = Rect::new(3, 2, 30, 10);
+    let mut model = sample_model(SetupStep::Timezone, None);
+    model.scroll_offset = u16::MAX;
+    let viewport = ui::setup_viewport(area, &model);
+    let [back, next] = ui::setup_navigation_areas(viewport.content);
+    assert!(back.bottom() <= next.y);
+    assert!(viewport.project(back).is_some() && viewport.project(next).is_some());
+    let mut terminal = Terminal::new(TestBackend::new(40, 15)).unwrap();
+    let context = ui::RenderContext::from_theme(
+        &TundraTheme::default_dark(),
+        Default::default(),
+        Default::default(),
+    );
+    terminal
+        .draw(|frame| ui::render_setup_content(frame, area, &model, &context))
+        .unwrap();
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Alt+← Back"));
+    assert!(output.contains("Ctrl+Enter Next"));
+}
+
+#[test]
 fn setup_admin_page_is_step_specific_and_masks_password() {
     let model = sample_model(SetupStep::Admin, None);
     let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
@@ -175,7 +198,7 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
     assert!(output.contains("[x] At least 10 characters"));
     assert!(output.contains("[x] Different from username"));
     assert!(output.contains("[x] Passwords match"));
-    assert!(output.contains("Submit: ready"));
+    assert!(output.contains("Ctrl+Enter Submit"));
     assert!(!output.contains("Admin username:"));
     assert!(!output.contains("Admin password:"));
     assert!(!output.contains("Timezone Map"));

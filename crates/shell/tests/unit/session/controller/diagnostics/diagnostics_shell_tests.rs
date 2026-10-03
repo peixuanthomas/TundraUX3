@@ -127,6 +127,206 @@ fn update_diagnostics_snapshot(
 }
 
 #[test]
+fn diagnostics_toolbar_shortcuts_match_in_both_hosts_and_keep_disabled_actions_inert() {
+    for standalone in [true, false] {
+        let mut state = state(UserRole::Admin);
+        state.diagnostics_tab = ui::DiagnosticsTab::Logs;
+        state.system_status_route = ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Logs);
+        if standalone {
+            state.screen_stack.push(ShellScreen::Diagnostics);
+        }
+        let route = |state: &ShellSession, key: &KeyInput| {
+            if standalone {
+                state.route_diagnostics_key(key).1
+            } else {
+                state.route_system_status_key(key).1
+            }
+        };
+        for (label, expected) in [
+            ("R", ShellCommand::DiagnosticsRescan),
+            ("F5", ShellCommand::DiagnosticsRescan),
+            ("Enter", ShellCommand::DiagnosticsOpenReport),
+            ("O", ShellCommand::DiagnosticsOpenReport),
+            ("E", ShellCommand::DiagnosticsOpenLogsInExplorer),
+        ] {
+            assert_eq!(route(&state, &KeyInput::from_label(label)), expected);
+            let key = KeyInput::from_label(label).key;
+            for phase in [InputPhase::Release, InputPhase::Repeat] {
+                assert_eq!(
+                    route(
+                        &state,
+                        &KeyInput::with_phase(key.clone(), InputModifiers::none(), phase)
+                    ),
+                    ShellCommand::Noop,
+                );
+            }
+        }
+        assert_eq!(
+            route(
+                &state,
+                &KeyInput::with_modifiers(InputKey::Char('r'), InputModifiers::CTRL)
+            ),
+            ShellCommand::Noop
+        );
+        state.diagnostics_scanning = true;
+        for label in ["R", "F5", "C", "Enter", "O", "E", "X"] {
+            assert_eq!(
+                route(&state, &KeyInput::from_label(label)),
+                ShellCommand::Noop
+            );
+        }
+        assert_eq!(
+            route(&state, &KeyInput::from_label("Down")),
+            ShellCommand::DiagnosticsNext
+        );
+    }
+}
+
+#[test]
+fn system_status_f4_matches_the_size_button_and_repair_requires_confirmation() {
+    let mut state = state(UserRole::Admin);
+    state.begin_system_status_dashboard_edit();
+    let (model, layout) = state.system_status_layout().expect("dashboard layout");
+    assert!(!model.dashboard.actions.size_disabled);
+    assert_eq!(
+        state.route_system_status_key(&KeyInput::from_label("F4")).1,
+        ShellCommand::SystemStatusOpenSizePicker,
+    );
+    assert_eq!(
+        state
+            .route_system_status_mouse(
+                MouseInput::down(
+                    layout.size_button.x,
+                    layout.size_button.y,
+                    PointerButton::Left
+                ),
+                Some(ShellComponent::SystemStatus),
+                Instant::now(),
+            )
+            .1,
+        ShellCommand::SystemStatusOpenSizePicker,
+    );
+    state.system_status_selected_widget = None;
+    assert_eq!(
+        state.route_system_status_key(&KeyInput::from_label("F4")).1,
+        ShellCommand::Noop
+    );
+    let save = KeyInput::with_modifiers(InputKey::Char('s'), InputModifiers::CTRL);
+    assert_eq!(state.route_system_status_key(&save).1, ShellCommand::Noop);
+    state
+        .system_status_dashboard_draft
+        .as_mut()
+        .unwrap()
+        .widgets
+        .pop();
+    assert!(state.system_status_dashboard_is_dirty());
+    assert_eq!(
+        state.route_system_status_key(&save).1,
+        ShellCommand::SystemStatusSaveDashboard
+    );
+    state.finish_cancel_system_status_dashboard_edit();
+    state.open_diagnostics();
+    state.preview_selected_diagnostics_repair();
+    assert_eq!(state.diagnostics_repair_preview.len(), 1);
+    let release =
+        KeyInput::with_phase(InputKey::Enter, InputModifiers::none(), InputPhase::Release);
+    assert_eq!(
+        state.route_system_status_key(&release).1,
+        ShellCommand::Noop
+    );
+    assert_eq!(
+        state
+            .route_system_status_key(&KeyInput::from_label("Enter"))
+            .1,
+        ShellCommand::DiagnosticsConfirmRepair
+    );
+    assert_eq!(
+        state.diagnostics_repair_preview.len(),
+        1,
+        "routing a key only proposes the confirmed action"
+    );
+    state.diagnostics_repair_confirm_selected = false;
+    assert_eq!(
+        state
+            .route_system_status_key(&KeyInput::from_label("Enter"))
+            .1,
+        ShellCommand::DiagnosticsCancelRepair
+    );
+    assert_eq!(
+        state.route_system_status_key(&KeyInput::from_label("Y")).1,
+        ShellCommand::DiagnosticsConfirmRepair
+    );
+    assert_eq!(
+        state
+            .route_system_status_key(&KeyInput::from_label("Esc"))
+            .1,
+        ShellCommand::DiagnosticsCancelRepair
+    );
+}
+
+#[test]
+fn dashboard_discard_shortcut_is_explicit_when_cancel_is_selected() {
+    let mut state = state(UserRole::Admin);
+    state.begin_system_status_dashboard_edit();
+    state.system_status_discard_dialog = true;
+    state.system_status_discard_confirm_selected = false;
+    assert_eq!(
+        state
+            .route_system_status_key(&KeyInput::from_label("Enter"))
+            .1,
+        ShellCommand::SystemStatusContinueEdit
+    );
+    assert_eq!(
+        state.route_system_status_key(&KeyInput::from_label("Y")).1,
+        ShellCommand::SystemStatusDiscardEdit
+    );
+    assert_eq!(
+        state
+            .route_system_status_key(&KeyInput::from_label("Esc"))
+            .1,
+        ShellCommand::SystemStatusContinueEdit
+    );
+    let release = KeyInput::with_phase(
+        InputKey::Char('y'),
+        InputModifiers::none(),
+        InputPhase::Release,
+    );
+    assert_eq!(
+        state.route_system_status_key(&release).1,
+        ShellCommand::Noop
+    );
+}
+
+#[test]
+fn system_status_refresh_aliases_respect_the_busy_state_in_dashboard_and_details() {
+    let mut state = state(UserRole::Admin);
+    for route in [
+        ui::SystemStatusRoute::Dashboard,
+        ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Cpu),
+    ] {
+        state.system_status_route = route;
+        for label in ["R", "F5"] {
+            assert_eq!(
+                state
+                    .route_system_status_key(&KeyInput::from_label(label))
+                    .1,
+                ShellCommand::SystemStatusRefresh
+            );
+        }
+        state.system_status_refresh_requested_revision = Some(0);
+        for label in ["R", "F5"] {
+            assert_eq!(
+                state
+                    .route_system_status_key(&KeyInput::from_label(label))
+                    .1,
+                ShellCommand::Noop
+            );
+        }
+        state.system_status_refresh_requested_revision = None;
+    }
+}
+
+#[test]
 fn diagnostics_detail_drag_reaches_last_line_without_changing_selection() {
     let mut state = state(UserRole::Admin);
     update_diagnostics_snapshot(&mut state, |snapshot| {

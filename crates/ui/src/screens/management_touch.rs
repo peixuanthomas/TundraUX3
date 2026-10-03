@@ -983,9 +983,14 @@ pub fn render_management_content(
         for (offset, area) in layout.actions.iter().enumerate() {
             let index = layout.action_start + offset;
             if let Some((label, enabled)) = model.actions.get(index) {
+                let number = if index == 9 {
+                    "0".into()
+                } else {
+                    (index + 1).to_string()
+                };
                 let mut button = Button::new(
                     management_action_id(model, index),
-                    format!("{}. {label}", index + 1),
+                    format!("{number}. {label}"),
                 );
                 button.set_disabled(!enabled);
                 button.render_borderless_frame(frame, *area, &theme);
@@ -1094,6 +1099,17 @@ pub fn render_management_overlay(
             i18n::tr!("management-touch-close-choices"),
         )
         .render_borderless_frame(frame, layout.choice_cancel, &theme);
+        if layout.choice_cancel.height > 0 && layout.choice_cancel.y > layout.form.y {
+            frame.render_widget(
+                Paragraph::new(i18n::tr!("management-choice-hint")).style(theme.muted_style()),
+                Rect::new(
+                    layout.choice_cancel.x,
+                    layout.choice_cancel.y - 1,
+                    layout.choice_cancel.width,
+                    1,
+                ),
+            );
+        }
         for bar in &layout.scrollbars {
             if matches!(
                 bar.target,

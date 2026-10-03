@@ -708,7 +708,7 @@ fn login_renderer_masks_password_length() {
     assert!(output.contains("Password"));
     assert!(output.contains("*************"));
     assert!(!output.contains("StrongPass123"));
-    assert!(output.contains("[Show]"));
+    assert!(output.contains("[F2 Show]"));
     assert!(!output.to_ascii_lowercase().contains("guest"));
     assert!(!output.contains("F3"));
     assert!(output.contains("Invalid username or password"));
@@ -766,7 +766,7 @@ fn login_renderer_reveals_only_explicit_plaintext_and_focuses_visibility_control
     assert_eq!(model.visible_password(), Some(visible));
     assert!(model.password_is_visible());
     assert!(visible.chars().all(|character| output.contains(character)));
-    assert!(output.contains("[Hide]"));
+    assert!(output.contains("[F2 Hide]"));
     assert!(!output.contains("***"));
     assert!(region_has_fg(
         &terminal,
