@@ -15,8 +15,7 @@ TundraUX3 is written in Rust, using Ratatui and crossterm. It is under active de
 | Platform | Role |
 | --- | --- |
 | **Linux** | The main target for device operation and system management in terminal-only environments. |
-| **Windows** | A demonstration platform for exploring the interface and interaction design. |
-| **macOS** | A demonstration platform for exploring the interface and interaction design. |
+| **Windows && MacOS** | A demonstration platform for exploring the interface and interaction design. |
 
 System-management development focuses on Linux. Windows and macOS builds let you try the experience, but do not promise the same system controls. Available Linux operations depend on the installed tools, running services, and your user's permissions.
 
