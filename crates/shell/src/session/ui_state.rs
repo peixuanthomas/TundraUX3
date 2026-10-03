@@ -660,6 +660,9 @@ pub struct UiSessionState {
     pub(super) editor_read_session: Option<EditorReadSession>,
     pub(super) diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     pub(super) logs_state: LogsUiState,
+    pub(super) management_state: ManagementState,
+    pub(super) management_background:
+        HashMap<platform::management::ManagementKind, ManagementState>,
     pub(super) diagnostics_tab: ui::DiagnosticsTab,
     pub(super) diagnostics_selected_check: usize,
     pub(super) diagnostics_selected_log: usize,

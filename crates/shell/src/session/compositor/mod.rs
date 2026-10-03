@@ -15,6 +15,7 @@ pub(super) enum ScreenViewModel {
     Editor(Box<ui::EditorViewModel>),
     Settings(Box<ui::SettingsViewModel>),
     Logs(Box<ui::LogsViewModel>),
+    Management(Box<ui::ManagementViewModel>),
     Diagnostics(Box<ui::DiagnosticsViewModel>),
     SystemStatus(Box<ui::SystemStatusViewModel>),
     Clock(Box<ui::ClockViewModel>),
@@ -54,6 +55,7 @@ impl ScreenViewModel {
                     .expect("Settings requires an authenticated session"),
             )),
             ShellScreen::Logs => Self::Logs(Box::new(state.to_logs_view_model())),
+            ShellScreen::Management => Self::Management(Box::new(state.to_management_view_model())),
             ShellScreen::Diagnostics => {
                 Self::Diagnostics(Box::new(state.to_diagnostics_view_model()))
             }
@@ -82,6 +84,7 @@ impl ScreenViewModel {
             Self::Editor(model) => ui::ScreenContent::Editor(model),
             Self::Settings(model) => ui::ScreenContent::Settings(model),
             Self::Logs(model) => ui::ScreenContent::Logs(model),
+            Self::Management(model) => ui::ScreenContent::Management(model),
             Self::Diagnostics(model) => ui::ScreenContent::Diagnostics(model),
             Self::SystemStatus(model) => ui::ScreenContent::SystemStatus(model),
             Self::Clock(model) => ui::ScreenContent::Clock(model),

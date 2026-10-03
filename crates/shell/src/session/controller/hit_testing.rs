@@ -59,10 +59,14 @@ pub(in crate::session) fn build_shell_hit_map(
                 component: match content_screen {
                     ShellScreen::Editor => ShellComponent::Editor,
                     ShellScreen::Settings => ShellComponent::Settings,
+                    ShellScreen::Management => ShellComponent::Management,
                     _ => ShellComponent::CompactHome,
                 },
                 area: compact,
-                layer: if matches!(content_screen, ShellScreen::Editor | ShellScreen::Settings) {
+                layer: if matches!(
+                    content_screen,
+                    ShellScreen::Editor | ShellScreen::Settings | ShellScreen::Management
+                ) {
                     ShellHitLayer::AppContent
                 } else {
                     ShellHitLayer::ShellChrome
@@ -184,6 +188,13 @@ pub(in crate::session) fn build_shell_hit_map(
                 ShellScreen::Logs => {
                     regions.push(ShellHitRegion {
                         component: ShellComponent::Logs,
+                        area: main,
+                        layer: ShellHitLayer::AppContent,
+                    });
+                }
+                ShellScreen::Management => {
+                    regions.push(ShellHitRegion {
+                        component: ShellComponent::Management,
                         area: main,
                         layer: ShellHitLayer::AppContent,
                     });

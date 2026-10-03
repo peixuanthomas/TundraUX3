@@ -6,6 +6,34 @@ use watchdog::{
 };
 
 fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    #[cfg(target_os = "linux")]
+    if matches!(
+        args.first().map(String::as_str),
+        Some("__system-helper" | "__network-rollback")
+    ) {
+        let result = if args.len() != 2 {
+            Err(platform::management::ManagementError::InvalidInput(
+                "Invalid internal operation arguments".into(),
+            ))
+        } else if args[0] == "__system-helper" {
+            args[1]
+                .parse::<u32>()
+                .map_err(|_| {
+                    platform::management::ManagementError::InvalidInput(
+                        "Invalid operation owner".into(),
+                    )
+                })
+                .and_then(platform::management::helper::entry)
+        } else {
+            platform::management::network::rollback_transaction(&args[1])
+        };
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     #[cfg(target_os = "linux")]
     match shell::confirm_linux_startup() {
         Ok(user) => {
@@ -20,7 +48,6 @@ fn main() {
         }
     }
 
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
     if matches!(
         cli::parse_args(&args),
         Ok(cli::CliCommand::UpdateProbe) | Ok(cli::CliCommand::ApplyUpdate { .. })

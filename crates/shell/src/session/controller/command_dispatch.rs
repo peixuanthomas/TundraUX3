@@ -91,6 +91,10 @@ impl ShellSession {
                 let (target, command) = self.route_mouse_input(*mouse, received_at);
                 (target, command)
             }
+            InputEvent::Paste(value) if self.active_screen() == ShellScreen::Management => (
+                RoutedTarget::Component(ShellComponent::Management),
+                ShellCommand::ManagementPaste(value.clone()),
+            ),
             InputEvent::Paste(value) if self.active_screen() == ShellScreen::Editor => (
                 RoutedTarget::Component(ShellComponent::Editor),
                 ShellCommand::EditorPaste(value.clone()),
@@ -284,6 +288,7 @@ impl ShellSession {
                 self.poll_settings_background_tasks();
                 self.drain_diagnostics_events();
                 self.poll_logs_tasks();
+                self.poll_management();
                 #[cfg(target_os = "linux")]
                 self.poll_user_management_task();
                 self.poll_editor_background_tasks(platform);
@@ -292,6 +297,7 @@ impl ShellSession {
             }
             ShellCommand::RefreshHitMap { width, height } => {
                 self.terminal_size = (width, height);
+                self.resize_management_terminal();
                 if self.active_screen() == ShellScreen::SystemStatus {
                     self.clamp_system_status_dashboard_scroll();
                 }
@@ -1285,6 +1291,22 @@ impl ShellSession {
             }
             ShellCommand::OpenLogs => {
                 self.open_logs();
+                ShellAction::Redraw
+            }
+            ShellCommand::ManagementKey(key) => {
+                self.handle_management_key(&key);
+                self.open_management_directory(platform);
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::ManagementPointer(mouse) => {
+                self.handle_management_pointer(mouse);
+                self.open_management_directory(platform);
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::ManagementPaste(value) => {
+                self.handle_management_paste(&value);
                 ShellAction::Redraw
             }
             ShellCommand::LogsKey(key) => {

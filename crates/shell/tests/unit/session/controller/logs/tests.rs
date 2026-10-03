@@ -100,3 +100,50 @@ fn refresh_preserves_selected_event_and_scroll() {
     assert_eq!(state.logs_state.scroll, 4);
     assert!(state.logs_state.explicit_scroll);
 }
+
+#[test]
+fn service_logs_open_exact_linux_filter_and_return_to_the_previous_screen() {
+    let mut state = state(UserRole::Admin);
+    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.focused_component = ShellComponent::SystemStatus;
+    state.logs_state.query.min_level = Some(LogLevel::Error);
+    state.open_service_logs("example.service", "user");
+    assert_eq!(state.active_screen(), ShellScreen::Logs);
+    assert_eq!(state.logs_state.category, ui::LogsCategory::Linux);
+    assert_eq!(state.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.logs_state.query.source, LogSource::Linux);
+    assert_eq!(
+        state.logs_state.query.systemd_unit.as_deref(),
+        Some("example.service")
+    );
+    assert_eq!(
+        state.logs_state.query.systemd_scope.as_deref(),
+        Some("user")
+    );
+    assert_eq!(state.logs_state.query.min_level, None);
+    assert!(
+        state
+            .to_logs_view_model()
+            .filter_summary
+            .contains("example.service")
+    );
+    key(&mut state, "Esc");
+    assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
+    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+}
+
+#[test]
+fn guest_and_invalid_service_log_requests_do_not_change_navigation() {
+    let mut guest = state(UserRole::Guest);
+    guest.open_service_logs("example.service", "system");
+    assert_eq!(guest.active_screen(), ShellScreen::Home);
+    let mut state = state(UserRole::Admin);
+    for (unit, scope) in [
+        ("*.service", "system"),
+        ("example.service", "other-user"),
+        ("../example.service", "user"),
+    ] {
+        state.open_service_logs(unit, scope);
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+    }
+}

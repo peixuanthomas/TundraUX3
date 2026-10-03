@@ -1,4 +1,31 @@
 use super::*;
+
+#[test]
+fn management_icons_upgrade_preserves_existing_custom_artwork() {
+    let root = TempDir::new("management-icon-upgrade");
+    restore_default_theme(root.path()).unwrap();
+    let path = root.path().join("themes/default/home_icons.toml");
+    let original = fs::read_to_string(&path).unwrap();
+    let old = original
+        .split("[items.services]")
+        .next()
+        .unwrap()
+        .replace("label = \"Explorer\"", "label = \"My Files\"");
+    fs::write(&path, &old).unwrap();
+    let (store, report) =
+        AsciiAssetStore::load_default_with_root_and_recovery(root.path()).unwrap();
+    assert!(report.repaired.iter().any(|file| file.key == "home_icons"));
+    let updated = fs::read_to_string(path).unwrap();
+    assert!(updated.starts_with(&old));
+    for key in ["services", "processes", "packages", "network", "disks"] {
+        assert!(
+            store
+                .home_icon_catalog()
+                .icons()
+                .any(|icon| icon.key() == key)
+        );
+    }
+}
 use crate::{AssetCheckStatus, check_default_theme, check_required_assets};
 use std::time::{SystemTime, UNIX_EPOCH};
 

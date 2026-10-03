@@ -89,6 +89,13 @@ pub struct LogQuery {
     pub until: Option<DateTime<Utc>>,
     pub min_level: Option<LogLevel>,
     pub module: Option<String>,
+    /// Exact systemd .service name. Linux journal queries apply this before
+    /// their record limit, rather than filtering a global journal afterward.
+    #[serde(default)]
+    pub systemd_unit: Option<String>,
+    /// "system" or the current user's "user" service manager.
+    #[serde(default)]
+    pub systemd_scope: Option<String>,
     pub run_id: Option<String>,
     pub operation_id: Option<String>,
     pub task_id: Option<String>,
@@ -104,6 +111,8 @@ impl Default for LogQuery {
             until: None,
             min_level: None,
             module: None,
+            systemd_unit: None,
+            systemd_scope: None,
             run_id: None,
             operation_id: None,
             task_id: None,

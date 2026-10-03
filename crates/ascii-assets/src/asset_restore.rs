@@ -194,7 +194,15 @@ fn upgraded_home_icons(path: &Path, embedded: &[u8]) -> Option<String> {
     let existing = fs::read_to_string(path).ok()?;
     let parsed: toml::Value = toml::from_str(&existing).ok()?;
     let items = parsed.get("items")?.as_table()?;
-    if items.contains_key("logs")
+    let added = [
+        "logs",
+        "services",
+        "processes",
+        "packages",
+        "network",
+        "disks",
+    ];
+    if added.iter().all(|key| items.contains_key(*key))
         || [
             "explorer",
             "launcher",
@@ -215,8 +223,16 @@ fn upgraded_home_icons(path: &Path, embedded: &[u8]) -> Option<String> {
     crate::artwork::load_art_set(&resolver, DEFAULT_THEME_ID, "home_icons", "home_icons.toml")
         .ok()?;
     let defaults = std::str::from_utf8(embedded).ok()?;
-    let entry = defaults.split_once("[items.logs]")?.1;
-    Some(format!("{existing}\n[items.logs]{entry}"))
+    let defaults: toml::Value = toml::from_str(defaults).ok()?;
+    let mut updated = existing;
+    for key in added.into_iter().filter(|key| !items.contains_key(*key)) {
+        let entry = defaults.get("items")?.get(key)?;
+        updated.push_str(&format!(
+            "\n[items.{key}]\n{}",
+            toml::to_string(entry).ok()?
+        ));
+    }
+    Some(updated)
 }
 
 /// Restores every missing, unreadable, or invalid file in the default theme,

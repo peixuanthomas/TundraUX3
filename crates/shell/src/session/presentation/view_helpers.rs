@@ -30,6 +30,7 @@ pub(in crate::session) fn clock_button_active_for_screen(screen: ShellScreen) ->
             | ShellScreen::SystemStatus
             | ShellScreen::UserManagement
             | ShellScreen::Logs
+            | ShellScreen::Management
             | ShellScreen::Diagnostics
             | ShellScreen::Clock
     )
@@ -872,6 +873,7 @@ pub(in crate::session) fn component_message(component: ShellComponent) -> i18n::
         }
         ShellComponent::Diagnostics => i18n::msg!("shell-component-diagnostics"),
         ShellComponent::Logs => i18n::msg!("shell-component-logs"),
+        ShellComponent::Management => i18n::msg!("management-title"),
         ShellComponent::SystemStatus => i18n::msg!("shell-component-system-status"),
         ShellComponent::DiagnosticsRepairDialog => {
             i18n::msg!("shell-component-diagnostics-repair-dialog")

@@ -9,6 +9,8 @@ pub(crate) mod home;
 pub(crate) mod launcher;
 pub(crate) mod logs;
 pub use logs::*;
+mod management;
+pub use management::*;
 pub(crate) mod notifications;
 mod panic;
 pub(crate) mod settings;

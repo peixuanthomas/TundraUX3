@@ -104,6 +104,8 @@ impl ShellSession {
         let _ = self.settings_task_runtime.set_system_status_active(false);
         self.reset_system_status_trackers();
         self.logs_state = LogsUiState::default();
+        self.management_state = ManagementState::default();
+        self.management_background.clear();
         self.launcher_drag = None;
         self.replace_explorer_state(None);
         self.explorer_input_mode = ExplorerInputMode::Browse;
@@ -195,6 +197,23 @@ impl ShellSession {
                 .with_icon_key("user_profile"),
             );
         }
+        if cfg!(target_os = "linux") {
+            for kind in [
+                platform::management::ManagementKind::Services,
+                platform::management::ManagementKind::Processes,
+                platform::management::ManagementKind::Packages,
+                platform::management::ManagementKind::Network,
+                platform::management::ManagementKind::Disks,
+            ] {
+                entries.push(
+                    ui::ShellEntry::new(
+                        management_title(kind),
+                        i18n::tr!("management-home-description"),
+                    )
+                    .with_icon_key(kind.id()),
+                );
+            }
+        }
         entries
     }
 
@@ -223,15 +242,7 @@ impl ShellSession {
         self.selected_home_entry_index = index.min(entries.len() - 1);
         self.notify_status(i18n::LocalizedText::from(i18n::msg!(
             "shell-home-arg1",
-            arg1 = match self.selected_home_entry_index {
-                0 => i18n::msg!("shell-explorer"),
-                1 => i18n::msg!("shell-launcher"),
-                2 => i18n::msg!("shell-settings"),
-                3 => i18n::msg!("shell-system-status"),
-                4 => i18n::msg!("shell-logs"),
-                _ if self.can_manage_all_users() => i18n::msg!("shell-user-management"),
-                _ => i18n::msg!("shell-user-profile"),
-            }
+            arg1 = entries[self.selected_home_entry_index].label.clone()
         )));
     }
 
@@ -262,18 +273,23 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         let entries = self.user_home_entries();
-        let Some(_) = entries.get(index) else {
+        let Some(entry) = entries.get(index) else {
             return;
         };
 
         self.selected_home_entry_index = index;
-        match index {
-            0 => self.open_explorer(platform),
-            1 => self.open_launcher(platform),
-            2 => self.open_settings(),
-            3 => self.open_system_status(),
-            4 => self.open_logs(),
-            5 => self.open_user_management(),
+        match entry.icon_identity() {
+            "explorer" => self.open_explorer(platform),
+            "launcher" => self.open_launcher(platform),
+            "settings" => self.open_settings(),
+            "system_status" => self.open_system_status(),
+            "logs" => self.open_logs(),
+            "user_management" | "user_profile" => self.open_user_management(),
+            "services" => self.open_management(platform::management::ManagementKind::Services),
+            "processes" => self.open_management(platform::management::ManagementKind::Processes),
+            "packages" => self.open_management(platform::management::ManagementKind::Packages),
+            "network" => self.open_management(platform::management::ManagementKind::Network),
+            "disks" => self.open_management(platform::management::ManagementKind::Disks),
             _ => {}
         }
     }

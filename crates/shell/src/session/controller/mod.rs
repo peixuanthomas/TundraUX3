@@ -36,3 +36,6 @@ pub(super) use settings_tasks::*;
 
 mod logs;
 pub(super) use logs::*;
+mod management;
+mod management_client;
+pub(super) use management::*;

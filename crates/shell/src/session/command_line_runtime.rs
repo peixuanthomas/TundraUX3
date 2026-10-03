@@ -136,7 +136,7 @@ pub struct TerminalSnapshot {
 }
 
 impl TerminalSnapshot {
-    fn from_parser(parser: &mut vt100::Parser) -> Self {
+    pub(super) fn from_parser(parser: &mut vt100::Parser) -> Self {
         let scrollback_offset = parser.screen().scrollback();
         parser.set_scrollback(usize::MAX);
         let scrollback_rows = parser.screen().scrollback();
@@ -1249,7 +1249,7 @@ fn blank_terminal_snapshot() -> TerminalSnapshot {
     TerminalSnapshot::from_parser(&mut vt100::Parser::new(DEFAULT_ROWS, DEFAULT_COLUMNS, 0))
 }
 
-fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSnapshot {
+pub(super) fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSnapshot {
     let mut result = ui::CommandLineTerminalSnapshot::blank(snapshot.columns, snapshot.rows);
     result.scrollback_rows = snapshot.scrollback_rows;
     result.scrollback_offset = snapshot.scrollback_offset;

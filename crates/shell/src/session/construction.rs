@@ -272,6 +272,8 @@ impl ShellSession {
             editor_read_session: None,
             diagnostics_task_runtime: runtime_services.diagnostics,
             logs_state: LogsUiState::default(),
+            management_state: ManagementState::default(),
+            management_background: HashMap::new(),
             diagnostics_tab: ui::DiagnosticsTab::Health,
             diagnostics_selected_check: 0,
             diagnostics_selected_log: 0,

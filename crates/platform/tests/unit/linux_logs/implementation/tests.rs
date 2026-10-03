@@ -272,6 +272,98 @@ fn query_arguments_are_separate_and_bounded() {
     );
 }
 
+#[test]
+fn service_log_filters_reach_journal_before_its_limit_and_never_use_dmesg() {
+    for scope in ["system", "user"] {
+        let query = LogQuery {
+            systemd_unit: Some("example.service".into()),
+            systemd_scope: Some(scope.into()),
+            ..query()
+        };
+        let mut calls = 0;
+        let result = query_with(&query, &AtomicBool::new(false), |program, args| {
+            calls += 1;
+            assert_eq!(program, "journalctl");
+            let prefix = if scope == "system" {
+                "--unit"
+            } else {
+                "--user-unit"
+            };
+            assert!(args.contains(&format!("{prefix}=example.service")));
+            if scope == "user" {
+                assert!(args.contains(&format!("_UID={}", current_uid())));
+            }
+            Capture {
+                stop: Some(LogSourceState::Unavailable),
+                ..Default::default()
+            }
+        });
+        assert_eq!(calls, 1);
+        assert_eq!(result.state, LogSourceState::Unavailable);
+        assert!(result.events.is_empty());
+        assert!(
+            result
+                .notices
+                .iter()
+                .any(|notice| notice.contains("dmesg cannot"))
+        );
+    }
+}
+
+#[test]
+fn invalid_service_log_names_and_scopes_do_not_spawn() {
+    for (unit, scope) in [
+        ("*.service", "system"),
+        ("../test.service", "system"),
+        ("test.service", "other"),
+        ("test.service;id", "user"),
+    ] {
+        let result = query_with(
+            &LogQuery {
+                systemd_unit: Some(unit.into()),
+                systemd_scope: Some(scope.into()),
+                ..query()
+            },
+            &AtomicBool::new(false),
+            |_, _| panic!("invalid filter must not spawn"),
+        );
+        assert_eq!(result.state, LogSourceState::Unavailable);
+    }
+}
+
+#[test]
+fn exact_service_parser_keeps_only_selected_unit_and_current_user() {
+    let system_query = LogQuery {
+        systemd_unit: Some("example.service".into()),
+        systemd_scope: Some("system".into()),
+        ..query()
+    };
+    let good_record = journal("stdout", 6, 1_000_000);
+    let other_record = good_record.replace("example.service", "other.service");
+    let result = parse_journal(
+        format!("{good_record}\n{other_record}").as_bytes(),
+        &system_query,
+    );
+    assert_eq!(result.events.len(), 1);
+    assert_eq!(result.damaged_records, 0);
+    let user_query = LogQuery {
+        systemd_scope: Some("user".into()),
+        ..system_query
+    };
+    let mut record: Value = serde_json::from_str(&good_record).unwrap();
+    record["_SYSTEMD_USER_UNIT"] = Value::String("example.service".into());
+    record["_UID"] = Value::String(current_uid().to_string());
+    let matching = serde_json::to_string(&record).unwrap();
+    record["_UID"] = Value::String(current_uid().wrapping_add(1).to_string());
+    let other_user = serde_json::to_string(&record).unwrap();
+    let result = parse_journal(
+        format!("{matching}\n{other_user}\n{other_record}").as_bytes(),
+        &user_query,
+    );
+    assert_eq!(result.events.len(), 1);
+    assert_eq!(result.damaged_records, 0);
+}
+
 #[cfg(unix)]
 #[test]
 fn capture_timeout_and_cancellation_stop_hanging_children() {

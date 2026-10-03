@@ -50,6 +50,7 @@ pub enum ShellScreen {
     Clock,
     Diagnostics,
     Logs,
+    Management,
     SystemStatus,
     Explorer,
     Launcher,

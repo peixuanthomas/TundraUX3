@@ -320,7 +320,7 @@ fn panel_inner_area(area: Rect) -> Rect {
     )
 }
 
-fn render_terminal_snapshot(
+pub(crate) fn render_terminal_snapshot(
     frame: &mut Frame<'_>,
     area: Rect,
     snapshot: &CommandLineTerminalSnapshot,

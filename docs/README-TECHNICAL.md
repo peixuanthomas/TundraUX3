@@ -293,6 +293,14 @@ Linux 当前用户可查看其进程权限允许的明细，不以 UX 角色推�
 
 ## 内置应用
 
+### Linux 运维应用
+
+Linux 首页新增服务、进程、软件包、网络、磁盘五个独立入口；具体操作和支持范围见 [Linux 系统管理](linux-management.md)。五个页面各自保存查询和后台任务状态，切换页面不会停止安装；后台等待输入时会提示返回对应应用。
+
+`platform::management` 定义查询、固定操作和任务事件，Shell 通过受管理的后台线程读取，UI 只负责显示和输入。需要权限的操作经 sudo 启动 `tundra-cli __system-helper`，请求通过标准输入发送，密码不放在命令参数中。助手保存本次任务、Unix socket 和有限的输出，Shell 退出后可重新连接。内部入口在普通启动流程之前处理，不会以 root 打开整个桌面。
+
+网络更改先保存原配置，再通过系统 systemd 服务启动独立恢复助手 `__network-rollback`，应用后等待 120 秒确认。进程信号使用 pidfd，并核对进程启动标识；调整 nice 只作用于主线程。软件包直接运行 APT/dpkg 或 DNF 的实际事务，常见问题以表单回答，其余交互保留在页面内的终端。磁盘扫描保持原用户权限，不跟随符号链接或越过挂载点。
+
 ### Weathr 锁屏
 
 `WeatherProvider` 支持 Open-Meteo 与 Met Office；但 APP 和启动预取目前固定使用 Open-Meteo，尚未依据 `Config.provider` 选择 Met Office。坐标可来自地址搜索、配置位置或时区对应城市。显式 refresh 会绕过缓存；APP 内存天气缓存 TTL 为 300 秒，天气磁盘缓存为 300 秒，位置、地址和地理编码缓存为 24 小时。Shell 可以在启动时预取天气。

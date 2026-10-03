@@ -9,6 +9,7 @@ pub use error_details::CapturedIoError;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod macos;
+pub mod management;
 pub mod mock;
 mod paths;
 mod platform;

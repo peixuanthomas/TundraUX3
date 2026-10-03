@@ -202,8 +202,31 @@ mod implementation {
         if query.limit == 0 {
             return LogQueryResult::default();
         }
-        let mut args: Vec<String> = ["--no-pager", "--output=json", "--reverse", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_TRANSPORT,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,_KERNEL_DEVICE,_PID,PRIORITY,MESSAGE"].into_iter().map(String::from).collect();
+        if query
+            .systemd_unit
+            .as_ref()
+            .is_some_and(|unit| !valid_service_unit(unit))
+            || query
+                .systemd_scope
+                .as_deref()
+                .is_some_and(|scope| !matches!(scope, "system" | "user"))
+            || (query.systemd_scope.is_some() && query.systemd_unit.is_none())
+        {
+            return state(
+                LogSourceState::Unavailable,
+                "Invalid exact systemd service log filter",
+            );
+        }
+        let mut args: Vec<String> = ["--no-pager", "--output=json", "--reverse", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_TRANSPORT,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,OBJECT_SYSTEMD_UNIT,OBJECT_SYSTEMD_USER_UNIT,UNIT,USER_UNIT,_UID,_KERNEL_DEVICE,_PID,PRIORITY,MESSAGE"].into_iter().map(String::from).collect();
         args.push(format!("--lines={}", MAX_RECORDS + 1));
+        if let Some(unit) = &query.systemd_unit {
+            if query.systemd_scope.as_deref() == Some("user") {
+                args.push(format!("--user-unit={unit}"));
+                args.push(format!("_UID={}", current_uid()));
+            } else {
+                args.push(format!("--unit={unit}"));
+            }
+        }
         if let Some(since) = query.since {
             args.push(format!(
                 "--since=@{}.{:06}",
@@ -250,6 +273,12 @@ mod implementation {
                 "Permission denied reading the system journal",
             );
         }
+        if query.systemd_unit.is_some() {
+            return state(
+                journal_state,
+                "The system journal is unavailable; kernel dmesg cannot provide this service's logs",
+            );
+        }
         let mut dmesg = run(
             "dmesg",
             &["--json".into(), "--kernel".into(), "--color=never".into()],
@@ -283,6 +312,50 @@ mod implementation {
             notices: vec![notice.into()],
             ..Default::default()
         }
+    }
+
+    fn valid_service_unit(unit: &str) -> bool {
+        unit.ends_with(".service")
+            && unit.len() > ".service".len()
+            && unit.len() <= 255
+            && !unit.starts_with('-')
+            && unit.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(byte, b':' | b'_' | b'.' | b'@' | b'-' | b'\\')
+            })
+    }
+
+    fn current_uid() -> u32 {
+        #[cfg(unix)]
+        {
+            unsafe { libc::getuid() }
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    }
+
+    fn matches_service(record: &Value, query: &LogQuery) -> bool {
+        let Some(unit) = &query.systemd_unit else {
+            return true;
+        };
+        let fields = if query.systemd_scope.as_deref() == Some("user") {
+            if scalar(record, "_UID").and_then(|uid| uid.parse::<u32>().ok()) != Some(current_uid())
+            {
+                return false;
+            }
+            [
+                "_SYSTEMD_USER_UNIT",
+                "OBJECT_SYSTEMD_USER_UNIT",
+                "USER_UNIT",
+            ]
+        } else {
+            ["_SYSTEMD_UNIT", "OBJECT_SYSTEMD_UNIT", "UNIT"]
+        };
+        fields
+            .iter()
+            .any(|key| scalar(record, key).as_ref() == Some(unit))
     }
 
     fn capture_state(output: &Capture) -> LogSourceState {
@@ -515,10 +588,10 @@ mod implementation {
                         .map(|unit| format!("journal; unit={}", clean(&unit)))
                         .unwrap_or_else(|| "journal; external service".into())
                 });
-                Some(entry)
+                Some((entry, matches_service(&record, query)))
             })();
             match parsed {
-                Some(event) if accepts(&event, query) => result.events.push(event),
+                Some((event, true)) if accepts(&event, query) => result.events.push(event),
                 Some(_) => {}
                 None => result.damaged_records += 1,
             }

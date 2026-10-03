@@ -21,6 +21,7 @@ pub(in crate::session) struct LogsUiState {
     last_document: Option<LogDocumentSelection>,
     editor_snapshot: Option<PathBuf>,
     refreshing_editor: bool,
+    return_component: Option<ShellComponent>,
 }
 
 #[derive(Clone)]
@@ -64,11 +65,35 @@ impl ShellSession {
             return;
         }
         if self.active_screen() != ShellScreen::Logs {
+            self.logs_state.return_component = Some(self.focused_component);
             self.screen_stack.push(ShellScreen::Logs);
         }
         self.focused_component = ShellComponent::Logs;
         self.request_logs_job(None);
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
+    }
+
+    pub(in crate::session) fn open_service_logs(&mut self, unit: &str, scope: &str) {
+        if self
+            .app
+            .auth_session()
+            .is_none_or(|session| session.role == UserRole::Guest)
+        {
+            return;
+        }
+        let Some(query) = service_log_query(unit, scope) else {
+            return;
+        };
+        self.logs_state.query = query;
+        self.logs_state.category = ui::LogsCategory::Linux;
+        self.logs_state.section = ui::LogsSection::Events;
+        self.logs_state.time_filter = 0;
+        self.logs_state.known_modules.clear();
+        self.logs_state.selected = 0;
+        self.logs_state.scroll = 0;
+        self.logs_state.explicit_scroll = false;
+        self.logs_state.snapshot = LogsSnapshot::default();
+        self.open_logs();
     }
 
     pub(in crate::session) fn logs_select_legacy_section(&mut self, incidents: bool) {
@@ -420,7 +445,10 @@ impl ShellSession {
                 self.focused_component = if self.active_screen() == ShellScreen::SystemStatus {
                     ShellComponent::SystemStatus
                 } else {
-                    ShellComponent::Home
+                    self.logs_state
+                        .return_component
+                        .take()
+                        .unwrap_or(ShellComponent::Home)
                 };
             }
             InputKey::Left | InputKey::Right => {
@@ -712,17 +740,46 @@ impl ShellSession {
                     i18n::tr!("shell-7-days")
                 ][usize::from(state.time_filter)]
                 .clone(),
-                arg4 = state
-                    .query
-                    .incident_id
-                    .as_ref()
-                    .map(|id| i18n::tr!("shell-incident-id", id = id))
-                    .unwrap_or_else(|| i18n::tr!("shell-c-clear-filters"))
+                arg4 = if let Some(unit) = &state.query.systemd_unit {
+                    format!(
+                        "{}: {} | {}",
+                        state.query.systemd_scope.as_deref().unwrap_or("system"),
+                        unit,
+                        i18n::tr!("shell-c-clear-filters")
+                    )
+                } else {
+                    state
+                        .query
+                        .incident_id
+                        .as_ref()
+                        .map(|id| i18n::tr!("shell-incident-id", id = id))
+                        .unwrap_or_else(|| i18n::tr!("shell-c-clear-filters"))
+                }
             )
             .into(),
             feedback,
         }
     }
+}
+
+fn service_log_query(unit: &str, scope: &str) -> Option<LogQuery> {
+    if !matches!(scope, "system" | "user")
+        || !unit.ends_with(".service")
+        || unit.len() <= ".service".len()
+        || unit.len() > 255
+        || unit.starts_with('-')
+        || !unit.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'.' | b'@' | b'-' | b'\\')
+        })
+    {
+        return None;
+    }
+    Some(LogQuery {
+        source: LogSource::Linux,
+        systemd_unit: Some(unit.into()),
+        systemd_scope: Some(scope.into()),
+        ..Default::default()
+    })
 }
 
 fn serde_event_detail(event: &runtime_log::RuntimeLogEvent) -> String {

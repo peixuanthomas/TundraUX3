@@ -15,6 +15,7 @@ pub enum ScreenContent<'a> {
     Editor(&'a EditorViewModel),
     Settings(&'a SettingsViewModel),
     Logs(&'a LogsViewModel),
+    Management(&'a ManagementViewModel),
     Diagnostics(&'a DiagnosticsViewModel),
     SystemStatus(&'a SystemStatusViewModel),
     Clock(&'a ClockViewModel),
@@ -22,7 +23,10 @@ pub enum ScreenContent<'a> {
 
 impl ScreenContent<'_> {
     pub fn renders_in_compact(self) -> bool {
-        matches!(self, Self::Editor(_) | Self::Settings(_))
+        matches!(
+            self,
+            Self::Editor(_) | Self::Settings(_) | Self::Management(_)
+        )
     }
     pub fn render_context(self, context: &RenderContext) -> RenderContext {
         match self {
@@ -67,6 +71,7 @@ impl ScreenContent<'_> {
                 render_settings_content(frame, &settings_layout(main, model), model, context)
             }
             Self::Logs(model) => render_logs_content(frame, main, model, context),
+            Self::Management(model) => render_management_content(frame, main, model, context),
             Self::Diagnostics(model) => {
                 render_diagnostics_page_content(frame, main, model, context)
             }
@@ -83,6 +88,7 @@ impl ScreenContent<'_> {
         let main = layout.main;
         match self {
             Self::Setup(model) => render_setup_overlay(frame, main, model, context),
+            Self::Management(model) => render_management_overlay(frame, main, model, context),
             Self::UserManagement(model) => {
                 render_user_management_overlay(frame, main, model, context)
             }

@@ -1036,7 +1036,10 @@ fn home_arrow_keys_update_selected_entry() {
     assert_eq!(state.selected_home_entry_index(), 1);
 
     state.apply_input(InputEvent::from_key_label("End"));
-    assert_eq!(state.selected_home_entry_index(), 4);
+    assert_eq!(
+        state.selected_home_entry_index(),
+        if cfg!(target_os = "linux") { 9 } else { 4 }
+    );
 }
 
 #[test]

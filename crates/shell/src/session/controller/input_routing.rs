@@ -13,6 +13,7 @@ impl ShellSession {
             .rev()
             .find(|button| rect_contains(button.area, point))
             .cloned()
+            .or_else(|| self.management_button_at(point))
             .or_else(|| {
                 // Details rows are drawn as a table, but launch on release just
                 // like icon buttons. Use the same layout as their hit testing.
@@ -229,6 +230,12 @@ impl ShellSession {
                 ShellCommand::EditorKey(key.clone()),
             );
         }
+        if key.is_ctrl_c() && self.active_screen() == ShellScreen::Management {
+            return (
+                RoutedTarget::Component(ShellComponent::Management),
+                ShellCommand::ManagementKey(key.clone()),
+            );
+        }
 
         if key.is_ctrl_c() && self.active_screen() != ShellScreen::Explorer {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
@@ -267,6 +274,12 @@ impl ShellSession {
             return (
                 RoutedTarget::Component(ShellComponent::Logs),
                 ShellCommand::LogsKey(key.clone()),
+            );
+        }
+        if self.active_screen() == ShellScreen::Management {
+            return (
+                RoutedTarget::Component(ShellComponent::Management),
+                ShellCommand::ManagementKey(key.clone()),
             );
         }
         if self.active_screen() == ShellScreen::Diagnostics {
@@ -1941,6 +1954,14 @@ impl ShellSession {
             return (
                 RoutedTarget::Component(ShellComponent::Settings),
                 ShellCommand::SettingsPointer(mouse),
+            );
+        }
+        if self.active_screen() == ShellScreen::Management
+            && hit_target == Some(ShellComponent::Management)
+        {
+            return (
+                RoutedTarget::Component(ShellComponent::Management),
+                ShellCommand::ManagementPointer(mouse),
             );
         }
         if self.active_screen() == ShellScreen::Logs

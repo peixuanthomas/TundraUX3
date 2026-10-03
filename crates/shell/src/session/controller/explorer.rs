@@ -195,6 +195,12 @@ impl ShellSession {
             return;
         }
         self.explorer_purpose = ExplorerPurpose::Browse;
+        if self.screen_stack.iter().rev().nth(1) == Some(&ShellScreen::Management) {
+            self.screen_stack.pop();
+            self.focused_component = ShellComponent::Management;
+            self.refresh_hit_map();
+            return;
+        }
         self.pop_to_home();
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
     }
