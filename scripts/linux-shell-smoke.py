@@ -9,6 +9,7 @@ third-party test harness.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import pty
 import re
@@ -312,7 +313,15 @@ def main() -> int:
 
         # Cancel the temporary color, then complete the real first-use workflow.
         # Saving a profile is a separate assertion, not an input dispatch timer.
+        cancel_offset = len(output)
         os.write(master, b"\x1b")
+        # A quiet output interval can occur while Escape is being disambiguated
+        # or an overlay is closing. Wait for the underlying control to return
+        # before sending keys which the closing overlay would otherwise block.
+        if not wait_for_output(
+            master, output, b"Use a custom theme color...", child, 5.0, cancel_offset
+        ):
+            raise SystemExit("Appearance color input did not return to its control")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Appearance color input did not close")
         home_offset = len(output)
@@ -320,10 +329,62 @@ def main() -> int:
         if not wait_for_output(
             master, output, b"Explorer", child, 10.0, start_offset=home_offset
         ):
-            raise SystemExit("Appearance setup did not finish at Home")
+            raise SystemExit(
+                "Appearance setup did not finish at Home; output:\n"
+                f"{output_diagnostic(output[home_offset:])}"
+            )
 
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle before pointer regression")
+
+        # Reproduce Escape and an SGR report in the same terminal read. The
+        # report's final M must never become Home's System Status shortcut.
+        for report in (b"\x1b[<35;45;12M", b"\x1b[<35;90;22M"):
+            explorer_offset = len(output)
+            os.write(master, b"e")
+            if not wait_for_output(master, output, b"Quick access", child, 5.0, explorer_offset):
+                raise SystemExit("Explorer did not open before Escape/mouse regression")
+            if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+                raise SystemExit("Explorer did not settle")
+            home_offset = len(output)
+            os.write(master, b"\x1b" + report)
+            if not wait_for_output(master, output, b"Launcher", child, 5.0, home_offset):
+                raise SystemExit("Escape/mouse did not return to Home")
+            if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+                raise SystemExit("Escape/mouse did not settle at Home")
+            if b"Dashboard" in output[home_offset:]:
+                raise SystemExit("mouse report tail activated System Status")
+
+        invalid_offset = len(output)
+        # Allow an incomplete report to expire, then deliver its late M. Also
+        # inject a zero coordinate and an extra field. None may activate Home.
+        os.write(master, b"\x1b[<35;45;")
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            read_available(master, output, 0.05)
+        os.write(master, b"12M\x1b[<35;0;12M\x1b[<35;45;12;1M")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("invalid input did not settle")
+        if b"Dashboard" in output[invalid_offset:]:
+            raise SystemExit("invalid terminal input activated System Status")
+
+        # A real shortcut still works immediately after discarded reports.
+        status_offset = len(output)
+        os.write(master, b"m")
+        if not wait_for_output(master, output, b"Dashboard", child, 5.0, status_offset):
+            raise SystemExit("valid System Status shortcut was lost after filtering")
+        # Live metrics redraw continuously; allow the page entrance animation
+        # to finish while draining output instead of requiring a quiet screen.
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            read_available(master, output, 0.05)
+        home_offset = len(output)
+        os.write(master, b"\x1b")
+        if not wait_for_output(master, output, b"Launcher", child, 5.0, home_offset):
+            raise SystemExit("System Status did not return to Home")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Home did not settle after input validation")
+
         # The 140-column frame places the shared Back button at x=133..139.
         # SGR coordinates are one-based. Hover/hold must only repaint the button;
         # the power dialog opens after release and a drag-out must cancel it.
@@ -371,6 +432,18 @@ def main() -> int:
                 + "\n".join(path.read_text() for path in incidents)
             )
 
+        input_warnings = []
+        for path in isolated.rglob("*.jsonl"):
+            for line in path.read_text().splitlines():
+                record = json.loads(line)
+                if record.get("context", {}).get("module") == "ux.terminal.input":
+                    input_warnings.append(record)
+        codes = {record.get("error_code") for record in input_warnings}
+        if not {"UX_TERMINAL_INPUT_INCOMPLETE", "UX_TERMINAL_INPUT_MALFORMED"} <= codes:
+            raise SystemExit(f"missing terminal input warning logs: {codes}")
+        if any(record.get("level") != "warning" for record in input_warnings):
+            raise SystemExit("discarded terminal input was not logged as a warning")
+
         terminal_after = termios.tcgetattr(slave)
         # Raw mode changes input/output/local flags and control characters.
         # Comparing those fields catches a process that merely printed the
@@ -406,7 +479,7 @@ def main() -> int:
         shutil.rmtree(isolated, ignore_errors=True)
 
     print(
-        "Linux PTY button release and mouse/keyboard priority smoke passed "
+        "Linux PTY Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
         f"sentinel visible in {sentinel_latency:.3f}s)"

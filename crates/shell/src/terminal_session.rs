@@ -37,6 +37,7 @@ pub struct TerminalGuard<W: Write> {
 
 impl<W: Write> TerminalGuard<W> {
     pub fn enter(output: W) -> io::Result<Self> {
+        crossterm::event::set_input_error_handler(log_discarded_terminal_input);
         // Constructing `Terminal` probes the backend size and can fail. Do it
         // before changing any terminal mode so that this error path needs no
         // emergency cleanup.
@@ -123,6 +124,46 @@ impl<W: Write> TerminalGuard<W> {
         Ok(())
     }
 }
+
+fn discarded_terminal_input_log(
+    error: crossterm::event::InputError,
+) -> runtime_log::RuntimeLogEvent {
+    let context = watchdog::ProcessWatchdog::global()
+        .map(|process| process.log_context("ux.terminal.input", "discard_report"))
+        .unwrap_or_else(|| runtime_log::LogContext {
+            app: "tundra-shell".into(),
+            module: "ux.terminal.input".into(),
+            operation: "discard_report".into(),
+            ..Default::default()
+        });
+    let code = match error.kind {
+        crossterm::event::InputErrorKind::Malformed => "UX_TERMINAL_INPUT_MALFORMED",
+        crossterm::event::InputErrorKind::Incomplete => "UX_TERMINAL_INPUT_INCOMPLETE",
+        crossterm::event::InputErrorKind::TooLong => "UX_TERMINAL_INPUT_TOO_LONG",
+    };
+    let mut event = runtime_log::RuntimeLogEvent::new(
+        context,
+        runtime_log::LogLevel::Warning,
+        runtime_log::LogPhase::Degraded,
+        format!(
+            "Discarded terminal input report: {:?}; protocol={}; buffered_bytes={}",
+            error.kind, error.protocol, error.buffered_bytes
+        ),
+    );
+    event.error_code = Some(code.into());
+    event.alert_key = Some(code.into());
+    event
+}
+
+fn log_discarded_terminal_input(error: crossterm::event::InputError) {
+    // The existing logger queues writes and coalesces repeated warning keys.
+    // Never include terminal bytes: they may contain authentication or paste data.
+    runtime_log::record(discarded_terminal_input_log(error));
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/terminal_input_logging.rs"]
+mod terminal_input_logging_tests;
 
 impl<W: Write> Drop for TerminalGuard<W> {
     fn drop(&mut self) {

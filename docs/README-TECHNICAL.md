@@ -138,6 +138,8 @@ flowchart LR
 
 主循环以 250 ms 为 tick 周期运行；每批最多处理 4,096 个就绪事件，并合并连续的 mouse-move 和 resize 事件，既保持其他事件顺序，也避免移动风暴淹没 UI。watchdog 管理的后台任务通过 `mpsc` 发送结果，Shell 在 Tick 中轮询；Launcher 完整性刷新最多 2 个并发任务。后台线程不持有 Ratatui frame，也不得直接更改焦点、命中表或最终绘制。
 
+Unix 终端输入先在 crossterm 本地补丁中完成报文组装与校验，再转换为 `ui::InputEvent`。单独的 ESC 最多等待 50 ms，以兼容转义前缀跨读取边界到达；普通报文使用 250 ms 空闲超时和 4,096 字节上限，括号粘贴使用 5 s 空闲超时和 1 MiB 上限。非法、超时残缺和超长报文会被丢弃，迟到尾部不会回放成快捷键；未完成的粘贴需等到结束标记才能恢复普通输入。警告写入 `ux.terminal.input`，错误码为 `UX_TERMINAL_INPUT_MALFORMED`、`UX_TERMINAL_INPUT_INCOMPLETE` 或 `UX_TERMINAL_INPUT_TOO_LONG`，只记录类型、原因与缓冲字节数，不记录原始输入。正常分段报文会继续拼接，独立 ESC 和有效快捷键仍可使用。
+
 这不等于所有副作用都已从领域层完全移走。`ExplorerFileService` 与 `LauncherController` 目前仍会在 `apply` 中执行一部分平台、文件系统或存储操作；文档应以该现状为准，不应承诺所有平台 I/O 都先被抽成异步领域结果。
 
 ### 终端会话、休眠与恢复
@@ -747,6 +749,8 @@ cargo build --locked -p shell -p cli -p weathr
 - 便携包在 `SHA256SUMS` 中记录校验和。运行依赖见 Linux 运行说明。
 
 ## third_party
+
+workspace 通过 `[patch.crates-io]` 使用本地 `crossterm 0.29.0`。补丁修复 ESC 紧邻鼠标报文时吞掉下一条报文前缀的问题，并为 Unix 读取后端增加共用的报文边界、超时、长度限制和警告回调；Windows 保留原生事件读取路径。来源、MIT 许可、兼容边界与专项测试命令见 [`third_party/crossterm/TUNDRA_PATCH.md`](../third_party/crossterm/TUNDRA_PATCH.md)。`scripts/linux-shell-smoke.py` 同时验证文件管理器退出时的 ESC/鼠标组合、残缺/非法报文过滤及警告日志落盘。
 
 workspace 通过 `[patch.crates-io]` 将 `vt100 0.15.2` 指向本地 `third_party/vt100`，使项目使用经过本地维护的解析器实现，而不是从 crates.io 解析该依赖。该补丁回移了 `Grid::visible_rows` 的 scrollback 修复，并额外支持 `CSI 3 J`；变更、上游信息和许可应与该目录内的 `README.md`、`TUNDRA_PATCH.md` 和 `LICENSE` 一并审阅。
 
