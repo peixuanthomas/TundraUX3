@@ -4,10 +4,42 @@ use ratatui::text::Line;
 
 use super::common::render_auth_screen;
 use super::{AuthField, BootstrapAdminViewModel};
-use crate::components::{Surface, TextInput};
+use crate::components::{Button, Surface, TextInput};
 use crate::{RenderContext, TundraTheme};
 
 pub fn render_bootstrap_admin_content(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &BootstrapAdminViewModel,
+    context: &RenderContext,
+) {
+    super::common::render_auth_viewport(
+        frame,
+        bootstrap_viewport(area, model),
+        context,
+        |frame, area, context| render_bootstrap_unscrolled(frame, area, model, context),
+    );
+}
+
+pub fn bootstrap_viewport(main: Rect, model: &BootstrapAdminViewModel) -> super::AuthViewport {
+    super::auth_viewport(main, 10, model.scroll_offset)
+}
+
+pub fn bootstrap_action_areas(main: Rect) -> [Rect; 2] {
+    let inner = Surface::new().bordered(true).inner(main);
+    let y = inner.bottom().saturating_sub(1);
+    [
+        Rect::new(inner.x, y, inner.width / 2, u16::from(inner.height > 0)),
+        Rect::new(
+            inner.x + inner.width / 2,
+            y,
+            inner.width - inner.width / 2,
+            u16::from(inner.height > 0),
+        ),
+    ]
+}
+
+fn render_bootstrap_unscrolled(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &BootstrapAdminViewModel,
@@ -52,6 +84,11 @@ pub fn render_bootstrap_admin_content(
         model.focused_field == AuthField::Password,
         theme,
     );
+    let [submit, exit] = bootstrap_action_areas(area);
+    Button::new("bootstrap.submit", i18n::tr!("ui-auth-touch-create-admin"))
+        .render_inline_frame(frame, submit, theme);
+    Button::new("bootstrap.exit", i18n::tr!("ui-auth-touch-exit"))
+        .render_inline_frame(frame, exit, theme);
 }
 
 #[allow(clippy::too_many_arguments)]

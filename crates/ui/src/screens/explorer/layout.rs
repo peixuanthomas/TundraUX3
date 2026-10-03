@@ -3,6 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use super::model::*;
+use crate::components::Scrollbar;
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const EXPLORER_SIDEBAR_MIN_WIDTH: u16 = 96;
@@ -122,6 +123,7 @@ pub struct ExplorerLayout {
     pub sidebar: Option<Rect>,
     pub sidebar_header: Option<Rect>,
     pub quick_location_visible_start: usize,
+    pub quick_location_scrollbar: Option<Rect>,
     pub quick_location_visible_capacity: usize,
     pub quick_locations: Vec<ExplorerQuickLocationLayout>,
     pub table: Rect,
@@ -224,8 +226,14 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     };
     let panel = area;
     let inner = inset_rect(panel, 1);
-    let toolbar = line_in_rect(inner, inner.y);
-    let path_bar = line_in_rect(inner, inner.y.saturating_add(1));
+    let toolbar_rows = explorer_toolbar_rows(inner.width, model);
+    let toolbar = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        toolbar_rows.min(inner.height.saturating_sub(3).max(1)),
+    );
+    let path_bar = line_in_rect(inner, toolbar.bottom());
     let toolbar_buttons = explorer_toolbar_button_layouts(toolbar, model, mode);
 
     let search_width = if path_bar.width >= 96 {
@@ -276,7 +284,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         explorer_breadcrumb_layouts(address_input, model)
     };
 
-    let remaining_height = inner.height.saturating_sub(2);
+    let remaining_height = inner.height.saturating_sub(toolbar.height + 1);
     let footer_height = if remaining_height >= 11 {
         EXPLORER_FOOTER_TALL_HEIGHT
     } else if remaining_height >= 4 {
@@ -284,7 +292,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     } else {
         u16::from(remaining_height > 0)
     };
-    let body_y = inner.y.saturating_add(2);
+    let body_y = path_bar.bottom();
     let body_height = remaining_height.saturating_sub(footer_height);
     let body = Rect::new(inner.x, body_y, inner.width, body_height);
     let footer = Rect::new(
@@ -315,6 +323,13 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         .unwrap_or_default();
     let quick_location_visible_start =
         explorer_quick_location_visible_start(model, quick_location_visible_capacity);
+    let quick_location_scrollbar = sidebar
+        .filter(|area| {
+            area.width > 1
+                && area.height > 1
+                && model.quick_locations.len() > quick_location_visible_capacity
+        })
+        .map(|area| Rect::new(area.right() - 1, area.y + 1, 1, area.height - 1));
     let quick_locations = sidebar.map_or_else(Vec::new, |sidebar| {
         model
             .quick_locations
@@ -331,7 +346,9 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
                         .y
                         .saturating_add(1)
                         .saturating_add(usize_to_u16(offset)),
-                    sidebar.width,
+                    sidebar
+                        .width
+                        .saturating_sub(u16::from(quick_location_scrollbar.is_some())),
                     1,
                 ),
             })
@@ -357,23 +374,16 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
             u16::from(table_body.width > 0),
             table_body.height,
         );
-        let track_height = usize::from(track.height);
         let total = model.entries.len().max(1);
-        let thumb_height = track_height
-            .saturating_mul(visible_capacity)
-            .checked_div(total)
-            .unwrap_or_default()
-            .clamp(1, track_height.max(1));
-        let travel = track_height.saturating_sub(thumb_height);
-        let max_start = total.saturating_sub(visible_capacity).max(1);
-        let thumb_start = travel.saturating_mul(visible_start) / max_start;
+        let (thumb_start, thumb_height) =
+            Scrollbar::new(total, visible_capacity, visible_start).thumb_range(track);
         ExplorerScrollbarLayout {
             track,
             thumb: Rect::new(
                 track.x,
-                track.y.saturating_add(usize_to_u16(thumb_start)),
+                track.y.saturating_add(thumb_start),
                 track.width,
-                usize_to_u16(thumb_height),
+                thumb_height,
             ),
         }
     });
@@ -434,6 +444,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         sidebar,
         sidebar_header,
         quick_location_visible_start,
+        quick_location_scrollbar,
         quick_location_visible_capacity,
         quick_locations,
         table,
@@ -455,6 +466,9 @@ fn explorer_quick_location_visible_start(model: &ExplorerViewModel, capacity: us
         return 0;
     }
     let max_start = model.quick_locations.len().saturating_sub(capacity);
+    if let Some(offset) = model.quick_location_viewport_offset {
+        return offset.min(max_start);
+    }
     model
         .quick_locations
         .iter()
@@ -471,64 +485,64 @@ pub fn explorer_hit_test(
     layout.hit_test(coordinates.0, coordinates.1)
 }
 
+fn explorer_toolbar_rows(width: u16, model: &ExplorerViewModel) -> u16 {
+    if width == 0 || model.toolbar.buttons.is_empty() {
+        return 0;
+    }
+    let mut rows = 1u16;
+    let mut used = 0u16;
+    for button in &model.toolbar.buttons {
+        let length = button
+            .label
+            .cell_width()
+            .saturating_add(button.action.shortcut_label().cell_width())
+            .saturating_add(3)
+            .min(width);
+        if used > 0 && used.saturating_add(length) > width {
+            rows = rows.saturating_add(1);
+            used = 0;
+        }
+        used = used.saturating_add(length).saturating_add(1);
+    }
+    rows
+}
+
 fn explorer_toolbar_button_layouts(
     area: Rect,
     model: &ExplorerViewModel,
-    mode: ExplorerLayoutMode,
+    _mode: ExplorerLayoutMode,
 ) -> Vec<ExplorerToolbarButtonLayout> {
-    let compact = matches!(mode, ExplorerLayoutMode::Compact);
-    let labelled_width = model
-        .toolbar
-        .buttons
-        .iter()
-        .map(|button| {
-            button
-                .label
-                .cell_width()
-                .saturating_add(button.action.shortcut_label().cell_width())
-                .saturating_add(3)
-        })
-        .fold(0u16, u16::saturating_add)
-        .saturating_add(model.toolbar.buttons.len().saturating_sub(1) as u16);
-    // Either label every action or collapse every action to its shortcut. A greedy mix made
-    // the important trailing Rename/Delete/Sort/Options controls disappear at common widths.
-    let show_labels = !compact && labelled_width <= area.width;
     let mut x = area.x;
+    let mut y = area.y;
     model
         .toolbar
         .buttons
         .iter()
         .filter_map(|button| {
-            let remaining = area.x.saturating_add(area.width).saturating_sub(x);
-            let shortcut_width = button
-                .action
-                .shortcut_label()
+            let width = button
+                .label
                 .cell_width()
-                .saturating_add(2);
-            if remaining < shortcut_width || area.height == 0 {
+                .saturating_add(button.action.shortcut_label().cell_width())
+                .saturating_add(3)
+                .min(area.width);
+            if x > area.x && x.saturating_add(width) > area.right() {
+                x = area.x;
+                y = y.saturating_add(1);
+            }
+            if width == 0 || y >= area.bottom() {
                 return None;
             }
-            let labelled_width = button.label.cell_width().saturating_add(shortcut_width + 1);
-            let show_label = show_labels;
-            let width = if show_label {
-                labelled_width
-            } else {
-                shortcut_width
-            };
             let layout = ExplorerToolbarButtonLayout {
                 action: button.action,
-                area: Rect::new(x, area.y, width, 1),
-                show_label,
+                area: Rect::new(x, y, width, 1),
+                show_label: true,
                 enabled: button.enabled,
             };
-            x = x
-                .saturating_add(width)
-                .saturating_add(u16::from(remaining > width));
+            x = x.saturating_add(width).saturating_add(1);
             Some(layout)
         })
         .collect()
 }
-
 fn explorer_breadcrumb_layouts(
     area: Rect,
     model: &ExplorerViewModel,

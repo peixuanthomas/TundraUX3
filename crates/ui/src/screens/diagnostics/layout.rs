@@ -1,6 +1,7 @@
 use ratatui::layout::Rect;
 
 use super::model::{DiagnosticsRepairDialogViewModel, DiagnosticsTab, DiagnosticsViewModel};
+use crate::components::Scrollbar;
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const DIAGNOSTICS_LIST_MIN_WIDTH: u16 = 28;
@@ -164,7 +165,14 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
     let inner_bottom = inner.y.saturating_add(inner.height);
     let header = line_in_rect(inner, inner.y);
     let tabs_area = line_in_rect(inner, inner.y.saturating_add(header.height));
-    let footer = line_in_rect(inner, inner_bottom.saturating_sub(1));
+    let footer_height = super::render::diagnostics_toolbar_height(inner.width, model)
+        .min(inner.height.saturating_sub(3));
+    let footer = Rect::new(
+        inner.x,
+        inner_bottom.saturating_sub(footer_height),
+        inner.width,
+        footer_height,
+    );
     let content_y = tabs_area.y.saturating_add(tabs_area.height);
     let content_height = footer.y.saturating_sub(content_y);
     let content = Rect::new(inner.x, content_y, inner.width, content_height);
@@ -302,28 +310,14 @@ fn diagnostics_scrollbar_layout(
         1,
         list_inner.height,
     );
-    let track_height = usize::from(track.height);
     let visible_count = visible_capacity.min(item_count);
-    let thumb_height = track_height
-        .saturating_mul(visible_count)
-        .saturating_add(item_count / 2)
-        .checked_div(item_count)
-        .unwrap_or_default()
-        .max(1)
-        .min(track_height);
-    let max_thumb_start = track_height.saturating_sub(thumb_height);
-    let max_visible_start = item_count.saturating_sub(visible_count);
-    let thumb_start = visible_start
-        .min(max_visible_start)
-        .saturating_mul(max_thumb_start)
-        .saturating_add(max_visible_start / 2)
-        .checked_div(max_visible_start)
-        .unwrap_or_default();
+    let (thumb_start, thumb_height) =
+        Scrollbar::new(item_count, visible_count, visible_start).thumb_range(track);
     let thumb = Rect::new(
         track.x,
-        track.y.saturating_add(usize_to_u16(thumb_start)),
+        track.y.saturating_add(thumb_start),
         1,
-        usize_to_u16(thumb_height),
+        thumb_height,
     );
 
     Some(DiagnosticsScrollbarLayout { track, thumb })

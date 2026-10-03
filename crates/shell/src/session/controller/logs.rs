@@ -12,6 +12,8 @@ pub(in crate::session) struct LogsUiState {
     selected: usize,
     scroll: usize,
     explicit_scroll: bool,
+    detail_scroll: usize,
+    detail_scrollbar_grab: Option<u16>,
     feedback: Option<i18n::LocalizedText>,
     job: Option<LogsJob>,
     revision: u64,
@@ -338,7 +340,7 @@ impl ShellSession {
     fn logs_main_area(&self) -> Option<Rect> {
         match self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)) {
             ui::ShellLayout::Full { main, .. } => Some(main),
-            _ => None,
+            _ => Some(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)),
         }
     }
     fn logs_move(&mut self, delta: isize) {
@@ -435,6 +437,29 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn handle_logs_key(&mut self, key: &KeyInput) {
+        if key.key == InputKey::Escape {
+            self.cancel_logs_pointer_gesture();
+        }
+        if (key.modifiers.shift || key.modifiers.control || key.modifiers.ctrl)
+            && matches!(key.key, InputKey::PageUp | InputKey::PageDown)
+        {
+            self.logs_state.detail_scroll = self
+                .logs_state
+                .detail_scroll
+                .saturating_add_signed(if key.key == InputKey::PageUp { -5 } else { 5 });
+            return;
+        }
+        if matches!(
+            key.key,
+            InputKey::Up
+                | InputKey::Down
+                | InputKey::PageUp
+                | InputKey::PageDown
+                | InputKey::Home
+                | InputKey::End
+        ) {
+            self.logs_state.detail_scroll = 0;
+        }
         match key.key {
             InputKey::Escape => {
                 self.logs_state.job = None;
@@ -522,102 +547,6 @@ impl ShellSession {
             _ => {}
         }
     }
-    pub(in crate::session) fn handle_logs_pointer(&mut self, mouse: MouseInput) {
-        let Some(main) = self.logs_main_area() else {
-            return;
-        };
-        let model = self.to_logs_view_model();
-        let layout = ui::logs_layout(main, &model);
-        let point = mouse.coordinates();
-        match mouse.kind {
-            ui::MouseEventKind::Scroll(direction) => {
-                let delta = if direction == ScrollDirection::Up {
-                    -3
-                } else if direction == ScrollDirection::Down {
-                    3
-                } else {
-                    0
-                };
-                self.logs_state.scroll = layout
-                    .visible_start
-                    .saturating_add_signed(delta)
-                    .min(self.logs_count().saturating_sub(layout.visible_capacity));
-                self.logs_state.explicit_scroll = true;
-            }
-            ui::MouseEventKind::Up(PointerButton::Left) => {
-                self.logs_state.scrollbar_grab = None;
-            }
-            ui::MouseEventKind::Down(PointerButton::Left) => {
-                if let Some(target) = ui::logs_hit_test(main, &model, point) {
-                    match target {
-                        ui::LogsHitTarget::Category(category) => self.logs_set_category(category),
-                        ui::LogsHitTarget::Section(section) => self.logs_set_section(section),
-                        ui::LogsHitTarget::Event(index)
-                        | ui::LogsHitTarget::File(index)
-                        | ui::LogsHitTarget::Incident(index) => {
-                            let click = self.register_click(
-                                Some(ShellComponent::Logs),
-                                point,
-                                PointerButton::Left,
-                                Instant::now(),
-                            );
-                            self.logs_state.selected = index;
-                            if click == ClickKind::Double {
-                                self.logs_open_selected();
-                            }
-                        }
-                        ui::LogsHitTarget::Refresh => self.request_logs_job(None),
-                        ui::LogsHitTarget::Open => self.logs_open_selected(),
-                        ui::LogsHitTarget::FilterLevel => self.logs_filter_level(),
-                        ui::LogsHitTarget::FilterModule => self.logs_filter_module(),
-                        ui::LogsHitTarget::FilterTime => self.logs_filter_time(),
-                        ui::LogsHitTarget::Scrollbar => {
-                            self.logs_state.scrollbar_grab = Some(
-                                layout
-                                    .content
-                                    .list_scrollbar
-                                    .filter(|bar| bar.thumb.contains(point.into()))
-                                    .map(|bar| point.1.saturating_sub(bar.thumb.y))
-                                    .unwrap_or(0),
-                            );
-                            self.drag_logs_scrollbar(point);
-                        }
-                    }
-                }
-            }
-            ui::MouseEventKind::Drag(PointerButton::Left)
-                if self.logs_state.scrollbar_grab.is_some() =>
-            {
-                self.drag_logs_scrollbar(point)
-            }
-            _ => {}
-        }
-    }
-    fn drag_logs_scrollbar(&mut self, point: CellPosition) {
-        let Some(main) = self.logs_main_area() else {
-            return;
-        };
-        let layout = ui::logs_layout(main, &self.to_logs_view_model());
-        let Some(scrollbar_layout) = layout.content.list_scrollbar else {
-            return;
-        };
-        let track = scrollbar_layout.track;
-        let count = self.logs_count();
-        let scrollbar =
-            ui::components::Scrollbar::new(count, layout.visible_capacity, layout.visible_start);
-        let (_, thumb_len) = scrollbar.thumb_range(track);
-        self.logs_state.scroll = scrollbar_window_start(
-            point.1,
-            self.logs_state.scrollbar_grab.unwrap_or(0),
-            track.y,
-            track.height,
-            thumb_len,
-            count,
-            layout.visible_capacity,
-        );
-        self.logs_state.explicit_scroll = true;
-    }
-
     pub(in crate::session) fn to_logs_view_model(&self) -> ui::LogsViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
         let state = &self.logs_state;
@@ -718,6 +647,7 @@ impl ShellSession {
                 .collect(),
             selected_event: state.selected,
             scroll_offset: state.scroll,
+            detail_scroll: state.detail_scroll,
             linux_available: cfg!(target_os = "linux"),
             can_view_system: system,
             loading: state.job.is_some(),
@@ -888,3 +818,6 @@ pub(in crate::session) fn record_shell_runtime_event(event: runtime_log::Runtime
 #[cfg(test)]
 #[path = "../../../tests/unit/session/controller/logs/tests.rs"]
 mod tests;
+
+#[path = "logs_touch.rs"]
+mod touch;

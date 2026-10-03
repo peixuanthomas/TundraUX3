@@ -30,3 +30,8 @@ ui-logs-event-detail = 时间：{ $time }
     { $detail }{ $incident }
 
 ui-logs-incident-link = { "\u000A" }故障事件：{ $id }
+
+ui-logs-clear-filters = 清除过滤
+ui-logs-show-incident = 查看故障
+ui-logs-show-events = 关联事件
+ui-logs-back = 返回

@@ -1,4 +1,9 @@
 use super::super::*;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/session/controller/home_navigation/touch_tests.rs"]
+mod touch_tests;
+
 impl ShellSession {
     pub(in crate::session) fn logout_at(&mut self, now: Instant) -> bool {
         if self.identity_backend == identity::IdentityBackend::Linux {
@@ -100,6 +105,7 @@ impl ShellSession {
         self.user_management_mode = UserManagementMode::Browse;
         self.user_management_message = None;
         self.selected_home_entry_index = 0;
+        self.home_viewport_offset = 0;
         self.settings_state = None;
         let _ = self.settings_task_runtime.set_system_status_active(false);
         self.reset_system_status_trackers();
@@ -176,6 +182,12 @@ impl ShellSession {
             return Vec::new();
         }
         let mut entries = user_home_entries();
+        entries.retain(|entry| {
+            !matches!(
+                entry.icon_identity(),
+                "logs" | "services" | "processes" | "packages" | "network" | "disks"
+            )
+        });
         if self.can_manage_all_users() {
             entries.push(
                 ui::ShellEntry::new(
@@ -197,23 +209,6 @@ impl ShellSession {
                 .with_icon_key("user_profile"),
             );
         }
-        if cfg!(target_os = "linux") {
-            for kind in [
-                platform::management::ManagementKind::Services,
-                platform::management::ManagementKind::Processes,
-                platform::management::ManagementKind::Packages,
-                platform::management::ManagementKind::Network,
-                platform::management::ManagementKind::Disks,
-            ] {
-                entries.push(
-                    ui::ShellEntry::new(
-                        management_title(kind),
-                        i18n::tr!("management-home-description"),
-                    )
-                    .with_icon_key(kind.id()),
-                );
-            }
-        }
         entries
     }
 
@@ -230,6 +225,7 @@ impl ShellSession {
         } else {
             self.selected_home_entry_index.min(count - 1)
         };
+        self.sync_home_viewport();
     }
 
     pub(in crate::session) fn select_home_entry(&mut self, index: usize) {
@@ -240,6 +236,7 @@ impl ShellSession {
         }
 
         self.selected_home_entry_index = index.min(entries.len() - 1);
+        self.sync_home_viewport();
         self.notify_status(i18n::LocalizedText::from(i18n::msg!(
             "shell-home-arg1",
             arg1 = entries[self.selected_home_entry_index].label.clone()
@@ -283,40 +280,130 @@ impl ShellSession {
             "launcher" => self.open_launcher(platform),
             "settings" => self.open_settings(),
             "system_status" => self.open_system_status(),
-            "logs" => self.open_logs(),
             "user_management" | "user_profile" => self.open_user_management(),
-            "services" => self.open_management(platform::management::ManagementKind::Services),
-            "processes" => self.open_management(platform::management::ManagementKind::Processes),
-            "packages" => self.open_management(platform::management::ManagementKind::Packages),
-            "network" => self.open_management(platform::management::ManagementKind::Network),
-            "disks" => self.open_management(platform::management::ManagementKind::Disks),
             _ => {}
         }
     }
 
     pub(in crate::session) fn visible_home_entry_columns(&self) -> usize {
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
-            return 1;
-        };
-        let areas = ui::home_entry_tile_areas(main, self.user_home_entries().len());
-        let Some(first) = areas.first() else {
-            return 1;
-        };
-
-        areas.iter().take_while(|area| area.y == first.y).count()
+        self.home_content_layout()
+            .map_or(1, |layout| layout.columns)
     }
 
     pub(in crate::session) fn home_entry_index_at(
         &self,
         coordinates: CellPosition,
     ) -> Option<usize> {
+        self.home_content_layout()?.entry_at(coordinates)
+    }
+
+    pub(in crate::session) fn home_control_at(
+        &self,
+        coordinates: CellPosition,
+    ) -> Option<ui::HomeToolbarAction> {
+        self.home_content_layout()?.control_at(coordinates)
+    }
+
+    fn home_content_layout(&self) -> Option<ui::HomeLayout> {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return None;
         };
+        Some(ui::home_layout(main, &self.to_home_view_model()))
+    }
 
-        ui::home_entry_index_at(main, self.user_home_entries().len(), coordinates)
+    fn sync_home_viewport(&mut self) {
+        if let Some(layout) = self.home_content_layout() {
+            self.home_viewport_offset = layout.visible_start;
+        }
+    }
+
+    pub(in crate::session) fn handle_home_pointer_scrollbar(&mut self, mouse: &MouseInput) -> bool {
+        if self.active_screen() != ShellScreen::Home {
+            if matches!(self.scrollbar_drag, Some(ScrollbarDragState::Home { .. })) {
+                self.scrollbar_drag = None;
+            }
+            return false;
+        }
+        match mouse.kind {
+            ui::MouseEventKind::Down(PointerButton::Left) => {
+                let Some(layout) = self.home_content_layout() else {
+                    return false;
+                };
+                let Some(track) = layout.scrollbar else {
+                    return false;
+                };
+                if !rect_contains(track, mouse.coordinates()) {
+                    return false;
+                }
+                let (start, height) = ui::components::Scrollbar::new(
+                    layout.scroll_content_len,
+                    layout.visible_capacity,
+                    layout.visible_start,
+                )
+                .thumb_range(track);
+                let thumb = Rect::new(track.x, track.y.saturating_add(start), track.width, height);
+                let grab_offset = if rect_contains(thumb, mouse.coordinates()) {
+                    mouse.coordinates().1.saturating_sub(thumb.y)
+                } else {
+                    height / 2
+                };
+                self.scrollbar_drag = Some(ScrollbarDragState::Home { grab_offset });
+                self.button_pointer_capture = None;
+                self.drag_tracker = None;
+                self.drag_home_scrollbar(mouse.coordinates(), grab_offset);
+                true
+            }
+            ui::MouseEventKind::Drag(PointerButton::Left)
+            | ui::MouseEventKind::Up(PointerButton::Left) => {
+                let Some(ScrollbarDragState::Home { grab_offset }) = self.scrollbar_drag else {
+                    return false;
+                };
+                self.drag_home_scrollbar(mouse.coordinates(), grab_offset);
+                if matches!(mouse.kind, ui::MouseEventKind::Up(_)) {
+                    self.scrollbar_drag = None;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn drag_home_scrollbar(&mut self, coordinates: CellPosition, grab_offset: u16) {
+        let Some(layout) = self.home_content_layout() else {
+            return;
+        };
+        let Some(track) = layout.scrollbar else {
+            self.scrollbar_drag = None;
+            return;
+        };
+        let (_, height) = ui::components::Scrollbar::new(
+            layout.scroll_content_len,
+            layout.visible_capacity,
+            layout.visible_start,
+        )
+        .thumb_range(track);
+        let requested = scrollbar_window_start(
+            coordinates.1,
+            grab_offset,
+            track.y,
+            track.height,
+            height,
+            layout.scroll_content_len,
+            layout.visible_capacity,
+        );
+        self.home_viewport_offset = requested / layout.columns * layout.columns;
+        let count = self.user_home_entries().len();
+        if count > 0 {
+            let last = self
+                .home_viewport_offset
+                .saturating_add(layout.visible_capacity)
+                .saturating_sub(1)
+                .min(count - 1);
+            self.selected_home_entry_index = self
+                .selected_home_entry_index
+                .clamp(self.home_viewport_offset.min(last), last);
+        }
     }
 
     pub(in crate::session) fn notification_action_index_at(

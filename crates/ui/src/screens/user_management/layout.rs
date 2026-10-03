@@ -42,6 +42,10 @@ pub struct UserManagementFormLayout {
     pub error: Rect,
     pub submit: Rect,
     pub cancel: Rect,
+    pub scrollbar: Option<Rect>,
+    pub field_window_start: usize,
+    pub field_capacity: usize,
+    pub field_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +63,7 @@ pub struct UserManagementLayout {
     pub visible_start: usize,
     pub visible_capacity: usize,
     pub form: Option<UserManagementFormLayout>,
+    pub scrollbar: Option<Rect>,
 }
 
 impl UserManagementLayout {
@@ -102,10 +107,25 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
     } else {
         Rect::new(inner.x, inner_bottom, 0, 0)
     };
+    let action_columns = if inner.height < 5 && inner.width >= 60 {
+        model.actions.len().max(1)
+    } else {
+        usize::from(inner.width / 14)
+            .max(1)
+            .min(model.actions.len().max(1))
+    };
+    let action_height = u16::try_from(model.actions.len().div_ceil(action_columns))
+        .unwrap_or(u16::MAX)
+        .min(inner.height);
     let actions_y = inner_bottom
-        .saturating_sub(1)
+        .saturating_sub(action_height)
         .saturating_sub(u16::from(show_help));
-    let actions_area = line_in_rect(inner, actions_y);
+    let actions_area = Rect::new(
+        inner.x,
+        actions_y.max(inner.y),
+        inner.width,
+        action_height.min(inner_bottom.saturating_sub(actions_y.max(inner.y))),
+    );
     let show_feedback = (model.message.is_some()
         || matches!(model.focus, UserManagementFocus::Action(action) if model
             .actions
@@ -122,7 +142,15 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
     let rows_y = header.y.saturating_add(header.height);
     let rows_end = if show_feedback { feedback_y } else { actions_y };
     let rows_height = rows_end.saturating_sub(rows_y);
-    let rows_area = Rect::new(inner.x, rows_y, inner.width, rows_height);
+    let scrollbar =
+        (model.users.len() > usize::from(rows_height) && inner.width > 1 && rows_height > 0)
+            .then(|| Rect::new(inner.right() - 1, rows_y, 1, rows_height));
+    let rows_area = Rect::new(
+        inner.x,
+        rows_y,
+        inner.width.saturating_sub(u16::from(scrollbar.is_some())),
+        rows_height,
+    );
     let visible_capacity = usize::from(rows_height);
     let visible_start = user_management_visible_start(model, visible_capacity);
     let rows = (visible_start..model.users.len())
@@ -162,6 +190,7 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
             .form
             .as_ref()
             .map(|form| user_management_form_layout(main, form)),
+        scrollbar,
     }
 }
 
@@ -194,17 +223,8 @@ fn user_management_visible_start(
         return 0;
     }
 
-    let selected = model
-        .selected_index
-        .min(model.users.len().saturating_sub(1));
     let max_start = model.users.len().saturating_sub(visible_capacity);
-    let mut start = model.user_window_start.min(max_start);
-    if selected < start {
-        start = selected;
-    } else if selected >= start.saturating_add(visible_capacity) {
-        start = selected.saturating_add(1).saturating_sub(visible_capacity);
-    }
-    start.min(max_start)
+    model.user_window_start.min(max_start)
 }
 
 fn user_management_action_layouts(
@@ -215,22 +235,28 @@ fn user_management_action_layouts(
         return Vec::new();
     }
 
-    let count = u16::try_from(actions.len()).unwrap_or(u16::MAX);
+    let columns = if area.height == 1 {
+        actions.len()
+    } else {
+        usize::from(area.width / 14).max(1).min(actions.len())
+    };
+    let count = u16::try_from(columns).unwrap_or(u16::MAX);
     let gap = u16::from(area.width >= count.saturating_mul(2).saturating_sub(1));
     let gaps_width = count.saturating_sub(1).saturating_mul(gap);
     let available = area.width.saturating_sub(gaps_width);
     let base_width = available / count.max(1);
     let remainder = available % count.max(1);
-    let mut x = area.x;
 
     actions
         .iter()
         .enumerate()
         .map(|(index, action)| {
-            let extra = u16::from(usize::from(remainder) > index);
+            let column = index % columns;
+            let extra = u16::from(usize::from(remainder) > column);
             let width = base_width.saturating_add(extra);
-            let action_area = Rect::new(x, area.y, width, 1);
-            x = x.saturating_add(width).saturating_add(gap);
+            let x = area.x + (base_width + gap) * column as u16 + (column as u16).min(remainder);
+            let y = area.y + (index / columns) as u16;
+            let action_area = Rect::new(x, y, width, u16::from(y < area.bottom()));
             UserManagementActionLayout {
                 action: action.action,
                 area: action_area,
@@ -276,8 +302,21 @@ fn user_management_form_layout(
             )
         })
         .collect::<Vec<_>>();
+    let field_count = input_fields.len();
+    let field_capacity = usize::from(buttons_y.saturating_sub(inner.y + 1));
+    let focused_index = input_fields
+        .iter()
+        .position(|field| *field == form.focused_field)
+        .unwrap_or(0);
+    let field_window_start = focused_index
+        .saturating_add(1)
+        .saturating_sub(field_capacity.max(1))
+        .min(field_count.saturating_sub(field_capacity));
+    let scrollbar = (field_count > field_capacity && field_capacity > 0 && inner.width > 1)
+        .then(|| Rect::new(inner.right() - 1, inner.y + 1, 1, field_capacity as u16));
     let fields = input_fields
         .into_iter()
+        .skip(field_window_start)
         .enumerate()
         .filter_map(|(index, field)| {
             let y = inner
@@ -286,7 +325,12 @@ fn user_management_form_layout(
                 .saturating_add(usize_to_u16(index));
             (y < buttons_y).then_some(UserManagementFieldLayout {
                 field,
-                area: line_in_rect(inner, y),
+                area: Rect::new(
+                    inner.x,
+                    y,
+                    inner.width.saturating_sub(u16::from(scrollbar.is_some())),
+                    1,
+                ),
             })
         })
         .collect::<Vec<_>>();
@@ -323,5 +367,9 @@ fn user_management_form_layout(
         error,
         submit,
         cancel,
+        scrollbar,
+        field_window_start,
+        field_capacity,
+        field_count,
     }
 }

@@ -578,33 +578,104 @@ fn launcher_click_launches_only_after_matching_release_in_both_views() {
 
 #[test]
 fn home_entry_single_click_opens_on_first_release() {
-    let mut state = session();
-    state.app.dispatch_at(
-        app::AppCommand::SetAuthSession(Some(AuthSession {
-            source: identity::IdentitySource::LocalAccount,
-            session_id: "click-session".into(),
-            user_id: "click-user".into(),
-            username: "click-user".into(),
-            role: UserRole::User,
-            started_at_epoch_ms: 1,
-        })),
-        Instant::now(),
-    );
+    struct StorageFixtureGuard(PathBuf);
+    impl Drop for StorageFixtureGuard {
+        fn drop(&mut self) {
+            let _ = platform::cleanup_temp_path(&self.0);
+        }
+    }
+
+    let root = platform::create_temp_dir(
+        &std::env::temp_dir().join("TundraUX3-shell-tests"),
+        "home-launcher-click",
+    )
+    .expect("create private Launcher storage fixture");
+    let _storage_guard = StorageFixtureGuard(root.clone());
+    let paths = platform::build_linux_app_paths(
+        root.join("Config"),
+        root.join("Data"),
+        root.join("Cache"),
+        root.join("State"),
+        root.join("Temp"),
+    )
+    .unwrap();
+    let manager = StorageManager::open(paths.clone()).unwrap().manager;
+    let user_dirs = platform::UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Videos"),
+        root.join("Music"),
+        root.join("UserData"),
+    )
+    .unwrap();
+    let platform = platform::mock::MockPlatform::new(user_dirs, paths);
+    let launcher_session = || {
+        let mut state = session();
+        state.storage_manager = Some(manager.clone());
+        state.app.dispatch_at(
+            app::AppCommand::SetAuthSession(Some(AuthSession {
+                source: identity::IdentitySource::LocalAccount,
+                session_id: "click-session".into(),
+                user_id: "click-user".into(),
+                username: "click-user".into(),
+                role: UserRole::User,
+                started_at_epoch_ms: 1,
+            })),
+            Instant::now(),
+        );
+        state.refresh_hit_map();
+        state
+    };
+    // Check the storage and authorization prerequisites through the real
+    // keyboard path before testing pointer activation on an independent session.
+    let mut keyboard_state = launcher_session();
+    let launcher_index = keyboard_state
+        .user_home_entries()
+        .iter()
+        .position(|entry| entry.icon_identity() == "launcher")
+        .unwrap();
+    keyboard_state.select_home_entry(launcher_index);
+    keyboard_state.apply_input_with_platform(InputEvent::key(InputKey::Enter), &platform);
+    assert_eq!(keyboard_state.active_screen(), ShellScreen::Launcher);
+    assert!(keyboard_state.error_message.is_none());
+
+    let mut state = launcher_session();
     let mut compositor = ScreenCompositor::default();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let prepared = home_frame(&state, 0, true);
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let launcher_id = format!("home.entry.{launcher_index}");
     let area = state
         .button_regions
         .iter()
-        .find(|r| r.id.as_str() == "home.entry.4")
+        .find(|r| r.id.as_str() == launcher_id)
         .unwrap()
         .area;
     let point = (area.x + 1, area.y + 1);
-    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert_eq!(state.home_entry_index_at(point), Some(launcher_index));
+    let pressed_at = Instant::now();
+    state.apply_input_with_platform_at(
+        InputEvent::mouse_down(PointerButton::Left, point),
+        &platform,
+        pressed_at,
+    );
     assert_eq!(state.active_screen(), ShellScreen::Home);
-    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert_eq!(state.active_screen(), ShellScreen::Logs);
+    assert_eq!(
+        state
+            .button_pointer_capture
+            .as_ref()
+            .map(|capture| capture.region.id.as_str()),
+        Some(launcher_id.as_str()),
+    );
+    state.apply_input_with_platform_at(
+        InputEvent::mouse_up(PointerButton::Left, point),
+        &platform,
+        pressed_at + Duration::from_millis(10),
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    assert!(state.error_message.is_none());
 }
 
 #[test]

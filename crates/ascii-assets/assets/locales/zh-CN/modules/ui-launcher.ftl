@@ -4,6 +4,13 @@ ui-launcher-no-launcher-items-go-to-explorer-select-a-file-then-right-click-and-
 ui-launcher-remove = 移除
 ui-launcher-refresh = 刷新
 ui-launcher-view = 视图
+ui-launcher-open = 打开
+ui-launcher-back = 返回
+ui-launcher-open-description = 打开选中的应用
+ui-launcher-remove-description = 移除入口，保留文件
+ui-launcher-refresh-description = 重新检查应用文件
+ui-launcher-view-description = 切换图标和列表
+ui-launcher-back-description = 返回上一页
 ui-launcher-name = 名称
 ui-launcher-type = 类型
 ui-launcher-integrity = 完整性

@@ -199,6 +199,8 @@ impl ShellSession {
             #[cfg(target_os = "linux")]
             user_management_job: None,
             selected_home_entry_index: 0,
+            home_viewport_offset: 0,
+            page_touch: PageTouchState::default(),
             settings_state: None,
             system_settings_backend: app::system_settings::UnavailableSystemSettingsBackend {
                 reason: if startup.platform_kind == PlatformKind::Linux {
@@ -247,6 +249,7 @@ impl ShellSession {
             explorer_overlay_selection: 0,
             explorer_conflict_apply_to_remaining: false,
             explorer_purpose: ExplorerPurpose::Browse,
+            explorer_locations_scroll: None,
             explorer_task_runtime: runtime_services.explorer,
             editor_task_runtime: runtime_services.editor,
             editor_load_state: None,
@@ -298,6 +301,9 @@ impl ShellSession {
             keyboard_focus_visible: false,
             button_regions: Vec::new(),
             button_pointer_capture: None,
+            notification_scrollbar_drag: None,
+            diagnostics_detail_scroll: 0,
+            diagnostics_detail_drag: None,
             hovered_component: None,
             active_popup: None,
             frame_layout: None,

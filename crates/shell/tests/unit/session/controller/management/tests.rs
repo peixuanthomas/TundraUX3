@@ -253,9 +253,9 @@ fn action_capture_requires_matching_release() {
 }
 
 #[test]
-fn home_management_entries_are_linux_only_and_guest_is_blocked() {
+fn launcher_management_entries_are_linux_only_and_guest_is_blocked() {
     let mut state = state();
-    let entries = state.user_home_entries();
+    let entries = state.built_in_launcher_applications();
     for kind in [
         ManagementKind::Services,
         ManagementKind::Processes,
@@ -266,7 +266,7 @@ fn home_management_entries_are_linux_only_and_guest_is_blocked() {
         assert_eq!(
             entries
                 .iter()
-                .any(|entry| entry.icon_identity() == kind.id()),
+                .any(|entry| entry.id == format!("builtin.{}", kind.id())),
             cfg!(target_os = "linux")
         );
     }
@@ -284,4 +284,228 @@ fn home_management_entries_are_linux_only_and_guest_is_blocked() {
     state.screen_stack = vec![ShellScreen::Home];
     state.open_management(ManagementKind::Packages);
     assert_eq!(state.active_screen(), ShellScreen::Home);
+}
+
+#[test]
+fn management_scrollbar_drag_preserves_viewport_and_cancel_stops_capture() {
+    let mut state = state();
+    state.management_state.snapshot.columns = vec!["Name".into()];
+    state.management_state.snapshot.rows = (0..100)
+        .map(|index| ManagementRow {
+            id: index.to_string(),
+            cells: vec![format!("row-{index}")],
+            ..Default::default()
+        })
+        .collect();
+    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
+    let bar = *layout
+        .scrollbars
+        .iter()
+        .find(|bar| bar.target == ui::ManagementScrollTarget::Rows)
+        .unwrap();
+    let pointer = |position: (u16, u16), kind| MouseInput {
+        position: ui::Point::new(position.0, position.1),
+        kind,
+        modifiers: ui::KeyModifiers::NONE,
+    };
+    state.handle_management_pointer(pointer(
+        (bar.thumb.x, bar.thumb.y),
+        ui::MouseEventKind::Down(PointerButton::Left),
+    ));
+    state.handle_management_pointer(pointer(
+        (bar.track.x, bar.track.bottom()),
+        ui::MouseEventKind::Drag(PointerButton::Left),
+    ));
+    assert_eq!(state.management_state.scroll, 100 - layout.list_capacity);
+    state.poll_management();
+    assert_eq!(state.management_state.scroll, 100 - layout.list_capacity);
+    state.cancel_management_pointer_gesture();
+    assert!(!state.management_pointer_drag_active());
+}
+
+#[test]
+fn touch_choice_list_selects_without_cycling_or_submitting() {
+    let mut state = state();
+    state.management_state.form = Some(ManagementEditor {
+        title: "Choice".into(),
+        message: String::new(),
+        message_scroll: 0,
+        fields: vec![ManagementField {
+            id: "answer".into(),
+            label: "Action".into(),
+            value: "No".into(),
+            choices: vec!["No".into(), "Yes".into()],
+            ..Default::default()
+        }],
+        selected: 0,
+        purpose: FormPurpose::Answer("question".into()),
+    });
+    let pointer = |area: Rect| MouseInput {
+        position: ui::Point::new(area.x, area.y),
+        kind: ui::MouseEventKind::Click(PointerButton::Left),
+        modifiers: ui::KeyModifiers::NONE,
+    };
+    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
+    state.handle_management_pointer(pointer(layout.fields[0].1));
+    assert_eq!(
+        state.management_state.form.as_ref().unwrap().fields[0].value,
+        "No"
+    );
+    assert_eq!(state.management_state.choice_field, Some(0));
+    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
+    let choice = layout
+        .choice_rows
+        .iter()
+        .find(|(index, _)| *index == 1)
+        .unwrap()
+        .1;
+    state.handle_management_pointer(pointer(choice));
+    assert_eq!(
+        state.management_state.form.as_ref().unwrap().fields[0].value,
+        "Yes"
+    );
+    assert!(state.management_state.choice_field.is_none());
+    assert!(state.management_state.form.is_some());
+}
+
+#[test]
+fn touch_back_returns_management_to_launcher_without_cancelling_task() {
+    let mut state = state();
+    state.screen_stack = vec![
+        ShellScreen::Home,
+        ShellScreen::Launcher,
+        ShellScreen::Management,
+    ];
+    let (job, _) = state.management_job();
+    state.management_state.operation_job = Some(job);
+    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
+    let area = layout
+        .controls
+        .iter()
+        .find(|(control, _)| *control == ui::ManagementControl::Back)
+        .unwrap()
+        .1;
+    state.handle_management_pointer(MouseInput {
+        position: ui::Point::new(area.x, area.y),
+        kind: ui::MouseEventKind::Click(PointerButton::Left),
+        modifiers: ui::KeyModifiers::NONE,
+    });
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    assert_eq!(state.focused_component, ShellComponent::Launcher);
+    assert!(state.management_state.operation_job.is_some());
+}
+
+#[test]
+fn management_touch_buttons_are_hidden_by_global_overlays() {
+    let mut state = state();
+    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
+    let point = (layout.controls[0].1.x, layout.controls[0].1.y);
+    assert!(state.management_button_at(point).is_some());
+    state.time_sync_dialog_visible = true;
+    assert!(state.management_button_at(point).is_none());
+    state.time_sync_dialog_visible = false;
+    state.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Management),
+        anchor: point,
+    });
+    assert!(state.management_button_at(point).is_none());
+}
+
+#[test]
+fn global_notification_releases_management_scroll_capture() {
+    let mut state = state();
+    state.management_state.scrollbar_grab = Some((ui::ManagementScrollTarget::Rows, 0));
+    state.notify_modal(
+        "Notice",
+        "Stop dragging",
+        ui::NotificationTone::Info,
+        vec![],
+    );
+    assert!(state.management_state.scrollbar_grab.is_none());
+}
+
+#[test]
+fn terminal_events_close_the_choice_list_and_release_form_drag() {
+    for event in [
+        OperationEvent::Completed {
+            message: "Completed".into(),
+        },
+        OperationEvent::Failed {
+            message: "Failed".into(),
+        },
+        OperationEvent::Disconnected {
+            message: "Disconnected".into(),
+        },
+    ] {
+        let mut state = state();
+        state.management_state.form = Some(ManagementEditor {
+            title: "Question".into(),
+            message: String::new(),
+            message_scroll: 0,
+            fields: vec![ManagementField {
+                id: "answer".into(),
+                choices: vec!["No".into(), "Yes".into()],
+                ..Default::default()
+            }],
+            selected: 0,
+            purpose: FormPurpose::Answer("question".into()),
+        });
+        state.management_state.choice_field = Some(0);
+        state.management_state.choice_scroll = 3;
+        state.management_state.choice_columns = 8;
+        state.management_state.form_field_scroll = Some(4);
+        state.management_state.scrollbar_grab = Some((ui::ManagementScrollTarget::Choices, 0));
+        state.management_state.received_snapshot = true;
+        let (job, _) = state.management_job();
+        job.0.events.lock().unwrap().push_back(event);
+        state.management_state.operation_job = Some(job);
+        state.poll_management();
+        assert!(state.management_state.form.is_none());
+        assert!(state.management_state.choice_field.is_none());
+        assert!(state.management_state.form_field_scroll.is_none());
+        assert_eq!(state.management_state.choice_scroll, 0);
+        assert_eq!(state.management_state.choice_columns, 0);
+        assert!(!state.management_pointer_drag_active());
+        assert!(!state.handle_management_choice_key(&KeyInput::new(InputKey::Right)));
+    }
+}
+
+#[test]
+fn compact_action_paging_makes_each_middle_action_touch_reachable() {
+    let mut state = state();
+    state.terminal_size = (60, 18);
+    state.management_state.snapshot.actions = (0..6)
+        .map(|index| ManagementAction {
+            id: format!("action-{index}"),
+            label: format!("Action {index}"),
+            confirm: true,
+            ..Default::default()
+        })
+        .collect();
+    let tap = |area: Rect| MouseInput {
+        position: ui::Point::new(area.x, area.y),
+        kind: ui::MouseEventKind::Click(PointerButton::Left),
+        modifiers: ui::KeyModifiers::NONE,
+    };
+    for index in 0..6 {
+        let layout =
+            ui::management_layout(state.management_main(), &state.to_management_view_model());
+        assert_eq!(layout.actions.len(), 1);
+        assert_eq!(layout.action_start, index);
+        assert!(layout.action_next.width > 0 && layout.action_next.height > 0);
+        if index < 5 {
+            state.handle_management_pointer(tap(layout.action_next));
+        }
+    }
+    for _ in 0..3 {
+        let layout =
+            ui::management_layout(state.management_main(), &state.to_management_view_model());
+        state.handle_management_pointer(tap(layout.action_previous));
+    }
+    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
+    assert_eq!(layout.action_start, 2);
+    state.handle_management_pointer(tap(layout.actions[0]));
+    assert!(
+        matches!(&state.management_state.form.as_ref().unwrap().purpose,FormPurpose::Action(action,_) if action.id=="action-2")
+    );
 }

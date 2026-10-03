@@ -9,6 +9,22 @@ use ui::components::{
 use ui::{InputPhase, KeyModifiers, MouseEvent, TundraTheme};
 
 #[test]
+fn overflowing_scrollbars_keep_drag_travel_on_short_tracks() {
+    use ui::components::{Scrollbar, ScrollbarOrientation};
+    let vertical = Rect::new(4, 5, 1, 3);
+    assert_eq!(Scrollbar::new(4, 3, 0).thumb_range(vertical), (0, 2));
+    assert_eq!(Scrollbar::new(4, 3, 1).thumb_range(vertical), (1, 2));
+    let horizontal = Rect::new(4, 5, 3, 1);
+    assert_eq!(
+        Scrollbar::new(4, 3, 1)
+            .orientation(ScrollbarOrientation::HorizontalBottom)
+            .thumb_range(horizontal),
+        (1, 2)
+    );
+    assert_eq!(Scrollbar::new(3, 3, 0).thumb_range(vertical), (0, 0));
+}
+
+#[test]
 fn button_keyboard_and_mouse_activate_the_same_component() {
     let mut button = Button::new("save", "Save");
     let area = Rect::new(0, 0, 12, 3);

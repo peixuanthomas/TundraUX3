@@ -1,18 +1,89 @@
-use crate::components::terminal_width;
+use crate::components::{terminal_width, truncate_to_terminal_width};
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{HomeDisplayMode, HomeViewModel};
-use crate::components::{Button, Surface};
+use crate::components::{Button, Scrollbar, Surface};
 use crate::{RenderContext, TundraTheme};
 
 const HOME_SUMMARY_HEIGHT: u16 = 1;
-const HOME_CONTROLS_HEIGHT: u16 = 2;
 const HOME_TILE_MAX_HEIGHT: u16 = 8;
 const HOME_TILE_MIN_HEIGHT: u16 = 3;
 const HOME_TILE_GAP: u16 = crate::SpringStyle::CARD_GAP;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HomeToolbarAction {
+    OpenSelected,
+    Launcher,
+    Exit,
+}
+
+impl HomeToolbarAction {
+    fn label(self) -> String {
+        match self {
+            Self::OpenSelected => i18n::tr!("ui-home-open-button"),
+            Self::Launcher => i18n::tr!("ui-home-launcher-button"),
+            Self::Exit => i18n::tr!("ui-home-exit-button"),
+        }
+    }
+
+    fn description(self) -> String {
+        match self {
+            Self::OpenSelected => i18n::tr!("ui-home-open-description"),
+            Self::Launcher => i18n::tr!("ui-home-launcher-description"),
+            Self::Exit => i18n::tr!("ui-home-exit-description"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HomeItemLayout {
+    pub index: usize,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HomeControlLayout {
+    pub action: HomeToolbarAction,
+    pub area: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeLayout {
+    pub items: Vec<HomeItemLayout>,
+    pub controls: Vec<HomeControlLayout>,
+    pub scrollbar: Option<Rect>,
+    pub visible_start: usize,
+    pub visible_capacity: usize,
+    pub columns: usize,
+    /// Empty slots in the final grid row count toward scrollbar movement.
+    pub scroll_content_len: usize,
+}
+
+impl HomeLayout {
+    pub fn entry_at(&self, coordinates: (u16, u16)) -> Option<usize> {
+        self.items
+            .iter()
+            .find_map(|item| rect_contains(item.area, coordinates).then_some(item.index))
+    }
+
+    pub fn control_at(&self, coordinates: (u16, u16)) -> Option<HomeToolbarAction> {
+        self.controls
+            .iter()
+            .find_map(|control| rect_contains(control.area, coordinates).then_some(control.action))
+    }
+}
+
+pub fn home_layout(main: Rect, home: &HomeViewModel) -> HomeLayout {
+    home_layout_for_entries(
+        main,
+        home.entries().len(),
+        home.selected_entry_index(),
+        home.viewport_offset(),
+    )
+}
 
 pub trait HomeIconRenderer {
     /// Returns true when a terminal image was rendered for `entry_label`.
@@ -52,15 +123,13 @@ fn render_user_main(
     }
 
     let summary = home_summary_area(area);
-    let controls = home_controls_area(area);
+    let layout = home_layout(area, home);
     render_home_account_summary(frame, area, summary, home, theme);
 
-    for (index, (entry, tile)) in home
-        .entries()
-        .iter()
-        .zip(home_entry_tile_areas(area, home.entries().len()))
-        .enumerate()
-    {
+    for item in &layout.items {
+        let index = item.index;
+        let entry = &home.entries()[index];
+        let tile = item.area;
         let selected = theme.keyboard_focus_visible() && index == home.selected_entry_index();
         let style = if selected {
             theme.title_style()
@@ -72,6 +141,13 @@ fn render_user_main(
         let mut surface = Button::new(format!("home.entry.{index}"), "");
         surface.state.selected = selected;
         surface.set_focused(selected);
+        if tile.height < HOME_TILE_MIN_HEIGHT {
+            let mut compact = Button::new(format!("home.entry.{index}"), entry.label.clone());
+            compact.state.selected = selected;
+            compact.set_focused(selected);
+            compact.render_borderless_frame(frame, tile, theme);
+            continue;
+        }
         surface.render_surface_frame(frame, tile, theme);
         let icon_area = home_entry_icon_area(tile);
         let rendered_graphic = icon_area.width > 0
@@ -130,20 +206,37 @@ fn render_user_main(
         }
     }
 
-    let controls_text = if home.logout_visible() && home.entries().is_empty() {
-        i18n::tr!("ui-home-tab-focus-logout-clock-l-logout-q-esc-exit")
-    } else if home.logout_visible() {
-        i18n::tr!("ui-home-arrows-select-enter-open-e-explorer-u-users-l-logout-q-esc-exit")
-    } else {
-        i18n::tr!("ui-home-arrows-select-enter-open-e-explorer-u-users-q-esc-exit")
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(controls_text))
-            .alignment(HorizontalAlignment::Left)
-            .style(theme.muted_style())
-            .wrap(Wrap { trim: true }),
-        controls,
-    );
+    for control in &layout.controls {
+        let mut button = Button::new(
+            format!("home.toolbar.{:?}", control.action),
+            truncate_to_terminal_width(&control.action.label(), usize::from(control.area.width)),
+        );
+        button.set_disabled(home.entries().is_empty() && control.action != HomeToolbarAction::Exit);
+        button.render_borderless_frame(frame, control.area, theme);
+        if control.area.height > 1 {
+            frame.render_widget(
+                Paragraph::new(truncate_to_terminal_width(
+                    &control.action.description(),
+                    usize::from(control.area.width),
+                ))
+                .style(theme.muted_style()),
+                Rect::new(
+                    control.area.x,
+                    control.area.y.saturating_add(1),
+                    control.area.width,
+                    1,
+                ),
+            );
+        }
+    }
+    if let Some(area) = layout.scrollbar {
+        Scrollbar::new(
+            layout.scroll_content_len,
+            layout.visible_capacity,
+            layout.visible_start,
+        )
+        .render_frame(frame, area, context);
+    }
 }
 
 fn render_home_account_summary(
@@ -191,7 +284,8 @@ fn centered_home_tile_line(
 }
 
 fn centered_home_tile_text(text: &str, content_width: usize) -> String {
-    centered_home_tile_value(text, Line::from(text).width(), content_width)
+    let text = truncate_to_terminal_width(text, content_width);
+    centered_home_tile_value(&text, Line::from(text.as_str()).width(), content_width)
 }
 
 fn centered_home_tile_value(text: &str, measured_width: usize, content_width: usize) -> String {
@@ -200,54 +294,101 @@ fn centered_home_tile_value(text: &str, measured_width: usize, content_width: us
 }
 
 pub fn home_entry_tile_areas(main: Rect, entry_count: usize) -> Vec<Rect> {
-    if entry_count == 0 {
-        return Vec::new();
-    }
+    home_layout_for_entries(main, entry_count, 0, 0)
+        .items
+        .into_iter()
+        .map(|item| item.area)
+        .collect()
+}
 
-    let grid = home_entry_grid_area(main);
-    if grid.width == 0 || grid.height == 0 {
-        return Vec::new();
+fn home_layout_for_entries(
+    main: Rect,
+    entry_count: usize,
+    selected: usize,
+    requested: usize,
+) -> HomeLayout {
+    let controls_area = home_controls_area(main);
+    let control_width = controls_area.width.min(32);
+    let control_height = controls_area.height.min(2);
+    let controls = [HomeToolbarAction::Exit]
+        .into_iter()
+        .filter_map(|action| {
+            let area = Rect::new(
+                controls_area.right().saturating_sub(control_width),
+                controls_area.y,
+                control_width,
+                control_height,
+            );
+            (area.width > 0 && area.height > 0).then_some(HomeControlLayout { action, area })
+        })
+        .collect();
+    let mut grid = home_entry_grid_area(main);
+    let mut columns = home_entry_column_count(grid.width, entry_count);
+    let max_rows = usize::from(
+        (grid.height.saturating_add(HOME_TILE_GAP)
+            / HOME_TILE_MIN_HEIGHT.saturating_add(HOME_TILE_GAP))
+        .max(1),
+    );
+    let mut rows = entry_count.div_ceil(columns).min(max_rows).max(1);
+    let needs_scrollbar =
+        entry_count > columns.saturating_mul(rows) && grid.width > 0 && grid.height > 0;
+    let scrollbar =
+        needs_scrollbar.then(|| Rect::new(grid.right().saturating_sub(1), grid.y, 1, grid.height));
+    if needs_scrollbar {
+        grid.width = grid.width.saturating_sub(1);
+        columns = home_entry_column_count(grid.width, entry_count);
+        rows = entry_count.div_ceil(columns).min(max_rows).max(1);
     }
-
-    let columns = home_entry_column_count(grid.width, entry_count);
-    let rows = entry_count.div_ceil(columns);
+    let capacity = columns.saturating_mul(rows);
+    let scroll_content_len = entry_count.div_ceil(columns).saturating_mul(columns);
+    let max_start = scroll_content_len.saturating_sub(capacity);
+    let mut start = requested.min(max_start) / columns * columns;
+    if selected < start {
+        start = selected / columns * columns;
+    } else if selected < entry_count && selected >= start.saturating_add(capacity) {
+        start = (selected / columns).saturating_sub(rows - 1) * columns;
+    }
+    start = start.min(max_start);
     let horizontal_gap = if columns > 1 { HOME_TILE_GAP } else { 0 };
-    let vertical_gap = if rows > 1 { HOME_TILE_GAP } else { 0 };
-    let total_horizontal_gap = horizontal_gap.saturating_mul(columns.saturating_sub(1) as u16);
-    let total_vertical_gap = vertical_gap.saturating_mul(rows.saturating_sub(1) as u16);
     let tile_width = grid
         .width
-        .saturating_sub(total_horizontal_gap)
-        .checked_div(columns as u16)
-        .unwrap_or(0);
-    let available_height = grid.height.saturating_sub(total_vertical_gap);
-    let tile_height = available_height
-        .checked_div(rows as u16)
-        .unwrap_or(0)
-        .min(HOME_TILE_MAX_HEIGHT)
-        .max(HOME_TILE_MIN_HEIGHT.min(grid.height));
-
-    let mut areas = Vec::with_capacity(entry_count);
-    for index in 0..entry_count {
-        let row = index / columns;
-        let column = index % columns;
-        let x = grid.x.saturating_add(
-            (column as u16).saturating_mul(tile_width.saturating_add(horizontal_gap)),
-        );
-        let y = grid
-            .y
-            .saturating_add((row as u16).saturating_mul(tile_height.saturating_add(vertical_gap)));
-        if x >= grid.x.saturating_add(grid.width) || y >= grid.y.saturating_add(grid.height) {
-            break;
-        }
-        let width = tile_width.min(grid.x.saturating_add(grid.width).saturating_sub(x));
-        let height = tile_height.min(grid.y.saturating_add(grid.height).saturating_sub(y));
-        if width > 0 && height > 0 {
-            areas.push(Rect::new(x, y, width, height));
-        }
+        .saturating_sub(horizontal_gap.saturating_mul((columns - 1) as u16))
+        / columns as u16;
+    let tile_height = (grid
+        .height
+        .saturating_sub(HOME_TILE_GAP.saturating_mul((rows - 1) as u16))
+        / rows as u16)
+        .min(HOME_TILE_MAX_HEIGHT);
+    let items = if grid.width == 0 || grid.height == 0 || tile_width == 0 || tile_height == 0 {
+        Vec::new()
+    } else {
+        (start..entry_count)
+            .take(capacity)
+            .enumerate()
+            .map(|(slot, index)| HomeItemLayout {
+                index,
+                area: Rect::new(
+                    grid.x.saturating_add(
+                        (slot % columns) as u16 * tile_width.saturating_add(horizontal_gap),
+                    ),
+                    grid.y.saturating_add(
+                        (slot / columns) as u16 * tile_height.saturating_add(HOME_TILE_GAP),
+                    ),
+                    tile_width,
+                    tile_height,
+                ),
+            })
+            .collect()
+    };
+    HomeLayout {
+        items,
+        controls,
+        scrollbar,
+        visible_start: start,
+        visible_capacity: capacity,
+        columns,
+        scroll_content_len,
     }
-
-    areas
 }
 
 /// Returns the image allocation shared by Home's ASCII and graphical icons.
@@ -260,7 +401,8 @@ pub fn home_entry_icon_area(tile: Rect) -> Rect {
         tile.x.saturating_add(1),
         tile.y.saturating_add(1),
         tile.width.saturating_sub(2),
-        tile.height.saturating_sub(2).min(4),
+        // Always reserve a row for the application name on short tiles.
+        tile.height.saturating_sub(3).min(4),
     )
 }
 
@@ -325,7 +467,7 @@ fn home_summary_area(main: Rect) -> Rect {
 
 fn home_controls_area(main: Rect) -> Rect {
     let content = home_content_area(main);
-    let height = HOME_CONTROLS_HEIGHT.min(content.height);
+    let height = 2_u16.min(content.height.saturating_sub(HOME_SUMMARY_HEIGHT));
     Rect::new(
         content.x,
         content
@@ -338,23 +480,11 @@ fn home_controls_area(main: Rect) -> Rect {
 
 fn home_entry_grid_area(main: Rect) -> Rect {
     let content = home_content_area(main);
-    let reserved = HOME_SUMMARY_HEIGHT.saturating_add(HOME_CONTROLS_HEIGHT);
+    let controls = home_controls_area(main);
     let y = content
         .y
         .saturating_add(HOME_SUMMARY_HEIGHT.min(content.height));
-    let bottom = content.y.saturating_add(
-        content
-            .height
-            .saturating_sub(HOME_CONTROLS_HEIGHT.min(content.height)),
-    );
-    Rect::new(
-        content.x,
-        y,
-        content.width,
-        bottom
-            .saturating_sub(y)
-            .min(content.height.saturating_sub(reserved.min(content.height))),
-    )
+    Rect::new(content.x, y, content.width, controls.y.saturating_sub(y))
 }
 
 fn home_entry_column_count(width: u16, entry_count: usize) -> usize {

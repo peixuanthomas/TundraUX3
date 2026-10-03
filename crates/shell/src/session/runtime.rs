@@ -520,6 +520,11 @@ impl LauncherIconRuntime {
 
         let layout = ui::launcher_layout(main, model);
         for item_layout in &layout.items {
+            // A small window may temporarily leave no room for an image.
+            // Retry after resize instead of marking a valid asset unavailable.
+            if item_layout.icon_area.is_empty() {
+                continue;
+            }
             let Some(item) = model.items.get(item_layout.index) else {
                 continue;
             };
@@ -599,12 +604,11 @@ impl LauncherIconRuntime {
         self.home_prepared
             .retain(|label, _| labels.contains(label.as_str()));
 
-        for (entry, tile) in model
-            .entries()
-            .iter()
-            .zip(ui::home_entry_tile_areas(main, model.entries().len()))
-        {
-            let icon_area = ui::home_entry_icon_area(tile);
+        for item in ui::home_layout(main, model).items {
+            let Some(entry) = model.entries().get(item.index) else {
+                continue;
+            };
+            let icon_area = ui::home_entry_icon_area(item.area);
             if icon_area.width == 0 || icon_area.height == 0 {
                 continue;
             }

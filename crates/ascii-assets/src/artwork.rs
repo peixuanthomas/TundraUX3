@@ -221,14 +221,7 @@ pub(crate) fn load_home_icon_catalog(
     // Older custom themes remain usable without modifying their files. The default
     // theme is upgraded by the asset repair path before it is loaded.
     if theme_id == crate::DEFAULT_THEME_ID {
-        for required in [
-            "logs",
-            "services",
-            "processes",
-            "packages",
-            "network",
-            "disks",
-        ] {
+        for required in ["logs"] {
             if !icons.contains_key(required) {
                 return Err(AssetError::InvalidAsset {
                     asset: "home_icons".to_string(),
@@ -260,6 +253,23 @@ pub(crate) fn load_launcher_icons(
                 asset: "launcher_icons".to_string(),
                 message: format!("missing required built-in application icon {required}"),
             });
+        }
+    }
+    if theme_id == crate::DEFAULT_THEME_ID {
+        for required in [
+            "builtin.logs",
+            "builtin.services",
+            "builtin.processes",
+            "builtin.packages",
+            "builtin.network",
+            "builtin.disks",
+        ] {
+            if icons.get(required).is_none() {
+                return Err(AssetError::InvalidAsset {
+                    asset: "launcher_icons".into(),
+                    message: format!("missing required built-in application icon {required}"),
+                });
+            }
         }
     }
     Ok(icons)

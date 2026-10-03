@@ -22,6 +22,54 @@ const WIDE_SETUP_HEIGHT: u16 = 34;
 const SETUP_CONTROLS_WIDTH: u16 = 48;
 
 #[test]
+fn short_setup_projects_only_visible_buttons_to_the_scrolled_rows() {
+    let area = Rect::new(3, 2, 40, 10);
+    let mut model = sample_model(SetupStep::Admin, None);
+    let theme = TundraTheme::default_dark();
+    let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+    let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    context.buttons = Some(buttons.clone());
+    let mut terminal = Terminal::new(TestBackend::new(50, 15)).unwrap();
+    terminal
+        .draw(|frame| ui::render_setup_content(frame, area, &model, &context))
+        .unwrap();
+    assert!(
+        !buttons
+            .regions()
+            .iter()
+            .any(|button| button.id.as_str() == "setup.admin.submit")
+    );
+    model.scroll_offset = 15;
+    terminal
+        .draw(|frame| ui::render_setup_content(frame, area, &model, &context))
+        .unwrap();
+    let viewport = ui::setup_viewport(area, &model);
+    let expected = viewport
+        .project(ui::setup_admin_field_area(
+            viewport.content,
+            SetupField::Submit,
+        ))
+        .unwrap();
+    assert!(
+        buttons
+            .regions()
+            .iter()
+            .any(|button| button.id.as_str() == "setup.admin.submit" && button.area == expected)
+    );
+    assert!(
+        buttons
+            .regions()
+            .iter()
+            .any(|button| button.id.as_str() == "setup.exit")
+    );
+    assert!(viewport.scrollbar.is_some());
+    assert_eq!(
+        viewport.content_point((expected.x, expected.y)),
+        Some((expected.x - area.x, expected.y - area.y + viewport.offset))
+    );
+}
+
+#[test]
 fn setup_admin_page_is_step_specific_and_masks_password() {
     let model = sample_model(SetupStep::Admin, None);
     let terminal = render_terminal(&model, 120, 34, TundraTheme::default_dark());
@@ -122,10 +170,20 @@ fn setup_renderer_uses_glacier_timezone_scrollbar_when_window_is_partial() {
     let model = sample_model(SetupStep::Timezone, None);
     let terminal = render_terminal(&model, 70, 19, TundraTheme::default_dark());
     let output = terminal_output(&terminal);
-    let list_area = setup_timezone_list_area(setup_main_rect(70, 19));
+    let viewport = ui::setup_viewport(setup_main_rect(70, 19), &model);
+    let list_area = viewport
+        .project(setup_timezone_list_area(viewport.content))
+        .expect("timezone list is fully visible");
+    let track = viewport
+        .project(
+            ui::setup_timezone_scrollbar(viewport.content, &model)
+                .expect("partial timezone list needs a scrollbar"),
+        )
+        .expect("timezone scrollbar is fully visible");
 
     assert!(!output.contains("more timezones"));
     assert!(region_has_symbol(&terminal, list_area, "█"));
+    assert!(region_has_symbol(&terminal, track, "█"));
 }
 
 fn sample_model(step: SetupStep, error: Option<String>) -> SetupViewModel {
@@ -155,6 +213,7 @@ fn sample_model_with_timezone(
         .unwrap_or_else(|| panic!("{timezone_id} in setup catalog"));
 
     SetupViewModel {
+        scroll_offset: 0,
         step,
         languages,
         timezones,

@@ -60,7 +60,8 @@ impl Scrollbar {
         }
         let thumb_len = ((track_len as usize * self.viewport_len).div_ceil(self.content_len))
             .max(1)
-            .min(track_len as usize) as u16;
+            // Keep room to drag even when only one content row is hidden.
+            .min(usize::from(track_len.saturating_sub(1).max(1))) as u16;
         let max_offset = self.content_len.saturating_sub(self.viewport_len).max(1);
         let start = (((track_len.saturating_sub(thumb_len) as usize) * self.offset.min(max_offset))
             / max_offset) as u16;

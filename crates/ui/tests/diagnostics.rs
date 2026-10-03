@@ -17,6 +17,25 @@ use ui::{
 };
 
 #[test]
+fn long_diagnostic_details_can_show_the_last_line_with_a_scrollbar() {
+    let mut model = health_model();
+    model.can_view_details = true;
+    model.checks[0].detail = (0..100)
+        .map(|n| format!("detail line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    model.checks[0].detail.push_str("\nLAST_DETAIL_MARKER");
+    let layout = diagnostics_layout(full_main(108, 25), &model);
+    let (track, total, viewport) =
+        ui::diagnostics_detail_scroll_metrics(layout.detail_panel, &model);
+    assert!(total > viewport);
+    assert!(track.height > 0);
+    model.detail_scroll = total.saturating_sub(viewport);
+    let terminal = render(108, 25, &model);
+    assert!(terminal_output(&terminal).contains("LAST_DETAIL_MARKER"));
+}
+
+#[test]
 fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targets() {
     let mut model = health_model();
     model.checks = (0..12)
@@ -66,8 +85,8 @@ fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
     assert_eq!(layout.visible_capacity, 7);
     assert_eq!(layout.visible_start, 4);
     assert_eq!(scrollbar.track.height, 7);
-    assert_eq!(scrollbar.thumb.height, 4);
-    assert_eq!(scrollbar.thumb.y, scrollbar.track.y.saturating_add(2));
+    assert_eq!(scrollbar.thumb.height, 5);
+    assert_eq!(scrollbar.thumb.y, scrollbar.track.y.saturating_add(1));
     assert_eq!(
         diagnostics_hit_test(&layout, (scrollbar.thumb.x, scrollbar.thumb.y)),
         Some(DiagnosticsHitTarget::Scrollbar)
@@ -230,6 +249,7 @@ fn health_model() -> DiagnosticsViewModel {
         selected_log: 0,
         list_window_start: 0,
         list_window_is_explicit: false,
+        detail_scroll: 0,
         scanning: false,
         can_view_details: false,
         can_repair: false,

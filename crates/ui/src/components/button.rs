@@ -69,6 +69,16 @@ impl ButtonFrame {
     pub fn regions(&self) -> Vec<ButtonRegion> {
         self.regions.lock().expect("button frame registry").clone()
     }
+
+    /// Registers a visible button after a scrolling page translates its canvas.
+    pub fn register_region(&self, region: ButtonRegion) {
+        if region.area.width > 0 && region.area.height > 0 {
+            self.regions
+                .lock()
+                .expect("button frame registry")
+                .push(region);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

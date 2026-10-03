@@ -4,26 +4,62 @@ use super::*;
 fn management_icons_upgrade_preserves_existing_custom_artwork() {
     let root = TempDir::new("management-icon-upgrade");
     restore_default_theme(root.path()).unwrap();
-    let path = root.path().join("themes/default/home_icons.toml");
+    let path = root.path().join("themes/default/launcher_icons.toml");
     let original = fs::read_to_string(&path).unwrap();
     let old = original
-        .split("[items.services]")
+        .split("[items.\"builtin.logs\"]")
         .next()
         .unwrap()
-        .replace("label = \"Explorer\"", "label = \"My Files\"");
+        .replace("label = \"Editor\"", "label = \"My Editor\"");
     fs::write(&path, &old).unwrap();
     let (store, report) =
         AsciiAssetStore::load_default_with_root_and_recovery(root.path()).unwrap();
-    assert!(report.repaired.iter().any(|file| file.key == "home_icons"));
+    assert!(
+        report
+            .repaired
+            .iter()
+            .any(|file| file.key == "launcher_icons")
+    );
     let updated = fs::read_to_string(path).unwrap();
     assert!(updated.starts_with(&old));
+    for key in [
+        "builtin.services",
+        "builtin.processes",
+        "builtin.packages",
+        "builtin.network",
+        "builtin.disks",
+        "builtin.logs",
+    ] {
+        assert!(store.launcher_icon(key).is_some());
+    }
+}
+
+#[test]
+fn five_management_images_are_distinct_embedded_and_recoverable() {
+    let root = TempDir::new("management-png-recovery");
+    restore_default_theme(root.path()).unwrap();
+    let mut seen = std::collections::BTreeSet::new();
     for key in ["services", "processes", "packages", "network", "disks"] {
+        let relative = format!("launcher_icons/{key}.png");
+        let file = embedded_default_theme_file(&relative).expect("embedded management PNG");
         assert!(
-            store
-                .home_icon_catalog()
-                .icons()
-                .any(|icon| icon.key() == key)
+            seen.insert(file.contents.to_vec()),
+            "each app needs its own image"
         );
+        let path = root.path().join("themes/default").join(&relative);
+        fs::remove_file(&path).unwrap();
+        let repaired = restore_default_theme_file(root.path(), &relative).unwrap();
+        assert!(repaired.changed);
+        assert_eq!(fs::read(path).unwrap(), file.contents);
+    }
+    let store = AsciiAssetStore::load_with_root(root.path(), DEFAULT_THEME_ID).unwrap();
+    for key in ["services", "processes", "packages", "network", "disks"] {
+        let id = format!("builtin.{key}");
+        assert_eq!(
+            store.launcher_icon(&id).unwrap().image_path(),
+            Some(format!("launcher_icons/{key}.png").as_str())
+        );
+        assert!(store.launcher_icon_image_bytes(&id).is_some());
     }
 }
 use crate::{AssetCheckStatus, check_default_theme, check_required_assets};
@@ -138,8 +174,10 @@ fn upgrades_old_home_catalog_without_replacing_customized_items() {
     assert_eq!(restored.len(), 1);
     let updated = fs::read_to_string(&catalog).unwrap();
     assert!(updated.starts_with(&old));
-    assert!(updated.contains("[items.logs]"));
-    assert!(updated.contains("label = \"My Explorer\""));
+    let parsed: toml::Value = toml::from_str(&updated).unwrap();
+    let items = parsed.get("items").and_then(toml::Value::as_table).unwrap();
+    assert_eq!(items["logs"]["image"].as_str(), Some("home_icons/logs.png"));
+    assert_eq!(items["explorer"]["label"].as_str(), Some("My Explorer"));
     assert!(check_default_theme(root.path()).is_ok());
     assert!(restore_default_theme(root.path()).unwrap().is_empty());
 }

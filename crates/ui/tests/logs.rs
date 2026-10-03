@@ -121,7 +121,7 @@ fn category_section_and_control_geometry_match_rendered_components() {
     for control in &layout.controls {
         assert_eq!(
             logs_hit_test(main, &model, (control.area.x, control.area.y)),
-            Some(control.target)
+            (control.target != LogsHitTarget::RelatedEvents).then_some(control.target)
         );
     }
 }
@@ -199,7 +199,7 @@ fn restricted_and_unsupported_sources_hide_rows_and_disable_actions() {
     for control in logs_layout(main_area(), &model).controls {
         assert_eq!(
             logs_hit_test(main_area(), &model, (control.area.x, control.area.y)),
-            None
+            (control.target == LogsHitTarget::Back).then_some(control.target)
         );
     }
 }
@@ -246,5 +246,92 @@ fn empty_events_use_log_language_and_disable_open() {
     assert_eq!(
         logs_hit_test(main_area(), &model, (open.area.x, open.area.y)),
         None
+    );
+}
+
+#[test]
+fn long_log_details_expose_a_draggable_scrollbar_and_the_last_line() {
+    let mut model = model();
+    model.events[0].detail = (0..80).map(|index| format!("detail-{index}\n")).collect();
+    let layout = logs_layout(main_area(), &model);
+    let bar = layout.detail_scrollbar.unwrap();
+    assert_eq!(
+        logs_hit_test(main_area(), &model, (bar.track.x, bar.track.y)),
+        Some(LogsHitTarget::DetailScrollbar)
+    );
+    let end = bar.offset_at((bar.track.x, bar.track.bottom()), 0);
+    assert_eq!(end, bar.content_len - bar.viewport_len);
+    model.detail_scroll = end;
+    let output = terminal_output(&render(120, 32, &model, &TundraTheme::default_dark()));
+    assert!(output.contains("detail-79"), "{output}");
+}
+
+#[test]
+fn narrow_log_toolbar_keeps_all_controls_inside_the_page() {
+    let model = model();
+    for size in [(40, 20), (60, 20), (80, 24)] {
+        let area = Rect::new(0, 0, size.0, size.1);
+        let layout = logs_layout(area, &model);
+        assert_eq!(layout.controls.len(), 9);
+        assert!(layout.controls.iter().all(|control| control.area.width > 0
+            && control.area.height > 0
+            && control.area.right() <= area.right()
+            && control.area.bottom() <= area.bottom()));
+        assert!(
+            layout
+                .controls
+                .iter()
+                .any(|control| control.target == LogsHitTarget::Back)
+        );
+    }
+}
+
+#[test]
+fn log_list_and_detail_inherit_the_global_border_shape() {
+    for (shape, corner) in [
+        (ui::BorderShape::Square, "┌"),
+        (ui::BorderShape::Rounded, "╭"),
+    ] {
+        let theme = TundraTheme::default_dark().with_border_shape(shape);
+        let model = model();
+        let layout = logs_layout(main_area(), &model);
+        let terminal = render(120, 32, &model, &theme);
+        for panel in [layout.content.list_panel, layout.content.detail_panel] {
+            assert_eq!(
+                terminal.backend().buffer()[(panel.x, panel.y)].symbol(),
+                corner
+            );
+        }
+    }
+}
+
+#[test]
+fn log_buttons_use_the_same_record_identity_for_rendering_and_pressed_color() {
+    use ui::components::{ButtonFrame, ButtonRegion};
+    let model = model();
+    let main = main_area();
+    let layout = logs_layout(main, &model);
+    let control = layout
+        .controls
+        .iter()
+        .find(|control| control.target == LogsHitTarget::Refresh)
+        .unwrap();
+    let region = ButtonRegion {
+        id: ui::logs_control_id(&model, control.target).into(),
+        area: control.area,
+        disabled: false,
+    };
+    let theme = TundraTheme::default_dark();
+    let buttons = ButtonFrame::new(Some(region.clone()), Some(region.clone()), &theme);
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    context.buttons = Some(buttons.clone());
+    let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+    terminal
+        .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
+        .unwrap();
+    assert!(buttons.regions().contains(&region));
+    assert_eq!(
+        terminal.backend().buffer()[(region.area.x, region.area.y)].fg,
+        theme.accent_color
     );
 }

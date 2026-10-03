@@ -14,6 +14,46 @@ use ui::{
 
 struct UnavailableLauncherIconRenderer;
 
+#[test]
+fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
+    let model = LauncherViewModel::new(
+        (0..30)
+            .map(|index| item(index, LauncherItemStatus::Ready))
+            .collect(),
+        Some(0),
+        LauncherViewMode::Details,
+        true,
+    );
+    let main = Rect::new(0, 0, 32, 24);
+    let layout = launcher_layout(main, &model);
+    assert_eq!(layout.toolbar_buttons.len(), model.toolbar.len());
+    assert!(
+        model
+            .toolbar
+            .iter()
+            .any(|button| button.action == LauncherToolbarAction::Open)
+    );
+    assert!(
+        model
+            .toolbar
+            .iter()
+            .any(|button| button.action == LauncherToolbarAction::Back)
+    );
+    assert!(
+        model
+            .toolbar
+            .iter()
+            .all(|button| !button.description.is_empty())
+    );
+    for button in &layout.toolbar_buttons {
+        assert!(button.area.right() <= main.right() && button.area.bottom() <= main.bottom());
+        assert_eq!(
+            layout.hit_test(button.area.x, button.area.y),
+            Some(LauncherHitTarget::Toolbar(button.action))
+        );
+    }
+}
+
 impl LauncherIconRenderer for UnavailableLauncherIconRenderer {
     fn render_icon(&self, _item_id: &str, _frame: &mut ratatui::Frame<'_>, _area: Rect) -> bool {
         false
@@ -213,9 +253,11 @@ fn toolbar_management_actions_are_admin_only() {
             .map(|button| button.action)
             .collect::<Vec<_>>(),
         vec![
+            LauncherToolbarAction::Open,
             LauncherToolbarAction::Remove,
             LauncherToolbarAction::Refresh,
             LauncherToolbarAction::ToggleView,
+            LauncherToolbarAction::Back,
         ]
     );
     assert!(admin.toolbar[0].enabled);
@@ -225,8 +267,10 @@ fn toolbar_management_actions_are_admin_only() {
             .map(|button| button.action)
             .collect::<Vec<_>>(),
         vec![
+            LauncherToolbarAction::Open,
             LauncherToolbarAction::Refresh,
             LauncherToolbarAction::ToggleView,
+            LauncherToolbarAction::Back,
         ]
     );
 }
@@ -283,7 +327,7 @@ fn layouts_keep_selection_visible_and_hit_test_toolbar_items_and_scrollbar() {
     let button = layout.toolbar_buttons[0];
     assert_eq!(
         layout.hit_test(button.area.x, button.area.y),
-        Some(LauncherHitTarget::Toolbar(LauncherToolbarAction::Remove))
+        Some(LauncherHitTarget::Toolbar(LauncherToolbarAction::Open))
     );
     let visible_item = layout.items[0];
     assert_eq!(

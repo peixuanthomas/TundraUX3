@@ -67,6 +67,15 @@ pub(in crate::session) struct ManagementState {
     snapshot: ManagementSnapshot,
     selected: usize,
     scroll: usize,
+    list_scroll_explicit: bool,
+    table_scroll: usize,
+    action_scroll: Option<usize>,
+    form_field_scroll: Option<usize>,
+    choice_field: Option<usize>,
+    choice_scroll: usize,
+    choice_selected: usize,
+    choice_columns: usize,
+    scrollbar_grab: Option<(ui::ManagementScrollTarget, u16)>,
     selected_action: usize,
     actions_focused: bool,
     filtering: bool,
@@ -78,6 +87,7 @@ pub(in crate::session) struct ManagementState {
     output: String,
     output_scroll: u16,
     details_scroll: u16,
+    details_only: bool,
     query_job: Option<ManagementJob>,
     operation_job: Option<ManagementJob>,
     form: Option<ManagementEditor>,
@@ -213,6 +223,9 @@ impl ShellSession {
         }
     }
     fn poll_management_page(&mut self, visible: bool) {
+        if !visible {
+            self.cancel_management_pointer_gesture();
+        }
         let result = self
             .management_state
             .query_job
@@ -333,7 +346,7 @@ impl ShellSession {
                         self.management_main(),
                         &self.to_management_view_model(),
                     )
-                    .content;
+                    .output_text;
                     let parser = self
                         .management_state
                         .parser
@@ -356,6 +369,7 @@ impl ShellSession {
                     choices,
                     secret,
                 } => {
+                    self.reset_management_form_view();
                     self.management_state.terminal_mode = false;
                     if !visible {
                         if let Some(kind) = self.management_state.kind {
@@ -394,6 +408,7 @@ impl ShellSession {
                     self.management_state.status = message.clone();
                     self.management_state.outcome = Some(message);
                     self.management_state.form = None;
+                    self.reset_management_form_view();
                     completed = true;
                 }
                 OperationEvent::Disconnected { message } => {
@@ -401,6 +416,7 @@ impl ShellSession {
                     self.management_state.status = status.clone();
                     self.management_state.outcome = Some(status);
                     self.management_state.form = None;
+                    self.reset_management_form_view();
                     completed = true;
                 }
             }
@@ -471,6 +487,7 @@ impl ShellSession {
         actions
     }
     fn activate_management_action(&mut self, index: usize) {
+        self.reset_management_form_view();
         let Some((action, row)) = self.management_actions().get(index).cloned() else {
             return;
         };
@@ -711,6 +728,29 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn handle_management_key(&mut self, key: &KeyInput) {
+        if self.handle_management_choice_key(key) {
+            return;
+        }
+        if matches!(
+            key.key,
+            InputKey::Tab
+                | InputKey::BackTab
+                | InputKey::Up
+                | InputKey::Down
+                | InputKey::Home
+                | InputKey::End
+                | InputKey::PageUp
+                | InputKey::PageDown
+        ) {
+            self.management_state.list_scroll_explicit = false;
+            self.management_state.action_scroll = None;
+            if !matches!(key.key, InputKey::PageUp | InputKey::PageDown) {
+                self.management_state.form_field_scroll = None;
+            }
+        }
+        if key.key == InputKey::Escape {
+            self.cancel_management_pointer_gesture();
+        }
         if key.phase == InputPhase::Repeat
             && (matches!(key.key, InputKey::Enter | InputKey::Escape)
                 || (!self.management_state.filtering
@@ -892,7 +932,11 @@ impl ShellSession {
         match key.key {
             InputKey::Escape => {
                 self.screen_stack.pop();
-                self.focused_component = ShellComponent::Home;
+                self.focused_component = if self.active_screen() == ShellScreen::Launcher {
+                    ShellComponent::Launcher
+                } else {
+                    ShellComponent::Home
+                };
             }
             InputKey::Char('/') => self.management_state.filtering = true,
             InputKey::Char('r' | 'R') => {
@@ -958,65 +1002,9 @@ impl ShellSession {
             _ => bounds,
         }
     }
-    pub(in crate::session) fn management_button_at(
-        &self,
-        point: CellPosition,
-    ) -> Option<ui::components::ButtonRegion> {
-        if self.active_screen() != ShellScreen::Management {
-            return None;
-        }
-        let model = self.to_management_view_model();
-        let layout = ui::management_layout(self.management_main(), &model);
-        let button = |id: String, area: Rect, disabled: bool| ui::components::ButtonRegion {
-            id: id.into(),
-            area,
-            disabled,
-        };
-        if let Some(form) = &self.management_state.form {
-            let identity = format!(
-                "{:?}",
-                match &form.purpose {
-                    FormPurpose::Action(a, _) => &a.id,
-                    FormPurpose::Answer(id) => id,
-                }
-            );
-            if rect_contains(layout.submit, point) {
-                return Some(button(
-                    format!("management.confirm.{identity}"),
-                    layout.submit,
-                    false,
-                ));
-            }
-            if rect_contains(layout.cancel, point) {
-                return Some(button(
-                    format!("management.cancel.{identity}"),
-                    layout.cancel,
-                    false,
-                ));
-            }
-        } else {
-            let actions = self.management_actions();
-            for (offset, area) in layout.actions.iter().enumerate() {
-                let index = offset + layout.action_start;
-                if rect_contains(*area, point) {
-                    let (action, row) = actions.get(index)?;
-                    return Some(button(
-                        format!(
-                            "management.action.{}.{:?}",
-                            action.id,
-                            row.as_ref().map(|r| (&r.id, &r.identity))
-                        ),
-                        *area,
-                        action.disabled_reason.is_some(),
-                    ));
-                }
-            }
-        }
-        None
-    }
     pub(in crate::session) fn resize_management_terminal(&mut self) {
-        let area =
-            ui::management_layout(self.management_main(), &self.to_management_view_model()).content;
+        let area = ui::management_layout(self.management_main(), &self.to_management_view_model())
+            .output_text;
         let rows = area.height.max(1);
         let columns = area.width.max(1);
         if let Some(parser) = &self.management_state.parser {
@@ -1046,113 +1034,22 @@ impl ShellSession {
             }
         }
     }
-    fn clamp_management_scroll(&mut self) {
-        let count = self.management_state.snapshot.rows.len();
-        self.management_state.selected =
-            self.management_state.selected.min(count.saturating_sub(1));
-        let page = ui::management_layout(self.management_main(), &self.to_management_view_model())
-            .list
-            .height
-            .saturating_sub(3)
-            .max(1) as usize;
-        self.management_state.selected_action = self
-            .management_state
-            .selected_action
-            .min(self.management_actions().len().saturating_sub(1));
-        if self.management_state.selected < self.management_state.scroll {
-            self.management_state.scroll = self.management_state.selected;
-        }
-        if self.management_state.selected >= self.management_state.scroll + page {
-            self.management_state.scroll = self.management_state.selected + 1 - page;
-        }
-    }
-    pub(in crate::session) fn handle_management_pointer(&mut self, mouse: MouseInput) {
-        if self.management_state.terminal_mode {
-            if let ui::MouseEventKind::Scroll(direction) = mouse.kind {
-                self.scroll_management_terminal(if direction == ScrollDirection::Up {
-                    3
-                } else {
-                    -3
-                });
-            }
-            return;
-        }
-        let model = self.to_management_view_model();
-        let layout = ui::management_layout(self.management_main(), &model);
-        let point = ratatui::layout::Position::new(mouse.position.column, mouse.position.row);
-        if let ui::MouseEventKind::Scroll(direction) = mouse.kind {
-            if self.management_state.form.is_some() {
-                if let Some(form) = &mut self.management_state.form {
-                    form.message_scroll = if direction == ScrollDirection::Up {
-                        form.message_scroll.saturating_sub(3)
-                    } else {
-                        form.message_scroll.saturating_add(3)
-                    };
-                }
-                return;
-            }
-            if layout.details.contains(point) {
-                self.management_state.details_scroll = if direction == ScrollDirection::Up {
-                    self.management_state.details_scroll.saturating_sub(3)
-                } else {
-                    self.management_state.details_scroll.saturating_add(3)
-                };
-                return;
-            }
-        }
-        match mouse.kind {
-            ui::MouseEventKind::Scroll(direction) => {
-                if direction == ScrollDirection::Up {
-                    self.management_state.selected =
-                        self.management_state.selected.saturating_sub(3);
-                } else if direction == ScrollDirection::Down {
-                    self.management_state.selected = (self.management_state.selected + 3)
-                        .min(self.management_state.snapshot.rows.len().saturating_sub(1));
-                }
-            }
-            ui::MouseEventKind::Down(PointerButton::Left)
-            | ui::MouseEventKind::Click(PointerButton::Left) => {
-                if self.management_state.form.is_some() {
-                    if layout.submit.contains(point) {
-                        self.submit_management_form();
-                    } else if layout.cancel.contains(point) {
-                        self.cancel_management_form();
-                    } else if let Some((index, _)) =
-                        layout.fields.iter().find(|(_, r)| r.contains(point))
-                    {
-                        if let Some(form) = &mut self.management_state.form {
-                            form.selected = *index;
-                            let field = &mut form.fields[*index];
-                            if !field.choices.is_empty() {
-                                let current = field
-                                    .choices
-                                    .iter()
-                                    .position(|v| v == &field.value)
-                                    .unwrap_or(0);
-                                field.value =
-                                    field.choices[(current + 1) % field.choices.len()].clone();
-                            }
-                        }
-                    }
-                } else if layout.filter.contains(point) {
-                    self.management_state.filtering = true;
-                } else if let Some(index) = layout.actions.iter().position(|r| r.contains(point)) {
-                    self.activate_management_action(index + layout.action_start);
-                } else if layout.list.contains(point) {
-                    self.management_state.selected = (self.management_state.scroll
-                        + point.y.saturating_sub(layout.list.y + 2) as usize)
-                        .min(self.management_state.snapshot.rows.len().saturating_sub(1));
-                    self.management_state.actions_focused = false;
-                }
-            }
-            _ => {}
-        }
-        self.clamp_management_scroll();
-    }
     pub(in crate::session) fn to_management_view_model(&self) -> ui::ManagementViewModel {
         let s = &self.management_state;
         let actions = self.management_actions();
         ui::ManagementViewModel {
+            scope_id: format!("{:?}", s.kind),
+            action_ids: actions
+                .iter()
+                .map(|(action, row)| {
+                    format!(
+                        "management.action.{:?}.{}.{:?}",
+                        s.kind,
+                        action.id,
+                        row.as_ref().map(|row| (&row.id, &row.identity))
+                    )
+                })
+                .collect(),
             title: s.kind.map(management_title).unwrap_or_default(),
             columns: s
                 .snapshot
@@ -1163,6 +1060,8 @@ impl ShellSession {
             rows: s.snapshot.rows.iter().map(|r| r.cells.clone()).collect(),
             selected: s.selected,
             scroll: s.scroll,
+            table_scroll: s.table_scroll,
+            action_scroll: s.action_scroll,
             details: s
                 .snapshot
                 .rows
@@ -1184,6 +1083,20 @@ impl ShellSession {
                     )
                 })
                 .collect(),
+            action_help: actions
+                .iter()
+                .map(|(action, _)| {
+                    action.disabled_reason.clone().unwrap_or_else(|| {
+                        if action.privileged {
+                            i18n::tr!("management-touch-authorization")
+                        } else if action.confirm || !action.fields.is_empty() {
+                            i18n::tr!("management-touch-review")
+                        } else {
+                            i18n::tr!("management-touch-run")
+                        }
+                    })
+                })
+                .collect(),
             selected_action: s.selected_action,
             actions_focused: s.actions_focused,
             filter: s.filter_input.clone(),
@@ -1194,6 +1107,7 @@ impl ShellSession {
             output: s.output.clone(),
             output_scroll: s.output_scroll,
             details_scroll: s.details_scroll,
+            details_only: s.details_only,
             terminal: s.terminal_mode,
             terminal_snapshot: if s.terminal_mode {
                 s.parser.as_ref().and_then(|parser| {
@@ -1213,6 +1127,25 @@ impl ShellSession {
                 .as_ref()
                 .filter(|_| !s.terminal_mode)
                 .map(|f| ui::ManagementForm {
+                    identity: match &f.purpose {
+                        FormPurpose::Action(action, row) => format!(
+                            "{}.{:?}",
+                            action.id,
+                            row.as_ref().map(|row| (&row.id, &row.identity))
+                        ),
+                        FormPurpose::Answer(id) => id.clone(),
+                    },
+                    field_scroll: s.form_field_scroll,
+                    cancel_disabled: matches!(&f.purpose, FormPurpose::Answer(id) if id.starts_with("package-config-")),
+                    choice: s.choice_field.and_then(|index| {
+                        f.fields.get(index).map(|field| ui::ManagementChoices {
+                            field: index,
+                            values: field.choices.clone(),
+                            selected: s.choice_selected,
+                            scroll: s.choice_scroll,
+                            columns: s.choice_columns,
+                        })
+                    }),
                     message_scroll: f.message_scroll,
                     title: f.title.clone(),
                     message: f.message.clone(),
@@ -1221,6 +1154,7 @@ impl ShellSession {
                         .fields
                         .iter()
                         .map(|v| ui::ManagementFormField {
+                            id: v.id.clone(),
                             label: management_text("field", &v.id, &v.label),
                             value: if v.secret {
                                 "•".repeat(v.value.chars().count())
@@ -1228,11 +1162,7 @@ impl ShellSession {
                                 v.value.clone()
                             },
                             secret: false,
-                            choices: if v.choices.is_empty() {
-                                String::new()
-                            } else {
-                                format!("←/→ {}", v.choices.join(" | "))
-                            },
+                            choices: v.choices.clone(),
                         })
                         .collect(),
                 }),
@@ -1243,3 +1173,6 @@ impl ShellSession {
 #[cfg(test)]
 #[path = "../../../tests/unit/session/controller/management/tests.rs"]
 mod tests;
+
+#[path = "management_touch.rs"]
+mod touch;

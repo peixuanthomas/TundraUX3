@@ -145,6 +145,25 @@ pub fn render_shell_chrome(
     chrome: &ShellChromeViewModel,
     context: &RenderContext,
 ) {
+    if let ShellLayout::Compact(area) = layout.shell {
+        if area.is_empty() || (chrome.status.error.is_none() && chrome.status.toast.is_none()) {
+            return;
+        }
+        let theme = context.compatibility_theme();
+        let (message, style) = status_presentation(&chrome.status, &theme);
+        let line = Rect::new(area.x, area.y, area.width, 1);
+        // Compact pages use the whole terminal. Paint the shell notification
+        // after their content and dialogs so the highest-priority text survives.
+        frame.render_widget(Clear, line);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                truncate_status_text(&message, area.width),
+                style,
+            )),
+            line,
+        );
+        return;
+    }
     let ShellLayout::Full { top, status, .. } = layout.shell else {
         return;
     };

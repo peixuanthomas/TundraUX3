@@ -24,6 +24,7 @@ pub struct LoginUserOptionViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginViewModel {
+    pub scroll_offset: u16,
     pub system_users: bool,
     pub users: Vec<LoginUserOptionViewModel>,
     pub selected_index: usize,
@@ -48,9 +49,10 @@ impl LoginViewModel {
         } else {
             selected_index.min(users.len() - 1)
         };
-        let user_window_start = user_window_start.min(selected_index);
+        let user_window_start = user_window_start.min(users.len());
 
         Self {
+            scroll_offset: 0,
             system_users: false,
             users,
             selected_index,
@@ -84,6 +86,7 @@ impl LoginViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapAdminViewModel {
+    pub scroll_offset: u16,
     pub username: String,
     pub password_len: usize,
     pub focused_field: AuthField,
@@ -98,6 +101,7 @@ impl BootstrapAdminViewModel {
         error: Option<String>,
     ) -> Self {
         Self {
+            scroll_offset: 0,
             username: username.into(),
             password_len,
             focused_field,
@@ -154,6 +158,7 @@ impl SetupPasswordRequirementViewModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetupViewModel {
+    pub scroll_offset: u16,
     pub step: SetupStep,
     pub languages: Vec<SetupLanguageOption>,
     pub timezones: Vec<SetupTimezoneOption>,

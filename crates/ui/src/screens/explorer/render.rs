@@ -149,6 +149,14 @@ fn render_explorer_sidebar(
     context: &crate::RenderContext,
     theme: &TundraTheme,
 ) {
+    if let Some(track) = layout.quick_location_scrollbar {
+        Scrollbar::new(
+            model.quick_locations.len(),
+            layout.quick_location_visible_capacity,
+            layout.quick_location_visible_start,
+        )
+        .render_frame(frame, track, context);
+    }
     if let Some(header) = layout.sidebar_header {
         frame.render_widget(
             Paragraph::new(i18n::tr!("ui-explorer-quick-access"))

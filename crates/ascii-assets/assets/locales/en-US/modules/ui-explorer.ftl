@@ -92,3 +92,5 @@ ui-explorer-help = Ctrl+A: select all    Space: toggle    Shift+arrows: select r
 ui-explorer-compact-help = Ctrl+A: select all | Space: toggle | C/X/V: copy/cut/paste | Del: delete | Shift+F10: menu | Hidden: { $hidden }{ $quick }
 
 ui-explorer-quick-access-help = { " " }| Tab/Shift+Tab: quick access
+ui-explorer-open-selected = Open
+ui-explorer-actions-menu = Actions

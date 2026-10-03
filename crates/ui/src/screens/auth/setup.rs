@@ -67,6 +67,97 @@ pub fn render_setup_content(
     model: &SetupViewModel,
     context: &RenderContext,
 ) {
+    super::common::render_auth_viewport(
+        frame,
+        setup_viewport(area, model),
+        context,
+        |frame, area, context| render_setup_unscrolled(frame, area, model, context),
+    );
+}
+
+pub fn setup_viewport(main: Rect, model: &SetupViewModel) -> super::AuthViewport {
+    let minimum = match model.step {
+        SetupStep::Language => u16::try_from(model.languages.len())
+            .unwrap_or(200)
+            .min(200)
+            .saturating_add(12),
+        SetupStep::Timezone => 15,
+        SetupStep::Admin => {
+            if main.width >= SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH + 3 {
+                26
+            } else {
+                32
+            }
+        }
+        SetupStep::Appearance => 29,
+    };
+    super::auth_viewport(main, minimum, model.scroll_offset)
+}
+
+pub fn setup_navigation_areas(main: Rect) -> [Rect; 3] {
+    let inner = setup_inner_area(main);
+    let y = inner.bottom().saturating_sub(1);
+    let width = inner.width / 3;
+    [
+        Rect::new(inner.x, y, width, u16::from(inner.height > 0)),
+        Rect::new(inner.x + width, y, width, u16::from(inner.height > 0)),
+        Rect::new(
+            inner.x + width * 2,
+            y,
+            inner.width - width * 2,
+            u16::from(inner.height > 0),
+        ),
+    ]
+}
+
+pub fn setup_exit_area(main: Rect, step: SetupStep) -> Rect {
+    let row = match step {
+        SetupStep::Language => return setup_navigation_areas(main)[2],
+        SetupStep::Timezone => {
+            return setup_navigation_areas(setup_timezone_controls_area(main))[2];
+        }
+        SetupStep::Admin => setup_admin_line_area(main, SETUP_ADMIN_SUBMIT_LINE, 1),
+        SetupStep::Appearance => setup_line_area(main, SETUP_APPEARANCE_SUBMIT_LINE, 1),
+    };
+    let width = row.width.min(12);
+    Rect::new(row.right().saturating_sub(width), row.y, width, row.height)
+}
+
+pub fn setup_timezone_scrollbar(main: Rect, model: &SetupViewModel) -> Option<Rect> {
+    let list = setup_timezone_list_area(main);
+    (model.timezones.len() > usize::from(list.height) && list.width > 1 && list.height > 0)
+        .then(|| Rect::new(list.right() - 1, list.y, 1, list.height))
+}
+
+pub fn setup_custom_color_actions(main: Rect) -> [Rect; 2] {
+    let inner = setup_inner_area(setup_custom_color_dialog_area(main));
+    let row = Rect::new(
+        inner.x,
+        inner.bottom().saturating_sub(1),
+        inner.width,
+        u16::from(inner.height > 0),
+    );
+    [
+        Rect::new(row.x, row.y, row.width / 2, row.height),
+        Rect::new(
+            row.x + row.width / 2,
+            row.y,
+            row.width - row.width / 2,
+            row.height,
+        ),
+    ]
+}
+
+pub fn setup_color_viewport(main: Rect, model: &SetupViewModel) -> super::AuthViewport {
+    super::auth_viewport(main, 10, model.scroll_offset)
+}
+
+fn render_setup_unscrolled(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &SetupViewModel,
+    context: &RenderContext,
+) {
     let theme = &context.compatibility_theme();
     if model.step == SetupStep::Timezone
         && area.width >= SETUP_WIDE_MAP_MIN_WIDTH
@@ -82,6 +173,24 @@ pub fn render_setup_content(
     } else {
         render_setup_controls(frame, area, area, model, context);
     }
+    if matches!(model.step, SetupStep::Language | SetupStep::Timezone) {
+        let [back, next, _] = setup_navigation_areas(if model.step == SetupStep::Timezone {
+            setup_timezone_controls_area(area)
+        } else {
+            area
+        });
+        let theme = &context.compatibility_theme();
+        let mut previous = Button::new("setup.back", i18n::tr!("ui-auth-touch-back"));
+        previous.set_disabled(model.step == SetupStep::Language);
+        previous.render_inline_frame(frame, back, theme);
+        Button::new("setup.continue", i18n::tr!("ui-auth-touch-continue"))
+            .render_inline_frame(frame, next, theme);
+    }
+    Button::new("setup.exit", i18n::tr!("ui-auth-touch-exit")).render_inline_frame(
+        frame,
+        setup_exit_area(area, model.step),
+        &context.compatibility_theme(),
+    );
 }
 
 fn render_setup_controls(
@@ -683,12 +792,13 @@ fn render_setup_custom_color_dialog(
         inner.width,
         1.min(inner.height.saturating_sub(6)),
     );
-    frame.render_widget(
-        Paragraph::new(i18n::tr!("ui-auth-enter-apply-esc-cancel"))
-            .alignment(HorizontalAlignment::Left)
-            .style(theme.muted_style()),
-        actions_area,
-    );
+    let _ = actions_area;
+    let [apply, cancel] = setup_custom_color_actions(area);
+    let mut apply_button = Button::new("setup.color.apply", i18n::tr!("ui-auth-touch-apply"));
+    apply_button.set_disabled(!model.custom_color_valid || model.custom_color_conflicts_with_theme);
+    apply_button.render_inline_frame(frame, apply, theme);
+    Button::new("setup.color.cancel", i18n::tr!("ui-auth-touch-cancel"))
+        .render_inline_frame(frame, cancel, theme);
 }
 
 fn render_setup_surface(
@@ -975,7 +1085,11 @@ pub fn setup_admin_field_area(main: Rect, field: SetupField) -> Rect {
         | SetupField::AppearanceAccentCustom
         | SetupField::AppearanceSubmit => (SETUP_ADMIN_USERNAME_LINE, SETUP_ADMIN_FIELD_HEIGHT),
     };
-    setup_admin_line_area(main, line, height)
+    let mut area = setup_admin_line_area(main, line, height);
+    if field == SetupField::Submit {
+        area.width = area.width.saturating_sub(12);
+    }
+    area
 }
 
 pub fn setup_appearance_field_area(main: Rect, field: SetupField) -> Rect {
@@ -993,7 +1107,11 @@ pub fn setup_appearance_field_area(main: Rect, field: SetupField) -> Rect {
         SetupField::AppearanceSubmit => (SETUP_APPEARANCE_SUBMIT_LINE, 1),
         _ => (SETUP_APPEARANCE_SHAPE_LINE, 0),
     };
-    setup_line_area(main, line, height)
+    let mut area = setup_line_area(main, line, height);
+    if field == SetupField::AppearanceSubmit {
+        area.width = area.width.saturating_sub(12);
+    }
+    area
 }
 
 pub fn setup_appearance_shape_option_areas(main: Rect) -> [(crate::BorderShape, Rect); 2] {
@@ -1204,16 +1322,8 @@ fn setup_timezone_window_bounds(model: &SetupViewModel, visible_rows: usize) -> 
         return (0, 0);
     }
 
-    let selected = model.selected_timezone_index.min(model.timezones.len() - 1);
     let max_start = model.timezones.len().saturating_sub(visible_rows);
-    let mut start = model.timezone_window_start.min(max_start);
-
-    if selected < start {
-        start = selected;
-    } else if selected >= start.saturating_add(visible_rows) {
-        start = selected.saturating_add(1).saturating_sub(visible_rows);
-    }
-    start = start.min(max_start);
+    let start = model.timezone_window_start.min(max_start);
 
     let end = start
         .saturating_add(visible_rows)
@@ -1295,6 +1405,11 @@ pub fn render_setup_overlay(
     context: &RenderContext,
 ) {
     if model.step == SetupStep::Appearance && model.custom_color_target.is_some() {
-        render_setup_custom_color_dialog(frame, area, model, context);
+        super::common::render_auth_overlay_viewport(
+            frame,
+            setup_color_viewport(area, model),
+            context,
+            |frame, area, context| render_setup_custom_color_dialog(frame, area, model, context),
+        );
     }
 }

@@ -323,6 +323,19 @@ impl ShellSession {
         };
         let layout = ui::settings_layout(app_area, &model);
         match ui::settings_hit_test(&layout, coordinates) {
+            Some(ui::SettingsHitTarget::Back) => self.close_settings(),
+            Some(ui::SettingsHitTarget::OverlayApply) => {
+                self.handle_settings_key(&KeyInput::new(InputKey::Enter), platform)
+            }
+            Some(ui::SettingsHitTarget::OverlayCancel) => {
+                self.handle_settings_key(&KeyInput::new(InputKey::Escape), platform)
+            }
+            Some(ui::SettingsHitTarget::AdjustField(field, delta)) => {
+                if let Some(state) = self.settings_state.as_mut() {
+                    state.selected_field = field;
+                }
+                self.adjust_selected_setting(delta, platform);
+            }
             Some(ui::SettingsHitTarget::UpdateConfirm) => self.begin_confirmed_update(),
             Some(ui::SettingsHitTarget::UpdateCancel) => self.cancel_update_confirmation(),
             Some(ui::SettingsHitTarget::Category(category)) => {

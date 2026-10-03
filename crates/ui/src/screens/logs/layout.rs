@@ -17,6 +17,11 @@ pub enum LogsHitTarget {
     FilterLevel,
     FilterModule,
     FilterTime,
+    ClearFilters,
+    RelatedIncident,
+    RelatedEvents,
+    Back,
+    DetailScrollbar,
     Scrollbar,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +52,8 @@ pub struct LogsLayout {
     pub footer: Rect,
     pub visible_start: usize,
     pub visible_capacity: usize,
+    pub detail_text: Rect,
+    pub detail_scrollbar: Option<crate::ManagementScrollbar>,
 }
 
 pub(super) fn category_tabs() -> Tabs {
@@ -68,13 +75,26 @@ pub(super) fn section_tabs() -> Tabs {
         ],
     )
 }
-pub(super) fn controls() -> [(LogsHitTarget, String); 5] {
-    [
+pub(super) fn controls() -> Vec<(LogsHitTarget, String)> {
+    vec![
         (LogsHitTarget::Refresh, i18n::tr!("ui-logs-r-refresh")),
         (LogsHitTarget::Open, i18n::tr!("ui-logs-o-open")),
         (LogsHitTarget::FilterLevel, i18n::tr!("ui-logs-l-level")),
         (LogsHitTarget::FilterModule, i18n::tr!("ui-logs-m-module")),
         (LogsHitTarget::FilterTime, i18n::tr!("ui-logs-t-time")),
+        (
+            LogsHitTarget::ClearFilters,
+            i18n::tr!("ui-logs-clear-filters"),
+        ),
+        (
+            LogsHitTarget::RelatedIncident,
+            i18n::tr!("ui-logs-show-incident"),
+        ),
+        (
+            LogsHitTarget::RelatedEvents,
+            i18n::tr!("ui-logs-show-events"),
+        ),
+        (LogsHitTarget::Back, i18n::tr!("ui-logs-back")),
     ]
 }
 
@@ -87,15 +107,13 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     } else {
         Rect::new(inner.x, category_tabs_area.bottom(), inner.width, 0)
     };
-    let toolbar = line_in_rect(inner, section_tabs_area.bottom());
-    let filter_summary = line_in_rect(inner, toolbar.bottom());
-    let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
-    let content_area = Rect::new(
+    let toolbar = Rect::new(
         inner.x,
-        filter_summary.bottom(),
+        section_tabs_area.bottom(),
         inner.width,
-        footer.y.saturating_sub(filter_summary.bottom()),
+        inner.bottom().saturating_sub(section_tabs_area.bottom()),
     );
+    let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
     let category_tabs = category_tabs()
         .borderless_item_areas(category_tabs_area)
         .into_iter()
@@ -117,17 +135,62 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         Vec::new()
     };
     let mut x = toolbar.x;
+    let mut y = toolbar.y;
     let controls = controls()
         .into_iter()
         .map(|(target, label)| {
             let width = (unicode_width::UnicodeWidthStr::width(label.as_str()) as u16 + 2)
-                .min(toolbar.right().saturating_sub(x));
-            let area = Rect::new(x, toolbar.y, width, toolbar.height);
+                .min(toolbar.width);
+            if x != toolbar.x && x.saturating_add(width) > toolbar.right() {
+                x = toolbar.x;
+                y = y.saturating_add(1);
+            }
+            let area = Rect::new(
+                x,
+                y.min(toolbar.bottom()),
+                width,
+                u16::from(y < toolbar.bottom()),
+            );
             x = x.saturating_add(width).saturating_add(1);
             LogsControlLayout { target, area }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let summary_y = controls
+        .iter()
+        .map(|control| control.area.bottom())
+        .max()
+        .unwrap_or(toolbar.y);
+    let filter_summary = line_in_rect(inner, summary_y);
+    let content_area = Rect::new(
+        inner.x,
+        filter_summary.bottom(),
+        inner.width,
+        footer.y.saturating_sub(filter_summary.bottom()),
+    );
     let content = diagnostics_content_layout(content_area, &super::render::content_model(model));
+    let detail_inner = crate::components::Surface::new()
+        .bordered(true)
+        .inner(content.detail_panel);
+    let detail_text = Rect::new(
+        detail_inner.x,
+        detail_inner.y,
+        detail_inner.width.saturating_sub(1),
+        detail_inner.height,
+    );
+    let detail_scrollbar = crate::management_scrollbar(
+        crate::ManagementScrollTarget::Details,
+        Rect::new(
+            detail_inner.right().saturating_sub(1),
+            detail_inner.y,
+            u16::from(detail_inner.width > 0),
+            detail_inner.height,
+        ),
+        crate::management_wrapped_lines(&super::render::logs_detail_text(model), detail_text.width)
+            .len(),
+        usize::from(detail_text.height),
+        model.detail_scroll,
+        false,
+    );
     LogsLayout {
         panel: main,
         category_tabs_area,
@@ -140,6 +203,8 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         visible_start: content.visible_start,
         visible_capacity: content.visible_capacity,
         content,
+        detail_text,
+        detail_scrollbar,
     }
 }
 
@@ -164,21 +229,24 @@ pub fn logs_hit_test(
     {
         return Some(LogsHitTarget::Section(tab.section));
     }
-    if super::render::unavailable_reason(model).is_some() {
-        return None;
-    }
     if let Some(control) = layout
         .controls
         .iter()
         .find(|control| rect_contains(control.area, x, y))
     {
-        if model.loading
-            || (control.target == LogsHitTarget::Open
-                && super::render::content_model(model).item_count() == 0)
-        {
+        if !super::render::control_enabled(model, control.target) {
             return None;
         }
         return Some(control.target);
+    }
+    if super::render::unavailable_reason(model).is_some() {
+        return None;
+    }
+    if layout
+        .detail_scrollbar
+        .is_some_and(|bar| rect_contains(bar.track, x, y))
+    {
+        return Some(LogsHitTarget::DetailScrollbar);
     }
     layout
         .content

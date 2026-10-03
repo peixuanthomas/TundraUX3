@@ -1,6 +1,79 @@
 use super::super::*;
 use i18n::LocalizedText;
 impl ShellSession {
+    fn cancel_pointer_gestures_for_modal(&mut self) {
+        self.button_pointer_capture = None;
+        self.notification_pointer_capture = None;
+        self.notification_scrollbar_drag = None;
+        self.diagnostics_detail_drag = None;
+        self.scrollbar_drag = None;
+        self.launcher_drag = None;
+        self.drag_tracker = None;
+        self.cancel_touch_pages_pointer();
+        self.cancel_management_pointer_gesture();
+        self.cancel_logs_pointer_gesture();
+    }
+
+    pub(in crate::session) fn handle_notification_scrollbar(&mut self, mouse: MouseInput) -> bool {
+        let Some(id) = self.notification_active_modal_id() else {
+            self.notification_scrollbar_drag = None;
+            return false;
+        };
+        if self
+            .notification_scrollbar_drag
+            .is_some_and(|(owner, _)| owner != id)
+        {
+            self.notification_scrollbar_drag = None;
+        }
+        if matches!(mouse.kind, ui::MouseEventKind::Up(PointerButton::Left)) {
+            return self.notification_scrollbar_drag.take().is_some();
+        }
+        let Some(model) = self.notification_active_modal_view_model() else {
+            return false;
+        };
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::NotificationLayout::Dialog(layout) = ui::notification_layout(area, &model) else {
+            return false;
+        };
+        let Some(track) = layout.scrollbar else {
+            self.notification_scrollbar_drag = None;
+            return false;
+        };
+        let scrollbar = ui::components::Scrollbar::new(
+            layout.message_line_count,
+            layout.message.height as usize,
+            layout.scroll_offset,
+        );
+        let (start, thumb_len) = scrollbar.thumb_range(track);
+        match mouse.kind {
+            ui::MouseEventKind::Down(PointerButton::Left)
+                if rect_contains(track, mouse.coordinates()) =>
+            {
+                let relative = mouse.row().saturating_sub(track.y);
+                let grab = if (start..start.saturating_add(thumb_len)).contains(&relative) {
+                    relative - start
+                } else {
+                    thumb_len / 2
+                };
+                self.notification_scrollbar_drag = Some((id, grab));
+                self.notification_pointer_capture = None;
+            }
+            ui::MouseEventKind::Drag(PointerButton::Left)
+                if self.notification_scrollbar_drag.is_some() => {}
+            _ => return false,
+        }
+        self.notification_message_scroll = scrollbar_window_start(
+            mouse.row(),
+            self.notification_scrollbar_drag.unwrap().1,
+            track.y,
+            track.height,
+            thumb_len,
+            layout.message_line_count,
+            layout.message.height as usize,
+        );
+        true
+    }
+
     pub fn status_text(&self) -> &LocalizedText {
         self.app.notification_center().status()
     }
@@ -85,6 +158,7 @@ impl ShellSession {
                 .with_component(ShellComponent::NotificationDialog);
         let app_notification = notification.to_app_notification();
         let id = self.app.push_critical_notification_modal(app_notification);
+        self.cancel_pointer_gestures_for_modal();
         self.ui.notification_message_scroll = 0;
         self.ui.notification_bindings.bind(id, &notification);
         self.active_popup = None;
@@ -319,6 +393,7 @@ impl ShellSession {
         let app_notification = notification.to_app_notification();
         let previous_modal = self.notification_active_modal_id();
         let id = self.app.push_notification_modal(app_notification);
+        self.cancel_pointer_gestures_for_modal();
         if previous_modal != self.notification_active_modal_id()
             || self.notification_active_modal_id() == Some(id)
         {

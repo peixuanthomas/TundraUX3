@@ -47,3 +47,4 @@ ui-user-management-summary = { $count ->
     }
 
 ui-user-management-current-status = { $status } · You
+ui-user-management-touch-help = Select an account, then tap an action. Drag the bar to see more. Tab/Enter also work.

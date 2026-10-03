@@ -30,3 +30,8 @@ ui-logs-event-detail = Time: { $time }
     { $detail }{ $incident }
 
 ui-logs-incident-link = { "\u000A" }Incident: { $id }
+
+ui-logs-clear-filters = Clear filters
+ui-logs-show-incident = Show incident
+ui-logs-show-events = Related events
+ui-logs-back = Back

@@ -83,3 +83,5 @@ ui-explorer-help = Ctrl+A：全选    空格：勾选    Shift+方向键：连�
 ui-explorer-compact-help = Ctrl+A：全选 | 空格：勾选 | C/X/V：复制/剪切/粘贴 | Del：删除 | Shift+F10：菜单 | 隐藏文件：{ $hidden }{ $quick }
 
 ui-explorer-quick-access-help = { " " }| Tab/Shift+Tab：快速访问
+ui-explorer-open-selected = 打开
+ui-explorer-actions-menu = 更多操作

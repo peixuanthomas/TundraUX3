@@ -8,12 +8,29 @@ impl ShellSession {
         &self,
         point: CellPosition,
     ) -> Option<ui::components::ButtonRegion> {
-        self.button_regions
-            .iter()
-            .rev()
-            .find(|button| rect_contains(button.area, point))
-            .cloned()
-            .or_else(|| self.management_button_at(point))
+        if let Some(id) = self.notification_active_modal_id() {
+            let prefix = format!("notification.{id}.");
+            return self
+                .button_regions
+                .iter()
+                .rev()
+                .find(|button| {
+                    let notification_action = button.id.as_str().starts_with(&prefix);
+                    let modal_back = button.id.as_str() == "shell.back"
+                        && self.hit_map.target_at(point) == Some(ShellComponent::BackButton);
+                    (notification_action || modal_back) && rect_contains(button.area, point)
+                })
+                .cloned();
+        }
+        self.management_button_at(point)
+            .or_else(|| self.logs_button_at(point))
+            .or_else(|| {
+                self.button_regions
+                    .iter()
+                    .rev()
+                    .find(|button| rect_contains(button.area, point))
+                    .cloned()
+            })
             .or_else(|| {
                 // Details rows are drawn as a table, but launch on release just
                 // like icon buttons. Use the same layout as their hit testing.
@@ -78,6 +95,21 @@ impl ShellSession {
             ) {
                 self.button_pointer_capture = None;
                 self.notification_pointer_capture = None;
+                self.notification_scrollbar_drag = None;
+                self.diagnostics_detail_drag = None;
+                self.cancel_touch_pages_pointer();
+                self.cancel_management_pointer_gesture();
+                self.cancel_logs_pointer_gesture();
+                if matches!(
+                    self.scrollbar_drag,
+                    Some(
+                        ScrollbarDragState::Home { .. }
+                            | ScrollbarDragState::Launcher { .. }
+                            | ScrollbarDragState::ExplorerLocations { .. }
+                    )
+                ) {
+                    self.scrollbar_drag = None;
+                }
             }
             if matches!(input, InputEvent::FocusLost) {
                 self.mouse_coordinates = None;
@@ -90,6 +122,21 @@ impl ShellSession {
             return Some(input);
         };
         self.mouse_coordinates = Some(mouse.coordinates());
+        if self.notification_has_active_modal() && self.handle_notification_scrollbar(mouse) {
+            self.button_pointer_capture = None;
+            return None;
+        }
+        if !self.notification_has_active_modal()
+            && !self.time_sync_dialog_visible
+            && self.active_popup.is_none()
+            && (self.handle_home_pointer_scrollbar(&mouse)
+                || self.handle_launcher_pointer_scrollbar(&mouse)
+                || self.handle_diagnostics_detail_pointer(mouse)
+                || self.handle_explorer_locations_pointer(mouse))
+        {
+            self.button_pointer_capture = None;
+            return None;
+        }
         match mouse.kind {
             ui::MouseEventKind::Down(PointerButton::Left) => {
                 self.button_pointer_capture = None;
@@ -185,6 +232,30 @@ impl ShellSession {
         &self,
         input: InputEvent,
     ) -> InputEvent {
+        if let InputEvent::Mouse(mouse) = &input
+            && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
+            && !self.notification_has_active_modal()
+            && !self.time_sync_dialog_visible
+            && self.active_popup.is_none()
+            && self.diagnostics_repair_preview.is_empty()
+            && matches!(
+                self.active_screen(),
+                ShellScreen::Diagnostics | ShellScreen::SystemStatus
+            )
+            && let Some(button) = self.button_at(mouse.coordinates())
+            && let Some(code) = button
+                .id
+                .as_str()
+                .strip_prefix("diagnostics.toolbar.")
+                .and_then(|value| value.parse::<u32>().ok())
+                .and_then(char::from_u32)
+        {
+            return InputEvent::Key(KeyInput::new(if code == '\u{1b}' {
+                InputKey::Escape
+            } else {
+                InputKey::Char(code)
+            }));
+        }
         if let InputEvent::Mouse(mouse) = &input
             && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
             && self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton)
@@ -413,17 +484,6 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
-            return if matches!(&key.key, InputKey::Escape) {
-                (RoutedTarget::Global, ShellCommand::RequestExit)
-            } else {
-                (
-                    RoutedTarget::Component(ShellComponent::CompactHome),
-                    ShellCommand::CaptureOverlayInput,
-                )
-            };
-        }
         let target = RoutedTarget::Component(self.focused_component);
         if matches!(&key.key, InputKey::Escape) {
             return (RoutedTarget::Global, ShellCommand::RequestExit);
@@ -520,21 +580,6 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
-            return match &key.key {
-                InputKey::Escape if self.clock_create_state.is_some() => (
-                    RoutedTarget::Modal(ShellComponent::ClockCreateDialog),
-                    ShellCommand::ClockCloseCreate,
-                ),
-                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseClock),
-                _ => (
-                    RoutedTarget::Component(ShellComponent::CompactHome),
-                    ShellCommand::CaptureOverlayInput,
-                ),
-            };
-        }
-
         if self.is_strict_guest() {
             let target = RoutedTarget::Component(ShellComponent::ClockButton);
             return match &key.key {
@@ -1469,16 +1514,6 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
-            return match &key.key {
-                InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
-                _ => (
-                    RoutedTarget::Component(ShellComponent::CompactHome),
-                    ShellCommand::CaptureOverlayInput,
-                ),
-            };
-        }
 
         if self.user_management_mode != UserManagementMode::Browse {
             let field = self.user_management_form_field();
@@ -1727,6 +1762,9 @@ impl ShellSession {
             return (target, ShellCommand::CaptureOverlayInput);
         }
 
+        if self.notification_has_active_modal() && self.notification_scrollbar_drag.is_some() {
+            return self.route_notification_mouse(mouse, hit_target);
+        }
         if hit_layer == Some(ShellHitLayer::ShellModal) {
             if self.notification_has_active_modal() {
                 return self.route_notification_mouse(mouse, hit_target);
@@ -1762,6 +1800,9 @@ impl ShellSession {
             && !self.time_sync_dialog_visible
             && self.active_popup.is_none()
         {
+            if let Some(command) = self.route_touch_pages_pointer(mouse) {
+                return (target_route(hit_target), command);
+            }
             let coordinates = mouse.coordinates();
             if self.system_status_widget_drag.is_some() {
                 match mouse.kind {
@@ -1957,7 +1998,8 @@ impl ShellSession {
             );
         }
         if self.active_screen() == ShellScreen::Management
-            && hit_target == Some(ShellComponent::Management)
+            && (hit_target == Some(ShellComponent::Management)
+                || self.management_pointer_drag_active())
         {
             return (
                 RoutedTarget::Component(ShellComponent::Management),
@@ -1965,8 +2007,7 @@ impl ShellSession {
             );
         }
         if self.active_screen() == ShellScreen::Logs
-            && (hit_target == Some(ShellComponent::Logs)
-                || self.logs_state.scrollbar_grab.is_some())
+            && (hit_target == Some(ShellComponent::Logs) || self.logs_pointer_drag_active())
         {
             return (
                 RoutedTarget::Component(ShellComponent::Logs),
@@ -2009,6 +2050,16 @@ impl ShellSession {
                         );
                     }
                     if self.active_screen() == ShellScreen::Home && target == ShellComponent::Home {
+                        if let Some(control) = self.home_control_at(coordinates) {
+                            let command = match control {
+                                ui::HomeToolbarAction::OpenSelected => {
+                                    ShellCommand::ActivateSelectedHomeEntry
+                                }
+                                ui::HomeToolbarAction::Launcher => ShellCommand::OpenLauncher,
+                                ui::HomeToolbarAction::Exit => ShellCommand::RequestExit,
+                            };
+                            return (RoutedTarget::Component(target), command);
+                        }
                         return (
                             RoutedTarget::Component(target),
                             ShellCommand::ActivateHomeEntryAt(coordinates, click),
@@ -2580,13 +2631,6 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
         let coordinates = mouse.coordinates();
-        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
-            return (
-                RoutedTarget::Component(ShellComponent::CompactHome),
-                ShellCommand::CaptureOverlayInput,
-            );
-        }
 
         if self.user_management_mode == UserManagementMode::Browse
             && hit_target == Some(ShellComponent::ClockButton)
@@ -2720,6 +2764,10 @@ impl ShellSession {
 
         if !self.notification_can_render() {
             self.notification_pointer_capture = None;
+            return (target, ShellCommand::CaptureOverlayInput);
+        }
+
+        if self.handle_notification_scrollbar(mouse) {
             return (target, ShellCommand::CaptureOverlayInput);
         }
 

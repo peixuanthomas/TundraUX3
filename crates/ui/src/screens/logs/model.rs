@@ -32,6 +32,7 @@ pub struct LogsViewModel {
     pub events: Vec<LogsEventViewModel>,
     pub selected_event: usize,
     pub scroll_offset: usize,
+    pub detail_scroll: usize,
     pub linux_available: bool,
     pub can_view_system: bool,
     pub loading: bool,

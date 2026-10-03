@@ -102,3 +102,10 @@ ui-auth-custom-accent-color = 自定义强调色
 ui-auth-timezone-item = { $name } ({ $id })
 
 ui-auth-timezone-description = { $name } - { $description }
+ui-auth-touch-sign-in = 登录
+ui-auth-touch-exit = 退出
+ui-auth-touch-back = 上一步
+ui-auth-touch-continue = 继续
+ui-auth-touch-apply = 应用
+ui-auth-touch-cancel = 取消
+ui-auth-touch-create-admin = 创建管理员

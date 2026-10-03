@@ -169,6 +169,9 @@ impl ShellSession {
             self.pending_notification_commands.clear();
         }
         self.finish_modal_focus_transition();
+        if matches!(follow_up_input, InputEvent::Key(_) | InputEvent::Paste(_)) {
+            self.ensure_touch_auth_focus_visible();
+        }
         action
     }
 
@@ -1303,6 +1306,10 @@ impl ShellSession {
                 self.handle_management_pointer(mouse);
                 self.open_management_directory(platform);
                 self.refresh_hit_map();
+                ShellAction::Redraw
+            }
+            ShellCommand::TouchPagesPointer(mouse) => {
+                self.handle_touch_pages_pointer(mouse);
                 ShellAction::Redraw
             }
             ShellCommand::ManagementPaste(value) => {

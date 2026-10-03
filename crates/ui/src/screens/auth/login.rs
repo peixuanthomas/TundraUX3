@@ -4,7 +4,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{LoginField, LoginViewModel};
-use crate::components::{Button, List, ListItem, Surface, TextInput};
+use crate::components::{Button, List, ListItem, Scrollbar, Surface, TextInput};
 use crate::{RenderContext, TundraTheme};
 
 const LOGIN_USER_LIST_WIDTH: u16 = 30;
@@ -22,9 +22,43 @@ pub struct LoginLayout {
     pub password: Rect,
     pub password_visibility: Rect,
     pub help: Rect,
+    pub submit: Rect,
+    pub exit: Rect,
+}
+
+pub fn login_viewport(main: Rect, model: &LoginViewModel) -> super::AuthViewport {
+    // Stacked user list, password and actions remain reachable on short screens.
+    let viewport = super::auth_viewport(main, 16, model.scroll_offset);
+    if login_inner_area(viewport.content).width <= LOGIN_USER_LIST_WIDTH.saturating_add(10) {
+        super::auth_viewport(main, 24, model.scroll_offset)
+    } else {
+        viewport
+    }
+}
+
+pub fn login_list_scrollbar(main: Rect, model: &LoginViewModel) -> Option<Rect> {
+    let list = login_layout(main).user_list;
+    (model.users.len() > usize::from(list.height.saturating_sub(2))
+        && list.width > 2
+        && list.height > 2)
+        .then(|| Rect::new(list.right() - 2, list.y + 1, 1, list.height - 2))
 }
 
 pub fn render_login_content(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &LoginViewModel,
+    context: &RenderContext,
+) {
+    super::common::render_auth_viewport(
+        frame,
+        login_viewport(main, model),
+        context,
+        |frame, main, context| render_login_unscrolled(frame, main, model, context),
+    );
+}
+
+fn render_login_unscrolled(
     frame: &mut Frame<'_>,
     main: Rect,
     model: &LoginViewModel,
@@ -56,6 +90,16 @@ pub fn render_login_content(
         model.focused_field == LoginField::PasswordVisibility,
         theme,
     );
+    for (id, label, area) in [
+        (
+            "login.submit",
+            i18n::tr!("ui-auth-touch-sign-in"),
+            layout.submit,
+        ),
+        ("login.exit", i18n::tr!("ui-auth-touch-exit"), layout.exit),
+    ] {
+        Button::new(id, label).render_inline_frame(frame, area, theme);
+    }
     if layout.help.height > 0 {
         let mut lines = vec![
             Line::from(i18n::tr!(
@@ -75,12 +119,8 @@ pub fn render_login_content(
             }
         }
         if let Some(error) = &model.error {
-            if model.system_users {
-                lines.insert(0, Line::styled(error.clone(), theme.error_style()));
-            } else {
-                lines.push(Line::from(""));
-                lines.push(Line::styled(error.clone(), theme.error_style()));
-            }
+            // A failed sign-in must remain visible ahead of optional key hints.
+            lines.insert(0, Line::styled(error.clone(), theme.error_style()));
         }
         frame.render_widget(
             Paragraph::new(lines)
@@ -142,6 +182,13 @@ fn render_login_user_list(
         list_theme.border_color = context.theme.focus;
     }
     list.render_frame(frame, area, &list_theme);
+    if model.users.len() > visible_rows && area.width > 2 && area.height > 2 {
+        Scrollbar::new(model.users.len(), visible_rows, start).render_frame(
+            frame,
+            Rect::new(area.right() - 2, area.y + 1, 1, area.height - 2),
+            context,
+        );
+    }
 }
 
 fn render_login_username_field(
@@ -334,8 +381,21 @@ pub fn login_layout(main: Rect) -> LoginLayout {
     let help_y = password_y
         .saturating_add(control_height)
         .saturating_add(LOGIN_FORM_GAP);
-    let help_height = form.y.saturating_add(form.height).saturating_sub(help_y);
+    let actions_y = form.bottom().saturating_sub(1);
+    let help_height = actions_y.saturating_sub(help_y);
     let help = Rect::new(form.x, help_y, form.width, help_height);
+    let submit = Rect::new(
+        form.x,
+        actions_y,
+        form.width / 2,
+        u16::from(form.height > 0),
+    );
+    let exit = Rect::new(
+        submit.right(),
+        actions_y,
+        form.width - submit.width,
+        submit.height,
+    );
 
     LoginLayout {
         user_list,
@@ -343,6 +403,8 @@ pub fn login_layout(main: Rect) -> LoginLayout {
         password,
         password_visibility,
         help,
+        submit,
+        exit,
     }
 }
 
@@ -391,15 +453,8 @@ fn login_user_window_bounds(model: &LoginViewModel, visible_rows: usize) -> (usi
         return (0, 0);
     }
 
-    let selected = model.selected_index.min(model.users.len() - 1);
     let max_start = model.users.len().saturating_sub(visible_rows);
-    let mut start = model.user_window_start.min(max_start);
-    if selected < start {
-        start = selected;
-    } else if selected >= start.saturating_add(visible_rows) {
-        start = selected.saturating_add(1).saturating_sub(visible_rows);
-    }
-    start = start.min(max_start);
+    let start = model.user_window_start.min(max_start);
 
     let end = start.saturating_add(visible_rows).min(model.users.len());
     (start, end)

@@ -227,6 +227,89 @@ pub(in crate::session) fn apply_terminal_graphics_check(
 }
 
 impl ShellSession {
+    pub(in crate::session) fn handle_diagnostics_detail_pointer(
+        &mut self,
+        mouse: MouseInput,
+    ) -> bool {
+        if !matches!(
+            self.active_screen(),
+            ShellScreen::Diagnostics | ShellScreen::SystemStatus
+        ) {
+            self.diagnostics_detail_drag = None;
+            return false;
+        }
+        if !self.diagnostics_repair_preview.is_empty() {
+            self.diagnostics_detail_drag = None;
+            return false;
+        }
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
+            return false;
+        };
+        let model = self.to_diagnostics_view_model();
+        let panel = match self.active_screen() {
+            ShellScreen::Diagnostics => ui::diagnostics_layout(main, &model).detail_panel,
+            ShellScreen::SystemStatus => {
+                let Some(status_model) = self.to_system_status_view_model() else {
+                    return false;
+                };
+                let layout = ui::system_status_layout(main, &status_model);
+                let Some(content) = layout.diagnostics_content else {
+                    self.diagnostics_detail_drag = None;
+                    return false;
+                };
+                content.detail_panel
+            }
+            _ => {
+                self.diagnostics_detail_drag = None;
+                return false;
+            }
+        };
+        let (track, count, viewport) = ui::diagnostics_detail_scroll_metrics(panel, &model);
+        let max = count.saturating_sub(viewport);
+        let (start, thumb) =
+            ui::components::Scrollbar::new(count, viewport, self.diagnostics_detail_scroll)
+                .thumb_range(track);
+        match mouse.kind {
+            ui::MouseEventKind::Up(PointerButton::Left) => {
+                return self.diagnostics_detail_drag.take().is_some();
+            }
+            ui::MouseEventKind::Scroll(direction) if rect_contains(panel, mouse.coordinates()) => {
+                self.diagnostics_detail_scroll = match direction {
+                    ScrollDirection::Up => self.diagnostics_detail_scroll.saturating_sub(3),
+                    ScrollDirection::Down => {
+                        self.diagnostics_detail_scroll.saturating_add(3).min(max)
+                    }
+                    _ => self.diagnostics_detail_scroll,
+                };
+                return true;
+            }
+            ui::MouseEventKind::Down(PointerButton::Left)
+                if max > 0 && rect_contains(track, mouse.coordinates()) =>
+            {
+                let pos = mouse.row().saturating_sub(track.y);
+                self.diagnostics_detail_drag = Some(if (start..start + thumb).contains(&pos) {
+                    pos - start
+                } else {
+                    thumb / 2
+                });
+            }
+            ui::MouseEventKind::Drag(PointerButton::Left)
+                if self.diagnostics_detail_drag.is_some() => {}
+            _ => return false,
+        }
+        self.diagnostics_detail_scroll = scrollbar_window_start(
+            mouse.row(),
+            self.diagnostics_detail_drag.unwrap(),
+            track.y,
+            track.height,
+            thumb,
+            count,
+            viewport,
+        );
+        true
+    }
+
     pub(in crate::session) fn apply_terminal_graphics_startup_policy(
         &mut self,
         status: &ui::TerminalGraphicsProbeStatus,
@@ -631,6 +714,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn move_diagnostics_selection(&mut self, delta: isize) {
+        self.diagnostics_detail_scroll = 0;
+        self.diagnostics_detail_drag = None;
         let count = self.diagnostics_item_count();
         if count == 0 {
             return;
@@ -646,6 +731,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn set_diagnostics_tab(&mut self, tab: ui::DiagnosticsTab) {
+        self.diagnostics_detail_scroll = 0;
+        self.diagnostics_detail_drag = None;
         self.diagnostics_tab = tab;
         if self.active_screen() == ShellScreen::SystemStatus {
             self.set_system_status_tab(match tab {
@@ -662,6 +749,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_diagnostics_index(&mut self, index: usize) {
+        self.diagnostics_detail_scroll = 0;
+        self.diagnostics_detail_drag = None;
         let count = self.diagnostics_item_count();
         if count == 0 {
             return;

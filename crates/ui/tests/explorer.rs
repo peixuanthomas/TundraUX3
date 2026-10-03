@@ -209,15 +209,19 @@ fn explorer_quick_access_scrolls_current_location_into_view() {
         .collect();
 
     let layout = explorer_layout(Rect::new(0, 0, 96, 14), &model);
-    assert_eq!(layout.quick_location_visible_capacity, 7);
-    assert_eq!(layout.quick_location_visible_start, 4);
+    assert!(layout.quick_location_visible_capacity > 0);
+    assert_eq!(
+        layout.quick_location_visible_start + layout.quick_location_visible_capacity,
+        11
+    );
+    assert!(layout.quick_location_scrollbar.is_some());
     assert_eq!(
         layout
             .quick_locations
             .iter()
             .map(|location| location.index)
             .collect::<Vec<_>>(),
-        vec![4, 5, 6, 7, 8, 9, 10]
+        (layout.quick_location_visible_start..11).collect::<Vec<_>>()
     );
     let last = layout.quick_locations.last().expect("current location row");
     assert_eq!(
@@ -234,6 +238,14 @@ fn explorer_quick_access_scrolls_current_location_into_view() {
     assert_eq!(narrow.quick_location_visible_capacity, 0);
     assert_eq!(narrow.quick_location_visible_start, 0);
     assert!(narrow.quick_locations.is_empty());
+
+    model.quick_location_viewport_offset = Some(usize::MAX);
+    let scrolled = explorer_layout(Rect::new(0, 0, 96, 14), &model);
+    assert_eq!(scrolled.quick_locations.last().unwrap().index, 11);
+    assert_eq!(
+        scrolled.quick_locations[0].area.right(),
+        scrolled.quick_location_scrollbar.unwrap().x
+    );
 }
 
 #[test]
@@ -344,7 +356,7 @@ fn explorer_layout_keeps_focused_entry_visible_and_adds_scrollbar() {
 #[test]
 fn explorer_toolbar_keeps_every_action_at_supported_widths() {
     let model = sample_model();
-    for width in [72, 95, 96, 110] {
+    for width in [50, 72, 95, 96, 110] {
         let layout = explorer_layout(Rect::new(0, 0, width, 20), &model);
         assert_eq!(
             layout
@@ -354,6 +366,18 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
                 .collect::<Vec<_>>(),
             ExplorerToolbarAction::REGULAR,
             "toolbar actions at width {width}"
+        );
+        assert!(
+            layout
+                .toolbar_buttons
+                .iter()
+                .all(|button| button.show_label)
+        );
+        assert!(
+            layout
+                .toolbar_buttons
+                .iter()
+                .all(|button| button.area.bottom() <= layout.path_bar.y)
         );
     }
 }

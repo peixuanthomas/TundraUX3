@@ -25,7 +25,15 @@ impl ScreenContent<'_> {
     pub fn renders_in_compact(self) -> bool {
         matches!(
             self,
-            Self::Editor(_) | Self::Settings(_) | Self::Management(_)
+            Self::Editor(_)
+                | Self::Settings(_)
+                | Self::Management(_)
+                | Self::Logs(_)
+                | Self::Login(_)
+                | Self::Setup(_)
+                | Self::BootstrapAdmin(_)
+                | Self::UserManagement(_)
+                | Self::Clock(_)
         )
     }
     pub fn render_context(self, context: &RenderContext) -> RenderContext {

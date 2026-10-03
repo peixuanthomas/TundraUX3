@@ -1,4 +1,17 @@
 use super::*;
+
+#[test]
+fn global_notification_releases_log_detail_scroll_capture() {
+    let mut state = state(UserRole::User);
+    state.logs_state.detail_scrollbar_grab = Some(0);
+    state.notify_modal(
+        "Notice",
+        "Stop dragging",
+        ui::NotificationTone::Info,
+        vec![],
+    );
+    assert!(state.logs_state.detail_scrollbar_grab.is_none());
+}
 fn state(role: UserRole) -> ShellSession {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -22,13 +35,21 @@ fn key(state: &mut ShellSession, value: &str) {
     state.apply_input(InputEvent::from_key_label(value));
 }
 #[test]
-fn logs_home_entry_and_direct_route_enforce_guest_gate() {
+fn logs_launcher_entry_and_direct_route_enforce_guest_gate() {
     for role in [UserRole::Admin, UserRole::User, UserRole::Guest] {
         let mut state = state(role);
         assert_eq!(
             state.user_home_entries().iter().any(|e| e.label == "Logs"),
-            role != UserRole::Guest
+            false
         );
+        if role != UserRole::Guest {
+            assert!(
+                state
+                    .built_in_launcher_applications()
+                    .iter()
+                    .any(|entry| entry.id == "builtin.logs")
+            );
+        }
         state.open_logs();
         assert_eq!(
             state.active_screen() == ShellScreen::Logs,
@@ -146,4 +167,72 @@ fn guest_and_invalid_service_log_requests_do_not_change_navigation() {
         state.open_service_logs(unit, scope);
         assert_eq!(state.active_screen(), ShellScreen::Home);
     }
+}
+
+#[test]
+fn logs_detail_drag_and_cancel_do_not_move_the_event_selection() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.job = None;
+    state.logs_state.snapshot.result.events = vec![runtime_log::RuntimeLogEvent::new(
+        runtime_log::LogContext::default(),
+        LogLevel::Info,
+        runtime_log::LogPhase::Succeeded,
+        "description\n".repeat(100),
+    )];
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    let bar = layout.detail_scrollbar.unwrap();
+    let pointer = |position: (u16, u16), kind| MouseInput {
+        position: ui::Point::new(position.0, position.1),
+        kind,
+        modifiers: ui::KeyModifiers::NONE,
+    };
+    state.handle_logs_pointer(pointer(
+        (bar.thumb.x, bar.thumb.y),
+        ui::MouseEventKind::Down(PointerButton::Left),
+    ));
+    state.handle_logs_pointer(pointer(
+        (bar.track.x, bar.track.bottom()),
+        ui::MouseEventKind::Drag(PointerButton::Left),
+    ));
+    assert_eq!(
+        state.logs_state.detail_scroll,
+        bar.content_len - bar.viewport_len
+    );
+    assert_eq!(state.logs_state.selected, 0);
+    state.cancel_logs_pointer_gesture();
+    assert!(!state.logs_pointer_drag_active());
+}
+
+#[test]
+fn touch_logs_back_returns_to_launcher_and_global_overlays_hide_background_buttons() {
+    let mut state = state(UserRole::User);
+    state.screen_stack.push(ShellScreen::Launcher);
+    state.focused_component = ShellComponent::Launcher;
+    state.open_logs();
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    let area = layout
+        .controls
+        .iter()
+        .find(|control| control.target == ui::LogsHitTarget::Back)
+        .unwrap()
+        .area;
+    let point = (area.x, area.y);
+    assert!(state.logs_button_at(point).is_some());
+    state.time_sync_dialog_visible = true;
+    assert!(state.logs_button_at(point).is_none());
+    state.time_sync_dialog_visible = false;
+    state.active_popup = Some(ShellPopup {
+        owner: Some(ShellComponent::Logs),
+        anchor: point,
+    });
+    assert!(state.logs_button_at(point).is_none());
+    state.active_popup = None;
+    state.handle_logs_pointer(MouseInput {
+        position: ui::Point::new(point.0, point.1),
+        kind: ui::MouseEventKind::Click(PointerButton::Left),
+        modifiers: ui::KeyModifiers::NONE,
+    });
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    assert_eq!(state.focused_component, ShellComponent::Launcher);
 }

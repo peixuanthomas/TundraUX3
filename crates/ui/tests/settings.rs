@@ -20,6 +20,37 @@ use ui::{
 };
 
 #[test]
+fn settings_back_and_editor_actions_are_hittable_without_crossing_an_overlay() {
+    let mut model = sample_model();
+    let area = Rect::new(0, 0, 40, 10);
+    let layout = settings_layout(area, &model);
+    assert_eq!(
+        settings_hit_test(&layout, (layout.back_button.x, layout.back_button.y)),
+        Some(SettingsHitTarget::Back)
+    );
+    model.color_editor = Some(SettingsColorEditorViewModel {
+        title: "Color".into(),
+        value: "#123456".into(),
+        error: None,
+    });
+    let overlay = settings_layout(area, &model);
+    let apply = overlay.overlay_apply.unwrap();
+    let cancel = overlay.overlay_cancel.unwrap();
+    assert_eq!(
+        settings_hit_test(&overlay, (apply.x, apply.y)),
+        Some(SettingsHitTarget::OverlayApply)
+    );
+    assert_eq!(
+        settings_hit_test(&overlay, (cancel.x, cancel.y)),
+        Some(SettingsHitTarget::OverlayCancel)
+    );
+    assert_ne!(
+        settings_hit_test(&overlay, (layout.back_button.x, layout.back_button.y)),
+        Some(SettingsHitTarget::Back)
+    );
+}
+
+#[test]
 fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
     let model = sample_model();
     for (width, height) in [(80, 24), (120, 32)] {
@@ -767,6 +798,54 @@ fn unavailable_settings_use_localized_reasons_and_theme_without_permission_lock(
             }
         }
     }
+}
+
+#[test]
+fn compact_settings_keep_the_complete_unavailable_reason_in_the_scrollable_detail() {
+    let reason = "This feature is not supported on this platform yet.";
+    let mut model = sample_model();
+    model.appearance_preview = None;
+    model.selected_field = SettingsField::SoundOutputVolume;
+    model.cards = vec![SettingsCardViewModel::new(
+        "Sound",
+        vec![
+            SettingsItemViewModel::new(
+                SettingsField::SoundOutputVolume,
+                "Volume",
+                "Unavailable",
+                "Output volume",
+                SettingsControlKind::Stepper,
+            )
+            .unavailable(reason),
+        ],
+    )];
+    let area = Rect::new(0, 0, 30, 10);
+    let layout = settings_layout(area, &model);
+    assert!(layout.scrollbar.is_some());
+    model.scroll_offset = layout.max_scroll_offset;
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| {
+            let layout = settings_layout(area, &model);
+            let theme = TundraTheme::default_dark();
+            let context =
+                ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+            ui::render_settings_content(frame, &layout, &model, &context);
+        })
+        .unwrap();
+    let output = terminal_output(&terminal);
+    let detail = settings_layout(area, &model).detail;
+    let rendered_reason = (detail.y..detail.bottom())
+        .flat_map(|y| (detail.x..detail.right()).map(move |x| (x, y)))
+        .map(|point| terminal.backend().buffer()[point].symbol())
+        .collect::<String>();
+    assert!(
+        rendered_reason
+            .replace(' ', "")
+            .contains(&reason.replace(' ', "")),
+        "{output}"
+    );
+    assert!(output.contains("[Back]"));
 }
 
 #[test]

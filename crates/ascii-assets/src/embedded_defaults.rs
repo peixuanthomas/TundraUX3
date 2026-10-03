@@ -45,6 +45,14 @@ pub(crate) const EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
         "launcher_icons/command_line.png"
     ),
     embedded_default_theme_file!("launcher_icons/editor.png", "launcher_icons/editor.png"),
+    embedded_default_theme_file!("launcher_icons/services.png", "launcher_icons/services.png"),
+    embedded_default_theme_file!(
+        "launcher_icons/processes.png",
+        "launcher_icons/processes.png"
+    ),
+    embedded_default_theme_file!("launcher_icons/packages.png", "launcher_icons/packages.png"),
+    embedded_default_theme_file!("launcher_icons/network.png", "launcher_icons/network.png"),
+    embedded_default_theme_file!("launcher_icons/disks.png", "launcher_icons/disks.png"),
     embedded_default_theme_file!("weathr/render/clock_font", "weathr/render/clock_font.toml"),
     embedded_default_theme_file!("weathr/animation/airplane", "weathr/animation/airplane.txt"),
     embedded_default_theme_file!("weathr/animation/cloud_0", "weathr/animation/cloud_0.txt"),

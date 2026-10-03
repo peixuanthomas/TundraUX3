@@ -18,6 +18,34 @@ use ui::{
 };
 
 #[test]
+fn narrow_user_actions_wrap_and_short_forms_expose_the_remaining_fields() {
+    let mut model = model_with_users(20);
+    let area = Rect::new(0, 0, 40, 12);
+    let layout = user_management_layout(area, &model);
+    assert!(layout.actions.iter().all(|action| !action.area.is_empty()
+        && action.area.right() <= area.right()
+        && action.area.bottom() <= area.bottom()));
+    assert!(
+        layout
+            .actions
+            .iter()
+            .any(|action| action.area.y > layout.actions_area.y)
+    );
+    assert!(layout.scrollbar.is_some());
+    model.form = Some(create_form(UserManagementField::Password));
+    let form = user_management_layout(Rect::new(0, 0, 30, 4), &model)
+        .form
+        .unwrap();
+    assert!(form.scrollbar.is_some());
+    assert!(
+        form.fields
+            .iter()
+            .any(|field| field.field == UserManagementField::Password)
+    );
+    assert!(!form.submit.is_empty() && !form.cancel.is_empty());
+}
+
+#[test]
 fn layout_switches_columns_at_72_cells_and_keeps_one_row_at_minimum_height() {
     let model = model_with_users(3);
     let account = user_management_layout(Rect::new(0, 0, 71, 6), &model);
@@ -45,17 +73,18 @@ fn layout_switches_columns_at_72_cells_and_keeps_one_row_at_minimum_height() {
 }
 
 #[test]
-fn selected_user_is_forced_into_the_visible_window() {
+fn manual_user_window_can_move_away_from_the_selected_account() {
     let mut model = model_with_users(12);
     model.selected_index = 10;
     model.user_window_start = 0;
 
     let layout = user_management_layout(Rect::new(4, 7, 80, 10), &model);
 
-    assert_eq!(layout.visible_capacity, 4);
-    assert_eq!(layout.visible_start, 7);
-    assert_eq!(layout.rows.first().map(|row| row.index), Some(7));
-    assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
+    assert_eq!(layout.visible_capacity, 3);
+    assert_eq!(layout.visible_start, 0);
+    assert_eq!(layout.rows.first().map(|row| row.index), Some(0));
+    assert_eq!(layout.rows.last().map(|row| row.index), Some(2));
+    assert!(layout.scrollbar.is_some());
 }
 
 #[test]

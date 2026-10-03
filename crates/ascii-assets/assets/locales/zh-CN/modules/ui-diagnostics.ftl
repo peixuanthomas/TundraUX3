@@ -87,3 +87,4 @@ ui-diagnostics-attention-failures = 系统需要关注 — { $warnings } 条警�
 ui-diagnostics-attention-warnings = 系统需要关注 — { $count } 条警告
 
 ui-diagnostics-unsupported-count = 系统状态正常 — { $count } 项能力不受支持
+ui-diagnostics-touch-back = Esc 返回

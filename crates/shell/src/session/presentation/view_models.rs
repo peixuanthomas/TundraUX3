@@ -1120,7 +1120,8 @@ impl ShellSession {
             self.user_home_entries(),
             self.selected_home_entry_index(),
             self.ascii_assets.clone(),
-        );
+        )
+        .with_viewport_offset(self.home_viewport_offset);
         let model = match self.home_mode {
             ShellHomeMode::Debug => model.with_debug_diagnostics(ui::DebugDiagnosticsViewModel {
                 tick_count: self.tick_count,
@@ -1294,6 +1295,7 @@ impl ShellSession {
             selected_incident: self.diagnostics_selected_incident,
             list_window_start: self.diagnostics_list_window_start,
             list_window_is_explicit: self.diagnostics_list_window_is_explicit,
+            detail_scroll: self.diagnostics_detail_scroll,
             scanning: self.diagnostics_scanning
                 || self
                     .diagnostics_task_runtime
@@ -1423,6 +1425,7 @@ impl ShellSession {
                 .map(i18n::LocalizedText::render_current),
         );
         model.system_users = self.identity_backend == identity::IdentityBackend::Linux;
+        model.scroll_offset = self.page_touch.login_scroll;
         if self.login_password_is_visible_at(now) {
             model.with_visible_password(self.login_password.clone())
         } else {
@@ -1432,7 +1435,7 @@ impl ShellSession {
 
     pub fn to_bootstrap_admin_view_model(&self) -> ui::BootstrapAdminViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
-        ui::BootstrapAdminViewModel::new(
+        let mut model = ui::BootstrapAdminViewModel::new(
             self.bootstrap_username.clone(),
             self.bootstrap_password.chars().count(),
             match self.focused_component {
@@ -1442,7 +1445,9 @@ impl ShellSession {
             self.error_message
                 .as_ref()
                 .map(i18n::LocalizedText::render_current),
-        )
+        );
+        model.scroll_offset = self.page_touch.bootstrap_scroll;
+        model
     }
 
     pub fn to_setup_view_model(&self) -> ui::SetupViewModel {
@@ -1465,6 +1470,7 @@ impl ShellSession {
             && custom_color == Some(self.setup_theme_color);
 
         ui::SetupViewModel {
+            scroll_offset: self.page_touch.setup_scroll,
             step: self.setup_step,
             languages: self.language_options(),
             timezones: app::setup_timezone_options()
@@ -1607,6 +1613,7 @@ impl ShellSession {
             self.ascii_assets.clone(),
         );
         model.is_trash = is_trash;
+        model.quick_location_viewport_offset = self.explorer_locations_scroll;
         model.address_editing = self.explorer_input_mode == ExplorerInputMode::Address;
         model.address_value = if model.address_editing {
             self.explorer_input.clone()

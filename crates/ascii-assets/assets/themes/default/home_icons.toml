@@ -80,28 +80,3 @@ lines = [
   '| == | ',
   '|____| ',
 ]
-
-[items.services]
-label = "Services"
-image = "home_icons/settings.png"
-lines = [' [===] ', ' o---o ', ' [===] ', ' o---o ']
-
-[items.processes]
-label = "Processes"
-image = "home_icons/system_status.png"
-lines = [' | | | ', ' | | | ', ' | |_| ', ' |_|   ']
-
-[items.packages]
-label = "Packages"
-image = "home_icons/launcher.png"
-lines = ['  ___  ', ' /___\ ', ' | + | ', ' |___| ']
-
-[items.network]
-label = "Network"
-image = "home_icons/default.png"
-lines = ['  [o]  ', '   |   ', ' --+-- ', ' o   o ']
-
-[items.disks]
-label = "Disks"
-image = "home_icons/explorer.png"
-lines = [' _____ ', '| (o) |', '|     |', '|___o_|']

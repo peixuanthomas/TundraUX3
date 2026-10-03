@@ -20,3 +20,33 @@ lines = [
   '|  __|',
   '|_/__|',
 ]
+
+[items."builtin.logs"]
+label = "Logs"
+image = "home_icons/logs.png"
+lines = [' ____  ', '| =  | ', '| == | ', '|____| ']
+
+[items."builtin.services"]
+label = "Services"
+image = "launcher_icons/services.png"
+lines = [' [===] ', ' o---o ', ' [===] ', ' o---o ']
+
+[items."builtin.processes"]
+label = "Processes"
+image = "launcher_icons/processes.png"
+lines = [' | | | ', ' | | | ', ' | |_| ', ' |_|   ']
+
+[items."builtin.packages"]
+label = "Packages"
+image = "launcher_icons/packages.png"
+lines = ['  ___  ', ' /___\ ', ' | + | ', ' |___| ']
+
+[items."builtin.network"]
+label = "Network"
+image = "launcher_icons/network.png"
+lines = ['  [o]  ', '   |   ', ' --+-- ', ' o   o ']
+
+[items."builtin.disks"]
+label = "Disks"
+image = "launcher_icons/disks.png"
+lines = [' _____ ', '| (o) |', '|     |', '|___o_|']

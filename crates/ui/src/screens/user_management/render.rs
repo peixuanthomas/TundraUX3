@@ -11,7 +11,7 @@ use super::model::{
     UserManagementFeedbackTone, UserManagementField, UserManagementFocus, UserManagementFormKind,
     UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };
-use crate::components::{Button, ComponentTone, DataTable, Surface, TextInput};
+use crate::components::{Button, ComponentTone, DataTable, Scrollbar, Surface, TextInput};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
 use crate::{RenderContext, TundraTheme};
@@ -40,12 +40,20 @@ pub fn render_user_management_content(
         HorizontalAlignment::Left,
     );
     render_user_management_table(frame, &layout, model, context);
+    if let Some(track) = layout.scrollbar {
+        Scrollbar::new(
+            model.users.len(),
+            layout.visible_capacity,
+            layout.visible_start,
+        )
+        .render_frame(frame, track, context);
+    }
     render_user_management_feedback(frame, &layout, model, theme);
     render_user_management_actions(frame, &layout, model, theme);
     render_clock_line(
         frame,
         layout.help,
-        i18n::tr!("ui-user-management-select-tab-actions-enter-activate-esc-back"),
+        i18n::tr!("ui-user-management-touch-help"),
         theme.muted_style(),
         HorizontalAlignment::Left,
     );
@@ -160,10 +168,7 @@ fn render_user_management_actions(
         let focused = model.focus == UserManagementFocus::Action(action.action);
         let mut button = Button::new(
             format!("user-management.action.{:?}", action.action),
-            fit_cell(
-                &action.button_label(),
-                usize::from(action_layout.area.width),
-            ),
+            fit_cell(&action.label, usize::from(action_layout.area.width)),
         );
         button.set_disabled(!action.enabled);
         button.set_focused(focused);
@@ -191,6 +196,14 @@ fn render_user_management_form(
             .bordered(true)
             .raised(true)
             .render_frame(frame, layout.dialog, context);
+    }
+    if let Some(track) = layout.scrollbar {
+        Scrollbar::new(
+            layout.field_count,
+            layout.field_capacity,
+            layout.field_window_start,
+        )
+        .render_frame(frame, track, context);
     }
 
     let prompt = match (layout.compact, form.kind) {

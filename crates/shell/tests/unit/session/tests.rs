@@ -3863,7 +3863,10 @@ fn fixed_launcher_items_include_editor_and_keep_command_line_admin_only() {
     set_test_auth_role(&mut admin, UserRole::Admin);
 
     let launcher = admin.to_launcher_view_model();
-    assert_eq!(launcher.items.len(), 2);
+    assert_eq!(
+        launcher.items.len(),
+        if cfg!(target_os = "linux") { 8 } else { 3 }
+    );
     assert_eq!(launcher.items[0].id, app::COMMAND_LINE_APPLICATION.id);
     assert_eq!(launcher.items[1].id, app::EDITOR_APPLICATION.id);
     assert!(launcher.items.iter().all(|item| item.is_builtin()));
@@ -3877,7 +3880,10 @@ fn fixed_launcher_items_include_editor_and_keep_command_line_admin_only() {
     let mut user = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut user, UserRole::User);
     let launcher = user.to_launcher_view_model();
-    assert_eq!(launcher.items.len(), 1);
+    assert_eq!(
+        launcher.items.len(),
+        if cfg!(target_os = "linux") { 7 } else { 2 }
+    );
     assert_eq!(launcher.items[0].id, app::EDITOR_APPLICATION.id);
 }
 
@@ -4403,15 +4409,16 @@ fn clock_create_arrows_are_clickable_once_and_fields_accept_replacement_digits()
 }
 
 #[test]
-fn compact_clock_routes_only_escape_and_does_not_open_hidden_controls() {
+fn compact_clock_keeps_visible_controls_and_keyboard_access() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (49, 11));
     state.screen_stack = vec![ShellScreen::Clock];
+    set_test_auth_role(&mut state, UserRole::User);
 
     assert_eq!(
         state.route_clock_key(&KeyInput::from_label("n")).1,
-        ShellCommand::CaptureOverlayInput
+        ShellCommand::ClockOpenCreate
     );
-    assert_eq!(state.focus_order(), vec![ShellComponent::CompactHome]);
+    assert_eq!(state.focus_order(), vec![ShellComponent::ClockNewButton]);
 
     state.clock_create_state = Some(ClockCreateState::default());
     assert_eq!(

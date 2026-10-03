@@ -124,7 +124,21 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
     let panel = main;
     let inner = inset_rect(panel, 1);
     let header = line_in_rect(inner, inner.y);
-    let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
+    let footer_height = match model.route {
+        SystemStatusRoute::Detail(detail) if detail.diagnostics_tab().is_some() => {
+            let mut diagnostics = model.diagnostics.clone();
+            diagnostics.tab = detail.diagnostics_tab().unwrap();
+            crate::diagnostics_toolbar_height(inner.width, &diagnostics)
+        }
+        _ => 1,
+    }
+    .min(inner.height.saturating_sub(2));
+    let footer = Rect::new(
+        inner.x,
+        inner.bottom().saturating_sub(footer_height),
+        inner.width,
+        footer_height,
+    );
     let content_panel = Rect::new(
         inner.x,
         header.bottom(),

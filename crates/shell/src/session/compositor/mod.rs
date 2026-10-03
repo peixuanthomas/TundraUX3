@@ -221,8 +221,8 @@ impl ScreenCompositor {
         }
         if visible_content {
             content.render_overlay(frame, &layout, context);
+            ui::render_shell_chrome(frame, &layout, &chrome, context);
         }
-        ui::render_shell_chrome(frame, &layout, &chrome, context);
         if prepared.notification.is_none()
             && prepared.chrome.status.error.is_none()
             && let (Some(toast), Some(area)) = (&self.toast, layout.status_message)

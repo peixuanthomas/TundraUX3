@@ -1,7 +1,7 @@
 use super::document::*;
 use super::source::*;
 use super::*;
-use crate::components::terminal_width;
+use crate::components::{Scrollbar, ScrollbarOrientation, terminal_width};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorMenuLayout {
@@ -1279,22 +1279,10 @@ pub(super) fn scrollbar_layout(
         1,
         base_canvas.height,
     );
-    let track_height = usize::from(track.height);
-    let thumb_height = max(1, track_height.saturating_mul(capacity) / total.max(1));
-    let max_start = total.saturating_sub(capacity);
-    let max_offset = track_height.saturating_sub(thumb_height);
-    let offset = max_offset
-        .saturating_mul(start)
-        .checked_div(max_start)
-        .unwrap_or_default();
+    let (offset, thumb_height) = Scrollbar::new(total, capacity, start).thumb_range(track);
     EditorScrollbarLayout {
         track,
-        thumb: Rect::new(
-            track.x,
-            track.y.saturating_add(to_u16(offset)),
-            1,
-            to_u16(thumb_height),
-        ),
+        thumb: Rect::new(track.x, track.y.saturating_add(offset), 1, thumb_height),
     }
 }
 
@@ -1308,22 +1296,12 @@ pub(super) fn horizontal_scrollbar_layout(
     // the caller. Keep that raw offset authoritative even if content metadata
     // is temporarily stale, while still keeping the thumb within its track.
     let total = content_total.max(start.saturating_add(capacity));
-    let track_width = usize::from(track.width);
-    let thumb_width = max(1, track_width.saturating_mul(capacity) / total.max(1));
-    let max_start = total.saturating_sub(capacity);
-    let max_offset = track_width.saturating_sub(thumb_width);
-    let offset = max_offset
-        .saturating_mul(start)
-        .checked_div(max_start)
-        .unwrap_or_default();
+    let (offset, thumb_width) = Scrollbar::new(total, capacity, start)
+        .orientation(ScrollbarOrientation::HorizontalBottom)
+        .thumb_range(track);
     EditorScrollbarLayout {
         track,
-        thumb: Rect::new(
-            track.x.saturating_add(to_u16(offset)),
-            track.y,
-            to_u16(thumb_width),
-            1,
-        ),
+        thumb: Rect::new(track.x.saturating_add(offset), track.y, thumb_width, 1),
     }
 }
 

@@ -136,7 +136,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn login_user_visible_row_count(&self) -> usize {
-        login_user_visible_row_count(self.terminal_size).max(1)
+        let model = self.to_login_view_model();
+        let terminal = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let main = match self.shell_layout_for(terminal) {
+            ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+        };
+        ui::login_user_list_visible_rows(ui::login_viewport(main, &model).content).max(1)
     }
 
     pub(in crate::session) fn select_login_user_delta(&mut self, delta: isize) {
@@ -288,10 +293,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn setup_timezone_visible_row_count(&self) -> usize {
-        setup_timezone_visible_row_count(self.terminal_size).max(1)
+        ui::setup_timezone_visible_rows(self.touch_setup_viewport().content).max(1)
     }
 
     pub(in crate::session) fn setup_continue(&mut self) {
+        self.page_touch.setup_scroll = 0;
         match self.setup_step {
             ui::SetupStep::Language => {
                 let code = self.selected_setup_language_value();
@@ -365,6 +371,7 @@ impl ShellSession {
             self.setup_focused_field = field;
             self.focused_component = component;
             self.error_message = None;
+            self.ensure_touch_auth_focus_visible();
             return;
         }
 
@@ -398,6 +405,7 @@ impl ShellSession {
         self.setup_focused_field = field;
         self.focused_component = component;
         self.error_message = None;
+        self.ensure_touch_auth_focus_visible();
     }
 
     pub(in crate::session) fn focus_setup_component(&mut self, component: ShellComponent) {
@@ -411,6 +419,7 @@ impl ShellSession {
 
         self.setup_focused_field = field;
         self.focused_component = component;
+        self.ensure_touch_auth_focus_visible();
     }
 
     pub(in crate::session) fn setup_active_key_component(&self) -> ShellComponent {
@@ -521,7 +530,8 @@ impl ShellSession {
 
         match target {
             ShellComponent::SetupAppearanceShape => {
-                if let Some(main) = setup_main_rect(self.terminal_size) {
+                {
+                    let main = self.touch_setup_viewport().content;
                     for (shape, area) in ui::setup_appearance_shape_option_areas(main) {
                         if rect_contains(area, coordinates) {
                             self.setup_border_shape = match shape {
@@ -536,7 +546,8 @@ impl ShellSession {
             }
             ShellComponent::SetupAppearanceThemeColor
             | ShellComponent::SetupAppearanceAccentColor => {
-                if let Some(main) = setup_main_rect(self.terminal_size) {
+                {
+                    let main = self.touch_setup_viewport().content;
                     let field = if target == ShellComponent::SetupAppearanceThemeColor {
                         ui::SetupField::AppearanceThemeColor
                     } else {
@@ -875,6 +886,7 @@ impl ShellSession {
             self.setup_focused_field = ui::SetupField::AdminPasswordConfirm;
             self.focused_component = ShellComponent::SetupAdminPasswordConfirm;
             self.error_message = Some(i18n::msg!("account-passwords-do-not-match").into());
+            self.ensure_touch_auth_focus_visible();
             self.notify_status(i18n::msg!("account-setup-incomplete"));
             return;
         }
@@ -904,6 +916,7 @@ impl ShellSession {
         match users.validate_bootstrap_admin(&username, &password, hint.as_deref()) {
             Ok(()) => {
                 self.setup_step = ui::SetupStep::Appearance;
+                self.page_touch.setup_scroll = 0;
                 self.setup_focused_field = ui::SetupField::AppearanceShape;
                 self.focused_component = ShellComponent::SetupAppearanceShape;
                 self.error_message = None;
@@ -1030,6 +1043,7 @@ impl ShellSession {
             Instant::now(),
         );
         self.setup_step = ui::SetupStep::Language;
+        self.page_touch.setup_scroll = 0;
         self.setup_focused_field = ui::SetupField::LanguageList;
         self.screen_stack = vec![ShellScreen::FirstRunSetup];
         self.focused_component = ShellComponent::SetupLanguage;

@@ -40,6 +40,7 @@ pub struct ClockCreateDialogLayout {
     pub error: Rect,
     pub create_alarm: Rect,
     pub create_countdown: Rect,
+    pub cancel: Rect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +55,10 @@ pub struct ClockPageLayout {
     /// Outer area of the alarms and countdowns block.
     pub panel: Rect,
     pub new_button: Rect,
+    pub manage_button: Rect,
+    pub back_button: Rect,
+    pub help: Rect,
+    pub scrollbar: Option<Rect>,
     pub alarms_heading: Rect,
     pub countdowns_heading: Rect,
     pub entry_rows: Vec<ClockEntryRowLayout>,
@@ -116,44 +121,109 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
             (clock, analog, digital, panel)
         }
         ClockPageMode::DigitalOnly => {
-            let panel_width = (main.width / 2)
-                .clamp(CLOCK_PANEL_MIN_WIDTH, CLOCK_PANEL_MAX_WIDTH)
-                .min(main.width.saturating_sub(17));
-            let clock_width = main
-                .width
-                .saturating_sub(panel_width)
-                .saturating_sub(CLOCK_COLUMN_GAP);
-            let clock = Rect::new(main.x, main.y, clock_width, main.height);
-            let panel = Rect::new(
-                main.x
-                    .saturating_add(clock_width)
-                    .saturating_add(CLOCK_COLUMN_GAP),
-                main.y,
-                panel_width,
-                main.height,
-            );
-            let digital = inset_rect(clock, 1);
-            (clock, None, digital, panel)
+            if main.width < 50 {
+                let clock = Rect::new(main.x, main.y, main.width, main.height.min(2));
+                let panel = Rect::new(
+                    main.x,
+                    clock.bottom(),
+                    main.width,
+                    main.height.saturating_sub(clock.height),
+                );
+                (clock, None, clock, panel)
+            } else {
+                let panel_width = (main.width / 2)
+                    .clamp(CLOCK_PANEL_MIN_WIDTH, CLOCK_PANEL_MAX_WIDTH)
+                    .min(main.width.saturating_sub(17));
+                let clock_width = main
+                    .width
+                    .saturating_sub(panel_width)
+                    .saturating_sub(CLOCK_COLUMN_GAP);
+                let clock = Rect::new(main.x, main.y, clock_width, main.height);
+                let panel = Rect::new(
+                    main.x
+                        .saturating_add(clock_width)
+                        .saturating_add(CLOCK_COLUMN_GAP),
+                    main.y,
+                    panel_width,
+                    main.height,
+                );
+                let digital = inset_rect(clock, 1);
+                (clock, None, digital, panel)
+            }
         }
     };
 
-    let panel_inner = inset_rect(panel, 1);
+    let mut panel_inner = inset_rect(panel, 1);
+    let initial_capacity = usize::from(panel_inner.height.saturating_sub(
+        if model.is_read_only() || panel_inner.height < 7 {
+            3
+        } else {
+            4
+        },
+    ));
+    let scrollbar = (model.alarms.len().saturating_add(model.countdowns.len()) > initial_capacity
+        && initial_capacity > 0
+        && panel_inner.width > 1
+        && panel_inner.height > 1)
+        .then(|| {
+            Rect::new(
+                panel_inner.right() - 1,
+                panel_inner.y + 1,
+                1,
+                panel_inner.height - 1,
+            )
+        });
+    panel_inner.width = panel_inner
+        .width
+        .saturating_sub(u16::from(scrollbar.is_some()));
     let new_button = if model.is_read_only() {
         Rect::new(panel_inner.x, panel_inner.y, 0, 0)
     } else {
-        line_in_rect(panel_inner, panel_inner.y)
+        Rect::new(panel_inner.x, panel_inner.y, panel_inner.width / 3, 1)
     };
     let condensed_panel = panel_inner.height < 7;
     let reserved_lines = if model.is_read_only() {
-        2
+        3
     } else if condensed_panel {
         3
     } else {
         4
     };
+    let manage_button = if model.is_read_only() {
+        Rect::default()
+    } else {
+        Rect::new(
+            new_button.right(),
+            new_button.y,
+            new_button.width,
+            new_button.height,
+        )
+    };
+    let back_button = if model.is_read_only() {
+        Rect::new(
+            panel_inner.right().saturating_sub(8),
+            panel_inner.y,
+            panel_inner.width.min(8),
+            u16::from(panel_inner.height > 0),
+        )
+    } else {
+        Rect::new(
+            manage_button.right(),
+            new_button.y,
+            panel_inner.width - new_button.width - manage_button.width,
+            new_button.height,
+        )
+    };
     let entry_capacity = usize::from(panel_inner.height.saturating_sub(reserved_lines));
+    let help = if !condensed_panel && !model.is_read_only() {
+        line_in_rect(panel_inner, panel_inner.y + 1)
+    } else {
+        Rect::default()
+    };
     let total_entries = model.alarms.len().saturating_add(model.countdowns.len());
-    let entry_window_start = model.entry_window_start.min(total_entries);
+    let entry_window_start = model
+        .entry_window_start
+        .min(total_entries.saturating_sub(entry_capacity));
     let visible = flattened_clock_entries(model)
         .into_iter()
         .skip(entry_window_start)
@@ -167,7 +237,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     let alarms_heading = line_in_rect(
         panel_inner,
         panel_inner.y.saturating_add(if model.is_read_only() {
-            0
+            1
         } else if condensed_panel {
             1
         } else {
@@ -215,6 +285,10 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         digital,
         panel,
         new_button,
+        manage_button,
+        back_button,
+        help,
+        scrollbar,
         alarms_heading,
         countdowns_heading,
         entry_rows,
@@ -277,15 +351,21 @@ fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
     } else {
         Rect::new(inner.x, button_y, 0, 0)
     };
-    let buttons_width = inner.width.saturating_sub(2);
-    let alarm_width = buttons_width / 2;
-    let countdown_width = buttons_width.saturating_sub(alarm_width);
+    let buttons_width = inner.width;
+    let alarm_width = buttons_width / 3;
+    let countdown_width = alarm_width;
     let create_alarm = Rect::new(inner.x, button_y, alarm_width, u16::from(inner.height > 0));
     let create_countdown = Rect::new(
-        inner.x.saturating_add(alarm_width).saturating_add(2),
+        inner.x.saturating_add(alarm_width),
         button_y,
         countdown_width,
         u16::from(inner.height > 0),
+    );
+    let cancel = Rect::new(
+        create_countdown.right(),
+        button_y,
+        buttons_width.saturating_sub(alarm_width + countdown_width),
+        create_alarm.height,
     );
 
     ClockCreateDialogLayout {
@@ -299,6 +379,7 @@ fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
         error,
         create_alarm,
         create_countdown,
+        cancel,
     }
 }
 

@@ -1,5 +1,91 @@
 use super::*;
 
+#[test]
+fn notification_back_waits_for_matching_release_and_cancels_on_drag() {
+    let mut session = session_with_long_notification();
+    let back = session
+        .hit_map
+        .regions()
+        .iter()
+        .find(|region| region.component == ShellComponent::BackButton)
+        .unwrap()
+        .area;
+    let point = (back.x, back.y);
+    session.button_regions.push(ui::components::ButtonRegion {
+        id: "shell.back".into(),
+        area: back,
+        disabled: false,
+    });
+    session.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(session.notification_has_active_modal());
+    session.apply_input(InputEvent::mouse_drag(PointerButton::Left, (0, 0)));
+    session.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(session.notification_has_active_modal());
+    session.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(session.notification_has_active_modal());
+    session.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(!session.notification_has_active_modal());
+}
+
+#[test]
+fn a_new_modal_cancels_dragging_on_the_page_below_it() {
+    let mut session = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
+    session.logs_state.scrollbar_grab = Some(0);
+    session.diagnostics_detail_drag = Some(0);
+    session.scrollbar_drag = Some(ScrollbarDragState::Home { grab_offset: 0 });
+    session.notify_modal(
+        "Notice",
+        "Drag ends here",
+        ui::NotificationTone::Info,
+        vec![],
+    );
+    assert!(session.logs_state.scrollbar_grab.is_none());
+    assert!(session.diagnostics_detail_drag.is_none());
+    assert!(session.scrollbar_drag.is_none());
+}
+
+#[test]
+fn notification_scrollbar_drags_to_end_without_activating_a_dialog_action() {
+    let mut session = session_with_long_notification();
+    let model = session.to_notification_view_model().unwrap();
+    let ui::NotificationLayout::Dialog(layout) =
+        ui::notification_layout(Rect::new(0, 0, 80, 24), &model)
+    else {
+        panic!("dialog");
+    };
+    let track = layout.scrollbar.unwrap();
+    // The renderer still retains page buttons behind the modal.
+    session.button_regions.push(ui::components::ButtonRegion {
+        id: "home.entry.0".into(),
+        area: track,
+        disabled: false,
+    });
+    session.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (track.x, track.y),
+    ));
+    session.apply_input(InputEvent::mouse_drag(
+        PointerButton::Left,
+        (track.x + 2, track.bottom() + 1),
+    ));
+    session.apply_input(InputEvent::mouse_up(
+        PointerButton::Left,
+        (track.x + 2, track.bottom() + 1),
+    ));
+    assert_eq!(
+        session.to_notification_view_model().unwrap().scroll_offset,
+        layout.max_scroll_offset
+    );
+    assert!(session.notification_has_active_modal());
+    assert!(session.notification_scrollbar_drag.is_none());
+    session.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (track.x, track.y),
+    ));
+    session.apply_input(InputEvent::FocusLost);
+    assert!(session.notification_scrollbar_drag.is_none());
+}
+
 fn session_with_long_notification() -> ShellSession {
     let mut session = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
     session.notify_modal(

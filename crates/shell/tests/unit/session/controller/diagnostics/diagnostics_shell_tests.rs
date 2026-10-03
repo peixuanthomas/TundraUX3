@@ -127,6 +127,105 @@ fn update_diagnostics_snapshot(
 }
 
 #[test]
+fn diagnostics_detail_drag_reaches_last_line_without_changing_selection() {
+    let mut state = state(UserRole::Admin);
+    update_diagnostics_snapshot(&mut state, |snapshot| {
+        snapshot.checks[0].detail = (0..80)
+            .map(|i| format!("Detail {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+    });
+    state.open_diagnostics();
+    let area = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
+    let ui::ShellLayout::Full { main, .. } = state.shell_layout_for(area) else {
+        panic!("full layout");
+    };
+    let layout = ui::system_status_layout(main, &state.to_system_status_view_model().unwrap());
+    let panel = layout.diagnostics_content.unwrap().detail_panel;
+    let (track, count, viewport) =
+        ui::diagnostics_detail_scroll_metrics(panel, &state.to_diagnostics_view_model());
+    assert!(count > viewport);
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (track.x, track.y),
+    ));
+    state.apply_input(InputEvent::mouse_drag(
+        PointerButton::Left,
+        (track.x + 2, track.bottom() + 2),
+    ));
+    state.apply_input(InputEvent::mouse_up(
+        PointerButton::Left,
+        (track.x + 2, track.bottom() + 2),
+    ));
+    assert_eq!(state.diagnostics_detail_scroll, count - viewport);
+    assert!(state.diagnostics_detail_drag.is_none());
+    assert_eq!(state.to_diagnostics_view_model().selected_check, 0);
+    state.select_diagnostics_index(0);
+    assert_eq!(state.diagnostics_detail_scroll, 0);
+}
+
+#[test]
+fn diagnostics_repair_toolbar_opens_preview_only_after_matching_release() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut state = state(UserRole::Admin);
+    state.open_diagnostics();
+    let theme = ui::TundraTheme::default_dark();
+    let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+    let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    context.buttons = Some(buttons.clone());
+    let area = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
+    let ui::ShellLayout::Full { main, .. } = state.shell_layout_for(area) else {
+        panic!("full layout");
+    };
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| {
+            ui::render_system_status_content(
+                frame,
+                main,
+                &state.to_system_status_view_model().unwrap(),
+                &context,
+            )
+        })
+        .unwrap();
+    state.button_regions = buttons.regions();
+    let region = state
+        .button_regions
+        .iter()
+        .find(|region| region.id.as_str() == "diagnostics.toolbar.102")
+        .unwrap();
+    let point = (region.area.x, region.area.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(state.diagnostics_repair_preview.is_empty());
+    state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (0, 0)));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(state.diagnostics_repair_preview.is_empty());
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.diagnostics_repair_preview.len(), 1);
+}
+
+#[test]
+fn background_diagnostics_button_cannot_become_a_modal_shortcut() {
+    let mut state = state(UserRole::Admin);
+    state.open_diagnostics();
+    state.button_regions.push(ui::components::ButtonRegion {
+        id: "diagnostics.toolbar.114".into(),
+        area: Rect::new(10, 25, 12, 1),
+        disabled: false,
+    });
+    state.notify_modal(
+        "Confirm",
+        "Choose an action",
+        ui::NotificationTone::Warning,
+        vec![ShellNotificationAction::new("respond", "Respond").with_shortcut(InputKey::Char('r'))],
+    );
+    let press = InputEvent::mouse_down(PointerButton::Left, (11, 25));
+    assert_eq!(state.normalize_shell_navigation_input(press.clone()), press);
+    assert!(state.notification_has_active_modal());
+}
+
+#[test]
 fn probed_graphics_protocol_controls_terminal_diagnostic_status() {
     let mut snapshot = terminal_snapshot(app::diagnostics::DiagnosticStatus::Pass);
     apply_terminal_graphics_check(

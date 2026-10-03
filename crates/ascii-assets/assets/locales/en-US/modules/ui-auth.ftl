@@ -102,3 +102,10 @@ ui-auth-custom-accent-color = Custom accent color
 ui-auth-timezone-item = { $name } ({ $id })
 
 ui-auth-timezone-description = { $name } - { $description }
+ui-auth-touch-sign-in = Sign in
+ui-auth-touch-exit = Exit
+ui-auth-touch-back = Back
+ui-auth-touch-continue = Next
+ui-auth-touch-apply = Apply
+ui-auth-touch-cancel = Cancel
+ui-auth-touch-create-admin = Create admin

@@ -10,6 +10,7 @@ pub enum ShellCommand {
     LogsPointer(MouseInput),
     ManagementKey(KeyInput),
     ManagementPointer(MouseInput),
+    TouchPagesPointer(MouseInput),
     ManagementPaste(String),
     Noop,
     Tick,

@@ -44,3 +44,4 @@ ui-user-management-role-picker = 角色：{ $role }  ◀/▶
 ui-user-management-summary = 已登录：{ $user }    { $count } 位用户
 
 ui-user-management-current-status = { $status } · 当前用户
+ui-user-management-touch-help = 点击账号后选择下方操作，拖动滚动条查看更多；也可用 Tab/Enter。

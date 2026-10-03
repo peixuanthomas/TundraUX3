@@ -20,6 +20,15 @@ pub(super) struct DragTracker {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ScrollbarDragState {
+    ExplorerLocations {
+        grab_offset: u16,
+    },
+    Home {
+        grab_offset: u16,
+    },
+    Launcher {
+        grab_offset: u16,
+    },
     Explorer {
         grab_offset: u16,
     },
@@ -593,6 +602,8 @@ pub struct UiSessionState {
     #[cfg(target_os = "linux")]
     pub(super) user_management_job: Option<UserManagementJob>,
     pub(super) selected_home_entry_index: usize,
+    pub(super) home_viewport_offset: usize,
+    pub(super) page_touch: PageTouchState,
     pub(super) settings_state: Option<SettingsState>,
     pub(super) system_settings_backend: app::system_settings::UnavailableSystemSettingsBackend,
     pub(super) settings_task_runtime: ShellSettingsTaskRuntime,
@@ -635,6 +646,7 @@ pub struct UiSessionState {
     pub(super) explorer_overlay_selection: usize,
     pub(super) explorer_conflict_apply_to_remaining: bool,
     pub(super) explorer_purpose: ExplorerPurpose,
+    pub(super) explorer_locations_scroll: Option<usize>,
     pub(super) explorer_task_runtime: Option<ShellExplorerTaskRuntime>,
     pub(super) editor_task_runtime: ShellEditorTaskRuntime,
     pub(super) editor_load_state: Option<EditorLoadState>,
@@ -687,6 +699,9 @@ pub struct UiSessionState {
     pub(super) keyboard_focus_visible: bool,
     pub(super) button_regions: Vec<ui::components::ButtonRegion>,
     pub(super) button_pointer_capture: Option<ButtonPointerCapture>,
+    pub(super) notification_scrollbar_drag: Option<(u64, u16)>,
+    pub(super) diagnostics_detail_scroll: usize,
+    pub(super) diagnostics_detail_drag: Option<u16>,
     pub(super) hovered_component: Option<ShellComponent>,
     pub(super) active_popup: Option<ShellPopup>,
     pub(super) frame_layout: Option<ui::ShellFrameLayout>,

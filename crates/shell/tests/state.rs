@@ -1038,7 +1038,7 @@ fn home_arrow_keys_update_selected_entry() {
     state.apply_input(InputEvent::from_key_label("End"));
     assert_eq!(
         state.selected_home_entry_index(),
-        if cfg!(target_os = "linux") { 9 } else { 4 }
+        state.to_home_view_model().entries().len().saturating_sub(1)
     );
 }
 
@@ -1198,9 +1198,11 @@ fn home_entry_coordinates(state: &ShellSession, index: usize) -> (u16, u16) {
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
         panic!("state tests use a full shell layout");
     };
-    let tile = ui::home_entry_tile_areas(main, state.to_home_view_model().entries().len())
-        .get(index)
-        .copied()
+    let tile = ui::home_layout(main, &state.to_home_view_model())
+        .items
+        .into_iter()
+        .find(|item| item.index == index)
+        .map(|item| item.area)
         .unwrap_or_else(|| panic!("missing home entry tile at index {index}"));
 
     (tile.x.saturating_add(1), tile.y.saturating_add(1))

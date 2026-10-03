@@ -191,6 +191,48 @@ fn home_entry_index_at_maps_coordinates_to_entry_tiles() {
 }
 
 #[test]
+fn short_login_reserves_space_at_the_stacked_layout_boundary() {
+    let model = LoginViewModel::new(Vec::new(), 0, 0, 0, LoginField::Password, None);
+    for width in 39..=44 {
+        let viewport = ui::login_viewport(Rect::new(0, 0, width, 10), &model);
+        let layout = ui::login_layout(viewport.content);
+        assert!(layout.password.height >= 3);
+        assert!(layout.password.bottom() <= layout.submit.y, "width {width}");
+        assert!(layout.submit.bottom() <= viewport.content.bottom());
+    }
+}
+
+#[test]
+fn home_scrolling_keeps_tail_entries_and_touch_controls_reachable() {
+    let entries = (0..30)
+        .map(|index| ShellEntry::new(format!("App {index}"), "Open this app"))
+        .collect();
+    let home =
+        HomeViewModel::user_with_selection("User", "Now", entries, 29).with_viewport_offset(25);
+    let main = Rect::new(3, 2, 32, 20);
+    let layout = ui::home_layout(main, &home);
+    assert!(layout.scrollbar.is_some());
+    assert!(layout.items.iter().any(|item| item.index == 29));
+    assert!(layout.controls.len() == 1);
+    assert_eq!(layout.controls[0].action, ui::HomeToolbarAction::Exit);
+    for item in &layout.items {
+        assert!(item.area.x >= main.x && item.area.right() <= main.right());
+        assert!(item.area.y >= main.y && item.area.bottom() <= main.bottom());
+        assert_eq!(
+            layout.entry_at((item.area.x, item.area.y)),
+            Some(item.index)
+        );
+    }
+    for control in &layout.controls {
+        assert!(control.area.right() <= main.right() && control.area.bottom() <= main.bottom());
+        assert_eq!(
+            layout.control_at((control.area.x, control.area.y)),
+            Some(control.action)
+        );
+    }
+}
+
+#[test]
 fn debug_status_returns_after_a_notification_clears() {
     let home = HomeViewModel::debug(DebugDiagnosticsViewModel {
         tick_count: 0,

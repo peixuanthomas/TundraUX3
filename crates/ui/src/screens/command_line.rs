@@ -187,31 +187,21 @@ pub fn command_line_scrollbar_layout(
         1,
         terminal_area.height,
     );
-    let track_height = usize::from(track.height);
     let visible_rows = usize::from(snapshot.rows.min(terminal_area.height)).max(1);
     let total_rows = snapshot.scrollback_rows.saturating_add(visible_rows);
-    let thumb_height = track_height
-        .saturating_mul(visible_rows)
-        .saturating_add(total_rows / 2)
-        .checked_div(total_rows)
-        .unwrap_or_default()
-        .clamp(1, track_height);
-    let thumb_travel = track_height.saturating_sub(thumb_height);
     let visible_start = snapshot
         .scrollback_rows
         .saturating_sub(snapshot.scrollback_offset.min(snapshot.scrollback_rows));
-    let thumb_start = thumb_travel
-        .saturating_mul(visible_start)
-        .saturating_add(snapshot.scrollback_rows / 2)
-        / snapshot.scrollback_rows;
+    let (thumb_start, thumb_height) =
+        Scrollbar::new(total_rows, visible_rows, visible_start).thumb_range(track);
 
     Some(CommandLineScrollbarLayout {
         track,
         thumb: Rect::new(
             track.x,
-            track.y.saturating_add(usize_to_u16(thumb_start)),
+            track.y.saturating_add(thumb_start),
             1,
-            usize_to_u16(thumb_height),
+            thumb_height,
         ),
     })
 }
@@ -445,10 +435,6 @@ fn visible_symbol(symbol: &str) -> &str {
     } else {
         symbol
     }
-}
-
-fn usize_to_u16(value: usize) -> u16 {
-    u16::try_from(value).unwrap_or(u16::MAX)
 }
 
 #[cfg(test)]

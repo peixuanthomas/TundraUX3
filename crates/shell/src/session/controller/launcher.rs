@@ -34,6 +34,7 @@ impl ShellSession {
         app::BUILT_IN_LAUNCHER_APPLICATIONS
             .iter()
             .copied()
+            .filter(|descriptor| descriptor.available_on_platform(cfg!(target_os = "linux")))
             .filter(|descriptor| !descriptor.admin_only || self.can_execute_command_line())
             .collect()
     }
@@ -108,6 +109,12 @@ impl ShellSession {
     pub(in crate::session) fn close_launcher(&mut self) {
         self.launcher_pending_confirmation = None;
         self.launcher_drag = None;
+        if matches!(
+            self.scrollbar_drag,
+            Some(ScrollbarDragState::Launcher { .. })
+        ) {
+            self.scrollbar_drag = None;
+        }
         if self.active_screen() == ShellScreen::Launcher {
             self.screen_stack.pop();
         }
@@ -147,10 +154,17 @@ impl ShellSession {
 
     pub(in crate::session) fn toggle_launcher_view(&mut self) {
         self.launcher_drag = None;
+        if matches!(
+            self.scrollbar_drag,
+            Some(ScrollbarDragState::Launcher { .. })
+        ) {
+            self.scrollbar_drag = None;
+        }
         self.launcher_view_mode = match self.launcher_view_mode {
             app::launcher::LauncherViewMode::LargeIcons => app::launcher::LauncherViewMode::Details,
             app::launcher::LauncherViewMode::Details => app::launcher::LauncherViewMode::LargeIcons,
         };
+        self.sync_launcher_viewport();
         let Some(key) = self.launcher_preference_key() else {
             return;
         };
@@ -207,6 +221,7 @@ impl ShellSession {
     pub(in crate::session) fn select_launcher_index(&mut self, index: usize) {
         let len = self.launcher_item_count();
         self.launcher_selected_index = index.min(len.saturating_sub(1));
+        self.sync_launcher_viewport();
     }
 
     pub(in crate::session) fn select_launcher_delta(&mut self, delta: isize) {
@@ -218,6 +233,7 @@ impl ShellSession {
             .launcher_selected_index
             .saturating_add_signed(delta)
             .min(len - 1);
+        self.sync_launcher_viewport();
     }
 
     pub(in crate::session) fn select_launcher_last(&mut self) {
@@ -400,6 +416,22 @@ impl ShellSession {
             match application.id {
                 id if id == app::COMMAND_LINE_APPLICATION.id => self.open_command_line(),
                 id if id == app::EDITOR_APPLICATION.id => self.open_editor(),
+                "builtin.logs" => self.open_logs(),
+                "builtin.services" => {
+                    self.open_management(platform::management::ManagementKind::Services)
+                }
+                "builtin.processes" => {
+                    self.open_management(platform::management::ManagementKind::Processes)
+                }
+                "builtin.packages" => {
+                    self.open_management(platform::management::ManagementKind::Packages)
+                }
+                "builtin.network" => {
+                    self.open_management(platform::management::ManagementKind::Network)
+                }
+                "builtin.disks" => {
+                    self.open_management(platform::management::ManagementKind::Disks)
+                }
                 _ => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-arg1-is-not-available-in-this-build",
                     arg1 = application.localized_name()
@@ -524,13 +556,126 @@ impl ShellSession {
                 }
             }
             Some(ui::LauncherHitTarget::Toolbar(action)) => match action {
+                ui::LauncherToolbarAction::Open => self.request_launcher_launch(platform),
                 ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
                 ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
                 ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
+                ui::LauncherToolbarAction::Back => self.close_launcher(),
             },
             Some(ui::LauncherHitTarget::Confirm) => self.confirm_launcher_action(platform),
             Some(ui::LauncherHitTarget::Cancel) => self.launcher_pending_confirmation = None,
             _ => {}
+        }
+    }
+
+    fn launcher_content_layout(&self) -> Option<ui::LauncherLayout> {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
+            return None;
+        };
+        Some(ui::launcher_layout(main, &self.to_launcher_view_model()))
+    }
+
+    fn sync_launcher_viewport(&mut self) {
+        if let Some(layout) = self.launcher_content_layout() {
+            self.launcher_viewport_offset = layout.visible_start;
+        }
+    }
+
+    pub(in crate::session) fn handle_launcher_pointer_scrollbar(
+        &mut self,
+        mouse: &MouseInput,
+    ) -> bool {
+        if self.active_screen() != ShellScreen::Launcher
+            || self.launcher_pending_confirmation.is_some()
+        {
+            if matches!(
+                self.scrollbar_drag,
+                Some(ScrollbarDragState::Launcher { .. })
+            ) {
+                self.scrollbar_drag = None;
+            }
+            return false;
+        }
+        match mouse.kind {
+            ui::MouseEventKind::Down(PointerButton::Left) => {
+                let Some(layout) = self.launcher_content_layout() else {
+                    return false;
+                };
+                let Some(track) = layout.scrollbar else {
+                    return false;
+                };
+                if !rect_contains(track, mouse.coordinates()) {
+                    return false;
+                }
+                let (start, height) = ui::components::Scrollbar::new(
+                    layout.scroll_content_len,
+                    layout.visible_capacity,
+                    layout.visible_start,
+                )
+                .thumb_range(track);
+                let thumb = Rect::new(track.x, track.y.saturating_add(start), track.width, height);
+                let grab_offset = if rect_contains(thumb, mouse.coordinates()) {
+                    mouse.coordinates().1.saturating_sub(thumb.y)
+                } else {
+                    height / 2
+                };
+                self.scrollbar_drag = Some(ScrollbarDragState::Launcher { grab_offset });
+                self.launcher_drag = None;
+                self.button_pointer_capture = None;
+                self.drag_tracker = None;
+                self.drag_launcher_scrollbar(mouse.coordinates(), grab_offset);
+                true
+            }
+            ui::MouseEventKind::Drag(PointerButton::Left)
+            | ui::MouseEventKind::Up(PointerButton::Left) => {
+                let Some(ScrollbarDragState::Launcher { grab_offset }) = self.scrollbar_drag else {
+                    return false;
+                };
+                self.drag_launcher_scrollbar(mouse.coordinates(), grab_offset);
+                if matches!(mouse.kind, ui::MouseEventKind::Up(_)) {
+                    self.scrollbar_drag = None;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn drag_launcher_scrollbar(&mut self, coordinates: CellPosition, grab_offset: u16) {
+        let Some(layout) = self.launcher_content_layout() else {
+            return;
+        };
+        let Some(track) = layout.scrollbar else {
+            self.scrollbar_drag = None;
+            return;
+        };
+        let (_, height) = ui::components::Scrollbar::new(
+            layout.scroll_content_len,
+            layout.visible_capacity,
+            layout.visible_start,
+        )
+        .thumb_range(track);
+        let requested = scrollbar_window_start(
+            coordinates.1,
+            grab_offset,
+            track.y,
+            track.height,
+            height,
+            layout.scroll_content_len,
+            layout.visible_capacity,
+        );
+        self.launcher_viewport_offset = requested / layout.columns * layout.columns;
+        let count = self.launcher_item_count();
+        if count > 0 {
+            let last = self
+                .launcher_viewport_offset
+                .saturating_add(layout.visible_capacity)
+                .saturating_sub(1)
+                .min(count - 1);
+            self.launcher_selected_index = self
+                .launcher_selected_index
+                .clamp(self.launcher_viewport_offset.min(last), last);
         }
     }
 

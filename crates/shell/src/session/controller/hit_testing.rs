@@ -60,12 +60,26 @@ pub(in crate::session) fn build_shell_hit_map(
                     ShellScreen::Editor => ShellComponent::Editor,
                     ShellScreen::Settings => ShellComponent::Settings,
                     ShellScreen::Management => ShellComponent::Management,
+                    ShellScreen::Logs => ShellComponent::Logs,
+                    ShellScreen::Login => ShellComponent::LoginUserList,
+                    ShellScreen::FirstRunSetup => ShellComponent::SetupLanguage,
+                    ShellScreen::BootstrapAdmin => ShellComponent::BootstrapUsername,
+                    ShellScreen::UserManagement => ShellComponent::UserManagement,
+                    ShellScreen::Clock => ShellComponent::Clock,
                     _ => ShellComponent::CompactHome,
                 },
                 area: compact,
                 layer: if matches!(
                     content_screen,
-                    ShellScreen::Editor | ShellScreen::Settings | ShellScreen::Management
+                    ShellScreen::Editor
+                        | ShellScreen::Settings
+                        | ShellScreen::Management
+                        | ShellScreen::Logs
+                        | ShellScreen::Login
+                        | ShellScreen::FirstRunSetup
+                        | ShellScreen::BootstrapAdmin
+                        | ShellScreen::UserManagement
+                        | ShellScreen::Clock
                 ) {
                     ShellHitLayer::AppContent
                 } else {
@@ -571,18 +585,6 @@ pub(in crate::session) fn setup_timezone_list_row_at(
 ) -> Option<usize> {
     let main = setup_main_rect(terminal_size)?;
     setup_row_at(ui::setup_timezone_list_area(main), coordinates)
-}
-
-pub(in crate::session) fn setup_timezone_visible_row_count(terminal_size: CellPosition) -> usize {
-    setup_main_rect(terminal_size)
-        .map(ui::setup_timezone_visible_rows)
-        .unwrap_or(0)
-}
-
-pub(in crate::session) fn login_user_visible_row_count(terminal_size: CellPosition) -> usize {
-    setup_main_rect(terminal_size)
-        .map(ui::login_user_list_visible_rows)
-        .unwrap_or(0)
 }
 
 pub(in crate::session) fn setup_main_rect(terminal_size: CellPosition) -> Option<Rect> {

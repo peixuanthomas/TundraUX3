@@ -20,6 +20,8 @@ mod settings_devices;
 mod settings_tasks;
 pub(super) mod system_status;
 mod time_sync;
+mod touch_pages;
+pub(super) use touch_pages::*;
 mod user_management;
 #[cfg(target_os = "linux")]
 mod user_management_tasks;

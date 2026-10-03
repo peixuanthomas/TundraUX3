@@ -35,6 +35,8 @@ pub(crate) const fn explorer_sort_direction_icon_key(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExplorerToolbarAction {
+    Open,
+    Menu,
     Back,
     Forward,
     Up,
@@ -52,7 +54,9 @@ pub enum ExplorerToolbarAction {
 }
 
 impl ExplorerToolbarAction {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 16] = [
+        Self::Open,
+        Self::Menu,
         Self::Back,
         Self::Forward,
         Self::Up,
@@ -69,7 +73,9 @@ impl ExplorerToolbarAction {
         Self::Options,
     ];
 
-    pub const REGULAR: [Self; 12] = [
+    pub const REGULAR: [Self; 14] = [
+        Self::Open,
+        Self::Menu,
         Self::Back,
         Self::Forward,
         Self::Up,
@@ -84,7 +90,8 @@ impl ExplorerToolbarAction {
         Self::Options,
     ];
 
-    pub const TRASH: [Self; 7] = [
+    pub const TRASH: [Self; 8] = [
+        Self::Menu,
         Self::Back,
         Self::Forward,
         Self::Refresh,
@@ -96,6 +103,8 @@ impl ExplorerToolbarAction {
 
     pub fn label(self) -> String {
         match self {
+            Self::Open => i18n::tr!("ui-explorer-open-selected"),
+            Self::Menu => i18n::tr!("ui-explorer-actions-menu"),
             Self::Back => i18n::tr!("ui-explorer-back"),
             Self::Forward => i18n::tr!("ui-explorer-forward"),
             Self::Up => i18n::tr!("ui-explorer-up"),
@@ -115,6 +124,8 @@ impl ExplorerToolbarAction {
 
     pub const fn icon_key(self) -> &'static str {
         match self {
+            Self::Open => "forward",
+            Self::Menu => "options",
             Self::Back => "back",
             Self::Forward => "forward",
             Self::Up => "up",
@@ -134,6 +145,8 @@ impl ExplorerToolbarAction {
 
     pub const fn shortcut_label(self) -> &'static str {
         match self {
+            Self::Open => "Enter",
+            Self::Menu => "Shift+F10",
             Self::Back => "Left",
             Self::Forward => "Right",
             Self::Up => "Backspace",
@@ -543,6 +556,7 @@ pub struct ExplorerViewModel {
     pub entry_presentations: Vec<ExplorerEntryPresentationViewModel>,
     pub toolbar: ExplorerToolbarViewModel,
     pub quick_locations: Vec<ExplorerQuickLocationViewModel>,
+    pub quick_location_viewport_offset: Option<usize>,
     pub breadcrumbs: Vec<ExplorerBreadcrumbViewModel>,
     pub sort_column: ExplorerSortColumn,
     pub sort_direction: ExplorerSortDirection,
@@ -609,6 +623,7 @@ impl ExplorerViewModel {
             entry_presentations: Vec::new(),
             toolbar: ExplorerToolbarViewModel::standard(false, false),
             quick_locations: Vec::new(),
+            quick_location_viewport_offset: None,
             breadcrumbs: Vec::new(),
             sort_column: ExplorerSortColumn::Name,
             sort_direction: ExplorerSortDirection::Ascending,

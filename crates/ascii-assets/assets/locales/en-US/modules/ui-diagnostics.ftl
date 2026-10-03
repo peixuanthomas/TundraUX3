@@ -99,3 +99,4 @@ ui-diagnostics-unsupported-count = { $count ->
         [one] System healthy — { $count } unsupported capability
        *[other] System healthy — { $count } unsupported capabilities
     }
+ui-diagnostics-touch-back = Esc Back

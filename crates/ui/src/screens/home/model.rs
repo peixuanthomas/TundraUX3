@@ -44,6 +44,7 @@ pub struct HomeViewModel {
     pub(crate) current_time: Option<String>,
     entries: Vec<ShellEntry>,
     selected_entry_index: usize,
+    viewport_offset: usize,
     logout_visible: bool,
     logout_selected: bool,
 }
@@ -56,6 +57,7 @@ impl PartialEq for HomeViewModel {
             && self.current_time == other.current_time
             && self.entries == other.entries
             && self.selected_entry_index == other.selected_entry_index
+            && self.viewport_offset == other.viewport_offset
             && self.logout_visible == other.logout_visible
             && self.logout_selected == other.logout_selected
     }
@@ -73,6 +75,7 @@ impl HomeViewModel {
             current_time: None,
             entries: Vec::new(),
             selected_entry_index: 0,
+            viewport_offset: 0,
             logout_visible: false,
             logout_selected: false,
         }
@@ -156,6 +159,7 @@ impl HomeViewModel {
             current_time: Some(current_time.into()),
             entries,
             selected_entry_index,
+            viewport_offset: 0,
             logout_visible: false,
             logout_selected: false,
         }
@@ -222,5 +226,14 @@ impl HomeViewModel {
 
     pub fn selected_entry_index(&self) -> usize {
         self.selected_entry_index
+    }
+
+    pub fn with_viewport_offset(mut self, offset: usize) -> Self {
+        self.viewport_offset = offset;
+        self
+    }
+
+    pub fn viewport_offset(&self) -> usize {
+        self.viewport_offset
     }
 }

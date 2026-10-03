@@ -1035,6 +1035,25 @@ fn login_mouse_click_selects_user_and_focuses_password() {
         Some("user2")
     );
 
+    state.apply_input(InputEvent::Resize {
+        width: 39,
+        height: 12,
+    });
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::LoginUserList);
+    let user_point = login_user_row_coordinates(&state, 1);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, user_point));
+    assert_eq!(state.focused_component(), ShellComponent::LoginPassword);
+    let page = ui::login_viewport(
+        ratatui::layout::Rect::new(0, 0, 39, 12),
+        &state.to_login_view_model(),
+    );
+    assert!(
+        page.project(ui::login_layout(page.content).password)
+            .is_some(),
+        "selecting an account must reveal the compact password field"
+    );
+
     type_text(&mut state, "userPass2123!");
     state.apply_input(InputEvent::from_key_label("Enter"));
 
@@ -1163,7 +1182,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
 }
 
 #[test]
-fn compact_user_management_captures_hidden_actions_and_only_escape_leaves() {
+fn compact_user_management_supports_touch_forms_and_its_own_back_action() {
     let fixture = FixtureRoot::new("user-management-compact");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -1176,21 +1195,66 @@ fn compact_user_management_captures_hidden_actions_and_only_escape_leaves() {
 
     state.apply_input(InputEvent::Resize {
         width: 49,
-        height: 40,
+        height: 12,
     });
-    for key in ["n", "e", "r", "d", "u", "c", "x", "Down", "End"] {
-        state.apply_input(InputEvent::from_key_label(key));
-    }
-    state.apply_input(InputEvent::mouse_down(PointerButton::Left, (10, 10)));
+    let layout = user_management_layout_for(&state);
+    let create = layout
+        .actions
+        .iter()
+        .find(|action| action.action == ui::UserManagementAction::NewUser)
+        .expect("compact create button");
+    assert!(create.enabled && !create.area.is_empty());
+    let create_point = rect_center(create.area);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, create_point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, create_point));
+    assert_eq!(
+        state.to_user_management_view_model().form.unwrap().kind,
+        ui::UserManagementFormKind::Create
+    );
 
-    let compact = state.to_user_management_view_model();
-    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
-    assert_eq!(compact.users, before.users);
-    assert_eq!(compact.selected_index, before.selected_index);
-    assert_eq!(compact.form, None);
+    let form = user_management_layout_for(&state)
+        .form
+        .expect("compact create form");
+    let display_name = form
+        .fields
+        .iter()
+        .find(|field| field.field == ui::UserManagementField::DisplayName)
+        .expect("visible compact text field");
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(display_name.area),
+    ));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .unwrap()
+            .focused_field,
+        ui::UserManagementField::DisplayName
+    );
+    let cancel_point = rect_center(form.cancel);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, cancel_point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, cancel_point));
+    assert!(state.to_user_management_view_model().form.is_none());
+    assert_eq!(state.to_user_management_view_model().users, before.users);
     assert_eq!(state.to_notification_view_model(), None);
 
+    // Keyboard cancellation still closes the form before leaving the page.
+    state.apply_input(InputEvent::from_key_label("n"));
+    assert!(state.to_user_management_view_model().form.is_some());
     state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+    assert!(state.to_user_management_view_model().form.is_none());
+    let layout = user_management_layout_for(&state);
+    let back = layout
+        .actions
+        .iter()
+        .find(|action| action.action == ui::UserManagementAction::Back)
+        .expect("compact back button");
+    assert!(!back.area.is_empty());
+    let back_point = rect_center(back.area);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, back_point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, back_point));
     assert_eq!(state.active_screen(), ShellScreen::Home);
 }
 
@@ -1777,8 +1841,8 @@ fn create_managed_user(state: &mut ShellSession, username: &str, admin: bool) {
 
 fn user_management_layout_for(state: &ShellSession) -> ui::UserManagementLayout {
     let area = ratatui::layout::Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
-    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
-        panic!("user management layout requires a full shell");
+    let main = match ui::compute_shell_layout(area) {
+        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
     };
     ui::user_management_layout(main, &state.to_user_management_view_model())
 }
@@ -1901,22 +1965,27 @@ fn setup_hit_map_row_coordinates(
 }
 
 fn login_user_row_coordinates(state: &ShellSession, row: u16) -> (u16, u16) {
-    let region = state
-        .hit_map()
-        .regions()
-        .iter()
-        .find(|region| region.component == ShellComponent::LoginUserList)
-        .expect("missing login user list hit region");
-    let content_height = region.area.height.saturating_sub(2);
+    let area = ratatui::layout::Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
+    let main = match ui::compute_shell_layout(area) {
+        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+    };
+    let page = ui::login_viewport(main, &state.to_login_view_model());
+    let list = ui::login_layout(page.content).user_list;
+    let content_height = list.height.saturating_sub(2);
     assert!(
         row < content_height,
         "row {row} outside login user list content height {content_height}"
     );
 
-    (
-        region.area.x.saturating_add(1),
-        region.area.y.saturating_add(1).saturating_add(row),
-    )
+    let row = page
+        .project(ratatui::layout::Rect::new(
+            list.x + 1,
+            list.y + 1 + row,
+            list.width.saturating_sub(2),
+            1,
+        ))
+        .expect("login row must be visible");
+    (row.x, row.y)
 }
 
 fn complete_first_run_setup(

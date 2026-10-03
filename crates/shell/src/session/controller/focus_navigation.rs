@@ -183,10 +183,6 @@ impl ShellSession {
             };
         }
         if self.active_screen() == ShellScreen::Login {
-            let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-            if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
-                return vec![ShellComponent::CompactHome];
-            }
             return vec![
                 ShellComponent::LoginUserList,
                 ShellComponent::LoginPassword,
@@ -230,10 +226,6 @@ impl ShellSession {
             return vec![ShellComponent::Diagnostics];
         }
         if self.active_screen() == ShellScreen::Clock {
-            let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-            if matches!(self.shell_layout_for(area), ui::ShellLayout::Compact(_)) {
-                return vec![ShellComponent::CompactHome];
-            }
             if self.overlay_interaction_ready && self.clock_create_state.is_some() {
                 return vec![
                     ShellComponent::ClockCreateInput,

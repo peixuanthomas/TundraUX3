@@ -704,10 +704,29 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     assert_eq!(state.focused_component(), ShellComponent::Launcher);
-    assert_eq!(state.to_launcher_view_model().items.len(), 4);
+    state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
 
     let launcher = state.to_launcher_view_model();
-    assert_eq!(launcher.items.len(), 4);
+    let built_in_count = launcher
+        .items
+        .iter()
+        .filter(|item| item.is_builtin())
+        .count();
+    assert_eq!(launcher.items.len(), built_in_count + 2);
+    let executable_id = launcher
+        .items
+        .iter()
+        .find(|item| item.name == "program.exe")
+        .unwrap()
+        .id
+        .clone();
+    let script_id = launcher
+        .items
+        .iter()
+        .find(|item| item.name == "script.cmd")
+        .unwrap()
+        .id
+        .clone();
     assert_eq!(launcher.items[0].id, app::COMMAND_LINE_APPLICATION.id);
     assert!(launcher.items[0].is_builtin());
     assert_eq!(launcher.items[1].id, app::EDITOR_APPLICATION.id);
@@ -725,9 +744,11 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .map(|button| button.action)
             .collect::<Vec<_>>(),
         vec![
+            ui::LauncherToolbarAction::Open,
             ui::LauncherToolbarAction::Remove,
             ui::LauncherToolbarAction::Refresh,
             ui::LauncherToolbarAction::ToggleView,
+            ui::LauncherToolbarAction::Back,
         ]
     );
 
@@ -735,9 +756,22 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
         panic!("Launcher drag test requires the full shell layout");
     };
+    let area_for_id = |layout: &ui::LauncherLayout, model: &ui::LauncherViewModel, id: &str| {
+        let index = model
+            .items
+            .iter()
+            .position(|item| item.id == id)
+            .expect("application ID");
+        layout
+            .items
+            .iter()
+            .find(|item| item.index == index)
+            .expect("selected applications stay visible")
+            .area
+    };
     let layout = ui::launcher_layout(main, &launcher);
-    let source = layout.items[2].area;
-    let destination = layout.items[3].area;
+    let source = area_for_id(&layout, &launcher, &executable_id);
+    let destination = area_for_id(&layout, &launcher, &script_id);
     let source_point = (
         source.x.saturating_add(source.width / 2),
         source.y.saturating_add(1),
@@ -759,7 +793,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
         dragging
             .drop_target
             .map(ui::LauncherDropTarget::insertion_index),
-        Some(4)
+        Some(built_in_count + 2)
     );
     assert!(
         ui::launcher_layout(main, &dragging)
@@ -775,15 +809,16 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .to_launcher_view_model()
             .items
             .iter()
+            .filter(|item| !item.is_builtin())
             .map(|item| item.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["Command Line", "Editor", "script.cmd", "program.exe"]
+        vec!["script.cmd", "program.exe"]
     );
 
     let launcher = state.to_launcher_view_model();
     let layout = ui::launcher_layout(main, &launcher);
-    let source = layout.items[3].area;
-    let destination = layout.items[2].area;
+    let source = area_for_id(&layout, &launcher, &executable_id);
+    let destination = area_for_id(&layout, &launcher, &script_id);
     let source_point = (
         source.x.saturating_add(source.width / 2),
         source.y.saturating_add(1),
@@ -806,9 +841,10 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
         launcher
             .items
             .iter()
+            .filter(|item| !item.is_builtin())
             .map(|item| item.name.as_str())
             .collect::<Vec<_>>(),
-        vec!["Command Line", "Editor", "program.exe", "script.cmd"]
+        vec!["program.exe", "script.cmd"]
     );
     assert!(
         !platform.calls().iter().any(|call| {
@@ -818,7 +854,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     );
 
     let layout = ui::launcher_layout(main, &launcher);
-    let executable_area = layout.items[2].area;
+    let executable_area = area_for_id(&layout, &launcher, &executable_id);
     let executable_point = (executable_area.x + 1, executable_area.y + 1);
     state.apply_input_with_platform(
         InputEvent::mouse_down(PointerButton::Left, executable_point),

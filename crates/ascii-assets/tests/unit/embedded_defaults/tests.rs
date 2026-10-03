@@ -17,8 +17,20 @@ fn embedded_default_theme_covers_required_ascii_assets_and_images() {
     assert_eq!(embedded.len(), EMBEDDED_DEFAULT_THEME_FILES.len());
     assert!(required.is_subset(&embedded));
     assert!(embedded.contains(&("launcher_icons/editor.png", "launcher_icons/editor.png")));
+    for path in [
+        "launcher_icons/services.png",
+        "launcher_icons/processes.png",
+        "launcher_icons/packages.png",
+        "launcher_icons/network.png",
+        "launcher_icons/disks.png",
+    ] {
+        assert!(
+            embedded.contains(&(path, path)),
+            "missing embedded image {path}"
+        );
+    }
     assert!(!embedded.iter().any(|(key, _)| key.contains("diagnostics")));
-    assert_eq!(embedded.len(), required.len() + 10);
+    assert_eq!(embedded.len(), required.len() + 15);
     assert_eq!(
         EMBEDDED_DEFAULT_THEME_FILES
             .iter()
@@ -26,7 +38,7 @@ fn embedded_default_theme_covers_required_ascii_assets_and_images() {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("png")))
             .count(),
-        10
+        15
     );
     assert!(
         EMBEDDED_DEFAULT_THEME_FILES

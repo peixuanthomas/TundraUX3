@@ -110,12 +110,39 @@ pub fn restore_default_theme_file(
         .join("themes")
         .join(DEFAULT_THEME_ID)
         .join(file.relative_path);
-    // A valid pre-Logs catalog needs only its new entry. Preserve user labels,
+    // A valid older catalog needs only its missing entries. Preserve user labels,
     // artwork, comments and extra items rather than resetting the entire catalog.
-    let upgraded = if file_key == "home_icons" {
-        upgraded_home_icons(&path, file.contents)
-    } else {
-        None
+    let upgraded = match file_key {
+        "home_icons" => upgraded_icon_catalog(
+            &path,
+            file_key,
+            file.contents,
+            &["logs"],
+            &[
+                "explorer",
+                "launcher",
+                "settings",
+                "system_status",
+                "user_management",
+                "user_profile",
+                "default",
+            ],
+        ),
+        "launcher_icons" => upgraded_icon_catalog(
+            &path,
+            file_key,
+            file.contents,
+            &[
+                "builtin.logs",
+                "builtin.services",
+                "builtin.processes",
+                "builtin.packages",
+                "builtin.network",
+                "builtin.disks",
+            ],
+            &["builtin.command-line", "builtin.editor"],
+        ),
+        _ => None,
     };
     let contents = upgraded
         .as_deref()
@@ -190,45 +217,36 @@ impl Drop for StagedAsset {
     }
 }
 
-fn upgraded_home_icons(path: &Path, embedded: &[u8]) -> Option<String> {
+fn upgraded_icon_catalog(
+    path: &Path,
+    key: &str,
+    embedded: &[u8],
+    added: &[&str],
+    required: &[&str],
+) -> Option<String> {
     let existing = fs::read_to_string(path).ok()?;
     let parsed: toml::Value = toml::from_str(&existing).ok()?;
     let items = parsed.get("items")?.as_table()?;
-    let added = [
-        "logs",
-        "services",
-        "processes",
-        "packages",
-        "network",
-        "disks",
-    ];
     if added.iter().all(|key| items.contains_key(*key))
-        || [
-            "explorer",
-            "launcher",
-            "settings",
-            "system_status",
-            "user_management",
-            "user_profile",
-            "default",
-        ]
-        .iter()
-        .any(|key| !items.contains_key(*key))
+        || required.iter().any(|key| !items.contains_key(*key))
     {
         return None;
     }
     // Only upgrade catalogs whose existing artwork parses correctly.
     let root = path.parent()?.parent()?.parent()?;
     let resolver = crate::AssetResolver::from_unchecked_root(root.to_path_buf());
-    crate::artwork::load_art_set(&resolver, DEFAULT_THEME_ID, "home_icons", "home_icons.toml")
-        .ok()?;
+    crate::artwork::load_art_set(&resolver, DEFAULT_THEME_ID, key, &format!("{key}.toml")).ok()?;
     let defaults = std::str::from_utf8(embedded).ok()?;
     let defaults: toml::Value = toml::from_str(defaults).ok()?;
     let mut updated = existing;
-    for key in added.into_iter().filter(|key| !items.contains_key(*key)) {
+    for key in added
+        .iter()
+        .copied()
+        .filter(|key| !items.contains_key(*key))
+    {
         let entry = defaults.get("items")?.get(key)?;
         updated.push_str(&format!(
-            "\n[items.{key}]\n{}",
+            "\n[items.\"{key}\"]\n{}",
             toml::to_string(entry).ok()?
         ));
     }

@@ -1,5 +1,5 @@
-use super::layout::{category_tabs, controls, section_tabs};
-use super::{LogsCategory, LogsSection, LogsViewModel, logs_layout};
+use super::layout::controls;
+use super::{LogsCategory, LogsHitTarget, LogsSection, LogsViewModel, logs_layout};
 use crate::components::{Button, Surface};
 use crate::screens::diagnostics::render_diagnostics_content_titled;
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
 use ratatui::{
     Frame,
     layout::Rect,
-    widgets::{Paragraph, Wrap},
+    widgets::{Clear, Paragraph, Wrap},
 };
 
 pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
@@ -30,6 +30,140 @@ pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
         ));
     }
     None
+}
+
+pub(super) fn control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> bool {
+    if target == LogsHitTarget::Back {
+        return true;
+    }
+    if unavailable_reason(model).is_some() || model.loading {
+        return false;
+    }
+    match target {
+        LogsHitTarget::Open => content_model(model).item_count() > 0,
+        LogsHitTarget::RelatedIncident => {
+            model.category == LogsCategory::Ux
+                && model.section == LogsSection::Events
+                && model
+                    .events
+                    .get(model.selected_event)
+                    .is_some_and(|event| event.incident_id.is_some())
+        }
+        LogsHitTarget::RelatedEvents => {
+            model.category == LogsCategory::Ux
+                && model.section == LogsSection::Incidents
+                && !model.diagnostics.incidents.is_empty()
+        }
+        _ => true,
+    }
+}
+
+pub fn logs_control_id(model: &LogsViewModel, target: LogsHitTarget) -> String {
+    let selection = if model.category == LogsCategory::Linux || model.section == LogsSection::Events
+    {
+        model
+            .events
+            .get(model.selected_event)
+            .map(|event| event.id.as_str())
+    } else {
+        match model.section {
+            LogsSection::Files => model
+                .diagnostics
+                .selected_log()
+                .map(|log| log.path.as_str()),
+            LogsSection::Incidents => model
+                .diagnostics
+                .selected_incident()
+                .map(|incident| incident.id.as_str()),
+            LogsSection::Events => None,
+        }
+    };
+    format!(
+        "logs.{target:?}.{:?}.{:?}.{selection:?}",
+        model.category, model.section
+    )
+}
+
+pub fn logs_detail_text(model: &LogsViewModel) -> String {
+    if let Some(reason) = unavailable_reason(model) {
+        return reason;
+    }
+    if model.category == LogsCategory::Linux || model.section == LogsSection::Events {
+        return model
+            .events
+            .get(model.selected_event)
+            .map(|event| {
+                format!(
+                    "{} {}\n{}\n{}\n{}",
+                    event.timestamp,
+                    event.operation,
+                    event.module,
+                    event.summary,
+                    i18n::tr!(
+                        "ui-logs-event-detail",
+                        time = event.timestamp.clone(),
+                        level = event.level.clone(),
+                        event = event.id.clone(),
+                        operation = event.operation.clone(),
+                        detail = event.detail.clone(),
+                        incident = event
+                            .incident_id
+                            .as_ref()
+                            .map(|id| i18n::tr!("ui-logs-incident-link", id = id.as_str()))
+                            .unwrap_or_default()
+                    )
+                )
+            })
+            .unwrap_or_else(|| {
+                i18n::tr!(
+                    "ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers"
+                )
+            });
+    }
+    if model.section == LogsSection::Files {
+        return model
+            .diagnostics
+            .selected_log()
+            .map(|log| {
+                format!(
+                    "{}\n{}\n{}\n{}",
+                    log.relative_path,
+                    i18n::tr!(
+                        "ui-diagnostics-modified",
+                        modified = log.modified_at.clone()
+                    ),
+                    i18n::tr!("ui-diagnostics-size-bytes", size = log.size_bytes),
+                    i18n::tr!("ui-diagnostics-path", path = log.path.clone())
+                )
+            })
+            .unwrap_or_else(|| i18n::tr!("ui-diagnostics-no-log-selected"));
+    }
+    model
+        .diagnostics
+        .selected_incident()
+        .map(|incident| {
+            if incident.restricted {
+                format!(
+                    "{}\n{}\n{}",
+                    incident.app,
+                    incident.occurred_at,
+                    i18n::tr!(
+                        "ui-diagnostics-details-and-report-path-are-restricted-to-administrators"
+                    )
+                )
+            } else {
+                format!(
+                    "{}\n{}\n{}\n{}\n{}\n{}",
+                    incident.id,
+                    incident.app,
+                    incident.occurred_at,
+                    incident.recovery,
+                    incident.summary,
+                    incident.detail
+                )
+            }
+        })
+        .unwrap_or_else(|| i18n::tr!("ui-diagnostics-no-incident-selected"))
 }
 
 /// Adapts event data to the existing list/details presentation, without I/O or new widgets.
@@ -101,27 +235,33 @@ pub fn render_logs_content(
         .titled(i18n::tr!("ui-logs-logs"))
         .bordered(false)
         .render_frame(frame, layout.panel, context);
-    let mut categories = category_tabs();
-    categories.set_selected(Some(usize::from(model.category == LogsCategory::Linux)));
-    categories.render_borderless_frame(frame, layout.category_tabs_area, &theme);
+    for tab in &layout.category_tabs {
+        let label = if tab.category == LogsCategory::Ux {
+            i18n::tr!("ui-logs-ux-log")
+        } else {
+            i18n::tr!("ui-logs-linux-log")
+        };
+        let mut button = Button::new(format!("logs.category.{:?}", tab.category), label);
+        button.state.selected = tab.category == model.category;
+        button.render_borderless_frame(frame, tab.area, &theme);
+    }
     if model.category == LogsCategory::Ux {
-        let mut sections = section_tabs();
-        sections.set_selected(Some(match model.section {
-            LogsSection::Events => 0,
-            LogsSection::Files => 1,
-            LogsSection::Incidents => 2,
-        }));
-        sections.render_borderless_frame(frame, layout.section_tabs_area, &theme);
+        for tab in &layout.section_tabs {
+            let label = match tab.section {
+                LogsSection::Events => i18n::tr!("ui-logs-events"),
+                LogsSection::Files => i18n::tr!("ui-logs-files"),
+                LogsSection::Incidents => i18n::tr!("ui-logs-incidents"),
+            };
+            let mut button = Button::new(format!("logs.section.{:?}", tab.section), label);
+            button.state.selected = tab.section == model.section;
+            button.render_borderless_frame(frame, tab.area, &theme);
+        }
     }
     let unavailable = unavailable_reason(model);
     let content = content_model(model);
     for (control, (target, label)) in layout.controls.iter().zip(controls()) {
-        let mut button = Button::new(format!("logs.{target:?}"), label);
-        button.set_disabled(
-            unavailable.is_some()
-                || model.loading
-                || (target == super::LogsHitTarget::Open && content.item_count() == 0),
-        );
+        let mut button = Button::new(logs_control_id(model, target), label);
+        button.set_disabled(!control_enabled(model, target));
         button.render_borderless_frame(frame, control.area, &theme);
     }
     frame.render_widget(
@@ -176,6 +316,29 @@ pub fn render_logs_content(
                             i18n::tr!("ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers"),
                         )),
                 );
+        frame.render_widget(Clear, layout.detail_text);
+        Surface::new().render_frame(frame, layout.detail_text, context);
+        let lines =
+            crate::management_wrapped_lines(&logs_detail_text(model), layout.detail_text.width);
+        let start = model.detail_scroll.min(
+            lines
+                .len()
+                .saturating_sub(usize::from(layout.detail_text.height)),
+        );
+        frame.render_widget(
+            Paragraph::new(
+                lines
+                    .into_iter()
+                    .skip(start)
+                    .map(ratatui::text::Line::from)
+                    .collect::<Vec<_>>(),
+            )
+            .style(theme.body_style()),
+            layout.detail_text,
+        );
+        if let Some(bar) = layout.detail_scrollbar {
+            bar.render(frame, context);
+        }
     }
     frame.render_widget(
         Paragraph::new(model.feedback.as_deref().unwrap_or(&i18n::tr!(

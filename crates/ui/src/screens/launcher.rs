@@ -11,6 +11,7 @@ use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
 
 const GRID_TILE_MIN_WIDTH: u16 = 20;
 const GRID_TILE_HEIGHT: u16 = 9;
+const TOOLBAR_BUTTON_MIN_WIDTH: u16 = 12;
 fn empty_message() -> String {
     i18n::tr!(
         "ui-launcher-no-launcher-items-go-to-explorer-select-a-file-then-right-click-and-choose-add-to-launcher"
@@ -108,25 +109,41 @@ impl LauncherItemViewModel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherToolbarAction {
+    Open,
     Remove,
     Refresh,
     ToggleView,
+    Back,
 }
 
 impl LauncherToolbarAction {
     pub fn label(self) -> String {
         match self {
+            Self::Open => i18n::tr!("ui-launcher-open"),
             Self::Remove => i18n::tr!("ui-launcher-remove"),
             Self::Refresh => i18n::tr!("ui-launcher-refresh"),
             Self::ToggleView => i18n::tr!("ui-launcher-view"),
+            Self::Back => i18n::tr!("ui-launcher-back"),
         }
     }
 
     pub const fn shortcut(self) -> &'static str {
         match self {
+            Self::Open => "Enter",
             Self::Remove => "Del",
             Self::Refresh => "R",
             Self::ToggleView => "V",
+            Self::Back => "Esc",
+        }
+    }
+
+    pub fn description(self) -> String {
+        match self {
+            Self::Open => i18n::tr!("ui-launcher-open-description"),
+            Self::Remove => i18n::tr!("ui-launcher-remove-description"),
+            Self::Refresh => i18n::tr!("ui-launcher-refresh-description"),
+            Self::ToggleView => i18n::tr!("ui-launcher-view-description"),
+            Self::Back => i18n::tr!("ui-launcher-back-description"),
         }
     }
 }
@@ -135,6 +152,7 @@ impl LauncherToolbarAction {
 pub struct LauncherToolbarButtonViewModel {
     pub action: LauncherToolbarAction,
     pub label: String,
+    pub description: String,
     pub enabled: bool,
 }
 
@@ -143,6 +161,7 @@ impl LauncherToolbarButtonViewModel {
         Self {
             action,
             label: action.label().to_string(),
+            description: action.description(),
             enabled,
         }
     }
@@ -238,7 +257,18 @@ impl LauncherViewModel {
             .or_else(|| (!items.is_empty()).then_some(0));
         let selected_item = selected_index.and_then(|index| items.get(index));
         let can_remove = selected_item.is_some_and(|item| item.capabilities.removable);
-        let mut toolbar = Vec::new();
+        let can_open = selected_item.is_some_and(|item| {
+            matches!(
+                item.status,
+                LauncherItemStatus::Ready
+                    | LauncherItemStatus::Changed
+                    | LauncherItemStatus::NeedsApproval
+            )
+        });
+        let mut toolbar = vec![LauncherToolbarButtonViewModel::new(
+            LauncherToolbarAction::Open,
+            can_open,
+        )];
         if can_manage && can_remove {
             toolbar.push(LauncherToolbarButtonViewModel::new(
                 LauncherToolbarAction::Remove,
@@ -251,6 +281,10 @@ impl LauncherViewModel {
         ));
         toolbar.push(LauncherToolbarButtonViewModel::new(
             LauncherToolbarAction::ToggleView,
+            true,
+        ));
+        toolbar.push(LauncherToolbarButtonViewModel::new(
+            LauncherToolbarAction::Back,
             true,
         ));
 
@@ -352,6 +386,8 @@ pub struct LauncherLayout {
     pub items: Vec<LauncherItemLayout>,
     pub visible_start: usize,
     pub visible_capacity: usize,
+    pub columns: usize,
+    pub scroll_content_len: usize,
     pub scrollbar: Option<Rect>,
     pub drop_indicator: Option<Rect>,
     pub confirmation: Option<LauncherConfirmationLayout>,
@@ -385,7 +421,10 @@ impl LauncherLayout {
     }
 
     pub fn large_icon_drop_target(&self, x: u16, y: u16) -> Option<LauncherDropTarget> {
-        if !contains(self.content, x, y) || self.items.is_empty() {
+        if !contains(self.content, x, y)
+            || self.items.is_empty()
+            || self.scrollbar.is_some_and(|area| contains(area, x, y))
+        {
             return None;
         }
 
@@ -429,12 +468,27 @@ impl LauncherLayout {
 pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout {
     let panel = main;
     let inner = inset(panel, 1);
-    let toolbar = Rect::new(inner.x, inner.y, inner.width, u16::from(inner.height > 0));
+    let toolbar_columns = launcher_toolbar_columns(inner.width, model.toolbar.len());
+    let toolbar_rows = model.toolbar.len().div_ceil(toolbar_columns);
+    let desired_footer_height = if inner.height >= 7 { 2 } else { 1 };
+    let toolbar_height = u16::try_from(toolbar_rows)
+        .unwrap_or(u16::MAX)
+        .saturating_mul(2)
+        .min(
+            inner
+                .height
+                .saturating_sub(desired_footer_height)
+                .saturating_sub(1),
+        );
+    let toolbar = Rect::new(inner.x, inner.y, inner.width, toolbar_height);
+    let footer_height = desired_footer_height.min(inner.height.saturating_sub(toolbar.height));
     let footer = Rect::new(
         inner.x,
-        inner.y.saturating_add(inner.height.saturating_sub(1)),
+        inner
+            .y
+            .saturating_add(inner.height.saturating_sub(footer_height)),
         inner.width,
-        u16::from(inner.height > 1),
+        footer_height,
     );
     let content_y = toolbar.y.saturating_add(toolbar.height);
     let content = Rect::new(
@@ -448,6 +502,14 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         LauncherViewMode::LargeIcons => launcher_grid_layout(content, model),
         LauncherViewMode::Details => launcher_details_layout(content, model),
     };
+    let columns = match model.view_mode {
+        LauncherViewMode::LargeIcons => usize::from(
+            (content.width.saturating_sub(u16::from(scrollbar.is_some())) / GRID_TILE_MIN_WIDTH)
+                .max(1),
+        ),
+        LauncherViewMode::Details => 1,
+    };
+    let scroll_content_len = model.items.len().div_ceil(columns).saturating_mul(columns);
     let confirmation = model
         .confirmation
         .as_ref()
@@ -482,6 +544,8 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         items,
         visible_start,
         visible_capacity,
+        columns,
+        scroll_content_len,
         scrollbar,
         drop_indicator,
         confirmation,
@@ -492,30 +556,46 @@ fn launcher_toolbar_layout(
     area: Rect,
     model: &LauncherViewModel,
 ) -> Vec<LauncherToolbarButtonLayout> {
-    let mut x = area.x;
-    let end = area.x.saturating_add(area.width);
+    let columns = launcher_toolbar_columns(area.width, model.toolbar.len());
+    let rows = model.toolbar.len().div_ceil(columns).max(1);
+    let height = (area.height / u16::try_from(rows).unwrap_or(u16::MAX)).min(2);
+    let width = area.width.saturating_sub((columns - 1) as u16) / columns as u16;
     let mut result = Vec::new();
-    for button in &model.toolbar {
-        let text = format!("[{} {}]", button.action.shortcut(), button.label);
-        let width = u16::try_from(terminal_width(&text)).unwrap_or(u16::MAX);
-        if x.saturating_add(width) > end {
+    for (index, button) in model.toolbar.iter().enumerate() {
+        if width == 0 || height == 0 {
             break;
         }
         result.push(LauncherToolbarButtonLayout {
             action: button.action,
-            area: Rect::new(x, area.y, width, area.height),
+            area: Rect::new(
+                area.x
+                    .saturating_add((index % columns) as u16 * width.saturating_add(1)),
+                area.y.saturating_add((index / columns) as u16 * height),
+                width,
+                height,
+            ),
         });
-        x = x.saturating_add(width).saturating_add(1);
     }
     result
+}
+
+fn launcher_toolbar_columns(width: u16, button_count: usize) -> usize {
+    usize::from((width.saturating_add(1) / TOOLBAR_BUTTON_MIN_WIDTH.saturating_add(1)).max(1))
+        .min(button_count.max(1))
 }
 
 fn launcher_grid_layout(
     content: Rect,
     model: &LauncherViewModel,
 ) -> (Vec<LauncherItemLayout>, usize, usize, Option<Rect>) {
-    let columns = usize::from((content.width / GRID_TILE_MIN_WIDTH).max(1));
+    let mut columns = usize::from((content.width / GRID_TILE_MIN_WIDTH).max(1));
     let rows = usize::from((content.height / GRID_TILE_HEIGHT).max(1));
+    let needs_scrollbar =
+        model.items.len() > columns.saturating_mul(rows) && content.width > 0 && content.height > 0;
+    let grid_width = content.width.saturating_sub(u16::from(needs_scrollbar));
+    if needs_scrollbar {
+        columns = usize::from((grid_width / GRID_TILE_MIN_WIDTH).max(1));
+    }
     let capacity = columns.saturating_mul(rows).max(1);
     let start = visible_start(
         model.items.len(),
@@ -524,8 +604,6 @@ fn launcher_grid_layout(
         capacity,
         columns,
     );
-    let needs_scrollbar = model.items.len() > capacity;
-    let grid_width = content.width.saturating_sub(u16::from(needs_scrollbar));
     let column_width = if columns == 0 {
         grid_width
     } else {
@@ -533,6 +611,9 @@ fn launcher_grid_layout(
     };
     let mut items = Vec::new();
     for (slot, index) in (start..model.items.len()).take(capacity).enumerate() {
+        if grid_width == 0 || content.height == 0 {
+            break;
+        }
         let column = slot % columns;
         let row = slot / columns;
         let x = content.x.saturating_add(
@@ -563,7 +644,12 @@ fn launcher_grid_layout(
                 .min(content.bottom().saturating_sub(y)),
         );
         let inner = inset(area, 1);
-        let icon_area = Rect::new(inner.x, inner.y, inner.width, inner.height.min(4));
+        let icon_area = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            inner.height.saturating_sub(2).min(4),
+        );
         items.push(LauncherItemLayout {
             index,
             area,
@@ -603,6 +689,7 @@ fn launcher_details_layout(
     let row_width = rows_area.width.saturating_sub(u16::from(needs_scrollbar));
     let items = (start..model.items.len())
         .take(capacity)
+        .take(usize::from(rows_area.height))
         .enumerate()
         .map(|(slot, index)| {
             let area = Rect::new(
@@ -642,7 +729,12 @@ fn visible_start(
         return 0;
     }
     let columns = columns.max(1);
-    let max_start = item_count.saturating_sub(capacity);
+    // Count the final partial row so the bottom scrollbar position can reveal
+    // the last entry without placing it outside the grid.
+    let max_start = item_count
+        .div_ceil(columns)
+        .saturating_mul(columns)
+        .saturating_sub(capacity);
     let mut start = requested.min(max_start);
     start -= start % columns;
     if let Some(selected) = selected_index.filter(|selected| *selected < item_count) {
@@ -763,6 +855,18 @@ fn render_launcher_toolbar(
         );
         component.set_disabled(!button.enabled);
         component.render_borderless_frame(frame, button_layout.area, theme);
+        if button_layout.area.height > 1 {
+            frame.render_widget(
+                Paragraph::new(fit_text(&button.description, button_layout.area.width))
+                    .style(theme.muted_style()),
+                Rect::new(
+                    button_layout.area.x,
+                    button_layout.area.y.saturating_add(1),
+                    button_layout.area.width,
+                    1,
+                ),
+            );
+        }
     }
 }
 
@@ -795,9 +899,18 @@ fn render_launcher_grid(
         surface.set_focused(focused);
         surface.state.selected = selected;
         surface.set_disabled(item.status != LauncherItemStatus::Ready);
+        if item_layout.area.height < 3 {
+            let mut compact = Button::new(format!("launcher.item.{}", item.id), item.name.clone());
+            compact.set_focused(focused);
+            compact.state.selected = selected;
+            compact.set_disabled(item.status != LauncherItemStatus::Ready);
+            compact.render_borderless_frame(frame, item_layout.area, theme);
+            continue;
+        }
         surface.render_surface_frame(frame, item_layout.area, theme);
-        let rendered_native =
-            icons.is_some_and(|icons| icons.render_icon(&item.id, frame, item_layout.icon_area));
+        let rendered_native = item_layout.icon_area.width > 0
+            && item_layout.icon_area.height > 0
+            && icons.is_some_and(|icons| icons.render_icon(&item.id, frame, item_layout.icon_area));
         if !rendered_native {
             render_default_ascii_icon(frame, item_layout.icon_area, model, item, style);
         }
@@ -805,7 +918,8 @@ fn render_launcher_grid(
         let name_y = item_layout
             .icon_area
             .bottom()
-            .min(inner.bottom().saturating_sub(2));
+            .min(inner.bottom().saturating_sub(2.min(inner.height)))
+            .max(inner.y);
         frame.render_widget(
             Paragraph::new(fit_text(&item.name, inner.width))
                 .style(if focused {
@@ -817,14 +931,18 @@ fn render_launcher_grid(
             Rect::new(inner.x, name_y, inner.width, u16::from(inner.height > 0)),
         );
         frame.render_widget(
-            Paragraph::new(launcher_status_label(item.status))
-                .style(style)
-                .alignment(HorizontalAlignment::Center),
+            Paragraph::new(if item.is_builtin() {
+                fit_text(&item.path, inner.width)
+            } else {
+                launcher_status_label(item.status)
+            })
+            .style(style)
+            .alignment(HorizontalAlignment::Center),
             Rect::new(
                 inner.x,
-                name_y.saturating_add(1),
+                name_y.saturating_add(1).min(inner.bottom()),
                 inner.width,
-                u16::from(inner.height > 1),
+                u16::from(inner.height > 1 && name_y.saturating_add(1) < inner.bottom()),
             ),
         );
     }
@@ -975,8 +1093,16 @@ fn render_launcher_footer(
         Paragraph::new(fit_text(&text, area.width))
             .alignment(HorizontalAlignment::Left)
             .style(style),
-        area,
+        Rect::new(area.x, area.y, area.width, 1),
     );
+    if area.height > 1
+        && let Some(item) = model.selected_item()
+    {
+        frame.render_widget(
+            Paragraph::new(fit_text(&item.path, area.width)).style(theme.muted_style()),
+            Rect::new(area.x, area.y.saturating_add(1), area.width, 1),
+        );
+    }
 }
 
 fn render_launcher_scrollbar(
@@ -990,7 +1116,7 @@ fn render_launcher_scrollbar(
         return;
     }
     Scrollbar::new(
-        model.items.len(),
+        layout.scroll_content_len,
         layout.visible_capacity,
         layout.visible_start,
     )

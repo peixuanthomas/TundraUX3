@@ -16,6 +16,25 @@ use ui::{
 };
 
 #[test]
+fn short_clock_has_its_own_basic_buttons_and_scrollbar() {
+    let mut model = clock_model();
+    model.alarms = (0..20)
+        .map(|id| ClockEntryViewModel::new(id, "Alarm", false))
+        .collect();
+    let area = Rect::new(0, 0, 30, 10);
+    let layout = clock_page_layout(area, &model);
+    for button in [layout.new_button, layout.manage_button, layout.back_button] {
+        assert!(!button.is_empty());
+        assert!(button.right() <= area.right() && button.bottom() <= area.bottom());
+    }
+    assert!(layout.scrollbar.is_some());
+    model.create_dialog = Some(ClockCreateDialogViewModel::default());
+    let dialog = clock_page_layout(area, &model).create_dialog.unwrap();
+    assert!(!dialog.cancel.is_empty());
+    assert!(dialog.create_countdown.right() <= dialog.cancel.x);
+}
+
+#[test]
 fn wide_layout_exposes_analog_panel_rows_and_dialog_hit_areas() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel::default());
@@ -83,7 +102,7 @@ fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
     assert!(output.contains("2026-07-10"));
     assert!(output.contains("14:32:08"));
     assert!(output.contains("Alarms & Timers"));
-    assert!(output.contains("[ + New ]"));
+    assert!(output.contains("[New]"));
     assert!(output.contains("ALARMS"));
     assert!(output.contains("COUNTDOWNS"));
     assert!(output.contains("[A] 07:30:00 Daily"));
@@ -176,8 +195,8 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
     assert!(output.contains("↑↓/click: adjust"));
     assert_eq!(output.matches("[ 00 ]").count(), 3);
     assert!(output.contains("Use hh mm ss"));
-    assert!(output.contains("[ Create Alarm ]"));
-    assert!(output.contains("[ Create Countdown ]"));
+    assert!(output.contains("[Alarm]"));
+    assert!(output.contains("[Timer]"));
     assert!(region_has_fg(
         &terminal,
         dialog.create_countdown,
@@ -283,7 +302,7 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
     assert!(layout.digital.height > 0);
     assert!(layout.new_button.height > 0);
     assert!(output.contains("14:32:08"));
-    assert!(output.contains("[ + New ]"));
+    assert!(output.contains("[New]"));
     assert!(output.contains("[A] 07:30:00 Daily"));
 }
 
@@ -331,7 +350,7 @@ fn read_only_clock_hides_new_control_and_ignores_create_dialog_model() {
     assert_eq!(layout.new_button.width, 0);
     assert_eq!(layout.new_button.height, 0);
     assert!(layout.create_dialog.is_none());
-    assert!(!output.contains("[ + New ]"));
+    assert!(!output.contains("[New]"));
     assert!(!output.contains("New Alarm or Countdown"));
     assert!(output.contains("ALARMS"));
     assert!(output.contains("COUNTDOWNS"));

@@ -381,6 +381,10 @@ pub struct SettingsPickerOptionLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsHitTarget {
+    Back,
+    OverlayApply,
+    OverlayCancel,
+    AdjustField(SettingsField, i8),
     Category(SettingsCategory),
     Field(SettingsField),
     PickerOption(usize),
@@ -396,10 +400,18 @@ pub enum SettingsHitTarget {
 pub struct SettingsLayout {
     pub main: Rect,
     pub detail: Rect,
+    pub back_button: Rect,
     pub scrollbar: Option<Rect>,
     pub content_height: usize,
     pub max_scroll_offset: u16,
     pub scroll_offset: u16,
+    pub category_scrollbar: Option<Rect>,
+    pub category_window_start: usize,
+    pub category_capacity: usize,
+    pub picker_list: Option<Rect>,
+    pub adjustments: Vec<(SettingsField, i8, Rect)>,
+    pub overlay_apply: Option<Rect>,
+    pub overlay_cancel: Option<Rect>,
     pub category_cards: Vec<SettingsCategoryLayout>,
     pub fields: Vec<SettingsFieldLayout>,
     /// Absolute content row, including card spacing, even when scrolled out of view.
@@ -447,6 +459,18 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     let scroll_offset = model.scroll_offset.min(max_scroll_offset);
     let category_inner = inset(category_area, 1, 1);
     let category_start = settings_category_viewport(category_area, model.selected_category);
+    let category_capacity = usize::from(category_inner.height);
+    let category_scrollbar = (SettingsCategory::ALL.len() > category_capacity
+        && category_inner.width > 1
+        && category_inner.height > 0)
+        .then(|| {
+            Rect::new(
+                category_inner.right() - 1,
+                category_inner.y,
+                1,
+                category_inner.height,
+            )
+        });
     let category_cards = SettingsCategory::ALL
         .into_iter()
         .enumerate()
@@ -467,12 +491,20 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .collect();
 
     let mut fields = Vec::new();
+    let mut adjustments = Vec::new();
     let mut selected_field_row = None;
     let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
     if model.appearance_preview.is_some() {
         y += 5;
     }
     for card in &model.cards {
+        let value_width = card
+            .items
+            .iter()
+            .map(settings_control_width)
+            .max()
+            .unwrap_or(0)
+            .min(detail_area.width.saturating_sub(2) / 2);
         let height = u16::try_from(card.items.len())
             .unwrap_or(u16::MAX)
             .saturating_add(2)
@@ -484,6 +516,15 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
                     u16::try_from(row_y - i32::from(detail_area.y) + i32::from(scroll_offset)).ok();
             }
             if row_y >= i32::from(detail_area.y) && row_y < i32::from(detail_area.bottom()) {
+                if item.enabled && item.kind == SettingsControlKind::Stepper && value_width >= 6 {
+                    let x = detail_area.right().saturating_sub(1 + value_width);
+                    adjustments.push((item.field, -1, Rect::new(x, row_y as u16, 3, 1)));
+                    adjustments.push((
+                        item.field,
+                        1,
+                        Rect::new(detail_area.right().saturating_sub(4), row_y as u16, 3, 1),
+                    ));
+                }
                 fields.push(SettingsFieldLayout {
                     field: item.field,
                     area: Rect::new(
@@ -500,10 +541,12 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
 
     let mut picker_options = Vec::new();
     let mut picker_dialog = None;
+    let mut picker_list = None;
     if let Some(picker) = &model.picker {
         let dialog = centered(area, area.width.min(78), area.height.min(24));
         picker_dialog = Some(dialog);
         let list = picker_list_area(dialog, picker.kind == SettingsPickerKind::Timezone);
+        picker_list = Some(list);
         let visible_rows = usize::from(list.height);
         let start = picker.window_start.min(picker.options.len());
         let end = start.saturating_add(visible_rows).min(picker.options.len());
@@ -547,13 +590,52 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         })
         .unwrap_or_default();
 
+    let active_editor = model
+        .time_sync_server_editor
+        .as_ref()
+        .map(|_| centered(area, area.width.min(76), area.height.min(11)))
+        .or_else(|| {
+            model
+                .file_extensions_editor
+                .as_ref()
+                .map(|_| centered(area, area.width.min(72), area.height.min(11)))
+        })
+        .or_else(|| {
+            model
+                .weather_location_editor
+                .as_ref()
+                .map(|_| centered(area, area.width.min(68), area.height.min(11)))
+        })
+        .or_else(|| {
+            model
+                .color_editor
+                .as_ref()
+                .map(|_| centered(area, area.width.min(56), area.height.min(9)))
+        })
+        .or(picker_dialog);
+    let overlay_buttons = active_editor.map(settings_overlay_buttons);
     SettingsLayout {
         main: area,
         detail: detail_area,
+        back_button: Rect::new(
+            raw_detail_area
+                .right()
+                .saturating_sub(raw_detail_area.width.min(8)),
+            raw_detail_area.bottom().saturating_sub(1),
+            raw_detail_area.width.min(8),
+            u16::from(raw_detail_area.height > 0),
+        ),
         scrollbar,
         content_height,
         max_scroll_offset,
         scroll_offset,
+        category_scrollbar,
+        category_window_start: category_start,
+        category_capacity,
+        picker_list,
+        adjustments,
+        overlay_apply: overlay_buttons.map(|buttons| buttons[0]),
+        overlay_cancel: overlay_buttons.map(|buttons| buttons[1]),
         category_cards,
         fields,
         selected_field_row,
@@ -597,6 +679,18 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
         }
         return None;
     }
+    if layout
+        .overlay_apply
+        .is_some_and(|area| contains(area, point))
+    {
+        return Some(SettingsHitTarget::OverlayApply);
+    }
+    if layout
+        .overlay_cancel
+        .is_some_and(|area| contains(area, point))
+    {
+        return Some(SettingsHitTarget::OverlayCancel);
+    }
     if let Some(area) = layout.time_sync_server_editor
         && contains(area, point)
     {
@@ -624,11 +718,29 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
     {
         return Some(SettingsHitTarget::PickerOption(option.index));
     }
+    if layout.picker_dialog.is_some()
+        || layout.color_editor.is_some()
+        || layout.weather_location_editor.is_some()
+        || layout.file_extensions_editor.is_some()
+        || layout.time_sync_server_editor.is_some()
+    {
+        return None;
+    }
+    if contains(layout.back_button, point) {
+        return Some(SettingsHitTarget::Back);
+    }
     if let Some(field) = layout
         .fields
         .iter()
         .find(|field| contains(field.area, point))
     {
+        if let Some((field, delta, _)) = layout
+            .adjustments
+            .iter()
+            .find(|(_, _, area)| contains(*area, point))
+        {
+            return Some(SettingsHitTarget::AdjustField(*field, *delta));
+        }
         return Some(SettingsHitTarget::Field(field.field));
     }
     layout
@@ -674,6 +786,14 @@ pub fn render_settings_content(
     ));
     categories.set_focused(true);
     categories.render_with_context(settings_category_area(layout), frame.buffer_mut(), context);
+    if let Some(track) = layout.category_scrollbar {
+        Scrollbar::new(
+            SettingsCategory::ALL.len(),
+            layout.category_capacity,
+            layout.category_window_start,
+        )
+        .render_frame(frame, track, context);
+    }
 
     let detail_area = layout.detail;
     if let Some(preview) = model.appearance_preview {
@@ -722,6 +842,11 @@ pub fn render_settings_content(
         .render_frame(frame, scrollbar, context);
     }
     render_settings_footer(frame, settings_raw_detail_area(layout), model, context);
+    Button::new("settings.back", i18n::tr!("ui-settings-touch-back")).render_inline_frame(
+        frame,
+        layout.back_button,
+        theme,
+    );
 }
 
 pub fn render_settings_overlay(
@@ -751,6 +876,25 @@ pub fn render_settings_overlay(
         .and_then(|update| update.confirmation.as_ref())
     {
         render_update_confirmation(frame, layout, confirmation, context);
+    }
+    if let (Some(apply), Some(cancel)) = (layout.overlay_apply, layout.overlay_cancel) {
+        let theme = &context.compatibility_theme();
+        let mut apply_button = Button::new(
+            "settings.overlay.apply",
+            i18n::tr!("ui-settings-touch-apply"),
+        );
+        apply_button.set_disabled(
+            model
+                .time_sync_server_editor
+                .as_ref()
+                .is_some_and(|editor| editor.validating),
+        );
+        apply_button.render_inline_frame(frame, apply, theme);
+        Button::new(
+            "settings.overlay.cancel",
+            i18n::tr!("ui-settings-touch-cancel"),
+        )
+        .render_inline_frame(frame, cancel, theme);
     }
 }
 
@@ -867,6 +1011,25 @@ fn render_cards(
             y += i32::from(UpdateActivity::HEIGHT) + 1;
         }
         render_update_commits(frame, detail_area, y, update, context);
+        y += i32::from(update_commits_height(
+            detail_area.width,
+            &update_commit_lines(update),
+        )) + 1;
+    }
+    let reason = settings_unavailable_lines(detail_area.width, model);
+    if let Some((visible, skipped)) = visible_scrolled_rect(
+        detail_area.x,
+        y,
+        detail_area.width,
+        u16::try_from(reason.len()).unwrap_or(u16::MAX),
+        detail_area,
+    ) {
+        frame.render_widget(
+            Paragraph::new(reason.join("\n"))
+                .style(theme.muted_style())
+                .scroll((skipped, 0)),
+            visible,
+        );
     }
 }
 
@@ -897,9 +1060,48 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
         let lines = update_commit_lines(update);
         content_height = content_height
             .max(next_y.saturating_add(usize::from(update_commits_height(detail_width, &lines))));
+        next_y = content_height.saturating_add(1);
     }
 
-    content_height
+    let reason = settings_unavailable_lines(detail_width, model);
+    if reason.is_empty() {
+        content_height
+    } else {
+        content_height.max(next_y.saturating_add(reason.len()))
+    }
+}
+
+/// Keep the complete failure reason inside the draggable detail viewport.
+/// The fixed footer may abbreviate its copy to leave room for Back.
+fn settings_unavailable_lines(width: u16, model: &SettingsViewModel) -> Vec<String> {
+    let Some(reason) = model
+        .cards
+        .iter()
+        .flat_map(|card| &card.items)
+        .find(|item| item.field == model.selected_field)
+        .and_then(|item| item.unavailable_reason.as_deref())
+    else {
+        return Vec::new();
+    };
+    let width = usize::from(width.max(1));
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut used = 0;
+    for character in reason.chars() {
+        let character_width = terminal_width(&character.to_string());
+        if character == '\n' || (!line.is_empty() && used + character_width > width) {
+            lines.push(std::mem::take(&mut line));
+            used = 0;
+        }
+        if character != '\n' {
+            line.push(character);
+            used += character_width;
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 fn update_commit_lines(update: &SettingsUpdateViewModel) -> Vec<String> {
@@ -1051,7 +1253,12 @@ fn render_settings_footer(
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("  |  ");
-    let area = Rect::new(detail.x, detail.bottom().saturating_sub(1), detail.width, 1);
+    let area = Rect::new(
+        detail.x,
+        detail.bottom().saturating_sub(1),
+        detail.width.saturating_sub(8),
+        1,
+    );
     frame.render_widget(
         Paragraph::new(Line::styled(
             truncate(&text, usize::from(area.width)),
@@ -1411,7 +1618,7 @@ fn settings_category_area(layout: &SettingsLayout) -> Rect {
 
 fn settings_content_areas(area: Rect) -> (Rect, Rect) {
     let inner = inset(area, 1, 1);
-    let sidebar_width = 18.min(inner.width.saturating_sub(1));
+    let sidebar_width = (if inner.width < 48 { 10 } else { 18 }).min(inner.width.saturating_sub(1));
     let gap = crate::SpringStyle::CARD_GAP.min(inner.width.saturating_sub(sidebar_width));
     let [category, _, detail] = Layout::horizontal([
         Constraint::Length(sidebar_width),
@@ -1456,6 +1663,25 @@ fn render_settings_control(
         );
         return;
     }
+    if item.kind == SettingsControlKind::Stepper && area.width >= 6 {
+        Button::new(format!("settings.decrease.{:?}", item.field), "−").render_inline_frame(
+            frame,
+            Rect::new(area.x, area.y, 3, area.height),
+            theme,
+        );
+        Button::new(format!("settings.increase.{:?}", item.field), "+").render_inline_frame(
+            frame,
+            Rect::new(area.right() - 3, area.y, 3, area.height),
+            theme,
+        );
+        frame.render_widget(
+            Paragraph::new(item.value.clone())
+                .alignment(HorizontalAlignment::Center)
+                .style(theme.body_style()),
+            Rect::new(area.x + 3, area.y, area.width - 6, area.height),
+        );
+        return;
+    }
 
     let mut button = Button::new(
         format!("settings.field.{:?}", item.field).to_ascii_lowercase(),
@@ -1481,8 +1707,8 @@ fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
         SettingsControlKind::Cycle
         | SettingsControlKind::Picker
         | SettingsControlKind::Palette
-        | SettingsControlKind::Stepper
         | SettingsControlKind::Action => 4,
+        SettingsControlKind::Stepper => 6,
         SettingsControlKind::ReadOnly => 0,
     };
     label_width.saturating_add(component_padding)
@@ -1495,14 +1721,14 @@ fn picker_list_area(dialog: Rect, timezone: bool) -> Rect {
             content.x,
             content.y.saturating_add(1),
             content.width / 2,
-            content.height.saturating_sub(1),
+            content.height.saturating_sub(2),
         )
     } else {
         Rect::new(
             content.x,
             content.y.saturating_add(1),
             content.width,
-            content.height.saturating_sub(1),
+            content.height.saturating_sub(2),
         )
     }
 }
@@ -1516,6 +1742,24 @@ fn picker_map_area(dialog: Rect) -> Rect {
         content.width.saturating_sub(left).saturating_sub(1),
         content.height.saturating_sub(1),
     )
+}
+
+fn settings_overlay_buttons(dialog: Rect) -> [Rect; 2] {
+    let row = Rect::new(
+        dialog.x + u16::from(dialog.width > 1),
+        dialog.bottom().saturating_sub(2),
+        dialog.width.saturating_sub(2),
+        u16::from(dialog.height > 2),
+    );
+    [
+        Rect::new(row.x, row.y, row.width / 2, row.height),
+        Rect::new(
+            row.x + row.width / 2,
+            row.y,
+            row.width - row.width / 2,
+            row.height,
+        ),
+    ]
 }
 
 fn inset(area: Rect, horizontal: u16, vertical: u16) -> Rect {

@@ -497,6 +497,7 @@ fn diagnostics() -> DiagnosticsViewModel {
         selected_log: 0,
         list_window_start: 0,
         list_window_is_explicit: false,
+        detail_scroll: 0,
         scanning: false,
         can_view_details: true,
         can_repair: true,

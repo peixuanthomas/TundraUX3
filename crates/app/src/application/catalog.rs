@@ -75,6 +75,7 @@ pub struct BuiltInApplicationDescriptor {
     pub type_label: &'static str,
     pub admin_only: bool,
     pub fixed_in_launcher: bool,
+    pub linux_only: bool,
 }
 
 impl BuiltInApplicationDescriptor {
@@ -82,6 +83,12 @@ impl BuiltInApplicationDescriptor {
         match self.id {
             "builtin.command-line" => msg!("app-catalog-command-line-name").into(),
             "builtin.editor" => msg!("app-catalog-editor-name").into(),
+            "builtin.logs" => msg!("app-catalog-logs-name").into(),
+            "builtin.services" => msg!("app-catalog-services-name").into(),
+            "builtin.processes" => msg!("app-catalog-processes-name").into(),
+            "builtin.packages" => msg!("app-catalog-packages-name").into(),
+            "builtin.network" => msg!("app-catalog-network-name").into(),
+            "builtin.disks" => msg!("app-catalog-disks-name").into(),
             _ => LocalizedText::Raw(self.name.to_string()),
         }
     }
@@ -89,14 +96,21 @@ impl BuiltInApplicationDescriptor {
         match self.id {
             "builtin.command-line" => msg!("app-catalog-command-line-description").into(),
             "builtin.editor" => msg!("app-catalog-editor-description").into(),
+            "builtin.logs" => msg!("app-catalog-logs-description").into(),
+            "builtin.services" => msg!("app-catalog-services-description").into(),
+            "builtin.processes" => msg!("app-catalog-processes-description").into(),
+            "builtin.packages" => msg!("app-catalog-packages-description").into(),
+            "builtin.network" => msg!("app-catalog-network-description").into(),
+            "builtin.disks" => msg!("app-catalog-disks-description").into(),
             _ => LocalizedText::Raw(self.description.to_string()),
         }
     }
     pub fn localized_type_label(&self) -> LocalizedText {
-        match self.id {
-            "builtin.command-line" | "builtin.editor" => msg!("app-catalog-builtin-type").into(),
-            _ => LocalizedText::Raw(self.type_label.to_string()),
-        }
+        msg!("app-catalog-builtin-type").into()
+    }
+
+    pub const fn available_on_platform(&self, linux: bool) -> bool {
+        !self.linux_only || linux
     }
 }
 
@@ -107,6 +121,7 @@ pub const COMMAND_LINE_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplic
     type_label: "Built-in application",
     admin_only: true,
     fixed_in_launcher: true,
+    linux_only: false,
 };
 
 pub const EDITOR_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationDescriptor {
@@ -116,10 +131,63 @@ pub const EDITOR_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationD
     type_label: "Built-in application",
     admin_only: false,
     fixed_in_launcher: true,
+    linux_only: false,
 };
 
-pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] =
-    &[COMMAND_LINE_APPLICATION, EDITOR_APPLICATION];
+const fn management_application(
+    id: &'static str,
+    name: &'static str,
+    description: &'static str,
+) -> BuiltInApplicationDescriptor {
+    BuiltInApplicationDescriptor {
+        id,
+        name,
+        description,
+        type_label: "Built-in application",
+        admin_only: false,
+        fixed_in_launcher: true,
+        linux_only: true,
+    }
+}
+
+pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
+    COMMAND_LINE_APPLICATION,
+    EDITOR_APPLICATION,
+    BuiltInApplicationDescriptor {
+        id: "builtin.logs",
+        name: "Logs",
+        description: "Inspect application and system logs",
+        type_label: "Built-in application",
+        admin_only: false,
+        fixed_in_launcher: true,
+        linux_only: false,
+    },
+    management_application(
+        "builtin.services",
+        "Services",
+        "Inspect, start and stop system services",
+    ),
+    management_application(
+        "builtin.processes",
+        "Processes",
+        "Inspect processes and resource use",
+    ),
+    management_application(
+        "builtin.packages",
+        "Packages",
+        "Search, install, remove and update software",
+    ),
+    management_application(
+        "builtin.network",
+        "Network",
+        "Inspect connections and configure addresses and DNS",
+    ),
+    management_application(
+        "builtin.disks",
+        "Disks",
+        "Inspect storage, mount filesystems and scan space usage",
+    ),
+];
 
 pub fn setup_language_options() -> Vec<SetupLanguageOption> {
     i18n::LanguageCatalog::built_in()

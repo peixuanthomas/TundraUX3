@@ -198,6 +198,56 @@ fn command_line_history_renders_the_glacier_scrollbar_style() {
 }
 
 #[test]
+fn short_history_scrollbar_layout_matches_the_painted_thumb() {
+    use ratatui::layout::Rect;
+
+    let main = Rect::new(0, 0, 10, 4);
+    let terminal_area = Rect::new(1, 1, 8, 2);
+    let context = ui::RenderContext::from_theme(
+        &TundraTheme::default_dark(),
+        Default::default(),
+        Default::default(),
+    );
+    for scrollback_offset in [0, 1, 2] {
+        let mut snapshot = CommandLineTerminalSnapshot::blank(7, 1);
+        snapshot.scrollback_rows = 2;
+        snapshot.scrollback_offset = scrollback_offset;
+        let layout = ui::command_line_scrollbar_layout(terminal_area, &snapshot).unwrap();
+        let (start, length) =
+            ui::components::Scrollbar::new(3, 1, 2 - scrollback_offset).thumb_range(layout.track);
+        assert_eq!(
+            layout.thumb,
+            Rect::new(layout.track.x, layout.track.y + start, 1, length),
+        );
+        assert!(layout.thumb.height < layout.track.height);
+
+        let model = CommandLineViewModel::new(snapshot);
+        let mut screen = Terminal::new(TestBackend::new(main.width, main.height)).unwrap();
+        screen
+            .draw(|frame| {
+                ui::render_command_line_content(frame, main, Some(terminal_area), &model, &context);
+            })
+            .unwrap();
+        for y in layout.track.y..layout.track.bottom() {
+            let expected = if y >= layout.thumb.y && y < layout.thumb.bottom() {
+                "█"
+            } else {
+                "│"
+            };
+            assert_eq!(
+                screen
+                    .backend()
+                    .buffer()
+                    .cell((layout.track.x, y))
+                    .unwrap()
+                    .symbol(),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
 fn undersized_command_line_is_blocked() {
     let model = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(108, 20));
     let mut screen = Terminal::new(TestBackend::new(80, 20)).unwrap();

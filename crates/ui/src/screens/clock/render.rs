@@ -6,7 +6,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use super::layout::{ClockEntryKind, ClockPageLayout, clock_page_layout};
 use super::model::{ClockCreateDialogFocus, ClockEntryViewModel, ClockViewModel};
-use crate::components::{Button, List, ListItem, Surface};
+use crate::components::{Button, List, ListItem, Scrollbar, Surface};
 use crate::{ClockFontAsset, RenderContext, TundraTheme};
 
 const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
@@ -94,9 +94,16 @@ fn render_clock_panel(
         frame,
         layout.new_button,
         "clock.new",
-        &i18n::tr!("ui-clock-new-button"),
+        &i18n::tr!("ui-clock-touch-new"),
         model.selected_entry_id.is_none() && model.create_dialog.is_none(),
         theme,
+    );
+    render_clock_line(
+        frame,
+        layout.help,
+        i18n::tr!("ui-clock-touch-help"),
+        theme.muted_style(),
+        HorizontalAlignment::Left,
     );
     render_clock_line(
         frame,
@@ -123,6 +130,22 @@ fn render_clock_panel(
 
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, context);
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Countdown, context);
+    let mut manage = Button::new("clock.manage", i18n::tr!("ui-clock-touch-manage"));
+    manage.set_disabled(model.selected_entry_id.is_none());
+    manage.render_inline_frame(frame, layout.manage_button, theme);
+    Button::new("clock.back", i18n::tr!("ui-clock-touch-back")).render_inline_frame(
+        frame,
+        layout.back_button,
+        theme,
+    );
+    if let Some(track) = layout.scrollbar {
+        Scrollbar::new(
+            model.alarms.len() + model.countdowns.len(),
+            layout.entry_capacity,
+            layout.entry_window_start,
+        )
+        .render_frame(frame, track, context);
+    }
 }
 
 fn render_clock_entry_list(
@@ -168,6 +191,28 @@ fn render_clock_entry_list(
     list.set_focused(selected.is_some());
     list.set_selected(selected);
     list.render_borderless_frame(frame, area, &context.compatibility_theme());
+    for row in rows {
+        let Some(entry) = clock_entry(model, row.kind, row.id) else {
+            continue;
+        };
+        let marker = if row.kind == ClockEntryKind::Alarm {
+            "[A]"
+        } else {
+            "[T]"
+        };
+        let label = crate::screens::shell::fit_cell(
+            &format!(
+                "{marker} {}{}",
+                entry.label,
+                if entry.strong { " !" } else { "" }
+            ),
+            usize::from(row.area.width),
+        );
+        let mut button = Button::new(format!("clock.entry.{}", row.id), label);
+        button.set_focused(model.selected_entry_id == Some(row.id));
+        button.state.selected = model.selected_entry_id == Some(row.id);
+        button.render_borderless_frame(frame, row.area, &context.compatibility_theme());
+    }
 }
 
 fn render_clock_create_dialog(
@@ -216,7 +261,7 @@ fn render_clock_create_dialog(
         frame,
         layout.create_alarm,
         "clock.create-alarm",
-        &i18n::tr!("ui-clock-create-alarm-button"),
+        &i18n::tr!("ui-clock-touch-alarm"),
         model.focus == ClockCreateDialogFocus::CreateAlarm,
         theme,
     );
@@ -224,8 +269,16 @@ fn render_clock_create_dialog(
         frame,
         layout.create_countdown,
         "clock.create-countdown",
-        &i18n::tr!("ui-clock-create-countdown-button"),
+        &i18n::tr!("ui-clock-touch-timer"),
         model.focus == ClockCreateDialogFocus::CreateCountdown,
+        theme,
+    );
+    render_clock_button(
+        frame,
+        layout.cancel,
+        "clock.create-cancel",
+        &i18n::tr!("ui-clock-touch-cancel"),
+        false,
         theme,
     );
 }

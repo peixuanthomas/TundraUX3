@@ -766,11 +766,6 @@ pub(in crate::session) fn user_home_entries() -> Vec<ui::ShellEntry> {
             i18n::tr!("shell-view-storage-and-network-health"),
         )
         .with_icon_key("system_status"),
-        ui::ShellEntry::new(
-            i18n::tr!("shell-logs"),
-            i18n::tr!("shell-view-runtime-logs-and-incidents"),
-        )
-        .with_icon_key("logs"),
     ]
 }
 

@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::layout::{
@@ -327,7 +327,93 @@ fn render_diagnostics_detail(
         return;
     }
 
-    let lines = match model.tab {
+    let lines = wrapped_detail_lines(model, theme, inner.width.saturating_sub(1));
+    let count = lines.len();
+    let offset = model
+        .detail_scroll
+        .min(count.saturating_sub(inner.height as usize));
+    let content = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width.saturating_sub(1),
+        inner.height,
+    );
+    frame.render_widget(
+        Paragraph::new(lines.into_iter().skip(offset).collect::<Vec<_>>())
+            .style(theme.body_style()),
+        content,
+    );
+    let context = crate::RenderContext::from_theme(theme, Default::default(), Default::default());
+    Scrollbar::new(count, inner.height as usize, offset).render_frame(
+        frame,
+        Rect::new(inner.right().saturating_sub(1), inner.y, 1, inner.height),
+        &context,
+    );
+}
+
+pub fn diagnostics_detail_scroll_metrics(
+    panel: Rect,
+    model: &DiagnosticsViewModel,
+) -> (Rect, usize, usize) {
+    let inner = Surface::new().bordered(true).inner(panel);
+    let count = wrapped_detail_lines(
+        model,
+        &TundraTheme::default_dark(),
+        inner.width.saturating_sub(1),
+    )
+    .len();
+    (
+        Rect::new(
+            inner.right().saturating_sub(1),
+            inner.y,
+            u16::from(inner.width > 0),
+            inner.height,
+        ),
+        count,
+        inner.height as usize,
+    )
+}
+
+fn wrapped_detail_lines(
+    model: &DiagnosticsViewModel,
+    theme: &TundraTheme,
+    width: u16,
+) -> Vec<Line<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut output = Vec::new();
+    for line in diagnostics_detail_lines(model, theme) {
+        let mut spans = Vec::new();
+        let mut used = 0;
+        for span in line.spans {
+            for (index, part) in span.content.split('\n').enumerate() {
+                if index > 0 {
+                    output.push(Line::from(std::mem::take(&mut spans)));
+                    used = 0;
+                }
+                let part = Span::styled(part, span.style);
+                for glyph in part.styled_graphemes(line.style) {
+                    let size = Line::from(glyph.symbol).width();
+                    if used > 0 && used + size > width as usize {
+                        output.push(Line::from(std::mem::take(&mut spans)));
+                        used = 0;
+                    }
+                    spans.push(Span::styled(glyph.symbol.to_owned(), glyph.style));
+                    used += size;
+                }
+            }
+        }
+        output.push(Line::from(spans));
+    }
+    output
+}
+
+fn diagnostics_detail_lines(
+    model: &DiagnosticsViewModel,
+    theme: &TundraTheme,
+) -> Vec<Line<'static>> {
+    match model.tab {
         DiagnosticsTab::Health => model.selected_check().map_or_else(
             || {
                 vec![Line::styled(
@@ -359,14 +445,7 @@ fn render_diagnostics_detail(
             },
             |log| diagnostics_log_detail_lines(log, model, theme),
         ),
-    };
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(HorizontalAlignment::Left)
-            .style(theme.body_style())
-            .wrap(Wrap { trim: true }),
-        inner,
-    );
+    }
 }
 
 fn diagnostics_log_detail_lines(
@@ -520,63 +599,83 @@ pub(crate) fn render_diagnostics_footer(
     area: Rect,
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
-    close_hint: &str,
+    _close_hint: &str,
 ) {
-    let help = if model.restart_required {
-        i18n::tr!("ui-diagnostics-restart-help", close_hint = close_hint)
-    } else if model.scanning {
-        i18n::tr!("ui-diagnostics-scanning-help", close_hint = close_hint)
-    } else {
-        let mut actions = vec![
-            i18n::tr!("ui-diagnostics-r-rescan"),
-            i18n::tr!("ui-diagnostics-c-copy"),
-            close_hint.to_owned(),
-        ];
-        if model.can_repair && model.tab == DiagnosticsTab::Health {
-            actions.insert(1, i18n::tr!("ui-diagnostics-f-repair"));
-            actions.insert(2, i18n::tr!("ui-diagnostics-a-repair-all"));
-        }
-        if model.tab != DiagnosticsTab::Health && model.can_view_details {
-            actions.insert(
-                actions.len().saturating_sub(1),
-                match model.tab {
-                    DiagnosticsTab::Health => unreachable!(),
-                    DiagnosticsTab::Logs => i18n::tr!("ui-diagnostics-o-open-log"),
-                    DiagnosticsTab::Incidents => i18n::tr!("ui-diagnostics-o-open-report"),
-                },
-            );
-        }
-        if model.can_view_details && model.tab != DiagnosticsTab::Health {
-            actions.insert(
-                actions.len().saturating_sub(1),
-                i18n::tr!("ui-diagnostics-e-log-folder"),
-            );
-        }
-        actions.insert(
-            actions.len().saturating_sub(1),
-            i18n::tr!("ui-diagnostics-x-restart"),
+    let mut actions_area = area;
+    if let Some(feedback) = &model.feedback {
+        frame.render_widget(
+            Paragraph::new(feedback.as_str()).style(theme.title_style()),
+            Rect::new(area.x, area.y, area.width, u16::from(area.height > 0)),
         );
-        actions.join(" · ")
-    };
-    let text = model
-        .feedback
-        .as_ref()
-        .map_or(help.clone(), |feedback| format!("{feedback} · {help}"));
-    render_clock_line(
-        frame,
-        area,
-        fit_cell(&text, usize::from(area.width)),
-        if model.restart_required {
-            diagnostics_warning_style(theme)
-        } else if model.feedback.is_some() {
-            theme.title_style()
-        } else {
-            theme.muted_style()
-        },
-        HorizontalAlignment::Left,
-    );
+        actions_area.y = actions_area.y.saturating_add(1);
+        actions_area.height = actions_area.height.saturating_sub(1);
+    }
+    for (key, label, rect) in
+        diagnostics_toolbar_buttons(actions_area, model, &i18n::tr!("ui-diagnostics-touch-back"))
+    {
+        let mut button = Button::new(format!("diagnostics.toolbar.{}", key as u32), label);
+        button.set_disabled(model.scanning && key != '\u{1b}');
+        button.render_borderless_frame(frame, rect, theme);
+    }
 }
 
+pub fn diagnostics_toolbar_height(width: u16, model: &DiagnosticsViewModel) -> u16 {
+    diagnostics_toolbar_buttons(
+        Rect::new(0, 0, width, u16::MAX),
+        model,
+        &i18n::tr!("ui-diagnostics-touch-back"),
+    )
+    .last()
+    .map_or(1, |(_, _, r)| r.bottom())
+    .saturating_add(u16::from(model.feedback.is_some()))
+}
+
+pub fn diagnostics_toolbar_buttons(
+    area: Rect,
+    model: &DiagnosticsViewModel,
+    close: &str,
+) -> Vec<(char, String, Rect)> {
+    use unicode_width::UnicodeWidthStr;
+    let mut actions = vec![
+        ('r', i18n::tr!("ui-diagnostics-r-rescan")),
+        ('c', i18n::tr!("ui-diagnostics-c-copy")),
+    ];
+    if model.can_repair && model.tab == DiagnosticsTab::Health {
+        actions.push(('f', i18n::tr!("ui-diagnostics-f-repair")));
+        actions.push(('a', i18n::tr!("ui-diagnostics-a-repair-all")));
+    }
+    if model.can_view_details && model.tab != DiagnosticsTab::Health {
+        actions.push((
+            'o',
+            if model.tab == DiagnosticsTab::Logs {
+                i18n::tr!("ui-diagnostics-o-open-log")
+            } else {
+                i18n::tr!("ui-diagnostics-o-open-report")
+            },
+        ));
+        actions.push(('e', i18n::tr!("ui-diagnostics-e-log-folder")));
+    }
+    actions.push(('x', i18n::tr!("ui-diagnostics-x-restart")));
+    actions.push(('\u{1b}', close.to_owned()));
+    let mut x = area.x;
+    let mut y = area.y;
+    actions
+        .into_iter()
+        .filter_map(|(key, label)| {
+            let width = (label.width().saturating_add(2) as u16).min(area.width);
+            if x > area.x && x.saturating_add(width) > area.right() {
+                x = area.x;
+                y = y.saturating_add(1);
+            }
+            if width == 0 || y >= area.bottom() {
+                return None;
+            }
+            let rect = Rect::new(x, y, width, 1);
+            x = x.saturating_add(width).saturating_add(1);
+            Some((key, label, rect))
+        })
+        .collect()
+}
 pub(crate) fn render_diagnostics_repair_dialog(
     frame: &mut Frame<'_>,
     layout: &DiagnosticsRepairDialogLayout,

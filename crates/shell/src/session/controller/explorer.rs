@@ -1,6 +1,84 @@
 use super::super::queries::ResolvedExplorerOverlay;
 use super::super::*;
 impl ShellSession {
+    pub(in crate::session) fn handle_explorer_locations_pointer(
+        &mut self,
+        mouse: MouseInput,
+    ) -> bool {
+        let dragging = matches!(
+            self.scrollbar_drag,
+            Some(ScrollbarDragState::ExplorerLocations { .. })
+        );
+        if self.active_screen() != ShellScreen::Explorer || self.explorer_overlay_mode.is_some() {
+            if dragging {
+                self.scrollbar_drag = None;
+            }
+            return false;
+        }
+        if matches!(mouse.kind, ui::MouseEventKind::Up(PointerButton::Left)) && dragging {
+            self.scrollbar_drag = None;
+            return true;
+        }
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
+            return false;
+        };
+        let model = self.to_explorer_view_model();
+        let layout = ui::explorer_layout(main, &model);
+        let Some(track) = layout.quick_location_scrollbar else {
+            return false;
+        };
+        let count = model.quick_locations.len();
+        let viewport = layout.quick_location_visible_capacity;
+        let (start, thumb) =
+            ui::components::Scrollbar::new(count, viewport, layout.quick_location_visible_start)
+                .thumb_range(track);
+        match mouse.kind {
+            ui::MouseEventKind::Scroll(direction)
+                if layout
+                    .sidebar
+                    .is_some_and(|sidebar| rect_contains(sidebar, mouse.coordinates())) =>
+            {
+                self.explorer_locations_scroll = Some(match direction {
+                    ScrollDirection::Up => layout.quick_location_visible_start.saturating_sub(1),
+                    ScrollDirection::Down => layout
+                        .quick_location_visible_start
+                        .saturating_add(1)
+                        .min(count.saturating_sub(viewport)),
+                    _ => layout.quick_location_visible_start,
+                });
+                return true;
+            }
+            ui::MouseEventKind::Down(PointerButton::Left)
+                if rect_contains(track, mouse.coordinates()) =>
+            {
+                let relative = mouse.row().saturating_sub(track.y);
+                let grab_offset = if (start..start + thumb).contains(&relative) {
+                    relative - start
+                } else {
+                    thumb / 2
+                };
+                self.scrollbar_drag = Some(ScrollbarDragState::ExplorerLocations { grab_offset });
+            }
+            ui::MouseEventKind::Drag(PointerButton::Left) if dragging => {}
+            _ => return false,
+        }
+        let Some(ScrollbarDragState::ExplorerLocations { grab_offset }) = self.scrollbar_drag
+        else {
+            return false;
+        };
+        self.explorer_locations_scroll = Some(scrollbar_window_start(
+            mouse.row(),
+            grab_offset,
+            track.y,
+            track.height,
+            thumb,
+            count,
+            viewport,
+        ));
+        true
+    }
+
     pub(in crate::session) fn navigate_explorer_selection(
         &mut self,
         key: InputKey,
@@ -325,6 +403,7 @@ impl ShellSession {
     }
 
     fn activate_explorer_quick_location(&mut self, index: usize, platform: &dyn Platform) {
+        self.explorer_locations_scroll = None;
         let model = self.to_explorer_view_model();
         let Some(command) = self
             .app
@@ -818,6 +897,10 @@ impl ShellSession {
         use ui::ExplorerToolbarAction;
 
         match action {
+            ExplorerToolbarAction::Open => {
+                self.apply_explorer_command(ExplorerCommand::OpenSelected, platform)
+            }
+            ExplorerToolbarAction::Menu => self.open_explorer_keyboard_context_menu(),
             ExplorerToolbarAction::Back => {
                 self.apply_explorer_command(ExplorerCommand::OpenBack, platform)
             }
