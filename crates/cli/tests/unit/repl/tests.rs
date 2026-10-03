@@ -39,5 +39,5 @@ fn exit_and_reset_words_are_exact() {
 #[test]
 fn system_command_returns_its_exit_code() {
     let command = if cfg!(windows) { "exit /B 7" } else { "exit 7" };
-    assert_eq!(run_system_command(command), 7);
+    assert_eq!(run_system_command(&mut None, command), 7);
 }

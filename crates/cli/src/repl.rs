@@ -1,5 +1,4 @@
-use std::process::Command;
-
+use platform::SystemCommandSession;
 use rustyline::error::ReadlineError;
 use rustyline::history::MemHistory;
 use rustyline::{Config, Editor};
@@ -38,6 +37,7 @@ where
         }
     };
     let prompt = repl_prompt(embedded);
+    let mut system_session = None;
 
     loop {
         let line = match editor.readline(&prompt) {
@@ -58,7 +58,7 @@ where
         let _ = editor.add_history_entry(&line);
 
         if let Some(system_command) = line.strip_prefix('/') {
-            let _ = run_system_command(system_command);
+            let _ = run_system_command(&mut system_session, system_command);
             continue;
         }
 
@@ -154,23 +154,30 @@ fn is_reset_confirmation(answer: &str) -> bool {
 
 /// Executes the bytes following `/` unchanged and returns the operating
 /// system command's status. The REPL intentionally remains open afterwards.
-fn run_system_command(command: &str) -> i32 {
+fn run_system_command(session: &mut Option<SystemCommandSession>, command: &str) -> i32 {
     if command.trim().is_empty() {
         eprintln!("ERROR: '/' must be followed by an operating-system command");
         return 2;
     }
 
-    let result = if cfg!(windows) {
-        Command::new("cmd.exe")
-            .args(["/D", "/S", "/C", command])
-            .status()
-    } else {
-        Command::new("/bin/sh").args(["-lc", command]).status()
-    };
+    let result = (|| {
+        if session.is_none() {
+            *session = Some(SystemCommandSession::new()?);
+        }
+        session
+            .as_mut()
+            .expect("initialized system session")
+            .run(command)
+    })();
     match result {
-        Ok(status) => {
-            let exit_code = status.code().unwrap_or(1);
+        Ok(result) => {
+            let exit_code = result.exit_code;
             println!("[system exit code: {exit_code}]");
+            if let Some(error) = result.state_error {
+                eprintln!(
+                    "WARNING: could not retain command state; the next system command will use the last saved environment and directory: {error}"
+                );
+            }
             exit_code
         }
         Err(error) => {

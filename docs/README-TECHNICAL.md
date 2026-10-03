@@ -585,6 +585,14 @@ tundra-cli <cls|config|debug|new|repl|help>
 
 调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中可直接输入 `debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
 
+Command Line 和独立 `repl` 在当前会话内保留系统命令的**已导出环境变量和工作目录**。Linux/macOS 例如先执行 `/export PROJECT_MODE=dev`、`/cd "/path/with spaces"`，后续 `/echo "$PROJECT_MODE"`、`/pwd` 和相对路径操作沿用修改后的状态；`/unset PROJECT_MODE` 会移除变量。Windows 对应 `/set PROJECT_MODE=dev`、`/cd /d "C:\path with spaces"`、`/echo %PROJECT_MODE%`，用 `/set PROJECT_MODE=` 删除变量。中间执行 `help` 等 Tundra 内置命令不会清空这些状态。
+
+状态由 `platform::SystemCommandSession` 持有，只传递给本会话的下一条系统命令，不修改 Tundra 主进程的环境或目录，也不更改系统环境变量配置；离开 Command Line、退出 REPL 或重启应用后释放。Unix 首次执行仍读取 `/bin/sh` 的登录默认设置，后续执行不重新加载登录配置，避免覆盖用户修改的 `PATH`。Unix 用私有匿名文件采集 NUL 分隔的环境和独立目录数据；Windows 保留 cmd 命令提示符语法，通过临时脚本和 UTF-16 快照采集 `set`、`cd` 的结果，临时文件随调用结束清理。命令输出继续使用原有 PTY。
+
+Windows 输入在 cmd 命令组中执行，使条件命令的采集始终位于条件体之外；包含括号、`&` 等特殊字符的值应加引号，例如 `/set "PATH=C:\my tools;%PATH%"`。`for` 仍使用命令提示符的 `%i` 写法。
+
+普通失败也会保留失败前已经完成的环境和目录修改；失败的 `cd` 保持原目录。若强制终止、Unix `exec`/覆盖 `EXIT` trap，或 Windows `exit` 等操作跳过采集，则显示警告，下一条命令使用上一次完整状态。该功能保存的是环境和目录，未导出的 shell 局部变量、函数、别名及 shell 选项不跨命令保存；独立子进程本来也不能改变父 shell 的环境，脚本如需修改当前命令环境应使用 Unix 的 `. script` 或 Windows 的 `call script.cmd`。
+
 UI 样式预览可在 Command Line 中运行 `debug view-ui-style 2`，或在外部终端运行 `tundra-cli debug view-ui-style 2`。源码运行方式为 `cargo run -p cli --bin tundra-cli -- debug view-ui-style 2`。预览至少需要 60 × 24 个字符，建议使用 100 × 35 或更大的窗口。
 
 - `1` Glacier：现有带边框组件、直接更新的进度条、tachyonfx 扫入效果。

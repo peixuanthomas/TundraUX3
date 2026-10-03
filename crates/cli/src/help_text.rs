@@ -28,6 +28,10 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
+        "          System commands keep exported environment variables and the working directory until you leave this REPL."
+    )?;
+    writeln!(
+        output,
         "  logs    Query runtime logs and incidents, or export diagnostics; run logs help"
     )?;
     writeln!(output, "  help    Show command help")

@@ -2958,6 +2958,7 @@ dependencies = [
  "signal-hook",
  "starship-battery",
  "sysinfo",
+ "tempfile",
  "watchdog",
  "windows-sys 0.61.2",
  "zbus",
