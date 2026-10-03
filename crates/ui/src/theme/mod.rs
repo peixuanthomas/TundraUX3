@@ -824,6 +824,19 @@ impl TundraTheme {
             .map_or(self.accent_color, |frame| frame.accent)
     }
 
+    /// Unavailable actions use neutral gray in both true-color and ANSI
+    /// terminals. Clear inherited emphasis and local selection fills so a
+    /// disabled control cannot look focused, pressed, or selected.
+    pub fn disabled_style(&self) -> Style {
+        Style::default()
+            .fg(Color::DarkGray)
+            .bg(self
+                .buttons
+                .as_ref()
+                .map_or(self.background, |frame| frame.background))
+            .remove_modifier(Modifier::all())
+    }
+
     pub fn body_style(&self) -> Style {
         Style::default().fg(self.foreground).bg(self.background)
     }

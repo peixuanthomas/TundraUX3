@@ -1,7 +1,6 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
 use ratatui::widgets::{
     Borders, HighlightSpacing, List as RatatuiList, ListItem as RatatuiListItem,
     ListState as RatatuiListState, StatefulWidget,
@@ -316,10 +315,7 @@ impl List {
                     item.disabled,
                     theme,
                 );
-                if item.disabled {
-                    style = style.add_modifier(Modifier::DIM);
-                }
-                if self.selected != Some(index) {
+                if !item.disabled && self.selected != Some(index) {
                     style = style.fg(tone_color(item.tone, theme));
                 }
                 RatatuiListItem::new(label).style(style)

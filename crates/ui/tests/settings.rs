@@ -50,6 +50,77 @@ fn settings_editor_actions_are_hittable_without_a_duplicate_page_back() {
 }
 
 #[test]
+fn unavailable_settings_retain_gray_buttons_and_register_disabled_hit_regions() {
+    use ui::components::ButtonFrame;
+    for kind in [
+        SettingsControlKind::Action,
+        SettingsControlKind::Toggle,
+        SettingsControlKind::Cycle,
+        SettingsControlKind::Picker,
+        SettingsControlKind::Palette,
+        SettingsControlKind::Stepper,
+    ] {
+        for enabled in [false, true] {
+            let mut model = sample_model();
+            model.appearance_preview = None;
+            model.selected_field = SettingsField::CheckUpdates;
+            model.cards = vec![SettingsCardViewModel::new(
+                "Actions",
+                vec![
+                    SettingsItemViewModel::new(
+                        SettingsField::CheckUpdates,
+                        "Action",
+                        "55",
+                        "Unavailable while busy",
+                        kind,
+                    )
+                    .enabled(enabled),
+                ],
+            )];
+            let mut theme = TundraTheme {
+                muted: Color::Magenta,
+                ..TundraTheme::default()
+            };
+            let buttons = ButtonFrame::new(None, None, &theme);
+            theme.buttons = Some(buttons.clone());
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_settings(frame, frame.area(), &chrome(), &model, &theme);
+                })
+                .unwrap();
+            let regions: Vec<_> = buttons
+                .regions()
+                .into_iter()
+                .filter(|region| region.id.as_str().starts_with("settings."))
+                .collect();
+            assert_eq!(
+                regions.len(),
+                if kind == SettingsControlKind::Stepper {
+                    2
+                } else {
+                    1
+                }
+            );
+            for region in regions {
+                assert_eq!(region.disabled, !enabled);
+                let label: String = (region.area.x..region.area.right())
+                    .map(|x| terminal.backend().buffer()[(x, region.area.y)].symbol())
+                    .collect();
+                assert!(label.contains('[') && label.contains(']'), "{label}");
+                if !enabled {
+                    for x in region.area.x..region.area.right() {
+                        let cell = &terminal.backend().buffer()[(x, region.area.y)];
+                        assert_eq!(cell.fg, Color::DarkGray);
+                        assert!(cell.modifier.is_empty());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
     let model = sample_model();
     for (width, height) in [(80, 24), (120, 32)] {
@@ -791,7 +862,7 @@ fn unavailable_settings_use_localized_reasons_and_theme_without_permission_lock(
                         .iter()
                         .any(
                             |cell| cell.symbol() == missing.chars().next().unwrap().to_string()
-                                && cell.fg == theme.muted
+                                && cell.fg == Color::DarkGray
                         )
                 );
             }

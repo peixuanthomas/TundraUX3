@@ -706,7 +706,7 @@ fn buttons_share_hover_tint_pressed_accent_and_disabled_precedence() {
             (false, false, false, theme.foreground),
             (true, false, false, theme.button_hover_color()),
             (true, true, false, theme.accent_color),
-            (true, true, true, theme.muted),
+            (true, true, true, Color::DarkGray),
         ] {
             button.state.hovered = hovered;
             button.state.active = active;
@@ -727,6 +727,124 @@ fn buttons_share_hover_tint_pressed_accent_and_disabled_precedence() {
                 expected
             );
         }
+    }
+}
+
+#[test]
+fn disabled_buttons_remain_gray_without_emphasis_for_every_render_variant() {
+    use ui::components::{ButtonFrame, ButtonRegion, ComponentState};
+    use ui::{RenderCapabilities, RenderContext};
+    let area = Rect::new(0, 0, 16, 3);
+    for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
+        for background in [Color::Black, Color::White] {
+            let base = TundraTheme {
+                background,
+                muted: Color::Magenta,
+                border_color: Color::Green,
+                ..TundraTheme::default()
+            };
+            let mut theme = RenderContext::from_theme(&base, Default::default(), capabilities)
+                .compatibility_theme();
+            let region = ButtonRegion {
+                id: "save".into(),
+                area,
+                disabled: true,
+            };
+            theme.buttons = Some(ButtonFrame::new(Some(region.clone()), Some(region), &theme));
+            let canvas = theme.background;
+            theme.background = Color::Yellow; // A local selected palette fill.
+            let mut button = Button::new("save", "Save");
+            button.state = ComponentState::default()
+                .disabled(true)
+                .focused(true)
+                .hovered(true)
+                .active(true)
+                .selected(true);
+            for variant in 0..3 {
+                let mut buffer = Buffer::empty(area);
+                buffer.set_style(
+                    area,
+                    ratatui::style::Style::default()
+                        .add_modifier(Modifier::BOLD | Modifier::DIM | Modifier::REVERSED),
+                );
+                match variant {
+                    0 => button.render(area, &mut buffer, &theme),
+                    1 => button.render_borderless(area, &mut buffer, &theme),
+                    _ => button.render_surface(area, &mut buffer, &theme),
+                }
+                for cell in buffer.content() {
+                    assert_eq!(cell.fg, Color::DarkGray);
+                    assert!(cell.modifier.is_empty());
+                }
+                assert_eq!(buffer[(0, 0)].bg, canvas);
+            }
+        }
+    }
+}
+
+#[test]
+fn disabling_a_pressed_button_cancels_activation_until_reenabled() {
+    let area = Rect::new(0, 0, 12, 3);
+    let mut button = Button::new("save", "Save");
+    button.handle_event(
+        InputEvent::mouse(MouseEvent::down(2, 1, MouseButton::Left)),
+        area,
+    );
+    button.set_disabled(true);
+    for event in [
+        InputEvent::key(Key::Enter),
+        InputEvent::key(Key::Space),
+        InputEvent::mouse(MouseEvent::up(2, 1, MouseButton::Left)),
+        InputEvent::mouse(MouseEvent::click(2, 1, MouseButton::Left)),
+        InputEvent::mouse(MouseEvent::down(2, 1, MouseButton::Left)),
+    ] {
+        assert_eq!(button.handle_event(event, area), ComponentEvent::None);
+        assert!(!button.state.active);
+    }
+    button.set_disabled(false);
+    assert_eq!(
+        button.handle_event(
+            InputEvent::mouse(MouseEvent::up(2, 1, MouseButton::Left)),
+            area
+        ),
+        ComponentEvent::None
+    );
+    assert_eq!(
+        button.handle_event(InputEvent::key(Key::Enter), area),
+        ComponentEvent::Activated("save".into())
+    );
+}
+
+#[test]
+fn disabled_menu_items_keep_gray_instead_of_their_semantic_tone() {
+    use ui::components::ComponentTone;
+    let theme = TundraTheme {
+        muted: Color::Magenta,
+        ..TundraTheme::default()
+    };
+    for tone in [
+        ComponentTone::Default,
+        ComponentTone::Accent,
+        ComponentTone::Danger,
+    ] {
+        let mut list = List::new(
+            "actions",
+            vec![
+                ListItem::new("open", "Open"),
+                ListItem::new("delete", "Delete").tone(tone).disabled(true),
+            ],
+        );
+        list.set_focused(true);
+        let area = Rect::new(0, 0, 16, 2);
+        let mut buffer = Buffer::empty(area);
+        list.render_borderless(area, &mut buffer, &theme);
+        let label = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "D")
+            .unwrap();
+        assert_eq!(label.fg, Color::DarkGray);
+        assert!(label.modifier.is_empty());
     }
 }
 

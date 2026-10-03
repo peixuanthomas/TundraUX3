@@ -235,7 +235,7 @@ fn setup_appearance_disables_the_accent_option_matching_the_theme_color() {
 
     assert!(output.contains("Cyan"));
     assert!(!output.contains("[xCyan]"));
-    assert!(region_has_fg(&terminal, cyan_area, theme.muted));
+    assert!(region_has_fg(&terminal, cyan_area, Color::DarkGray));
     assert!(!region_has_fg(&terminal, cyan_area, Color::Cyan));
 }
 

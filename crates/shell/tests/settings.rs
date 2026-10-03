@@ -405,7 +405,7 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
 }
 
 #[test]
-fn normal_user_system_settings_are_read_only() {
+fn normal_user_system_settings_keep_their_controls_disabled() {
     let fixture = FixtureRoot::new("system-settings-user");
     let platform = mock_platform(fixture.path());
     let manager = initialize_users(&platform, true, false);
@@ -428,7 +428,7 @@ fn normal_user_system_settings_are_read_only() {
             .cards
             .iter()
             .flat_map(|card| &card.items)
-            .all(|item| item.kind == ui::SettingsControlKind::ReadOnly)
+            .all(|item| item.kind != ui::SettingsControlKind::ReadOnly)
     );
     press(&mut state, &platform, "Right");
     assert_eq!(manager.load_config().unwrap(), before);

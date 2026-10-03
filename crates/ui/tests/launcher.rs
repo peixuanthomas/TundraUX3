@@ -170,6 +170,43 @@ fn built_in_launcher_item_falls_back_to_ascii_when_graphical_icon_loading_fails(
 }
 
 #[test]
+fn unavailable_launcher_cards_stay_gray_when_selected() {
+    use ratatui::style::Color;
+    for status in [
+        LauncherItemStatus::Checking,
+        LauncherItemStatus::NeedsApproval,
+        LauncherItemStatus::Changed,
+        LauncherItemStatus::Missing,
+        LauncherItemStatus::Unsupported,
+    ] {
+        let model = LauncherViewModel::new(
+            vec![item(0, status)],
+            Some(0),
+            LauncherViewMode::LargeIcons,
+            true,
+        );
+        let terminal = render_terminal(&model, 120, 32);
+        let main = match compute_shell_layout(Rect::new(0, 0, 120, 32)) {
+            ShellLayout::Full { main, .. } | ShellLayout::Compact(main) => main,
+        };
+        let area = launcher_layout(main, &model).items[0].area;
+        let mut painted = 0;
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                let cell = &terminal.backend().buffer()[(x, y)];
+                if cell.symbol().trim().is_empty() {
+                    continue;
+                }
+                painted += 1;
+                assert_eq!(cell.fg, Color::DarkGray, "{status:?}: {cell:?}");
+                assert!(cell.modifier.is_empty());
+            }
+        }
+        assert!(painted > 0);
+    }
+}
+
+#[test]
 fn details_table_renders_cells_at_the_declared_column_boundaries() {
     let width = 100;
     let height = 30;

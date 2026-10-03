@@ -134,7 +134,7 @@ pub(crate) fn inner_area(area: Rect) -> Rect {
 pub(crate) fn interactive_style(state: ComponentState, theme: &TundraTheme) -> Style {
     let tokens = theme.tokens();
     if state.disabled {
-        return Style::default().fg(tokens.muted).bg(tokens.surface);
+        return theme.disabled_style().bg(tokens.surface);
     }
 
     let mut style = Style::default().fg(tokens.text).bg(tokens.surface);

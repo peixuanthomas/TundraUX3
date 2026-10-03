@@ -322,7 +322,7 @@ impl Button {
 
     fn border_style(state: ComponentState, theme: &TundraTheme) -> Style {
         if state.disabled {
-            return theme.border_style();
+            return theme.disabled_style();
         }
         if state.active {
             return theme.border_style().fg(theme.button_accent_color());
@@ -335,7 +335,7 @@ impl Button {
 
     fn style_for_state(state: ComponentState, theme: &TundraTheme) -> Style {
         if state.disabled {
-            return theme.muted_style();
+            return theme.disabled_style();
         }
 
         let mut style = theme.body_style();

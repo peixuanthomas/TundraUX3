@@ -279,6 +279,8 @@ Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装�
 
 Home 图标由 `home_icons.toml` 同时声明 ASCII 图案和 PNG；Launcher 使用同样的图形策略。检测到 Kitty、Sixel 或 iTerm2 图形协议时，可在 **Settings → Appearance → Theme → Default theme** 选择 ASCII 或图片图标；这一选择随当前用户 Appearance 持久化。普通文本终端会禁用图片选项。PNG 缺失、损坏或无法准备时，一律自动回退到原有 ASCII 图标，且保持既有四行图标区域和等比例居中布局。
 
+不可用操作统一使用 `TundraTheme::disabled_style()` 的中性灰色，按钮文字、边框与禁用菜单项不再使用主题弱化色、警告色或额外的 DIM 效果；禁用状态优先于悬停、按下、选中和焦点状态。Settings 保留不可用操作原有的按钮与步进器形态，并将禁用状态注册到共享按钮命中区域；Launcher 的不可用图标卡片使用灰色 ASCII 图标，避免彩色图片覆盖禁用样式。操作权限与执行条件仍由原有控制器检查。
+
 ### System Status 数据流与权限边界
 
 System Status 的只读数据流为：`platform` 原生采集器 → `system-services` 中由 `Arc`/`watch` 发布的不可变 `SystemSnapshot` → APP 领域快照 → Shell 按角色过滤的 ViewModel 与通知 → UI。前台活动时每 5 秒采样，后台时每 30 秒采样；用户也可以请求即时刷新。存储压力告警只在达到压力条件时产生，各数据项可独立标记为 `Stale` 或 `Unavailable`，不会因单项失败而把整个快照伪装成最新或完全不可用。

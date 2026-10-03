@@ -66,7 +66,7 @@ fn options_use_body_color_and_mark_non_defaults_independently_of_focus() {
                 let area = overlay_control_area(&model, &ExplorerOverlayControl::Option(index));
                 let cell = &terminal.backend().buffer()[(area.x, area.y)];
                 let expected = if index == 3 {
-                    theme.muted
+                    Color::DarkGray
                 } else if index == focused_index {
                     theme.accent_color
                 } else {

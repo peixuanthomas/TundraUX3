@@ -900,7 +900,8 @@ fn render_launcher_grid(
             continue;
         }
         surface.render_surface_frame(frame, item_layout.area, theme);
-        let rendered_native = item_layout.icon_area.width > 0
+        let rendered_native = !surface.state.disabled
+            && item_layout.icon_area.width > 0
             && item_layout.icon_area.height > 0
             && icons.is_some_and(|icons| icons.render_icon(&item.id, frame, item_layout.icon_area));
         if !rendered_native {
@@ -914,7 +915,7 @@ fn render_launcher_grid(
             .max(inner.y);
         frame.render_widget(
             Paragraph::new(fit_text(&item.name, inner.width))
-                .style(if focused {
+                .style(if focused && !surface.state.disabled {
                     theme.title_style().bg(theme.tokens().raised)
                 } else {
                     style
@@ -1151,20 +1152,12 @@ fn render_launcher_confirmation(
 }
 
 fn item_style(status: LauncherItemStatus, selected: bool, theme: &TundraTheme) -> Style {
-    if selected {
+    if status != LauncherItemStatus::Ready {
+        theme.disabled_style()
+    } else if selected {
         theme.title_style()
     } else {
-        status_style(status, theme)
-    }
-}
-
-fn status_style(status: LauncherItemStatus, theme: &TundraTheme) -> Style {
-    match status {
-        LauncherItemStatus::Ready => theme.body_style(),
-        LauncherItemStatus::Checking | LauncherItemStatus::NeedsApproval => theme.muted_style(),
-        LauncherItemStatus::Changed
-        | LauncherItemStatus::Missing
-        | LauncherItemStatus::Unsupported => theme.error_style(),
+        theme.body_style()
     }
 }
 

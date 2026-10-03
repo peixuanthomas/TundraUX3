@@ -157,7 +157,7 @@ fn default_admin_actions_protect_the_last_enabled_administrator() {
 }
 
 #[test]
-fn disabled_action_is_muted_and_exposes_its_reason() {
+fn disabled_action_is_gray_and_exposes_its_reason() {
     let mut model = UserManagementViewModel::new(
         "root",
         vec![user("root", "Administrator", "Admin", true, false, true)],
@@ -179,7 +179,7 @@ fn disabled_action_is_muted_and_exposes_its_reason() {
     assert!(region_has_fg(
         &terminal,
         delete.area,
-        TundraTheme::default_dark().muted
+        ratatui::style::Color::DarkGray
     ));
 }
 

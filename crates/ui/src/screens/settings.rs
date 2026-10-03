@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
-use ratatui::style::{Color, Modifier};
+use ratatui::style::Color;
 use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
@@ -204,9 +204,6 @@ impl SettingsItemViewModel {
 
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
-        if !enabled {
-            self.kind = SettingsControlKind::ReadOnly;
-        }
         self
     }
 }
@@ -1630,12 +1627,7 @@ fn render_settings_control(
         return;
     }
 
-    if !item.enabled || item.kind == SettingsControlKind::ReadOnly {
-        let label = if item.enabled || item.unavailable_reason.is_some() {
-            item.value.clone()
-        } else {
-            i18n::tr!("ui-settings-locked-value", value = item.value.clone())
-        };
+    if item.kind == SettingsControlKind::ReadOnly {
         let style = if item.enabled {
             if selected {
                 theme.title_style()
@@ -1643,10 +1635,10 @@ fn render_settings_control(
                 theme.body_style()
             }
         } else {
-            theme.muted_style().add_modifier(Modifier::DIM)
+            theme.disabled_style()
         };
         frame.render_widget(
-            Paragraph::new(label)
+            Paragraph::new(item.value.clone())
                 .alignment(HorizontalAlignment::Right)
                 .style(style),
             area,
@@ -1654,20 +1646,22 @@ fn render_settings_control(
         return;
     }
     if item.kind == SettingsControlKind::Stepper && area.width >= 6 {
-        Button::new(format!("settings.decrease.{:?}", item.field), "−").render_inline_frame(
-            frame,
-            Rect::new(area.x, area.y, 3, area.height),
-            theme,
-        );
-        Button::new(format!("settings.increase.{:?}", item.field), "+").render_inline_frame(
-            frame,
-            Rect::new(area.right() - 3, area.y, 3, area.height),
-            theme,
-        );
+        for (action, label, x) in [
+            ("decrease", "−", area.x),
+            ("increase", "+", area.right() - 3),
+        ] {
+            let mut button = Button::new(format!("settings.{action}.{:?}", item.field), label);
+            button.set_disabled(!item.enabled);
+            button.render_inline_frame(frame, Rect::new(x, area.y, 3, area.height), theme);
+        }
         frame.render_widget(
             Paragraph::new(item.value.clone())
                 .alignment(HorizontalAlignment::Center)
-                .style(theme.body_style()),
+                .style(if item.enabled {
+                    theme.body_style()
+                } else {
+                    theme.disabled_style()
+                }),
             Rect::new(area.x + 3, area.y, area.width - 6, area.height),
         );
         return;
@@ -1679,19 +1673,12 @@ fn render_settings_control(
     );
     button.state.selected = selected;
     button.set_focused(selected);
+    button.set_disabled(!item.enabled);
     button.render_inline_frame(frame, area, theme);
 }
 
 fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
     let label_width = u16::try_from(terminal_width(&item.value)).unwrap_or(u16::MAX);
-    if !item.enabled && item.unavailable_reason.is_none() {
-        return u16::try_from(terminal_width(&i18n::tr!(
-            "ui-settings-locked-value",
-            value = item.value.clone()
-        )))
-        .unwrap_or(u16::MAX);
-    }
-
     let component_padding = match item.kind {
         SettingsControlKind::Toggle => 2,
         SettingsControlKind::Cycle
