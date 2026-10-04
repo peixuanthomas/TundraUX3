@@ -41,13 +41,7 @@ impl ScreenViewModel {
             }
             ShellScreen::Explorer => Self::Explorer(Box::new(state.to_explorer_view_model())),
             ShellScreen::Launcher => Self::Launcher(Box::new(state.to_launcher_view_model())),
-            ShellScreen::CommandLine => Self::CommandLine(Box::new({
-                let mut model = command_line.view_model();
-                if let Some(username) = state.current_home_username() {
-                    model = model.with_prompt_username(username);
-                }
-                model
-            })),
+            ShellScreen::CommandLine => Self::CommandLine(Box::new(command_line.view_model())),
             ShellScreen::Editor => Self::Editor(Box::new(state.to_editor_view_model())),
             ShellScreen::Settings => Self::Settings(Box::new(
                 state

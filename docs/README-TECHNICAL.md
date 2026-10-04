@@ -58,10 +58,11 @@ cargo build --release -p shell -p cli
 - `target/debug/tundra-shell`（Windows 为 `tundra-shell.exe`）
 - `target/debug/tundra-cli`（Windows 为 `tundra-cli.exe`）
 
-启动完整 Shell：
+启动完整 Shell（更新源码后也先构建 CLI，避免 Command Line 使用旧程序）：
 
 ~~~console
-cargo run -p shell --bin tundra-shell
+cargo build --locked -p cli
+cargo run --locked -p shell --bin tundra-shell
 ~~~
 
 Linux 在验证普通进程身份后附着当前 NSS 用户，首次依次完成语言、时区和外观设置后进入 Home（跳过创建用户），后续直接进入 Home。Windows/macOS 首次创建本地管理员账户，后续保留 Weathr 锁屏与本地登录流程。
@@ -349,7 +350,9 @@ Launcher 存储平台可执行项目及固定顺序，支持图标/列表视图�
 
 Launcher 固定提供 **Editor**；Linux 当前用户及 Windows/macOS 本地管理员还会在第一项看到 **Command Line**。这些内建应用不写入 Launcher 配置，不能删除或拖动排序。图标由 `launcher_icons.toml` 中的 built-in application ID 定义。
 
-打开 Command Line 后，`CommandLineHost` 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，以 `xterm-256color` 运行，并使用有 2,000 行回滚的 vt100 内存屏幕解析子终端单元格，再在 Tundra chrome 中绘制。子进程输出不会直接写入宿主终端；所有 OSC 控制串（包括 OSC 52 剪贴板请求）都会被过滤。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理子进程树（Windows Job Object、Unix 进程组）；输入 `exit` 正常返回 Launcher。子 CLI 以退出码 `75` 请求重置时，Shell 统一完成重置并重启。
+打开 Command Line 后，`CommandLineHost` 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，以 `xterm-256color` 运行，并使用有 2,000 行回滚的 vt100 内存屏幕解析子终端单元格，再在 Tundra chrome 中绘制。提示符和输入使用普通命令输出的文字颜色，不单独套用强调色。子进程输出不会直接写入宿主终端；所有 OSC 控制串（包括 OSC 52 剪贴板请求）都会被过滤。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理子进程树（Windows Job Object、Unix 进程组）；输入 `exit` 正常返回 Launcher。子 CLI 以退出码 `75` 请求重置时，Shell 统一完成重置并重启。
+
+`cargo run -p shell` 只构建主界面，不会重新构建 `tundra-cli` 可执行文件。若更新源码后 Command Line 仍显示旧提示符，先运行 `cargo build --locked -p cli` 再启动 Shell；发布模式需要对应使用 `--release`。两者必须放在同一构建目录，便携包也应一起更新两个程序。
 
 ### 纯文本编辑器
 
@@ -690,10 +693,11 @@ Linux 的自动测试不触碰用户真实 Trash。发布候选可在 GNOME/KDE 
 
 ```console
 cargo test -p platform --test native_trash_smoke -- --ignored --nocapture
+cargo build --locked -p shell -p cli
 python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
 ```
 
-PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。它依次经过语言、时区页面（跳过创建用户），打开已有 Appearance 颜色输入框，默认注入 64 个 SGR 全移动鼠标事件（可通过 `TUNDRA_PTY_MOUSE_EVENT_COUNT` 调整），随后发送单字符哨兵，在 250 毫秒门限内验证鼠标洪峰后的普通字符输入响应；Ratatui 增量绘制不保证重发完整多字符字符串。测试再取消临时颜色、完成当前 Linux 用户的 Appearance 设置并进入 Home。最后发送 `SIGTERM`，检查终端属性、raw mode、鼠标捕获、备用屏幕和光标均得到恢复。
+PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。它依次经过语言、时区页面（跳过创建用户），打开已有 Appearance 颜色输入框，默认注入 64 个 SGR 全移动鼠标事件（可通过 `TUNDRA_PTY_MOUSE_EVENT_COUNT` 调整），随后发送单字符哨兵，在 250 毫秒门限内验证鼠标洪峰后的普通字符输入响应；Ratatui 增量绘制不保证重发完整多字符字符串。测试再取消临时颜色、完成当前 Linux 用户的 Appearance 设置并进入 Home，从 Launcher 打开 Command Line，验证初始绝对路径以及切换到含空格和中文的目录后的提示符。最后发送 `SIGTERM`，检查终端属性、raw mode、鼠标捕获、备用屏幕和光标均得到恢复。
 
 root 启动确认在可丢弃的 Linux 测试环境验证；下列脚本使用临时 XDG 目录，不修改系统配置。
 第一项覆盖 Shell/CLI 的 `y` 确认、其他按键取消、终端模式恢复、管道拒绝、普通用户免确认和 set-ID 拒绝；

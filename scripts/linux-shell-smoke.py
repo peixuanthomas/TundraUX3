@@ -12,8 +12,10 @@ import fcntl
 import json
 import os
 import pty
+import pwd
 import re
 import select
+import shlex
 import shutil
 import signal
 import struct
@@ -77,6 +79,7 @@ def wait_for_output(
     child: subprocess.Popen,
     timeout: float,
     start_offset: int = 0,
+    ignore_spaces: bool = False,
 ) -> bool:
     deadline = time.monotonic() + timeout
     def contains_sequence() -> bool:
@@ -84,6 +87,9 @@ def wait_for_output(
             return True
         # Ratatui can switch styles between a border and its title.
         visible = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output[start_offset:]))
+        if ignore_spaces:
+            # Ratatui can skip already-blank cells with cursor positioning.
+            return sequence.replace(b" ", b"") in visible.replace(b" ", b"")
         return sequence in visible
 
     while not contains_sequence() and time.monotonic() < deadline:
@@ -337,6 +343,52 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle before pointer regression")
 
+        # Exercise the companion CLI launched by the real Shell, not just a
+        # standalone REPL. Rebuilding Shell alone can leave an older CLI beside it.
+        launcher_offset = len(output)
+        os.write(master, b"a")
+        if not wait_for_output(master, output, b"Command Line", child, 5.0, launcher_offset):
+            raise SystemExit("Launcher did not show Command Line")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Launcher did not settle")
+        prompt_offset = len(output)
+        os.write(master, b"\r")
+        username = pwd.getpwuid(os.geteuid()).pw_name
+        if not wait_for_output(master, output, f"{username}@/".encode(), child, 10.0, prompt_offset):
+            raise SystemExit("embedded CLI did not show an absolute-path prompt; rebuild both shell and cli")
+        # Command Line's live cursor can keep painting. Drain through the entry
+        # animation rather than requiring the entire terminal to become silent.
+        entry_deadline = time.monotonic() + 1.0
+        while time.monotonic() < entry_deadline:
+            read_available(master, output, 0.1)
+        command_directory = isolated / "command path 中文"
+        command_directory.mkdir()
+        os.write(master, ("/cd " + shlex.quote(str(command_directory)) + "\r").encode())
+        if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, prompt_offset, ignore_spaces=True):
+            raise SystemExit("embedded CLI could not change directory:\n" + output_diagnostic(output[prompt_offset:]))
+        # Resize to get a full frame: incremental updates can omit the unchanged
+        # username and path prefix, so raw output alone cannot verify that prompt.
+        prompt_offset = len(output)
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 139, 0, 0))
+        os.kill(child.pid, signal.SIGWINCH)
+        expected_prompt = f"{username}@{command_directory} >>".encode()
+        if not wait_for_output(master, output, expected_prompt, child, 5.0, prompt_offset, ignore_spaces=True):
+            raise SystemExit("embedded CLI did not display the new absolute path after cd:\n" + output_diagnostic(output[prompt_offset:]))
+        launcher_offset = len(output)
+        os.write(master, b"exit\r")
+        if not wait_for_output(master, output, b"Command Line", child, 5.0, launcher_offset):
+            raise SystemExit("embedded CLI did not return to Launcher")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Launcher did not settle after CLI exit")
+        home_offset = len(output)
+        os.write(master, b"\x1b")
+        if not wait_for_output(master, output, b"Explorer", child, 5.0, home_offset):
+            raise SystemExit("Launcher did not return to Home")
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
+        os.kill(child.pid, signal.SIGWINCH)
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Home did not settle after CLI verification")
+
         # Reproduce Escape and an SGR report in the same terminal read. The
         # report's final M must never become Home's System Status shortcut.
         for report in (b"\x1b[<35;45;12M", b"\x1b[<35;90;22M"):
@@ -479,7 +531,7 @@ def main() -> int:
         shutil.rmtree(isolated, ignore_errors=True)
 
     print(
-        "Linux PTY Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
+        "Linux PTY embedded CLI paths, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
         f"sentinel visible in {sentinel_latency:.3f}s)"

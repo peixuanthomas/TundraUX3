@@ -1023,7 +1023,6 @@ impl CommandLineHost {
             terminal: Arc::clone(&self.ui_snapshot),
             process_state,
             message: None,
-            prompt_label: None,
         }
     }
 

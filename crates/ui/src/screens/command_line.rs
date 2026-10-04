@@ -134,10 +134,6 @@ pub struct CommandLineViewModel {
     pub process_state: CommandLineProcessState,
     /// A host-side message such as a spawn error or a restart hint.
     pub message: Option<String>,
-    /// Username prefix emitted by the embedded REPL, before its current path.
-    /// The renderer uses this hint to apply the live application accent without injecting
-    /// ANSI sequences that can break line-editor cursor calculations.
-    pub prompt_label: Option<String>,
 }
 
 impl CommandLineViewModel {
@@ -146,13 +142,7 @@ impl CommandLineViewModel {
             terminal: Arc::new(terminal),
             process_state: CommandLineProcessState::Running,
             message: None,
-            prompt_label: None,
         }
-    }
-
-    pub fn with_prompt_username(mut self, username: &str) -> Self {
-        self.prompt_label = Some(format!("{username}@"));
-        self
     }
 }
 
@@ -225,13 +215,7 @@ pub fn render_command_line_content(
     };
 
     let content_area = command_line_content_area(terminal_area, model.terminal.as_ref());
-    render_terminal_snapshot(
-        frame,
-        content_area,
-        model.terminal.as_ref(),
-        model.prompt_label.as_deref(),
-        theme.accent_color,
-    );
+    render_terminal_snapshot(frame, content_area, model.terminal.as_ref());
     render_command_line_scrollbar(frame, terminal_area, model.terminal.as_ref(), context);
     if let Some((message, style)) = command_line_process_message(model, theme) {
         render_process_message(frame, terminal_area, &message, style);
@@ -314,11 +298,9 @@ pub(crate) fn render_terminal_snapshot(
     frame: &mut Frame<'_>,
     area: Rect,
     snapshot: &CommandLineTerminalSnapshot,
-    prompt_label: Option<&str>,
-    accent_color: Color,
 ) {
     let lines = (0..snapshot.rows)
-        .map(|row| terminal_snapshot_line(snapshot, row, prompt_label, accent_color))
+        .map(|row| terminal_snapshot_line(snapshot, row))
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(lines)
@@ -328,35 +310,12 @@ pub(crate) fn render_terminal_snapshot(
     );
 }
 
-fn terminal_snapshot_line(
-    snapshot: &CommandLineTerminalSnapshot,
-    row: u16,
-    prompt_label: Option<&str>,
-    accent_color: Color,
-) -> Line<'static> {
+fn terminal_snapshot_line(snapshot: &CommandLineTerminalSnapshot, row: u16) -> Line<'static> {
     let row_end = terminal_row_end(snapshot, row);
     if row_end == 0 {
         return Line::default();
     }
 
-    let prompt_width = prompt_label
-        .filter(|prompt| row_starts_with(snapshot, row, prompt))
-        .map_or(0, |prefix| {
-            // Stop before the command. A long path can wrap before its delimiter.
-            // Count terminal cells, not bytes, so Chinese paths keep their width.
-            (prefix.len() as u16..row_end)
-                .find(|column| {
-                    [" ", ">", ">", " "]
-                        .iter()
-                        .enumerate()
-                        .all(|(offset, symbol)| {
-                            snapshot
-                                .cell(column.saturating_add(offset as u16), row)
-                                .is_some_and(|cell| cell.symbol == *symbol)
-                        })
-                })
-                .map_or(usize::from(row_end), |end| usize::from(end) + 3)
-        });
     let mut spans = Vec::new();
     let mut text = String::new();
     let mut text_style = None;
@@ -365,10 +324,7 @@ fn terminal_snapshot_line(
         let default_cell = CommandLineCell::default();
         let cell = snapshot.cell(column, row).unwrap_or(&default_cell);
         let symbol = visible_symbol(&cell.symbol);
-        let mut style = cell_style(cell);
-        if usize::from(column) < prompt_width {
-            style = style.fg(accent_color);
-        }
+        let style = cell_style(cell);
         if text_style.is_some_and(|current| current != style) {
             spans.push(Span::styled(
                 std::mem::take(&mut text),
@@ -403,20 +359,6 @@ fn terminal_row_end(snapshot: &CommandLineTerminalSnapshot, row: u16) -> u16 {
             })
         })
         .map_or(0, |column| column.saturating_add(1))
-}
-
-fn row_starts_with(snapshot: &CommandLineTerminalSnapshot, row: u16, prefix: &str) -> bool {
-    if prefix.is_empty() || prefix.len() > usize::from(snapshot.columns) {
-        return false;
-    }
-    prefix.bytes().enumerate().all(|(column, expected)| {
-        let Ok(column) = u16::try_from(column) else {
-            return false;
-        };
-        snapshot
-            .cell(column, row)
-            .is_some_and(|cell| cell.symbol.as_bytes() == [expected])
-    })
 }
 
 fn cell_style(cell: &CommandLineCell) -> Style {

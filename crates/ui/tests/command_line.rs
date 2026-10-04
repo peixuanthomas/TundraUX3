@@ -86,7 +86,7 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
 }
 
 #[test]
-fn command_line_prompt_uses_the_application_accent_color() {
+fn command_line_prompt_and_input_use_the_normal_output_color() {
     let prompt = "AdminUser@/home/user/space and 中文 >> ";
     let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
     let mut column = 0;
@@ -109,7 +109,15 @@ fn command_line_prompt_uses_the_application_accent_color() {
             ..CommandLineCell::default()
         },
     );
-    let model = CommandLineViewModel::new(terminal).with_prompt_username("AdminUser");
+    terminal.set_cell(
+        0,
+        1,
+        CommandLineCell {
+            symbol: "O".into(),
+            ..CommandLineCell::default()
+        },
+    );
+    let model = CommandLineViewModel::new(terminal);
     let theme = TundraTheme::default_dark().with_accent_color(ratatui::style::Color::LightMagenta);
     let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
     screen
@@ -118,20 +126,22 @@ fn command_line_prompt_uses_the_application_accent_color() {
         })
         .unwrap();
     let buffer = screen.backend().buffer();
+    let output_color = buffer.cell((1, 5)).unwrap().fg;
+    assert_ne!(output_color, theme.accent_color);
 
     let mut prompt_column = 0;
     for symbol in prompt.trim_end().chars() {
         let cell = buffer.cell((1 + prompt_column, 4)).unwrap();
         assert_eq!(cell.symbol(), symbol.to_string());
-        assert_eq!(cell.fg, theme.accent_color);
+        assert_eq!(cell.fg, output_color);
         // Wide glyphs use the leading cell's style; their continuation cell
         // has no independently painted symbol or foreground color.
         prompt_column +=
             u16::try_from(ratatui::text::Line::from(symbol.to_string()).width()).unwrap();
     }
-    assert_ne!(
+    assert_eq!(
         buffer.cell((1 + column, 4)).unwrap().fg,
-        theme.accent_color,
+        output_color,
         "typed command text must keep the child terminal style"
     );
 }

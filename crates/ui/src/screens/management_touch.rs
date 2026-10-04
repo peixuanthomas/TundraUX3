@@ -895,8 +895,6 @@ pub fn render_management_content(
                 frame,
                 layout.output_text,
                 snapshot,
-                None,
-                theme.accent_color,
             );
         } else {
             render_text(

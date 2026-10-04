@@ -75,6 +75,8 @@ cargo build --locked -p shell -p cli
 cargo run --locked -p shell --bin tundra-shell
 ```
 
+Repeat both commands after pulling updates. `cargo run -p shell` alone does not rebuild the companion `tundra-cli` executable used by Command Line.
+
 Explore the companion CLI:
 
 ```sh

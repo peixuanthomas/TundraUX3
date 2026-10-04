@@ -76,6 +76,8 @@ cargo build --locked -p shell -p cli
 cargo run --locked -p shell --bin tundra-shell
 ```
 
+更新源码后也要依次执行这两条命令。单独运行 `cargo run -p shell` 不会重新构建 Command Line 使用的 `tundra-cli` 可执行文件。
+
 查看配套命令行工具：
 
 ```sh
