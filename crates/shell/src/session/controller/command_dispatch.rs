@@ -35,8 +35,21 @@ impl ShellSession {
         if let Some(action) = self.apply_input_preamble_at(&input, received_at) {
             return action;
         }
+        let was_auto_admin_visible = self.auto_admin_visible();
+        let opening_key = match &input {
+            InputEvent::Key(key) if key.phase.is_press_like() => Some(key.clone()),
+            _ => None,
+        };
         let routed = self.route_input_at(input, received_at);
-        self.apply_routed_event(routed, platform, received_at)
+        let action = self.apply_routed_event(routed, platform, received_at);
+        if !was_auto_admin_visible
+            && self.auto_admin_visible()
+            && let Some(key) = opening_key
+        {
+            // Holding the page's activation key must not also approve its new modal.
+            self.auto_admin.guard_opening_key(key, received_at);
+        }
+        action
     }
 
     pub(in crate::session) fn apply_input_preamble_at(

@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn default_enter_approval_reaches_the_linux_authorization_adapter() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let (tx, _rx) = mpsc::channel();
+    let job = state
+        .begin_auto_admin("Enable fixture account".into(), true, tx)
+        .unwrap();
+    let authorization = AutoAdminAuthorization::new(job.clone());
+    assert!(matches!(
+        authorization.begin(),
+        Err(ServiceError::AuthorizationCancelled)
+    ));
+    state.apply_input(InputEvent::key(InputKey::Enter));
+    assert!(job.wait_for_approval().is_ok());
+    assert!(authorization.begin().is_ok());
+    assert!(!authorization.cancelled());
+}
+
+#[test]
 fn embedded_auth_pty_accepts_password_and_yn_and_resizes_without_echoing_secret() {
     let (tx, _rx) = mpsc::channel();
     let job = AutoAdminJob::new(

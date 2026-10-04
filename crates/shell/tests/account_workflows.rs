@@ -1648,7 +1648,7 @@ fn user_management_clock_button_opens_clock_and_returns_to_user_management() {
 }
 
 #[test]
-fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
+fn last_admin_actions_are_skipped_and_self_delete_can_be_cancelled() {
     let fixture = FixtureRoot::new("user-management-last-admin-delete");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -2003,7 +2003,13 @@ fn create_managed_user(state: &mut ShellSession, username: &str, admin: bool) {
 }
 
 fn finish_user_management_aa(state: &mut ShellSession, approve: bool) {
-    if approve {
+    // Approval is a fresh press after the key that opened the modal.
+    state.apply_input(InputEvent::Key(KeyInput::with_phase(
+        InputKey::Enter,
+        InputModifiers::NONE,
+        InputPhase::Release,
+    )));
+    if !approve {
         state.apply_input(InputEvent::from_key_label("Tab"));
     }
     state.apply_input(InputEvent::from_key_label("Enter"));

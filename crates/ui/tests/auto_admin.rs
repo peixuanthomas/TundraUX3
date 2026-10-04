@@ -9,7 +9,8 @@ fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
     for (width, height) in [(220, 65), (120, 40), (80, 24), (50, 12), (40, 12), (20, 8)] {
         let bounds = Rect::new(0, 0, width, height);
         for confirming in [true, false] {
-            let layout = ui::auto_admin_layout(bounds, confirming);
+            let model = model(confirming, false);
+            let layout = ui::auto_admin_layout(bounds, &model);
             let main = match ui::compute_shell_layout(bounds) {
                 ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
             };
@@ -32,26 +33,14 @@ fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
                 assert_eq!(area.intersection(bounds), area);
             }
             for (a, left) in layout.buttons.iter().enumerate() {
-                assert!(left.width > 0 && left.height > 0);
+                if a < if confirming { 2 } else { 4 } {
+                    assert!(left.width > 0 && left.height > 0);
+                }
                 for right in layout.buttons.iter().skip(a + 1) {
                     assert_eq!(left.intersection(*right).width, 0);
                 }
             }
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            let model = AutoAdminViewModel {
-                description: "Remove demo\nTarget: demo-1.0".into(),
-                status: "Waiting".into(),
-                confirming,
-                finished: false,
-                approve_selected: false,
-                button_focus: None,
-                scroll: 0,
-                input: None,
-                terminal: std::sync::Arc::new(CommandLineTerminalSnapshot::blank(
-                    layout.terminal.width,
-                    layout.terminal.height,
-                )),
-            };
             let theme = TundraTheme::default();
             let context = RenderContext::from_theme(
                 &theme,
@@ -82,21 +71,7 @@ fn auto_admin_preserves_title_and_status_cells_in_every_phase() {
             let main = match ui::compute_shell_layout(bounds) {
                 ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
             };
-            let layout = ui::auto_admin_layout(bounds, confirming);
-            let model = AutoAdminViewModel {
-                description: "Remove neofetch".into(),
-                status: "Status".into(),
-                confirming,
-                finished,
-                approve_selected: false,
-                button_focus: None,
-                scroll: 0,
-                input: None,
-                terminal: std::sync::Arc::new(CommandLineTerminalSnapshot::blank(
-                    layout.terminal.width,
-                    layout.terminal.height,
-                )),
-            };
+            let model = model(confirming, finished);
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal
                 .draw(|frame| {
@@ -125,7 +100,7 @@ fn auto_admin_preserves_title_and_status_cells_in_every_phase() {
 fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
     for width in [50, 60, 180] {
         let bounds = Rect::new(0, 0, width, 50);
-        let layout = ui::auto_admin_layout(bounds, false);
+        let layout = ui::auto_admin_layout(bounds, &model(false, false));
         let mut model = AutoAdminViewModel {
             description: "Remove demo".into(),
             status: "Running".into(),
@@ -141,6 +116,7 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
             )),
         };
         let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+        let layout = ui::auto_admin_layout(bounds, &model);
         terminal
             .draw(|frame| ui::render_auto_admin(frame, bounds, &model, &RenderContext::default()))
             .unwrap();
@@ -172,6 +148,121 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
                 );
             }
             assert!(!hint.contains('•'));
+        }
+    }
+}
+
+fn model(confirming: bool, finished: bool) -> AutoAdminViewModel {
+    AutoAdminViewModel {
+        description: "Remove demo\nTarget: demo-1.0".into(),
+        status: "Waiting".into(),
+        confirming,
+        finished,
+        approve_selected: true,
+        button_focus: None,
+        scroll: 0,
+        input: None,
+        terminal: std::sync::Arc::new(CommandLineTerminalSnapshot::blank(104, 20)),
+    }
+}
+
+#[test]
+fn confirmation_and_empty_results_are_compact_with_centered_actions() {
+    let bounds = Rect::new(0, 0, 208, 55);
+    for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 4)] {
+        let model = model(confirming, finished);
+        let layout = ui::auto_admin_layout(bounds, &model);
+        let first = layout.buttons[0];
+        let last = layout.buttons[count - 1];
+        assert!(
+            (i32::from(first.x + last.right())
+                - i32::from(layout.dialog.x * 2 + layout.dialog.width))
+            .abs()
+                <= 1
+        );
+        assert!(layout.description.x > layout.dialog.x + 1);
+        assert!(layout.description.y > layout.dialog.y + 1);
+        if confirming || finished {
+            assert!(
+                layout.dialog.height <= 16,
+                "sparse requests should not fill the screen"
+            );
+            assert_eq!(layout.terminal.height, 0);
+        } else {
+            assert_eq!(layout.terminal.height, 20);
+        }
+    }
+}
+
+#[test]
+fn completed_output_is_retained_without_an_empty_terminal_tail() {
+    let bounds = Rect::new(0, 0, 208, 55);
+    let mut model = model(false, true);
+    let terminal = std::sync::Arc::make_mut(&mut model.terminal);
+    terminal.cells[0].symbol = "O".into();
+    terminal.cells[104 * 2].symbol = "K".into();
+    let layout = ui::auto_admin_layout(bounds, &model);
+    assert_eq!(layout.terminal.height, 3);
+    let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+    terminal
+        .draw(|frame| ui::render_auto_admin(frame, bounds, &model, &RenderContext::default()))
+        .unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(layout.terminal.x, layout.terminal.y + 2)].symbol(),
+        "K"
+    );
+}
+
+#[test]
+fn localized_confirmation_wraps_and_registers_the_same_centered_button_areas() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        for width in [80, 208] {
+            let bounds = Rect::new(0, 0, width, 55);
+            let mut model = model(true, false);
+            model.description = i18n::tr!("aa-local-user-enable", user = "TestUser");
+            model.status = i18n::tr!("aa-request");
+            let layout = ui::auto_admin_layout(bounds, &model);
+            let theme = TundraTheme::default();
+            let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+            let mut context =
+                RenderContext::from_theme(&theme, Default::default(), Default::default());
+            context.buttons = Some(buttons.clone());
+            let mut terminal = Terminal::new(TestBackend::new(width, 55)).unwrap();
+            terminal
+                .draw(|frame| ui::render_auto_admin(frame, bounds, &model, &context))
+                .unwrap();
+            let regions = buttons.regions();
+            assert_eq!(regions.len(), 2);
+            assert_eq!(regions[0].area, layout.buttons[0]);
+            assert_eq!(regions[1].area, layout.buttons[1]);
+            for (text, area) in [
+                (&model.description, layout.description),
+                (&model.status, layout.status),
+                (&i18n::tr!("aa-confirm-hint"), layout.input),
+            ] {
+                let expected = ui::management_wrapped_lines(text, area.width);
+                assert!(
+                    expected.len() <= usize::from(area.height),
+                    "{language} {width}: clipped {text}"
+                );
+                let actual = (area.y..area.bottom())
+                    .map(|y| {
+                        (area.x..area.right())
+                            .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>();
+                // Wide glyph continuation cells are spaces; check Latin shortcuts
+                // separately while verifying every row has rendered content.
+                for (row, expected) in actual.iter().zip(expected) {
+                    assert!(!row.trim().is_empty() || expected.is_empty());
+                }
+            }
         }
     }
 }

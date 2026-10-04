@@ -9,6 +9,48 @@ fn job(policy: storage::AutoAdminPolicy) -> (AutoAdminJob, mpsc::Receiver<Operat
 }
 
 #[test]
+fn a_new_confirmation_focuses_approve_and_keyboard_denial_still_cancels() {
+    for deny_key in [
+        InputKey::Tab,
+        InputKey::BackTab,
+        InputKey::Right,
+        InputKey::Left,
+        InputKey::Escape,
+    ] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (tx, rx) = mpsc::channel();
+        let job = state
+            .begin_auto_admin("Enable demo".into(), true, tx)
+            .unwrap();
+        assert!(state.auto_admin_view().unwrap().approve_selected);
+        state.apply_input(InputEvent::key(deny_key.clone()));
+        if deny_key != InputKey::Escape {
+            assert!(!state.auto_admin_view().unwrap().approve_selected);
+            state.apply_input(InputEvent::key(InputKey::Enter));
+        }
+        assert_eq!(job.phase(), DENIED);
+        assert!(job.wait_for_approval().is_err());
+        assert!(
+            rx.try_iter()
+                .all(|input| matches!(input, OperationInput::Resize { .. }))
+        );
+        assert!(
+            state
+                .auto_admin_view()
+                .unwrap()
+                .terminal
+                .cells
+                .iter()
+                .all(|cell| !cell.cursor)
+        );
+    }
+}
+
+#[test]
 fn approval_is_required_before_worker_runs_and_denial_never_runs_it() {
     let (manual, _) = job(storage::AutoAdminPolicy::Manual);
     assert_eq!(manual.phase(), WAITING);
@@ -338,7 +380,8 @@ fn approval_click_requires_its_own_matching_release_and_resize_cancels_it() {
         visible: true,
         ..Default::default()
     };
-    let area = ui::auto_admin_layout(Rect::new(0, 0, 120, 40), true).buttons[0];
+    let area = ui::auto_admin_layout(Rect::new(0, 0, 120, 40), &state.auto_admin_view().unwrap())
+        .buttons[0];
     let point = (area.x, area.y);
     state.handle_auto_admin_input(&InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(job.phase(), WAITING);
@@ -503,7 +546,7 @@ fn hiding_pending_approval_denies_it_and_reopening_cannot_approve_it() {
         .begin_auto_admin("Remove demo".into(), true, tx)
         .unwrap();
     assert_eq!(job.phase(), WAITING);
-    assert!(!state.auto_admin.approve_selected);
+    assert!(state.auto_admin.approve_selected);
     let (tx, _rx) = mpsc::channel();
     assert!(
         state
@@ -566,4 +609,31 @@ fn requests_read_the_saved_policy_and_fail_closed_when_config_cannot_be_read() {
     assert_eq!(job.phase(), DENIED);
     assert!(job.wait_for_approval().is_err());
     platform::cleanup_temp_path(&root).unwrap();
+}
+
+#[test]
+fn confirmation_scroll_stops_at_the_last_description_line() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let (tx, _rx) = mpsc::channel();
+    state
+        .begin_auto_admin(
+            (0..30)
+                .map(|i| format!("Affected item {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            true,
+            tx,
+        )
+        .unwrap();
+    for _ in 0..30 {
+        state.apply_input(InputEvent::key(InputKey::Down));
+    }
+    let view = state.auto_admin_view().unwrap();
+    let layout = ui::auto_admin_layout(Rect::new(0, 0, 120, 40), &view);
+    assert_eq!(usize::from(view.scroll + layout.description.height), 30);
+    assert!(view.confirming);
 }

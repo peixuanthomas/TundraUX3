@@ -85,6 +85,10 @@ pub(in crate::session) struct AutoAdminState {
 }
 
 impl AutoAdminState {
+    pub(in crate::session) fn guard_opening_key(&mut self, key: KeyInput, at: Instant) {
+        self.action_key = Some((key.key, at));
+    }
+
     fn consume_action_repeat(&mut self, key: &KeyInput, at: Instant) -> bool {
         let Some((action, last_seen)) = self.action_key.as_mut() else {
             return false;
@@ -540,6 +544,7 @@ impl ShellSession {
         self.auto_admin = AutoAdminState {
             job: Some(job.clone()),
             visible: true,
+            approve_selected: true,
             suppress_repeats: true,
             ..Default::default()
         };
@@ -559,11 +564,17 @@ impl ShellSession {
             .is_some_and(AutoAdminJob::running)
     }
     pub(in crate::session) fn resize_auto_admin(&self) {
-        if let Some(job) = &self.auto_admin.job {
+        if let Some(job) = &self.auto_admin.job
+            && let Some(mut model) = self.auto_admin_model()
+        {
+            // Size the backing terminal for execution even while the compact
+            // confirmation/result is visible, preserving output and scrollback.
+            model.confirming = false;
+            model.finished = false;
             job.resize(
                 ui::auto_admin_layout(
                     Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
-                    false,
+                    &model,
                 )
                 .terminal,
             );
@@ -606,6 +617,7 @@ impl ShellSession {
         if self.auto_admin.job.as_ref() != Some(&job) {
             self.auto_admin = AutoAdminState {
                 job: Some(job),
+                approve_selected: true,
                 ..Default::default()
             };
         }
@@ -621,6 +633,9 @@ impl ShellSession {
         if !self.auto_admin_visible() {
             return None;
         }
+        self.auto_admin_model()
+    }
+    fn auto_admin_model(&self) -> Option<ui::AutoAdminViewModel> {
         let job = self.auto_admin.job.as_ref()?;
         let mut d = job.0.display.lock().unwrap_or_else(|e| e.into_inner());
         let input = d.question.as_ref().map(|q| {
@@ -634,18 +649,23 @@ impl ShellSession {
             )
         });
         let snapshot = TerminalSnapshot::from_parser(&mut d.parser);
+        let finished = matches!(job.phase(), DENIED | FINISHED);
+        let mut terminal = super::super::command_line_runtime::to_ui_snapshot(&snapshot);
+        if finished {
+            for cell in &mut terminal.cells {
+                cell.cursor = false;
+            }
+        }
         Some(ui::AutoAdminViewModel {
             description: job.0.description.clone(),
             status: d.status.clone(),
             confirming: job.phase() == WAITING,
-            finished: matches!(job.phase(), DENIED | FINISHED),
+            finished,
             approve_selected: self.auto_admin.approve_selected,
             button_focus: self.auto_admin.button_focus,
             scroll: self.auto_admin.scroll,
             input,
-            terminal: Arc::new(super::super::command_line_runtime::to_ui_snapshot(
-                &snapshot,
-            )),
+            terminal: Arc::new(terminal),
         })
     }
     #[cfg(test)]
@@ -813,7 +833,7 @@ impl ShellSession {
                 self.keyboard_focus_visible = false;
                 let layout = ui::auto_admin_layout(
                     Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
-                    job.phase() == WAITING,
+                    &self.auto_admin_model().unwrap(),
                 );
                 let hit = layout
                     .buttons
@@ -822,6 +842,11 @@ impl ShellSession {
                 let activated = match mouse.kind {
                     ui::MouseEventKind::Down(ui::MouseButton::Left) => {
                         self.auto_admin.button_focus = None;
+                        if job.phase() == WAITING
+                            && let Some(index) = hit
+                        {
+                            self.auto_admin.approve_selected = index == 0;
+                        }
                         self.auto_admin.pointer =
                             hit.map(|index| (index, job.phase(), received_at));
                         None
@@ -866,6 +891,20 @@ impl ShellSession {
             }
             InputEvent::FocusLost => self.auto_admin.pointer = None,
             InputEvent::FocusGained => {}
+        }
+        if job.phase() == WAITING {
+            let model = self.auto_admin_model().unwrap();
+            let layout = ui::auto_admin_layout(
+                Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
+                &model,
+            );
+            let lines =
+                ui::management_wrapped_lines(&model.description, layout.description.width).len();
+            self.auto_admin.scroll = self.auto_admin.scroll.min(
+                lines
+                    .saturating_sub(usize::from(layout.description.height))
+                    .min(u16::MAX as usize) as u16,
+            );
         }
         true
     }

@@ -129,7 +129,7 @@ fn password_change_waits_for_approval_and_two_matching_hidden_answers() {
             .password_hash,
         old
     );
-    state.apply_input(InputEvent::key(InputKey::Tab));
+    assert!(state.auto_admin_view().unwrap().approve_selected);
     state.apply_input(InputEvent::key(InputKey::Enter));
     secret_prompt(&mut state);
     answer_secret(&mut state, "NewPassword123!");
@@ -164,6 +164,50 @@ fn password_change_waits_for_approval_and_two_matching_hidden_answers() {
     assert!(view.finished);
     assert!(!format!("{view:?}").contains("NewPassword123!"));
     assert!(!format!("{view:?}").contains("Mismatch123!"));
+}
+
+#[test]
+fn enter_approves_enabling_the_selected_user_and_updates_the_account() {
+    let (mut state, storage, _fixture) = local_state(storage::AutoAdminPolicy::Manual);
+    let service = UserService::new(storage.clone());
+    service
+        .disable_user(state.app.auth_session().unwrap(), "other")
+        .unwrap();
+    let before = std::fs::read(&storage.layout().users_path).unwrap();
+    state.open_user_management();
+    state.focus_user_management_action(ui::UserManagementAction::ToggleEnabled);
+    let at = Instant::now();
+    state.apply_input_at(InputEvent::key(InputKey::Enter), at);
+    assert!(state.auto_admin_view().unwrap().confirming);
+    for millis in [10, 100, 500] {
+        state.apply_input_at(
+            InputEvent::key(InputKey::Enter),
+            at + Duration::from_millis(millis),
+        );
+        assert!(
+            state.auto_admin_view().unwrap().confirming,
+            "opening Enter must not approve the modal"
+        );
+    }
+    assert_eq!(std::fs::read(&storage.layout().users_path).unwrap(), before);
+    state.apply_input_at(
+        InputEvent::key(InputKey::Enter),
+        at + Duration::from_secs(2),
+    );
+    // Use a bounded assertion before waiting for a worker that may still need approval.
+    let view = state.auto_admin_view().unwrap();
+    assert!(!view.confirming);
+    assert!(view.approve_selected);
+    wait_for(&mut state, |state| state.user_management_job.is_none());
+    assert_eq!(
+        state.user_management_feedback_tone,
+        UserManagementFeedbackTone::Success
+    );
+    assert!(
+        identity::SessionService::new(storage)
+            .login("other", "InitialOther123!")
+            .is_ok()
+    );
 }
 
 #[test]
