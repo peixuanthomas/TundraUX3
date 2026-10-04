@@ -688,7 +688,7 @@ fn config_set_border_theme_fields_normalizes_and_preserves_users() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).expect("config output should be utf8"),
-        "Updated border color: light-cyan\n"
+        "Saved. Restart TundraUX3 to apply settings to an already running UI.\nUpdated border color: light-cyan\n"
     );
     assert_eq!(
         opened
@@ -726,7 +726,7 @@ fn config_border_color_accepts_hex_and_default_then_reports_canonical_values() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).expect("config output should be utf8"),
-        "Updated border color: #ABC123\n"
+        "Saved. Restart TundraUX3 to apply settings to an already running UI.\nUpdated border color: #ABC123\n"
     );
     assert_eq!(
         opened
@@ -752,7 +752,7 @@ fn config_border_color_accepts_hex_and_default_then_reports_canonical_values() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).expect("config output should be utf8"),
-        "Updated border color: white\n"
+        "Saved. Restart TundraUX3 to apply settings to an already running UI.\nUpdated border color: white\n"
     );
     assert_eq!(
         opened
@@ -786,7 +786,7 @@ fn config_accent_color_accepts_hex_and_default_then_reports_canonical_values() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).expect("config output should be utf8"),
-        "Updated accent color: #ABC123\n"
+        "Saved. Restart TundraUX3 to apply settings to an already running UI.\nUpdated accent color: #ABC123\n"
     );
     assert_eq!(
         opened
@@ -812,7 +812,7 @@ fn config_accent_color_accepts_hex_and_default_then_reports_canonical_values() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).expect("config output should be utf8"),
-        "Updated accent color: cyan\n"
+        "Saved. Restart TundraUX3 to apply settings to an already running UI.\nUpdated accent color: cyan\n"
     );
     assert_eq!(
         opened
@@ -838,7 +838,7 @@ fn config_accent_color_accepts_hex_and_default_then_reports_canonical_values() {
     assert!(stderr.is_empty());
     assert_eq!(
         String::from_utf8(stdout).expect("config output should be utf8"),
-        "Updated accent color: light-magenta\n"
+        "Saved. Restart TundraUX3 to apply settings to an already running UI.\nUpdated accent color: light-magenta\n"
     );
 
     let mut stdout = Vec::new();
@@ -1097,21 +1097,20 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
     let stdout = String::from_utf8(stdout).expect("doctor output should be utf8");
     assert!(stdout.contains("TundraUX3 doctor"));
     assert!(stdout.contains("Platform kind: macOS"));
-    assert!(stdout.contains("Path templates:"));
+    assert!(!stdout.contains("Path templates:"));
     assert!(stdout.contains("Resolved paths:"));
     assert!(stdout.contains("Checks:"));
     assert!(stdout.contains("Platform checks:"));
     assert!(stdout.contains("Terminal check:"));
     assert_eq!(stdout.matches("] Terminal:").count(), 1);
     assert!(!stdout.contains("Terminal image protocol"));
-    assert!(stdout.contains("Capability checks:"));
+    assert!(!stdout.contains("Capability checks:"));
     assert!(stdout.contains("Path checks:"));
     assert!(stdout.contains("Storage checks:"));
     assert!(stdout.contains("[PASS] Storage bootstrap: storage initialized and loaded cleanly"));
     assert!(stdout.contains("Asset checks:"));
     assert!(stdout.contains("[PASS] Required ASCII assets (theme default):"));
     assert!(stdout.contains("Doctor result: PASS"));
-    assert_path_labels(&stdout);
     assert_macos_resolved_path_markers(&stdout);
 
     assert!(
@@ -1175,10 +1174,10 @@ fn doctor_command_reports_checks_and_skips_storage_when_app_paths_fail() {
     let stderr = String::from_utf8(stderr).expect("doctor error output should be utf8");
     assert!(stdout.contains("TundraUX3 doctor"));
     assert!(stdout.contains("Platform kind: Unsupported"));
-    assert!(stdout.contains("Path templates:"));
+    assert!(!stdout.contains("Path templates:"));
     assert!(stdout.contains("Checks:"));
     assert!(stdout.contains("Terminal check:"));
-    assert!(stdout.contains("Capability checks:"));
+    assert!(!stdout.contains("Capability checks:"));
     assert!(stdout.contains("Path checks:"));
     assert!(stdout.contains("[FAIL] App paths: platform capability is unsupported: app_paths"));
     assert!(stdout.contains("Asset checks:"));
@@ -1198,7 +1197,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("<cls|config|debug|logs|new|repl|help>"));
+    assert!(stderr.contains("<config|launcher|debug|logs|cls|new|repl|help>"));
 }
 
 fn assert_path_labels(output: &str) {
@@ -1349,4 +1348,263 @@ impl Drop for TempTree {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+#[test]
+fn help_is_contextual_and_never_runs_the_command() {
+    for words in [
+        "config",
+        "config set",
+        "config reset",
+        "launcher",
+        "launcher pin",
+        "launcher unpin",
+        "repl",
+        "new",
+        "cls",
+        "debug doctor",
+        "debug test-watchdog-panic",
+        "logs export",
+        "debug clear-logs",
+    ] {
+        for flag in ["help", "--help", "-h"] {
+            let mut args = words.split_whitespace().collect::<Vec<_>>();
+            args.push(flag);
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            assert_eq!(
+                run_with_platform(&args, &UnsupportedPlatform, &mut stdout, &mut stderr),
+                0,
+                "{args:?}: {}",
+                String::from_utf8_lossy(&stderr)
+            );
+            assert!(String::from_utf8_lossy(&stdout).contains("Usage:"));
+            assert!(stderr.is_empty());
+        }
+        let mut args = vec!["help"];
+        args.extend(words.split_whitespace());
+        let mut stdout = Vec::new();
+        assert_eq!(
+            run_with_platform(&args, &UnsupportedPlatform, &mut stdout, &mut Vec::new()),
+            0
+        );
+    }
+    assert!(parse_args(["help", "made-up-command"]).is_err());
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["config", "set"],
+            &UnsupportedPlatform,
+            &mut Vec::new(),
+            &mut stderr
+        ),
+        2
+    );
+    assert!(String::from_utf8_lossy(&stderr).contains("config [get"));
+}
+
+#[test]
+fn ux_preferences_roundtrip_reset_and_reject_invalid_values_without_writing() {
+    let tree = TempTree::new("ux-preferences");
+    let platform = mock_windows_platform(tree.path()).with_kind(PlatformKind::Linux);
+    let opened = StorageManager::open(platform.app_paths().unwrap()).unwrap();
+    let mut before = opened.manager.load_config().unwrap();
+    before.timezone = "Asia/Shanghai".into();
+    before.explorer.show_hidden = true;
+    opened.manager.save_config(&before).unwrap();
+    for (field, value) in [
+        ("icon-mode", "ascii"),
+        ("motion", "reduced"),
+        ("animation-speed", "125"),
+        ("weather-location", "London, UK"),
+        ("update-mode", "beta"),
+    ] {
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_platform(
+                ["config", "set", field, value],
+                &platform,
+                &mut Vec::new(),
+                &mut stderr
+            ),
+            0,
+            "{}",
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+    let saved = opened.manager.load_config().unwrap();
+    assert_eq!(
+        saved.appearance.icon_display_mode,
+        storage::IconDisplayMode::Ascii
+    );
+    assert_eq!(
+        saved.appearance.motion_preference,
+        storage::MotionPreference::Reduced
+    );
+    assert_eq!(saved.appearance.animation_speed_percent, 125);
+    assert_eq!(saved.weather_location.as_deref(), Some("London, UK"));
+    assert_eq!(saved.linux_update_mode, storage::LinuxUpdateMode::Beta);
+    assert_eq!(saved.timezone, before.timezone);
+    assert!(saved.explorer.show_hidden);
+    let bytes = fs::read(&opened.manager.layout().config_path).unwrap();
+    for (field, value) in [
+        ("icon-mode", "none"),
+        ("motion", "fast"),
+        ("animation-speed", "49"),
+        ("animation-speed", "126"),
+        ("animation-speed", "201"),
+        ("weather-location", "bad\naddress"),
+        ("weather-location", "bad;address"),
+        ("weather-location", &"a".repeat(121)),
+        ("update-mode", "nightly"),
+    ] {
+        assert_ne!(
+            run_with_platform(
+                ["config", "set", field, value],
+                &platform,
+                &mut Vec::new(),
+                &mut Vec::new()
+            ),
+            0
+        );
+        assert_eq!(
+            fs::read(&opened.manager.layout().config_path).unwrap(),
+            bytes
+        );
+    }
+    assert_eq!(
+        run_with_platform(
+            ["config", "reset", "weather-location"],
+            &platform,
+            &mut Vec::new(),
+            &mut Vec::new()
+        ),
+        0
+    );
+    let reset = opened.manager.load_config().unwrap();
+    assert_eq!(reset.weather_location, None);
+    assert_eq!(reset.appearance, saved.appearance);
+    assert_eq!(reset.timezone, saved.timezone);
+    assert_eq!(reset.linux_update_mode, saved.linux_update_mode);
+}
+
+#[test]
+fn update_mode_writes_are_linux_only_and_options_do_not_need_storage() {
+    let tree = TempTree::new("update-mode-platform");
+    let platform = mock_windows_platform(tree.path());
+    assert_eq!(
+        run_with_platform(
+            ["config", "set", "update-mode", "beta"],
+            &platform,
+            &mut Vec::new(),
+            &mut Vec::new()
+        ),
+        1
+    );
+    assert!(!platform.app_paths().unwrap().config_path().exists());
+    let mut stdout = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["config", "options", "timezone"],
+            &UnsupportedPlatform,
+            &mut stdout,
+            &mut Vec::new()
+        ),
+        0
+    );
+    assert!(String::from_utf8_lossy(&stdout).contains("Asia/Shanghai"));
+    stdout.clear();
+    assert_eq!(
+        run_with_platform(
+            ["config", "options", "motion"],
+            &UnsupportedPlatform,
+            &mut stdout,
+            &mut Vec::new()
+        ),
+        0
+    );
+    assert_eq!(String::from_utf8_lossy(&stdout), "full, reduced\n");
+}
+
+#[test]
+fn launcher_pin_checks_targets_deduplicates_and_unpin_keeps_the_file() {
+    let tree = TempTree::new("launcher-pins");
+    let platform = mock_windows_platform(tree.path());
+    let opened = StorageManager::open(platform.app_paths().unwrap()).unwrap();
+    let target = tree.path().join("my app.exe");
+    fs::write(&target, b"test executable fixture").unwrap();
+    let canonical = fs::canonicalize(&target).unwrap();
+    platform.set_file_open_policy(
+        canonical.clone(),
+        platform::FileOpenPolicy::launcher_required(
+            platform::ExecutableKind::NativeBinary,
+            "test executable",
+        ),
+    );
+    let target = target.to_str().unwrap();
+    for _ in 0..2 {
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_platform(
+                ["launcher", "pin", target],
+                &platform,
+                &mut Vec::new(),
+                &mut stderr
+            ),
+            0,
+            "{}",
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+    let config = opened.manager.load_config().unwrap();
+    assert_eq!(config.launcher.entries.len(), 1);
+    let entry = &config.launcher.entries[0];
+    assert_eq!(Path::new(&entry.path), canonical);
+    assert_eq!(entry.added_by_user_id, "cli");
+    assert!(!platform.calls().iter().any(|call| matches!(
+        call,
+        MockCall::SpawnWait(_) | MockCall::SpawnDetached(_) | MockCall::OpenPath(_)
+    )));
+    let bytes = fs::read(&opened.manager.layout().config_path).unwrap();
+    assert_eq!(
+        run_with_platform(
+            ["launcher", "pin", "missing-tundra-fixture.exe"],
+            &platform,
+            &mut Vec::new(),
+            &mut Vec::new()
+        ),
+        1
+    );
+    assert_eq!(
+        run_with_platform(
+            ["launcher", "unpin", "missing-id"],
+            &platform,
+            &mut Vec::new(),
+            &mut Vec::new()
+        ),
+        1
+    );
+    assert_eq!(
+        fs::read(&opened.manager.layout().config_path).unwrap(),
+        bytes
+    );
+    assert_eq!(
+        run_with_platform(
+            ["launcher", "unpin", &entry.id],
+            &platform,
+            &mut Vec::new(),
+            &mut Vec::new()
+        ),
+        0
+    );
+    assert!(
+        opened
+            .manager
+            .load_config()
+            .unwrap()
+            .launcher
+            .entries
+            .is_empty()
+    );
+    assert!(canonical.exists());
 }

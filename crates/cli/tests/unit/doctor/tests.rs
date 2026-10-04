@@ -7,7 +7,6 @@ struct TestProbe {
     environment: HashMap<&'static str, &'static str>,
     commands: HashSet<&'static str>,
     paths: HashSet<&'static str>,
-    logind_state: Option<&'static str>,
     session_bus_reachable: Option<bool>,
     session_services: HashSet<&'static str>,
     clipboard_backend_available: Option<bool>,
@@ -24,14 +23,6 @@ impl LinuxDoctorProbe for TestProbe {
 
     fn path_exists(&self, path: &str) -> bool {
         self.paths.contains(path)
-    }
-
-    fn logind_poweroff_state(&self) -> Option<Result<String, String>> {
-        self.logind_state.map(|state| Ok(state.to_string()))
-    }
-
-    fn session_bus_reachable(&self) -> Option<bool> {
-        self.session_bus_reachable
     }
 
     fn session_service_available(&self, name: &str) -> Option<bool> {
@@ -76,7 +67,6 @@ fn linux_doctor_reports_ready_desktop_dependencies_from_injected_probe() {
             "/run/dbus/system_bus_socket",
             "/usr/libexec/xdg-desktop-portal",
         ]),
-        logind_state: Some("challenge"),
         session_bus_reachable: Some(true),
         session_services: HashSet::from([
             "org.freedesktop.portal.Desktop",
@@ -91,7 +81,6 @@ fn linux_doctor_reports_ready_desktop_dependencies_from_injected_probe() {
         check(&checks, "Linux command: xdg-open").status,
         CheckStatus::Pass
     );
-    assert_eq!(check(&checks, "systemd-logind").status, CheckStatus::Pass);
     assert_eq!(check(&checks, "Desktop portal").status, CheckStatus::Pass);
     assert_eq!(check(&checks, "Linux clipboard").status, CheckStatus::Pass);
     assert!(
@@ -118,11 +107,6 @@ fn linux_doctor_explains_wayland_clipboard_and_missing_runtime_services() {
         check(&checks, "Linux command: xdg-open")
             .message
             .contains("xdg-utils")
-    );
-    assert!(
-        check(&checks, "Session D-Bus")
-            .message
-            .contains("DBUS_SESSION_BUS_ADDRESS")
     );
     assert!(
         check(&checks, "Desktop portal")
@@ -233,4 +217,48 @@ fn linux_fail_checks_are_release_blocking() {
         environment_checks_have_failures(&checks),
         "missing required Linux commands must make doctor fail"
     );
+}
+
+#[test]
+fn headless_linux_skips_desktop_probes_and_missing_tools_only_warn() {
+    let probe = TestProbe {
+        commands: HashSet::from(["/bin/sh", "/usr/bin/env"]),
+        paths: HashSet::from([
+            "/dev/ptmx",
+            "/proc/self/stat",
+            "/proc/meminfo",
+            "/sys/class",
+        ]),
+        ..Default::default()
+    };
+    let checks = linux_environment_checks(PlatformKind::Linux, &probe);
+    assert!(!environment_checks_have_failures(&checks));
+    assert!(
+        check(&checks, "Optional desktop integration")
+            .message
+            .contains("skipped")
+    );
+    assert_eq!(
+        check(&checks, "Linux command: systemctl").status,
+        CheckStatus::Warning
+    );
+    assert_eq!(
+        check(&checks, "Linux command: gio").status,
+        CheckStatus::Warning
+    );
+    assert!(!checks.iter().any(|check| matches!(
+        check.id,
+        "linux-architecture" | "polkit" | "logind" | "session-dbus" | "clipboard"
+    )));
+}
+
+#[test]
+fn missing_linux_shell_and_pty_are_actionable_failures() {
+    let checks = linux_environment_checks(PlatformKind::Linux, &TestProbe::default());
+    assert_eq!(
+        check(&checks, "Linux command: /bin/sh").status,
+        CheckStatus::Fail
+    );
+    assert_eq!(check(&checks, "Linux PTY").status, CheckStatus::Fail);
+    assert!(check(&checks, "Linux PTY").message.contains("devpts"));
 }

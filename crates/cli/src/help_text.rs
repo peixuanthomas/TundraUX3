@@ -4,7 +4,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
     writeln!(
         output,
-        "Usage: tundra-cli <cls|config|debug|logs|new|repl|help>"
+        "Usage: tundra-cli <config|launcher|debug|logs|cls|new|repl|help>"
     )?;
     writeln!(
         output,
@@ -12,7 +12,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  config  View or update user config: get [field], set <border-shape|border-color|accent-color|language|timezone|address> <value>"
+        "  config  Read, set, reset, or list values for UX settings; run config help"
     )?;
     writeln!(
         output,
@@ -34,7 +34,30 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
         output,
         "  logs    Query runtime logs and incidents, or export diagnostics; run logs help"
     )?;
-    writeln!(output, "  help    Show command help")
+    writeln!(
+        output,
+        "  launcher  List, pin, or unpin applications; run launcher help"
+    )?;
+    writeln!(
+        output,
+        "  help [command]  Show help, for example: help config or help debug doctor"
+    )?;
+    writeln!(
+        output,
+        "\nUse <command> --help (or -h) for syntax, values, and examples."
+    )?;
+    writeln!(
+        output,
+        "In Command Line / repl, omit tundra-cli: config set motion reduced"
+    )?;
+    writeln!(
+        output,
+        "System commands require / there: /pwd, /ls -la (Linux/macOS), /dir (Windows)."
+    )?;
+    writeln!(
+        output,
+        "Exit status: 0 success, 1 operation failed, 2 invalid arguments; logs may also return 3/130 (see logs help)."
+    )
 }
 
 pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
@@ -53,7 +76,7 @@ pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  doctor  Check Windows/macOS/Linux, terminal, and app path readiness"
+        "  doctor  Diagnose terminal, storage, and Linux runtime/tools; warnings are optional features"
     )?;
     writeln!(output, "  paths   Print configured and resolved app paths")?;
     writeln!(
@@ -121,7 +144,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  2. tundra-cli handles operator commands and config: cls, config, debug, new, repl; diagnostics and tests are under debug."
+        "  2. tundra-cli handles config, launcher pins, logs, cls, new, and repl; diagnostics and tests are under debug."
     )?;
     writeln!(
         output,
@@ -129,17 +152,17 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  4. The main loop will route input to UI controllers; Phase 0 uses a placeholder loop."
+        "  4. The main loop reads keyboard/mouse input, runs the selected action, and redraws the UI."
     )?;
     writeln!(output)?;
     writeln!(output, "Kernel boundary:")?;
     writeln!(
         output,
-        "  - platform is the platform boundary for OS facts, paths, terminal checks, and future platform API calls."
+        "  - platform reads OS facts and paths, checks the terminal, and calls OS services."
     )?;
     writeln!(
         output,
-        "  - storage owns config/state format boundaries: TOML config and schema-v1 JSON state."
+        "  - storage reads and writes TOML configuration and versioned JSON state."
     )?;
     writeln!(
         output,
@@ -149,7 +172,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "UI boundary:")?;
     writeln!(
         output,
-        "  - tundra-shell owns startup visuals, shell lifecycle, and the future event/render loop."
+        "  - tundra-shell owns startup visuals, application sessions, and the event/render loop."
     )?;
     writeln!(
         output,
@@ -189,4 +212,169 @@ pub(crate) fn write_asset_help(output: &mut impl Write) -> std::io::Result<()> {
         writeln!(output, "  {}", asset.key)?;
     }
     Ok(())
+}
+
+// Recognize command paths, not arbitrary option values, so a help request can
+// never accidentally perform a reset, start a preview, or edit configuration.
+pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, crate::CliError> {
+    use crate::{AssetAction, ClearLogsAction, CliCommand, LogsAction};
+    let topic = args.join(" ");
+    Ok(match topic.as_str() {
+        "" => CliCommand::Help,
+        "debug" => CliCommand::DebugHelp,
+        "debug asset" => CliCommand::Asset(AssetAction::Help),
+        "debug view-ui-style" => CliCommand::UiStyleHelp,
+        "debug clear-logs" => CliCommand::ClearLogs(ClearLogsAction::Help),
+        "logs" | "logs query" | "logs incidents" | "logs export" => {
+            CliCommand::Logs(LogsAction::Help)
+        }
+        "config"
+        | "config get"
+        | "config set"
+        | "config reset"
+        | "config options"
+        | "launcher"
+        | "launcher list"
+        | "launcher pin"
+        | "launcher unpin"
+        | "new"
+        | "cls"
+        | "repl"
+        | "debug doctor"
+        | "debug paths"
+        | "debug explain"
+        | "debug test-frost"
+        | "debug test-matrix"
+        | "debug test-watchdog-error"
+        | "debug test-watchdog-critical"
+        | "debug test-watchdog-panic" => CliCommand::TopicHelp(topic),
+        _ => return Err(crate::CliError::UnknownCommand(topic)),
+    })
+}
+
+pub(crate) fn write_config_help(output: &mut impl Write) -> std::io::Result<()> {
+    writeln!(
+        output,
+        "Usage: tundra-cli config [get [field] | set <field> <value> | reset <field> | options [field]]"
+    )?;
+    writeln!(
+        output,
+        "No arguments prints settings. reset restores only the named field. theme is a read-only color summary."
+    )?;
+    writeln!(output, "Fields and values:")?;
+    writeln!(output, "  border-shape       rounded | square")?;
+    writeln!(
+        output,
+        "  border-color       default | named color (e.g. light-cyan) | #RRGGBB"
+    )?;
+    writeln!(
+        output,
+        "  accent-color       default | named color | #RRGGBB"
+    )?;
+    writeln!(
+        output,
+        "  icon-mode          ascii | image (image needs terminal graphics support)"
+    )?;
+    writeln!(output, "  motion             full | reduced")?;
+    writeln!(
+        output,
+        "  animation-speed    50..200 percent, in steps of 25; default 100"
+    )?;
+    writeln!(
+        output,
+        "  language           installed locale code; config options language lists choices"
+    )?;
+    writeln!(
+        output,
+        "  timezone / address timezone ID or city label; config options timezone lists choices"
+    )?;
+    writeln!(
+        output,
+        "  weather-location   English address in quotes (max 120 chars) | auto (follow timezone location)"
+    )?;
+    writeln!(
+        output,
+        "  update-mode        release | beta (Linux only; saves choice, does not start an update)"
+    )?;
+    writeln!(
+        output,
+        "address changes the timezone. weather-location changes only weather; it does not change system time."
+    )?;
+    writeln!(
+        output,
+        "Examples:\n  tundra-cli config set motion reduced\n  tundra-cli config set animation-speed 125\n  tundra-cli config set weather-location \"Shanghai, China\"\n  tundra-cli config reset weather-location\n  tundra-cli config set accent-color \"#38bdf8\""
+    )?;
+    writeln!(
+        output,
+        "Changes use the current OS user's config. Restart a running TundraUX3 UI to apply them. Identity/password fields are not exposed."
+    )
+}
+
+pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io::Result<()> {
+    if topic == "config" || topic.starts_with("config ") {
+        return write_config_help(output);
+    }
+    if topic == "launcher" || topic.starts_with("launcher ") {
+        return writeln!(
+            output,
+            "Usage: tundra-cli launcher [list | pin <path> | unpin <id>]\n  list          Show saved IDs, target paths, and availability\n  pin <path>    Add a checked executable; quote paths with spaces; does not run it\n  unpin <id>    Remove only the pin, using an ID from list; keeps the file\nExamples:\n  tundra-cli launcher pin \"/home/user/My App/run.sh\"\n  tundra-cli launcher list\nPaths may be relative to the current command directory. Duplicate pins are ignored.\nUses the current OS user's config. Restart a running TundraUX3 UI to refresh its Launcher."
+        );
+    }
+    writeln!(output, "Usage: tundra-cli {topic}")?;
+    let detail = match topic {
+        "debug doctor" => {
+            "Check runtime prerequisites, paths, storage, and assets. Linux checks include /bin/sh, /proc, PTY access, service/network/disk tools and optional desktop integration.\nWARN means a feature may be unavailable; FAIL means a required check failed. Exit: 0 no failures, 1 failure.\nDirectory write probes create/remove temporary files; storage may be initialized or recovered. No packages are installed and no services are changed. Use debug paths for path templates."
+        }
+        "debug paths" => {
+            "Show path templates and the resolved config, data, state, logs, cache, and temporary paths."
+        }
+        "debug explain" => {
+            "Describe CLI startup and which parts handle storage, OS calls, and the UI."
+        }
+        "new" => {
+            "Erase saved TundraUX3 configuration and state, then create defaults. Requires typing RESET.\nFirst use debug paths and back up the displayed config/state directories. To reset one setting, use config reset <field>."
+        }
+        "cls" => {
+            "Clear terminal scrollback and screen, then move the cursor home. Saved logs are kept."
+        }
+        "repl" => {
+            "Start interactive Command Line. Use help for Tundra commands and exit or EOF to leave.\nSystem commands require a leading /: /ls -la or /dir. Suspected system commands only get a hint; they are never executed automatically.\nExported environment and working directory persist for this REPL session. /cd changes the system command directory; launcher pin uses that directory too.\nExamples: config set motion reduced; /pwd (Linux/macOS); /cd (Windows)."
+        }
+        "debug test-frost" | "debug test-matrix" => {
+            "Play an animation preview in the current terminal; settings are not changed."
+        }
+        "debug test-watchdog-error" | "debug test-watchdog-critical" => {
+            "Write an intentional diagnostic report and print its JSON/text paths. Requires the normal CLI watchdog runtime."
+        }
+        "debug test-watchdog-panic" => {
+            "Trigger a real panic and discard the current session. Embedded Command Line asks Shell to panic. This is an intentional failure test."
+        }
+        _ => "Use help for the command list.",
+    };
+    writeln!(output, "{detail}")
+}
+
+pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std::io::Result<()> {
+    match args.first().map(String::as_str) {
+        Some("config") => write_config_help(output),
+        Some("launcher") => write_topic_help(output, "launcher"),
+        Some("debug") => match args.get(1).map(String::as_str) {
+            Some("asset") => write_asset_help(output),
+            Some("view-ui-style") => write_ui_style_help(output),
+            Some("clear-logs") => crate::clear_logs_command::help(output),
+            Some(
+                "doctor"
+                | "paths"
+                | "explain"
+                | "test-frost"
+                | "test-matrix"
+                | "test-watchdog-error"
+                | "test-watchdog-critical"
+                | "test-watchdog-panic",
+            ) => write_topic_help(output, &format!("debug {}", args[1])),
+            _ => write_debug_help(output),
+        },
+        Some("logs") => crate::logs_command::write_logs_help(output),
+        _ => write_help(output),
+    }
 }

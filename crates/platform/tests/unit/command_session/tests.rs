@@ -1,5 +1,43 @@
 use super::*;
 
+#[test]
+fn system_command_hint_uses_session_paths_and_never_executes_files() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = SystemCommandSession::new().unwrap();
+    session.directory = root.path().to_path_buf();
+    session.environment.clear();
+    session.environment.insert("PATH".into(), "bin".into());
+    std::fs::create_dir(root.path().join("bin")).unwrap();
+    let filename = if cfg!(windows) {
+        "tundra-hint-test.cmd"
+    } else {
+        "tundra-hint-test"
+    };
+    let executable = root.path().join("bin").join(filename);
+    std::fs::write(&executable, "echo ran > SHOULD-NOT-EXIST").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    assert!(session.is_likely_command("cd"));
+    assert!(session.is_likely_command("echo"));
+    assert!(session.is_likely_command("tundra-hint-test"));
+    assert!(session.is_likely_command(&format!("./bin/{filename}")));
+    assert!(!session.is_likely_command("tundra-hint-unknown"));
+    assert!(!root.path().join("SHOULD-NOT-EXIST").exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(!session.is_likely_command("tundra-hint-test"));
+        assert!(session.is_likely_command("NAME=value"));
+        assert!(!session.is_likely_command("1NAME=value"));
+    }
+    session.environment.insert("PATH".into(), "absent".into());
+    assert!(!session.is_likely_command("tundra-hint-test"));
+}
+
 fn run(session: &mut SystemCommandSession, command: &str, code: i32) {
     let result = session.run(command).unwrap();
     assert_eq!(result.exit_code, code, "{command}");

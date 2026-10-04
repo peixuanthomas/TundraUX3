@@ -482,7 +482,7 @@ Linux 回收站仅按当前进程用户的 Freedesktop Trash 权限工作，保�
 | 关键错误 | 平台提示与日志 | 桌面通知、watchdog 文本报告和 stderr |
 | 电脑重启与关机 | Windows 原生 API 与系统权限 | systemd-logind + polkit；分别检查 CanReboot / CanPowerOff，允许系统要求授权 |
 
-`tundra-cli debug doctor` 会报告缺失的 `xdg-open`、`gio`、session D-Bus、portal、polkit、logind 和剪贴板后端，并提供安装或会话建议。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
+`tundra-cli debug doctor` 检查 Linux 的 `/bin/sh`、`/usr/bin/env`、伪终端、`/proc`、`/sys`，以及服务、网络、磁盘管理用到的命令。D-Bus、polkit、logind 由平台检查各报告一次；没有图形显示时跳过桌面专用检查。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
 
 Linux 文件管理器不会只凭可执行权限把文件送入 Launcher。普通文本、图片等仍按文件打开配置处理，即使文件权限为 `0755` 或 `0777`；ELF 程序、带 `#!` 开头的脚本、带可执行权限的已知脚本类型，以及 AppImage、EXE 和 `.desktop` 文件仍由 Launcher 管理。
 
@@ -576,7 +576,7 @@ tundra-shell
 `tundra-cli` 是独立的运维工具，可读取和修改公开配置，但不能向 Shell 传参或绕过 UI 打开 Editor：
 
 ```console
-tundra-cli <cls|config|debug|new|repl|help>
+tundra-cli <config|launcher|debug|logs|cls|new|repl|help>
 ```
 
 | 命令 | 作用 |
@@ -586,8 +586,13 @@ tundra-cli <cls|config|debug|new|repl|help>
 | `debug asset <name> --<item>` | 只输出 TOML 资源中的项目，例如 `home_icons --launcher`。 |
 | `cls` | 清空终端历史和可见内容，并将光标移到左上角。 |
 | `config` | 查看全部公开配置。 |
-| `config get [field]` | 查看 `theme`、`border-shape`、`border-color`、`accent-color`、`language`、`timezone` 或 `address`。 |
-| `config set <field> <value>` | 设置边框形状/颜色、强调色、语言、时区或天气地址；`theme` 仅为只读摘要。 |
+| `config get [field]` | 查看外观、动画、语言、时区、天气地点和 Linux 更新模式；省略字段列出全部公开设置。 |
+| `config set <field> <value>` | 设置 `border-shape`、`border-color`、`accent-color`、`icon-mode`、`motion`、`animation-speed`、`language`、`timezone`、`address`、`weather-location` 或 `update-mode`；`theme` 仅为只读摘要。 |
+| `config reset <field>` | 只恢复指定字段的默认值，保留其他配置。 |
+| `config options [field]` | 列出取值说明；`language` 列出已安装语言，`timezone` / `address` 列出支持的时区和城市。 |
+| `launcher [list]` | 列出固定应用的 ID、状态和文件路径。 |
+| `launcher pin <path>` | 检查并固定可执行文件，支持带引号的相对或绝对路径；不会启动应用，重复路径不重复添加。 |
+| `launcher unpin <id>` | 按 `launcher list` 中的 ID 移除固定项，保留应用文件。 |
 | `debug doctor` | 检查系统、终端、权限、应用路径、存储和资源；实际探测 Kitty、Sixel、iTerm2 图形协议。 |
 | `debug explain` / `debug paths` | 输出启动/边界说明，或输出路径模板和解析路径。 |
 | `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入复用 CLI 命令，`/<command>` 交给固定系统命令解释器并显示退出码。 |
@@ -597,10 +602,18 @@ tundra-cli <cls|config|debug|new|repl|help>
 | `debug test-watchdog-error` | 主动生成普通错误报告。 |
 | `debug test-watchdog-critical` | 主动生成严重错误报告。 |
 | `debug test-watchdog-panic` | 触发真实 panic，进入正常故障处理流程；当前命令行会话终止。 |
-| `help` | 输出公开命令帮助。 |
+| `help [command ...]` | 显示对应命令帮助，例如 `help config`、`help debug doctor`；也支持 `config --help`、`config set -h`、`launcher help`、`logs export --help`。 |
 | `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
 
 调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中可直接输入 `debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
+
+设置通过当前操作系统用户的配置文件保存，不修改系统时间或系统账号。`icon-mode` 接受 `ascii` / `image`，`motion` 接受 `full` / `reduced`，`animation-speed` 接受 50–200 的 25 倍数，默认 100。`address` 沿用旧行为，会改变 Tundra 时区；`weather-location` 单独保存最多 120 字符的英文地址，`auto` 或 `config reset weather-location` 恢复按时区选择天气地点。`update-mode` 仅在 Linux 接受 `release` / `beta`，只保存更新选择，不立即下载或安装。已运行的 UI 需要重启以加载 CLI 保存的设置和 Launcher 固定项。
+
+Launcher 的 CLI 和 UI 共用目标检查：拒绝缺失文件、不支持的目标、符号链接和重解析点；CLI 的添加记录标记为 `cli`，遵循当前操作系统用户对配置文件的写权限，不伪造 UI 登录状态。`launcher pin` 的相对路径在 REPL 中跟随 `/cd` 后的目录。
+
+没有 `/` 的未知命令会先检查是否像系统命令：识别常见解释器内置命令、Unix 变量赋值、当前会话 `PATH` 中的可执行文件和相对可执行路径，Windows 同时使用 `PATHEXT`。命中后显示“执行系统命令需要前缀 `/`”及输入示例；只检查名称和文件，不尝试执行。拼错的 Tundra 子命令继续显示对应帮助。显式系统命令仍写作 `/ls -la`、`/dir`；直接调用 Unix 绝对路径时写作 `//usr/bin/ls`。
+
+doctor 不再逐条输出固定的平台能力声明、重复的 Linux 架构/授权检查和各系统路径模板；模板仍可通过 `debug paths` 查看。Linux 增加伪终端读写、进程/内存数据可读性，以及 `systemctl`、`journalctl`、`ip`、`nmcli`、`lsblk`、`findmnt`、`df`、`pkexec`、`gio` 检查。命令存在仅说明已安装，不保证对应服务运行或用户获准执行操作。可选功能缺失显示 `WARN`，不让整体失败；必需运行条件、目录或存储检查失败返回 1。目录检查会创建并移除探测文件，原有存储检查可能初始化或恢复文档；不会安装软件或修改服务。
 
 Command Line 和独立 `repl` 在当前会话内保留系统命令的**已导出环境变量和工作目录**。提示符使用 `user@绝对路径 >> command`；每次读取下一条输入前更新路径，执行 `/cd` 后立即显示新目录，切换失败时保留实际目录。尚未执行系统命令时显示子 CLI 的启动工作目录；无法读取目录时以 `?` 标明未知。路径中的中文和空格原样显示，换行及终端控制字符转为可见的转义文字。Linux/macOS 例如先执行 `/export PROJECT_MODE=dev`、`/cd "/path/with spaces"`，后续 `/echo "$PROJECT_MODE"`、`/pwd` 和相对路径操作沿用修改后的状态；`/unset PROJECT_MODE` 会移除变量。Windows 对应 `/set PROJECT_MODE=dev`、`/cd /d "C:\path with spaces"`、`/echo %PROJECT_MODE%`，用 `/set PROJECT_MODE=` 删除变量。中间执行 `help` 等 Tundra 内置命令不会清空这些状态。
 
@@ -645,6 +658,14 @@ tundra-cli config set timezone Asia/Shanghai
 tundra-cli config set border-shape rounded
 tundra-cli config set border-color light-cyan
 tundra-cli config set accent-color "#38bdf8"
+tundra-cli config set motion reduced
+tundra-cli config set animation-speed 125
+tundra-cli config set weather-location "Shanghai, China"
+tundra-cli config reset weather-location
+tundra-cli config set update-mode release
+tundra-cli launcher pin "/home/user/My App/run.sh"
+tundra-cli launcher list
+tundra-cli help config
 ```
 
 资源名可使用 `debug asset` 帮助列出的完整键，也可用唯一文件名，例如 `house`、`clock_font`。资源、文件或 TOML 条目不存在时会写入 stderr 并返回非零状态。

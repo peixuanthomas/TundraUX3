@@ -433,22 +433,7 @@ impl LauncherController {
         actor: &AuthSession,
         platform: &dyn Platform,
     ) -> Result<Option<LauncherEntryRecord>, LauncherError> {
-        let target = validate(path, platform)?;
-        if config
-            .entries
-            .iter()
-            .any(|entry| same_path(Path::new(&entry.path), &target.path))
-        {
-            return Ok(None);
-        }
-        Ok(Some(LauncherEntryRecord {
-            id: new_id(&target.path, config),
-            path: target.path.to_string_lossy().into_owned(),
-            executable_kind: Some(target.kind),
-            fingerprint: None,
-            added_by_user_id: actor.user_id.clone(),
-            added_at_epoch_ms: epoch_millis(),
-        }))
+        prepare_launcher_entry(config, path, &actor.user_id, platform)
     }
 
     fn authorize(
@@ -467,6 +452,33 @@ impl LauncherController {
             ))
         }
     }
+}
+
+/// Validate a user-approved pin without launching it or writing configuration.
+/// Callers must authorize the edit: the UI uses ManageLauncher; the CLI edits
+/// the current OS user's own configuration, just like `config set`.
+pub fn prepare_launcher_entry(
+    config: &LauncherConfig,
+    path: &Path,
+    added_by_user_id: &str,
+    platform: &dyn Platform,
+) -> Result<Option<LauncherEntryRecord>, LauncherError> {
+    let target = validate(path, platform)?;
+    if config
+        .entries
+        .iter()
+        .any(|entry| same_path(Path::new(&entry.path), &target.path))
+    {
+        return Ok(None);
+    }
+    Ok(Some(LauncherEntryRecord {
+        id: new_id(&target.path, config),
+        path: target.path.to_string_lossy().into_owned(),
+        executable_kind: Some(target.kind),
+        fingerprint: None,
+        added_by_user_id: added_by_user_id.to_string(),
+        added_at_epoch_ms: epoch_millis(),
+    }))
 }
 
 struct Target {

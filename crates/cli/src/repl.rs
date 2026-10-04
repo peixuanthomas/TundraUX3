@@ -61,6 +61,7 @@ where
                 return 1;
             }
         };
+        let line = line.trim_start();
         if line.is_empty() {
             continue;
         }
@@ -68,7 +69,7 @@ where
             report_command_status(embedded, 0);
             return 0;
         }
-        let _ = editor.add_history_entry(&line);
+        let _ = editor.add_history_entry(line);
 
         if let Some(system_command) = line.strip_prefix('/') {
             let code = run_system_command(&mut system_session, system_command);
@@ -76,7 +77,7 @@ where
             continue;
         }
 
-        let arguments = match shlex::split(&line) {
+        let mut arguments = match shlex::split(line) {
             Some(arguments) => arguments,
             None => {
                 eprintln!("ERROR: could not parse command line: unmatched quote");
@@ -86,6 +87,22 @@ where
         };
         if arguments.is_empty() {
             continue;
+        }
+
+        if matches!(
+            parse_args(&arguments),
+            Ok(CliCommand::Launcher(crate::LauncherAction::Pin(_)))
+        ) {
+            if let Some(session) = system_session.as_ref() {
+                let path = std::path::Path::new(&arguments[2]);
+                if path.is_relative() {
+                    arguments[2] = session
+                        .current_dir()
+                        .join(path)
+                        .to_string_lossy()
+                        .into_owned();
+                }
+            }
         }
 
         let code = match parse_args(&arguments) {
@@ -112,7 +129,34 @@ where
             Ok(_) => execute_cli(&arguments),
             Err(error) => {
                 eprintln!("ERROR: {error}");
-                1
+                let likely_system_command = matches!(error, crate::CliError::UnknownCommand(_))
+                    && system_session
+                        .as_ref()
+                        .map(|session| session.is_likely_command(&arguments[0]))
+                        .unwrap_or_else(|| {
+                            SystemCommandSession::new()
+                                .is_ok_and(|session| session.is_likely_command(&arguments[0]))
+                        });
+                if likely_system_command {
+                    let example = line
+                        .chars()
+                        .map(|character| {
+                            if character.is_control() {
+                                character.escape_default().to_string()
+                            } else {
+                                character.to_string()
+                            }
+                        })
+                        .collect::<String>();
+                    eprintln!(
+                        "This looks like a system command. Prefix it with '/': /{}",
+                        example
+                    );
+                    eprintln!("这可能是系统命令；执行系统命令需要前缀“/”。本次未执行。");
+                } else {
+                    let _ = crate::help_text::write_error_help(&mut std::io::stderr(), &arguments);
+                }
+                2
             }
         };
         report_command_status(embedded, code);

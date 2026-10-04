@@ -274,7 +274,7 @@ fn report_status(result: &runtime_log::LogQueryResult, stderr: &mut impl Write) 
         _ => 1,
     }
 }
-fn write_logs_help(output: &mut impl Write) -> std::io::Result<()> {
+pub(crate) fn write_logs_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "Usage: tundra-cli logs <query|incidents|export> [options]"

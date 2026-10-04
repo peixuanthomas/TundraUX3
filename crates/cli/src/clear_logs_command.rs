@@ -164,7 +164,7 @@ pub(crate) fn run_clear_logs(
     }
 }
 
-fn help(output: &mut impl Write) -> std::io::Result<()> {
+pub(crate) fn help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "Usage: tundra-cli debug clear-logs <all|TYPE|--type TYPE|--file PATH> [--yes]"

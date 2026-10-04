@@ -7,6 +7,8 @@ pub enum CliCommand {
     Asset(AssetAction),
     Cls,
     Config(ConfigAction),
+    Launcher(crate::launcher_command::LauncherAction),
+    TopicHelp(String),
     Doctor,
     Explain,
     New,
@@ -52,6 +54,8 @@ pub enum AssetOutput {
 pub enum ConfigAction {
     Get(Option<ConfigField>),
     Set(ConfigUpdate),
+    Reset(ConfigField),
+    Options(Option<ConfigField>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +67,11 @@ pub enum ConfigField {
     Language,
     Timezone,
     Address,
+    IconMode,
+    Motion,
+    AnimationSpeed,
+    WeatherLocation,
+    UpdateMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +82,11 @@ pub enum ConfigUpdate {
     Language(String),
     Timezone(String),
     Address(String),
+    IconMode(String),
+    Motion(String),
+    AnimationSpeed(String),
+    WeatherLocation(String),
+    UpdateMode(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,11 +103,15 @@ pub enum CliError {
     InvalidReplArgument(String),
     InvalidProcessId(String),
     InvalidUiStyle(String),
+    InvalidLauncherArgument(String),
 }
 
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidLauncherArgument(message) => {
+                write!(formatter, "{message}; run launcher help")
+            }
             Self::InvalidLogsArgument(message) => {
                 write!(formatter, "invalid logs arguments: {message}")
             }
@@ -150,7 +168,22 @@ where
     };
     let command = args.remove(0);
 
+    if command == "help" && !args.is_empty() {
+        return crate::help_text::parse_help_topic(&args);
+    }
+    if args
+        .last()
+        .is_some_and(|arg| matches!(arg.as_str(), "help" | "--help" | "-h"))
+    {
+        let mut topic = vec![command.clone()];
+        topic.extend_from_slice(&args[..args.len() - 1]);
+        if let Ok(help) = crate::help_text::parse_help_topic(&topic) {
+            return Ok(help);
+        }
+    }
+
     match command.as_str() {
+        "launcher" => crate::launcher_command::parse_launcher(&args).map(CliCommand::Launcher),
         "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
         "debug" => parse_debug_args(&args),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),
@@ -160,7 +193,7 @@ where
         "__update-probe" => parse_no_extra_args(&args, CliCommand::UpdateProbe),
         "__apply-update" => parse_internal_update_args(&args, false),
         "__recover-update" => parse_internal_update_args(&args, true),
-        "-h" | "--help" | "help" => Ok(CliCommand::Help),
+        "-h" | "--help" | "help" => parse_no_extra_args(&args, CliCommand::Help),
         other => Err(CliError::UnknownCommand(other.to_string())),
     }
 }
@@ -268,6 +301,22 @@ fn parse_config_args(args: &[String]) -> Result<ConfigAction, CliError> {
     match command {
         "get" => parse_config_get(&args[1..]),
         "set" => parse_config_set(&args[1..]),
+        "reset" => match &args[1..] {
+            [field] => {
+                let field = parse_config_field(field)?;
+                if field == ConfigField::Theme {
+                    return Err(CliError::ReadOnlyConfigField("theme".into()));
+                }
+                Ok(ConfigAction::Reset(field))
+            }
+            [] => Err(CliError::MissingArgument("config field; run config help")),
+            [_, extra, ..] => Err(CliError::UnexpectedArgument(extra.clone())),
+        },
+        "options" => match &args[1..] {
+            [] => Ok(ConfigAction::Options(None)),
+            [field] => parse_config_field(field).map(|field| ConfigAction::Options(Some(field))),
+            [_, extra, ..] => Err(CliError::UnexpectedArgument(extra.clone())),
+        },
         other => Err(CliError::UnknownConfigCommand(other.to_string())),
     }
 }
@@ -294,6 +343,11 @@ fn parse_config_set(args: &[String]) -> Result<ConfigAction, CliError> {
         ConfigField::Language => Ok(ConfigAction::Set(ConfigUpdate::Language(value))),
         ConfigField::Timezone => Ok(ConfigAction::Set(ConfigUpdate::Timezone(value))),
         ConfigField::Address => Ok(ConfigAction::Set(ConfigUpdate::Address(value))),
+        ConfigField::IconMode => Ok(ConfigAction::Set(ConfigUpdate::IconMode(value))),
+        ConfigField::Motion => Ok(ConfigAction::Set(ConfigUpdate::Motion(value))),
+        ConfigField::AnimationSpeed => Ok(ConfigAction::Set(ConfigUpdate::AnimationSpeed(value))),
+        ConfigField::WeatherLocation => Ok(ConfigAction::Set(ConfigUpdate::WeatherLocation(value))),
+        ConfigField::UpdateMode => Ok(ConfigAction::Set(ConfigUpdate::UpdateMode(value))),
     }
 }
 
@@ -319,6 +373,11 @@ fn parse_config_field(field: &str) -> Result<ConfigField, CliError> {
         "language" | "locale" => Ok(ConfigField::Language),
         "timezone" | "time-zone" | "tz" => Ok(ConfigField::Timezone),
         "address" | "location" => Ok(ConfigField::Address),
+        "icon-mode" | "icon_mode" => Ok(ConfigField::IconMode),
+        "motion" => Ok(ConfigField::Motion),
+        "animation-speed" | "animation_speed" => Ok(ConfigField::AnimationSpeed),
+        "weather-location" | "weather_location" => Ok(ConfigField::WeatherLocation),
+        "update-mode" | "update_mode" => Ok(ConfigField::UpdateMode),
         "user" | "users" | "username" | "password" | "passwd" | "password_hint" => {
             Err(CliError::ForbiddenConfigField(field.to_string()))
         }

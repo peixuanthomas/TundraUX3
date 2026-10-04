@@ -5,6 +5,8 @@ pub use logs_command::{LogsAction, LogsFormat, LogsVerb};
 mod arguments;
 mod asset_command;
 mod config_command;
+mod launcher_command;
+pub use launcher_command::LauncherAction;
 mod debug_command;
 mod doctor;
 mod help_text;

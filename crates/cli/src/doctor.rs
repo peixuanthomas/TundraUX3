@@ -7,7 +7,7 @@ use std::{env, fs};
 use platform::{AppPaths, CheckStatus, EnvironmentCheck, PathCheck, Platform, PlatformKind};
 use storage::StorageManager;
 
-use crate::path_report::{write_path_templates, write_resolved_paths};
+use crate::path_report::write_resolved_paths;
 
 pub(crate) fn run_doctor<Stdout: Write, Stderr: Write>(
     platform: &dyn Platform,
@@ -34,9 +34,10 @@ fn run_doctor_with_terminal_graphics_probe<Stdout: Write, Stderr: Write>(
     let terminal_check = terminal_environment_check_from_probe(platform.kind(), graphics_probe);
     let _ = writeln!(stdout, "TundraUX3 doctor");
     let _ = writeln!(stdout, "Platform kind: {}", platform.kind().as_str());
-    let _ = writeln!(stdout);
-    let _ = writeln!(stdout, "Path templates:");
-    write_path_templates(stdout);
+    let _ = writeln!(
+        stdout,
+        "WARN: optional/limited feature; FAIL: required check failed. Run debug paths for path templates."
+    );
 
     match platform::run_doctor_with(platform) {
         Ok(report) => {
@@ -44,6 +45,7 @@ fn run_doctor_with_terminal_graphics_probe<Stdout: Write, Stderr: Write>(
             let _ = writeln!(stdout, "Resolved paths:");
             write_resolved_paths(stdout, &report.app_paths);
             let mut environment_checks = report.environment_checks.clone();
+            environment_checks.retain(|check| !is_capability_check(check));
             replace_terminal_environment_check(&mut environment_checks, terminal_check.clone());
             environment_checks.extend(linux_environment_checks(
                 platform.kind(),
@@ -57,19 +59,31 @@ fn run_doctor_with_terminal_graphics_probe<Stdout: Write, Stderr: Write>(
             let asset_check = run_asset_check(asset_root, &asset_theme_id);
             write_asset_check(stdout, &asset_check);
 
-            if report.has_failures()
+            if report
+                .path_checks
+                .iter()
+                .any(|check| check.status == CheckStatus::Fail)
                 || environment_checks_have_failures(&environment_checks)
                 || storage_check.status == CheckStatus::Fail
             {
                 let _ = writeln!(stderr, "Doctor result: FAIL");
                 1
             } else {
-                let _ = writeln!(stdout, "Doctor result: PASS");
+                let warnings = environment_checks
+                    .iter()
+                    .filter(|check| check.status == CheckStatus::Warning)
+                    .count()
+                    + usize::from(storage_check.status == CheckStatus::Warning)
+                    + usize::from(asset_check.status == CheckStatus::Warning);
+                let _ = writeln!(
+                    stdout,
+                    "Doctor result: PASS ({warnings} warnings; see WARN lines for affected features)"
+                );
                 0
             }
         }
         Err(error) => {
-            write_fallback_doctor_checks(stdout, platform, &terminal_check, &error);
+            write_fallback_doctor_checks(stdout, &terminal_check, &error);
             let asset_check = run_asset_check(asset_root, ascii_assets::DEFAULT_THEME_ID);
             write_asset_check(stdout, &asset_check);
             let _ = writeln!(stderr, "Doctor result: FAIL");
@@ -140,11 +154,11 @@ trait LinuxDoctorProbe {
     fn env_var(&self, name: &str) -> Option<String>;
     fn command_exists(&self, command: &str) -> bool;
     fn path_exists(&self, path: &str) -> bool;
-    fn logind_poweroff_state(&self) -> Option<Result<String, String>> {
-        None
+    fn readable(&self, path: &str) -> bool {
+        self.path_exists(path)
     }
-    fn session_bus_reachable(&self) -> Option<bool> {
-        None
+    fn pty_available(&self) -> bool {
+        self.path_exists("/dev/ptmx")
     }
     fn session_service_available(&self, _name: &str) -> Option<bool> {
         None
@@ -162,12 +176,7 @@ impl LinuxDoctorProbe for SystemDoctorProbe {
     }
 
     fn command_exists(&self, command: &str) -> bool {
-        let Some(path) = self.env_var("PATH") else {
-            return false;
-        };
-
-        env::split_paths(&path).any(|directory| {
-            let candidate = directory.join(command);
+        let executable = |candidate: &Path| {
             fs::metadata(candidate)
                 .map(|metadata| {
                     metadata.is_file() && {
@@ -182,33 +191,27 @@ impl LinuxDoctorProbe for SystemDoctorProbe {
                     }
                 })
                 .unwrap_or(false)
+        };
+        if Path::new(command).is_absolute() {
+            return executable(Path::new(command));
+        }
+        self.env_var("PATH").is_some_and(|path| {
+            env::split_paths(&path).any(|directory| executable(&directory.join(command)))
         })
     }
 
     fn path_exists(&self, path: &str) -> bool {
         Path::new(path).exists()
     }
-
-    fn logind_poweroff_state(&self) -> Option<Result<String, String>> {
-        #[cfg(target_os = "linux")]
-        {
-            Some(query_logind_poweroff_state())
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+    fn readable(&self, path: &str) -> bool {
+        fs::File::open(path).is_ok()
     }
-
-    fn session_bus_reachable(&self) -> Option<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            Some(zbus::blocking::Connection::session().is_ok())
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+    fn pty_available(&self) -> bool {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/ptmx")
+            .is_ok()
     }
 
     fn session_service_available(&self, name: &str) -> Option<bool> {
@@ -233,22 +236,6 @@ impl LinuxDoctorProbe for SystemDoctorProbe {
             None
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn query_logind_poweroff_state() -> Result<String, String> {
-    use platform::linux::power::{PowerAction, PowerAvailability, availability};
-    availability(PowerAction::PowerOff)
-        .map(|state| {
-            match state {
-                PowerAvailability::Allowed => "yes",
-                PowerAvailability::AuthorizationRequired => "challenge",
-                PowerAvailability::Denied => "no",
-                PowerAvailability::Unavailable => "na",
-            }
-            .into()
-        })
-        .map_err(|error| error.to_string())
 }
 
 #[cfg(target_os = "linux")]
@@ -281,31 +268,92 @@ fn linux_environment_checks(
         return Vec::new();
     }
 
-    vec![
-        linux_architecture_check(),
-        command_check(
+    let mut checks = vec![
+        command_check(probe, "linux-shell", "/bin/sh", "/bin/sh", CheckStatus::Fail,
+            "restore /bin/sh; Command Line uses it for system commands"),
+        command_check(probe, "linux-env", "/usr/bin/env", "/usr/bin/env", CheckStatus::Fail,
+            "install coreutils; required to retain system-command environment changes"),
+        EnvironmentCheck {
+            id: "linux-pty", label: "Linux PTY".into(),
+            status: if probe.pty_available() { CheckStatus::Pass } else { CheckStatus::Fail },
+            message: "Opening /dev/ptmx read/write checks terminal-session access; if unavailable, mount devpts and check device permissions".into(),
+        },
+        EnvironmentCheck {
+            id: "linux-proc", label: "Linux /proc metrics".into(),
+            status: if probe.readable("/proc/self/stat") && probe.readable("/proc/meminfo") { CheckStatus::Pass } else { CheckStatus::Warning },
+            message: "Process and memory pages read /proc/self/stat and /proc/meminfo; missing access limits system metrics (check procfs mounts in containers)".into(),
+        },
+        EnvironmentCheck {
+            id: "linux-sys", label: "Linux /sys devices".into(),
+            status: if probe.path_exists("/sys/class") { CheckStatus::Pass } else { CheckStatus::Warning },
+            message: "Device, battery, and temperature data uses /sys/class; sensors may be absent in VMs/WSL".into(),
+        },
+    ];
+    for (id, command, reason) in [
+        (
+            "command.systemctl",
+            "systemctl",
+            "service management needs systemd and systemctl; command presence does not prove systemd is running",
+        ),
+        (
+            "command.journalctl",
+            "journalctl",
+            "system log queries use journalctl; access also depends on journal permissions",
+        ),
+        ("command.ip", "ip", "network diagnosis uses iproute2"),
+        (
+            "command.nmcli",
+            "nmcli",
+            "network edits need NetworkManager; read-only diagnosis can still work without it",
+        ),
+        ("command.lsblk", "lsblk", "disk inventory uses util-linux"),
+        (
+            "command.findmnt",
+            "findmnt",
+            "mount inspection uses util-linux",
+        ),
+        ("command.df", "df", "filesystem space checks use coreutils"),
+        (
+            "command.pkexec",
+            "pkexec",
+            "temporary administrator operations need polkit/pkexec and an authentication agent",
+        ),
+        (
+            "command.gio",
+            "gio",
+            "trash operations need GLib tools (Debian/Ubuntu: libglib2.0-bin; Fedora: glib2)",
+        ),
+    ] {
+        checks.push(command_check(
+            probe,
+            id,
+            command,
+            command,
+            CheckStatus::Warning,
+            reason,
+        ));
+    }
+    if probe.env_var("DISPLAY").is_some() || probe.env_var("WAYLAND_DISPLAY").is_some() {
+        checks.push(command_check(
             probe,
             "command.xdg-open",
             "xdg-open",
             "xdg-open",
-            CheckStatus::Fail,
-            "install xdg-utils (for example: sudo apt install xdg-utils)",
-        ),
-        command_check(
-            probe,
-            "command.gio",
-            "gio",
-            "gio",
-            CheckStatus::Fail,
-            "install GLib command-line tools (for example: sudo apt install libglib2.0-bin)",
-        ),
-        logind_check(probe),
-        session_dbus_check(probe),
-        portal_check(probe),
-        clipboard_check(probe),
-        notification_check(probe),
-        polkit_check(probe),
-    ]
+            CheckStatus::Warning,
+            "opening external desktop files needs xdg-utils",
+        ));
+        checks.extend([
+            portal_check(probe),
+            clipboard_check(probe),
+            notification_check(probe),
+        ]);
+    } else {
+        checks.push(EnvironmentCheck {
+            id: "linux-desktop", label: "Optional desktop integration".into(), status: CheckStatus::Pass,
+            message: "No graphical display: skipped xdg-open, portal, clipboard, and notifications. Terminal/SSH use is supported; terminal paste remains available.".into(),
+        });
+    }
+    checks
 }
 
 fn portal_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
@@ -358,27 +406,6 @@ fn portal_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
     }
 }
 
-fn linux_architecture_check() -> EnvironmentCheck {
-    if env::consts::ARCH == "x86_64" {
-        EnvironmentCheck {
-            id: "linux-architecture",
-            label: "Linux architecture".to_string(),
-            status: CheckStatus::Pass,
-            message: "x86_64 is supported".to_string(),
-        }
-    } else {
-        EnvironmentCheck {
-            id: "linux-architecture",
-            label: "Linux architecture".to_string(),
-            status: CheckStatus::Fail,
-            message: format!(
-                "{} is not an M0 release architecture; use an x86_64 build",
-                env::consts::ARCH
-            ),
-        }
-    }
-}
-
 fn command_check(
     probe: &dyn LinuxDoctorProbe,
     id: &'static str,
@@ -399,75 +426,7 @@ fn command_check(
             id,
             label: format!("Linux command: {label}"),
             status: missing_status,
-            message: format!("{command} was not found in PATH; {remediation}"),
-        }
-    }
-}
-
-fn logind_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
-    if let Some(result) = probe.logind_poweroff_state() {
-        return match result {
-            Ok(state) if matches!(state.as_str(), "yes" | "challenge") => EnvironmentCheck {
-                id: "logind",
-                label: "systemd-logind".to_string(),
-                status: CheckStatus::Pass,
-                message: format!(
-                    "live CanPowerOff returned {state}; interactive Power off is available through logind"
-                ),
-            },
-            Ok(state) => EnvironmentCheck {
-                id: "logind",
-                label: "systemd-logind".to_string(),
-                status: CheckStatus::Warning,
-                message: format!(
-                    "live CanPowerOff returned {state}; check the active logind session and polkit policy"
-                ),
-            },
-            Err(error) => EnvironmentCheck {
-                id: "logind",
-                label: "systemd-logind".to_string(),
-                status: CheckStatus::Warning,
-                message: format!("could not query logind CanPowerOff on the system D-Bus: {error}"),
-            },
-        };
-    }
-    let systemd_running = probe.path_exists("/run/systemd/system");
-    let system_bus = probe.path_exists("/run/dbus/system_bus_socket");
-    if systemd_running && system_bus {
-        EnvironmentCheck {
-            id: "logind",
-            label: "systemd-logind".to_string(),
-            status: CheckStatus::Warning,
-            message: "systemd and the system D-Bus socket exist, but this build could not issue a live CanPowerOff probe".to_string(),
-        }
-    } else {
-        EnvironmentCheck {
-            id: "logind",
-            label: "systemd-logind".to_string(),
-            status: CheckStatus::Warning,
-            message: "systemd-logind or its system D-Bus socket was not detected; run inside a systemd user session to enable Power off".to_string(),
-        }
-    }
-}
-
-fn session_dbus_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
-    let reachable = probe
-        .session_bus_reachable()
-        .unwrap_or_else(|| probe.env_var("DBUS_SESSION_BUS_ADDRESS").is_some());
-    if reachable {
-        EnvironmentCheck {
-            id: "session-dbus",
-            label: "Session D-Bus".to_string(),
-            status: CheckStatus::Pass,
-            message: "a live session D-Bus connection is available for desktop services"
-                .to_string(),
-        }
-    } else {
-        EnvironmentCheck {
-            id: "session-dbus",
-            label: "Session D-Bus".to_string(),
-            status: CheckStatus::Warning,
-            message: "DBUS_SESSION_BUS_ADDRESS is unset; start TundraUX3 from your GNOME/KDE login session (or configure a session D-Bus) for notifications and portal integration".to_string(),
+            message: format!("{command} is missing or not executable; {remediation}"),
         }
     }
 }
@@ -545,51 +504,8 @@ fn notification_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
             id: "notifications",
             label: "Desktop notifications".to_string(),
             status: CheckStatus::Warning,
-            message: "no session D-Bus was detected; install/enable xdg-desktop-portal or a notification daemon in the graphical session; stderr and watchdog reports will be used".to_string(),
+            message: "org.freedesktop.Notifications is unavailable on the session D-Bus; enable a notification daemon in the graphical session; stderr and watchdog reports will be used".to_string(),
         }
-    }
-}
-
-fn polkit_check(probe: &dyn LinuxDoctorProbe) -> EnvironmentCheck {
-    if !probe.command_exists("pkcheck") {
-        return EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: "pkcheck was not found; install and enable polkit to authorize interactive Power off requests".to_string(),
-        };
-    }
-    match probe.logind_poweroff_state() {
-        Some(Ok(state)) if matches!(state.as_str(), "yes" | "challenge") => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Pass,
-            message: format!(
-                "pkcheck is executable and logind CanPowerOff returned {state}; no sudo path is used"
-            ),
-        },
-        Some(Ok(state)) => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: format!(
-                "pkcheck is executable, but logind CanPowerOff returned {state}; check the desktop polkit agent and policy"
-            ),
-        },
-        Some(Err(error)) => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: format!(
-                "pkcheck is executable, but logind authorization could not be queried: {error}"
-            ),
-        },
-        None => EnvironmentCheck {
-            id: "polkit",
-            label: "polkit".to_string(),
-            status: CheckStatus::Warning,
-            message: "pkcheck is executable, but this build could not verify the live desktop authorization agent".to_string(),
-        },
     }
 }
 
@@ -619,16 +535,6 @@ fn write_doctor_checks(
         write_environment_check(output, check);
     }
 
-    let _ = writeln!(output);
-    let _ = writeln!(output, "Capability checks:");
-    for check in environment_checks
-        .iter()
-        .filter(|check| is_capability_check(check))
-    {
-        write_environment_check(output, check);
-    }
-
-    let _ = writeln!(output);
     let _ = writeln!(output, "Path checks:");
     for check in path_checks {
         write_path_check(output, check);
@@ -685,12 +591,9 @@ fn write_path_check(output: &mut impl Write, check: &PathCheck) {
 
 fn write_fallback_doctor_checks(
     output: &mut impl Write,
-    platform: &dyn Platform,
     terminal_check: &EnvironmentCheck,
     error: &platform::PlatformError,
 ) {
-    let capability_checks = fallback_capability_checks(platform);
-
     let _ = writeln!(output);
     let _ = writeln!(output, "Checks:");
 
@@ -698,24 +601,8 @@ fn write_fallback_doctor_checks(
     let _ = writeln!(output, "Terminal check:");
     write_environment_check(output, terminal_check);
 
-    let _ = writeln!(output);
-    let _ = writeln!(output, "Capability checks:");
-    for check in &capability_checks {
-        write_environment_check(output, check);
-    }
-
-    let _ = writeln!(output);
     let _ = writeln!(output, "Path checks:");
     let _ = writeln!(output, "[FAIL] App paths: {error}");
-}
-
-fn fallback_capability_checks(platform: &dyn Platform) -> Vec<EnvironmentCheck> {
-    platform
-        .capabilities()
-        .checks()
-        .into_iter()
-        .map(|(name, status)| EnvironmentCheck::capability(name, status))
-        .collect()
 }
 
 fn is_platform_check(check: &EnvironmentCheck) -> bool {

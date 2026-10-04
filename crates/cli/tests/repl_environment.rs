@@ -2,6 +2,52 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 #[test]
+fn repl_system_command_hint_does_not_execute_and_builtin_errors_stay_contextual() {
+    const CHILD: &str = "TUNDRA_TEST_REPL_HINT_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        std::process::exit(cli::run_with_platform(
+            ["repl", "--embedded"],
+            &platform::mock::UnsupportedPlatform,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        ));
+    }
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "repl_system_command_hint_does_not_execute_and_builtin_errors_stay_contextual",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"  echo MUST_NOT_RUN\nconfig invalid\n/echo EXPLICIT_COMMAND_RAN\nexit\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("Prefix it with '/': /echo MUST_NOT_RUN"),
+        "{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("This looks like a system command").count(),
+        1
+    );
+    assert!(stderr.contains("Usage: tundra-cli config"));
+    assert!(!stdout.contains("MUST_NOT_RUN"), "{stdout}");
+    assert!(stdout.contains("EXPLICIT_COMMAND_RAN"), "{stdout}");
+}
+
+#[test]
 fn repl_reuses_system_command_state_across_builtin_commands() {
     const CHILD: &str = "TUNDRA_TEST_REPL_ENVIRONMENT_CHILD";
     if std::env::var_os(CHILD).is_some() {

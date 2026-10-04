@@ -144,7 +144,18 @@ where
     Stdout: Write,
     Stderr: Write,
 {
-    match parse_args(args) {
+    let args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect::<Vec<_>>();
+    match parse_args(&args) {
+        Ok(CliCommand::TopicHelp(topic)) => {
+            let _ = crate::help_text::write_topic_help(stdout, &topic);
+            0
+        }
+        Ok(CliCommand::Launcher(action)) => {
+            crate::launcher_command::run_launcher(platform, stdout, stderr, action)
+        }
         Ok(CliCommand::ClearLogs(action)) => {
             crate::clear_logs_command::run_clear_logs(platform, stdout, stderr, action)
         }
@@ -216,7 +227,7 @@ where
         }) => run_update_helper(&manifest, parent_pid, recover_only, stderr),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
-            let _ = write_help(stderr);
+            let _ = crate::help_text::write_error_help(stderr, &args);
             2
         }
     }

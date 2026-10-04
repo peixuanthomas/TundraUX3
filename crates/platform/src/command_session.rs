@@ -42,6 +42,146 @@ impl SystemCommandSession {
         &self.directory
     }
 
+    /// Best-effort hint only: inspect shell builtins and executable paths in
+    /// this session without spawning a shell or executing the supplied text.
+    pub fn is_likely_command(&self, word: &str) -> bool {
+        #[cfg(windows)]
+        let builtin = matches!(
+            word.to_ascii_lowercase().as_str(),
+            "cd" | "chdir"
+                | "dir"
+                | "echo"
+                | "set"
+                | "setlocal"
+                | "endlocal"
+                | "type"
+                | "copy"
+                | "move"
+                | "del"
+                | "erase"
+                | "ren"
+                | "rename"
+                | "md"
+                | "mkdir"
+                | "rd"
+                | "rmdir"
+                | "pushd"
+                | "popd"
+                | "if"
+                | "for"
+                | "call"
+                | "start"
+                | "ver"
+                | "vol"
+                | "where"
+                | "pause"
+        );
+        #[cfg(not(windows))]
+        let builtin = matches!(
+            word,
+            "cd" | "pwd"
+                | "echo"
+                | "printf"
+                | "export"
+                | "unset"
+                | "set"
+                | "read"
+                | "umask"
+                | "ulimit"
+                | "test"
+                | "["
+                | "command"
+                | "type"
+                | "exec"
+                | "eval"
+                | "alias"
+                | "unalias"
+                | "wait"
+                | "true"
+                | "false"
+                | "source"
+                | "."
+        );
+        if builtin {
+            return true;
+        }
+        #[cfg(unix)]
+        if let Some((name, _)) = word.split_once('=') {
+            if !name.is_empty()
+                && name.chars().enumerate().all(|(i, c)| {
+                    c == '_' || c.is_ascii_alphabetic() || (i > 0 && c.is_ascii_digit())
+                })
+            {
+                return true;
+            }
+        }
+        let get_env = |name: &str| {
+            self.environment.iter().find_map(|(key, value)| {
+                let matches = if cfg!(windows) {
+                    key.to_string_lossy().eq_ignore_ascii_case(name)
+                } else {
+                    key == name
+                };
+                matches.then_some(value)
+            })
+        };
+        let executable = |path: &Path| {
+            let Ok(metadata) = std::fs::metadata(path) else {
+                return false;
+            };
+            if !metadata.is_file() {
+                return false;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o111 != 0
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        };
+        let candidate_exists = |path: &Path| {
+            #[cfg(windows)]
+            {
+                let extensions = get_env("PATHEXT")
+                    .map(|v| v.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+                extensions
+                    .split(';')
+                    .filter(|ext| ext.starts_with('.') && !ext.contains(['/', '\\']))
+                    .any(|ext| {
+                        if path
+                            .to_string_lossy()
+                            .to_ascii_lowercase()
+                            .ends_with(&ext.to_ascii_lowercase())
+                            && executable(path)
+                        {
+                            return true;
+                        }
+                        let mut candidate = path.as_os_str().to_os_string();
+                        candidate.push(ext);
+                        executable(Path::new(&candidate))
+                    })
+            }
+            #[cfg(not(windows))]
+            {
+                executable(path)
+            }
+        };
+        if word.contains('/') || (cfg!(windows) && word.contains(['\\', ':'])) {
+            return candidate_exists(&self.directory.join(word));
+        }
+        if cfg!(windows) && candidate_exists(&self.directory.join(word)) {
+            return true;
+        }
+        get_env("PATH").is_some_and(|path| {
+            std::env::split_paths(path)
+                .any(|dir| candidate_exists(&self.directory.join(dir).join(word)))
+        })
+    }
+
     /// Run explicit shell input. This API is only for the advanced command
     /// line; ordinary system operations must continue using typed adapters.
     pub fn run(&mut self, command: &str) -> io::Result<SystemCommandResult> {
