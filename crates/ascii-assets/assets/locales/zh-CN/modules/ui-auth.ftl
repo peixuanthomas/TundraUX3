@@ -102,7 +102,7 @@ ui-auth-custom-accent-color = 自定义强调色
 ui-auth-timezone-item = { $name } ({ $id })
 
 ui-auth-timezone-description = { $name } - { $description }
-ui-auth-touch-sign-in = Ctrl+Enter 登录
+ui-auth-enter-sign-in = Enter 登录
 ui-auth-touch-back = Alt+← 上一步
 ui-auth-touch-continue = Ctrl+Enter 继续
 ui-auth-touch-apply = Enter 应用

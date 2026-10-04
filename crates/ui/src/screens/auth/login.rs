@@ -89,7 +89,7 @@ fn render_login_unscrolled(
         model.focused_field == LoginField::PasswordVisibility,
         theme,
     );
-    Button::new("login.submit", i18n::tr!("ui-auth-touch-sign-in")).render_inline_frame(
+    Button::new("login.submit", i18n::tr!("ui-auth-enter-sign-in")).render_inline_frame(
         frame,
         layout.submit,
         theme,

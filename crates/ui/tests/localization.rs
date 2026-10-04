@@ -220,6 +220,56 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
 }
 
 #[test]
+fn login_button_shows_enter_even_with_the_old_installed_translation() {
+    let fixture = LocaleFixture::new();
+    for (locale, label) in [("en-US", "Sign in"), ("zh-CN", "登录")] {
+        let resource = fixture
+            .0
+            .join("locales")
+            .join(locale)
+            .join("modules/ui-auth.ftl");
+        let text = fs::read_to_string(&resource).unwrap();
+        fs::write(
+            &resource,
+            text.replace(
+                &format!("ui-auth-enter-sign-in = Enter {label}"),
+                &format!("ui-auth-touch-sign-in = Ctrl+Enter {label}"),
+            ),
+        )
+        .unwrap();
+        let snapshot = fixture.snapshot(locale);
+        with_snapshot(&snapshot, || {
+            let model =
+                ui::LoginViewModel::new(Vec::new(), 0, 0, 0, ui::LoginField::Password, None);
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            terminal
+                .draw(|frame| {
+                    ui::render_login_content(
+                        frame,
+                        frame.area(),
+                        &model,
+                        &RenderContext::default(),
+                    );
+                })
+                .unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                text.replace(' ', "")
+                    .contains(&format!("Enter{label}").replace(' ', "")),
+                "{text}",
+            );
+            assert!(!text.contains("Ctrl+Enter"), "{text}");
+        });
+    }
+}
+
+#[test]
 fn home_icon_identity_is_independent_of_the_display_language() {
     let english = ShellEntry::new("Explorer", "Files").with_icon_key("explorer");
     let chinese = ShellEntry::new("文件管理器", "文件").with_icon_key("explorer");
