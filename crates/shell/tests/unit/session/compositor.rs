@@ -58,6 +58,34 @@ fn text(buffer: &Buffer, area: Rect) -> String {
 }
 
 #[test]
+fn auto_admin_keeps_shell_title_and_status_visible_after_resize() {
+    let mut state = session();
+    let (responses, _inputs) = mpsc::channel();
+    state
+        .begin_auto_admin("Remove neofetch".into(), false, responses)
+        .unwrap();
+    for (width, height) in [(180, 55), (80, 24), (120, 40)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut compositor = ScreenCompositor::default();
+        state.close_auto_admin();
+        let prepared = home_frame(&state, 0, true);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let ui::ShellLayout::Full { top, main, status } =
+            ui::compute_shell_layout(Rect::new(0, 0, width, height))
+        else {
+            panic!("full shell layout expected");
+        };
+        let title_before = text(terminal.backend().buffer(), top);
+        let status_before = text(terminal.backend().buffer(), status);
+        state.apply_input(InputEvent::from_key_label("F12"));
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        assert_eq!(text(terminal.backend().buffer(), top), title_before);
+        assert_eq!(text(terminal.backend().buffer(), status), status_before);
+        assert!(text(terminal.backend().buffer(), main).contains("AutoAdmin (AA)"));
+    }
+}
+
+#[test]
 fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
     for mode in 0..3 {
         let launcher = mode != 0;

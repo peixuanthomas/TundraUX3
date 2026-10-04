@@ -31,11 +31,30 @@ pub struct AutoAdminLayout {
     pub buttons: [Rect; 4],
 }
 
+/// Receives the full Shell bounds so drawing, hit testing and PTY sizing all
+/// reserve the same fixed title/status bars, even immediately after a resize.
 pub fn auto_admin_layout(bounds: Rect, confirming: bool) -> AutoAdminLayout {
-    let dialog = bounds.inner(Margin::new(
-        u16::from(bounds.width > 50) * 2,
-        u16::from(bounds.height > 18),
-    ));
+    let main = match crate::compute_shell_layout(bounds) {
+        crate::ShellLayout::Full { main, .. } | crate::ShellLayout::Compact(main) => main,
+    };
+    let width = if main.width > 80 {
+        main.width.saturating_sub(main.width / 10)
+    } else {
+        main.width
+    }
+    .min(140);
+    let height = if main.height > 20 {
+        main.height.saturating_sub(main.height / 5)
+    } else {
+        main.height
+    }
+    .min(36);
+    let dialog = Rect::new(
+        main.x + main.width.saturating_sub(width) / 2,
+        main.y + main.height.saturating_sub(height) / 2,
+        width,
+        height,
+    );
     let inner = dialog.inner(Margin::new(1, 1));
     let footer_height = inner.height.min(3);
     let body_height = inner.height.saturating_sub(footer_height);
