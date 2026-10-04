@@ -374,7 +374,6 @@ impl ShellSession {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(_) => Some("user-management:create"),
             UserManagementMode::EditInfo(_) => Some("user-management:edit-info"),
-            UserManagementMode::Password(_) => Some("user-management:password"),
         };
         if let Some(id) = user_management_mode {
             return Some(ShellOverlayDescriptor {

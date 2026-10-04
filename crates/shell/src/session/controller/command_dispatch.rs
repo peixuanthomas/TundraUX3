@@ -298,7 +298,6 @@ impl ShellSession {
                 self.poll_logs_tasks();
                 self.poll_management();
                 self.poll_auto_admin();
-                #[cfg(target_os = "linux")]
                 self.poll_user_management_task();
                 self.poll_editor_background_tasks(platform);
                 self.persist_editor_recovery_if_due(received_at);

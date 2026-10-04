@@ -123,6 +123,7 @@ impl ShellNotification {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn with_selected_action(mut self, index: usize) -> Self {
         self.selected_action = index.min(self.actions.len().saturating_sub(1));
         self

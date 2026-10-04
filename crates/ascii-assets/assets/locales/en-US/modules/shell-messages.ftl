@@ -647,7 +647,7 @@ shell-operation-error-detail-suffix = { " " }({ $detail })
 shell-path-error-detail = { $path }: { $reason }
 
 shell-linux-system-accounts = Real Linux login accounts. Changes use system authorization. Change your own password through the system prompt.
-shell-linux-accounts-working = Waiting for the Linux account service or authorization…
+shell-linux-accounts-working = Processing the account operation or waiting for approval…
 shell-linux-protect-current-account = You cannot delete, disable, or change the role of the account running this session.
 shell-linux-delete-account-keep-files = Delete Linux account { $username }? Its home directory and files will be kept.
 shell-linux-password-enables-account = Setting this Linux password also enables the account.

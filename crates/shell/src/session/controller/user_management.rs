@@ -3,7 +3,7 @@ impl ShellSession {
     pub(in crate::session) fn refresh_user_management(&mut self) -> bool {
         #[cfg(target_os = "linux")]
         if self.identity_backend == identity::IdentityBackend::Linux {
-            return self.start_linux_user_task(None, None, None, |_, _| Ok(()));
+            return self.start_user_management_task(None);
         }
 
         let Some(storage) = self.storage_manager.clone() else {
@@ -149,94 +149,20 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn begin_set_selected_password(&mut self) {
-        #[cfg(target_os = "linux")]
-        if self.identity_backend == identity::IdentityBackend::Linux
-            && let Some(username) = self.selected_managed_username()
-            && self.is_current_username(&username)
-        {
-            self.start_linux_user_task(
-                Some(i18n::tr!("aa-user-password", user = username.clone())),
-                Some(i18n::msg!("shell-updated-password-for-arg1", arg1 = username.clone()).into()),
-                None,
-                move |service, actor| service.set_user_password(actor, &username, ""),
-            );
-            return;
-        }
-
         if let Some(username) = self.selected_managed_username() {
-            self.user_management_mode = UserManagementMode::Password(UserManagementPasswordForm {
-                username,
-                password: String::new(),
-                focused_field: UserManagementFormField::Password,
-            });
-            self.user_management_message = (self.identity_backend
-                == identity::IdentityBackend::Linux)
-                .then(|| i18n::msg!("shell-linux-password-enables-account").into());
-            self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
+            self.start_user_management_task(Some(UserManagementOperation::Password { username }));
         }
     }
 
     pub(in crate::session) fn disable_selected_user(&mut self) {
-        #[cfg(target_os = "linux")]
-        if self.identity_backend == identity::IdentityBackend::Linux {
-            if let Some(username) = self.selected_managed_username() {
-                self.start_linux_user_task(
-                    Some(i18n::tr!("aa-user-disable", user = username.clone())),
-                    Some(
-                        i18n::msg!(
-                            "shell-success-prefix-username",
-                            success_prefix = i18n::msg!("shell-disabled"),
-                            username = username.clone()
-                        )
-                        .into(),
-                    ),
-                    None,
-                    move |service, actor| service.disable_user(actor, &username),
-                );
-            }
-            return;
-        }
-
         if let Some(username) = self.selected_managed_username() {
-            let current_user = self.is_current_username(&username);
-            let disabled = self.run_selected_user_operation(
-                i18n::LocalizedText::from(i18n::msg!("shell-disabled")),
-                |service, session| service.disable_user(session, &username),
-            );
-            if disabled && current_user {
-                self.return_to_login(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-account-disabled"
-                )));
-            }
+            self.start_user_management_task(Some(UserManagementOperation::Disable { username }));
         }
     }
 
     pub(in crate::session) fn unlock_selected_user(&mut self) {
-        #[cfg(target_os = "linux")]
-        if self.identity_backend == identity::IdentityBackend::Linux {
-            if let Some(username) = self.selected_managed_username() {
-                self.start_linux_user_task(
-                    Some(i18n::tr!("aa-user-enable", user = username.clone())),
-                    Some(
-                        i18n::msg!(
-                            "shell-success-prefix-username",
-                            success_prefix = i18n::msg!("shell-enabled-unlocked"),
-                            username = username.clone()
-                        )
-                        .into(),
-                    ),
-                    None,
-                    move |service, actor| service.enable_user(actor, &username),
-                );
-            }
-            return;
-        }
-
         if let Some(username) = self.selected_managed_username() {
-            self.run_selected_user_operation(
-                i18n::LocalizedText::from(i18n::msg!("shell-enabled-unlocked")),
-                |service, session| service.enable_user(session, &username),
-            );
+            self.start_user_management_task(Some(UserManagementOperation::Enable { username }));
         }
     }
 
@@ -245,308 +171,32 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn cycle_selected_role(&mut self) {
-        #[cfg(target_os = "linux")]
-        if self.identity_backend == identity::IdentityBackend::Linux {
-            if let Some(user) = self
-                .app
-                .managed_users()
-                .get(self.user_management_selected)
-                .cloned()
-            {
-                let role = if user.role == UserRole::Admin {
+        if let Some(user) = self.app.managed_users().get(self.user_management_selected) {
+            let operation = UserManagementOperation::Role {
+                username: user.username.clone(),
+                role: if user.role == UserRole::Admin {
                     UserRole::User
                 } else {
                     UserRole::Admin
-                };
-                self.start_linux_user_task(
-                    Some(i18n::tr!(
-                        "aa-user-role",
-                        user = user.username.clone(),
-                        role = format!("{role:?}")
-                    )),
-                    Some(
-                        i18n::msg!(
-                            "shell-success-prefix-username",
-                            success_prefix = i18n::msg!("shell-changed-role-for"),
-                            username = user.username.clone()
-                        )
-                        .into(),
-                    ),
-                    None,
-                    move |service, actor| service.change_role(actor, &user.username, role),
-                );
-            }
-            return;
+                },
+            };
+            self.start_user_management_task(Some(operation));
         }
-
-        if let Some(username) = self.selected_managed_username() {
-            let next_role = self
-                .app
-                .managed_users()
-                .get(self.user_management_selected)
-                .map(|user| match user.role {
-                    UserRole::User | UserRole::Guest => UserRole::Admin,
-                    UserRole::Admin => UserRole::User,
-                })
-                .unwrap_or(UserRole::User);
-            let changed = self.run_selected_user_operation(
-                i18n::LocalizedText::from(i18n::msg!("shell-changed-role-for")),
-                |service, session| service.change_role(session, &username, next_role),
-            );
-            if changed {
-                self.sync_current_session_role();
-                let _refresh_succeeded = self.refresh_user_management();
-            }
-        }
-    }
-
-    pub(in crate::session) fn run_selected_user_operation(
-        &mut self,
-        success_prefix: i18n::LocalizedText,
-        operation: impl FnOnce(UserService, &AuthSession) -> Result<(), CoreError>,
-    ) -> bool {
-        let Some(storage) = self.storage_manager.clone() else {
-            return false;
-        };
-        let Some(session) = self.app.auth_session() else {
-            return false;
-        };
-        let username = self
-            .selected_managed_username()
-            .unwrap_or_else(|| "user".to_string());
-        let service = UserService::with_debug_policy(storage, self.debug_policy)
-            .with_backend(self.identity_backend);
-        let succeeded = match operation(service, session) {
-            Ok(()) => {
-                self.user_management_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-success-prefix-username",
-                    success_prefix = success_prefix,
-                    username = username
-                )));
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                true
-            }
-            Err(error) => {
-                self.user_management_message = Some(format_core_error(&error));
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
-                false
-            }
-        };
-        let _refresh_succeeded = self.refresh_user_management();
-        succeeded
     }
 
     pub(in crate::session) fn submit_user_management_form(&mut self) {
-        #[cfg(target_os = "linux")]
-        if self.identity_backend == identity::IdentityBackend::Linux {
-            match self.user_management_mode.clone() {
-                UserManagementMode::Browse => {}
-                UserManagementMode::Create(form) => {
-                    self.start_linux_user_task(
-                        Some(i18n::tr!(
-                            "aa-user-create",
-                            user = form.username.clone(),
-                            role = format!("{:?}", form.role)
-                        )),
-                        Some(i18n::msg!("shell-created-arg1", arg1 = form.username.clone()).into()),
-                        Some(form.username.trim().to_string()),
-                        move |service, actor| {
-                            service
-                                .create_user(
-                                    actor,
-                                    &form.username,
-                                    &form.display_name,
-                                    form.role,
-                                    &form.password,
-                                )
-                                .map(|_| ())
-                        },
-                    );
-                }
-                UserManagementMode::EditInfo(form) => {
-                    self.start_linux_user_task(
-                        Some(i18n::tr!(
-                            "aa-user-rename",
-                            user = form.username.clone(),
-                            name = form.display_name.clone()
-                        )),
-                        Some(i18n::msg!("shell-updated-arg1", arg1 = form.username.clone()).into()),
-                        None,
-                        move |service, actor| {
-                            service
-                                .update_user_info(actor, &form.username, &form.display_name)
-                                .map(|_| ())
-                        },
-                    );
-                }
-                UserManagementMode::Password(form) => {
-                    self.start_linux_user_task(
-                        Some(i18n::tr!("aa-user-password", user = form.username.clone())),
-                        Some(
-                            i18n::msg!(
-                                "shell-updated-password-for-arg1",
-                                arg1 = form.username.clone()
-                            )
-                            .into(),
-                        ),
-                        None,
-                        move |service, actor| {
-                            service.set_user_password(actor, &form.username, &form.password)
-                        },
-                    );
-                }
-            }
-            return;
-        }
-
-        let Some(storage) = self.storage_manager.clone() else {
-            return;
+        let operation = match self.user_management_mode.clone() {
+            UserManagementMode::Browse => return,
+            UserManagementMode::Create(form) => UserManagementOperation::Create(form),
+            UserManagementMode::EditInfo(form) => UserManagementOperation::EditInfo(form),
         };
-        let Some(session) = self.app.auth_session() else {
-            return;
-        };
-        let service = UserService::with_debug_policy(storage, self.debug_policy)
-            .with_backend(self.identity_backend);
-        match self.user_management_mode.clone() {
-            UserManagementMode::Browse => {}
-            UserManagementMode::Create(form) => {
-                let username = form.username.trim().to_string();
-                let result = service.create_user(
-                    session,
-                    &form.username,
-                    &form.display_name,
-                    form.role,
-                    &form.password,
-                );
-                self.user_management_message = Some(match result {
-                    Ok(account) => {
-                        self.user_management_mode = UserManagementMode::Browse;
-                        self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                        i18n::LocalizedText::from(i18n::msg!(
-                            "shell-created-arg1",
-                            arg1 = account.username
-                        ))
-                    }
-                    Err(error) => {
-                        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
-                        format_core_error(&error)
-                    }
-                });
-                if !self.refresh_user_management() {
-                    return;
-                }
-                if !username.is_empty() {
-                    self.select_managed_username(&username);
-                }
-                return;
-            }
-            UserManagementMode::EditInfo(form) => {
-                let result = service.update_user_info(session, &form.username, &form.display_name);
-                self.user_management_message = Some(match result {
-                    Ok(account) => {
-                        self.user_management_mode = UserManagementMode::Browse;
-                        self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                        i18n::LocalizedText::from(i18n::msg!(
-                            "shell-updated-arg1",
-                            arg1 = account.username
-                        ))
-                    }
-                    Err(error) => {
-                        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
-                        format_core_error(&error)
-                    }
-                });
-            }
-            UserManagementMode::Password(form) => {
-                let result = service.set_user_password(session, &form.username, &form.password);
-                self.user_management_message = Some(match result {
-                    Ok(()) => {
-                        self.user_management_mode = UserManagementMode::Browse;
-                        self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                        i18n::LocalizedText::from(i18n::msg!(
-                            "shell-updated-password-for-arg1",
-                            arg1 = form.username
-                        ))
-                    }
-                    Err(error) => {
-                        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
-                        format_core_error(&error)
-                    }
-                });
-            }
-        }
-        let _refresh_succeeded = self.refresh_user_management();
+        self.start_user_management_task(Some(operation));
     }
 
     pub(in crate::session) fn delete_selected_user(&mut self) {
-        #[cfg(target_os = "linux")]
-        if self.identity_backend == identity::IdentityBackend::Linux {
-            if let Some(username) = self.selected_managed_username() {
-                self.start_linux_user_task(
-                    Some(i18n::tr!("aa-user-delete", user = username.clone())),
-                    Some(i18n::msg!("shell-deleted-username", username = username.clone()).into()),
-                    None,
-                    move |service, actor| service.delete_user(actor, &username),
-                );
-            }
-            return;
+        if let Some(username) = self.selected_managed_username() {
+            self.start_user_management_task(Some(UserManagementOperation::Delete { username }));
         }
-
-        let Some(username) = self.selected_managed_username() else {
-            return;
-        };
-        let deleted_user_id = self
-            .app
-            .managed_users()
-            .iter()
-            .find(|user| {
-                self.identity_backend
-                    .usernames_match(&user.username, &username)
-            })
-            .map(|user| user.id.clone());
-        let Some(storage) = self.storage_manager.clone() else {
-            return;
-        };
-        let Some(session) = self.app.auth_session() else {
-            return;
-        };
-        let deleting_current_user = self.is_current_username(&username);
-        let deleted = match UserService::with_debug_policy(storage.clone(), self.debug_policy)
-            .with_backend(self.identity_backend)
-            .delete_user(session, &username)
-        {
-            Ok(()) => {
-                self.user_management_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-deleted-username",
-                    username = username
-                )));
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
-                true
-            }
-            Err(error) => {
-                self.user_management_message = Some(format_core_error(&error));
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
-                false
-            }
-        };
-        if deleted && let Some(user_id) = deleted_user_id {
-            match storage.load_clock() {
-                Ok(mut document) => {
-                    document.profiles.remove(&user_id);
-                    if let Err(error) = storage.save_clock(&document) {
-                        self.report_clock_storage_error(error.to_string());
-                    }
-                }
-                Err(error) => self.report_clock_storage_error(error.to_string()),
-            }
-        }
-        if deleted && deleting_current_user {
-            self.return_to_login(i18n::LocalizedText::from(i18n::msg!(
-                "shell-account-deleted"
-            )));
-            return;
-        }
-        let _refresh_succeeded = self.refresh_user_management();
     }
 
     pub(in crate::session) fn append_user_management_char(&mut self, character: char) {
@@ -564,12 +214,7 @@ impl ShellSession {
             {
                 form.display_name.push(character);
             }
-            UserManagementMode::Password(form)
-                if form.focused_field == UserManagementFormField::Password =>
-            {
-                form.password.push(character);
-            }
-            UserManagementMode::EditInfo(_) | UserManagementMode::Password(_) => {}
+            UserManagementMode::EditInfo(_) => {}
             UserManagementMode::Browse => {}
         }
     }
@@ -595,12 +240,7 @@ impl ShellSession {
             {
                 form.display_name.pop();
             }
-            UserManagementMode::Password(form)
-                if form.focused_field == UserManagementFormField::Password =>
-            {
-                form.password.pop();
-            }
-            UserManagementMode::EditInfo(_) | UserManagementMode::Password(_) => {}
+            UserManagementMode::EditInfo(_) => {}
             UserManagementMode::Browse => {}
         }
     }
@@ -617,11 +257,6 @@ impl ShellSession {
             ],
             UserManagementMode::EditInfo(_) => &[
                 UserManagementFormField::DisplayName,
-                UserManagementFormField::Submit,
-                UserManagementFormField::Cancel,
-            ],
-            UserManagementMode::Password(_) => &[
-                UserManagementFormField::Password,
                 UserManagementFormField::Submit,
                 UserManagementFormField::Cancel,
             ],
@@ -651,7 +286,6 @@ impl ShellSession {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(form) => Some(form.focused_field),
             UserManagementMode::EditInfo(form) => Some(form.focused_field),
-            UserManagementMode::Password(form) => Some(form.focused_field),
         }
     }
 
@@ -663,7 +297,6 @@ impl ShellSession {
             UserManagementMode::Browse => {}
             UserManagementMode::Create(form) => form.focused_field = field,
             UserManagementMode::EditInfo(form) => form.focused_field = field,
-            UserManagementMode::Password(form) => form.focused_field = field,
         }
     }
 
@@ -678,12 +311,6 @@ impl ShellSession {
             UserManagementMode::EditInfo(_) => matches!(
                 field,
                 UserManagementFormField::DisplayName
-                    | UserManagementFormField::Submit
-                    | UserManagementFormField::Cancel
-            ),
-            UserManagementMode::Password(_) => matches!(
-                field,
-                UserManagementFormField::Password
                     | UserManagementFormField::Submit
                     | UserManagementFormField::Cancel
             ),
@@ -814,7 +441,6 @@ impl ShellSession {
         action: ui::UserManagementAction,
     ) -> Option<i18n::LocalizedText> {
         use ui::UserManagementAction as Action;
-        #[cfg(target_os = "linux")]
         if self.user_management_job.is_some() {
             return Some(i18n::msg!("shell-linux-accounts-working").into());
         }
@@ -847,63 +473,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn request_delete_selected_user(&mut self) {
-        use ui::UserManagementAction;
-
-        if !self.user_management_action_enabled(UserManagementAction::Delete) {
-            self.activate_user_management_action(UserManagementAction::Delete);
+        if !self.user_management_action_enabled(ui::UserManagementAction::Delete) {
+            self.activate_user_management_action(ui::UserManagementAction::Delete);
             return;
         }
-        let Some(username) = self.selected_managed_username() else {
-            return;
-        };
-        #[cfg(target_os = "linux")]
-        if self.identity_backend == identity::IdentityBackend::Linux {
-            self.delete_selected_user();
-            return;
-        }
-        let deleting_current_user = self.is_current_username(&username);
-        let title = if deleting_current_user {
-            i18n::LocalizedText::from(i18n::msg!("shell-delete-your-account"))
-        } else {
-            i18n::LocalizedText::from(i18n::msg!("shell-delete-user"))
-        };
-        let message = if self.identity_backend == identity::IdentityBackend::Linux {
-            i18n::msg!("shell-linux-delete-account-keep-files", username = username).into()
-        } else if deleting_current_user {
-            i18n::LocalizedText::from(i18n::msg!(
-                "shell-delete-username-you-will-be-signed-out-immediately",
-                username = username
-            ))
-        } else {
-            i18n::LocalizedText::from(i18n::msg!(
-                "shell-delete-username-this-action-cannot-be-undone",
-                username = username
-            ))
-        };
-        self.notify_modal_with_options(
-            ShellNotification::modal(
-                title,
-                message,
-                ui::NotificationTone::Warning,
-                vec![
-                    ShellNotificationAction::new(
-                        "delete",
-                        i18n::LocalizedText::from(i18n::msg!("shell-delete")),
-                    )
-                    .with_shortcut(InputKey::Char('x'))
-                    .with_follow_up(ShellCommand::DeleteManagedUser),
-                    ShellNotificationAction::new(
-                        "cancel",
-                        i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
-                    )
-                    .with_shortcut(InputKey::Escape)
-                    .cancel(),
-                ],
-            )
-            .with_selected_action(1)
-            .with_key(USER_MANAGEMENT_DELETE_NOTIFICATION_KEY)
-            .with_component(ShellComponent::NotificationDialog),
-        );
+        self.delete_selected_user();
     }
 
     pub(in crate::session) fn selected_is_last_enabled_admin(&self) -> bool {

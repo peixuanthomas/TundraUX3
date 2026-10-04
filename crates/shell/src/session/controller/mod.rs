@@ -25,9 +25,7 @@ mod time_sync;
 mod touch_pages;
 pub(super) use touch_pages::*;
 mod user_management;
-#[cfg(target_os = "linux")]
 mod user_management_tasks;
-#[cfg(target_os = "linux")]
 pub(super) use user_management_tasks::*;
 
 pub(super) use diagnostics::*;

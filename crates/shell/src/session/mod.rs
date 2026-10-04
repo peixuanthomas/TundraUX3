@@ -50,7 +50,6 @@ const EDITOR_CLOSE_NOTIFICATION_KEY: &str = "editor.close-confirm";
 const EDITOR_OPEN_NOTIFICATION_KEY: &str = "editor.open-confirm";
 const EDITOR_ALERT_KEY: &str = "editor.operation";
 const USER_MANAGEMENT_REFRESH_ALERT_KEY: &str = "user-management.refresh";
-const USER_MANAGEMENT_DELETE_NOTIFICATION_KEY: &str = "user-management.delete-confirm";
 const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
 const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
 const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";

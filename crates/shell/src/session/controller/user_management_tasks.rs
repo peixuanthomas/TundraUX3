@@ -1,11 +1,198 @@
 use super::super::*;
 
+use platform::management::{OperationEvent, OperationInput};
+use zeroize::Zeroizing;
+
+pub(in crate::session) enum UserManagementOperation {
+    Create(UserManagementCreateForm),
+    EditInfo(UserManagementInfoForm),
+    Password { username: String },
+    Disable { username: String },
+    Enable { username: String },
+    Role { username: String, role: UserRole },
+    Delete { username: String },
+}
+
+#[derive(Default)]
+enum Completion {
+    #[default]
+    None,
+    DisableCurrent,
+    DeleteLocal {
+        user_id: Option<String>,
+        current: bool,
+    },
+}
+
+impl UserManagementOperation {
+    fn username(&self) -> &str {
+        match self {
+            Self::Create(form) => &form.username,
+            Self::EditInfo(form) => &form.username,
+            Self::Password { username }
+            | Self::Disable { username }
+            | Self::Enable { username }
+            | Self::Role { username, .. }
+            | Self::Delete { username } => username,
+        }
+    }
+    fn description(&self, backend: identity::IdentityBackend) -> String {
+        let linux = backend == identity::IdentityBackend::Linux;
+        let user = self.username().to_string();
+        match self {
+            Self::Create(form) => i18n::tr!(
+                if linux {
+                    "aa-user-create"
+                } else {
+                    "aa-local-user-create"
+                },
+                user = user,
+                role = format!("{:?}", form.role)
+            ),
+            Self::EditInfo(form) => i18n::tr!(
+                if linux {
+                    "aa-user-rename"
+                } else {
+                    "aa-local-user-rename"
+                },
+                user = user,
+                name = form.display_name.clone()
+            ),
+            Self::Password { .. } => {
+                i18n::tr!(
+                    if linux {
+                        "aa-user-password"
+                    } else {
+                        "aa-local-user-password"
+                    },
+                    user = user
+                )
+            }
+            Self::Disable { .. } => i18n::tr!(
+                if linux {
+                    "aa-user-disable"
+                } else {
+                    "aa-local-user-disable"
+                },
+                user = user
+            ),
+            Self::Enable { .. } => i18n::tr!(
+                if linux {
+                    "aa-user-enable"
+                } else {
+                    "aa-local-user-enable"
+                },
+                user = user
+            ),
+            Self::Role { role, .. } => i18n::tr!(
+                if linux {
+                    "aa-user-role"
+                } else {
+                    "aa-local-user-role"
+                },
+                user = user,
+                role = format!("{role:?}")
+            ),
+            Self::Delete { .. } => i18n::tr!(
+                if linux {
+                    "aa-user-delete"
+                } else {
+                    "aa-local-user-delete"
+                },
+                user = user
+            ),
+        }
+    }
+    fn message(&self) -> i18n::LocalizedText {
+        let user = self.username().to_string();
+        match self {
+            Self::Create(_) => i18n::msg!("shell-created-arg1", arg1 = user).into(),
+            Self::EditInfo(_) => i18n::msg!("shell-updated-arg1", arg1 = user).into(),
+            Self::Password { .. } => {
+                i18n::msg!("shell-updated-password-for-arg1", arg1 = user).into()
+            }
+            Self::Delete { .. } => i18n::msg!("shell-deleted-username", username = user).into(),
+            Self::Disable { .. } | Self::Enable { .. } | Self::Role { .. } => i18n::msg!(
+                "shell-success-prefix-username",
+                success_prefix = i18n::msg!(match self {
+                    Self::Disable { .. } => "shell-disabled",
+                    Self::Enable { .. } => "shell-enabled-unlocked",
+                    _ => "shell-changed-role-for",
+                }),
+                username = user
+            )
+            .into(),
+        }
+    }
+    fn execute(
+        self,
+        service: &UserService,
+        actor: &AuthSession,
+        backend: identity::IdentityBackend,
+        job: &AutoAdminJob,
+        inputs: &mpsc::Receiver<OperationInput>,
+    ) -> Result<(), CoreError> {
+        match self {
+            Self::Create(form) => {
+                let password = Zeroizing::new(form.password);
+                service
+                    .create_user(
+                        actor,
+                        &form.username,
+                        &form.display_name,
+                        form.role,
+                        &password,
+                    )
+                    .map(|_| ())
+            }
+            Self::EditInfo(form) => service
+                .update_user_info(actor, &form.username, &form.display_name)
+                .map(|_| ()),
+            Self::Password { username } => {
+                if backend == identity::IdentityBackend::Linux
+                    && backend.usernames_match(&actor.username, &username)
+                {
+                    service.set_user_password(actor, &username, "")
+                } else {
+                    let password = read_confirmed_password(job, inputs)?;
+                    service.set_user_password(actor, &username, &password)
+                }
+            }
+            Self::Disable { username } => service.disable_user(actor, &username),
+            Self::Enable { username } => service.enable_user(actor, &username),
+            Self::Role { username, role } => service.change_role(actor, &username, role),
+            Self::Delete { username } => service.delete_user(actor, &username),
+        }
+    }
+}
+
+fn read_confirmed_password(
+    job: &AutoAdminJob,
+    inputs: &mpsc::Receiver<OperationInput>,
+) -> Result<Zeroizing<String>, CoreError> {
+    loop {
+        let password = job
+            .read_secret(inputs, "new-password", i18n::tr!("aa-new-password"))
+            .map_err(|error| CoreError::SystemIdentity(error.to_string()))?;
+        let confirmation = job
+            .read_secret(inputs, "confirm-password", i18n::tr!("aa-confirm-password"))
+            .map_err(|error| CoreError::SystemIdentity(error.to_string()))?;
+        if *password == *confirmation {
+            return Ok(password);
+        }
+        job.emit(&OperationEvent::Output {
+            text: i18n::tr!("account-passwords-do-not-match"),
+        });
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::session) struct UserManagementJob(Arc<Job>);
 struct Job {
     result: Mutex<Option<Outcome>>,
     worker: Mutex<Option<ManagedThreadHandle<()>>>,
     session_id: String,
+    completion: Completion,
 }
 struct Outcome {
     result: Result<(), CoreError>,
@@ -26,12 +213,9 @@ impl PartialEq for UserManagementJob {
 impl Eq for UserManagementJob {}
 
 impl ShellSession {
-    pub(in crate::session) fn start_linux_user_task(
+    pub(in crate::session) fn start_user_management_task(
         &mut self,
-        description: Option<String>,
-        message: Option<i18n::LocalizedText>,
-        select: Option<String>,
-        operation: impl FnOnce(&UserService, &AuthSession) -> Result<(), CoreError> + Send + 'static,
+        operation: Option<UserManagementOperation>,
     ) -> bool {
         if self.user_management_job.is_some() {
             return false;
@@ -48,43 +232,101 @@ impl ShellSession {
             );
             return false;
         };
-        let mut service = UserService::with_debug_policy(storage, self.debug_policy)
-            .with_backend(self.identity_backend);
-        let aa = if let Some(description) = description {
-            let (responses, _inputs) = mpsc::channel();
+        let backend = self.identity_backend;
+        let service =
+            UserService::with_debug_policy(storage, self.debug_policy).with_backend(backend);
+        let (responses, inputs) = mpsc::channel();
+        let aa = if let Some(operation) = &operation {
+            let mut description = operation.description(backend);
+            if matches!(operation, UserManagementOperation::Password { .. })
+                && backend == identity::IdentityBackend::Linux
+                && !self.is_current_username(operation.username())
+            {
+                description.push_str(&format!(
+                    "\n{}",
+                    i18n::tr!("shell-linux-password-enables-account")
+                ));
+            }
+            if matches!(operation, UserManagementOperation::Delete { .. })
+                && backend == identity::IdentityBackend::Local
+                && self.is_current_username(operation.username())
+            {
+                description = i18n::tr!(
+                    "shell-delete-username-you-will-be-signed-out-immediately",
+                    username = operation.username().to_string()
+                );
+            }
             let Some(job) = self.begin_auto_admin(description, true, responses) else {
                 return false;
             };
-            service = service.with_authorization_interaction(Arc::new(
-                super::auto_admin::AutoAdminAuthorization::new(job.clone()),
-            ));
             Some(job)
         } else {
             None
         };
+        #[cfg(target_os = "linux")]
+        let service = if backend == identity::IdentityBackend::Linux {
+            if let Some(job) = &aa {
+                service.with_authorization_interaction(Arc::new(
+                    super::auto_admin::AutoAdminAuthorization::new(job.clone()),
+                ))
+            } else {
+                service
+            }
+        } else {
+            service
+        };
+        let completion = if backend == identity::IdentityBackend::Local {
+            match &operation {
+                Some(UserManagementOperation::Disable { username })
+                    if self.is_current_username(username) =>
+                {
+                    Completion::DisableCurrent
+                }
+                Some(UserManagementOperation::Delete { username }) => Completion::DeleteLocal {
+                    current: self.is_current_username(username),
+                    user_id: self
+                        .app
+                        .managed_users()
+                        .iter()
+                        .find(|user| backend.usernames_match(&user.username, username))
+                        .map(|user| user.id.clone()),
+                },
+                _ => Completion::None,
+            }
+        } else {
+            Completion::None
+        };
+        let message = operation.as_ref().map(UserManagementOperation::message);
+        let select = operation
+            .as_ref()
+            .map(|operation| operation.username().trim().to_string());
         let worker_aa = aa.clone();
         let language = self.language.clone();
         let shared = Arc::new(Job {
             result: Mutex::new(None),
             worker: Mutex::new(None),
             session_id: actor.session_id.clone(),
+            completion,
         });
         let output = Arc::downgrade(&shared);
-        let mut operation = Some(operation);
+        let mut pending = Some(operation);
         match group.spawn_thread(
-            TaskSpec::one_shot(TaskId::from_static("linux-user-management")),
+            TaskSpec::one_shot(TaskId::from_static("user-management")),
             move || {
                 let _language = i18n::enter_snapshot(language.clone());
-                let Some(operation) = operation.take() else {
+                let Some(operation) = pending.take() else {
                     return;
                 };
-                let result = worker_aa
-                    .as_ref()
-                    .map_or(Ok(()), |job| {
-                        job.wait_for_approval()
-                            .map_err(|e| CoreError::SystemIdentity(e.to_string()))
-                    })
-                    .and_then(|()| operation(&service, &actor));
+                let result = match (operation, worker_aa.as_ref()) {
+                    (Some(operation), Some(job)) => job
+                        .wait_for_approval()
+                        .map_err(|error| CoreError::SystemIdentity(error.to_string()))
+                        .and_then(|()| operation.execute(&service, &actor, backend, job, &inputs)),
+                    (None, _) => Ok(()),
+                    _ => Err(CoreError::SystemIdentity(
+                        "Missing AutoAdmin approval".into(),
+                    )),
+                };
                 if let Some(job) = &worker_aa {
                     job.finish(
                         result
@@ -112,7 +354,10 @@ impl ShellSession {
             },
         ) {
             Ok(worker) => {
-                *shared.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
+                *shared
+                    .worker
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = Some(worker);
                 self.user_management_job = Some(UserManagementJob(shared));
                 self.user_management_message =
                     Some(i18n::msg!("shell-linux-accounts-working").into());
@@ -130,7 +375,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn poll_user_management_task(&mut self) {
-        let Some(job) = self.user_management_job.as_ref() else {
+        let Some(job) = self.user_management_job.clone() else {
             return;
         };
         let result = job
@@ -163,6 +408,30 @@ impl ShellSession {
         {
             return;
         }
+        if outcome.result.is_ok() {
+            let logout: Option<i18n::LocalizedText> = match &job.0.completion {
+                Completion::None => None,
+                Completion::DisableCurrent => Some(i18n::msg!("shell-account-disabled").into()),
+                Completion::DeleteLocal { user_id, current } => {
+                    if let Some(user_id) = user_id
+                        && let Some(storage) = &self.storage_manager
+                    {
+                        let result = storage.load_clock().and_then(|mut document| {
+                            document.profiles.remove(user_id);
+                            storage.save_clock(&document)
+                        });
+                        if let Err(error) = result {
+                            self.report_clock_storage_error(error.to_string());
+                        }
+                    }
+                    current.then(|| i18n::msg!("shell-account-deleted").into())
+                }
+            };
+            if let Some(message) = logout {
+                self.return_to_login(message);
+                return;
+            }
+        }
         match outcome.result {
             Ok(()) => {
                 if outcome.message.is_some() {
@@ -190,9 +459,12 @@ impl ShellSession {
                 self.resolve_user_management_refresh_alert();
             }
             Err(error) => {
-                // Clear stale rows so revoked access never leaves other users visible.
-                self.app
-                    .dispatch_at(app::AppCommand::SetManagedUsers(Vec::new()), Instant::now());
+                // Linux authority may have revoked access. Local read failures
+                // retain the last list, matching ordinary local refresh behavior.
+                if self.identity_backend == identity::IdentityBackend::Linux {
+                    self.app
+                        .dispatch_at(app::AppCommand::SetManagedUsers(Vec::new()), Instant::now());
+                }
                 let error = format_core_error(&error);
                 let feedback = if let Some(operation) = self.user_management_message.clone() {
                     i18n::msg!(

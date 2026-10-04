@@ -427,18 +427,10 @@ pub(super) struct UserManagementInfoForm {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct UserManagementPasswordForm {
-    pub(super) username: String,
-    pub(super) password: String,
-    pub(super) focused_field: UserManagementFormField,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum UserManagementMode {
     Browse,
     Create(UserManagementCreateForm),
     EditInfo(UserManagementInfoForm),
-    Password(UserManagementPasswordForm),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -599,7 +591,6 @@ pub struct UiSessionState {
     pub(super) user_management_message: Option<i18n::LocalizedText>,
     pub(super) user_management_feedback_tone: UserManagementFeedbackTone,
     pub(super) user_management_mode: UserManagementMode,
-    #[cfg(target_os = "linux")]
     pub(super) user_management_job: Option<UserManagementJob>,
     pub(super) selected_home_entry_index: usize,
     pub(super) home_viewport_offset: usize,

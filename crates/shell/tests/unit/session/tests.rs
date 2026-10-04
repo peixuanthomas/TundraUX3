@@ -2921,13 +2921,15 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         focused_field: UserManagementFormField::DisplayName,
     });
     let edit = users.active_overlay_descriptor().expect("edit user");
-    users.user_management_mode = UserManagementMode::Password(UserManagementPasswordForm {
-        username: "user".into(),
-        password: "typed".into(),
-        focused_field: UserManagementFormField::Password,
+    users.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
+        username: "other-user".into(),
+        display_name: "Typed name".into(),
+        focused_field: UserManagementFormField::DisplayName,
     });
-    let password = users.active_overlay_descriptor().expect("password user");
-    for overlay in [&create, &edit, &password] {
+    let other_edit = users
+        .active_overlay_descriptor()
+        .expect("edit another user");
+    for overlay in [&create, &edit, &other_edit] {
         assert_eq!(overlay.kind, ui::MotionOverlayKind::Dialog);
         assert_eq!(overlay.category, ShellOverlayCategory::PageDialog);
         assert_eq!(
@@ -2936,7 +2938,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         );
     }
     assert_ne!(create.id, edit.id);
-    assert_ne!(edit.id, password.id);
+    assert_eq!(edit.id, other_edit.id);
 }
 
 #[test]
@@ -2967,10 +2969,10 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         ShellHomeMode::User,
     );
     users.screen_stack = vec![ShellScreen::UserManagement];
-    users.user_management_mode = UserManagementMode::Password(UserManagementPasswordForm {
+    users.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
         username: "user".into(),
-        password: String::new(),
-        focused_field: UserManagementFormField::Password,
+        display_name: String::new(),
+        focused_field: UserManagementFormField::DisplayName,
     });
 
     for (state, kind, owner) in [

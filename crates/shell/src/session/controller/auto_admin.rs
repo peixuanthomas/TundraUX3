@@ -252,6 +252,41 @@ impl AutoAdminJob {
             Err(message) => OperationEvent::Failed { message },
         });
     }
+    pub(super) fn read_secret(
+        &self,
+        inputs: &mpsc::Receiver<OperationInput>,
+        id: &str,
+        prompt: String,
+    ) -> Result<Zeroizing<String>, ManagementError> {
+        if self.phase() != RUNNING {
+            return Err(ManagementError::Cancelled);
+        }
+        self.emit(&OperationEvent::Question {
+            id: id.into(),
+            prompt,
+            choices: vec![],
+            secret: true,
+        });
+        let deadline = Instant::now() + Duration::from_secs(300);
+        while self.phase() == RUNNING && Instant::now() < deadline {
+            match inputs.recv_timeout(Duration::from_millis(100)) {
+                Ok(OperationInput::Answer {
+                    id: answer_id,
+                    value,
+                }) => {
+                    let value = Zeroizing::new(value);
+                    if answer_id == id {
+                        return Ok(value);
+                    }
+                }
+                Ok(OperationInput::Cancel) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(ManagementError::Cancelled);
+                }
+                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
+        Err(ManagementError::Cancelled)
+    }
     fn send_bytes(&self, bytes: Vec<u8>) {
         if self.phase() != RUNNING {
             return;

@@ -118,6 +118,7 @@ fn login_and_user_form_shortcuts_do_not_steal_text_or_repeat_actions() {
     );
     let before = state.to_user_management_view_model().users;
     state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    finish_user_management_aa(&mut state, true);
     assert!(state.to_user_management_view_model().form.is_some());
     assert_eq!(state.to_user_management_view_model().users, before);
     state.apply_input(InputEvent::from_key_label("Tab"));
@@ -126,6 +127,7 @@ fn login_and_user_form_shortcuts_do_not_steal_text_or_repeat_actions() {
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "ManagedPass123!");
     state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
+    finish_user_management_aa(&mut state, true);
     assert!(state.to_user_management_view_model().form.is_none());
     assert!(
         state
@@ -1058,6 +1060,7 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     admin_state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut admin_state, "userPass2123!");
     admin_state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(&mut admin_state, true);
     assert_eq!(
         admin_state
             .to_user_management_view_model()
@@ -1113,6 +1116,7 @@ fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after
 
     state.apply_input(InputEvent::from_key_label("e"));
     state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(&mut state, true);
 
     let failed_management = state.to_user_management_view_model();
     let failed_chrome = state.to_shell_chrome_view_model();
@@ -1128,6 +1132,7 @@ fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after
     fs::write(&users_path, valid_users).expect("restore users fixture");
     state.apply_input(InputEvent::from_key_label("e"));
     state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(&mut state, true);
 
     let recovered_management = state.to_user_management_view_model();
     assert_eq!(recovered_management.users.len(), users_before_failure.len());
@@ -1158,6 +1163,7 @@ fn login_mouse_click_selects_user_and_focuses_password() {
     admin_state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut admin_state, "userPass2123!");
     admin_state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(&mut admin_state, true);
 
     let startup = prepare_shell_startup(&platform).expect("user startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
@@ -1217,7 +1223,7 @@ fn login_mouse_click_selects_user_and_focuses_password() {
 }
 
 #[test]
-fn user_management_forms_edit_password_and_delete_accounts() {
+fn user_management_forms_and_aa_operations_edit_and_delete_accounts() {
     let fixture = FixtureRoot::new("user-management-forms");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -1236,6 +1242,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "deletePass123!");
     state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(&mut state, true);
     assert!(
         state
             .to_user_management_view_model()
@@ -1263,6 +1270,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
     }
     type_text(&mut state, "Deleted User");
     state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(&mut state, true);
     assert!(
         state
             .to_user_management_view_model()
@@ -1272,6 +1280,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
     );
 
     state.apply_input(InputEvent::from_key_label("c"));
+    finish_user_management_aa(&mut state, true);
     assert!(
         state
             .to_user_management_view_model()
@@ -1280,6 +1289,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .any(|user| user.username == "deleteme" && user.role == "Admin")
     );
     state.apply_input(InputEvent::from_key_label("c"));
+    finish_user_management_aa(&mut state, true);
     assert!(
         state
             .to_user_management_view_model()
@@ -1288,6 +1298,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .any(|user| user.username == "deleteme" && user.role == "User")
     );
     state.apply_input(InputEvent::from_key_label("d"));
+    finish_user_management_aa(&mut state, true);
     assert!(
         state
             .to_user_management_view_model()
@@ -1296,6 +1307,7 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .any(|user| user.username == "deleteme" && !user.enabled)
     );
     state.apply_input(InputEvent::from_key_label("u"));
+    finish_user_management_aa(&mut state, true);
     assert!(
         state
             .to_user_management_view_model()
@@ -1304,17 +1316,32 @@ fn user_management_forms_edit_password_and_delete_accounts() {
             .any(|user| user.username == "deleteme" && user.enabled && !user.locked)
     );
 
+    let password_before = manager
+        .load_users()
+        .expect("users before password request")
+        .users
+        .into_iter()
+        .find(|user| user.username == "deleteme")
+        .unwrap()
+        .password_hash;
     state.apply_input(InputEvent::from_key_label("r"));
-    type_text(&mut state, "ChangedPass123!");
-    state.apply_input(InputEvent::from_key_label("Enter"));
-    state.apply_input(InputEvent::from_key_label("x"));
+    assert!(state.to_user_management_view_model().form.is_none());
+    assert!(state.to_notification_view_model().is_none());
+    finish_user_management_aa(&mut state, false);
     assert_eq!(
-        state
-            .to_notification_view_model()
-            .map(|notification| notification.title),
-        Some("Delete user".to_string())
+        manager
+            .load_users()
+            .expect("users after denied password request")
+            .users
+            .into_iter()
+            .find(|user| user.username == "deleteme")
+            .unwrap()
+            .password_hash,
+        password_before
     );
     state.apply_input(InputEvent::from_key_label("x"));
+    assert!(state.to_notification_view_model().is_none());
+    finish_user_management_aa(&mut state, true);
     assert!(
         !state
             .to_user_management_view_model()
@@ -1449,6 +1476,7 @@ fn user_management_create_role_and_action_focus_use_one_keyboard_flow() {
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "ManagedPass123!");
     state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(&mut state, true);
 
     let created = state.to_user_management_view_model();
     assert!(created.form.is_none());
@@ -1665,21 +1693,8 @@ fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
         Some("AdminUser")
     );
     state.apply_input(InputEvent::from_key_label("x"));
-    let notification = state
-        .to_notification_view_model()
-        .expect("self-delete confirmation");
-    assert_eq!(notification.title, "Delete your account");
-    assert!(notification.message.contains("signed out"));
-    assert_eq!(
-        notification
-            .actions
-            .iter()
-            .find(|action| action.selected)
-            .map(|action| action.id.as_str()),
-        Some("cancel")
-    );
-
-    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert!(state.to_notification_view_model().is_none());
+    finish_user_management_aa(&mut state, false);
     assert!(state.to_notification_view_model().is_none());
     assert_eq!(state.active_screen(), ShellScreen::UserManagement);
     assert_eq!(
@@ -1690,7 +1705,7 @@ fn last_admin_actions_are_skipped_and_self_delete_defaults_to_cancel() {
     );
 
     state.apply_input(InputEvent::from_key_label("x"));
-    state.apply_input(InputEvent::from_key_label("x"));
+    finish_user_management_aa(&mut state, true);
     assert_eq!(state.active_screen(), ShellScreen::Login);
     assert!(state.auth_session().is_none());
     assert!(
@@ -1976,6 +1991,7 @@ fn create_managed_user(state: &mut ShellSession, username: &str, admin: bool) {
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(state, "ManagedPass123!");
     state.apply_input(InputEvent::from_key_label("Enter"));
+    finish_user_management_aa(state, true);
     assert!(state.to_user_management_view_model().form.is_none());
     assert!(
         state
@@ -1984,6 +2000,29 @@ fn create_managed_user(state: &mut ShellSession, username: &str, admin: bool) {
             .iter()
             .any(|user| user.username == username)
     );
+}
+
+fn finish_user_management_aa(state: &mut ShellSession, approve: bool) {
+    if approve {
+        state.apply_input(InputEvent::from_key_label("Tab"));
+    }
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    let working = i18n::tr!("shell-linux-accounts-working");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        state.apply_input(InputEvent::Tick);
+        if state.to_user_management_view_model().message.as_deref() != Some(working.as_str()) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "account operation did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if state.active_screen() == ShellScreen::UserManagement {
+        state.apply_input(function_key(12));
+    }
 }
 
 fn user_management_layout_for(state: &ShellSession) -> ui::UserManagementLayout {

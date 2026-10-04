@@ -2103,20 +2103,6 @@ impl ShellSession {
                 focused_field: to_ui_user_management_field(form.focused_field),
                 error: self.user_management_form_error(),
             }),
-            UserManagementMode::Password(form) => Some(ui::UserManagementFormViewModel {
-                kind: ui::UserManagementFormKind::Password,
-                title: if self.identity_backend == identity::IdentityBackend::Linux {
-                    i18n::tr!("shell-linux-set-password-and-unlock")
-                } else {
-                    i18n::tr!("shell-set-password")
-                },
-                username: form.username.clone(),
-                display_name: String::new(),
-                role: String::new(),
-                password_len: form.password.chars().count(),
-                focused_field: to_ui_user_management_field(form.focused_field),
-                error: self.user_management_form_error(),
-            }),
         }
     }
 
