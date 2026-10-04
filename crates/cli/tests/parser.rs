@@ -29,6 +29,18 @@ fn simple_commands_dispatch_from_a_table() {
         (&["debug", "test-frost"], CliCommand::TestFrost),
         (&["debug", "test-matrix"], CliCommand::TestMatrix),
         (
+            &["debug", "test-aa-style1"],
+            CliCommand::TestAaStyle(shell::AutoAdminPreviewStyle::Caution),
+        ),
+        (
+            &["debug", "test-aa-style2"],
+            CliCommand::TestAaStyle(shell::AutoAdminPreviewStyle::Danger),
+        ),
+        (
+            &["debug", "test-aa-style3"],
+            CliCommand::TestAaStyle(shell::AutoAdminPreviewStyle::Authorization),
+        ),
+        (
             &["debug", "test-watchdog-error"],
             CliCommand::TestWatchdogError,
         ),
@@ -84,6 +96,9 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
         "test-watchdog-error",
         "test-watchdog-critical",
         "test-watchdog-panic",
+        "test-aa-style1",
+        "test-aa-style2",
+        "test-aa-style3",
     ] {
         assert_eq!(
             parse_args(["debug", name, "extra"]),

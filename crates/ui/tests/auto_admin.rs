@@ -176,6 +176,125 @@ fn model(confirming: bool, finished: bool) -> AutoAdminViewModel {
 }
 
 #[test]
+fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        for (width, height) in [(120, 40), (108, 22), (80, 24), (40, 12), (20, 8)] {
+            for (confirming, finished) in [(true, false), (false, false), (false, true)] {
+                let model = model(confirming, finished);
+                let bounds = Rect::new(0, 0, width, height);
+                let mut buffers = Vec::new();
+                for style in [
+                    ui::AutoAdminPreviewStyle::Caution,
+                    ui::AutoAdminPreviewStyle::Danger,
+                    ui::AutoAdminPreviewStyle::Authorization,
+                ] {
+                    let (layout, warning) = ui::auto_admin_preview_layout(bounds, &model, style);
+                    let main = match ui::compute_shell_layout(bounds) {
+                        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+                    };
+                    for area in [
+                        layout.dialog,
+                        warning,
+                        layout.description,
+                        layout.terminal,
+                        layout.status,
+                        layout.input,
+                    ]
+                    .into_iter()
+                    .chain(layout.buttons)
+                    {
+                        if area.width > 0 && area.height > 0 {
+                            assert_eq!(area.intersection(main), area);
+                        }
+                    }
+                    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    terminal
+                        .draw(|frame| {
+                            for cell in frame.buffer_mut().content.iter_mut() {
+                                cell.set_symbol("#");
+                            }
+                            ui::render_auto_admin_preview(
+                                frame,
+                                bounds,
+                                &model,
+                                style,
+                                &RenderContext::default(),
+                            );
+                        })
+                        .unwrap();
+                    let buffer = terminal.backend().buffer();
+                    for y in 0..height {
+                        for x in 0..width {
+                            if !main.contains((x, y).into()) {
+                                assert_eq!(buffer[(x, y)].symbol(), "#");
+                            } else if !layout.dialog.contains((x, y).into()) {
+                                assert_eq!(buffer[(x, y)].fg, ratatui::style::Color::DarkGray);
+                                assert!(
+                                    buffer[(x, y)]
+                                        .modifier
+                                        .contains(ratatui::style::Modifier::DIM)
+                                );
+                            }
+                        }
+                    }
+                    let text = buffer
+                        .content()
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .collect::<String>();
+                    assert!(text.contains("AA / AutoAdmin"));
+                    if width >= 80 && height >= 22 {
+                        let visible_warning = (warning.y..warning.bottom())
+                            .map(|y| {
+                                (warning.x..warning.right())
+                                    .map(|x| buffer[(x, y)].symbol())
+                                    .collect::<String>()
+                            })
+                            .collect::<String>();
+                        assert!(visible_warning.contains(if language == "en-US" {
+                            "ELEVATED"
+                        } else {
+                            "需"
+                        }));
+                        for area in layout.buttons.iter().take(if confirming {
+                            2
+                        } else if finished {
+                            1
+                        } else {
+                            4
+                        }) {
+                            assert!(area.width > 0 && area.height > 0);
+                            assert!(
+                                (area.x..area.right())
+                                    .any(|x| !buffer[(x, area.y)].symbol().trim().is_empty())
+                            );
+                        }
+                    }
+                    buffers.push(buffer.clone());
+                }
+                assert_ne!(buffers[0], buffers[1]);
+                assert_ne!(buffers[1], buffers[2]);
+                // Shape/text must differ even without color support.
+                let symbols = |buffer: &ratatui::buffer::Buffer| {
+                    buffer
+                        .content()
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .collect::<String>()
+                };
+                assert_ne!(symbols(&buffers[0]), symbols(&buffers[1]));
+                assert_ne!(symbols(&buffers[1]), symbols(&buffers[2]));
+            }
+        }
+    }
+}
+
+#[test]
 fn confirmation_and_empty_results_are_compact_with_centered_actions() {
     let bounds = Rect::new(0, 0, 208, 55);
     for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 4)] {

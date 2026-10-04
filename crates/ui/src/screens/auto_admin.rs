@@ -186,6 +186,16 @@ pub fn render_auto_admin(
         .bordered(true)
         .raised(true)
         .render_frame(frame, layout.dialog, context);
+    render_auto_admin_contents(frame, &layout, model, context, None);
+}
+
+pub(super) fn render_auto_admin_contents(
+    frame: &mut Frame<'_>,
+    layout: &AutoAdminLayout,
+    model: &AutoAdminViewModel,
+    context: &RenderContext,
+    hint_override: Option<&str>,
+) {
     frame.render_widget(
         wrapped_paragraph(&model.description, layout.description.width)
             .scroll((if model.confirming { model.scroll } else { 0 }, 0)),
@@ -203,7 +213,9 @@ pub fn render_auto_admin(
         wrapped_paragraph(&model.status, layout.status.width),
         layout.status,
     );
-    let hint = auto_admin_hint(model, layout.input.width);
+    let hint = hint_override
+        .map(str::to_owned)
+        .unwrap_or_else(|| auto_admin_hint(model, layout.input.width));
     frame.render_widget(wrapped_paragraph(&hint, layout.input.width), layout.input);
     let labels = if model.confirming {
         vec![

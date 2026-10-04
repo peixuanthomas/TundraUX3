@@ -125,6 +125,26 @@ management-touch-previous-action = [Alt+←] Previous
 management-touch-next-action = [Alt+→] Next
 
 aa-policy = Administrator operations
+aa-preview-warning = ELEVATED PRIVILEGES / DANGEROUS OPERATION
+aa-preview-review = Check the target and impact before approving.
+aa-preview-operation = Operation: Disable login for sample-user. Requires administrator privileges; this user will no longer be able to sign in.
+aa-preview-controls = AA PREVIEW | C/R/F: Confirm/Run/Finish | B: Backdrop comparison | Tab: Select  Enter: Use  Esc: Exit
+aa-preview-gate = PRIVILEGED
+aa-preview-page = User management - sample page
+aa-preview-page-content = Accounts                                    Role          Status
+    ------------------------------------------------------------------
+    administrator                               Admin         Active
+
+    sample-user                                 User          Active
+
+    guest                                       Guest         Inactive
+
+    Selected: sample-user
+
+    Action: Disable login
+
+    Account changes require administrator authorization.
+aa-preview-safe = DEMO ONLY - no system changes. Click buttons or use the keyboard.
 aa-policy-automatic = Automatically approve
 aa-policy-manual = Ask every time (default)
 aa-policy-deny = Deny all

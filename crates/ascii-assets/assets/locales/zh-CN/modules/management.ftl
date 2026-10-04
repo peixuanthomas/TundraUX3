@@ -125,6 +125,26 @@ management-touch-previous-action = [Alt+←] 上一项
 management-touch-next-action = [Alt+→] 下一项
 
 aa-policy = 管理员操作
+aa-preview-warning = 需要更高权限 / 危险操作
+aa-preview-review = 批准前，请核对操作对象和影响。
+aa-preview-operation = 操作：禁止 sample-user 登录。需要管理员权限；该用户将无法继续登录。
+aa-preview-controls = AA 演示 | C/R/F：确认/执行/结束 | B：对比背景遮罩 | Tab：选择  Enter：使用  Esc：退出
+aa-preview-gate = 权限确认
+aa-preview-page = 用户管理 - 示例页面
+aa-preview-page-content = 账户                                        角色          状态
+    ------------------------------------------------------------------
+    administrator                               管理员        已启用
+
+    sample-user                                 用户          已启用
+
+    guest                                       访客          已停用
+
+    已选择：sample-user
+
+    操作：禁止登录
+
+    修改账户需要管理员授权。
+aa-preview-safe = 仅演示，不修改系统。可点击按钮或使用键盘。
 aa-policy-automatic = 自动批准
 aa-policy-manual = 手动批准（默认）
 aa-policy-deny = 一律禁止

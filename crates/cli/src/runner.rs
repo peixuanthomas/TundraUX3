@@ -185,6 +185,9 @@ where
                 shell::run_frost_animation_preview_with_color(stdout, color)
             })
         }
+        Ok(CliCommand::TestAaStyle(style)) => run_animation_preview(stderr, "AA style", || {
+            shell::run_auto_admin_style_preview(stdout, style)
+        }),
         Ok(CliCommand::TestMatrix) => {
             run_configured_animation_preview(platform, stderr, "Matrix", |color| {
                 shell::run_matrix_animation_preview_with_color(stdout, color)
