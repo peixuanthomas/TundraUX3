@@ -137,6 +137,15 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
                     index == other,
                     "only the focused button is highlighted"
                 );
+                let theme = TundraTheme::default();
+                assert_eq!(
+                    buffer[(area.x, area.y)].fg,
+                    if index == other {
+                        theme.accent_color
+                    } else {
+                        theme.foreground
+                    }
+                );
             }
             let hint = (layout.input.x..layout.input.right())
                 .map(|x| buffer[(x, layout.input.y)].symbol())

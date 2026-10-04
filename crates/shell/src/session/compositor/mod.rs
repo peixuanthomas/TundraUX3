@@ -171,12 +171,16 @@ impl ScreenCompositor {
         let mut frame_context = prepared.context.clone();
         let hovered = state
             .mouse_coordinates
-            .filter(|_| !state.keyboard_focus_visible)
+            .filter(|_| !state.keyboard_focus_visible && !state.button_hover_suppressed)
             .and_then(|point| state.button_at(point));
-        let pressed = state
-            .button_pointer_capture
-            .as_ref()
-            .map(|capture| capture.region.clone());
+        let pressed = if state.auto_admin_visible() {
+            state.auto_admin_pressed_button()
+        } else {
+            state
+                .button_pointer_capture
+                .as_ref()
+                .map(|capture| capture.region.clone())
+        };
         let mut buttons = ui::components::ButtonFrame::new(
             hovered,
             pressed,

@@ -287,7 +287,7 @@ fn management_rendered_button_ids_match_capture_regions_and_show_pressed_color()
     assert!(buttons.regions().contains(&region));
     assert_eq!(
         terminal.backend().buffer()[(region.area.x, region.area.y)].fg,
-        theme.accent_color
+        theme.button_pressed_color()
     );
     let mut model = model;
     model.form = Some(ManagementForm {

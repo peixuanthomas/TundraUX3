@@ -798,8 +798,13 @@ impl TundraTheme {
             .add_modifier(Modifier::BOLD)
     }
 
-    /// Shared hover tint: move each RGB channel 35% toward white.
+    /// Pointer hover and keyboard focus use the same unmodified accent.
     pub fn button_hover_color(&self) -> Color {
+        self.button_accent_color()
+    }
+
+    /// Press feedback: move each RGB channel 35% toward white.
+    pub fn button_pressed_color(&self) -> Color {
         self.buttons.as_ref().map_or_else(
             || {
                 if self.color_capability == ColorCapability::Ansi {
@@ -814,7 +819,7 @@ impl TundraTheme {
                     lighten(Color::Rgb(r, g, b), 35)
                 })
             },
-            |frame| frame.hover_color,
+            |frame| frame.pressed_color,
         )
     }
 

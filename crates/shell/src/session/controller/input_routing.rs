@@ -8,6 +8,16 @@ impl ShellSession {
         &self,
         point: CellPosition,
     ) -> Option<ui::components::ButtonRegion> {
+        if self.auto_admin_visible() {
+            return self
+                .button_regions
+                .iter()
+                .rev()
+                .find(|button| {
+                    button.id.as_str().starts_with("aa.") && rect_contains(button.area, point)
+                })
+                .cloned();
+        }
         if let Some(id) = self.notification_active_modal_id() {
             let prefix = format!("notification.{id}.");
             return self
@@ -85,28 +95,7 @@ impl ShellSession {
             }
             _ => {}
         }
-        // Inspect physical input before a released button can become a
-        // synthetic key (for example, the chrome Back button becomes Escape).
-        match &input {
-            InputEvent::Mouse(_) | InputEvent::FocusLost => {
-                self.keyboard_focus_visible = false;
-            }
-            InputEvent::Key(key) if key.phase.is_press_like() => {
-                let (_, command) = self.route_key_input(key);
-                if key.phase == InputPhase::Press && command == ShellCommand::BeginExplorerSearch {
-                    self.explorer_search_shortcut_held = Some(key.key.clone());
-                }
-                if !matches!(
-                    command,
-                    ShellCommand::Noop
-                        | ShellCommand::RecordInput
-                        | ShellCommand::CaptureOverlayInput
-                ) {
-                    self.keyboard_focus_visible = true;
-                }
-            }
-            _ => {}
-        }
+        self.update_button_input_mode(&input);
         let InputEvent::Mouse(mouse) = input else {
             if matches!(
                 input,
@@ -244,6 +233,54 @@ impl ShellSession {
             _ => {}
         }
         Some(input)
+    }
+
+    /// Track physical input before a released button becomes a synthetic key.
+    /// AA uses this too, although its modal consumes input before page routing.
+    pub(in crate::session) fn update_button_input_mode(&mut self, input: &InputEvent) {
+        match input {
+            InputEvent::Mouse(mouse) => {
+                // Some terminals report stationary motion after a key press.
+                // It must not erase a keyboard user's visible selection.
+                if mouse.kind == ui::MouseEventKind::Move
+                    && self.mouse_coordinates == Some(mouse.coordinates())
+                {
+                    return;
+                }
+                self.keyboard_focus_visible = false;
+                self.button_hover_suppressed = matches!(
+                    mouse.kind,
+                    ui::MouseEventKind::Up(_)
+                        | ui::MouseEventKind::Click(_)
+                        | ui::MouseEventKind::DoubleClick(_)
+                );
+                self.mouse_coordinates = Some(mouse.coordinates());
+            }
+            InputEvent::FocusLost => {
+                self.keyboard_focus_visible = false;
+                self.button_hover_suppressed = true;
+                self.mouse_coordinates = None;
+            }
+            InputEvent::Key(key) if key.phase.is_press_like() => {
+                if self.auto_admin_visible() {
+                    self.keyboard_focus_visible = true;
+                    return;
+                }
+                let (_, command) = self.route_key_input(key);
+                if key.phase == InputPhase::Press && command == ShellCommand::BeginExplorerSearch {
+                    self.explorer_search_shortcut_held = Some(key.key.clone());
+                }
+                if !matches!(
+                    command,
+                    ShellCommand::Noop
+                        | ShellCommand::RecordInput
+                        | ShellCommand::CaptureOverlayInput
+                ) {
+                    self.keyboard_focus_visible = true;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// The chrome shortcut enters the same input path as a physical Escape,

@@ -30,7 +30,7 @@ pub struct ButtonFrame {
     pub keyboard_focus_visible: bool,
     pub background: ratatui::style::Color,
     pub accent: ratatui::style::Color,
-    pub hover_color: ratatui::style::Color,
+    pub pressed_color: ratatui::style::Color,
     pub hovered: Option<ButtonRegion>,
     pub pressed: Option<ButtonRegion>,
     regions: std::sync::Arc<std::sync::Mutex<Vec<ButtonRegion>>>,
@@ -41,7 +41,7 @@ impl PartialEq for ButtonFrame {
         self.background == other.background
             && self.keyboard_focus_visible == other.keyboard_focus_visible
             && self.accent == other.accent
-            && self.hover_color == other.hover_color
+            && self.pressed_color == other.pressed_color
             && self.hovered == other.hovered
             && self.pressed == other.pressed
             && std::sync::Arc::ptr_eq(&self.regions, &other.regions)
@@ -59,7 +59,7 @@ impl ButtonFrame {
             keyboard_focus_visible: true,
             background: theme.background,
             accent: theme.accent_color,
-            hover_color: theme.button_hover_color(),
+            pressed_color: theme.button_pressed_color(),
             hovered,
             pressed,
             regions: Default::default(),
@@ -159,7 +159,7 @@ impl Button {
                         ComponentEvent::FocusRequested(self.id.clone())
                     }
                     MouseKind::Up(super::MouseButton::Left) => {
-                        self.state.hovered = inside;
+                        self.state.hovered = false;
                         let was_active = self.state.active;
                         self.state.active = false;
                         if was_active && inside {
@@ -177,6 +177,7 @@ impl Button {
                     }
                     MouseKind::Click(button) if inside && button == super::MouseButton::Left => {
                         self.state.focused = true;
+                        self.state.hovered = false;
                         self.state.active = false;
                         ComponentEvent::Activated(self.id.clone())
                     }
@@ -304,6 +305,7 @@ impl Button {
         let mut state = self.state;
         if let Some(frame) = &theme.buttons {
             state.focused &= frame.keyboard_focus_visible;
+            state.selected &= frame.keyboard_focus_visible;
             let region = ButtonRegion {
                 id: self.id.clone(),
                 area,
@@ -325,12 +327,12 @@ impl Button {
             return theme.disabled_style();
         }
         if state.active {
+            return theme.border_style().fg(theme.button_pressed_color());
+        }
+        if state.hovered || state.focused || state.selected {
             return theme.border_style().fg(theme.button_accent_color());
         }
-        if state.hovered {
-            return theme.border_style().fg(theme.button_hover_color());
-        }
-        theme.selectable_border_style(state.selected)
+        theme.border_style()
     }
 
     fn style_for_state(state: ComponentState, theme: &TundraTheme) -> Style {
@@ -339,20 +341,17 @@ impl Button {
         }
 
         let mut style = theme.body_style();
-        if (state.hovered || state.active)
+        if (state.hovered || state.active || state.focused || state.selected)
             && let Some(frame) = &theme.buttons
         {
             // Swatches and menu tabs may supply a local fill equal to the
-            // shared accent. Use the frame canvas so pointer text stays visible.
+            // shared accent. Use the frame canvas so emphasized text stays visible.
             style = style.bg(frame.background);
         }
         if state.active {
+            style = style.fg(theme.button_pressed_color());
+        } else if state.hovered || state.focused || state.selected {
             style = style.fg(theme.button_accent_color());
-        } else if state.hovered {
-            style = style.fg(theme.button_hover_color());
-        } else if state.selected {
-            // Preserve page-specific selection contrast (for example swatches).
-            style = style.fg(theme.accent_color);
         }
         if state.selected || state.focused || state.active {
             style = style.add_modifier(Modifier::BOLD);

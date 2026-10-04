@@ -114,7 +114,7 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
             draw(compositor, terminal, state, &prepared);
         };
         render(&mut state, &mut compositor, &mut terminal);
-        assert!(!state.keyboard_focus_visible);
+        assert!(state.keyboard_focus_visible);
         state.apply_input(InputEvent::key(InputKey::Home));
         assert!(state.keyboard_focus_visible);
         render(&mut state, &mut compositor, &mut terminal);
@@ -416,7 +416,10 @@ fn rendered_chrome_buttons_hover_press_and_activate_only_on_release() {
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
     assert_eq!(state.active_screen(), ShellScreen::Home);
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.button_pressed_color()
+    );
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
     assert!(state.button_pointer_capture.is_none());
@@ -580,7 +583,10 @@ fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_di
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
     assert!(state.clock_create_state.is_none());
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.button_pressed_color()
+    );
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert!(state.clock_create_state.is_some());
 }
@@ -878,4 +884,127 @@ fn notification_button_release_after_focus_loss_does_not_activate() {
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert!(!state.shutdown_requested());
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+}
+
+#[test]
+fn aa_keyboard_focus_hover_and_press_render_the_requested_accent_colors() {
+    let mut state = session();
+    let (tx, _rx) = mpsc::channel();
+    state
+        .begin_auto_admin("Enable TestUser".into(), true, tx)
+        .unwrap();
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let prepared = home_frame(&state, 0, true);
+    let theme = prepared.context.compatibility_theme();
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let button = |state: &ShellSession, id: &str| {
+        let area = state
+            .button_regions
+            .iter()
+            .find(|r| r.id.as_str() == id)
+            .unwrap()
+            .area;
+        (area.x + area.width / 2, area.y)
+    };
+    let approve = button(&state, "aa.approve");
+    let deny = button(&state, "aa.deny");
+    assert_eq!(terminal.backend().buffer()[approve].fg, theme.accent_color);
+    assert_eq!(terminal.backend().buffer()[deny].fg, theme.foreground);
+    state.apply_input(InputEvent::key(InputKey::Right));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[approve].fg, theme.foreground);
+    assert_eq!(terminal.backend().buffer()[deny].fg, theme.accent_color);
+
+    state.apply_input(InputEvent::mouse_moved(approve));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[approve].fg, theme.accent_color);
+    assert_eq!(terminal.backend().buffer()[deny].fg, theme.foreground);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, approve));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(
+        terminal.backend().buffer()[approve].fg,
+        theme.button_pressed_color()
+    );
+    assert!(state.auto_admin_view().unwrap().confirming);
+
+    // Keyboard navigation cancels the press and takes over from the stationary mouse.
+    state.apply_input(InputEvent::key(InputKey::Tab));
+    state.apply_input(InputEvent::mouse_moved(approve));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert!(state.auto_admin_pressed_button().is_none());
+    assert_eq!(terminal.backend().buffer()[approve].fg, theme.foreground);
+    assert_eq!(terminal.backend().buffer()[deny].fg, theme.accent_color);
+    let background = state
+        .button_regions
+        .iter()
+        .find(|r| r.id.as_str() == "shell.back")
+        .unwrap()
+        .area;
+    assert!(state.button_at((background.x, background.y)).is_none());
+    state.apply_input(InputEvent::FocusLost);
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[deny].fg, theme.foreground);
+
+    // Reopening from a keyboard shortcut must also restore visible focus.
+    state.close_auto_admin();
+    state.apply_input(InputEvent::key(InputKey::F(12)));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let close = button(&state, "aa.close");
+    assert_eq!(terminal.backend().buffer()[close].fg, theme.accent_color);
+}
+
+#[test]
+fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
+    let mut state = session();
+    let (tx, rx) = mpsc::channel();
+    state
+        .begin_auto_admin("Read fixture output".into(), false, tx)
+        .unwrap();
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let prepared = home_frame(&state, 0, true);
+    let theme = prepared.context.compatibility_theme();
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let area = state
+        .button_regions
+        .iter()
+        .find(|r| r.id.as_str() == "aa.enter")
+        .unwrap()
+        .area;
+    let point = (area.x + area.width / 2, area.y);
+    let now = Instant::now();
+    state.apply_input_at(InputEvent::mouse_moved(point), now);
+    state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.button_pressed_color()
+    );
+    state.apply_input_at(
+        InputEvent::mouse_up(PointerButton::Left, point),
+        now + Duration::from_millis(50),
+    );
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.foreground);
+    assert!(rx.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"\r")));
+    state.apply_input(InputEvent::mouse_moved(point));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.foreground);
+    state.apply_input(InputEvent::mouse_moved((point.0 + 1, point.1)));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+    state.apply_input(InputEvent::key(InputKey::F(6)));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.foreground);
+    let first = state
+        .button_regions
+        .iter()
+        .find(|r| r.id.as_str() == "aa.y")
+        .unwrap()
+        .area;
+    assert_eq!(
+        terminal.backend().buffer()[(first.x, first.y)].fg,
+        theme.accent_color
+    );
 }

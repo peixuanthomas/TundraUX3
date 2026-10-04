@@ -60,7 +60,7 @@ fn button_keyboard_and_mouse_activate_the_same_component() {
 }
 
 #[test]
-fn themed_borders_keep_the_configured_color_when_controls_are_focused() {
+fn focused_buttons_use_accent_borders_while_inputs_keep_the_configured_border() {
     let area = Rect::new(0, 0, 16, 3);
     let theme = TundraTheme::default().with_border_color(Color::LightGreen);
 
@@ -68,7 +68,7 @@ fn themed_borders_keep_the_configured_color_when_controls_are_focused() {
     button.set_focused(true);
     let mut button_buffer = Buffer::empty(area);
     button.render(area, &mut button_buffer, &theme);
-    assert_eq!(button_buffer.cell((0, 0)).unwrap().fg, Color::LightGreen);
+    assert_eq!(button_buffer.cell((0, 0)).unwrap().fg, theme.accent_color);
 
     let mut input = TextInput::new("query");
     input.set_focused(true);
@@ -696,16 +696,17 @@ fn context_menu_single_click_activates_even_the_already_selected_item() {
 }
 
 #[test]
-fn buttons_share_hover_tint_pressed_accent_and_disabled_precedence() {
+fn buttons_share_hover_accent_pressed_tint_and_disabled_precedence() {
     let area = Rect::new(0, 0, 16, 3);
     let theme = TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180));
-    assert_eq!(theme.button_hover_color(), Color::Rgb(154, 180, 206));
+    assert_eq!(theme.button_hover_color(), Color::Rgb(100, 140, 180));
+    assert_eq!(theme.button_pressed_color(), Color::Rgb(154, 180, 206));
     let mut button = Button::new("save", "Save");
     for borderless in [false, true] {
         for (hovered, active, disabled, expected) in [
             (false, false, false, theme.foreground),
             (true, false, false, theme.button_hover_color()),
-            (true, true, false, theme.accent_color),
+            (true, true, false, theme.button_pressed_color()),
             (true, true, true, Color::DarkGray),
         ] {
             button.state.hovered = hovered;
@@ -863,7 +864,7 @@ fn button_frame_uses_exact_rendered_rectangles_and_ignores_page_focus_as_hover()
     local_theme.buttons = Some(frame.clone());
     let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 8));
     Button::new("save", "Save").render_surface(area, &mut buffer, &local_theme);
-    assert_eq!(buffer[(area.x, area.y)].fg, theme.accent_color);
+    assert_eq!(buffer[(area.x, area.y)].fg, theme.button_pressed_color());
     assert_eq!(frame.regions(), vec![region]);
 
     let frame = ButtonFrame::new(None, None, &theme);
@@ -879,7 +880,7 @@ fn button_frame_uses_exact_rendered_rectangles_and_ignores_page_focus_as_hover()
             .find(|cell| cell.symbol() == "S")
             .unwrap()
             .fg,
-        theme.foreground
+        theme.accent_color
     );
 }
 
@@ -906,6 +907,70 @@ fn selected_swatch_does_not_hide_pressed_text_on_an_accent_fill() {
         .iter()
         .find(|cell| cell.symbol() == "A")
         .unwrap();
-    assert_eq!(label.fg, base.accent_color);
+    assert_eq!(label.fg, base.button_pressed_color());
     assert_eq!(label.bg, base.background);
+}
+
+#[test]
+fn every_button_variant_uses_the_global_accent_for_keyboard_hover_and_press() {
+    use ui::components::{ButtonFrame, ButtonRegion};
+    use ui::{RenderCapabilities, RenderContext};
+    let area = Rect::new(0, 0, 16, 3);
+    for capability in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
+        let theme = RenderContext::from_theme(
+            &TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180)),
+            Default::default(),
+            capability,
+        )
+        .compatibility_theme();
+        let region = ButtonRegion {
+            id: "save".into(),
+            area,
+            disabled: false,
+        };
+        // Keep a logical selection while input mode changes; it must not leave
+        // a second accent visible during pointer interaction.
+        for (keyboard, hover, press, expected) in [
+            (true, false, false, theme.accent_color),
+            (false, false, false, theme.foreground),
+            (false, true, false, theme.accent_color),
+            (false, true, true, theme.button_pressed_color()),
+        ] {
+            let mut frame = ButtonFrame::new(
+                hover.then(|| region.clone()),
+                press.then(|| region.clone()),
+                &theme,
+            );
+            frame.keyboard_focus_visible = keyboard;
+            let mut local = theme.clone().with_accent_color(Color::Red);
+            local.buttons = Some(frame);
+            for variant in 0..3 {
+                let mut button = Button::new("save", "Save");
+                button.set_focused(true);
+                button.state.selected = true;
+                let mut buffer = Buffer::empty(area);
+                match variant {
+                    0 => button.render(area, &mut buffer, &local),
+                    1 => button.render_borderless(area, &mut buffer, &local),
+                    _ => button.render_surface(area, &mut buffer, &local),
+                }
+                if variant != 2 {
+                    let label = buffer
+                        .content()
+                        .iter()
+                        .find(|cell| cell.symbol() == "S")
+                        .unwrap();
+                    assert_eq!(label.fg, expected);
+                }
+                if variant != 1 {
+                    let border = if keyboard || hover {
+                        expected
+                    } else {
+                        theme.border_color
+                    };
+                    assert_eq!(buffer[(0, 0)].fg, border);
+                }
+            }
+        }
+    }
 }

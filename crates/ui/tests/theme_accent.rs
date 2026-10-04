@@ -80,6 +80,6 @@ fn ansi_components_render_user_accent_in_titles_selections_and_focus() {
         let mut button = Button::new("save", "Save");
         button.state.selected = true;
         button.render_surface(area, &mut buffer, &context.compatibility_theme());
-        assert_eq!(buffer[(0, 1)].fg, focus);
+        assert_eq!(buffer[(0, 1)].fg, accent);
     }
 }

@@ -549,7 +549,6 @@ impl ShellSession {
             ..Default::default()
         };
         self.last_key_event = None;
-        self.keyboard_focus_visible = true;
         self.button_pointer_capture = None;
         self.resize_auto_admin();
         Some(job)
@@ -625,7 +624,6 @@ impl ShellSession {
         self.auto_admin.pointer = None;
         self.auto_admin.suppress_repeats = true;
         self.last_key_event = None;
-        self.keyboard_focus_visible = true;
         self.button_pointer_capture = None;
         self.resize_auto_admin();
     }
@@ -634,6 +632,19 @@ impl ShellSession {
             return None;
         }
         self.auto_admin_model()
+    }
+    pub(in crate::session) fn auto_admin_pressed_button(
+        &self,
+    ) -> Option<ui::components::ButtonRegion> {
+        let (index, phase, _) = self.auto_admin.pointer?;
+        if self.auto_admin.job.as_ref()?.phase() != phase {
+            return None;
+        }
+        self.button_regions
+            .iter()
+            .filter(|region| region.id.as_str().starts_with("aa."))
+            .nth(index)
+            .cloned()
     }
     fn auto_admin_model(&self) -> Option<ui::AutoAdminViewModel> {
         let job = self.auto_admin.job.as_ref()?;
@@ -694,19 +705,18 @@ impl ShellSession {
             ) && self.auto_admin.job.is_some()
             {
                 self.auto_admin.visible = true;
+                self.update_button_input_mode(input);
                 self.auto_admin.action_key = Some((InputKey::F(12), received_at));
                 return true;
             }
             return false;
         }
         let job = self.auto_admin.job.as_ref().unwrap().clone();
+        self.update_button_input_mode(input);
         if matches!(input, InputEvent::Key(_) | InputEvent::Paste(_)) {
             self.auto_admin.pointer = None;
         }
         if let InputEvent::Key(key) = input {
-            if key.phase.is_press_like() {
-                self.keyboard_focus_visible = true;
-            }
             if key.phase == InputPhase::Release {
                 self.auto_admin.suppress_repeats = false;
                 return true;
@@ -829,8 +839,6 @@ impl ShellSession {
                 }
             }
             InputEvent::Mouse(mouse) => {
-                self.mouse_coordinates = Some(mouse.coordinates());
-                self.keyboard_focus_visible = false;
                 let layout = ui::auto_admin_layout(
                     Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
                     &self.auto_admin_model().unwrap(),
@@ -863,6 +871,10 @@ impl ShellSession {
                         })
                     }
                     ui::MouseEventKind::Click(ui::MouseButton::Left) => hit,
+                    ui::MouseEventKind::Drag(_) => {
+                        self.auto_admin.pointer = None;
+                        None
+                    }
                     ui::MouseEventKind::Scroll(direction) => {
                         let up = direction == ScrollDirection::Up;
                         if job.phase() == WAITING {

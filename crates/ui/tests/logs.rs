@@ -365,6 +365,6 @@ fn log_buttons_use_the_same_record_identity_for_rendering_and_pressed_color() {
     assert!(buttons.regions().contains(&region));
     assert_eq!(
         terminal.backend().buffer()[(region.area.x, region.area.y)].fg,
-        theme.accent_color
+        theme.button_pressed_color()
     );
 }
