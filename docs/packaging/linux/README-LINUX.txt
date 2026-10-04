@@ -20,12 +20,12 @@ Use `tundra-cli debug doctor` after installation.  It reports missing optional d
 services and gives the relevant package/service hint; a missing desktop helper
 degrades only the affected integration, never stored data.
 
-V1.3.2 release
+V1.3.3 release
 --------------
 This release provides only the Linux x86_64 portable archive, built on Ubuntu
 24.04. Extract it and run ./tundra-shell from the extracted directory. Keep
 assets/ and tundra-installation.json beside the binaries. No DEB or RPM
-installer is published for V1.3.2.
+installer is published for V1.3.3.
 
 For local builds, scripts/package-linux.sh produces only a portable archive.
 
