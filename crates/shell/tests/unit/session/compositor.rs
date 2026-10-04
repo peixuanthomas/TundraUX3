@@ -752,6 +752,77 @@ fn home_entry_single_click_opens_on_first_release() {
 }
 
 #[test]
+fn exit_buttons_activate_on_first_release_across_ticks_and_redraws() {
+    let root = std::env::temp_dir().join("tundra-exit-click-test");
+    let user_dirs = platform::UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Videos"),
+        root.join("Music"),
+        root.join("AppData"),
+    )
+    .unwrap();
+    let paths = platform::build_windows_app_paths(
+        root.join("Roaming"),
+        root.join("Local"),
+        root.join("Temp"),
+    )
+    .unwrap();
+    let platform = platform::mock::MockPlatform::new(user_dirs, paths);
+    for (id, expected, restart) in [
+        ("restore-terminal", ShellAction::Exit, false),
+        ("restart", ShellAction::Exit, true),
+        ("reboot", ShellAction::Reboot, false),
+        ("poweroff", ShellAction::PowerOff, false),
+        ("cancel", ShellAction::Redraw, false),
+    ] {
+        let mut state = session();
+        state.apply_input_with_platform(InputEvent::key(InputKey::Escape), &platform);
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut prepared = home_frame(&state, 0, true);
+        prepared.notification = state.to_notification_view_model();
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let area = state
+            .button_regions
+            .iter()
+            .find(|region| region.id.as_str().ends_with(&format!(".action.{id}")))
+            .unwrap()
+            .area;
+        let point = (area.x, area.y);
+        let pressed_at = Instant::now();
+        state.apply_input_with_platform_at(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            &platform,
+            pressed_at,
+        );
+        assert!(!state.shutdown_requested());
+        for millis in [50, 100] {
+            state.apply_input_with_platform_at(
+                InputEvent::Tick,
+                &platform,
+                pressed_at + Duration::from_millis(millis),
+            );
+            prepared.notification = state.to_notification_view_model();
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        }
+        assert_eq!(
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+                pressed_at + Duration::from_millis(150),
+            ),
+            expected,
+            "first click on {id}",
+        );
+        assert_eq!(state.restart_requested, restart, "{id}");
+        assert!(!state.notification_has_active_modal(), "{id}");
+    }
+}
+
+#[test]
 fn notification_button_release_after_focus_loss_does_not_activate() {
     let mut state = session();
     state.apply_input(InputEvent::key(InputKey::Escape));

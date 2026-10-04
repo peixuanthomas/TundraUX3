@@ -209,7 +209,8 @@ impl ShellSession {
             return ShellAction::Redraw;
         }
         self.record_input_diagnostics(&routed);
-        if !matches!(routed.input, InputEvent::Mouse(_)) {
+        // A refresh between press and release must not cancel the click.
+        if !matches!(routed.input, InputEvent::Mouse(_) | InputEvent::Tick) {
             self.notification_pointer_capture = None;
         }
         self.last_routed_target = Some(routed.target);

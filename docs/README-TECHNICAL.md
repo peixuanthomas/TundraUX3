@@ -488,7 +488,7 @@ Windows 继续使用已有的默认分支源码编译更新，不显示 Linux �
 
 Windows 更新时，原 Shell 先停止界面和后台任务，再等待更新助手；助手等待更新后的 Shell（或回滚恢复的 Shell）退出，两者都不读取终端输入，避免 PowerShell 提前恢复并与程序争用终端。原 Shell 仍在运行的备份可以被读取，但不能直接作为 `ReplaceFileW` 的替换源，因此回滚使用备份的副本。仍被运行中进程占用的备份保留到以后启动时清理；更新中断后的恢复也沿用同样的等待方式。
 
-主页的退出菜单将程序操作和电脑操作分别写明：Exit TundraUX、Restart TundraUX、Restart computer、Shut down computer，以及 Cancel。操作逐行等宽排列；窗口较矮时缩小行间空白。macOS 暂不提供程序自更新或电脑电源操作；Linux 的固定电源操作由后台调用 logind 并呈现不可用或授权失败，不在绘制菜单时阻塞查询系统服务。
+主页的退出菜单将程序操作和电脑操作分别写明：Exit TundraUX、Restart TundraUX、Restart computer、Shut down computer，以及 Cancel。操作逐行等宽排列；窗口较矮时缩小行间空白。所有按钮在同一按钮内按下并于 500 毫秒内松开即执行，期间的定时刷新不会取消点击；拖动、移出后松开或失去窗口焦点仍会取消。macOS 暂不提供程序自更新或电脑电源操作；Linux 的固定电源操作由后台调用 logind 并呈现不可用或授权失败，不在绘制菜单时阻塞查询系统服务。
 
 ### 从 Windows 迁移到 Linux
 
