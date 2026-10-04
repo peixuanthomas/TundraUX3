@@ -104,10 +104,19 @@ impl ShellSession {
             .into_iter()
             .find(|button| rect_contains(button.area, point))
     }
-    pub(super) fn apply_management_filter(&mut self) {
+    fn sync_management_filter(&mut self) {
         let filter = self.management_state.filter_input.clone();
         if let Some(query) = &mut self.management_state.query {
-            query.filter = filter;
+            if query.filter != filter {
+                query.filter = filter;
+                query.target = None;
+                self.management_state.list_scroll_explicit = false;
+            }
+        }
+    }
+    pub(super) fn apply_management_filter(&mut self) {
+        self.sync_management_filter();
+        if let Some(query) = &mut self.management_state.query {
             query.target = None;
         }
         self.management_state.filtering = false;
@@ -118,6 +127,7 @@ impl ShellSession {
         match control {
             ui::ManagementControl::Refresh => {
                 self.management_state.outcome = None;
+                self.sync_management_filter();
                 self.refresh_management();
             }
             ui::ManagementControl::Search => self.management_state.filtering = true,

@@ -1,6 +1,6 @@
 use crate::{
     RenderContext,
-    components::{Button, Scrollbar, ScrollbarOrientation, Surface},
+    components::{Button, Scrollbar, ScrollbarOrientation, Surface, TextInput},
 };
 use ratatui::{
     Frame,
@@ -876,18 +876,16 @@ pub fn render_management_content(
         button.set_disabled(*control == ManagementControl::Details && model.rows.is_empty());
         button.render_borderless_frame(frame, *area, &theme);
     }
-    frame.render_widget(
-        Paragraph::new(format!(
-            "{} {}",
-            i18n::tr!("management-search"),
-            model.filter
-        ))
-        .style(if model.filtering {
-            selected
-        } else {
-            theme.body_style()
-        }),
+    let mut filter = TextInput::new(format!("management.filter.{}", model.scope_id))
+        .with_cursor_symbol("_")
+        .with_horizontal_scroll(true);
+    filter.set_value(&model.filter);
+    filter.set_focused(model.filtering);
+    filter.render_borderless_frame_with_prefix(
+        frame,
         layout.filter,
+        &theme,
+        &format!("{} ", i18n::tr!("management-search")),
     );
     if model.terminal {
         if let Some(snapshot) = &model.terminal_snapshot {

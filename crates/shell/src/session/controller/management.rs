@@ -239,6 +239,9 @@ impl ShellSession {
         let Some(query) = self.management_state.query.clone() else {
             return;
         };
+        // A requested refresh replaces the previous query, including when a new
+        // worker cannot be started. Its late result must not restore an old filter.
+        self.management_state.query_job = None;
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
             self.management_state.status = i18n::tr!("management-worker-unavailable");
             return;
@@ -1001,6 +1004,9 @@ impl ShellSession {
                 InputKey::Escape => self.management_state.filtering = false,
                 InputKey::Enter => {
                     self.apply_management_filter();
+                }
+                InputKey::F(5) if key.phase == InputPhase::Press => {
+                    self.management_touch_control(ui::ManagementControl::Refresh);
                 }
                 InputKey::Backspace => {
                     self.management_state.filter_input.pop();

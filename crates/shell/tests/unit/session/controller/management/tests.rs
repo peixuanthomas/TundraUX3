@@ -42,6 +42,133 @@ fn click_management_point(session: &mut ShellSession, point: (u16, u16)) {
 }
 
 #[test]
+fn clearing_management_search_and_refreshing_restores_the_full_list() {
+    for refresh_with_key in [false, true] {
+        let mut session = shortcut_action_state(ManagementKind::Packages, "install");
+        session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+        session.management_state.filter_input = "bash".into();
+        session.apply_management_filter();
+        assert_eq!(
+            session.management_state.query.as_ref().unwrap().filter,
+            "bash"
+        );
+
+        let (search_job, _) = session.management_job();
+        *search_job.0.snapshot.lock().unwrap() = Some(Ok(ManagementSnapshot {
+            rows: vec![ManagementRow {
+                id: "bash".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }));
+        session.management_state.query_job = Some(search_job);
+        session.poll_management();
+        assert_eq!(session.management_state.snapshot.rows.len(), 1);
+
+        session.management_state.query.as_mut().unwrap().target = Some("bash".into());
+        session.management_state.list_scroll_explicit = true;
+        session.management_touch_control(ui::ManagementControl::Search);
+        for _ in 0..4 {
+            session.handle_management_key(&KeyInput::new(InputKey::Backspace));
+        }
+        assert!(session.management_state.filter_input.is_empty());
+        if refresh_with_key {
+            session.handle_management_key(&KeyInput::new(InputKey::F(5)));
+        } else {
+            let layout = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            );
+            let area = layout
+                .controls
+                .iter()
+                .find(|(control, _)| *control == ui::ManagementControl::Refresh)
+                .unwrap()
+                .1;
+            click_management_point(&mut session, (area.x, area.y));
+        }
+        let query = session.management_state.query.as_ref().unwrap();
+        assert!(query.filter.is_empty());
+        assert!(query.target.is_none());
+        assert!(!session.management_state.list_scroll_explicit);
+
+        let (full_job, _) = session.management_job();
+        *full_job.0.snapshot.lock().unwrap() = Some(Ok(ManagementSnapshot {
+            rows: ["bash", "coreutils", "curl"]
+                .into_iter()
+                .map(|id| ManagementRow {
+                    id: id.into(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }));
+        session.management_state.query_job = Some(full_job);
+        session.poll_management();
+        assert_eq!(session.management_state.snapshot.rows.len(), 3);
+    }
+}
+
+#[test]
+fn refreshing_management_discards_pending_results_even_without_a_worker() {
+    let mut session = shortcut_action_state(ManagementKind::Packages, "install");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    session.management_state.filter_input = "bash".into();
+    session.apply_management_filter();
+    let (old_job, _) = session.management_job();
+    session.management_state.query_job = Some(old_job.clone());
+    session.management_state.filter_input.clear();
+    session.management_touch_control(ui::ManagementControl::Refresh);
+    assert!(session.management_state.query_job.is_none());
+
+    *old_job.0.snapshot.lock().unwrap() = Some(Ok(ManagementSnapshot {
+        backend: "old-search-result".into(),
+        ..Default::default()
+    }));
+    session.poll_management();
+    assert_ne!(
+        session.management_state.snapshot.backend,
+        "old-search-result"
+    );
+
+    let (current_job, _) = session.management_job();
+    *current_job.0.snapshot.lock().unwrap() = Some(Ok(ManagementSnapshot {
+        backend: "full-list".into(),
+        ..Default::default()
+    }));
+    session.management_state.query_job = Some(current_job);
+    session.poll_management();
+    assert_eq!(session.management_state.snapshot.backend, "full-list");
+    session.poll_management();
+    assert_eq!(session.management_state.snapshot.backend, "full-list");
+}
+
+#[test]
+fn management_refresh_updates_drafts_but_retains_an_unchanged_detail_target() {
+    let mut session = shortcut_action_state(ManagementKind::Packages, "install");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    session.management_state.filter_input = "bash".into();
+    session.apply_management_filter();
+    session.management_state.query.as_mut().unwrap().target = Some("bash".into());
+    session.management_touch_control(ui::ManagementControl::Refresh);
+    assert_eq!(
+        session
+            .management_state
+            .query
+            .as_ref()
+            .unwrap()
+            .target
+            .as_deref(),
+        Some("bash")
+    );
+    session.management_state.filter_input = "curl".into();
+    session.management_touch_control(ui::ManagementControl::Refresh);
+    let query = session.management_state.query.as_ref().unwrap();
+    assert_eq!(query.filter, "curl");
+    assert!(query.target.is_none());
+}
+
+#[test]
 fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
     for (kind, ids) in [
         (

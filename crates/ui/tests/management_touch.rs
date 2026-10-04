@@ -2,6 +2,56 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn management_search_cursor_is_visible_for_empty_chinese_and_long_input() {
+    use unicode_width::UnicodeWidthStr;
+    for width in [20, 50] {
+        for filter in [
+            String::new(),
+            "中文搜索".into(),
+            format!("{}末尾", "软件包".repeat(30)),
+        ] {
+            let mut model = ManagementViewModel {
+                filter,
+                filtering: true,
+                ..Default::default()
+            };
+            let area = Rect::new(0, 0, width, 24);
+            let theme = TundraTheme::default_dark();
+            let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+            let layout = management_layout(area, &model);
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
+            terminal
+                .draw(|frame| render_management_content(frame, area, &model, &context))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let cursor = (layout.filter.x..layout.filter.right())
+                .find(|&x| buffer[(x, layout.filter.y)].symbol() == "_")
+                .expect("focused search shows a visible cursor");
+            if model.filter.is_empty() {
+                assert_eq!(
+                    cursor - layout.filter.x,
+                    format!("{} ", i18n::tr!("management-search")).width() as u16
+                );
+            } else {
+                assert_eq!(
+                    buffer[(cursor - 2, layout.filter.y)].symbol(),
+                    model.filter.chars().last().unwrap().to_string(),
+                    "the last Chinese character stays beside the cursor even when text overflows"
+                );
+            }
+            model.filtering = false;
+            terminal
+                .draw(|frame| render_management_content(frame, area, &model, &context))
+                .unwrap();
+            assert!(
+                (layout.filter.x..layout.filter.right())
+                    .all(|x| { terminal.backend().buffer()[(x, layout.filter.y)].symbol() != "_" })
+            );
+        }
+    }
+}
+
+#[test]
 fn management_shortcut_hints_fit_touch_regions_in_small_windows() {
     use unicode_width::UnicodeWidthStr;
     let mut model = ManagementViewModel {
