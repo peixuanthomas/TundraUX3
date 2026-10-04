@@ -21,6 +21,7 @@ pub struct DataTable {
     pub headers: Vec<String>,
     pub rows: Vec<Vec<String>>,
     pub selected: Option<usize>,
+    pub selected_rows: Vec<usize>,
     pub state: ComponentState,
     pub title: Option<String>,
     pub column_widths: Option<Vec<u16>>,
@@ -44,6 +45,7 @@ impl DataTable {
             id: id.into(),
             headers: headers.into_iter().map(Into::into).collect(),
             selected: (!rows.is_empty()).then_some(0),
+            selected_rows: Vec::new(),
             rows,
             state: ComponentState::default(),
             title: None,
@@ -69,6 +71,10 @@ impl DataTable {
     }
     pub fn with_row_tones(mut self, tones: Vec<ComponentTone>) -> Self {
         self.row_tones = tones;
+        self
+    }
+    pub fn with_selected_rows(mut self, rows: Vec<usize>) -> Self {
+        self.selected_rows = rows;
         self
     }
     pub const fn bordered(mut self, bordered: bool) -> Self {
@@ -166,7 +172,7 @@ impl DataTable {
             .skip(self.viewport_start)
             .take(inner.height.saturating_sub(header_height) as usize)
         {
-            let selected = self.selected == Some(index);
+            let selected = self.selected == Some(index) || self.selected_rows.contains(&index);
             let style = if selected {
                 Style::default()
                     .fg(if self.state.focused {

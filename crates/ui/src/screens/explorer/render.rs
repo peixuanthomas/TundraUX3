@@ -275,7 +275,7 @@ fn explorer_table_row(
     ];
     let tone = if cut {
         ComponentTone::Muted
-    } else if focused || drop_target {
+    } else if selected || focused || drop_target {
         ComponentTone::Accent
     } else {
         ComponentTone::Default
@@ -329,10 +329,24 @@ fn render_explorer_table(
         )
         .bordered(false)
         .with_column_widths(widths)
-        .with_row_tones(tones);
-        table.selected = model
-            .selected_index
-            .and_then(|selected| selected.checked_sub(layout.visible_start));
+        .with_row_tones(tones)
+        .with_selected_rows(
+            layout
+                .rows
+                .iter()
+                .enumerate()
+                .filter_map(|(visible, row)| {
+                    let selected = model
+                        .entry_presentation(row.index)
+                        .map(|entry| entry.selected)
+                        .unwrap_or_else(|| model.entries[row.index].selected);
+                    selected.then_some(visible)
+                })
+                .collect(),
+        );
+        // File selection persists in mouse mode and can contain several rows;
+        // the keyboard cursor alone must not paint an unselected file as selected.
+        table.selected = None;
         table.render_frame(
             frame,
             Rect::new(

@@ -20,6 +20,66 @@ use ui::{
 };
 
 #[test]
+fn all_selected_files_keep_their_highlight_in_mouse_mode() {
+    for theme in [
+        TundraTheme::default_dark(),
+        TundraTheme {
+            accent_color: ratatui::style::Color::Green,
+            ..TundraTheme::default_dark()
+        },
+    ] {
+        let mut model = sample_model();
+        model.entries = (0..5)
+            .map(|index| ExplorerEntryViewModel {
+                name: format!("file-{index}"),
+                selected: [1, 2, 4].contains(&index),
+                ..model.entries[1].clone()
+            })
+            .collect();
+        model.selected_index = Some(3); // Ctrl+arrow may focus an unselected file.
+        let mut context = RenderContext::from_theme(
+            &theme,
+            MotionFrame::default(),
+            RenderCapabilities::default(),
+        );
+        let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
+        buttons.keyboard_focus_visible = false;
+        context.buttons = Some(buttons);
+        let bounds = Rect::new(0, 0, 110, 32);
+        let ShellLayout::Full { main, .. } = compute_shell_layout(bounds) else {
+            unreachable!()
+        };
+        let layout = explorer_layout(main, &model);
+        let mut terminal = Terminal::new(TestBackend::new(110, 32)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_explorer_with_context(
+                    frame,
+                    bounds,
+                    &chrome_for("Explorer"),
+                    &model,
+                    &context,
+                )
+            })
+            .unwrap();
+        for row in &layout.rows {
+            let cell = &terminal.backend().buffer()[(row.area.x + 2, row.area.y)];
+            assert_eq!(
+                cell.bg,
+                if [1, 2, 4].contains(&row.index) {
+                    context.theme.accent_soft
+                } else {
+                    context.theme.surface
+                }
+            );
+            if [1, 2, 4].contains(&row.index) {
+                assert_eq!(cell.fg, theme.accent_color);
+            }
+        }
+    }
+}
+
+#[test]
 fn options_use_body_color_and_mark_non_defaults_independently_of_focus() {
     use ratatui::style::{Color, Modifier};
 

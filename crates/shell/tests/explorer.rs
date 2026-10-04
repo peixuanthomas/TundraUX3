@@ -536,6 +536,119 @@ fn right_click_selects_explorer_entry_and_opens_context_menu() {
 }
 
 #[test]
+fn mouse_modifiers_select_ranges_and_toggle_files_without_opening_them() {
+    let fixture = FixtureRoot::new("mouse-multiselect");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    for index in 0..6 {
+        fs::write(
+            fixture
+                .path()
+                .join("Documents")
+                .join(format!("file-{index}.txt")),
+            "test",
+        )
+        .unwrap();
+    }
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!("full layout");
+    };
+    let layout = ui::explorer_layout(main, &state.to_explorer_view_model());
+    let click = |state: &mut ShellSession, index: usize, modifiers| {
+        let row = layout
+            .rows
+            .iter()
+            .find(|row| row.index == index)
+            .unwrap()
+            .area;
+        for kind in [
+            crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+        ] {
+            let input = shell::crossterm_event_to_input(crossterm::event::Event::Mouse(
+                crossterm::event::MouseEvent {
+                    kind,
+                    column: row.x + 2,
+                    row: row.y,
+                    modifiers,
+                },
+            ));
+            state.apply_input_with_platform(input, &platform);
+        }
+    };
+    let selected = |state: &ShellSession| {
+        state
+            .to_explorer_view_model()
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.selected.then_some(i))
+            .collect::<Vec<_>>()
+    };
+    use crossterm::event::KeyModifiers as Mods;
+    click(&mut state, 1, Mods::NONE);
+    click(&mut state, 4, Mods::SHIFT);
+    assert_eq!(selected(&state), vec![1, 2, 3, 4]);
+    click(&mut state, 0, Mods::SHIFT);
+    assert_eq!(selected(&state), vec![0, 1]);
+    click(&mut state, 4, Mods::CONTROL);
+    assert_eq!(selected(&state), vec![0, 1, 4]);
+    click(&mut state, 1, Mods::CONTROL);
+    assert_eq!(selected(&state), vec![0, 4]);
+    click(&mut state, 3, Mods::CONTROL | Mods::SHIFT);
+    assert_eq!(selected(&state), vec![0, 1, 2, 3, 4]);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(
+        !platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::OpenPath(_)))
+    );
+}
+
+#[test]
+fn context_menu_outside_click_closes_without_changing_selection_or_opening_file() {
+    let fixture = FixtureRoot::new("context-outside");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(fixture.path().join("Documents/alpha.txt"), "test").unwrap();
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let entry = first_entry_coordinates(&state);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, entry),
+        &platform,
+    );
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!("full layout");
+    };
+    let layout = ui::explorer_layout(main, &state.to_explorer_view_model());
+    let overlay = layout.overlay.unwrap().area;
+    let blank = main
+        .positions()
+        .find(|p| !overlay.contains(*p) && p.y > entry.1 + 1)
+        .unwrap();
+    let before = state.to_explorer_view_model().selected_count;
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (blank.x, blank.y)),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, (blank.x, blank.y)),
+        &platform,
+    );
+    assert!(state.active_popup().is_none());
+    assert!(state.to_explorer_view_model().overlay.is_none());
+    assert_eq!(state.focused_component(), ShellComponent::Explorer);
+    assert_eq!(state.to_explorer_view_model().selected_count, before);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+}
+
+#[test]
 fn normal_directory_click_release_does_not_start_a_drag_move() {
     let fixture = FixtureRoot::new("click-release");
     let platform = mock_platform(fixture.path());

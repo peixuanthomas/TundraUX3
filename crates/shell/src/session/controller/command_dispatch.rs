@@ -2020,6 +2020,9 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::ClosePopup => {
+                if self.explorer_overlay_mode.is_some() {
+                    self.close_explorer_popup();
+                }
                 self.active_popup = None;
                 self.explorer_overlay_mode = None;
                 self.explorer_overlay_selection = 0;

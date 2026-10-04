@@ -32,6 +32,18 @@ impl ShellSession {
                 })
                 .cloned();
         }
+        if self.resolved_overlay_owner() == Some(ShellComponent::Explorer)
+            && matches!(
+                self.resolved_explorer_overlay(),
+                Some(ResolvedExplorerOverlay::Semantic(
+                    ExplorerOverlayMode::ContextMenu { .. }
+                ))
+            )
+            && self.explorer_hit_target_at(point).is_none()
+        {
+            // Covered toolbar buttons must not consume the outside click.
+            return None;
+        }
         self.management_button_at(point)
             .or_else(|| self.logs_button_at(point))
             .or_else(|| {
@@ -2550,6 +2562,19 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
         let target = RoutedTarget::Component(ShellComponent::Explorer);
+
+        if matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
+            && matches!(
+                self.resolved_explorer_overlay(),
+                Some(ResolvedExplorerOverlay::Semantic(
+                    ExplorerOverlayMode::ContextMenu { .. }
+                ))
+            )
+            && self.explorer_hit_target_at(coordinates).is_none()
+        {
+            self.clear_explorer_pointer_capture();
+            return (target, ShellCommand::ClosePopup);
+        }
 
         if hit_target != Some(ShellComponent::Explorer) {
             if matches!(
