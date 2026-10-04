@@ -17,6 +17,10 @@ const WAITING: u8 = 0;
 const RUNNING: u8 = 1;
 const DENIED: u8 = 2;
 const FINISHED: u8 = 3;
+// Legacy terminals send held keys as Press events and provide no release event.
+// Keep consuming the action key until it is released, another key is pressed,
+// or its repeat stream has been quiet long enough for a deliberate new press.
+const ACTION_KEY_QUIET_TIME: Duration = Duration::from_millis(750);
 
 pub(super) fn policy_label(policy: storage::AutoAdminPolicy) -> String {
     i18n::tr!(match policy {
@@ -76,6 +80,34 @@ pub(in crate::session) struct AutoAdminState {
     revision: u64,
     pointer: Option<(usize, u8, Instant)>,
     suppress_repeats: bool,
+    action_key: Option<(InputKey, Instant)>,
+    button_focus: Option<usize>,
+}
+
+impl AutoAdminState {
+    fn consume_action_repeat(&mut self, key: &KeyInput, at: Instant) -> bool {
+        let Some((action, last_seen)) = self.action_key.as_mut() else {
+            return false;
+        };
+        if &key.key != action {
+            if key.phase.is_press_like() {
+                self.action_key = None;
+            }
+            return false;
+        }
+        if key.phase == InputPhase::Release {
+            self.action_key = None;
+            return true;
+        }
+        if key.phase == InputPhase::Repeat
+            || at.saturating_duration_since(*last_seen) < ACTION_KEY_QUIET_TIME
+        {
+            *last_seen = at;
+            return true;
+        }
+        self.action_key = None;
+        false
+    }
 }
 
 impl AutoAdminJob {
@@ -237,9 +269,11 @@ impl AutoAdminJob {
         }
         let _ = self.0.responses.send(OperationInput::Terminal { bytes });
     }
-    fn key(&self, key: &KeyInput) {
+    // True means Enter handled a structured question and must not carry over
+    // into the terminal or the next password prompt.
+    fn key(&self, key: &KeyInput) -> bool {
         if !key.phase.is_press_like() || self.phase() != RUNNING {
-            return;
+            return false;
         }
         let mut d = self.0.display.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(q) = &mut d.question {
@@ -291,7 +325,7 @@ impl AutoAdminJob {
                 _ => {}
             }
             d.revision += 1;
-            return;
+            return key.key == InputKey::Enter && key.phase == InputPhase::Press;
         }
         let application_cursor = d.parser.screen().application_cursor();
         d.parser.set_scrollback(0);
@@ -301,6 +335,7 @@ impl AutoAdminJob {
         {
             self.send_bytes(bytes);
         }
+        false
     }
     fn paste(&self, text: &str) {
         if self.phase() != RUNNING {
@@ -570,6 +605,7 @@ impl ShellSession {
             confirming: job.phase() == WAITING,
             finished: matches!(job.phase(), DENIED | FINISHED),
             approve_selected: self.auto_admin.approve_selected,
+            button_focus: self.auto_admin.button_focus,
             scroll: self.auto_admin.scroll,
             input,
             terminal: Arc::new(super::super::command_line_runtime::to_ui_snapshot(
@@ -577,7 +613,21 @@ impl ShellSession {
             )),
         })
     }
+    #[cfg(test)]
     pub(in crate::session) fn handle_auto_admin_input(&mut self, input: &InputEvent) -> bool {
+        self.handle_auto_admin_input_at(input, Instant::now())
+    }
+    pub(in crate::session) fn handle_auto_admin_input_at(
+        &mut self,
+        input: &InputEvent,
+        received_at: Instant,
+    ) -> bool {
+        // A key used to hide the modal must not activate the page behind it.
+        if let InputEvent::Key(key) = input
+            && self.auto_admin.consume_action_repeat(key, received_at)
+        {
+            return true;
+        }
         if !self.auto_admin_visible() {
             if matches!(
                 input,
@@ -589,6 +639,7 @@ impl ShellSession {
             ) && self.auto_admin.job.is_some()
             {
                 self.auto_admin.visible = true;
+                self.auto_admin.action_key = Some((InputKey::F(12), received_at));
                 return true;
             }
             return false;
@@ -621,19 +672,23 @@ impl ShellSession {
             InputEvent::Key(key)
                 if key.phase == InputPhase::Press && key.key == InputKey::F(12) =>
             {
-                self.close_auto_admin()
+                self.close_auto_admin();
+                self.auto_admin.action_key = Some((key.key.clone(), received_at));
             }
             InputEvent::Key(key) if job.phase() == WAITING && key.phase == InputPhase::Press => {
                 match key.key {
                     InputKey::Tab | InputKey::BackTab | InputKey::Left | InputKey::Right => {
                         self.auto_admin.approve_selected = !self.auto_admin.approve_selected
                     }
-                    InputKey::Enter => {
+                    InputKey::Enter | InputKey::Space => {
                         job.decide(self.auto_admin.approve_selected);
                         self.auto_admin.suppress_repeats = true;
+                        self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                        self.auto_admin.button_focus = None;
                     }
                     InputKey::Escape => {
                         job.decide(false);
+                        self.auto_admin.action_key = Some((key.key.clone(), received_at));
                     }
                     InputKey::PageDown | InputKey::Down => {
                         self.auto_admin.scroll = self.auto_admin.scroll.saturating_add(3)
@@ -646,10 +701,51 @@ impl ShellSession {
             }
             InputEvent::Key(key)
                 if matches!(job.phase(), DENIED | FINISHED)
-                    && matches!(key.key, InputKey::Enter | InputKey::Escape) =>
+                    && matches!(
+                        key.key,
+                        InputKey::Enter | InputKey::Space | InputKey::Escape
+                    ) =>
             {
                 if key.phase == InputPhase::Press {
                     self.close_auto_admin();
+                    self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                }
+            }
+            InputEvent::Key(key) if job.phase() == RUNNING && key.key == InputKey::F(6) => {
+                if key.phase == InputPhase::Press {
+                    self.auto_admin.button_focus = if self.auto_admin.button_focus.is_some() {
+                        None
+                    } else {
+                        Some(0)
+                    };
+                    self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                }
+            }
+            InputEvent::Key(key)
+                if job.phase() == RUNNING && self.auto_admin.button_focus.is_some() =>
+            {
+                let index = self.auto_admin.button_focus.unwrap();
+                if key.phase.is_press_like() {
+                    match key.key {
+                        InputKey::BackTab | InputKey::Left | InputKey::Up => {
+                            self.auto_admin.button_focus = Some((index + 3) % 4);
+                        }
+                        InputKey::Tab if key.modifiers.shift => {
+                            self.auto_admin.button_focus = Some((index + 3) % 4);
+                        }
+                        InputKey::Tab | InputKey::Right | InputKey::Down => {
+                            self.auto_admin.button_focus = Some((index + 1) % 4);
+                        }
+                        InputKey::Escape => {
+                            self.auto_admin.button_focus = None;
+                            self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                        }
+                        InputKey::Enter | InputKey::Space if key.phase == InputPhase::Press => {
+                            self.activate_auto_admin_button(&job, index);
+                            self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                        }
+                        _ => {}
+                    }
                 }
             }
             InputEvent::Key(key)
@@ -666,8 +762,17 @@ impl ShellSession {
                     });
                 }
             }
-            InputEvent::Key(key) => job.key(key),
-            InputEvent::Paste(text) => job.paste(text),
+            InputEvent::Key(key) => {
+                if job.key(key) {
+                    self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                }
+            }
+            InputEvent::Paste(text) => {
+                if self.auto_admin.button_focus.is_none() {
+                    self.auto_admin.action_key = None;
+                    job.paste(text);
+                }
+            }
             InputEvent::Mouse(mouse) => {
                 self.mouse_coordinates = Some(mouse.coordinates());
                 self.keyboard_focus_visible = false;
@@ -681,8 +786,9 @@ impl ShellSession {
                     .position(|r| r.contains(ratatui::layout::Position::from(mouse.coordinates())));
                 let activated = match mouse.kind {
                     ui::MouseEventKind::Down(ui::MouseButton::Left) => {
+                        self.auto_admin.button_focus = None;
                         self.auto_admin.pointer =
-                            hit.map(|index| (index, job.phase(), Instant::now()));
+                            hit.map(|index| (index, job.phase(), received_at));
                         None
                     }
                     ui::MouseEventKind::Up(ui::MouseButton::Left) => {
@@ -691,7 +797,8 @@ impl ShellSession {
                             previous.is_some_and(|(index, phase, at)| {
                                 index == *h
                                     && phase == job.phase()
-                                    && at.elapsed() <= Duration::from_millis(500)
+                                    && received_at.saturating_duration_since(at)
+                                        <= Duration::from_millis(500)
                             })
                         })
                     }
@@ -718,28 +825,30 @@ impl ShellSession {
                     _ => None,
                 };
                 if let Some(index) = activated {
-                    if job.phase() == WAITING {
-                        if index < 2 {
-                            job.decide(index == 0);
-                        }
-                    } else if matches!(job.phase(), DENIED | FINISHED) {
-                        if index == 0 {
-                            self.close_auto_admin();
-                        }
-                    } else {
-                        match index {
-                            0 => job.paste("y"),
-                            1 => job.paste("n"),
-                            2 => job.key(&KeyInput::new(InputKey::Enter)),
-                            _ => self.close_auto_admin(),
-                        }
-                    }
+                    self.auto_admin.button_focus = None;
+                    self.activate_auto_admin_button(&job, index);
                 }
             }
             InputEvent::FocusLost => self.auto_admin.pointer = None,
             InputEvent::FocusGained => {}
         }
         true
+    }
+    fn activate_auto_admin_button(&mut self, job: &AutoAdminJob, index: usize) {
+        match job.phase() {
+            WAITING if index < 2 => job.decide(index == 0),
+            DENIED | FINISHED if index == 0 => self.close_auto_admin(),
+            RUNNING => match index {
+                0 => job.paste("y"),
+                1 => job.paste("n"),
+                2 => {
+                    job.key(&KeyInput::new(InputKey::Enter));
+                }
+                3 => self.close_auto_admin(),
+                _ => {}
+            },
+            _ => {}
+        }
     }
 }
 

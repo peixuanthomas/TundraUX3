@@ -1220,7 +1220,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 let input = crossterm_event_to_input(terminal_event);
                 let received_at = Instant::now();
-                if state.handle_auto_admin_input(&input) {
+                if state.handle_auto_admin_input_at(&input, received_at) {
                     action = Some(ShellAction::Redraw);
                     redraw.request_redraw();
                     continue;
@@ -1347,7 +1347,7 @@ pub(super) fn dispatch_motion_aware_input(
     platform: &dyn Platform,
     received_at: Instant,
 ) -> (ShellAction, bool) {
-    if state.handle_auto_admin_input(&input) {
+    if state.handle_auto_admin_input_at(&input, received_at) {
         return (ShellAction::Redraw, false);
     }
     let input = state.normalize_shell_navigation_input(input);

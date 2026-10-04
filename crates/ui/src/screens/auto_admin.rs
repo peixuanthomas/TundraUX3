@@ -16,6 +16,7 @@ pub struct AutoAdminViewModel {
     pub confirming: bool,
     pub finished: bool,
     pub approve_selected: bool,
+    pub button_focus: Option<usize>,
     pub scroll: u16,
     pub input: Option<String>,
     pub terminal: Arc<CommandLineTerminalSnapshot>,
@@ -121,15 +122,23 @@ pub fn render_auto_admin(
         super::command_line::render_terminal_snapshot(frame, layout.terminal, &model.terminal);
     }
     frame.render_widget(Paragraph::new(model.status.as_str()), layout.status);
-    let hint = model.input.clone().unwrap_or_else(|| {
-        i18n::tr!(if model.confirming {
-            "aa-confirm-hint"
-        } else if model.finished {
-            "aa-finished-hint"
+    let hint = if !model.confirming && !model.finished && model.button_focus.is_some() {
+        i18n::tr!(if layout.input.width < 80 {
+            "aa-buttons-hint-compact"
         } else {
-            "aa-terminal-hint"
+            "aa-buttons-hint"
         })
-    });
+    } else {
+        model.input.clone().unwrap_or_else(|| {
+            i18n::tr!(if model.confirming {
+                "aa-confirm-hint"
+            } else if model.finished {
+                "aa-finished-hint"
+            } else {
+                "aa-terminal-hint"
+            })
+        })
+    };
     frame.render_widget(Paragraph::new(hint), layout.input);
     let labels = if model.confirming {
         vec![
@@ -144,10 +153,14 @@ pub fn render_auto_admin(
         vec![("aa.close", i18n::tr!("aa-close"), true)]
     } else {
         vec![
-            ("aa.y", "y".into(), false),
-            ("aa.n", "n".into(), false),
-            ("aa.enter", "Enter".into(), false),
-            ("aa.close", i18n::tr!("aa-background"), false),
+            ("aa.y", "y".into(), model.button_focus == Some(0)),
+            ("aa.n", "n".into(), model.button_focus == Some(1)),
+            ("aa.enter", "Enter".into(), model.button_focus == Some(2)),
+            (
+                "aa.close",
+                i18n::tr!("aa-background"),
+                model.button_focus == Some(3),
+            ),
         ]
     };
     let theme = context.compatibility_theme();

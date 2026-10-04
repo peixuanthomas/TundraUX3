@@ -69,6 +69,263 @@ fn held_approval_enter_does_not_answer_the_childs_next_question() {
 }
 
 #[test]
+fn legacy_terminal_enter_burst_after_approval_does_not_reach_the_child() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let (job, rx) = job(storage::AutoAdminPolicy::Manual);
+    state.auto_admin = AutoAdminState {
+        job: Some(job.clone()),
+        visible: true,
+        approve_selected: true,
+        ..Default::default()
+    };
+    let start = Instant::now();
+    // Ordinary VT terminals report every CR/LF, including repeats, as Press.
+    for millis in [0, 1, 50, 500, 550, 1000] {
+        let input = crossterm_event_to_input(crossterm::event::Event::Key(
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            ),
+        ));
+        state.apply_input_at(input, start + Duration::from_millis(millis));
+    }
+    assert_eq!(job.phase(), RUNNING);
+    assert!(
+        rx.try_recv().is_err(),
+        "approval Enter must not become terminal input"
+    );
+    state.apply_input_at(
+        InputEvent::key(InputKey::Char('y')),
+        start + Duration::from_millis(1001),
+    );
+    state.apply_input_at(
+        InputEvent::key(InputKey::Enter),
+        start + Duration::from_millis(1002),
+    );
+    let bytes = rx
+        .try_iter()
+        .flat_map(|input| match input {
+            OperationInput::Terminal { bytes } => bytes,
+            _ => panic!("unexpected input"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bytes, b"y\r");
+}
+
+#[test]
+fn deliberate_enter_after_release_or_a_quiet_interval_reaches_the_terminal() {
+    for with_release in [false, true] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (job, rx) = job(storage::AutoAdminPolicy::Manual);
+        state.auto_admin = AutoAdminState {
+            job: Some(job),
+            visible: true,
+            approve_selected: true,
+            ..Default::default()
+        };
+        let at = Instant::now();
+        state.apply_input_at(InputEvent::key(InputKey::Enter), at);
+        let next = if with_release {
+            state.apply_input_at(
+                InputEvent::Key(KeyInput::with_phase(
+                    InputKey::Enter,
+                    InputModifiers::NONE,
+                    InputPhase::Release,
+                )),
+                at + Duration::from_millis(1),
+            );
+            at + Duration::from_millis(2)
+        } else {
+            at + Duration::from_secs(1)
+        };
+        state.apply_input_at(InputEvent::key(InputKey::Enter), next);
+        assert!(
+            matches!(rx.try_recv().unwrap(), OperationInput::Terminal { bytes } if bytes == b"\r")
+        );
+        assert!(rx.try_recv().is_err());
+    }
+}
+
+#[test]
+fn question_submission_enter_cannot_answer_the_next_question_or_enter_the_terminal() {
+    for next_question in [false, true] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+        state.auto_admin = AutoAdminState {
+            job: Some(job.clone()),
+            visible: true,
+            ..Default::default()
+        };
+        let question = OperationEvent::Question {
+            id: "password".into(),
+            prompt: "Password:".into(),
+            choices: vec![],
+            secret: true,
+        };
+        job.emit(&question);
+        state.apply_input(InputEvent::Paste("test-secret".into()));
+        let at = Instant::now();
+        state.apply_input_at(InputEvent::key(InputKey::Enter), at);
+        assert!(
+            matches!(rx.try_recv().unwrap(), OperationInput::Answer { value, .. } if value == "test-secret")
+        );
+        if next_question {
+            job.emit(&question);
+        }
+        state.apply_input_at(
+            InputEvent::key(InputKey::Enter),
+            at + Duration::from_millis(20),
+        );
+        state.apply_input_at(
+            InputEvent::Key(KeyInput::new(InputKey::Enter).repeated()),
+            at + Duration::from_millis(50),
+        );
+        assert!(rx.try_recv().is_err());
+    }
+}
+
+#[test]
+fn confirmation_navigation_and_space_activation_stay_out_of_terminal() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let (job, rx) = job(storage::AutoAdminPolicy::Manual);
+    state.auto_admin = AutoAdminState {
+        job: Some(job.clone()),
+        visible: true,
+        ..Default::default()
+    };
+    for (key, selected) in [
+        (InputKey::Tab, true),
+        (InputKey::BackTab, false),
+        (InputKey::Right, true),
+    ] {
+        state.apply_input(InputEvent::key(key));
+        assert_eq!(state.auto_admin.approve_selected, selected);
+    }
+    let at = Instant::now();
+    state.apply_input_at(InputEvent::key(InputKey::Space), at);
+    state.apply_input_at(
+        InputEvent::key(InputKey::Space),
+        at + Duration::from_millis(20),
+    );
+    assert_eq!(job.phase(), RUNNING);
+    assert!(rx.try_recv().is_err());
+    assert_eq!(state.auto_admin.button_focus, None);
+}
+
+#[test]
+fn running_buttons_are_keyboard_accessible_without_stealing_terminal_tab() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+    state.auto_admin = AutoAdminState {
+        job: Some(job.clone()),
+        visible: true,
+        ..Default::default()
+    };
+    state.apply_input(InputEvent::key(InputKey::Tab));
+    assert!(matches!(rx.try_recv().unwrap(), OperationInput::Terminal { bytes } if bytes == b"\t"));
+    state.apply_input(InputEvent::key(InputKey::F(6)));
+    assert_eq!(state.auto_admin_view().unwrap().button_focus, Some(0));
+    state.apply_input(InputEvent::key(InputKey::Enter));
+    state.apply_input(InputEvent::key(InputKey::Tab));
+    state.apply_input(InputEvent::key(InputKey::Space));
+    state.apply_input(InputEvent::key(InputKey::Right));
+    state.apply_input(InputEvent::key(InputKey::Enter));
+    let bytes = rx
+        .try_iter()
+        .flat_map(|input| match input {
+            OperationInput::Terminal { bytes } => bytes,
+            _ => panic!("unexpected input"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(bytes, b"yn\r");
+    state.apply_input(InputEvent::key(InputKey::BackTab));
+    assert_eq!(state.auto_admin.button_focus, Some(1));
+    state.apply_input(InputEvent::Key(KeyInput::with_modifiers(
+        InputKey::Tab,
+        InputModifiers::SHIFT,
+    )));
+    assert_eq!(state.auto_admin.button_focus, Some(0));
+    state.apply_input(InputEvent::key(InputKey::Escape));
+    state.apply_input(InputEvent::key(InputKey::Escape));
+    assert!(rx.try_recv().is_err());
+    assert_eq!(state.auto_admin.button_focus, None);
+    state.apply_input(InputEvent::key(InputKey::F(6)));
+    state.apply_input(InputEvent::key(InputKey::Left));
+    assert_eq!(state.auto_admin.button_focus, Some(3));
+    state.apply_input(InputEvent::key(InputKey::Enter));
+    assert!(!state.auto_admin_visible());
+    assert_eq!(job.phase(), RUNNING);
+    assert!(rx.try_recv().is_err());
+    state.apply_input(InputEvent::key(InputKey::F(12)));
+    job.finish(Ok("Done".into()));
+    state.apply_input(InputEvent::key(InputKey::Space));
+    assert!(!state.auto_admin_visible());
+}
+
+#[test]
+fn closing_auto_admin_consumes_the_action_key_before_it_can_reach_the_page() {
+    for finished in [false, true] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+        if finished {
+            job.finish(Ok("Done".into()));
+        }
+        state.auto_admin = AutoAdminState {
+            job: Some(job),
+            visible: true,
+            button_focus: Some(3),
+            ..Default::default()
+        };
+        let at = Instant::now();
+        assert!(state.handle_auto_admin_input_at(&InputEvent::key(InputKey::Enter), at));
+        assert!(!state.auto_admin_visible());
+        for millis in [1, 50, 500, 600] {
+            assert!(state.handle_auto_admin_input_at(
+                &InputEvent::key(InputKey::Enter),
+                at + Duration::from_millis(millis)
+            ));
+        }
+        assert!(rx.try_recv().is_err());
+        assert!(state.handle_auto_admin_input_at(
+            &InputEvent::Key(KeyInput::with_phase(
+                InputKey::Enter,
+                InputModifiers::NONE,
+                InputPhase::Release,
+            )),
+            at + Duration::from_millis(601)
+        ));
+        assert!(!state.handle_auto_admin_input_at(
+            &InputEvent::key(InputKey::Enter),
+            at + Duration::from_millis(602)
+        ));
+    }
+}
+
+#[test]
 fn approval_click_requires_its_own_matching_release_and_resize_cancels_it() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -184,6 +441,16 @@ fn modal_captures_ctrl_c_escape_and_page_shortcuts_and_reopens_with_f12() {
     assert!(!state.auto_admin_visible());
     assert!(state.auto_admin_running());
     state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(12))));
+    assert!(
+        !state.auto_admin_visible(),
+        "holding F12 must not repeatedly reopen the modal"
+    );
+    state.apply_input(InputEvent::Key(KeyInput::with_phase(
+        InputKey::F(12),
+        InputModifiers::NONE,
+        InputPhase::Release,
+    )));
+    state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(12))));
     assert!(state.auto_admin_visible());
 }
 
@@ -246,6 +513,11 @@ fn hiding_pending_approval_denies_it_and_reopening_cannot_approve_it() {
     assert_eq!(state.auto_admin.job.as_ref().unwrap(), &job);
     state.apply_input(InputEvent::from_key_label("F12"));
     assert!(job.wait_for_approval().is_err());
+    state.apply_input(InputEvent::Key(KeyInput::with_phase(
+        InputKey::F(12),
+        InputModifiers::NONE,
+        InputPhase::Release,
+    )));
     state.apply_input(InputEvent::from_key_label("F12"));
     state.apply_input(InputEvent::from_key_label("Right"));
     state.apply_input(InputEvent::from_key_label("Enter"));

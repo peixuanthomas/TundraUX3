@@ -44,6 +44,7 @@ fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
                 confirming,
                 finished: false,
                 approve_selected: false,
+                button_focus: None,
                 scroll: 0,
                 input: None,
                 terminal: std::sync::Arc::new(CommandLineTerminalSnapshot::blank(
@@ -88,6 +89,7 @@ fn auto_admin_preserves_title_and_status_cells_in_every_phase() {
                 confirming,
                 finished,
                 approve_selected: false,
+                button_focus: None,
                 scroll: 0,
                 input: None,
                 terminal: std::sync::Arc::new(CommandLineTerminalSnapshot::blank(
@@ -115,6 +117,61 @@ fn auto_admin_preserves_title_and_status_cells_in_every_phase() {
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
+    for width in [50, 60, 180] {
+        let bounds = Rect::new(0, 0, width, 50);
+        let layout = ui::auto_admin_layout(bounds, false);
+        let mut model = AutoAdminViewModel {
+            description: "Remove demo".into(),
+            status: "Running".into(),
+            confirming: false,
+            finished: false,
+            approve_selected: false,
+            button_focus: None,
+            scroll: 0,
+            input: Some("> ••••".into()),
+            terminal: std::sync::Arc::new(CommandLineTerminalSnapshot::blank(
+                layout.terminal.width,
+                layout.terminal.height,
+            )),
+        };
+        let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+        terminal
+            .draw(|frame| ui::render_auto_admin(frame, bounds, &model, &RenderContext::default()))
+            .unwrap();
+        let unfocused = terminal.backend().buffer().clone();
+        for index in 0..4 {
+            model.button_focus = Some(index);
+            terminal
+                .draw(|frame| {
+                    ui::render_auto_admin(frame, bounds, &model, &RenderContext::default())
+                })
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            for (other, area) in layout.buttons.iter().enumerate() {
+                let changed = (area.x..area.right())
+                    .any(|x| buffer[(x, area.y)].style() != unfocused[(x, area.y)].style());
+                assert_eq!(
+                    changed,
+                    index == other,
+                    "only the focused button is highlighted"
+                );
+            }
+            let hint = (layout.input.x..layout.input.right())
+                .map(|x| buffer[(x, layout.input.y)].symbol())
+                .collect::<String>();
+            for shortcut in ["F6", "Tab", "Enter"] {
+                assert!(
+                    hint.contains(shortcut),
+                    "missing {shortcut} in {width}-column window: {hint}"
+                );
+            }
+            assert!(!hint.contains('•'));
         }
     }
 }

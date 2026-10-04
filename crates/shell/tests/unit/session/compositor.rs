@@ -78,6 +78,11 @@ fn auto_admin_keeps_shell_title_and_status_visible_after_resize() {
         let title_before = text(terminal.backend().buffer(), top);
         let status_before = text(terminal.backend().buffer(), status);
         state.apply_input(InputEvent::from_key_label("F12"));
+        state.apply_input(InputEvent::Key(KeyInput::with_phase(
+            InputKey::F(12),
+            InputModifiers::NONE,
+            InputPhase::Release,
+        )));
         draw(&mut compositor, &mut terminal, &mut state, &prepared);
         assert_eq!(text(terminal.backend().buffer(), top), title_before);
         assert_eq!(text(terminal.backend().buffer(), status), status_before);

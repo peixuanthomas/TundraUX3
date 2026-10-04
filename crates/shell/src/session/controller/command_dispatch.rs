@@ -26,7 +26,7 @@ impl ShellSession {
         received_at: Instant,
     ) -> ShellAction {
         let _language = i18n::enter_snapshot(self.language.clone());
-        if self.handle_auto_admin_input(&input) {
+        if self.handle_auto_admin_input_at(&input, received_at) {
             return ShellAction::Redraw;
         }
         let Some(input) = self.prepare_button_input(input, received_at) else {
