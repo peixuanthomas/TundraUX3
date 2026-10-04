@@ -345,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn dpkg_logger_emits_native_configuration_question_and_real_phase() {
+    fn dpkg_status_stream_emits_native_configuration_question_and_real_phase() {
         let mut parser = PromptParser::default();
         let events = parser.push(b"processing: configure: demo:amd64\nstatus: /etc/demo:part.conf : conffile-prompt : '/etc/demo:part.conf' '/etc/demo:part.conf.dpkg-new' 1 1\n");
         assert!(

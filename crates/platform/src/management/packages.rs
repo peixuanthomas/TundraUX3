@@ -154,7 +154,9 @@ fn build_command(
             "-o",
             "Dpkg::Use-Pty=0",
             "-o",
-            "Dpkg::Options::=--status-logger=/usr/bin/cat",
+            // fd 2 is stderr, already connected to the AutoAdmin terminal.
+            // dpkg closes a status logger's stdout, so cat cannot forward it.
+            "Dpkg::Options::=--status-fd=2",
             "-o",
             "DPkg::Lock::Timeout=30",
         ]

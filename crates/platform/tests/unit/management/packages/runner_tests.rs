@@ -4,13 +4,16 @@ use std::{collections::VecDeque, path::PathBuf};
 #[derive(Default)]
 struct Interaction {
     output: Vec<u8>,
+    progress: Vec<String>,
     answers: VecDeque<(&'static str, Vec<u8>)>,
     calls: usize,
 }
 impl OperationInteraction for Interaction {
     fn emit(&mut self, event: OperationEvent) {
-        if let OperationEvent::TerminalOutput { bytes } = event {
-            self.output.extend(bytes);
+        match event {
+            OperationEvent::TerminalOutput { bytes } => self.output.extend(bytes),
+            OperationEvent::Progress { message, .. } => self.progress.push(message),
+            _ => {}
         }
     }
     fn ask(&mut self, _: &str, _: &str, _: &[String], _: bool) -> Result<String, ManagementError> {
@@ -33,6 +36,10 @@ impl OperationInteraction for Interaction {
         }
     }
 }
+
+#[path = "apt_dpkg_tests.rs"]
+mod apt_dpkg_tests;
+
 fn fixture(script: &str) -> PackageCommand {
     PackageCommand {
         program: PathBuf::from("/usr/bin/timeout"),
