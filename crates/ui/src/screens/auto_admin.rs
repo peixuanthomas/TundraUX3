@@ -1,11 +1,8 @@
-use crate::{
-    CommandLineTerminalSnapshot, RenderContext,
-    components::{Button, Surface},
-};
+use crate::{CommandLineTerminalSnapshot, RenderContext, components::Button};
 use ratatui::{
     Frame,
     layout::{Constraint, Flex, Layout, Margin, Rect},
-    widgets::{Clear, Paragraph},
+    widgets::Paragraph,
 };
 use std::sync::Arc;
 
@@ -35,18 +32,22 @@ pub struct AutoAdminLayout {
 /// Receives the full Shell bounds so drawing, hit testing and PTY sizing all
 /// reserve the same fixed title/status bars, even immediately after a resize.
 pub fn auto_admin_layout(bounds: Rect, model: &AutoAdminViewModel) -> AutoAdminLayout {
+    authorization_layout(bounds, model).0
+}
+
+fn authorization_layout(bounds: Rect, model: &AutoAdminViewModel) -> (AutoAdminLayout, Rect) {
     let main = match crate::compute_shell_layout(bounds) {
         crate::ShellLayout::Full { main, .. } | crate::ShellLayout::Compact(main) => main,
     };
-    let width = if main.width > 80 {
-        main.width.saturating_sub(main.width / 10)
-    } else {
-        main.width
-    }
-    .min(if model.confirming { 84 } else { 110 });
+    let width = main
+        .width
+        .saturating_sub(u16::from(main.width >= 50) * 4)
+        .min(100);
     let roomy = main.height >= 16 && width >= 40;
-    let padding = Margin::new(if roomy { 3 } else { 1 }, if roomy { 2 } else { 1 });
-    let content_width = width.saturating_sub(padding.horizontal * 2);
+    let padding = Margin::new(if width >= 50 { 3 } else { 1 }, 1);
+    let badge_width = if width >= 70 { 18 } else { 0 };
+    let content_width = width.saturating_sub(padding.horizontal * 2 + badge_width);
+    let warning_height = if roomy { 3 } else { 1 };
     let lines = |text: &str| {
         crate::management_wrapped_lines(text, content_width)
             .len()
@@ -87,6 +88,7 @@ pub fn auto_admin_layout(bounds: Rect, model: &AutoAdminViewModel) -> AutoAdminL
         main.height
     };
     let height = (padding.vertical * 2
+        + warning_height
         + description_height
         + terminal_height
         + status_height
@@ -101,7 +103,15 @@ pub fn auto_admin_layout(bounds: Rect, model: &AutoAdminViewModel) -> AutoAdminL
         width,
         height,
     );
-    let inner = dialog.inner(padding);
+    let mut inner = dialog.inner(padding);
+    inner.x += badge_width;
+    inner.width = inner.width.saturating_sub(badge_width);
+    // Reserve actions and at least one description row before the banner on
+    // very short terminals. All consumers use this same content rectangle.
+    let warning_height = warning_height.min(inner.height.saturating_sub(2));
+    let warning = Rect::new(inner.x, inner.y, inner.width, warning_height);
+    inner.y += warning_height;
+    inner.height = inner.height.saturating_sub(warning_height);
     let button_height = inner.height.min(1);
     let hint_height = hint_height.min(inner.height.saturating_sub(3 + gap * 2));
     let status_height = status_height.min(
@@ -139,14 +149,17 @@ pub fn auto_admin_layout(bounds: Rect, model: &AutoAdminViewModel) -> AutoAdminL
     .flex(Flex::Center)
     .spacing(button_gap)
     .split(areas[6]);
-    AutoAdminLayout {
-        dialog,
-        description: areas[0],
-        terminal: areas[2],
-        status: areas[3],
-        input: areas[4],
-        buttons: std::array::from_fn(|i| button_areas.get(i).copied().unwrap_or_default()),
-    }
+    (
+        AutoAdminLayout {
+            dialog,
+            description: areas[0],
+            terminal: areas[2],
+            status: areas[3],
+            input: areas[4],
+            buttons: std::array::from_fn(|i| button_areas.get(i).copied().unwrap_or_default()),
+        },
+        warning,
+    )
 }
 
 fn auto_admin_hint(model: &AutoAdminViewModel, width: u16) -> String {
@@ -179,13 +192,15 @@ pub fn render_auto_admin(
     model: &AutoAdminViewModel,
     context: &RenderContext,
 ) {
-    let layout = auto_admin_layout(bounds, model);
-    frame.render_widget(Clear, layout.dialog);
-    Surface::new()
-        .titled("AutoAdmin (AA)")
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, layout.dialog, context);
+    let (layout, warning) = authorization_layout(bounds, model);
+    super::auto_admin_preview::render_auto_admin_frame(
+        frame,
+        bounds,
+        &layout,
+        warning,
+        crate::AutoAdminPreviewStyle::Authorization,
+        Some(" AutoAdmin (AA) "),
+    );
     render_auto_admin_contents(frame, &layout, model, context, None);
 }
 

@@ -1,4 +1,4 @@
-//! Candidate AA treatments. Production AA keeps its current appearance until selected.
+//! AA style previews and shared decoration. Production uses Authorization.
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Margin, Rect},
@@ -95,6 +95,24 @@ pub fn render_auto_admin_preview(
     context: &RenderContext,
 ) {
     let (layout, warning) = auto_admin_preview_layout(bounds, model, style);
+    render_auto_admin_frame(frame, bounds, &layout, warning, style, None);
+    super::auto_admin::render_auto_admin_contents(
+        frame,
+        &layout,
+        model,
+        context,
+        Some(&i18n::tr!("aa-preview-safe")),
+    );
+}
+
+pub(super) fn render_auto_admin_frame(
+    frame: &mut Frame<'_>,
+    bounds: Rect,
+    layout: &AutoAdminLayout,
+    warning: Rect,
+    style: AutoAdminPreviewStyle,
+    title_override: Option<&str>,
+) {
     let main = match crate::compute_shell_layout(bounds) {
         crate::ShellLayout::Full { main, .. } | crate::ShellLayout::Compact(main) => main,
     };
@@ -146,7 +164,7 @@ pub fn render_auto_admin_preview(
     frame.render_widget(
         Block::bordered()
             .border_type(border)
-            .title(title)
+            .title(title_override.unwrap_or(title))
             .border_style(Style::default().fg(accent))
             .style(Style::default().fg(Color::White).bg(background)),
         layout.dialog,
@@ -201,11 +219,4 @@ pub fn render_auto_admin_preview(
         }
     }
     frame.render_widget(banner, warning);
-    super::auto_admin::render_auto_admin_contents(
-        frame,
-        &layout,
-        model,
-        context,
-        Some(&i18n::tr!("aa-preview-safe")),
-    );
 }

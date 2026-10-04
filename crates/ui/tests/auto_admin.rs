@@ -64,7 +64,7 @@ fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
 }
 
 #[test]
-fn auto_admin_preserves_title_and_status_cells_in_every_phase() {
+fn auto_admin_uses_authorization_style_and_preserves_chrome_in_every_phase() {
     for (width, height) in [(220, 65), (120, 40), (80, 24), (50, 12), (40, 12), (20, 8)] {
         for (confirming, finished) in [(true, false), (false, false), (false, true)] {
             let bounds = Rect::new(0, 0, width, height);
@@ -72,6 +72,7 @@ fn auto_admin_preserves_title_and_status_cells_in_every_phase() {
                 ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
             };
             let model = model(confirming, finished);
+            let layout = ui::auto_admin_layout(bounds, &model);
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal
                 .draw(|frame| {
@@ -89,8 +90,29 @@ fn auto_admin_preserves_title_and_status_cells_in_every_phase() {
                             "#",
                             "{width}x{height} changed chrome at {x},{y}"
                         );
+                    } else if !layout.dialog.contains((x, y).into()) {
+                        let cell = &terminal.backend().buffer()[(x, y)];
+                        assert_eq!(cell.fg, ratatui::style::Color::DarkGray);
+                        assert!(cell.modifier.contains(ratatui::style::Modifier::DIM));
                     }
                 }
+            }
+            let buffer = terminal.backend().buffer();
+            assert_eq!(buffer[(layout.dialog.x, layout.dialog.y)].symbol(), "┌");
+            assert_eq!(
+                buffer[(layout.dialog.x, layout.dialog.y)].fg,
+                ratatui::style::Color::LightCyan
+            );
+            assert_eq!(
+                buffer[(layout.dialog.x, layout.dialog.y)].bg,
+                ratatui::style::Color::Rgb(14, 27, 38)
+            );
+            if layout.dialog.width >= 70 {
+                assert_eq!(
+                    buffer[(layout.dialog.x + 18, layout.dialog.y + 1)].symbol(),
+                    "│"
+                );
+                assert!(layout.description.x > layout.dialog.x + 18);
             }
         }
     }
@@ -295,7 +317,7 @@ fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
 }
 
 #[test]
-fn confirmation_and_empty_results_are_compact_with_centered_actions() {
+fn confirmation_and_empty_results_are_compact_with_actions_centered_in_content() {
     let bounds = Rect::new(0, 0, 208, 55);
     for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 4)] {
         let model = model(confirming, finished);
@@ -304,7 +326,7 @@ fn confirmation_and_empty_results_are_compact_with_centered_actions() {
         let last = layout.buttons[count - 1];
         assert!(
             (i32::from(first.x + last.right())
-                - i32::from(layout.dialog.x * 2 + layout.dialog.width))
+                - i32::from(layout.description.x * 2 + layout.description.width))
             .abs()
                 <= 1
         );

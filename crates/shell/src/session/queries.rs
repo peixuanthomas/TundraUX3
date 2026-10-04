@@ -231,7 +231,7 @@ impl ShellSession {
                 id: "auto-admin".into(),
                 category: ShellOverlayCategory::ShellModal,
                 target: Some(RoutedTarget::Global),
-                immediate: true,
+                immediate: false,
             });
         }
         let dialog = |id: String, category, component| ShellOverlayDescriptor {

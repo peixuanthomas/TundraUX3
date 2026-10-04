@@ -91,6 +91,73 @@ fn auto_admin_keeps_shell_title_and_status_visible_after_resize() {
 }
 
 #[test]
+fn auto_admin_shares_dialog_motion_speed_reduced_motion_and_exit() {
+    for (speed, reduced) in [(50, false), (100, false), (200, false), (100, true)] {
+        let mut state = session();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut prepared = home_frame(&state, 0, reduced);
+        prepared.context.motion.animation_speed_percent = speed;
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let base = terminal.backend().buffer().clone();
+        let main = state.frame_layout.unwrap().main;
+        let (responses, _inputs) = mpsc::channel();
+        state
+            .begin_auto_admin("Review target".into(), true, responses)
+            .unwrap();
+        let dialog =
+            ui::auto_admin_layout(Rect::new(0, 0, 120, 40), &state.auto_admin_view().unwrap())
+                .dialog;
+        assert_eq!(
+            draw(&mut compositor, &mut terminal, &mut state, &prepared),
+            !reduced
+        );
+        let entering = terminal.backend().buffer().clone();
+        let mut frames = 0;
+        while compositor.motion.is_running() {
+            frames += 1;
+            assert!(frames <= 10, "AA animation must stop requesting redraws");
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        }
+        if reduced {
+            assert_eq!(frames, 0);
+        } else {
+            assert_eq!(frames, (18000_u32).div_ceil(50 * u32::from(speed)));
+            assert_ne!(
+                entering[(dialog.x, dialog.y)],
+                terminal.backend().buffer()[(dialog.x, dialog.y)]
+            );
+        }
+        for position in base.area.positions().filter(|p| !main.contains(*p)) {
+            assert_eq!(
+                entering[position], base[position],
+                "AA motion changed Shell chrome"
+            );
+        }
+        // Ordinary repainting does not replay the entry effect or delay input.
+        assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        state.apply_input(InputEvent::key(InputKey::F(12)));
+        assert!(!state.auto_admin_visible());
+        assert_eq!(
+            draw(&mut compositor, &mut terminal, &mut state, &prepared),
+            !reduced
+        );
+        for _ in 0..10 {
+            if !compositor.motion.is_running() {
+                break;
+            }
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        }
+        assert!(!compositor.motion.is_running());
+        assert_eq!(
+            terminal.backend().buffer(),
+            &base,
+            "AA exit must restore the page"
+        );
+    }
+}
+
+#[test]
 fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
     for mode in 0..3 {
         let launcher = mode != 0;

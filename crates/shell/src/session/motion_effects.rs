@@ -1122,6 +1122,12 @@ fn is_unrendered_generic_popup(state: &ShellSession) -> bool {
 }
 
 fn overlay_area(state: &ShellSession) -> Option<Rect> {
+    // AA handles its own input rather than registering a page hit region. Use
+    // its real dialog bounds so it shares the global dialog enter/exit effects.
+    if let Some(model) = state.auto_admin_view() {
+        let (width, height) = state.terminal_size();
+        return Some(ui::auto_admin_layout(Rect::new(0, 0, width, height), &model).dialog);
+    }
     bounds_for_regions(
         state
             .hit_map()
