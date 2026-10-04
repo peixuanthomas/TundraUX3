@@ -21,6 +21,7 @@ pub(super) fn run(
     use zeroize::Zeroizing;
     let failure = |e: std::io::Error| ManagementError::Failed(e.to_string());
     let actor = unsafe { libc::getuid() };
+    let mut terminal_size = None;
     let socket = if let Some(socket) = socket {
         socket
     } else {
@@ -66,6 +67,9 @@ pub(super) fn run(
                                 break Zeroizing::new(value);
                             }
                             Ok(OperationInput::Cancel) => return Err(ManagementError::Cancelled),
+                            Ok(OperationInput::Resize { columns, rows }) => {
+                                terminal_size = Some((columns, rows));
+                            }
                             Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                             Err(_) => return Err(ManagementError::Cancelled),
                         }
@@ -134,6 +138,12 @@ pub(super) fn run(
         ready.socket
     };
     let mut stream = platform::management::helper::connect(&socket, actor)?;
+    if let Some((columns, rows)) = terminal_size {
+        let mut bytes = serde_json::to_vec(&OperationInput::Resize { columns, rows })
+            .map_err(|e| ManagementError::Failed(e.to_string()))?;
+        bytes.push(b'\n');
+        stream.write_all(&bytes).map_err(failure)?;
+    }
     let mut buffer = Vec::new();
     let mut last_sequence = 0;
     while !detached.load(Ordering::Relaxed) {

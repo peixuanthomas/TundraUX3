@@ -25,9 +25,6 @@ pub(in crate::session) struct ShellSettingsTaskShared {
     pub(in crate::session) update_event_tx: mpsc::Sender<SettingsUpdateTaskEvent>,
     pub(in crate::session) update_event_rx: Mutex<mpsc::Receiver<SettingsUpdateTaskEvent>>,
     pub(in crate::session) update_worker: Mutex<Option<ManagedThreadHandle<()>>>,
-    #[cfg(target_os = "linux")]
-    pub(in crate::session) authorization:
-        Mutex<Option<Arc<dyn platform::linux::authorization::Interaction>>>,
     pub(in crate::session) platform: Option<std::sync::Arc<dyn Platform>>,
 }
 
@@ -70,8 +67,6 @@ impl ShellSettingsTaskRuntime {
                 update_event_tx,
                 update_event_rx: Mutex::new(update_event_rx),
                 update_worker: Mutex::new(None),
-                #[cfg(target_os = "linux")]
-                authorization: Mutex::new(None),
                 platform: None,
             }),
         }
@@ -113,8 +108,6 @@ impl ShellSettingsTaskRuntime {
                 update_event_tx,
                 update_event_rx: Mutex::new(update_event_rx),
                 update_worker: Mutex::new(None),
-                #[cfg(target_os = "linux")]
-                authorization: Mutex::new(None),
                 platform,
             }),
         }

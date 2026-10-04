@@ -946,13 +946,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         state.repaired_resource_paths.clear();
         state.fallback_resource_paths.clear();
     }
-    #[cfg(target_os = "linux")]
-    let (authorization_host, authorization_interaction) =
-        crate::authorization::AuthorizationHost::channel();
-    #[cfg(target_os = "linux")]
-    if let Ok(mut interaction) = state.settings_task_runtime.shared.authorization.lock() {
-        *interaction = Some(authorization_interaction.clone());
-    }
     let mut system_status_snapshots = system_services.subscribe();
     state.apply_system_status_snapshot(app::AppSystemStatusSnapshot::from(
         &*system_status_snapshots.borrow_and_update(),
@@ -985,12 +978,13 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let mut update_ready_marked = false;
 
     loop {
-        #[cfg(target_os = "linux")]
-        if authorization_host
-            .handle_pending(&mut guard, || terminal_control.shutdown_requested())?
-        {
+        if state.poll_auto_admin() {
             redraw.request_redraw();
         }
+        if state.auto_admin_power_succeeded() {
+            break;
+        }
+        state.resize_auto_admin();
         language_runtime.update_from(&state);
         let _language = i18n::enter_snapshot(state.language.clone());
         let state_before_polling = state.clone();
@@ -1201,7 +1195,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         let redraw_timeout = redraw.poll_timeout(poll_now, Duration::MAX);
         let combined_timeout = state_poll_timeout.min(redraw_timeout);
         let (poll_timeout, command_line_timeout_is_state) = command_line_poll_timeout(
-            state.content_screen() == ShellScreen::CommandLine,
+            state.content_screen() == ShellScreen::CommandLine
+                || (state.auto_admin_visible() && state.auto_admin_running()),
             combined_timeout,
         );
         let state_timeout_wakeup =
@@ -1225,6 +1220,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
                 let input = crossterm_event_to_input(terminal_event);
                 let received_at = Instant::now();
+                if state.handle_auto_admin_input(&input) {
+                    action = Some(ShellAction::Redraw);
+                    redraw.request_redraw();
+                    continue;
+                }
                 let Some(input) = state.prepare_button_input(input, received_at) else {
                     action = Some(ShellAction::Redraw);
                     continue;
@@ -1310,53 +1310,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             break;
         }
         if matches!(action, Some(ShellAction::PowerOff | ShellAction::Reboot)) {
-            // Interactive authorization may temporarily take over the
-            // terminal. Recovery has already been persisted by the command
-            // handler, so restore the user's terminal before asking logind or
-            // the native platform service to power off.
-            guard.restore()?;
-            let reboot = action == Some(ShellAction::Reboot);
-            #[cfg(target_os = "linux")]
-            let result = authorization_host.power(
-                &mut guard,
-                if reboot {
-                    platform::linux::power::PowerAction::Reboot
-                } else {
-                    platform::linux::power::PowerAction::PowerOff
-                },
-                shell_watchdog,
-                authorization_interaction.clone(),
-                || terminal_control.shutdown_requested(),
-            );
-            #[cfg(not(target_os = "linux"))]
-            let result = if reboot {
-                platform.reboot()
-            } else {
-                platform.poweroff()
-            };
-            match result {
-                Ok(()) => break,
-                Err(error) => {
-                    guard.resume()?;
-                    if let Ok((width, height)) = crossterm::terminal::size() {
-                        let _ = state.apply_input_with_platform(
-                            InputEvent::Resize { width, height },
-                            platform.as_ref(),
-                        );
-                    }
-                    state.show_exit_confirmation_modal(platform.as_ref());
-                    state.notify_alert_with_tone(
-                        if reboot {
-                            i18n::msg!("startup-reboot-failed", reason = error.to_string())
-                        } else {
-                            i18n::msg!("startup-shutdown-failed", reason = error.to_string())
-                        },
-                        ui::NotificationTone::Error,
-                    );
-                }
-            }
+            state.start_auto_admin_power(action == Some(ShellAction::Reboot), platform.clone());
+            redraw.request_redraw();
         }
     }
+
+    state.stop_auto_admin();
 
     command_line_host.terminate();
     guard.restore()?;
@@ -1388,6 +1347,9 @@ pub(super) fn dispatch_motion_aware_input(
     platform: &dyn Platform,
     received_at: Instant,
 ) -> (ShellAction, bool) {
+    if state.handle_auto_admin_input(&input) {
+        return (ShellAction::Redraw, false);
+    }
     let input = state.normalize_shell_navigation_input(input);
     if let Some(action) = state.apply_input_preamble_at(&input, received_at) {
         return (action, false);
@@ -1482,7 +1444,8 @@ fn session_render_state_changed(before: &ShellSession, after: &ShellSession) -> 
 }
 
 fn session_has_background_work(state: &ShellSession) -> bool {
-    state.content_screen() == ShellScreen::CommandLine
+    state.auto_admin_running()
+        || state.content_screen() == ShellScreen::CommandLine
         || state.launcher_refresh_request.is_some()
         || state.editor_load_state.is_some()
         || state.editor_save_state.is_some()
@@ -1518,7 +1481,7 @@ fn shell_render_capabilities(
 }
 
 fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool {
-    if state.active_screen() != ShellScreen::CommandLine {
+    if state.auto_admin_visible() || state.active_screen() != ShellScreen::CommandLine {
         return false;
     }
 

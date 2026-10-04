@@ -64,9 +64,7 @@ pub(super) fn execute(
     });
     interaction.emit(OperationEvent::Output { text: "Package operations continue in the system helper when this page closes. Cancellation is available at the package manager's confirmation; active package writes are not forcibly stopped.".into() });
     let mut parser = PromptParser::default();
-    let mut question_sequence = 0_u64;
     let mut tail = Vec::<u8>::new();
-    let mut declined = false;
     let mut cancel_noticed = false;
     let mut connection_error_noticed = false;
     let mut output_error = None;
@@ -95,53 +93,12 @@ pub(super) fn execute(
                 if tail.len() > 32 * 1024 {
                     tail.drain(..tail.len() - 32 * 1024);
                 }
+                // Observe progress only. The live package process owns every prompt;
+                // all answers go directly to its PTY, including unfamiliar/localized
+                // maintainer-script questions and configuration-file choices.
                 for prompt in parser.push(bytes) {
-                    match prompt {
-                        ObservedPrompt::Progress { message, percent } => {
-                            interaction.emit(OperationEvent::Progress { message, percent })
-                        }
-                        ObservedPrompt::Confirm { text } => {
-                            question_sequence += 1;
-                            let answer = ask_until_answer(
-                                interaction,
-                                &format!("package-confirm-{question_sequence}"),
-                                &format!(
-                                    "This is the running package manager's actual plan:\n\n{text}\nContinue?"
-                                ),
-                                &["Continue".into(), "Cancel".into()],
-                                false,
-                            );
-                            declined |= answer == "Cancel";
-                            // A client-side preview never supplies this answer.
-                            if let Err(error) = write_input(
-                                &mut writer,
-                                if answer == "Continue" { b"y\n" } else { b"n\n" },
-                            ) {
-                                output_error.get_or_insert_with(|| error.to_string());
-                            }
-                        }
-                        ObservedPrompt::Conffile { text } => {
-                            question_sequence += 1;
-                            let answer = ask_until_answer(
-                                interaction,
-                                &format!("package-config-{question_sequence}"),
-                                &format!(
-                                    "A locally changed configuration file conflicts with the package version:\n{text}\nChoose which file to keep."
-                                ),
-                                &["Keep current".into(), "Install package version".into()],
-                                true,
-                            );
-                            if let Err(error) = write_input(
-                                &mut writer,
-                                if answer == "Keep current" {
-                                    b"n\n"
-                                } else {
-                                    b"y\n"
-                                },
-                            ) {
-                                output_error.get_or_insert_with(|| error.to_string());
-                            }
-                        }
+                    if let ObservedPrompt::Progress { message, percent } = prompt {
+                        interaction.emit(OperationEvent::Progress { message, percent });
                     }
                 }
             } else if count < 0 {
@@ -207,9 +164,6 @@ pub(super) fn execute(
         }
     }
     let status = exit_status.ok_or_else(|| ManagementError::Failed("Package manager exit status is unavailable; check the system package database before retrying".into()))?;
-    if declined {
-        return Err(ManagementError::Cancelled);
-    }
     if !status.success() {
         let output = runtime_log::sanitize_text(&String::from_utf8_lossy(&tail));
         return Err(ManagementError::Failed(format!(
@@ -228,29 +182,6 @@ pub(super) fn execute(
         "{} completed (exit code 0); refresh the package list to read the resulting state",
         backend.id()
     ))
-}
-
-fn ask_until_answer(
-    interaction: &mut dyn OperationInteraction,
-    id: &str,
-    prompt: &str,
-    choices: &[String],
-    applying: bool,
-) -> String {
-    loop {
-        match interaction.ask(id, prompt, choices, false) {
-            Ok(answer) if choices.contains(&answer) => return answer,
-            Err(ManagementError::Cancelled) if !applying => return "Cancel".into(),
-            Ok(_) => interaction.emit(OperationEvent::Output {
-                text: "Choose one of the displayed package-manager answers".into(),
-            }),
-            Err(_) => {
-                // In particular, a UI timeout must not close the PTY, kill dpkg,
-                // or silently choose a configuration replacement.
-                std::thread::sleep(Duration::from_millis(250));
-            }
-        }
-    }
 }
 
 fn size(columns: u16, rows: u16) -> PtySize {
@@ -282,154 +213,5 @@ fn safe_terminal_input(bytes: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::VecDeque;
-    use std::path::PathBuf;
-
-    #[derive(Default)]
-    struct Interaction {
-        output: Vec<u8>,
-        questions: Vec<String>,
-        disconnects: usize,
-        answers: VecDeque<String>,
-        terminal: VecDeque<Vec<u8>>,
-    }
-
-    impl OperationInteraction for Interaction {
-        fn emit(&mut self, event: OperationEvent) {
-            if let OperationEvent::TerminalOutput { bytes } = event {
-                self.output.extend(bytes);
-            }
-        }
-        fn ask(
-            &mut self,
-            _id: &str,
-            prompt: &str,
-            choices: &[String],
-            _secret: bool,
-        ) -> Result<String, ManagementError> {
-            self.questions.push(prompt.into());
-            if self.disconnects > 0 {
-                self.disconnects -= 1;
-                return Err(ManagementError::Failed("client disconnected".into()));
-            }
-            Ok(self
-                .answers
-                .pop_front()
-                .unwrap_or_else(|| choices[0].clone()))
-        }
-        fn terminal_input(
-            &mut self,
-            _timeout: Duration,
-        ) -> Result<Option<Vec<u8>>, ManagementError> {
-            Ok(self.terminal.pop_front())
-        }
-    }
-
-    fn fixture(script: &str) -> PackageCommand {
-        // Fixed test-only scripts never install or modify a package.
-        PackageCommand {
-            program: PathBuf::from("/bin/sh"),
-            args: vec!["-c".into(), script.into()],
-        }
-    }
-
-    #[test]
-    fn input_cannot_interrupt_suspend_or_eof_the_package_manager() {
-        assert_eq!(safe_terminal_input(b"hello\x03\x04\x1a\x1c\r"), b"hello\r");
-        assert_eq!(safe_terminal_input(b"\x1b[A"), b"\x1b[A");
-    }
-
-    #[test]
-    fn real_pty_keeps_waiting_for_confirmation_after_client_disconnect() {
-        let spec = fixture(
-            r#"printf 'The following NEW packages will be installed:\n dependency\nDo you want to continue? [Y/n] '; read answer; test "$answer" = y || exit 7; printf '\nprocessing: configure: demo\n'; printf "status: /etc/demo.conf : conffile-prompt : '/etc/demo.conf' '/etc/demo.conf.dpkg-new' 1 1\n"; read config; test "$config" = n || exit 8; printf 'COMPLETED-FIXTURE\n'"#,
-        );
-        let mut interaction = Interaction {
-            disconnects: 1,
-            ..Default::default()
-        };
-        let result = execute(
-            spec,
-            PackageBackend::Apt,
-            &mut interaction,
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-        assert!(result.contains("exit code 0"));
-        assert!(String::from_utf8_lossy(&interaction.output).contains("COMPLETED-FIXTURE"));
-        assert!(
-            interaction
-                .questions
-                .iter()
-                .any(|question| question.contains("dependency"))
-        );
-        assert!(
-            interaction
-                .questions
-                .iter()
-                .any(|question| question.contains("/etc/demo.conf"))
-        );
-    }
-
-    #[test]
-    fn real_pty_rejects_current_plan_without_applying_changes() {
-        let spec = fixture(
-            "printf 'Do you want to continue? [Y/n] '; read answer; test \"$answer\" = y || exit 1; printf 'UNEXPECTED-APPLY\n'",
-        );
-        let mut interaction = Interaction {
-            answers: VecDeque::from(["Cancel".into()]),
-            ..Default::default()
-        };
-        assert_eq!(
-            execute(
-                spec,
-                PackageBackend::Apt,
-                &mut interaction,
-                &AtomicBool::new(false)
-            ),
-            Err(ManagementError::Cancelled)
-        );
-        assert!(!String::from_utf8_lossy(&interaction.output).contains("UNEXPECTED-APPLY"));
-    }
-
-    #[test]
-    fn real_pty_reports_actual_script_failure_and_partial_state() {
-        let spec = fixture(
-            "printf 'processing: configure: demo\n'; printf 'maintainer script failed\n'; exit 23",
-        );
-        let mut interaction = Interaction::default();
-        let error = execute(
-            spec,
-            PackageBackend::Apt,
-            &mut interaction,
-            &AtomicBool::new(false),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("23"));
-        assert!(error.contains("partially applied"));
-        assert!(error.contains("maintainer script failed"));
-    }
-
-    #[test]
-    fn script_interaction_is_delivered_to_the_pty_without_signal_keys() {
-        let spec = fixture(
-            "printf 'processing: configure: demo\n'; read answer; test \"$answer\" = expected || exit 31; printf 'SCRIPT-ANSWERED\n'",
-        );
-        let mut interaction = Interaction {
-            terminal: VecDeque::from([b"\x03\x1aexpected\r".to_vec()]),
-            ..Default::default()
-        };
-        let result = execute(
-            spec,
-            PackageBackend::Apt,
-            &mut interaction,
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-        assert!(result.contains("exit code 0"));
-        assert!(String::from_utf8_lossy(&interaction.output).contains("SCRIPT-ANSWERED"));
-    }
-}
+#[path = "../../../tests/unit/management/packages/runner_tests.rs"]
+mod tests;

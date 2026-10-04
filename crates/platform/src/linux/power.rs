@@ -65,9 +65,14 @@ pub fn execute_with_interaction(
         PowerAction::PowerOff => "PowerOff",
         PowerAction::Reboot => "Reboot",
     };
+    // With AutoAdmin, first ask without opening a desktop agent. Only an
+    // explicit unresolved challenge permits retrying with the embedded agent.
+    let mut interactive = !interaction.as_ref().is_some_and(|i| i.embedded());
     request_with_agent(
         || {
-            proxy.call(method, &(true,)).map_err(|error| {
+            let result = proxy.call(method, &(interactive,));
+            interactive = true;
+            result.map_err(|error| {
                 if matches!(&error, zbus::Error::MethodError(name, _, _)
                     if needs_agent(name.as_str()))
                 {

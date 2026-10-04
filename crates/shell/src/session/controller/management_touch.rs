@@ -147,6 +147,10 @@ impl ShellSession {
                 }
             }
             ui::ManagementControl::Terminal => {
+                if let Some(job) = self.management_state.auto_admin_job.clone() {
+                    self.show_auto_admin_job(job);
+                    return;
+                }
                 self.management_state.terminal_mode = !self.management_state.terminal_mode;
                 self.resize_management_terminal();
             }

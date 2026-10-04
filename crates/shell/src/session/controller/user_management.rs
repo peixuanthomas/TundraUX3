@@ -3,7 +3,7 @@ impl ShellSession {
     pub(in crate::session) fn refresh_user_management(&mut self) -> bool {
         #[cfg(target_os = "linux")]
         if self.identity_backend == identity::IdentityBackend::Linux {
-            return self.start_linux_user_task(None, None, |_, _| Ok(()));
+            return self.start_linux_user_task(None, None, None, |_, _| Ok(()));
         }
 
         let Some(storage) = self.storage_manager.clone() else {
@@ -155,6 +155,7 @@ impl ShellSession {
             && self.is_current_username(&username)
         {
             self.start_linux_user_task(
+                Some(i18n::tr!("aa-user-password", user = username.clone())),
                 Some(i18n::msg!("shell-updated-password-for-arg1", arg1 = username.clone()).into()),
                 None,
                 move |service, actor| service.set_user_password(actor, &username, ""),
@@ -180,6 +181,7 @@ impl ShellSession {
         if self.identity_backend == identity::IdentityBackend::Linux {
             if let Some(username) = self.selected_managed_username() {
                 self.start_linux_user_task(
+                    Some(i18n::tr!("aa-user-disable", user = username.clone())),
                     Some(
                         i18n::msg!(
                             "shell-success-prefix-username",
@@ -214,6 +216,7 @@ impl ShellSession {
         if self.identity_backend == identity::IdentityBackend::Linux {
             if let Some(username) = self.selected_managed_username() {
                 self.start_linux_user_task(
+                    Some(i18n::tr!("aa-user-enable", user = username.clone())),
                     Some(
                         i18n::msg!(
                             "shell-success-prefix-username",
@@ -256,6 +259,11 @@ impl ShellSession {
                     UserRole::Admin
                 };
                 self.start_linux_user_task(
+                    Some(i18n::tr!(
+                        "aa-user-role",
+                        user = user.username.clone(),
+                        role = format!("{role:?}")
+                    )),
                     Some(
                         i18n::msg!(
                             "shell-success-prefix-username",
@@ -335,6 +343,11 @@ impl ShellSession {
                 UserManagementMode::Browse => {}
                 UserManagementMode::Create(form) => {
                     self.start_linux_user_task(
+                        Some(i18n::tr!(
+                            "aa-user-create",
+                            user = form.username.clone(),
+                            role = format!("{:?}", form.role)
+                        )),
                         Some(i18n::msg!("shell-created-arg1", arg1 = form.username.clone()).into()),
                         Some(form.username.trim().to_string()),
                         move |service, actor| {
@@ -352,6 +365,11 @@ impl ShellSession {
                 }
                 UserManagementMode::EditInfo(form) => {
                     self.start_linux_user_task(
+                        Some(i18n::tr!(
+                            "aa-user-rename",
+                            user = form.username.clone(),
+                            name = form.display_name.clone()
+                        )),
                         Some(i18n::msg!("shell-updated-arg1", arg1 = form.username.clone()).into()),
                         None,
                         move |service, actor| {
@@ -363,6 +381,7 @@ impl ShellSession {
                 }
                 UserManagementMode::Password(form) => {
                     self.start_linux_user_task(
+                        Some(i18n::tr!("aa-user-password", user = form.username.clone())),
                         Some(
                             i18n::msg!(
                                 "shell-updated-password-for-arg1",
@@ -464,6 +483,7 @@ impl ShellSession {
         if self.identity_backend == identity::IdentityBackend::Linux {
             if let Some(username) = self.selected_managed_username() {
                 self.start_linux_user_task(
+                    Some(i18n::tr!("aa-user-delete", user = username.clone())),
                     Some(i18n::msg!("shell-deleted-username", username = username.clone()).into()),
                     None,
                     move |service, actor| service.delete_user(actor, &username),
@@ -836,6 +856,11 @@ impl ShellSession {
         let Some(username) = self.selected_managed_username() else {
             return;
         };
+        #[cfg(target_os = "linux")]
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            self.delete_selected_user();
+            return;
+        }
         let deleting_current_user = self.is_current_username(&username);
         let title = if deleting_current_user {
             i18n::LocalizedText::from(i18n::msg!("shell-delete-your-account"))

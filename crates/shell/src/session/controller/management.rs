@@ -91,6 +91,7 @@ pub(in crate::session) struct ManagementState {
     details_only: bool,
     query_job: Option<ManagementJob>,
     operation_job: Option<ManagementJob>,
+    auto_admin_job: Option<AutoAdminJob>,
     form: Option<ManagementEditor>,
     parser: Option<ManagementTerminal>,
     terminal_mode: bool,
@@ -431,6 +432,13 @@ impl ShellSession {
                     choices,
                     secret,
                 } => {
+                    if self.management_state.auto_admin_job.is_some() {
+                        // The same question is already displayed in AutoAdmin's terminal.
+                        if !self.auto_admin_visible() {
+                            self.notify_toast(i18n::msg!("aa-input-required"));
+                        }
+                        continue;
+                    }
                     self.reset_management_form_view();
                     self.management_state.terminal_mode = false;
                     if !visible {
@@ -565,7 +573,7 @@ impl ShellSession {
             .as_ref()
             .map(|r| r.cells.join(" · "))
             .unwrap_or_default();
-        if action.confirm || !action.fields.is_empty() {
+        if (action.confirm && !action.privileged) || !action.fields.is_empty() {
             self.management_state.form = Some(ManagementEditor {
                 message_scroll: 0,
                 title: management_label(&action.id, &action.label),
@@ -626,13 +634,25 @@ impl ShellSession {
         }
         if action.id == "recover" {
             if let Some(socket) = values.get("socket") {
-                self.start_management_operation(None, false, Some(PathBuf::from(socket)));
+                self.start_management_operation(None, false, Some(PathBuf::from(socket)), None);
             }
             return;
         }
         let Some(kind) = self.management_state.kind else {
             return;
         };
+        let description = std::iter::once(management_title(kind))
+            .chain(std::iter::once(management_label(&action.id, &action.label)))
+            .chain(row.as_ref().map(|r| r.id.clone()))
+            .chain(
+                action
+                    .fields
+                    .iter()
+                    .filter(|field| !field.secret)
+                    .map(|field| format!("{}: {}", field.label, field.value)),
+            )
+            .collect::<Vec<_>>()
+            .join("\n");
         let command = ManagementCommand {
             kind,
             action: action.id,
@@ -640,7 +660,7 @@ impl ShellSession {
             identity: row.as_ref().map(|r| r.identity.clone()).unwrap_or_default(),
             values,
         };
-        self.start_management_operation(Some(command), action.privileged, None);
+        self.start_management_operation(Some(command), action.privileged, None, Some(description));
     }
     fn management_send(&self, input: OperationInput) {
         if let Some(job) = &self.management_state.operation_job {
@@ -653,11 +673,20 @@ impl ShellSession {
         command: Option<ManagementCommand>,
         privileged: bool,
         socket: Option<PathBuf>,
+        description: Option<String>,
     ) {
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
             return;
         };
         let (job, rx) = self.management_job();
+        let description = description.unwrap_or_else(|| i18n::tr!("aa-reconnect"));
+        let Some(aa) = self.begin_auto_admin(description, privileged, job.0.responses.clone())
+        else {
+            return;
+        };
+        self.management_state.auto_admin_job = Some(aa.clone());
+        let worker_aa = aa.clone();
+        let language = self.language.clone();
         let output = Arc::downgrade(&job.0);
         let cancelled = job.0.cancelled.clone();
         let mut input = Some((command, socket, rx));
@@ -670,10 +699,12 @@ impl ShellSession {
         ))
         .expect("fixed management task name");
         match group.spawn_thread(TaskSpec::one_shot(task), move || {
+            let _language = i18n::enter_snapshot(language.clone());
             let Some((command, socket, rx)) = input.take() else {
                 return;
             };
             let emit = |event| {
+                worker_aa.emit(&event);
                 let mut event = Some(event);
                 while !cancelled.load(Ordering::Relaxed) {
                     let Some(shared) = output.upgrade() else {
@@ -689,8 +720,9 @@ impl ShellSession {
                     std::thread::sleep(Duration::from_millis(10));
                 }
             };
-            let result =
-                super::management_client::run(command, privileged, socket, rx, &cancelled, &emit);
+            let result = worker_aa.wait_for_approval().and_then(|()| {
+                super::management_client::run(command, privileged, socket, rx, &cancelled, &emit)
+            });
             if let Err(error) = result {
                 emit(OperationEvent::Disconnected {
                     message: error.to_string(),
@@ -707,7 +739,10 @@ impl ShellSession {
                 self.management_state.status = i18n::tr!("management-working");
                 self.resize_management_terminal();
             }
-            Err(error) => self.management_state.status = error.to_string(),
+            Err(error) => {
+                aa.finish(Err(error.to_string()));
+                self.management_state.status = error.to_string();
+            }
         }
     }
 
@@ -1161,6 +1196,10 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn resize_management_terminal(&mut self) {
+        if self.management_state.auto_admin_job.is_some() {
+            self.resize_auto_admin();
+            return;
+        }
         let area = ui::management_layout(self.management_main(), &self.to_management_view_model())
             .output_text;
         let rows = area.height.max(1);

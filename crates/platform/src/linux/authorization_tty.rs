@@ -1,4 +1,4 @@
-//! Fedora's text agent owns terminal input directly; Tundra never pipes its prompts.
+//! System text authentication agent, on the foreground TTY or AutoAdmin's private PTY.
 use crate::service::ServiceError;
 use std::{
     fs::{File, OpenOptions},
@@ -15,13 +15,20 @@ pub struct TextAgent {
 }
 impl TextAgent {
     pub fn register() -> Result<Self, ServiceError> {
+        Self::register_with_terminal(controlling_terminal()?, false)
+    }
+    /// The caller owns this private PTY. The agent gets a separate controlling
+    /// terminal; its password echo and input modes cannot alter the Shell TTY.
+    pub fn register_embedded(tty: File) -> Result<Self, ServiceError> {
+        Self::register_with_terminal(tty, true)
+    }
+    fn register_with_terminal(tty: File, embedded: bool) -> Result<Self, ServiceError> {
         // Fedora 43 accepts agent registration for unix-process/session subjects only.
         // Bind our own live process, whose stable D-Bus connection makes the request.
         let stat = std::fs::read_to_string("/proc/self/stat")
             .map_err(|_| ServiceError::ServiceUnavailable)?;
         let started = process_start_time(&stat)?;
         let process = format!("{},{}", std::process::id(), started);
-        let tty = controlling_terminal()?;
         let mut descriptors = [-1; 2];
         // The registration pipe contains only pkttyagent's readiness notification.
         if unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0
@@ -33,13 +40,7 @@ impl TextAgent {
         let notify_fd = writer.as_raw_fd();
         let mut command = Command::new("/usr/bin/pkttyagent");
         command
-            .args([
-                "--process",
-                &process,
-                "--notify-fd",
-                &notify_fd.to_string(),
-                "--fallback",
-            ])
+            .args(["--process", &process, "--notify-fd", &notify_fd.to_string()])
             .stdin(Stdio::from(
                 tty.try_clone()
                     .map_err(|_| ServiceError::ServiceUnavailable)?,
@@ -49,8 +50,16 @@ impl TextAgent {
                     .map_err(|_| ServiceError::ServiceUnavailable)?,
             ))
             .stderr(Stdio::from(tty));
+        // A fallback agent loses to the desktop agent. AutoAdmin registers for
+        // this process only and must receive its own authentication prompts.
+        if !embedded {
+            command.arg("--fallback");
+        }
         unsafe {
             command.pre_exec(move || {
+                if embedded && (libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0) {
+                    return Err(std::io::Error::last_os_error());
+                }
                 if libc::fcntl(notify_fd, libc::F_SETFD, 0) < 0 {
                     return Err(std::io::Error::last_os_error());
                 }

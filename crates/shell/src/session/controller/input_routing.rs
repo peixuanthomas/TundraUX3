@@ -254,6 +254,9 @@ impl ShellSession {
         &self,
         input: InputEvent,
     ) -> InputEvent {
+        if self.auto_admin_visible() {
+            return input;
+        }
         if let InputEvent::Mouse(mouse) = &input
             && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
             && !self.notification_has_active_modal()

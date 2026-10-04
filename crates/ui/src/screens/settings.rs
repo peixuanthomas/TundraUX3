@@ -80,6 +80,7 @@ impl SettingsCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsField {
+    AutoAdmin,
     SoundOutputDevice,
     SoundOutputVolume,
     SoundOutputMute,

@@ -1,4 +1,6 @@
 pub(crate) mod auth;
+mod auto_admin;
+pub use auto_admin::*;
 pub(crate) mod clock;
 pub(crate) mod command_line;
 mod context;

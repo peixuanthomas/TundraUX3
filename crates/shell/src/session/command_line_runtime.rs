@@ -1171,7 +1171,7 @@ fn is_emergency_termination(key: &KeyInput) -> bool {
         && !key.modifiers.meta
 }
 
-fn key_event_bytes(key: &KeyInput, application_cursor: bool) -> Option<Vec<u8>> {
+pub(super) fn key_event_bytes(key: &KeyInput, application_cursor: bool) -> Option<Vec<u8>> {
     let control = key.modifiers.is_control();
     let mut bytes = match &key.key {
         InputKey::Char(character) if control => {

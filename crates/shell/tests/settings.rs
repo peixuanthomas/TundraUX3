@@ -365,6 +365,28 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
         .iter()
         .flat_map(|card| &card.items)
         .collect::<Vec<_>>();
+    assert_eq!(items[0].field, SettingsField::AutoAdmin);
+    assert_eq!(
+        manager.load_config().unwrap().auto_admin,
+        storage::AutoAdminPolicy::Manual
+    );
+    press(&mut state, &platform, "Right");
+    assert_eq!(
+        manager.load_config().unwrap().auto_admin,
+        storage::AutoAdminPolicy::Automatic
+    );
+    press(&mut state, &platform, "Right");
+    assert_eq!(
+        manager.load_config().unwrap().auto_admin,
+        storage::AutoAdminPolicy::Deny
+    );
+    press(&mut state, &platform, "Right");
+    assert_eq!(
+        manager.load_config().unwrap().auto_admin,
+        storage::AutoAdminPolicy::Manual
+    );
+    press(&mut state, &platform, "Down");
+    let items = &items[1..];
     assert_eq!(items[0].field, SettingsField::SystemLowAvailable);
     assert_eq!(items[0].value, "5 GiB");
     assert_eq!(items[0].kind, ui::SettingsControlKind::Stepper);

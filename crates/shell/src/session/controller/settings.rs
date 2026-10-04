@@ -25,6 +25,7 @@ pub(in crate::session) const REGION_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::RestoreDefaults,
 ];
 pub(in crate::session) const SYSTEM_SETTINGS_FIELDS: &[ui::SettingsField] = &[
+    ui::SettingsField::AutoAdmin,
     ui::SettingsField::SystemLowAvailable,
     ui::SettingsField::SystemLowPercentage,
     ui::SettingsField::SystemCriticalAvailable,
@@ -664,6 +665,14 @@ impl ShellSession {
         };
         let increase = direction >= 0;
         match field {
+            ui::SettingsField::AutoAdmin => {
+                use storage::AutoAdminPolicy::*;
+                config.auto_admin = match (config.auto_admin, increase) {
+                    (Manual, true) | (Deny, false) => Automatic,
+                    (Automatic, true) | (Manual, false) => Deny,
+                    _ => Manual,
+                };
+            }
             ui::SettingsField::ShowHidden => {
                 config.explorer.show_hidden = !config.explorer.show_hidden
             }
@@ -2116,7 +2125,10 @@ impl ShellSession {
                 config.time_sync = defaults.time_sync;
                 config.weather_location = defaults.weather_location;
             }
-            ui::SettingsCategory::System => config.system_status = defaults.system_status,
+            ui::SettingsCategory::System => {
+                config.system_status = defaults.system_status;
+                config.auto_admin = defaults.auto_admin;
+            }
             ui::SettingsCategory::FileExplorer => config.explorer = defaults.explorer,
             ui::SettingsCategory::Editor => config.editor = defaults.editor,
             ui::SettingsCategory::Appearance => unreachable!(),
@@ -2772,6 +2784,19 @@ pub(in crate::session) fn settings_cards(
             Card::new(i18n::tr!("settings-reset"), vec![reset(global_enabled)]),
         ],
         ui::SettingsCategory::System => vec![
+            Card::new(
+                "AutoAdmin (AA)",
+                vec![
+                    Item::new(
+                        Field::AutoAdmin,
+                        i18n::tr!("aa-policy"),
+                        super::auto_admin::policy_label(config.auto_admin),
+                        i18n::tr!("aa-policy-help"),
+                        Kind::Cycle,
+                    )
+                    .enabled(global_enabled),
+                ],
+            ),
             Card::new(
                 i18n::tr!("settings-storage-pressure"),
                 vec![

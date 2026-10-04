@@ -111,6 +111,8 @@ impl ShellSession {
         self.reset_system_status_trackers();
         self.logs_state = LogsUiState::default();
         self.management_state = ManagementState::default();
+        self.stop_auto_admin();
+        self.auto_admin = AutoAdminState::default();
         self.management_background.clear();
         self.launcher_drag = None;
         self.replace_explorer_state(None);

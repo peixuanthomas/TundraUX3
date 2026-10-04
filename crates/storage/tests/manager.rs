@@ -114,6 +114,7 @@ fn toml_and_json_documents_round_trip() {
     let config = StorageConfig {
         schema_version: SCHEMA_VERSION,
         linux_update_mode: storage::LinuxUpdateMode::Beta,
+        auto_admin: storage::AutoAdminPolicy::Manual,
         theme: "light".to_string(),
         language: "zh-Hans".to_string(),
         timezone: "Asia/Shanghai".to_string(),

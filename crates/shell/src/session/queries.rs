@@ -225,6 +225,15 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn active_overlay_descriptor(&self) -> Option<ShellOverlayDescriptor> {
+        if self.auto_admin_visible() {
+            return Some(ShellOverlayDescriptor {
+                kind: ui::MotionOverlayKind::Dialog,
+                id: "auto-admin".into(),
+                category: ShellOverlayCategory::ShellModal,
+                target: Some(RoutedTarget::Global),
+                immediate: true,
+            });
+        }
         let dialog = |id: String, category, component| ShellOverlayDescriptor {
             kind: ui::MotionOverlayKind::Dialog,
             id,

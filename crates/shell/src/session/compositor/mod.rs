@@ -241,6 +241,9 @@ impl ScreenCompositor {
                 context,
             );
         }
+        if let Some(auto_admin) = state.auto_admin_view() {
+            ui::render_auto_admin(frame, bounds, &auto_admin, context);
+        }
         state.button_regions = buttons.regions();
         self.motion.capture_overlay(frame.buffer_mut(), state);
         self.motion

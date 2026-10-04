@@ -28,6 +28,7 @@ impl Eq for UserManagementJob {}
 impl ShellSession {
     pub(in crate::session) fn start_linux_user_task(
         &mut self,
+        description: Option<String>,
         message: Option<i18n::LocalizedText>,
         select: Option<String>,
         operation: impl FnOnce(&UserService, &AuthSession) -> Result<(), CoreError> + Send + 'static,
@@ -49,11 +50,20 @@ impl ShellSession {
         };
         let mut service = UserService::with_debug_policy(storage, self.debug_policy)
             .with_backend(self.identity_backend);
-        if let Ok(interaction) = self.settings_task_runtime.shared.authorization.lock()
-            && let Some(interaction) = interaction.as_ref()
-        {
-            service = service.with_authorization_interaction(interaction.clone());
-        }
+        let aa = if let Some(description) = description {
+            let (responses, _inputs) = mpsc::channel();
+            let Some(job) = self.begin_auto_admin(description, true, responses) else {
+                return false;
+            };
+            service = service.with_authorization_interaction(Arc::new(
+                super::auto_admin::AutoAdminAuthorization::new(job.clone()),
+            ));
+            Some(job)
+        } else {
+            None
+        };
+        let worker_aa = aa.clone();
+        let language = self.language.clone();
         let shared = Arc::new(Job {
             result: Mutex::new(None),
             worker: Mutex::new(None),
@@ -64,10 +74,30 @@ impl ShellSession {
         match group.spawn_thread(
             TaskSpec::one_shot(TaskId::from_static("linux-user-management")),
             move || {
+                let _language = i18n::enter_snapshot(language.clone());
                 let Some(operation) = operation.take() else {
                     return;
                 };
-                let result = operation(&service, &actor);
+                let result = worker_aa
+                    .as_ref()
+                    .map_or(Ok(()), |job| {
+                        job.wait_for_approval()
+                            .map_err(|e| CoreError::SystemIdentity(e.to_string()))
+                    })
+                    .and_then(|()| operation(&service, &actor));
+                if let Some(job) = &worker_aa {
+                    job.finish(
+                        result
+                            .as_ref()
+                            .map(|()| {
+                                message
+                                    .as_ref()
+                                    .map(i18n::LocalizedText::render_current)
+                                    .unwrap_or_else(|| i18n::tr!("aa-completed"))
+                            })
+                            .map_err(ToString::to_string),
+                    );
+                }
                 let users = service.list_accessible_users(&actor);
                 if let Some(output) = output.upgrade()
                     && let Ok(mut slot) = output.result.lock()
@@ -90,6 +120,9 @@ impl ShellSession {
                 true
             }
             Err(error) => {
+                if let Some(job) = &aa {
+                    job.finish(Err(error.to_string()));
+                }
                 self.report_user_management_refresh_error(error.to_string());
                 false
             }

@@ -1,4 +1,6 @@
 mod account;
+pub(super) mod auto_admin;
+pub(super) use auto_admin::{AutoAdminJob, AutoAdminState};
 mod clock;
 mod command_dispatch;
 mod command_line;

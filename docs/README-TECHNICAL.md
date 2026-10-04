@@ -304,7 +304,17 @@ Linux 首页新增服务、进程、软件包、网络、磁盘五个独立入�
 
 `platform::management` 定义查询、固定操作和任务事件，Shell 通过受管理的后台线程读取，UI 只负责显示和输入。需要权限的操作经 sudo 启动 `tundra-cli __system-helper`，请求通过标准输入发送，密码不放在命令参数中。助手保存本次任务、Unix socket 和有限的输出，Shell 退出后可重新连接。内部入口在普通启动流程之前处理，不会以 root 打开整个桌面。
 
-网络更改先保存原配置，再通过系统 systemd 服务启动独立恢复助手 `__network-rollback`，应用后等待 120 秒确认。进程信号使用 pidfd，并核对进程启动标识；调整 nice 只作用于主线程。软件包直接运行 APT/dpkg 或 DNF 的实际事务，常见问题以表单回答，其余交互保留在页面内的终端。磁盘扫描保持原用户权限，不跟随符号链接或越过挂载点。
+网络更改先保存原配置，再通过系统 systemd 服务启动独立恢复助手 `__network-rollback`，应用后等待 120 秒确认。进程信号使用 pidfd，并核对进程启动标识；调整 nice 只作用于主线程。软件包直接运行 APT/dpkg 或 DNF 的实际事务，所有提示原样显示在 AutoAdmin 内嵌终端；输入直接送给软件管理器，不再把 y/n 或配置文件问题改造成 Continue/Cancel 表单。磁盘扫描保持原用户权限，不跟随符号链接或越过挂载点。
+
+### AutoAdmin（AA）
+
+设置 → 系统 → AutoAdmin 保存 `config.toml` 的 `auto_admin`：`manual`（默认，手动批准）、`automatic`（自动批准）、`deny`（一律禁止）。手动模式先显示大弹窗，列出操作、目标和非密码参数，默认选中“拒绝”；同意后才启动需要权限的操作。禁止模式在启动系统命令之前拒绝。自动模式只省去 AA 确认，不代替 sudo/polkit 授权，也不替用户回答命令中的问题。无法读取配置时拒绝新请求。
+
+内置服务、进程、软件包、网络、磁盘操作中的提权步骤，以及 Linux 账户修改和电脑关机/重启，都从 AA 进入。操作参数仍在相应页面填写，管理员确认和执行过程统一显示在 AA。管理页面的终端按钮或 Ctrl+T 会重新打开该任务的 AA。普通查询不要求批准。AA 不修改系统授权策略，也不拦截用户自己在 Command Line 中输入的命令或外部程序的系统弹窗。
+
+同意后，弹窗显示实时输出，接收文字、回车、退格、方向键、功能键、组合键和粘贴。软件包任务使用真正的 PTY（让子程序像在独立终端中一样运行）；y/n、配置文件冲突和安装脚本的问题直接在里面回答。sudo 的密码和后端发出的选项问题也在 AA 中输入，密码用圆点隐藏，选项按显示的编号加回车回答。AA 输入不写入按键诊断或操作描述；自动批准不会保存密码。
+
+确认阶段 Tab/左右键切换同意与拒绝，Enter 确认，Esc 拒绝；操作运行时 Esc 属于子终端。Shift+PageUp/PageDown 和滚轮查看历史。F12 或“后台运行”收起弹窗，F12 重新打开最近任务；收起尚未批准的请求会拒绝它。任务完成后保留输出，Enter/Esc 或“关闭”退出。一次只接受一个尚未结束的 AA 请求，避免把输入送到其他任务。软件包写入不会因关闭弹窗、退出页面或 Ctrl+C/Ctrl+D/Ctrl+Z 而被强行中断；需要取消时，在软件管理器自己的确认处回答 n。Shell 退出后的助手任务仍可通过管理页面“重新连接”接回。
 
 ### Weathr 锁屏
 
@@ -423,7 +433,7 @@ Linux 的 User Management 通过 AccountsService 管理真实的本地登录账�
 
 Settings 中的个人外观和仪表板偏好只核对当前进程用户并读写本地配置，不查询 AccountsService。系统账户服务缺失或暂时不可用时，个人设置仍可打开和保存；系统账户管理单独报告错误。
 
-账户读写在后台执行。受保护的修改交给 AccountsService 与 polkit，沿用图形授权代理或终端授权提示。修改自己的密码使用 `/usr/bin/passwd`，由系统读取旧密码、新密码并检查密码规则；UX 暂停读取键盘，完成或取消后恢复终端。管理员设置其他用户密码时，通过 libxcrypt 生成随机盐的 SHA-512 crypt 值交给 AccountsService，不保存系统密码或把密码放入命令行参数。该操作按 AccountsService 的规则解锁目标账户，密码表单明确提示这一点。
+账户读写在后台执行。受保护的修改先通过 AutoAdmin，再交给 AccountsService 与 polkit。修改自己的密码使用 `/usr/bin/passwd`，由系统读取旧密码、新密码并检查密码规则；输入输出使用 AA 的独立终端，主界面继续处理绘制和事件。管理员设置其他用户密码时，通过 libxcrypt 生成随机盐的 SHA-512 crypt 值交给 AccountsService，不保存系统密码或把密码放入命令行参数。该操作按 AccountsService 的规则解锁目标账户，密码表单明确提示这一点。
 
 锁定操作仅锁定密码登录，不结束已有会话，也不禁止密钥登录。当前账户不能被删除、锁定或降级，避免移除本会话的管理权限；删除其他账户始终保留主目录和文件。创建账户后若设置密码失败，会明确报告部分完成并刷新列表，用户可继续设置密码，不自动删除新账户。未安装 AccountsService、libxcrypt 或授权不可用时显示错误；不以 sudo 重启 UX，也不回退到修改 UX 本地账户。Windows/macOS 保持原有行为。
 
@@ -443,11 +453,9 @@ Linux 自更新只支持当前用户拥有且可写的便携目录，目录中�
 `tundra-shell` 和 `tundra-cli`。检查、准备、替换和恢复均校验目录与文件权限。
 不再提供 PackageKit、apt、pacman 或 RPM 更新；系统目录中的旧安装不会被直接替换。
 
-系统授权优先使用已有 polkit agent。确有授权挑战且交互检查确认没有可用 agent 时，才在安全前台
-controlling TTY 上启动 Fedora 的 `pkttyagent`。它绑定当前请求进程的 PID 与启动时间，保持原请求连接存活，并用
-`--notify-fd` 等待注册，直接读取终端。Fedora 43 的 `--fallback` 依赖现有登录会话，直接 `podman exec` 的进程不能替代登录会话认证测试。主事件循环在授权交接期间不调用终端输入读取；RAII 在
-完成、失败、取消和 agent 退出时恢复正常 termios 基线，再恢复 raw、alternate screen、鼠标、
-焦点、粘贴、光标和重绘。Tundra 不记录密码或认证响应。logind 电源操作复用同一终端与代理交接；由 logind 选择基础、多会话或抑制器策略，只有其明确返回 `InteractiveAuthorizationRequired` 才在注册 fallback 后重试同一请求一次。拒绝、取消、超时和断线不会重放电源操作。日志读取遵守普通用户权限，不执行 root 命令回退。
+Shell 的 AutoAdmin 在需要认证时，为当前进程注册 `pkttyagent`，绑定 PID 与启动时间，并通过 `--notify-fd` 等待注册完成。认证代理和 `/usr/bin/passwd` 使用独立的控制终端，密码回显由系统程序控制；它们不会接管 Shell 的原终端。完成、失败或取消后仅清理认证子进程。AA 为当前进程注册的代理不带 `--fallback`，以免提示仍交给桌面代理；这个优先级规则见 [polkit 的代理注册说明](https://polkit.pages.freedesktop.org/polkit/eggdbus-interface-org.freedesktop.PolicyKit1.Authority.html)。其他调用方仍可使用已有系统代理。
+
+logind 仍选择基础、多会话或抑制器策略。AA 先发出不打开桌面授权窗口的请求，只有明确返回 `InteractiveAuthorizationRequired` 才注册内嵌代理，并对同一请求重试一次；拒绝、取消、超时和断线不会重放电源操作。日志读取遵守普通用户权限，不执行 root 命令回退。
 
 便携包不安装系统账户、PAM 配置或 system service。诊断只观察身份、目录权限、总线、
 logind、polkit、pkttyagent 和便携安装条件，不自动提权。

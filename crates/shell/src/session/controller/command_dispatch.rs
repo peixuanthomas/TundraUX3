@@ -26,6 +26,9 @@ impl ShellSession {
         received_at: Instant,
     ) -> ShellAction {
         let _language = i18n::enter_snapshot(self.language.clone());
+        if self.handle_auto_admin_input(&input) {
+            return ShellAction::Redraw;
+        }
         let Some(input) = self.prepare_button_input(input, received_at) else {
             return ShellAction::Redraw;
         };
@@ -294,6 +297,7 @@ impl ShellSession {
                 self.drain_diagnostics_events();
                 self.poll_logs_tasks();
                 self.poll_management();
+                self.poll_auto_admin();
                 #[cfg(target_os = "linux")]
                 self.poll_user_management_task();
                 self.poll_editor_background_tasks(platform);

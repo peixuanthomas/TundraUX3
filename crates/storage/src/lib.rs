@@ -18,7 +18,7 @@ mod user_document;
 
 pub use clock_document::{ClockDocument, ClockEntryRecord, ClockProfile};
 pub use config_document::{
-    ANIMATION_SPEED_STEP_PERCENT, AccentColor, AppearanceConfig, BorderColor,
+    ANIMATION_SPEED_STEP_PERCENT, AccentColor, AppearanceConfig, AutoAdminPolicy, BorderColor,
     BorderColorParseError, BorderShape, DEFAULT_ACCENT_COLOR, DEFAULT_ANIMATION_SPEED_PERCENT,
     DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS, EditorConfig, ExplorerConfig, ExplorerDateZone,
     ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, IconDisplayMode, LauncherConfig,

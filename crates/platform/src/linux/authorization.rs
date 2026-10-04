@@ -24,12 +24,17 @@ impl Action {
     }
 }
 
-/// Implemented by the terminal owner. No password or prompt response crosses this interface.
+/// Implemented by the terminal owner. Password bytes stay in the terminal transport,
+/// never in this authorization control interface.
 pub trait Interaction: Send + Sync {
+    /// The terminal owner supplies an embedded agent instead of a desktop prompt.
+    fn embedded(&self) -> bool {
+        false
+    }
     fn begin(&self) -> Result<(), ServiceError>;
     fn fallback(&self) -> Result<(), ServiceError>;
     fn finish(&self);
-    /// Run the system password conversation while the terminal owner suspends its UI.
+    /// Run the system password conversation in the terminal supplied by the owner.
     fn change_own_password(&self) -> Result<(), ServiceError> {
         Err(ServiceError::Unsupported)
     }
@@ -157,6 +162,10 @@ pub(super) fn prepare_using(
         return Ok(None);
     };
     let lease = Lease::begin(interaction)?;
+    if lease.interaction.embedded() {
+        lease.fallback()?;
+        return Ok(Some(lease));
+    }
     let decision = check(connection, authority_connection, action, true)?;
     if lease.interaction.cancelled() {
         return Err(ServiceError::AuthorizationCancelled);

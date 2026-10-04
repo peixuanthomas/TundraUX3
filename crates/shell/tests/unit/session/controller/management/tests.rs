@@ -12,6 +12,11 @@ fn shortcut_action_state(kind: ManagementKind, id: &str) -> ShellSession {
             label: id.into(),
             confirm: true,
             privileged: true,
+            fields: vec![ManagementField {
+                id: "option".into(),
+                label: "Option".into(),
+                ..Default::default()
+            }],
             ..Default::default()
         }],
         ..Default::default()
@@ -37,7 +42,7 @@ fn click_management_point(session: &mut ShellSession, point: (u16, u16)) {
 }
 
 #[test]
-fn management_action_shortcuts_match_clicks_and_preserve_confirmation_and_identity() {
+fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
     for (kind, ids) in [
         (
             ManagementKind::Services,
@@ -107,7 +112,7 @@ fn management_action_shortcuts_match_clicks_and_preserve_confirmation_and_identi
             );
             assert!(
                 keyed.management_state.form.is_some(),
-                "{id} still requires confirmation"
+                "{id} still collects operation fields before AutoAdmin approval"
             );
             assert!(
                 keyed.management_state.operation_job.is_none(),
@@ -542,6 +547,22 @@ fn state() -> ShellSession {
     state.management_state.kind = Some(ManagementKind::Services);
     state.management_state.query = Some(ManagementQuery::new(ManagementKind::Services));
     state
+}
+
+#[test]
+fn terminal_button_reopens_auto_admin_instead_of_a_second_input_surface() {
+    let mut state = state();
+    let (responses, _inputs) = mpsc::channel();
+    let job = state
+        .begin_auto_admin("Operation".into(), false, responses)
+        .unwrap();
+    state.management_state.auto_admin_job = Some(job.clone());
+    state.close_auto_admin();
+    assert!(!state.auto_admin_visible());
+    state.management_touch_control(ui::ManagementControl::Terminal);
+    assert!(state.auto_admin_visible());
+    assert!(!state.management_state.terminal_mode);
+    assert!(job.running());
 }
 
 #[test]

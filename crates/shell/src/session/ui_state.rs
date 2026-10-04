@@ -674,6 +674,7 @@ pub struct UiSessionState {
     pub(super) diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     pub(super) logs_state: LogsUiState,
     pub(super) management_state: ManagementState,
+    pub(super) auto_admin: AutoAdminState,
     pub(super) management_background:
         HashMap<platform::management::ManagementKind, ManagementState>,
     pub(super) diagnostics_tab: ui::DiagnosticsTab,

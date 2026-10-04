@@ -22,9 +22,20 @@ pub enum LinuxUpdateMode {
     Beta,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoAdminPolicy {
+    Automatic,
+    #[default]
+    Manual,
+    Deny,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub schema_version: u32,
+    #[serde(default)]
+    pub auto_admin: AutoAdminPolicy,
     #[serde(default)]
     pub linux_update_mode: LinuxUpdateMode,
     #[serde(default = "default_theme")]
@@ -88,6 +99,7 @@ impl Default for StorageConfig {
         Self {
             schema_version: SCHEMA_VERSION,
             linux_update_mode: LinuxUpdateMode::default(),
+            auto_admin: AutoAdminPolicy::default(),
             theme: default_theme(),
             language: default_language(),
             timezone: default_timezone(),
