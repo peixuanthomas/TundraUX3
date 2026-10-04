@@ -30,9 +30,13 @@ The marker metadata follows cells into scrollback and is removed when cells
 are overwritten or erased. Completion also updates retained history. No cursor
 movement, clipboard action, terminal title or host-side operation is performed.
 Only these exact numeric forms are recognized; OSC strings remain filtered.
-The private sequences are emitted only by `repl --embedded`. The numeric CSI
-form lets rustyline calculate prompt width correctly on Unix and Windows.
+The private sequences are emitted only by `repl --embedded`. The prompt passed
+to rustyline contains visible text only; its display helper inserts the marker
+sequence during rendering. Windows rustyline counts CSI bytes in layout input,
+so putting the sequence directly in the prompt shifts the cursor seven cells.
 The UI turns the metadata into themed spans; terminal output colors are retained.
 Regression coverage is in `crates/shell/tests/unit/session/command_line_runtime/tests.rs`
 and `crates/ui/tests/command_line.rs`, with real PTY coverage in
 `scripts/tests/command-line-input.py`.
+`crates/cli/tests/repl_cursor.rs` checks actual cursor positions and editing
+through native PTYs on Windows and Unix.

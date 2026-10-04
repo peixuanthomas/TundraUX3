@@ -607,6 +607,7 @@ dependencies = [
  "chrono",
  "i18n",
  "platform",
+ "portable-pty",
  "runtime-log",
  "rustyline",
  "serde_json",
@@ -614,6 +615,7 @@ dependencies = [
  "shlex",
  "storage",
  "toml 0.9.12+spec-1.1.0",
+ "vt100",
  "watchdog",
  "zbus",
 ]

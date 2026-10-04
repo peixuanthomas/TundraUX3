@@ -1,6 +1,18 @@
 use super::*;
 
 #[test]
+fn status_metadata_is_added_only_to_the_rendered_primary_prompt() {
+    let prompt = "○ user@C:\\Documents >> ";
+    assert_eq!(
+        PromptDisplay.highlight_prompt(prompt, true),
+        "○\x1b[777;0z user@C:\\Documents >> "
+    );
+    assert_eq!(PromptDisplay.highlight_prompt(prompt, false), prompt);
+    let reset = "Type RESET to erase TundraUX3 data, or press Enter to cancel: ";
+    assert_eq!(PromptDisplay.highlight_prompt(reset, true), reset);
+}
+
+#[test]
 fn prompt_rejects_untrusted_environment_values() {
     assert_eq!(
         prompt_for_username(Some("user\u{1b}[31m"), None),

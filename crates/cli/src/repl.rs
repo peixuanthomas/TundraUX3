@@ -1,9 +1,39 @@
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 use platform::SystemCommandSession;
 use rustyline::error::ReadlineError;
 use rustyline::history::MemHistory;
-use rustyline::{Config, Editor};
+use rustyline::{
+    Config, Editor, Helper, completion::Completer, highlight::Highlighter, hint::Hinter,
+    validate::Validator,
+};
+
+struct PromptDisplay;
+
+impl Completer for PromptDisplay {
+    type Candidate = String;
+}
+impl Hinter for PromptDisplay {
+    type Hint = String;
+}
+impl Validator for PromptDisplay {}
+impl Helper for PromptDisplay {}
+
+impl Highlighter for PromptDisplay {
+    fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
+        &'s self,
+        prompt: &'p str,
+        default: bool,
+    ) -> Cow<'b, str> {
+        if default && let Some(rest) = prompt.strip_prefix('○') {
+            // Only decorate the rendered prompt. Windows rustyline counts CSI
+            // bytes as visible text when calculating the undecorated layout.
+            Cow::Owned(format!("○\x1b[777;0z{rest}"))
+        } else {
+            Cow::Borrowed(prompt)
+        }
+    }
+}
 
 use crate::{CliCommand, parse_args};
 
@@ -25,27 +55,39 @@ where
         // Emacs mode otherwise waits indefinitely after Escape and consumes
         // the next ordinary character as an Alt binding (e.g. the e in exit).
         // The embedded host writes complete escape sequences atomically.
-        Ok(builder) => builder.keyseq_timeout(Some(100)).build(),
+        Ok(builder) => builder
+            .keyseq_timeout(Some(100))
+            .color_mode(if embedded {
+                // This hook carries status metadata, not optional prompt colors.
+                rustyline::ColorMode::Forced
+            } else {
+                rustyline::ColorMode::Enabled
+            })
+            .build(),
         Err(error) => {
             eprintln!("ERROR: could not configure command line: {error}");
             return 1;
         }
     };
-    let mut editor = match Editor::<(), MemHistory>::with_history(config, MemHistory::new()) {
-        Ok(editor) => editor,
-        Err(error) => {
-            eprintln!("ERROR: could not start command line: {error}");
-            return 1;
-        }
-    };
+    let mut editor =
+        match Editor::<PromptDisplay, MemHistory>::with_history(config, MemHistory::new()) {
+            Ok(editor) => editor,
+            Err(error) => {
+                eprintln!("ERROR: could not start command line: {error}");
+                return 1;
+            }
+        };
+    if embedded {
+        editor.set_helper(Some(PromptDisplay));
+    }
     let mut system_session = None;
 
     loop {
         let prompt = repl_prompt(embedded, system_session.as_ref());
-        // CSI carries zero display width in rustyline on both Unix and Windows.
-        // The host attaches status metadata to the preceding marker cell.
+        // Keep layout input free of terminal controls on every platform.
+        // PromptDisplay adds the host's marker metadata only during rendering.
         let prompt = if embedded {
-            format!("○\x1b[777;0z {prompt}")
+            format!("○ {prompt}")
         } else {
             prompt
         };
@@ -219,7 +261,7 @@ fn is_safe_prompt_username(username: &str) -> bool {
         })
 }
 
-fn confirm_reset(editor: &mut Editor<(), MemHistory>) -> bool {
+fn confirm_reset(editor: &mut Editor<PromptDisplay, MemHistory>) -> bool {
     match editor.readline("Type RESET to erase TundraUX3 data, or press Enter to cancel: ") {
         Ok(answer) => is_reset_confirmation(&answer),
         Err(ReadlineError::Interrupted | ReadlineError::Eof) => false,
