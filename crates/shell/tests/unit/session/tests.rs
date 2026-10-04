@@ -4093,7 +4093,7 @@ fn command_line_keeps_the_shell_clock_button_visible_and_clickable() {
 }
 
 #[test]
-fn back_button_routes_the_same_escape_for_every_screen() {
+fn back_button_routes_escape_except_for_command_line_force_exit() {
     for size in [(120, 40), (49, 11), (30, 8)] {
         let mut state = ShellSession::new(ShellLaunchConfig::default(), size);
         set_test_auth_role(&mut state, UserRole::Admin);
@@ -4119,7 +4119,15 @@ fn back_button_routes_the_same_escape_for_every_screen() {
             state.screen_stack = vec![ShellScreen::Home, screen];
             state.refresh_hit_map();
             let back = hit_region_center(&state, ShellComponent::BackButton);
-            let escape = state.route_input_at(InputEvent::key(InputKey::Escape), Instant::now());
+            let expected = if screen == ShellScreen::CommandLine {
+                InputEvent::Key(KeyInput::with_modifiers(
+                    InputKey::Char('x'),
+                    InputModifiers::CTRL_SHIFT,
+                ))
+            } else {
+                InputEvent::key(InputKey::Escape)
+            };
+            let escape = state.route_input_at(expected, Instant::now());
             let click = state.route_input_at(
                 InputEvent::mouse_down(PointerButton::Left, back),
                 Instant::now(),

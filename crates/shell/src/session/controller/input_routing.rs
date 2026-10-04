@@ -283,8 +283,8 @@ impl ShellSession {
         }
     }
 
-    /// The chrome shortcut enters the same input path as a physical Escape,
-    /// including overlay cancellation, motion gating and embedded PTY input.
+    /// The chrome shortcut acts like Escape except in Command Line, where it
+    /// uses the host's emergency termination shortcut to stop the child PTY.
     /// The shared pointer capture delivers this press only after release
     /// and leaves keyboard focus with the page being returned to.
     pub(in crate::session) fn normalize_shell_navigation_input(
@@ -318,6 +318,12 @@ impl ShellSession {
             && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
             && self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton)
         {
+            if self.active_screen() == ShellScreen::CommandLine {
+                return InputEvent::Key(KeyInput::with_modifiers(
+                    InputKey::Char('x'),
+                    InputModifiers::CTRL_SHIFT,
+                ));
+            }
             return InputEvent::Key(KeyInput::new(InputKey::Escape));
         }
         input

@@ -299,7 +299,13 @@ fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
         ui::MouseButton::Left,
         (back_area.x, back_area.y),
     ));
-    assert_eq!(back_input, InputEvent::key(ui::Key::Escape));
+    assert_eq!(
+        back_input,
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::Char('x'),
+            InputModifiers::CTRL_SHIFT,
+        ))
+    );
     assert!(command_line_captures_input(&state, &back_input));
 
     let clock_area = state

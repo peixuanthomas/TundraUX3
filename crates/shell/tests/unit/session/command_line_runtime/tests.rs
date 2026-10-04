@@ -281,11 +281,55 @@ fn pty_process_runs_inside_platform_containment() {
         }
     }
 
-    pty.force_terminate()
-        .expect("terminate contained process tree");
+    let child = Arc::clone(&pty.child);
+    let mut host = CommandLineHost::new(app.clone());
+    host.state = CommandLineHostState::Running(pty);
+    assert!(matches!(
+        host.handle_input(
+            &InputEvent::key(InputKey::Escape),
+            Some(Rect::new(0, 0, 160, 12))
+        ),
+        CommandLineHostEvent::None
+    ));
+    assert!(matches!(host.state, CommandLineHostState::Running(_)));
+    let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
+    state.screen_stack = vec![crate::ShellScreen::Home, crate::ShellScreen::CommandLine];
+    state.refresh_hit_map();
+    let back = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == crate::ShellComponent::BackButton)
+        .unwrap()
+        .area;
+    state.button_regions.push(ui::components::ButtonRegion {
+        id: "shell.back".into(),
+        area: back,
+        disabled: false,
+    });
+    let now = std::time::Instant::now();
+    let down = InputEvent::mouse_down(ui::MouseButton::Left, (back.x, back.y));
+    let up = InputEvent::mouse_up(ui::MouseButton::Left, (back.x, back.y));
+    assert!(state.prepare_button_input(down, now).is_none());
+    let click = state
+        .prepare_button_input(up.clone(), now + Duration::from_millis(20))
+        .unwrap();
+    let input = state.normalize_shell_navigation_input(click);
+    assert!(matches!(
+        host.handle_input(&input, None),
+        CommandLineHostEvent::ExitToLauncher
+    ));
+    assert!(matches!(host.state, CommandLineHostState::Inactive));
+    let release = state
+        .prepare_button_input(up, now + Duration::from_millis(40))
+        .unwrap();
+    assert!(matches!(
+        host.handle_input(&state.normalize_shell_navigation_input(release), None),
+        CommandLineHostEvent::None
+    ));
     let exit_deadline = std::time::Instant::now() + Duration::from_secs(5);
     let status = loop {
-        if let Some(status) = pty.try_wait().expect("PTY child status") {
+        if let Some(status) = child.lock().unwrap().try_wait().expect("PTY child status") {
             break status;
         }
         assert!(
@@ -294,9 +338,8 @@ fn pty_process_runs_inside_platform_containment() {
         );
         std::thread::sleep(Duration::from_millis(10));
     };
-    let _snapshot = pty.snapshot_after_exit();
-
-    assert!(!status.success);
+    assert!(!status.success());
+    drop(host);
 
     drop(reader_tasks);
     drop(app);

@@ -262,7 +262,7 @@ AppState::snapshot() -> AppSnapshot<'_>
 
 Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装屏幕 ViewModel。`shell::session::compositor::ScreenCompositor` 负责普通 Shell 每帧的统一合成；runtime 保留终端生命周期和事件循环。UI 通过借用 ViewModel 的 `ScreenContent` 枚举提供页面内容与页面弹层两个独立绘制阶段，不读取整个 `ShellSession`，也不在 render 中驱动领域状态转换。
 
-每帧以同一份 `ShellFrameLayout` 计算并共享布局：正常尺寸下顶栏与底部状态栏各占三行，中间为 `main`；顶栏最右侧为 `back_button`，底栏进一步划分 `status_message` 与 `time_button`。返回按钮使用 `crates/ui/assets/icons/back.txt` 中的实心左三角图标和共享 Button 组件，在按钮内按下并松开左键后等同于一次 Esc：先按当前页面规则取消弹层或返回，在首页沿用退出确认，在 Command Line 中将 Esc 发送给子终端。页面内不再放置作用相同的返回或退出按钮；弹窗里的取消、关闭按钮继续保留，文件管理器的历史后退和设置向导的上一步也保留。内容布局、鼠标命中、PTY 可用区域和效果边界使用这套几何信息。页面投影只影响内容区域，顶栏、底栏与时钟保持固定；Toast 限制在状态消息区域，不覆盖时钟按钮。小于最小终端尺寸时，紧凑布局预留顶部一行显示消息和右上角左三角，页面内容及全局弹窗均从下一行开始；无法显示内容的页面继续提示放大窗口。
+每帧以同一份 `ShellFrameLayout` 计算并共享布局：正常尺寸下顶栏与底部状态栏各占三行，中间为 `main`；顶栏最右侧为 `back_button`，底栏进一步划分 `status_message` 与 `time_button`。返回按钮使用 `crates/ui/assets/icons/back.txt` 中的实心左三角图标和共享 Button 组件，在按钮内按下并松开左键后等同于一次 Esc：先按当前页面规则取消弹层或返回，在首页沿用退出确认，在 Command Line 中则触发现有的 Ctrl+Shift+X 强制终止流程，清理子进程树并返回 Launcher；物理 Esc 继续交给子终端，不触发主界面退出。页面内不再放置作用相同的返回或退出按钮；弹窗里的取消、关闭按钮继续保留，文件管理器的历史后退和设置向导的上一步也保留。内容布局、鼠标命中、PTY 可用区域和效果边界使用这套几何信息。页面投影只影响内容区域，顶栏、底栏与时钟保持固定；Toast 限制在状态消息区域，不覆盖时钟按钮。小于最小终端尺寸时，紧凑布局预留顶部一行显示消息和右上角左三角，页面内容及全局弹窗均从下一行开始；无法显示内容的页面继续提示放大窗口。
 
 全部界面遵循 [UI requirements](UI-requirements.md)。共享 Button 的鼠标悬停使用当前强调色，按住时使用向白色混合 35% 的更淡强调色，在同一按钮内松开后才执行动作；完成后恢复普通颜色，下次实际鼠标移动再显示悬停。有限 ANSI 调色板使用对应亮色；禁用按钮不响应，拖出按钮、窗口失焦、调整尺寸或切换页面会取消待执行动作。键盘焦点使用强调色显示，有边框按钮同时强调边框。列表选择、文本选择和滚动条继续沿用各自交互。
 
