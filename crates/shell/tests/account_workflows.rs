@@ -2026,7 +2026,8 @@ fn finish_user_management_aa(state: &mut ShellSession, approve: bool) {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    if state.active_screen() == ShellScreen::UserManagement {
+    // Rejection already closes AA; F12 would reopen that rejected request.
+    if approve && state.active_screen() == ShellScreen::UserManagement {
         state.apply_input(function_key(12));
     }
 }

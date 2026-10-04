@@ -746,13 +746,16 @@ impl ShellSession {
                         self.auto_admin.approve_selected = !self.auto_admin.approve_selected
                     }
                     InputKey::Enter | InputKey::Space => {
-                        job.decide(self.auto_admin.approve_selected);
+                        self.activate_auto_admin_button(
+                            &job,
+                            usize::from(!self.auto_admin.approve_selected),
+                        );
                         self.auto_admin.suppress_repeats = true;
                         self.auto_admin.action_key = Some((key.key.clone(), received_at));
                         self.auto_admin.button_focus = None;
                     }
                     InputKey::Escape => {
-                        job.decide(false);
+                        self.close_auto_admin();
                         self.auto_admin.action_key = Some((key.key.clone(), received_at));
                     }
                     InputKey::PageDown | InputKey::Down => {
@@ -922,7 +925,8 @@ impl ShellSession {
     }
     fn activate_auto_admin_button(&mut self, job: &AutoAdminJob, index: usize) {
         match job.phase() {
-            WAITING if index < 2 => job.decide(index == 0),
+            WAITING if index == 0 => job.decide(true),
+            WAITING if index == 1 => self.close_auto_admin(),
             DENIED | FINISHED if index == 0 => self.close_auto_admin(),
             RUNNING => match index {
                 0 => job.paste("y"),

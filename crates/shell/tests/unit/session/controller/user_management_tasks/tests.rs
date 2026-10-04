@@ -259,7 +259,11 @@ fn rejected_and_forbidden_account_operations_do_not_write_user_data() {
                 before,
                 "action {action} under {policy:?}"
             );
-            assert!(state.auto_admin_view().unwrap().input.is_none());
+            if policy == storage::AutoAdminPolicy::Manual {
+                assert!(state.auto_admin_view().is_none());
+            } else {
+                assert!(state.auto_admin_view().unwrap().input.is_none());
+            }
         }
     }
 }

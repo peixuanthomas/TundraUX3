@@ -38,16 +38,37 @@ fn a_new_confirmation_focuses_approve_and_keyboard_denial_still_cancels() {
             rx.try_iter()
                 .all(|input| matches!(input, OperationInput::Resize { .. }))
         );
-        assert!(
-            state
-                .auto_admin_view()
-                .unwrap()
-                .terminal
-                .cells
-                .iter()
-                .all(|cell| !cell.cursor)
-        );
+        assert!(state.auto_admin_view().is_none());
     }
+}
+
+#[test]
+fn deny_click_closes_confirmation_without_running_the_operation() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let (job, rx) = job(storage::AutoAdminPolicy::Manual);
+    state.auto_admin = AutoAdminState {
+        job: Some(job.clone()),
+        visible: true,
+        ..Default::default()
+    };
+    let area = ui::auto_admin_layout(Rect::new(0, 0, 120, 40), &state.auto_admin_view().unwrap())
+        .buttons[1];
+    let point = (area.x, area.y);
+    state.handle_auto_admin_input(&InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(state.auto_admin_visible());
+    assert_eq!(job.phase(), WAITING);
+    state.handle_auto_admin_input(&InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(state.auto_admin_view().is_none());
+    assert_eq!(job.phase(), DENIED);
+    assert!(job.wait_for_approval().is_err());
+    assert!(
+        rx.try_iter()
+            .all(|input| matches!(input, OperationInput::Resize { .. }))
+    );
 }
 
 #[test]
