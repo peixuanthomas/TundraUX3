@@ -42,6 +42,7 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
                 ..CommandLineCellStyle::default()
             },
             cursor: true,
+            command_status: None,
         },
     );
     terminal.set_cell(
@@ -330,5 +331,61 @@ fn stopped_and_failed_cli_states_replace_the_running_shortcut_hint() {
         assert!(output.contains(expected));
         assert!(output.contains("Status"));
         assert!(output.contains("2026-07-27 10:15"));
+    }
+}
+
+#[test]
+fn command_markers_use_theme_colors_without_recoloring_command_text() {
+    use ui::components::CommandStatus;
+    for theme in [
+        TundraTheme::default_dark(),
+        TundraTheme::default_dark().with_accent_color(ratatui::style::Color::LightMagenta),
+    ] {
+        let cases = [
+            (CommandStatus::Pending, "○", theme.muted),
+            (CommandStatus::Succeeded, "●", theme.accent_color),
+            (CommandStatus::Failed, "×", theme.error),
+        ];
+        let mut snapshot = CommandLineTerminalSnapshot::blank(106, 14);
+        for (row, (status, _, _)) in cases.iter().enumerate() {
+            snapshot.set_cell(
+                0,
+                row as u16,
+                CommandLineCell {
+                    symbol: "○".into(),
+                    command_status: Some(*status),
+                    ..Default::default()
+                },
+            );
+            snapshot.set_cell(
+                2,
+                row as u16,
+                CommandLineCell {
+                    symbol: "h".into(),
+                    style: CommandLineCellStyle {
+                        foreground: CommandLineColor::Rgb(12, 34, 56),
+                        ..Default::default()
+                    },
+                    cursor: row == 0,
+                    ..Default::default()
+                },
+            );
+        }
+        let model = CommandLineViewModel::new(snapshot);
+        let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+        screen
+            .draw(|frame| {
+                render_command_line(frame, frame.area(), &chrome((108, 22)), &model, &theme)
+            })
+            .unwrap();
+        let buffer = screen.backend().buffer();
+        for (row, (_, symbol, color)) in cases.iter().enumerate() {
+            let marker = buffer.cell((1, 4 + row as u16)).unwrap();
+            assert_eq!(marker.symbol(), *symbol);
+            assert_eq!(marker.fg, *color);
+            let input = buffer.cell((3, 4 + row as u16)).unwrap();
+            assert_eq!(input.symbol(), "h");
+            assert_eq!(input.fg, ratatui::style::Color::Rgb(12, 34, 56));
+        }
     }
 }

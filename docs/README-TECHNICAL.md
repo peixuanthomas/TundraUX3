@@ -604,7 +604,9 @@ tundra-cli <cls|config|debug|new|repl|help>
 
 Command Line 和独立 `repl` 在当前会话内保留系统命令的**已导出环境变量和工作目录**。提示符使用 `user@绝对路径 >> command`；每次读取下一条输入前更新路径，执行 `/cd` 后立即显示新目录，切换失败时保留实际目录。尚未执行系统命令时显示子 CLI 的启动工作目录；无法读取目录时以 `?` 标明未知。路径中的中文和空格原样显示，换行及终端控制字符转为可见的转义文字。Linux/macOS 例如先执行 `/export PROJECT_MODE=dev`、`/cd "/path/with spaces"`，后续 `/echo "$PROJECT_MODE"`、`/pwd` 和相对路径操作沿用修改后的状态；`/unset PROJECT_MODE` 会移除变量。Windows 对应 `/set PROJECT_MODE=dev`、`/cd /d "C:\path with spaces"`、`/echo %PROJECT_MODE%`，用 `/set PROJECT_MODE=` 删除变量。中间执行 `help` 等 Tundra 内置命令不会清空这些状态。
 
-状态由 `platform::SystemCommandSession` 持有，只传递给本会话的下一条系统命令，不修改 Tundra 主进程的环境或目录，也不更改系统环境变量配置；离开 Command Line、退出 REPL 或重启应用后释放。Unix 首次执行仍读取 `/bin/sh` 的登录默认设置，后续执行不重新加载登录配置，避免覆盖用户修改的 `PATH`。Unix 用私有匿名文件采集 NUL 分隔的环境和独立目录数据；Windows 保留 cmd 命令提示符语法，通过临时脚本和 UTF-16 快照采集 `set`、`cd` 的结果，临时文件随调用结束清理。命令输出继续使用原有 PTY。
+嵌入式 Command Line 在每条提示符左侧显示命令状态：输入中或等待执行结果时为 `○`，退出码为 0 时为主题强调色 `●`，非零退出码、命令解析失败或取消输入时为主题错误色 `×`。标记随命令保留在终端滚动历史中；重绘和换行不会将结果移到下一条命令。普通命令文字及输出继续使用原有颜色，`cls` 同时清除历史标记。独立 `repl` 不输出这套嵌入式状态协议。
+
+系统命令的环境和目录状态由 `platform::SystemCommandSession` 持有，只传递给本会话的下一条系统命令，不修改 Tundra 主进程的环境或目录，也不更改系统环境变量配置；离开 Command Line、退出 REPL 或重启应用后释放。Unix 首次执行仍读取 `/bin/sh` 的登录默认设置，后续执行不重新加载登录配置，避免覆盖用户修改的 `PATH`。Unix 用私有匿名文件采集 NUL 分隔的环境和独立目录数据；Windows 保留 cmd 命令提示符语法，通过临时脚本和 UTF-16 快照采集 `set`、`cd` 的结果，临时文件随调用结束清理。命令输出继续使用原有 PTY。
 
 Windows 输入在 cmd 命令组中执行，使条件命令的采集始终位于条件体之外；包含括号、`&` 等特殊字符的值应加引号，例如 `/set "PATH=C:\my tools;%PATH%"`。`for` 仍使用命令提示符的 `%i` 写法。
 

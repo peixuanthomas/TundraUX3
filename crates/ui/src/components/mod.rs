@@ -9,6 +9,7 @@
 mod big_text;
 mod button;
 mod command_palette;
+mod command_status;
 mod context_menu;
 mod data_table;
 mod dialog;
@@ -29,6 +30,7 @@ mod update_activity;
 
 pub use button::{Button, ButtonFrame, ButtonRegion};
 pub use command_palette::{CommandPalette, CommandPaletteCommand};
+pub use command_status::CommandStatus;
 pub use context_menu::{ContextMenu, ContextMenuItem};
 pub use data_table::DataTable;
 pub use dialog::{Dialog, DialogAction};

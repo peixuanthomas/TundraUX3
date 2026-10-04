@@ -118,6 +118,7 @@ pub struct TerminalCell {
     pub inverse: bool,
     pub wide: bool,
     pub wide_continuation: bool,
+    pub command_status: Option<Option<bool>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +160,7 @@ impl TerminalSnapshot {
                         inverse: cell.inverse(),
                         wide: cell.is_wide(),
                         wide_continuation: cell.is_wide_continuation(),
+                        command_status: cell.command_status(),
                     },
                     None => TerminalCell {
                         text: String::new(),
@@ -170,6 +172,7 @@ impl TerminalSnapshot {
                         inverse: false,
                         wide: false,
                         wide_continuation: false,
+                        command_status: None,
                     },
                 });
             }
@@ -1275,6 +1278,11 @@ pub(super) fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerm
                         underline: cell.underline,
                         inverse: cell.inverse,
                     },
+                    command_status: cell.command_status.map(|status| match status {
+                        None => ui::components::CommandStatus::Pending,
+                        Some(true) => ui::components::CommandStatus::Succeeded,
+                        Some(false) => ui::components::CommandStatus::Failed,
+                    }),
                     cursor: snapshot.cursor_visible
                         && snapshot.cursor_row == row
                         && snapshot.cursor_column == column,

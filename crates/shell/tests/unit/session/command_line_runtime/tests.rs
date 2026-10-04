@@ -628,3 +628,83 @@ fn emergency_shortcut_is_exact() {
         InputModifiers::CTRL,
     )));
 }
+
+#[test]
+fn command_status_follows_wrapped_prompts_into_history_and_survives_redraws() {
+    use ui::components::CommandStatus;
+    let mut parser = vt100::Parser::new(3, 12, 20);
+    let mut filter = OscFilter::default();
+    // Split every byte, including the UTF-8 marker and private CSI sequence.
+    for byte in "○\x1b[777;0z user >>".as_bytes() {
+        parser.process(&filter.filter(&[*byte]));
+    }
+    let snapshot = to_ui_snapshot(&TerminalSnapshot::from_parser(&mut parser));
+    assert_eq!(
+        snapshot.cell(0, 0).unwrap().command_status,
+        Some(CommandStatus::Pending)
+    );
+    // Rustyline redraws the prompt before accepting a long command.
+    parser.process("\r\x1b[0K○\x1b[777;0z user >> long-command\r\noutput\r\nmore\r\n".as_bytes());
+    // An interactive child can enter and leave the alternate screen.
+    parser.process(b"\x1b[?1049hchild screen\x1b[?1049l\x1b[777;1;0z");
+    parser.process("○\x1b[777;0z user >> bad\r\n\x1b[777;1;1z".as_bytes());
+    parser.process("○\x1b[777;0z user >> ".as_bytes());
+    parser.set_size(4, 12);
+
+    let mut statuses = Vec::new();
+    let total = TerminalSnapshot::from_parser(&mut parser).scrollback_rows;
+    for offset in (0..=total).rev() {
+        parser.set_scrollback(offset);
+        let snapshot = to_ui_snapshot(&TerminalSnapshot::from_parser(&mut parser));
+        // Each top row is visited once; include the remaining live rows last.
+        let rows = if offset == 0 { snapshot.rows } else { 1 };
+        for row in 0..rows {
+            for column in 0..snapshot.columns {
+                if let Some(status) = snapshot.cell(column, row).unwrap().command_status {
+                    statuses.push(status);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        statuses,
+        [
+            CommandStatus::Succeeded,
+            CommandStatus::Failed,
+            CommandStatus::Pending
+        ]
+    );
+
+    parser.set_scrollback(0);
+    parser.process(b"\x1b[3J\x1b[2J\x1b[H\x1b[777;1;1z");
+    let cleared = TerminalSnapshot::from_parser(&mut parser);
+    assert_eq!(cleared.scrollback_rows, 0);
+    assert!(
+        cleared
+            .cells
+            .iter()
+            .flatten()
+            .all(|cell| cell.command_status.is_none())
+    );
+}
+
+#[test]
+fn command_status_rejects_unmarked_output_and_is_removed_on_overwrite() {
+    let mut parser = vt100::Parser::new(2, 20, 10);
+    parser.process(b"ordinary\x1b[777;0z\x1b[777;1;0z");
+    assert!(
+        TerminalSnapshot::from_parser(&mut parser)
+            .cells
+            .iter()
+            .flatten()
+            .all(|cell| cell.command_status.is_none())
+    );
+    parser.process("\r○\x1b[777;0z".as_bytes());
+    parser.process(b"\x1b[777;1;2z");
+    assert_eq!(
+        parser.screen().cell(0, 0).unwrap().command_status(),
+        Some(None)
+    );
+    parser.process(b"\rX\x1b[777;1;0z");
+    assert_eq!(parser.screen().cell(0, 0).unwrap().command_status(), None);
+}

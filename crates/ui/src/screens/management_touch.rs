@@ -893,6 +893,7 @@ pub fn render_management_content(
                 frame,
                 layout.output_text,
                 snapshot,
+                &theme,
             );
         } else {
             render_text(

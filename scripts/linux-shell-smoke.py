@@ -361,11 +361,19 @@ def main() -> int:
         entry_deadline = time.monotonic() + 1.0
         while time.monotonic() < entry_deadline:
             read_available(master, output, 0.1)
+        if "○".encode() not in output[prompt_offset:]:
+            raise SystemExit("embedded CLI did not render a pending command marker")
         command_directory = isolated / "command path 中文"
         command_directory.mkdir()
         os.write(master, ("/cd " + shlex.quote(str(command_directory)) + "\r").encode())
         if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, prompt_offset, ignore_spaces=True):
             raise SystemExit("embedded CLI could not change directory:\n" + output_diagnostic(output[prompt_offset:]))
+        if not wait_for_output(master, output, "●".encode(), child, 5.0, prompt_offset):
+            raise SystemExit("successful cd did not render a completed command marker")
+        failure_offset = len(output)
+        os.write(master, b"invalid-command\r")
+        if not wait_for_output(master, output, "×".encode(), child, 5.0, failure_offset):
+            raise SystemExit("invalid command did not render a failure marker")
         # Resize to get a full frame: incremental updates can omit the unchanged
         # username and path prefix, so raw output alone cannot verify that prompt.
         prompt_offset = len(output)
@@ -531,7 +539,7 @@ def main() -> int:
         shutil.rmtree(isolated, ignore_errors=True)
 
     print(
-        "Linux PTY embedded CLI paths, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
+        "Linux PTY embedded CLI paths/status markers, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
         f"sentinel visible in {sentinel_latency:.3f}s)"

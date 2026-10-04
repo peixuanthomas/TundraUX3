@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use platform::SystemCommandSession;
 use rustyline::error::ReadlineError;
 use rustyline::history::MemHistory;
@@ -40,9 +42,19 @@ where
 
     loop {
         let prompt = repl_prompt(embedded, system_session.as_ref());
+        // CSI carries zero display width in rustyline on both Unix and Windows.
+        // The host attaches status metadata to the preceding marker cell.
+        let prompt = if embedded {
+            format!("○\x1b[777;0z {prompt}")
+        } else {
+            prompt
+        };
         let line = match editor.readline(&prompt) {
             Ok(line) => line,
-            Err(ReadlineError::Interrupted) => continue,
+            Err(ReadlineError::Interrupted) => {
+                report_command_status(embedded, 1);
+                continue;
+            }
             Err(ReadlineError::Eof) => return 0,
             Err(error) => {
                 eprintln!("ERROR: command line input failed: {error}");
@@ -53,12 +65,14 @@ where
             continue;
         }
         if is_exit_line(&line) {
+            report_command_status(embedded, 0);
             return 0;
         }
         let _ = editor.add_history_entry(&line);
 
         if let Some(system_command) = line.strip_prefix('/') {
-            let _ = run_system_command(&mut system_session, system_command);
+            let code = run_system_command(&mut system_session, system_command);
+            report_command_status(embedded, code);
             continue;
         }
 
@@ -66,6 +80,7 @@ where
             Some(arguments) => arguments,
             None => {
                 eprintln!("ERROR: could not parse command line: unmatched quote");
+                report_command_status(embedded, 1);
                 continue;
             }
         };
@@ -73,13 +88,14 @@ where
             continue;
         }
 
-        match parse_args(&arguments) {
+        let code = match parse_args(&arguments) {
             Ok(CliCommand::TestWatchdogPanic) if embedded => {
                 println!("Triggering a real Shell panic; the current session will be discarded.");
                 return shell::COMMAND_LINE_PANIC_EXIT_CODE as i32;
             }
             Ok(CliCommand::Repl { .. }) => {
                 eprintln!("ERROR: repl cannot be started from inside repl");
+                1
             }
             Ok(CliCommand::New) => {
                 if confirm_reset(&mut editor) {
@@ -87,18 +103,27 @@ where
                         println!("TundraUX3 reset requested; returning control to Launcher.");
                         return EMBEDDED_RESET_EXIT_CODE;
                     }
-                    let _ = execute_cli(&arguments);
+                    execute_cli(&arguments)
                 } else {
                     println!("Reset cancelled.");
+                    1
                 }
             }
-            Ok(_) => {
-                let _ = execute_cli(&arguments);
-            }
+            Ok(_) => execute_cli(&arguments),
             Err(error) => {
                 eprintln!("ERROR: {error}");
+                1
             }
-        }
+        };
+        report_command_status(embedded, code);
+    }
+}
+
+/// Only the embedded terminal interprets this private, bounded CSI protocol.
+fn report_command_status(embedded: bool, code: i32) {
+    if embedded {
+        print!("\x1b[777;1;{}z", u8::from(code != 0));
+        let _ = std::io::stdout().flush();
     }
 }
 

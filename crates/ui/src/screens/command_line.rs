@@ -11,7 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 use std::sync::Arc;
 
-use crate::components::{Scrollbar, Surface};
+use crate::components::{CommandStatus, Scrollbar, Surface};
 use crate::{RenderContext, TundraTheme};
 
 /// Smallest outer terminal accepted by the embedded Command Line application.
@@ -51,6 +51,7 @@ pub struct CommandLineCell {
     pub symbol: String,
     pub style: CommandLineCellStyle,
     pub cursor: bool,
+    pub command_status: Option<CommandStatus>,
 }
 
 impl Default for CommandLineCell {
@@ -59,6 +60,7 @@ impl Default for CommandLineCell {
             symbol: " ".to_string(),
             style: CommandLineCellStyle::default(),
             cursor: false,
+            command_status: None,
         }
     }
 }
@@ -215,7 +217,7 @@ pub fn render_command_line_content(
     };
 
     let content_area = command_line_content_area(terminal_area, model.terminal.as_ref());
-    render_terminal_snapshot(frame, content_area, model.terminal.as_ref());
+    render_terminal_snapshot(frame, content_area, model.terminal.as_ref(), theme);
     render_command_line_scrollbar(frame, terminal_area, model.terminal.as_ref(), context);
     if let Some((message, style)) = command_line_process_message(model, theme) {
         render_process_message(frame, terminal_area, &message, style);
@@ -298,9 +300,10 @@ pub(crate) fn render_terminal_snapshot(
     frame: &mut Frame<'_>,
     area: Rect,
     snapshot: &CommandLineTerminalSnapshot,
+    theme: &TundraTheme,
 ) {
     let lines = (0..snapshot.rows)
-        .map(|row| terminal_snapshot_line(snapshot, row))
+        .map(|row| terminal_snapshot_line(snapshot, row, theme))
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(lines)
@@ -310,7 +313,11 @@ pub(crate) fn render_terminal_snapshot(
     );
 }
 
-fn terminal_snapshot_line(snapshot: &CommandLineTerminalSnapshot, row: u16) -> Line<'static> {
+fn terminal_snapshot_line(
+    snapshot: &CommandLineTerminalSnapshot,
+    row: u16,
+    theme: &TundraTheme,
+) -> Line<'static> {
     let row_end = terminal_row_end(snapshot, row);
     if row_end == 0 {
         return Line::default();
@@ -323,8 +330,14 @@ fn terminal_snapshot_line(snapshot: &CommandLineTerminalSnapshot, row: u16) -> L
     while column < row_end {
         let default_cell = CommandLineCell::default();
         let cell = snapshot.cell(column, row).unwrap_or(&default_cell);
-        let symbol = visible_symbol(&cell.symbol);
-        let style = cell_style(cell);
+        let marker = cell.command_status.map(|status| status.span(theme));
+        let symbol = marker.as_ref().map_or_else(
+            || visible_symbol(&cell.symbol),
+            |span| span.content.as_ref(),
+        );
+        let style = marker
+            .as_ref()
+            .map_or_else(|| cell_style(cell), |span| span.style);
         if text_style.is_some_and(|current| current != style) {
             spans.push(Span::styled(
                 std::mem::take(&mut text),

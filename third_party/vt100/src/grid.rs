@@ -177,6 +177,12 @@ impl Grid {
             .and_then(|r| r.get_mut(pos.col))
     }
 
+    pub fn complete_command(&mut self, id: u64, success: bool) {
+        for row in self.rows.iter_mut().chain(self.scrollback.iter_mut()) {
+            row.complete_command(id, success);
+        }
+    }
+
     pub fn scrollback_len(&self) -> usize {
         self.scrollback_len
     }

@@ -80,6 +80,7 @@ pub struct Screen {
     visual_bell_count: usize,
 
     errors: usize,
+    command_id: u64,
 }
 
 impl Screen {
@@ -107,6 +108,7 @@ impl Screen {
             visual_bell_count: 0,
 
             errors: 0,
+            command_id: 0,
         }
     }
 
@@ -737,6 +739,40 @@ impl Screen {
     #[must_use]
     pub fn inverse(&self) -> bool {
         self.attrs.inverse()
+    }
+
+    // Private Tundra CSI protocol. Metadata is attached to the marker cell,
+    // so scrolling, resizing, alternate screens and erasure use grid semantics.
+    fn command_status(&mut self, params: &vte::Params) {
+        let params: Vec<&[u16]> = params.iter().collect();
+        match params.as_slice() {
+            [&[777], &[0]] => {
+                let pos = self.grid().pos();
+                if pos.col == 0 {
+                    return;
+                }
+                let marker = crate::grid::Pos {
+                    row: pos.row,
+                    col: pos.col - 1,
+                };
+                if self.grid().drawing_cell(marker).map(|cell| cell.contents())
+                    != Some("○".to_string())
+                {
+                    return;
+                }
+                self.command_id = self.command_id.wrapping_add(1);
+                let id = self.command_id;
+                if let Some(cell) = self.grid_mut().drawing_cell_mut(marker) {
+                    cell.command = Some((id, None));
+                }
+            }
+            [&[777], &[1], &[result @ 0..=1]] => {
+                let id = self.command_id;
+                self.grid.complete_command(id, result == 0);
+                self.alternate_grid.complete_command(id, result == 0);
+            }
+            _ => {}
+        }
     }
 
     fn grid(&self) -> &crate::grid::Grid {
@@ -1626,6 +1662,7 @@ impl vte::Perform for Screen {
                 'h' => self.sm(params),
                 'l' => self.rm(params),
                 'm' => self.sgr(params),
+                'z' if !_ignore => self.command_status(params),
                 'r' => self.decstbm(canonicalize_params_decstbm(
                     params,
                     self.grid().size(),

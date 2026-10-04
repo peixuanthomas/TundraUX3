@@ -8,11 +8,12 @@ pub struct Cell {
     contents: [char; CODEPOINTS_IN_CELL],
     len: u8,
     attrs: crate::attrs::Attrs,
+    pub(crate) command: Option<(u64, Option<bool>)>,
 }
 
 impl PartialEq<Self> for Cell {
     fn eq(&self, other: &Self) -> bool {
-        if self.len != other.len {
+        if self.command != other.command || self.len != other.len {
             return false;
         }
         if self.attrs != other.attrs {
@@ -31,6 +32,7 @@ impl Cell {
     }
 
     pub(crate) fn set(&mut self, c: char, a: crate::attrs::Attrs) {
+        self.command = None;
         self.contents[0] = c;
         self.len = 1;
         // strings in this context should always be an arbitrary character
@@ -59,7 +61,15 @@ impl Cell {
 
     pub(crate) fn clear(&mut self, attrs: crate::attrs::Attrs) {
         self.len = 0;
+        self.command = None;
         self.attrs = attrs;
+    }
+
+    /// Tundra command marker: outer None means ordinary output, inner None
+    /// means pending, and Some(bool) records success or failure.
+    #[must_use]
+    pub fn command_status(&self) -> Option<Option<bool>> {
+        self.command.map(|(_, status)| status)
     }
 
     /// Returns the text contents of the cell.

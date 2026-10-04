@@ -33,6 +33,16 @@ impl Row {
         self.cells.iter()
     }
 
+    pub fn complete_command(&mut self, id: u64, success: bool) {
+        for cell in &mut self.cells {
+            if let Some((command_id, status)) = &mut cell.command {
+                if *command_id == id {
+                    *status = Some(success);
+                }
+            }
+        }
+    }
+
     pub fn get(&self, col: u16) -> Option<&crate::cell::Cell> {
         self.cells.get(usize::from(col))
     }

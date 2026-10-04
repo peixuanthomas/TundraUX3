@@ -192,7 +192,12 @@ pub fn render_auto_admin(
         layout.description,
     );
     if !model.confirming {
-        super::command_line::render_terminal_snapshot(frame, layout.terminal, &model.terminal);
+        super::command_line::render_terminal_snapshot(
+            frame,
+            layout.terminal,
+            &model.terminal,
+            &context.compatibility_theme(),
+        );
     }
     frame.render_widget(
         wrapped_paragraph(&model.status, layout.status.width),

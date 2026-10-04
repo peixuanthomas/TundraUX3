@@ -51,6 +51,7 @@ def run_command(command, expected=None, code=0):
     os.write(master, command.encode() + b"\r")
     wait_for(f"[system exit code: {code}]".encode())
     wait_for_prompt()
+    wait_for(f"\x1b[777;1;{int(code != 0)}z".encode())
     if expected is not None:
         assert expected in output, bytes(output)
     assert b"could not retain command state" not in output, bytes(output)
@@ -58,15 +59,23 @@ def run_command(command, expected=None, code=0):
 
 try:
     wait_for_prompt()
+    assert "○\x1b[777;0z".encode() in output, bytes(output)
     folder = Path(workspace.name).resolve() / "space and 中文"
     folder.mkdir()
     run_command("/export PERSISTED='kept=value'")
     current_directory = folder
     run_command("/cd " + shlex.quote(str(folder)))
-    run_command("/cd /tundra-path-that-does-not-exist", code=2)
+    run_command("/cd /tundra-path-that-does-not-exist",
+                code=1 if sys.platform == "darwin" else 2)
     output.clear()
     os.write(master, b"help\r")
     wait_for_prompt()
+    wait_for(b"\x1b[777;1;0z")
+    for invalid in ("invalid-command", "help '", "repl", "/"):
+        output.clear()
+        os.write(master, invalid.encode() + b"\r")
+        wait_for_prompt()
+        wait_for(b"\x1b[777;1;1z")
     run_command("/printf 'state:%s:%s\\n' \"$PERSISTED\" \"$PWD\"",
                 f"state:kept=value:{folder}".encode())
     # The command still reads the real PTY; the state protocol must not
@@ -89,7 +98,7 @@ try:
     current_directory = long_folder
     run_command("/cd " + shlex.quote(str(long_folder)))
     run_command("/pwd", str(long_folder).encode())
-    print("PASS: absolute prompts, Chinese and wrapping paths, environment, cwd, failure recovery, and terminal stdin")
+    print("PASS: command status, absolute prompts, Chinese and wrapping paths, environment, cwd, failure recovery, and terminal stdin")
     output.clear()
     os.write(master, b"\x1b")
     time.sleep(0.25)  # A standalone Escape, not an Alt chord.
