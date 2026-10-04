@@ -4,7 +4,11 @@
 use std::io;
 use std::process::Command;
 
-use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 #[cfg(windows)]
 mod windows;
@@ -31,6 +35,11 @@ impl SystemCommandSession {
             #[cfg(unix)]
             initialized: false,
         })
+    }
+
+    /// Absolute working directory used by the next system command.
+    pub fn current_dir(&self) -> &Path {
+        &self.directory
     }
 
     /// Run explicit shell input. This API is only for the advanced command

@@ -3,12 +3,53 @@ use super::*;
 #[test]
 fn prompt_rejects_untrusted_environment_values() {
     assert_eq!(
-        prompt_for_username(Some("user\u{1b}[31m")),
-        "tundra >> ".to_string()
+        prompt_for_username(Some("user\u{1b}[31m"), None),
+        "tundra@? >> ".to_string()
     );
     assert_eq!(
-        prompt_for_username(Some(" user.name ")),
-        "user.name >> ".to_string()
+        prompt_for_username(Some(" user.name "), None),
+        "user.name@? >> ".to_string()
+    );
+}
+
+#[test]
+fn prompt_shows_the_absolute_directory_without_terminal_controls() {
+    for path in ["/home/user/space and 中文", r"C:\Users\user\My Documents"] {
+        assert_eq!(
+            prompt_for_username(Some("user"), Some(std::path::Path::new(path))),
+            format!("user@{path} >> "),
+        );
+    }
+    assert_eq!(
+        prompt_for_username(
+            Some("user"),
+            Some(std::path::Path::new("/tmp/a\n\u{1b}[31m"))
+        ),
+        "user@/tmp/a\\n\\u{1b}[31m >> ",
+    );
+}
+
+#[test]
+fn prompt_uses_the_system_session_directory() {
+    let mut session = SystemCommandSession::new().unwrap();
+    let root = session
+        .current_dir()
+        .ancestors()
+        .last()
+        .unwrap()
+        .to_path_buf();
+    let command = if cfg!(windows) {
+        format!("cd /d \"{}\"", root.display())
+    } else {
+        "cd /".to_string()
+    };
+    let result = session.run(&command).unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.state_error.is_none());
+    let prompt = repl_prompt(false, Some(&session));
+    assert!(
+        prompt.ends_with(&format!("@{} >> ", root.display())),
+        "{prompt}"
     );
 }
 

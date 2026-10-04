@@ -36,10 +36,10 @@ where
             return 1;
         }
     };
-    let prompt = repl_prompt(embedded);
     let mut system_session = None;
 
     loop {
+        let prompt = repl_prompt(embedded, system_session.as_ref());
         let line = match editor.readline(&prompt) {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => continue,
@@ -102,13 +102,16 @@ where
     }
 }
 
-fn repl_prompt(embedded: bool) -> String {
+fn repl_prompt(embedded: bool, system_session: Option<&SystemCommandSession>) -> String {
     let username = if embedded {
         std::env::var(COMMAND_LINE_USERNAME_ENV).ok()
     } else {
         standalone_username()
     };
-    prompt_for_username(username.as_deref())
+    let directory = system_session
+        .map(|session| session.current_dir().to_path_buf())
+        .or_else(|| std::env::current_dir().ok());
+    prompt_for_username(username.as_deref(), directory.as_deref())
 }
 
 fn standalone_username() -> Option<String> {
@@ -117,12 +120,26 @@ fn standalone_username() -> Option<String> {
         .find_map(|name| std::env::var(name).ok())
 }
 
-fn prompt_for_username(username: Option<&str>) -> String {
+fn prompt_for_username(username: Option<&str>, directory: Option<&std::path::Path>) -> String {
     let username = username
         .map(str::trim)
         .filter(|username| is_safe_prompt_username(username))
         .unwrap_or("tundra");
-    format!("{username} >> ")
+    let mut path = String::new();
+    if let Some(directory) = directory {
+        for character in directory.to_string_lossy().chars() {
+            // Filenames can contain terminal controls or line breaks. Display
+            // those visibly without letting them move the cursor or hide text.
+            if character.is_control() {
+                path.extend(character.escape_default());
+            } else {
+                path.push(character);
+            }
+        }
+    } else {
+        path.push('?');
+    }
+    format!("{username}@{path} >> ")
 }
 
 fn is_safe_prompt_username(username: &str) -> bool {

@@ -87,20 +87,22 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
 
 #[test]
 fn command_line_prompt_uses_the_application_accent_color() {
-    let prompt = "AdminUser >> ";
+    let prompt = "AdminUser@/home/user/space and 中文 >> ";
     let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
-    for (column, symbol) in prompt.chars().enumerate() {
+    let mut column = 0;
+    for symbol in prompt.chars() {
         terminal.set_cell(
-            u16::try_from(column).unwrap(),
+            column,
             0,
             CommandLineCell {
                 symbol: symbol.to_string(),
                 ..CommandLineCell::default()
             },
         );
+        column += u16::try_from(ratatui::text::Line::from(symbol.to_string()).width()).unwrap();
     }
     terminal.set_cell(
-        u16::try_from(prompt.len()).unwrap(),
+        column,
         0,
         CommandLineCell {
             symbol: "h".to_string(),
@@ -117,14 +119,18 @@ fn command_line_prompt_uses_the_application_accent_color() {
         .unwrap();
     let buffer = screen.backend().buffer();
 
-    for column in 0..u16::try_from("AdminUser >>".len()).unwrap() {
-        assert_eq!(buffer.cell((1 + column, 4)).unwrap().fg, theme.accent_color);
+    let mut prompt_column = 0;
+    for symbol in prompt.trim_end().chars() {
+        let cell = buffer.cell((1 + prompt_column, 4)).unwrap();
+        assert_eq!(cell.symbol(), symbol.to_string());
+        assert_eq!(cell.fg, theme.accent_color);
+        // Wide glyphs use the leading cell's style; their continuation cell
+        // has no independently painted symbol or foreground color.
+        prompt_column +=
+            u16::try_from(ratatui::text::Line::from(symbol.to_string()).width()).unwrap();
     }
     assert_ne!(
-        buffer
-            .cell((1 + u16::try_from(prompt.len()).unwrap(), 4))
-            .unwrap()
-            .fg,
+        buffer.cell((1 + column, 4)).unwrap().fg,
         theme.accent_color,
         "typed command text must keep the child terminal style"
     );

@@ -22,6 +22,7 @@ if pid == 0:
 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
 output = bytearray()
 workspace = tempfile.TemporaryDirectory(prefix="tundra-command-state-")
+current_directory = Path.cwd().resolve()
 
 
 def wait_for(marker, timeout=5.0):
@@ -41,22 +42,31 @@ def wait_for(marker, timeout=5.0):
     raise AssertionError(f"missing {marker!r}: {bytes(output)!r}")
 
 
+def wait_for_prompt():
+    wait_for(f"input-test@{current_directory} >>".encode())
+
+
 def run_command(command, expected=None, code=0):
     output.clear()
     os.write(master, command.encode() + b"\r")
     wait_for(f"[system exit code: {code}]".encode())
-    wait_for(b"input-test >>")
+    wait_for_prompt()
     if expected is not None:
         assert expected in output, bytes(output)
     assert b"could not retain command state" not in output, bytes(output)
 
 
 try:
-    wait_for(b"input-test >>")
+    wait_for_prompt()
     folder = Path(workspace.name).resolve() / "space and 中文"
     folder.mkdir()
     run_command("/export PERSISTED='kept=value'")
+    current_directory = folder
     run_command("/cd " + shlex.quote(str(folder)))
+    run_command("/cd /tundra-path-that-does-not-exist", code=2)
+    output.clear()
+    os.write(master, b"help\r")
+    wait_for_prompt()
     run_command("/printf 'state:%s:%s\\n' \"$PERSISTED\" \"$PWD\"",
                 f"state:kept=value:{folder}".encode())
     # The command still reads the real PTY; the state protocol must not
@@ -67,14 +77,19 @@ try:
     os.write(master, b"typed-in-terminal\r")
     wait_for(b"reply:typed-in-terminal")
     wait_for(b"[system exit code: 0]")
-    wait_for(b"input-test >>")
+    wait_for_prompt()
     run_command("/printf contents > relative-file")
     assert (folder / "relative-file").read_text() == "contents"
     run_command("/export AFTER_FAILURE=retained; false", code=1)
     run_command("/printf 'after:%s\\n' \"$AFTER_FAILURE\"", b"after:retained")
     run_command("/unset PERSISTED")
     run_command("/test \"${PERSISTED+x}\" != x")
-    print("PASS: environment, unset, cwd, relative paths, failure recovery, and terminal stdin")
+    long_folder = folder / ("long-directory-" * 8)
+    long_folder.mkdir()
+    current_directory = long_folder
+    run_command("/cd " + shlex.quote(str(long_folder)))
+    run_command("/pwd", str(long_folder).encode())
+    print("PASS: absolute prompts, Chinese and wrapping paths, environment, cwd, failure recovery, and terminal stdin")
     output.clear()
     os.write(master, b"\x1b")
     time.sleep(0.25)  # A standalone Escape, not an Alt chord.

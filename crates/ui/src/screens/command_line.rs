@@ -134,8 +134,8 @@ pub struct CommandLineViewModel {
     pub process_state: CommandLineProcessState,
     /// A host-side message such as a spawn error or a restart hint.
     pub message: Option<String>,
-    /// Plain-text prefix emitted by the embedded REPL. The renderer uses this
-    /// semantic hint to apply the live application accent without injecting
+    /// Username prefix emitted by the embedded REPL, before its current path.
+    /// The renderer uses this hint to apply the live application accent without injecting
     /// ANSI sequences that can break line-editor cursor calculations.
     pub prompt_label: Option<String>,
 }
@@ -151,7 +151,7 @@ impl CommandLineViewModel {
     }
 
     pub fn with_prompt_username(mut self, username: &str) -> Self {
-        self.prompt_label = Some(format!("{username} >>"));
+        self.prompt_label = Some(format!("{username}@"));
         self
     }
 }
@@ -341,7 +341,22 @@ fn terminal_snapshot_line(
 
     let prompt_width = prompt_label
         .filter(|prompt| row_starts_with(snapshot, row, prompt))
-        .map_or(0, str::len);
+        .map_or(0, |prefix| {
+            // Stop before the command. A long path can wrap before its delimiter.
+            // Count terminal cells, not bytes, so Chinese paths keep their width.
+            (prefix.len() as u16..row_end)
+                .find(|column| {
+                    [" ", ">", ">", " "]
+                        .iter()
+                        .enumerate()
+                        .all(|(offset, symbol)| {
+                            snapshot
+                                .cell(column.saturating_add(offset as u16), row)
+                                .is_some_and(|cell| cell.symbol == *symbol)
+                        })
+                })
+                .map_or(usize::from(row_end), |end| usize::from(end) + 3)
+        });
     let mut spans = Vec::new();
     let mut text = String::new();
     let mut text_style = None;
