@@ -10,8 +10,11 @@ use zeroize::Zeroizing;
 #[cfg(target_os = "linux")]
 #[path = "auto_admin_linux.rs"]
 mod linux;
+#[path = "auto_admin_tasks.rs"]
+mod tasks;
 #[cfg(target_os = "linux")]
 pub(super) use linux::AutoAdminAuthorization;
+pub(super) use tasks::spawn_task;
 
 const WAITING: u8 = 0;
 const RUNNING: u8 = 1;
@@ -481,15 +484,15 @@ impl ShellSession {
             .app
             .auth_session()
             .is_some_and(|actor| actor.role == UserRole::Admin);
-        let language = self.language.clone();
-        match group.spawn_thread(
-            TaskSpec::one_shot(TaskId::from_static("auto-admin-power")),
+        if let Ok(worker) = spawn_task(
+            &group,
+            TaskId::from_static("auto-admin-power"),
+            self.language.clone(),
+            Some(&job),
             move || {
-                let _language = i18n::enter_snapshot(language.clone());
-                let result = worker_job
-                    .wait_for_approval()
-                    .map_err(|e| e.to_string())
-                    .and_then(|()| {
+                let result = worker_job.run_approved(
+                    |error| error.to_string(),
+                    || {
                         #[cfg(target_os = "linux")]
                         {
                             let _ = &platform;
@@ -536,15 +539,15 @@ impl ShellSession {
                             }
                             .map_err(|e| e.to_string())
                         }
-                    });
+                    },
+                );
                 if result.is_ok() {
                     worker_job.0.power_succeeded.store(true, Ordering::Release);
                 }
-                worker_job.finish(result.map(|()| i18n::tr!("aa-completed")));
+                worker_job.finish_result(&result, |()| i18n::tr!("aa-completed"));
             },
         ) {
-            Ok(worker) => *job.0.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker),
-            Err(error) => job.finish(Err(error.to_string())),
+            *job.0.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
         }
     }
     pub(in crate::session) fn begin_auto_admin(

@@ -92,11 +92,23 @@ fn worker_waits_for_explicit_approval_and_runs_once() {
     let (job, _inputs) = job(storage::AutoAdminPolicy::Manual);
     let worker_job = job.clone();
     let (done, result) = mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        if worker_job.wait_for_approval().is_ok() {
-            done.send("executed").unwrap();
-        }
-    });
+    let group = default_editor_watchdog()
+        .unwrap()
+        .task_group("auto-admin-approval-test");
+    let worker = spawn_task(
+        &group,
+        TaskId::from_static("approval"),
+        Arc::new(i18n::LanguageSnapshot::embedded(0)),
+        Some(&job),
+        move || {
+            let result = worker_job.run_approved(std::convert::identity, || {
+                done.send("executed").unwrap();
+                Ok(())
+            });
+            worker_job.finish_result(&result, |()| "Done".into());
+        },
+    )
+    .unwrap();
     assert!(result.recv_timeout(Duration::from_millis(30)).is_err());
     job.decide(true);
     assert_eq!(
@@ -106,6 +118,8 @@ fn worker_waits_for_explicit_approval_and_runs_once() {
     job.decide(true);
     worker.join().unwrap();
     assert!(result.try_recv().is_err());
+    assert_eq!(job.phase(), FINISHED);
+    assert_eq!(job.0.display.lock().unwrap().status, "Done");
 }
 
 #[test]

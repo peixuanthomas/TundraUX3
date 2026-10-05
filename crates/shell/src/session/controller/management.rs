@@ -696,10 +696,8 @@ impl ShellSession {
         let worker_aa = aa.clone();
         #[cfg(target_os = "linux")]
         let authority = self.privilege_session.clone();
-        let language = self.language.clone();
         let output = Arc::downgrade(&job.0);
         let cancelled = job.0.cancelled.clone();
-        let mut input = Some((command, socket, rx));
         let task = TaskId::new(format!(
             "management-operation-{}",
             self.management_state
@@ -708,46 +706,48 @@ impl ShellSession {
                 .unwrap_or("unknown")
         ))
         .expect("fixed management task name");
-        match group.spawn_thread(TaskSpec::one_shot(task), move || {
-            let _language = i18n::enter_snapshot(language.clone());
-            let Some((command, socket, rx)) = input.take() else {
-                return;
-            };
-            let emit = |event| {
-                worker_aa.emit(&event);
-                let mut event = Some(event);
-                while !cancelled.load(Ordering::Relaxed) {
-                    let Some(shared) = output.upgrade() else {
-                        return;
-                    };
-                    let mut events = shared.events.lock().unwrap_or_else(|e| e.into_inner());
-                    if events.len() < 512 {
-                        events.push_back(event.take().expect("event queued once"));
-                        return;
+        match super::auto_admin::spawn_task(
+            &group,
+            task,
+            self.language.clone(),
+            Some(&aa),
+            move || {
+                let emit = |event| {
+                    worker_aa.emit(&event);
+                    let mut event = Some(event);
+                    while !cancelled.load(Ordering::Relaxed) {
+                        let Some(shared) = output.upgrade() else {
+                            return;
+                        };
+                        let mut events = shared.events.lock().unwrap_or_else(|e| e.into_inner());
+                        if events.len() < 512 {
+                            events.push_back(event.take().expect("event queued once"));
+                            return;
+                        }
+                        drop(events);
+                        drop(shared);
+                        std::thread::sleep(Duration::from_millis(10));
                     }
-                    drop(events);
-                    drop(shared);
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-            };
-            let result = worker_aa.wait_for_approval().and_then(|()| {
-                super::management_client::run(
-                    #[cfg(target_os = "linux")]
-                    &authority,
-                    command,
-                    privileged,
-                    socket,
-                    rx,
-                    &cancelled,
-                    &emit,
-                )
-            });
-            if let Err(error) = result {
-                emit(OperationEvent::Disconnected {
-                    message: error.to_string(),
+                };
+                let result = worker_aa.run_approved(std::convert::identity, || {
+                    super::management_client::run(
+                        #[cfg(target_os = "linux")]
+                        &authority,
+                        command,
+                        privileged,
+                        socket,
+                        rx,
+                        &cancelled,
+                        &emit,
+                    )
                 });
-            }
-        }) {
+                if let Err(error) = result {
+                    emit(OperationEvent::Disconnected {
+                        message: error.to_string(),
+                    });
+                }
+            },
+        ) {
             Ok(worker) => {
                 *job.0.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
                 self.management_state.operation_job = Some(job);
@@ -759,7 +759,6 @@ impl ShellSession {
                 self.resize_management_terminal();
             }
             Err(error) => {
-                aa.finish(Err(error.to_string()));
                 self.management_state.status = error.to_string();
             }
         }

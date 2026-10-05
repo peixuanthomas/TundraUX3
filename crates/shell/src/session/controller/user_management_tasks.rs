@@ -310,7 +310,6 @@ impl ShellSession {
         let worker_aa = aa.clone();
         #[cfg(target_os = "linux")]
         let authority = self.privilege_session.clone();
-        let language = self.language.clone();
         let shared = Arc::new(Job {
             result: Mutex::new(None),
             worker: Mutex::new(None),
@@ -318,19 +317,16 @@ impl ShellSession {
             completion,
         });
         let output = Arc::downgrade(&shared);
-        let mut pending = Some(operation);
-        match group.spawn_thread(
-            TaskSpec::one_shot(TaskId::from_static("user-management")),
+        match super::auto_admin::spawn_task(
+            &group,
+            TaskId::from_static("user-management"),
+            self.language.clone(),
+            aa.as_ref(),
             move || {
-                let _language = i18n::enter_snapshot(language.clone());
-                let Some(operation) = pending.take() else {
-                    return;
-                };
                 let result = match (operation, worker_aa.as_ref()) {
-                    (Some(operation), Some(job)) => job
-                        .wait_for_approval()
-                        .map_err(|error| CoreError::SystemIdentity(error.to_string()))
-                        .and_then(|()| {
+                    (Some(operation), Some(job)) => job.run_approved(
+                        |error| CoreError::SystemIdentity(error.to_string()),
+                        || {
                             #[cfg(target_os = "linux")]
                             if backend == identity::IdentityBackend::Linux
                                 && actor.role == UserRole::Admin
@@ -348,24 +344,20 @@ impl ShellSession {
                                     })?;
                             }
                             operation.execute(&service, &actor, backend, job, &inputs)
-                        }),
+                        },
+                    ),
                     (None, _) => Ok(()),
                     _ => Err(CoreError::SystemIdentity(
                         "Missing AutoAdmin approval".into(),
                     )),
                 };
                 if let Some(job) = &worker_aa {
-                    job.finish(
-                        result
+                    job.finish_result(&result, |()| {
+                        message
                             .as_ref()
-                            .map(|()| {
-                                message
-                                    .as_ref()
-                                    .map(i18n::LocalizedText::render_current)
-                                    .unwrap_or_else(|| i18n::tr!("aa-completed"))
-                            })
-                            .map_err(ToString::to_string),
-                    );
+                            .map(i18n::LocalizedText::render_current)
+                            .unwrap_or_else(|| i18n::tr!("aa-completed"))
+                    });
                 }
                 let users = service.list_accessible_users(&actor);
                 if let Some(output) = output.upgrade()
@@ -392,9 +384,6 @@ impl ShellSession {
                 true
             }
             Err(error) => {
-                if let Some(job) = &aa {
-                    job.finish(Err(error.to_string()));
-                }
                 self.report_user_management_refresh_error(error.to_string());
                 false
             }
