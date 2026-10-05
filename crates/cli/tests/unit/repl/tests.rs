@@ -66,9 +66,13 @@ fn prompt_uses_the_system_session_directory() {
 }
 
 #[test]
-fn repl_parser_keeps_shell_escapes_out_of_cli_parsing() {
+fn repl_requires_a_prefix_for_ux_commands_and_keeps_system_paths_intact() {
     assert_eq!(
-        shlex::split("config set address 'New York'"),
+        ux_command_input("/config set address 'New York'"),
+        Some("config set address 'New York'")
+    );
+    assert_eq!(
+        shlex::split(ux_command_input("/config set address 'New York'").unwrap()),
         Some(vec![
             "config".to_string(),
             "set".to_string(),
@@ -76,7 +80,34 @@ fn repl_parser_keeps_shell_escapes_out_of_cli_parsing() {
             "New York".to_string(),
         ])
     );
-    assert_eq!("/dir".strip_prefix('/'), Some("dir"));
+    assert_eq!(ux_command_input("/"), Some(""));
+    assert_eq!(ux_command_input("/echo example"), Some("echo example"));
+    for line in [
+        "dir",
+        "config get",
+        "/usr/bin/printf '%s' hello",
+        "'/usr/bin/printf' hello",
+        "echo \"$HOME\" | cat",
+    ] {
+        assert_eq!(ux_command_input(line), None, "{line}");
+    }
+}
+
+#[test]
+fn ux_hints_recognize_invalid_subcommands_without_guessing_unknown_names() {
+    for line in [
+        "help",
+        "config get",
+        "config invalid",
+        "debug invalid",
+        "new",
+    ] {
+        assert!(is_likely_ux_command(line), "{line}");
+    }
+    for line in ["echo hello", "tundra-unknown", "config '", ""] {
+        assert!(!is_likely_ux_command(line), "{line}");
+    }
+    assert_eq!(visible_command("echo \u{1b}[31m\n"), "echo \\u{1b}[31m\\n");
 }
 
 #[test]

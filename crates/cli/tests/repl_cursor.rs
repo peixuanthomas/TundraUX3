@@ -128,10 +128,10 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
     wait_for(">>", 0);
     send("中文".as_bytes());
     wait_for(">> 中文", 0);
-    send(b"\x15help\r");
+    send(b"\x15/help\r");
     wait_for(">>", 0);
     send(b"\x1b[A");
-    wait_for(">> help", 0);
+    wait_for(">> /help", 0);
     parser.lock().unwrap().set_size(30, 50);
     pair.master
         .resize(PtySize {

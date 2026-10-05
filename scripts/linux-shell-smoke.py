@@ -365,11 +365,15 @@ def main() -> int:
             raise SystemExit("embedded CLI did not render a pending command marker")
         command_directory = isolated / "command path 中文"
         command_directory.mkdir()
-        os.write(master, ("/cd " + shlex.quote(str(command_directory)) + "\r").encode())
+        os.write(master, ("cd " + shlex.quote(str(command_directory)) + "\r").encode())
         if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, prompt_offset, ignore_spaces=True):
             raise SystemExit("embedded CLI could not change directory:\n" + output_diagnostic(output[prompt_offset:]))
         if not wait_for_output(master, output, "●".encode(), child, 5.0, prompt_offset):
             raise SystemExit("successful cd did not render a completed command marker")
+        help_offset = len(output)
+        os.write(master, b"/help\r")
+        if not wait_for_output(master, output, b"Usage: tundra-cli", child, 5.0, help_offset, ignore_spaces=True):
+            raise SystemExit("embedded CLI did not run the prefixed UX help command")
         failure_offset = len(output)
         os.write(master, b"invalid-command\r")
         if not wait_for_output(master, output, "×".encode(), child, 5.0, failure_offset):

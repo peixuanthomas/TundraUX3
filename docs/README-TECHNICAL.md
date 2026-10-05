@@ -599,7 +599,7 @@ tundra-cli <config|launcher|debug|logs|cls|new|repl|help>
 | `launcher unpin <id>` | 按 `launcher list` 中的 ID 移除固定项，保留应用文件。 |
 | `debug doctor` | 检查系统、终端、权限、应用路径、存储和资源；实际探测 Kitty、Sixel、iTerm2 图形协议。 |
 | `debug explain` / `debug paths` | 输出启动/边界说明，或输出路径模板和解析路径。 |
-| `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入复用 CLI 命令，`/<command>` 交给固定系统命令解释器并显示退出码。 |
+| `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入交给固定系统命令解释器并显示退出码，`/<command>` 执行 UX 命令。外部 CLI 调用不加 `/`。 |
 | `debug test-frost` / `debug test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
 | `debug view-ui-style [1\|2\|3]` | 不带数字时列出样式；带数字时进入交互 UI / 动画对比预览，不保存设置。 |
 | `debug test-aa-style1` / `debug test-aa-style2` / `debug test-aa-style3` | AA 弹窗样式演示：三种方案都会压暗背景，分别使用居中双线警戒框、宽幅警戒条、带 AA 标识的分栏授权面板；按 B 对比背景遮罩前后。C/R/F 查看确认、执行中、结束状态；Tab/方向键与鼠标选择按钮，Enter 使用，Esc 退出。仅模拟，不执行命令、不保存样式；正式 AA 已采用 style3 的视觉效果，并保留真实操作提示和随内容收缩的布局。 |
@@ -610,27 +610,27 @@ tundra-cli <config|launcher|debug|logs|cls|new|repl|help>
 | `help [command ...]` | 显示对应命令帮助，例如 `help config`、`help debug doctor`；也支持 `config --help`、`config set -h`、`launcher help`、`logs export --help`。 |
 | `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
 
-调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中可直接输入 `debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
+调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中输入 `/debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
 
 设置通过当前操作系统用户的配置文件保存，不修改系统时间或系统账号。`icon-mode` 接受 `ascii` / `image`，`motion` 接受 `full` / `reduced`，`animation-speed` 接受 50–200 的 25 倍数，默认 100。`address` 沿用旧行为，会改变 Tundra 时区；`weather-location` 单独保存最多 120 字符的英文地址，`auto` 或 `config reset weather-location` 恢复按时区选择天气地点。`update-mode` 仅在 Linux 接受 `release` / `beta`，只保存更新选择，不立即下载或安装。已运行的 UI 需要重启以加载 CLI 保存的设置和 Launcher 固定项。
 
-Launcher 的 CLI 和 UI 共用目标检查：拒绝缺失文件、不支持的目标、符号链接和重解析点；CLI 的添加记录标记为 `cli`，遵循当前操作系统用户对配置文件的写权限，不伪造 UI 登录状态。`launcher pin` 的相对路径在 REPL 中跟随 `/cd` 后的目录。
+Launcher 的 CLI 和 UI 共用目标检查：拒绝缺失文件、不支持的目标、符号链接和重解析点；CLI 的添加记录标记为 `cli`，遵循当前操作系统用户对配置文件的写权限，不伪造 UI 登录状态。`/launcher pin` 的相对路径在 REPL 中跟随 `cd` 后的目录。
 
-没有 `/` 的未知命令会先检查是否像系统命令：识别常见解释器内置命令、Unix 变量赋值、当前会话 `PATH` 中的可执行文件和相对可执行路径，Windows 同时使用 `PATHEXT`。命中后显示“执行系统命令需要前缀 `/`”及输入示例；只检查名称和文件，不尝试执行。拼错的 Tundra 子命令继续显示对应帮助。显式系统命令仍写作 `/ls -la`、`/dir`；直接调用 Unix 绝对路径时写作 `//usr/bin/ls`。
+Command Line 和独立 `repl` 默认执行系统命令，例如 `ls -la`、`dir`。UX 命令需要 `/` 前缀，例如 `/help`、`/config set motion reduced`；外部调用仍使用 `tundra-cli config set motion reduced`。普通输入即使与 UX 命令同名，也先按系统命令执行；失败后如果名称像 UX 命令，提示加 `/`，不自动执行 UX 命令。带 `/` 的未知 UX 命令如果像系统命令，提示去掉 `/`；识别常见解释器内置命令、Unix 变量赋值、当前会话 `PATH` 中的可执行文件和相对可执行路径，Windows 同时使用 `PATHEXT`，只检查名称和文件，不尝试执行猜测的命令。拼错的 UX 子命令继续显示对应帮助。Unix 绝对可执行路径可直接输入 `/usr/bin/ls`；开头的路径包含后续 `/` 时按系统命令执行，只有一个 `/` 的根目录可执行文件需用引号包住路径，如 `'/my-tool'`。
 
 doctor 不再逐条输出固定的平台能力声明、重复的 Linux 架构/授权检查和各系统路径模板；模板仍可通过 `debug paths` 查看。Linux 增加伪终端读写、进程/内存数据可读性，以及 `systemctl`、`journalctl`、`ip`、`nmcli`、`lsblk`、`findmnt`、`df`、`pkexec`、`gio` 检查。命令存在仅说明已安装，不保证对应服务运行或用户获准执行操作。可选功能缺失显示 `WARN`，不让整体失败；必需运行条件、目录或存储检查失败返回 1。目录检查会创建并移除探测文件，原有存储检查可能初始化或恢复文档；不会安装软件或修改服务。
 
-Command Line 和独立 `repl` 在当前会话内保留系统命令的**已导出环境变量和工作目录**。提示符使用 `user@绝对路径 >> command`；每次读取下一条输入前更新路径，执行 `/cd` 后立即显示新目录，切换失败时保留实际目录。尚未执行系统命令时显示子 CLI 的启动工作目录；无法读取目录时以 `?` 标明未知。路径中的中文和空格原样显示，换行及终端控制字符转为可见的转义文字。Linux/macOS 例如先执行 `/export PROJECT_MODE=dev`、`/cd "/path/with spaces"`，后续 `/echo "$PROJECT_MODE"`、`/pwd` 和相对路径操作沿用修改后的状态；`/unset PROJECT_MODE` 会移除变量。Windows 对应 `/set PROJECT_MODE=dev`、`/cd /d "C:\path with spaces"`、`/echo %PROJECT_MODE%`，用 `/set PROJECT_MODE=` 删除变量。中间执行 `help` 等 Tundra 内置命令不会清空这些状态。
+Command Line 和独立 `repl` 在当前会话内保留系统命令的**已导出环境变量和工作目录**。提示符使用 `user@绝对路径 >> command`；每次读取下一条输入前更新路径，执行 `cd` 后立即显示新目录，切换失败时保留实际目录。尚未执行系统命令时显示子 CLI 的启动工作目录；无法读取目录时以 `?` 标明未知。路径中的中文和空格原样显示，换行及终端控制字符转为可见的转义文字。Linux/macOS 例如先执行 `export PROJECT_MODE=dev`、`cd "/path/with spaces"`，后续 `echo "$PROJECT_MODE"`、`pwd` 和相对路径操作沿用修改后的状态；`unset PROJECT_MODE` 会移除变量。Windows 对应 `set PROJECT_MODE=dev`、`cd /d "C:\path with spaces"`、`echo %PROJECT_MODE%`，用 `set PROJECT_MODE=` 删除变量。中间执行 `/help` 等 UX 命令不会清空这些状态。
 
-嵌入式 Command Line 在每条提示符左侧显示命令状态：输入中或等待执行结果时为 `○`，退出码为 0 时为主题强调色 `●`，非零退出码、命令解析失败或取消输入时为主题错误色 `×`。标记随命令保留在终端滚动历史中；重绘和换行不会将结果移到下一条命令。普通命令文字及输出继续使用原有颜色，`cls` 同时清除历史标记。独立 `repl` 不输出这套嵌入式状态协议。
+嵌入式 Command Line 在每条提示符左侧显示命令状态：输入中或等待执行结果时为 `○`，退出码为 0 时为主题强调色 `●`，非零退出码、命令解析失败或取消输入时为主题错误色 `×`。标记随命令保留在终端滚动历史中；重绘和换行不会将结果移到下一条命令。普通命令文字及输出继续使用原有颜色，`/cls` 同时清除历史标记。独立 `repl` 不输出这套嵌入式状态协议。
 
 系统命令的环境和目录状态由 `platform::SystemCommandSession` 持有，只传递给本会话的下一条系统命令，不修改 Tundra 主进程的环境或目录，也不更改系统环境变量配置；离开 Command Line、退出 REPL 或重启应用后释放。Unix 首次执行仍读取 `/bin/sh` 的登录默认设置，后续执行不重新加载登录配置，避免覆盖用户修改的 `PATH`。Unix 用私有匿名文件采集 NUL 分隔的环境和独立目录数据；Windows 保留 cmd 命令提示符语法，通过临时脚本和 UTF-16 快照采集 `set`、`cd` 的结果，临时文件随调用结束清理。命令输出继续使用原有 PTY。
 
-Windows 输入在 cmd 命令组中执行，使条件命令的采集始终位于条件体之外；包含括号、`&` 等特殊字符的值应加引号，例如 `/set "PATH=C:\my tools;%PATH%"`。`for` 仍使用命令提示符的 `%i` 写法。
+Windows 输入在 cmd 命令组中执行，使条件命令的采集始终位于条件体之外；包含括号、`&` 等特殊字符的值应加引号，例如 `set "PATH=C:\my tools;%PATH%"`。`for` 仍使用命令提示符的 `%i` 写法。
 
 普通失败也会保留失败前已经完成的环境和目录修改；失败的 `cd` 保持原目录。若强制终止、Unix `exec`/覆盖 `EXIT` trap，或 Windows `exit` 等操作跳过采集，则显示警告，下一条命令使用上一次完整状态。该功能保存的是环境和目录，未导出的 shell 局部变量、函数、别名及 shell 选项不跨命令保存；独立子进程本来也不能改变父 shell 的环境，脚本如需修改当前命令环境应使用 Unix 的 `. script` 或 Windows 的 `call script.cmd`。
 
-UI 样式预览可在 Command Line 中运行 `debug view-ui-style 2`，或在外部终端运行 `tundra-cli debug view-ui-style 2`。源码运行方式为 `cargo run -p cli --bin tundra-cli -- debug view-ui-style 2`。预览至少需要 60 × 24 个字符，建议使用 100 × 35 或更大的窗口。
+UI 样式预览可在 Command Line 中运行 `/debug view-ui-style 2`，或在外部终端运行 `tundra-cli debug view-ui-style 2`。源码运行方式为 `cargo run -p cli --bin tundra-cli -- debug view-ui-style 2`。预览至少需要 60 × 24 个字符，建议使用 100 × 35 或更大的窗口。
 
 - `1` Glacier：现有带边框组件、直接更新的进度条、tachyonfx 扫入效果。
 - `2` Tea：无边框列表与表单、较集中的留白布局、450 ms cubic 缓动进度。借鉴 Bubble Tea 的 Model / Message / Update / View 方式，使用 Rust 和现有 Ratatui 组件实现，没有链接 Go 库。

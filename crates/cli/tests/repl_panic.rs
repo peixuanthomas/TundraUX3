@@ -29,7 +29,7 @@ fn embedded_repl_panic_requests_the_shell_and_stops_reading_commands() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"debug test-watchdog-panic\nhelp\nexit\n")
+        .write_all(b"/debug test-watchdog-panic\n/help\nexit\n")
         .unwrap();
     let output = child.wait_with_output().unwrap();
     assert_eq!(

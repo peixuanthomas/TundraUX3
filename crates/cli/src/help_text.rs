@@ -24,7 +24,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "  repl    Enter the interactive command loop; type exit to leave, or /<command> to run an operating-system command"
+        "  repl    Enter the interactive command loop; system commands run by default, /<command> runs a UX command, exit leaves"
     )?;
     writeln!(
         output,
@@ -48,11 +48,11 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "In Command Line / repl, omit tundra-cli: config set motion reduced"
+        "In Command Line / repl, use / for UX commands: /config set motion reduced; /help shows UX help."
     )?;
     writeln!(
         output,
-        "System commands require / there: /pwd, /ls -la (Linux/macOS), /dir (Windows)."
+        "System commands need no prefix there: pwd, ls -la (Linux/macOS), dir (Windows). External CLI calls need no /: tundra-cli config set motion reduced."
     )?;
     writeln!(
         output,
@@ -353,7 +353,7 @@ pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io:
             "Clear terminal scrollback and screen, then move the cursor home. Saved logs are kept."
         }
         "repl" => {
-            "Start interactive Command Line. Use help for Tundra commands and exit or EOF to leave.\nSystem commands require a leading /: /ls -la or /dir. Suspected system commands only get a hint; they are never executed automatically.\nExported environment and working directory persist for this REPL session. /cd changes the system command directory; launcher pin uses that directory too.\nExamples: config set motion reduced; /pwd (Linux/macOS); /cd (Windows)."
+            "Start interactive Command Line. Use /help for UX commands and exit or EOF to leave.\nSystem commands run by default: ls -la or dir. UX commands require a leading /: /config set motion reduced. External CLI calls stay unchanged: tundra-cli config set motion reduced.\nFailed system input that looks like a UX command gets a / hint. Unknown / commands that look like system commands get a hint to remove /. Hints never execute another command.\nExported environment and working directory persist for this REPL session. cd changes the system command directory; /launcher pin uses that directory too.\nExamples: /config set motion reduced; pwd (Linux/macOS); cd (Windows)."
         }
         "debug test-frost" | "debug test-matrix" => {
             "Play an animation preview in the current terminal; settings are not changed."

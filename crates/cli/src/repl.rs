@@ -81,6 +81,8 @@ where
         editor.set_helper(Some(PromptDisplay));
     }
     let mut system_session = None;
+    println!("System commands run by default. Use /help for UX commands; exit to leave.");
+    println!("默认执行系统命令；UX 命令使用 / 前缀（例如 /help）；exit 退出。");
 
     loop {
         let prompt = repl_prompt(embedded, system_session.as_ref());
@@ -113,13 +115,25 @@ where
         }
         let _ = editor.add_history_entry(line);
 
-        if let Some(system_command) = line.strip_prefix('/') {
-            let code = run_system_command(&mut system_session, system_command);
+        let Some(ux_command) = ux_command_input(line) else {
+            let code = run_system_command(&mut system_session, line);
+            if code != 0 && is_likely_ux_command(line) {
+                eprintln!(
+                    "This looks like a UX command. Prefix it with '/': /{}",
+                    visible_command(line)
+                );
+                eprintln!("这可能是 UX 命令；执行 UX 命令需要前缀“/”。本次未执行 UX 命令。");
+            }
             report_command_status(embedded, code);
+            continue;
+        };
+        if ux_command.trim().is_empty() {
+            eprintln!("ERROR: '/' must be followed by a UX command; use /help");
+            report_command_status(embedded, 2);
             continue;
         }
 
-        let mut arguments = match shlex::split(line) {
+        let mut arguments = match shlex::split(ux_command) {
             Some(arguments) => arguments,
             None => {
                 eprintln!("ERROR: could not parse command line: unmatched quote");
@@ -180,21 +194,11 @@ where
                                 .is_ok_and(|session| session.is_likely_command(&arguments[0]))
                         });
                 if likely_system_command {
-                    let example = line
-                        .chars()
-                        .map(|character| {
-                            if character.is_control() {
-                                character.escape_default().to_string()
-                            } else {
-                                character.to_string()
-                            }
-                        })
-                        .collect::<String>();
                     eprintln!(
-                        "This looks like a system command. Prefix it with '/': /{}",
-                        example
+                        "This looks like a system command. Remove the '/' prefix: {}",
+                        visible_command(ux_command)
                     );
-                    eprintln!("这可能是系统命令；执行系统命令需要前缀“/”。本次未执行。");
+                    eprintln!("这可能是系统命令；执行系统命令请去掉前缀“/”。本次未执行。");
                 } else {
                     let _ = crate::help_text::write_error_help(&mut std::io::stderr(), &arguments);
                 }
@@ -203,6 +207,36 @@ where
         };
         report_command_status(embedded, code);
     }
+}
+
+fn ux_command_input(line: &str) -> Option<&str> {
+    let command = line.strip_prefix('/')?;
+    let name = command.split_whitespace().next().unwrap_or_default();
+    // An absolute executable path such as /usr/bin/ls is ordinary system
+    // input. A single leading slash such as /help selects a UX command.
+    (!name.contains('/')).then_some(command)
+}
+
+fn is_likely_ux_command(line: &str) -> bool {
+    shlex::split(line).is_some_and(|arguments| {
+        !arguments.is_empty()
+            && !matches!(
+                parse_args(arguments),
+                Err(crate::CliError::UnknownCommand(_))
+            )
+    })
+}
+
+fn visible_command(command: &str) -> String {
+    let mut visible = String::new();
+    for character in command.chars() {
+        if character.is_control() {
+            visible.extend(character.escape_default());
+        } else {
+            visible.push(character);
+        }
+    }
+    visible
 }
 
 /// Only the embedded terminal interprets this private, bounded CSI protocol.
@@ -280,11 +314,11 @@ fn is_reset_confirmation(answer: &str) -> bool {
     answer == "RESET"
 }
 
-/// Executes the bytes following `/` unchanged and returns the operating
+/// Executes system input unchanged and returns the operating
 /// system command's status. The REPL intentionally remains open afterwards.
 fn run_system_command(session: &mut Option<SystemCommandSession>, command: &str) -> i32 {
     if command.trim().is_empty() {
-        eprintln!("ERROR: '/' must be followed by an operating-system command");
+        eprintln!("ERROR: an operating-system command is required");
         return 2;
     }
 
