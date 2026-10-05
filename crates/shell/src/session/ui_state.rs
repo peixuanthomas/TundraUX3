@@ -666,6 +666,8 @@ pub struct UiSessionState {
     pub(super) logs_state: LogsUiState,
     pub(super) management_state: ManagementState,
     pub(super) auto_admin: AutoAdminState,
+    #[cfg(target_os = "linux")]
+    pub(super) privilege_session: super::controller::privilege_session::PrivilegeSession,
     pub(super) management_background:
         HashMap<platform::management::ManagementKind, ManagementState>,
     pub(super) diagnostics_tab: ui::DiagnosticsTab,

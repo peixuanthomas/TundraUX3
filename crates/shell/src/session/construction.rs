@@ -277,6 +277,8 @@ impl ShellSession {
             logs_state: LogsUiState::default(),
             management_state: ManagementState::default(),
             auto_admin: AutoAdminState::default(),
+            #[cfg(target_os = "linux")]
+            privilege_session: Default::default(),
             management_background: HashMap::new(),
             diagnostics_tab: ui::DiagnosticsTab::Health,
             diagnostics_selected_check: 0,

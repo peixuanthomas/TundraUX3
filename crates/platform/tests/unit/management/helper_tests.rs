@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn elevated_reconnect_is_recognized_without_an_operation_command() {
+    assert!(requires_authorized_attach(std::path::Path::new(
+        "/run/tundraux3-management/1000/operation/control.sock"
+    )));
+    assert!(!requires_authorized_attach(std::path::Path::new(
+        "/tmp/tundraux3-management-1000/operation/control.sock"
+    )));
+    assert!(!requires_authorized_attach(std::path::Path::new(
+        "/run/tundraux3-management-other/1000/operation/control.sock"
+    )));
+}
+
+#[test]
+fn attach_rejects_paths_outside_the_actors_fixed_socket_namespace() {
+    for path in [
+        "/tmp/operation/control.sock",
+        "/run/tundraux3-management/1001/operation/control.sock",
+        "/run/tundraux3-management/1000/../1001/control.sock",
+        "/run/tundraux3-management/1000/operation/private/control.sock",
+        "/run/tundraux3-management/1000/operation/other.sock",
+    ] {
+        assert!(check_attach_path(std::path::Path::new(path), 1000).is_err());
+    }
+}
+
+#[test]
 fn reconnect_metadata_contains_only_kind_and_rejects_untrusted_files() {
     let directory = std::env::temp_dir().join(format!(
         "tundra-operation-metadata-test-{}-{}",

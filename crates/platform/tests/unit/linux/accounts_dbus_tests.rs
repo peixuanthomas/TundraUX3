@@ -132,6 +132,25 @@ impl Policy {
 }
 struct Bus(Child);
 struct CancelPassword(Arc<AtomicBool>);
+struct SessionAccount;
+impl authorization::Interaction for SessionAccount {
+    fn begin(&self) -> Result<(), ServiceError> {
+        Ok(())
+    }
+    fn fallback(&self) -> Result<(), ServiceError> {
+        panic!("session must not request polkit passwords")
+    }
+    fn finish(&self) {}
+    fn session_authorized(&self) -> bool {
+        true
+    }
+    fn account_operation(
+        &self,
+        _operation: super::super::privilege_session::AccountOperation,
+    ) -> Option<Result<(), ServiceError>> {
+        Some(Err(ServiceError::Busy))
+    }
+}
 impl authorization::Interaction for CancelPassword {
     fn begin(&self) -> Result<(), ServiceError> {
         Ok(())
@@ -226,6 +245,7 @@ fn account_service_reads_and_writes_respect_identity_and_system_authorization() 
             .unwrap(),
         current_uid: 1000,
         interaction: None,
+        session_authorized: false,
     };
 
     assert_eq!(
@@ -306,4 +326,40 @@ fn account_service_reads_and_writes_respect_identity_and_system_authorization() 
     assert!(created.load(Ordering::Relaxed));
     assert!(!calls.lock().unwrap().contains(&"delete:1002:false".into()));
     assert_eq!(accounts.visible().unwrap().len(), 3);
+
+    // Shell session forwarding covers every mutation, including own password;
+    // identity restrictions are still enforced before forwarding the request.
+    accounts.set_interaction(Arc::new(SessionAccount));
+    for result in [
+        accounts.rename("user1001", "Forwarded"),
+        accounts.password("user1000", "NewPassword123!"),
+        accounts.password("user1001", "NewPassword123!"),
+        accounts.set_locked("user1001", true),
+        accounts.set_admin("user1001", false),
+        accounts.delete("user1001"),
+        accounts
+            .create("user1002", "User", false, "NewPassword123!")
+            .map(|_| ()),
+    ] {
+        assert_eq!(result, Err(ServiceError::Busy));
+    }
+    assert_eq!(
+        accounts.delete("user1000"),
+        Err(ServiceError::PermissionDenied)
+    );
+    users[0].lock().unwrap().admin = false;
+    assert_eq!(
+        accounts.set_admin("user1001", true),
+        Err(ServiceError::PermissionDenied)
+    );
+    // The root session endpoint uses the same Accounts implementation against
+    // the original actor, but sets new passwords without an old-password prompt.
+    accounts.interaction = None;
+    accounts.session_authorized = true;
+    fail_password.store(false, Ordering::Relaxed);
+    accounts.password("user1000", "NewPassword123!").unwrap();
+    assert_eq!(
+        accounts.delete("user1001"),
+        Err(ServiceError::PermissionDenied)
+    );
 }

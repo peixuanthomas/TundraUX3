@@ -27,9 +27,30 @@ pub struct Accounts {
     connection: Connection,
     current_uid: u64,
     interaction: Option<Arc<dyn authorization::Interaction>>,
+    session_authorized: bool,
 }
 
 impl Accounts {
+    pub(crate) fn authorized_actor(actor: u32) -> Result<Self, ServiceError> {
+        if unsafe { libc::getuid() } != 0 || unsafe { libc::geteuid() } != 0 {
+            return Err(ServiceError::PermissionDenied);
+        }
+        Ok(Self {
+            connection: dbus::authorization_system()?,
+            current_uid: u64::from(actor),
+            interaction: None,
+            session_authorized: true,
+        })
+    }
+
+    fn session_operation(
+        &self,
+        operation: super::privilege_session::AccountOperation,
+    ) -> Option<Result<(), ServiceError>> {
+        self.interaction
+            .as_ref()
+            .and_then(|interaction| interaction.account_operation(operation))
+    }
     /// Optional startup metadata must not wait for an interactive authorization timeout.
     pub fn current_account() -> Result<Account, ServiceError> {
         let context = LinuxUserContext::current().map_err(|_| ServiceError::PermissionDenied)?;
@@ -42,6 +63,7 @@ impl Accounts {
             connection,
             current_uid: u64::from(context.process.uid),
             interaction: None,
+            session_authorized: false,
         }
         .actor()
     }
@@ -52,6 +74,7 @@ impl Accounts {
             connection: dbus::authorization_system()?,
             current_uid: u64::from(context.process.uid),
             interaction: None,
+            session_authorized: false,
         })
     }
 
@@ -149,6 +172,14 @@ impl Accounts {
 
     pub fn rename(&self, username: &str, display_name: &str) -> Result<(), ServiceError> {
         let target = self.target(username, false, false)?;
+        if let Some(result) =
+            self.session_operation(super::privilege_session::AccountOperation::Rename {
+                username: username.into(),
+                display_name: display_name.into(),
+            })
+        {
+            return result;
+        }
         let _lease = self.prepare(target.uid == self.current_uid)?;
         self.proxy(&target)?
             .call("SetRealName", &(display_name,))
@@ -157,7 +188,15 @@ impl Accounts {
 
     pub fn password(&self, username: &str, password: &str) -> Result<(), ServiceError> {
         let target = self.target(username, false, false)?;
-        if target.uid == self.current_uid {
+        if let Some(result) =
+            self.session_operation(super::privilege_session::AccountOperation::Password {
+                username: username.into(),
+                password: password.into(),
+            })
+        {
+            return result;
+        }
+        if target.uid == self.current_uid && !self.session_authorized {
             return self
                 .interaction
                 .as_ref()
@@ -173,6 +212,14 @@ impl Accounts {
 
     pub fn set_locked(&self, username: &str, locked: bool) -> Result<(), ServiceError> {
         let target = self.target(username, true, locked)?;
+        if let Some(result) =
+            self.session_operation(super::privilege_session::AccountOperation::Locked {
+                username: username.into(),
+                locked,
+            })
+        {
+            return result;
+        }
         let _lease = self.prepare(false)?;
         self.proxy(&target)?
             .call("SetLocked", &(locked,))
@@ -181,6 +228,14 @@ impl Accounts {
 
     pub fn set_admin(&self, username: &str, admin: bool) -> Result<(), ServiceError> {
         let target = self.target(username, true, !admin)?;
+        if let Some(result) =
+            self.session_operation(super::privilege_session::AccountOperation::Admin {
+                username: username.into(),
+                admin,
+            })
+        {
+            return result;
+        }
         let _lease = self.prepare(false)?;
         self.proxy(&target)?
             .call("SetAccountType", &(i32::from(admin),))
@@ -189,6 +244,13 @@ impl Accounts {
 
     pub fn delete(&self, username: &str) -> Result<(), ServiceError> {
         let target = self.target(username, true, true)?;
+        if let Some(result) =
+            self.session_operation(super::privilege_session::AccountOperation::Delete {
+                username: username.into(),
+            })
+        {
+            return result;
+        }
         let _lease = self.prepare(false)?;
         // Never remove the user's home or files.
         self.manager()?
@@ -206,6 +268,21 @@ impl Accounts {
         let actor = self.actor()?;
         if !actor.admin {
             return Err(ServiceError::PermissionDenied);
+        }
+        if let Some(result) =
+            self.session_operation(super::privilege_session::AccountOperation::Create {
+                username: username.into(),
+                display_name: display_name.into(),
+                admin,
+                password: password.into(),
+            })
+        {
+            result?;
+            let path = self
+                .manager()?
+                .call("FindUserByName", &(username,))
+                .map_err(map_error)?;
+            return self.read(path);
         }
         let hash = password_hash(password)?;
         let _lease = self.prepare(false)?;

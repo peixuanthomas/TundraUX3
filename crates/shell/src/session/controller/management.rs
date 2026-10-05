@@ -678,6 +678,11 @@ impl ShellSession {
         socket: Option<PathBuf>,
         description: Option<String>,
     ) {
+        #[cfg(target_os = "linux")]
+        let privileged = privileged
+            || socket
+                .as_ref()
+                .is_some_and(|path| platform::management::helper::requires_authorized_attach(path));
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
             return;
         };
@@ -689,6 +694,8 @@ impl ShellSession {
         };
         self.management_state.auto_admin_job = Some(aa.clone());
         let worker_aa = aa.clone();
+        #[cfg(target_os = "linux")]
+        let authority = self.privilege_session.clone();
         let language = self.language.clone();
         let output = Arc::downgrade(&job.0);
         let cancelled = job.0.cancelled.clone();
@@ -724,7 +731,16 @@ impl ShellSession {
                 }
             };
             let result = worker_aa.wait_for_approval().and_then(|()| {
-                super::management_client::run(command, privileged, socket, rx, &cancelled, &emit)
+                super::management_client::run(
+                    #[cfg(target_os = "linux")]
+                    &authority,
+                    command,
+                    privileged,
+                    socket,
+                    rx,
+                    &cancelled,
+                    &emit,
+                )
             });
             if let Err(error) = result {
                 emit(OperationEvent::Disconnected {

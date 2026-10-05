@@ -10,13 +10,13 @@ fn main() {
     #[cfg(target_os = "linux")]
     if matches!(
         args.first().map(String::as_str),
-        Some("__system-helper" | "__network-rollback")
+        Some("__system-helper" | "__privilege-session" | "__network-rollback")
     ) {
         let result = if args.len() != 2 {
             Err(platform::management::ManagementError::InvalidInput(
                 "Invalid internal operation arguments".into(),
             ))
-        } else if args[0] == "__system-helper" {
+        } else if args[0] == "__system-helper" || args[0] == "__privilege-session" {
             args[1]
                 .parse::<u32>()
                 .map_err(|_| {
@@ -24,7 +24,13 @@ fn main() {
                         "Invalid operation owner".into(),
                     )
                 })
-                .and_then(platform::management::helper::entry)
+                .and_then(|actor| {
+                    if args[0] == "__privilege-session" {
+                        platform::linux::privilege_session::entry(actor)
+                    } else {
+                        platform::management::helper::entry(actor)
+                    }
+                })
         } else {
             platform::management::network::rollback_transaction(&args[1])
         };

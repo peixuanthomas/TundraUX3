@@ -149,14 +149,16 @@ impl UserManagementOperation {
                 .update_user_info(actor, &form.username, &form.display_name)
                 .map(|_| ()),
             Self::Password { username } => {
+                // A non-administrator retains the system's ordinary own-password
+                // workflow; changing one's own password does not require sudo.
                 if backend == identity::IdentityBackend::Linux
+                    && actor.role != UserRole::Admin
                     && backend.usernames_match(&actor.username, &username)
                 {
-                    service.set_user_password(actor, &username, "")
-                } else {
-                    let password = read_confirmed_password(job, inputs)?;
-                    service.set_user_password(actor, &username, &password)
+                    return service.set_user_password(actor, &username, "");
                 }
+                let password = read_confirmed_password(job, inputs)?;
+                service.set_user_password(actor, &username, &password)
             }
             Self::Disable { username } => service.disable_user(actor, &username),
             Self::Enable { username } => service.enable_user(actor, &username),
@@ -266,9 +268,14 @@ impl ShellSession {
         #[cfg(target_os = "linux")]
         let service = if backend == identity::IdentityBackend::Linux {
             if let Some(job) = &aa {
-                service.with_authorization_interaction(Arc::new(
-                    super::auto_admin::AutoAdminAuthorization::new(job.clone()),
-                ))
+                service.with_authorization_interaction(Arc::new(if actor.role == UserRole::Admin {
+                    super::auto_admin::AutoAdminAuthorization::with_session(
+                        job.clone(),
+                        self.privilege_session.clone(),
+                    )
+                } else {
+                    super::auto_admin::AutoAdminAuthorization::new(job.clone())
+                }))
             } else {
                 service
             }
@@ -301,6 +308,8 @@ impl ShellSession {
             .as_ref()
             .map(|operation| operation.username().trim().to_string());
         let worker_aa = aa.clone();
+        #[cfg(target_os = "linux")]
+        let authority = self.privilege_session.clone();
         let language = self.language.clone();
         let shared = Arc::new(Job {
             result: Mutex::new(None),
@@ -321,7 +330,25 @@ impl ShellSession {
                     (Some(operation), Some(job)) => job
                         .wait_for_approval()
                         .map_err(|error| CoreError::SystemIdentity(error.to_string()))
-                        .and_then(|()| operation.execute(&service, &actor, backend, job, &inputs)),
+                        .and_then(|()| {
+                            #[cfg(target_os = "linux")]
+                            if backend == identity::IdentityBackend::Linux
+                                && actor.role == UserRole::Admin
+                            {
+                                authority
+                                    .ensure(|| {
+                                        job.read_secret(
+                                            &inputs,
+                                            "sudo-password",
+                                            i18n::tr!("management-auth-prompt"),
+                                        )
+                                    })
+                                    .map_err(|error| {
+                                        CoreError::SystemIdentity(error.to_string())
+                                    })?;
+                            }
+                            operation.execute(&service, &actor, backend, job, &inputs)
+                        }),
                     (None, _) => Ok(()),
                     _ => Err(CoreError::SystemIdentity(
                         "Missing AutoAdmin approval".into(),

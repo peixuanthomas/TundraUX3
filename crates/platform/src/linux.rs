@@ -33,6 +33,7 @@ pub mod diagnostics;
 pub mod identity;
 pub mod installation;
 pub mod power;
+pub mod privilege_session;
 mod user_dirs;
 
 use user_dirs::resolve_user_dirs;

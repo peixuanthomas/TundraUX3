@@ -67,6 +67,12 @@ fn base_directory(euid: u32, actor: u32) -> PathBuf {
 
 /// Used only by the CLI's early helper dispatch, before its ordinary startup/runtime.
 pub fn entry(actor: u32) -> Result<(), ManagementError> {
+    check_actor(actor)?;
+    let euid = unsafe { libc::geteuid() };
+    start(actor, euid)
+}
+
+pub(crate) fn check_actor(actor: u32) -> Result<(), ManagementError> {
     let uid = unsafe { libc::getuid() };
     let euid = unsafe { libc::geteuid() };
     if uid != euid || unsafe { libc::getgid() } != unsafe { libc::getegid() } {
@@ -89,6 +95,10 @@ pub fn entry(actor: u32) -> Result<(), ManagementError> {
             ));
         }
     }
+    Ok(())
+}
+
+fn start(actor: u32, euid: u32) -> Result<(), ManagementError> {
     let mut request = String::new();
     std::io::stdin()
         .lock()
@@ -141,13 +151,8 @@ pub fn entry(actor: u32) -> Result<(), ManagementError> {
     let socket = directory.join("control.sock");
     let listener = UnixListener::bind(&socket).map_err(failure)?;
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).map_err(failure)?;
-    if euid == 0 {
-        use std::os::unix::ffi::OsStrExt;
-        let name = std::ffi::CString::new(socket.as_os_str().as_bytes()).map_err(failure)?;
-        if unsafe { libc::chown(name.as_ptr(), actor, u32::MAX) } != 0 {
-            return Err(failure(std::io::Error::last_os_error()));
-        }
-    }
+    // Elevated operations keep a root-owned socket. A same-UID process must
+    // use its private authorized session before controlling it.
     listener.set_nonblocking(true).map_err(failure)?;
     // The early CLI entry has not started threads; fork occurs before watchdog initialization.
     let pid = unsafe { libc::fork() };
@@ -394,7 +399,7 @@ fn deliver_input(
     }
 }
 
-fn peer_uid(stream: &UnixStream) -> std::io::Result<u32> {
+pub(crate) fn peer_uid(stream: &UnixStream) -> std::io::Result<u32> {
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     if unsafe {
@@ -446,7 +451,7 @@ fn serve(
     let (input_tx, input_rx) = mpsc::sync_channel(32);
     let cancelled = Arc::new(AtomicBool::new(false));
     let worker_cancelled = cancelled.clone();
-    let actor = context.actor_uid;
+    let controller_uid = unsafe { libc::geteuid() };
     let mut worker_io = Some(WorkerInteraction {
         events: event_tx,
         inputs: input_rx,
@@ -482,7 +487,7 @@ fn serve(
     let mut finished: Option<Instant> = None;
     loop {
         if let Ok((stream, _)) = listener.accept() {
-            if peer_uid(&stream).is_ok_and(|uid| uid == actor || uid == 0) {
+            if peer_uid(&stream).is_ok_and(|uid| uid == controller_uid) {
                 stream.set_nonblocking(true).map_err(failure)?;
                 let outgoing = reconnect_outgoing(
                     &replay,
@@ -659,6 +664,44 @@ pub fn connect(path: &std::path::Path, actor: u32) -> Result<UnixStream, Managem
         .set_write_timeout(Some(Duration::from_secs(2)))
         .map_err(failure)?;
     Ok(stream)
+}
+
+/// The fixed elevated namespace also determines whether reconnect needs sudo.
+/// Do not infer this from the UI's operation flag: recovered tasks have no command.
+pub fn requires_authorized_attach(path: &std::path::Path) -> bool {
+    path.starts_with("/run/tundraux3-management")
+}
+
+pub(crate) fn check_attach_path(path: &std::path::Path, actor: u32) -> Result<(), ManagementError> {
+    use std::os::unix::fs::FileTypeExt;
+    let root = base_directory(0, actor);
+    let relative = path.strip_prefix(&root).map_err(failure)?;
+    let parts = relative.components().collect::<Vec<_>>();
+    if parts.len() != 2
+        || !matches!(parts[0], std::path::Component::Normal(_))
+        || parts[1].as_os_str() != "control.sock"
+    {
+        return Err(ManagementError::InvalidInput(
+            "Invalid operation socket path".into(),
+        ));
+    }
+    // All ancestors below /run must be root-owned and immutable to the actor.
+    // Reject symlinks rather than resolving them into an unrelated socket.
+    for directory in [root.parent().unwrap(), &root, path.parent().unwrap()] {
+        let meta = fs::symlink_metadata(directory).map_err(failure)?;
+        if !meta.is_dir() || meta.uid() != 0 || meta.mode() & 0o022 != 0 {
+            return Err(ManagementError::PermissionDenied(
+                "Unsafe operation directory".into(),
+            ));
+        }
+    }
+    let meta = fs::symlink_metadata(path).map_err(failure)?;
+    if !meta.file_type().is_socket() || meta.uid() != 0 || meta.mode() & 0o077 != 0 {
+        return Err(ManagementError::PermissionDenied(
+            "Unsafe operation socket".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

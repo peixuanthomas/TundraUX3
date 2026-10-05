@@ -493,7 +493,12 @@ impl UserService {
         #[cfg(target_os = "linux")]
         if self.backend == crate::IdentityBackend::Linux {
             let accounts = self.linux_accounts(actor)?;
-            if username != actor.username {
+            if username != actor.username
+                || self
+                    .interaction
+                    .as_ref()
+                    .is_some_and(|i| i.session_authorized())
+            {
                 validate_password(username, password)?;
             }
             return accounts

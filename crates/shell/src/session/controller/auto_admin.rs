@@ -443,6 +443,8 @@ fn print_line(parser: &mut vt100::Parser, text: &str) {
 
 impl ShellSession {
     pub(in crate::session) fn stop_auto_admin(&self) {
+        #[cfg(target_os = "linux")]
+        self.privilege_session.revoke();
         if let Some(job) = &self.auto_admin.job {
             let _lock = job.0.display.lock().unwrap_or_else(|e| e.into_inner());
             job.0.phase.store(DENIED, Ordering::Release);
@@ -463,7 +465,7 @@ impl ShellSession {
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
             return;
         };
-        let (responses, _inputs) = mpsc::channel();
+        let (responses, inputs) = mpsc::channel();
         let Some(job) = self.begin_auto_admin(
             i18n::tr!(if reboot { "aa-reboot" } else { "aa-poweroff" }),
             true,
@@ -472,6 +474,13 @@ impl ShellSession {
             return;
         };
         let worker_job = job.clone();
+        #[cfg(target_os = "linux")]
+        let authority = self.privilege_session.clone();
+        #[cfg(target_os = "linux")]
+        let administrator = self
+            .app
+            .auth_session()
+            .is_some_and(|actor| actor.role == UserRole::Admin);
         let language = self.language.clone();
         match group.spawn_thread(
             TaskSpec::one_shot(TaskId::from_static("auto-admin-power")),
@@ -484,18 +493,42 @@ impl ShellSession {
                         #[cfg(target_os = "linux")]
                         {
                             let _ = &platform;
-                            platform::linux::power::execute_with_interaction(
-                                if reboot {
-                                    platform::linux::power::PowerAction::Reboot
-                                } else {
-                                    platform::linux::power::PowerAction::PowerOff
-                                },
-                                Some(Arc::new(AutoAdminAuthorization::new(worker_job.clone()))),
-                            )
-                            .map_err(|e| e.to_string())
+                            let action = if reboot {
+                                platform::linux::power::PowerAction::Reboot
+                            } else {
+                                platform::linux::power::PowerAction::PowerOff
+                            };
+                            // Preserve ordinary logind access: a currently allowed
+                            // shutdown, or a non-admin user's system-agent path,
+                            // must not newly require membership in sudoers.
+                            if !administrator
+                                || platform::linux::power::availability(action)
+                                    == Ok(platform::linux::power::PowerAvailability::Allowed)
+                            {
+                                return platform::linux::power::execute_with_interaction(
+                                    action,
+                                    Some(Arc::new(AutoAdminAuthorization::new(worker_job.clone()))),
+                                )
+                                .map_err(|e| e.to_string());
+                            }
+                            authority
+                                .ensure(|| {
+                                    worker_job.read_secret(
+                                        &inputs,
+                                        "sudo-password",
+                                        i18n::tr!("management-auth-prompt"),
+                                    )
+                                })
+                                .map_err(|e| e.to_string())?;
+                            authority
+                                .execute(platform::linux::privilege_session::Request::Power {
+                                    reboot,
+                                })
+                                .map_err(|e| e.to_string())
                         }
                         #[cfg(not(target_os = "linux"))]
                         {
+                            let _ = &inputs;
                             if reboot {
                                 platform.reboot()
                             } else {

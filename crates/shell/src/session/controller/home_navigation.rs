@@ -112,6 +112,10 @@ impl ShellSession {
         self.logs_state = LogsUiState::default();
         self.management_state = ManagementState::default();
         self.stop_auto_admin();
+        #[cfg(target_os = "linux")]
+        {
+            self.privilege_session = Default::default();
+        }
         self.auto_admin = AutoAdminState::default();
         self.management_background.clear();
         self.launcher_drag = None;

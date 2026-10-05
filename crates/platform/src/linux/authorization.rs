@@ -24,9 +24,18 @@ impl Action {
     }
 }
 
-/// Implemented by the terminal owner. Password bytes stay in the terminal transport,
-/// never in this authorization control interface.
+/// Implemented by the terminal owner. Authentication passwords stay in the
+/// terminal transport; account requests may carry a new password to set.
 pub trait Interaction: Send + Sync {
+    fn session_authorized(&self) -> bool {
+        false
+    }
+    fn account_operation(
+        &self,
+        _operation: super::privilege_session::AccountOperation,
+    ) -> Option<Result<(), ServiceError>> {
+        None
+    }
     /// The terminal owner supplies an embedded agent instead of a desktop prompt.
     fn embedded(&self) -> bool {
         false

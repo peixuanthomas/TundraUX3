@@ -302,7 +302,9 @@ Linux 当前用户可查看其进程权限允许的明细，不以 UX 角色推�
 
 Linux 首页新增服务、进程、软件包、网络、磁盘五个独立入口；具体操作和支持范围见 [Linux 系统管理](linux-management.md)。五个页面各自保存查询和后台任务状态，切换页面不会停止安装；后台等待输入时会提示返回对应应用。
 
-`platform::management` 定义查询、固定操作和任务事件，Shell 通过受管理的后台线程读取，UI 只负责显示和输入。需要权限的操作经 sudo 启动 `tundra-cli __system-helper`，请求通过标准输入发送，密码不放在命令参数中。助手保存本次任务、Unix socket 和有限的输出，Shell 退出后可重新连接。内部入口在普通启动流程之前处理，不会以 root 打开整个桌面。
+`platform::management` 定义查询、固定操作和任务事件，Shell 通过后台线程读取，UI 负责显示和输入。Linux 首次内置提权通过 sudo 启动 `tundra-cli __privilege-session`；首次密码提示说明授权保留到当前 Shell 退出。密码只通过 stdin 送给 sudo，验证后清除，不写入文件或命令参数。后续系统管理、用户管理、关机重启和任务重连共用这一授权，每次操作仍须通过 AA。sudo 使用带命令的 `-k`，不借用或刷新其他程序可用的密码缓存。
+
+授权程序只持有创建时继承的私有双向连接，不创建可供其他程序连接的会话 socket，也不保存密码或令牌文件。Shell 禁止同用户进程通过 ptrace 或 `/proc` 复制授权，连接描述符带 close-on-exec 标记，不传给外部命令。退出、注销或通信失效时撤销连接，授权程序随后退出；不会因此杀死已启动的独立任务。后台任务的 `control.sock` 保持 root 所有且仅接受 root，授权程序核对固定 `/run/tundraux3-management/<actor>/<operation>/control.sock` 的归属与权限后，将已经连接的描述符交给当前 Shell。新启动的 Shell 需重新授权才能重连旧任务。
 
 网络更改先保存原配置，再通过系统 systemd 服务启动独立恢复助手 `__network-rollback`，应用后等待 120 秒确认。进程信号使用 pidfd，并核对进程启动标识；调整 nice 只作用于主线程。软件包直接运行 APT/dpkg 或 DNF 的实际事务，所有提示原样显示在 AutoAdmin 内嵌终端；输入直接送给软件管理器，不再把 y/n 或配置文件问题改造成 Continue/Cancel 表单。磁盘扫描保持原用户权限，不跟随符号链接或越过挂载点。
 
@@ -437,7 +439,7 @@ Linux 的 User Management 通过 AccountsService 管理真实的本地登录账�
 
 Settings 中的个人外观和仪表板偏好只核对当前进程用户并读写本地配置，不查询 AccountsService。系统账户服务缺失或暂时不可用时，个人设置仍可打开和保存；系统账户管理单独报告错误。
 
-账户读写在后台执行。受保护的修改先通过 AutoAdmin，再交给 AccountsService 与 polkit。修改自己的密码使用 `/usr/bin/passwd`，由系统读取旧密码、新密码并检查密码规则；输入输出使用 AA 的独立终端，主界面继续处理绘制和事件。管理员设置其他用户密码时，AA 批准后依次询问新密码和确认密码，掩码显示输入，两次一致才调用 UserService；不一致会重新询问，Ctrl+C 或超时取消。随后通过 libxcrypt 生成随机盐的 SHA-512 crypt 值交给 AccountsService，不保存系统密码或把密码放入命令行参数。该操作按 AccountsService 的规则解锁目标账户，AA 的操作说明会提示这一点。
+账户读写在后台执行。Shell 的写操作先通过 AutoAdmin 和本次 sudo 会话授权，再由授权程序调用 AccountsService；它按原 actor 身份重新检查可管理的账户，不把 actor 当成 root。修改自己或其他用户的密码时，AA 询问新密码和确认密码，两次一致并通过 UserService 校验才执行；不一致重新询问，Ctrl+C 或超时取消。授权密码与要设置的新密码分开处理。通过 libxcrypt 生成随机盐的 SHA-512 crypt 值交给 AccountsService，临时明文和传输缓冲区用完清除。设置密码按 AccountsService 的规则解锁目标账户。未使用 Shell 会话授权的调用方仍沿用原来的 polkit 和 `/usr/bin/passwd` 路径。
 
 锁定操作仅锁定密码登录，不结束已有会话，也不禁止密钥登录。当前账户不能被删除、锁定或降级，避免移除本会话的管理权限；删除其他账户始终保留主目录和文件。创建账户后若设置密码失败，会明确报告部分完成并刷新列表，用户可继续设置密码，不自动删除新账户。未安装 AccountsService、libxcrypt 或授权不可用时显示错误；不以 sudo 重启 UX，也不回退到修改 UX 本地账户。
 
@@ -459,9 +461,9 @@ Linux 自更新只支持当前用户拥有且可写的便携目录，目录中�
 `tundra-shell` 和 `tundra-cli`。检查、准备、替换和恢复均校验目录与文件权限。
 不再提供 PackageKit、apt、pacman 或 RPM 更新；系统目录中的旧安装不会被直接替换。
 
-Shell 的 AutoAdmin 在需要认证时，为当前进程注册 `pkttyagent`，绑定 PID 与启动时间，并通过 `--notify-fd` 等待注册完成。认证代理和 `/usr/bin/passwd` 使用独立的控制终端，密码回显由系统程序控制；它们不会接管 Shell 的原终端。完成、失败或取消后仅清理认证子进程。AA 为当前进程注册的代理不带 `--fallback`，以免提示仍交给桌面代理；这个优先级规则见 [polkit 的代理注册说明](https://polkit.pages.freedesktop.org/polkit/eggdbus-interface-org.freedesktop.PolicyKit1.Authority.html)。其他调用方仍可使用已有系统代理。
+Shell 的 AA 使用一次 sudo 授权覆盖全部内置提权操作；授权程序只接受固定的系统管理、账户和电源请求，不接受任意命令行。AccountsService 和 logind 仍负责实际修改。其他调用方的 polkit 交互适配器仍可注册绑定当前进程与启动时间的 `pkttyagent`，使用独立终端，不接管主终端。
 
-logind 仍选择基础、多会话或抑制器策略。AA 先发出不打开桌面授权窗口的请求，只有明确返回 `InteractiveAuthorizationRequired` 才注册内嵌代理，并对同一请求重试一次；拒绝、取消、超时和断线不会重放电源操作。日志读取遵守普通用户权限，不执行 root 命令回退。
+logind 仍选择基础、多会话或抑制器策略。系统已允许的电源操作以及普通用户的系统授权流程不新增 sudo 要求；管理员需要提权时复用 Shell 授权连接。普通用户修改本人资料和密码也保留原有 polkit 与 `passwd` 流程。授权连接的通信失败会撤销会话；已正常返回的服务错误或过期任务不会撤销会话。取消、超时和断线不会自动重放写操作。日志读取遵守普通用户权限，不执行 root 命令回退。
 
 便携包不安装系统账户、PAM 配置或 system service。诊断只观察身份、目录权限、总线、
 logind、polkit、pkttyagent 和便携安装条件，不自动提权。

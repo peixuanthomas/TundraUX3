@@ -148,16 +148,42 @@ impl AutoAdminJob {
 pub(in crate::session) struct AutoAdminAuthorization {
     job: AutoAdminJob,
     agent: Mutex<Option<TextAgent>>,
+    session: Option<super::super::privilege_session::PrivilegeSession>,
 }
 impl AutoAdminAuthorization {
     pub(in crate::session) fn new(job: AutoAdminJob) -> Self {
         Self {
             job,
             agent: Mutex::new(None),
+            session: None,
+        }
+    }
+    pub(in crate::session) fn with_session(
+        job: AutoAdminJob,
+        session: super::super::privilege_session::PrivilegeSession,
+    ) -> Self {
+        Self {
+            job,
+            agent: Mutex::new(None),
+            session: Some(session),
         }
     }
 }
 impl Interaction for AutoAdminAuthorization {
+    fn session_authorized(&self) -> bool {
+        self.session.is_some()
+    }
+    fn account_operation(
+        &self,
+        operation: platform::linux::privilege_session::AccountOperation,
+    ) -> Option<Result<(), ServiceError>> {
+        self.session.as_ref().map(|session| {
+            self.begin()?;
+            session.execute(platform::linux::privilege_session::Request::Account(
+                operation,
+            ))
+        })
+    }
     fn embedded(&self) -> bool {
         true
     }

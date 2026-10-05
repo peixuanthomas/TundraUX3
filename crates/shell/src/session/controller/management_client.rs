@@ -9,6 +9,7 @@ use std::{sync::atomic::Ordering, time::Duration};
 
 #[cfg(target_os = "linux")]
 pub(super) fn run(
+    authority: &super::privilege_session::PrivilegeSession,
     command: Option<ManagementCommand>,
     privileged: bool,
     socket: Option<PathBuf>,
@@ -22,122 +23,96 @@ pub(super) fn run(
     let failure = |e: std::io::Error| ManagementError::Failed(e.to_string());
     let actor = unsafe { libc::getuid() };
     let mut terminal_size = None;
-    let socket = if let Some(socket) = socket {
-        socket
-    } else {
-        let command =
-            command.ok_or_else(|| ManagementError::InvalidInput("Missing operation".into()))?;
-        let executable = std::env::current_exe()
-            .map_err(failure)?
-            .with_file_name("tundra-cli");
-        if !executable.is_file() {
-            return Err(ManagementError::Unavailable(
-                "tundra-cli must be beside tundra-shell".into(),
-            ));
-        }
-        if privileged && actor != 0 {
-            if !std::path::Path::new("/usr/bin/sudo").is_file() {
-                return Err(ManagementError::Unavailable(
-                    "This operation requires sudo; it is not installed".into(),
-                ));
-            }
-            let probe = Command::new("/usr/bin/sudo")
-                .args(["-n", "-v"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(failure)?;
-            let authorized = wait_for_launcher(probe, detached)?.status.success();
-            if !authorized {
-                let mut success = false;
-                for _ in 0..3 {
-                    emit(OperationEvent::Question {
-                        id: "sudo-password".into(),
-                        prompt: i18n::tr!("management-auth-prompt"),
-                        choices: Vec::new(),
-                        secret: true,
-                    });
-                    let password = loop {
-                        if detached.load(Ordering::Relaxed) {
-                            return Err(ManagementError::Cancelled);
-                        }
-                        match inputs.recv_timeout(Duration::from_millis(100)) {
-                            Ok(OperationInput::Answer { id, value }) if id == "sudo-password" => {
-                                break Zeroizing::new(value);
-                            }
-                            Ok(OperationInput::Cancel) => return Err(ManagementError::Cancelled),
-                            Ok(OperationInput::Resize { columns, rows }) => {
-                                terminal_size = Some((columns, rows));
-                            }
-                            Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
-                            Err(_) => return Err(ManagementError::Cancelled),
-                        }
-                    };
-                    let mut auth = Command::new("/usr/bin/sudo")
-                        .args(["-S", "-p", "", "-v"])
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::piped())
-                        .spawn()
-                        .map_err(failure)?;
-                    if let Some(mut stdin) = auth.stdin.take() {
-                        stdin.write_all(password.as_bytes()).map_err(failure)?;
-                        stdin.write_all(b"\n").map_err(failure)?;
-                    }
-                    drop(password);
-                    let result = wait_for_launcher(auth, detached)?;
-                    if result.status.success() {
-                        success = true;
-                        break;
-                    }
-                    emit(OperationEvent::Progress {
-                        message: i18n::tr!("management-auth-failed"),
-                        percent: None,
-                    });
+    let needs_authorization = socket.as_ref().map_or(privileged, |path| {
+        platform::management::helper::requires_authorized_attach(path)
+    });
+    let executable = std::env::current_exe()
+        .map_err(failure)?
+        .with_file_name("tundra-cli");
+    if (socket.is_none() || (needs_authorization && actor != 0)) && !executable.is_file() {
+        return Err(ManagementError::Unavailable(
+            "tundra-cli must be beside tundra-shell".into(),
+        ));
+    }
+    if needs_authorization {
+        authority.ensure(|| {
+            emit(OperationEvent::Question {
+                id: "sudo-password".into(),
+                prompt: i18n::tr!("management-auth-prompt"),
+                choices: Vec::new(),
+                secret: true,
+            });
+            loop {
+                if detached.load(Ordering::Relaxed) {
+                    return Err(ManagementError::Cancelled);
                 }
-                if !success {
-                    return Err(ManagementError::PermissionDenied(
-                        "System authorization failed".into(),
-                    ));
+                match inputs.recv_timeout(Duration::from_millis(100)) {
+                    Ok(OperationInput::Answer { id, value }) if id == "sudo-password" => {
+                        return Ok(Zeroizing::new(value));
+                    }
+                    Ok(OperationInput::Cancel) => return Err(ManagementError::Cancelled),
+                    Ok(OperationInput::Resize { columns, rows }) => {
+                        terminal_size = Some((columns, rows))
+                    }
+                    Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(_) => return Err(ManagementError::Cancelled),
                 }
             }
-        }
-        let mut launch = if privileged && actor != 0 {
-            let mut c = Command::new("/usr/bin/sudo");
-            c.args(["-n", "--"]).arg(&executable);
-            c
-        } else {
-            Command::new(&executable)
-        };
-        launch
-            .arg("__system-helper")
-            .arg(actor.to_string())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = launch.spawn().map_err(failure)?;
-        let mut request = Zeroizing::new(
-            serde_json::to_vec(&command)
-                .map_err(|e| ManagementError::InvalidInput(e.to_string()))?,
-        );
-        request.push(b'\n');
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(&request).map_err(failure)?;
-        }
-        drop(request);
-        let output = wait_for_launcher(child, detached)?;
-        if !output.status.success() {
-            return Err(ManagementError::Failed(runtime_log::sanitize_text(
-                &String::from_utf8_lossy(&output.stderr),
-            )));
-        }
-        let ready: HelperReady = serde_json::from_slice(&output.stdout).map_err(|_| {
-            ManagementError::Failed("The operation helper did not report a valid connection".into())
         })?;
-        ready.socket
+    }
+    let mut stream = if needs_authorization {
+        use platform::linux::privilege_session::Request;
+        authority.connect(if let Some(socket) = socket {
+            Request::Attach(socket)
+        } else {
+            Request::Start(
+                command.ok_or_else(|| ManagementError::InvalidInput("Missing operation".into()))?,
+            )
+        })?
+    } else {
+        let socket = if let Some(socket) = socket {
+            socket
+        } else {
+            let command =
+                command.ok_or_else(|| ManagementError::InvalidInput("Missing operation".into()))?;
+            let mut launch = Command::new(&executable);
+            launch
+                .arg("__system-helper")
+                .arg(actor.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut child = launch.spawn().map_err(failure)?;
+            let mut request = Zeroizing::new(
+                serde_json::to_vec(&command)
+                    .map_err(|e| ManagementError::InvalidInput(e.to_string()))?,
+            );
+            request.push(b'\n');
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(&request).map_err(failure)?;
+            }
+            drop(request);
+            let output = wait_for_launcher(child, detached)?;
+            if !output.status.success() {
+                return Err(ManagementError::Failed(runtime_log::sanitize_text(
+                    &String::from_utf8_lossy(&output.stderr),
+                )));
+            }
+            let ready: HelperReady = serde_json::from_slice(&output.stdout).map_err(|_| {
+                ManagementError::Failed(
+                    "The operation helper did not report a valid connection".into(),
+                )
+            })?;
+            ready.socket
+        };
+        platform::management::helper::connect(&socket, actor)?
     };
-    let mut stream = platform::management::helper::connect(&socket, actor)?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .map_err(failure)?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .map_err(failure)?;
     if let Some((columns, rows)) = terminal_size {
         let mut bytes = serde_json::to_vec(&OperationInput::Resize { columns, rows })
             .map_err(|e| ManagementError::Failed(e.to_string()))?;
