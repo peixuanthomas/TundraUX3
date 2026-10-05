@@ -1,4 +1,4 @@
-use super::{PackageBackend, PackageRecord, detect_backend, parsing, validate_target};
+use super::{PackageBackend, PackageRecord, detect_backend, pacman, parsing, validate_target};
 use crate::management::{
     ManagementAction, ManagementError, ManagementQuery, ManagementRow, ManagementSnapshot,
 };
@@ -18,6 +18,36 @@ pub(crate) fn run_read_command(
     program: &str,
     args: &[String],
     cancelled: &AtomicBool,
+) -> Result<String, ManagementError> {
+    run_read_command_with_empty(program, args, cancelled, false, false)
+}
+
+/// Pacman reports exit 1 for several queries with no results. Only an entirely
+/// empty response is accepted; missing databases and other diagnostics fail.
+pub(super) fn run_read_command_allow_empty(
+    program: &str,
+    args: &[String],
+    cancelled: &AtomicBool,
+) -> Result<String, ManagementError> {
+    run_read_command_with_empty(program, args, cancelled, true, false)
+}
+
+/// Successful sync queries can still return incomplete results and warnings.
+pub(super) fn run_pacman_sync_command(
+    program: &str,
+    args: &[String],
+    cancelled: &AtomicBool,
+    allow_empty: bool,
+) -> Result<String, ManagementError> {
+    run_read_command_with_empty(program, args, cancelled, allow_empty, true)
+}
+
+fn run_read_command_with_empty(
+    program: &str,
+    args: &[String],
+    cancelled: &AtomicBool,
+    allow_empty: bool,
+    reject_diagnostics: bool,
 ) -> Result<String, ManagementError> {
     if cancelled.load(Ordering::Acquire) {
         return Err(ManagementError::Cancelled);
@@ -74,7 +104,7 @@ pub(crate) fn run_read_command(
             if let Some(status) = child.try_wait().map_err(io_error)? {
                 drain(&mut stdout, &mut out)?;
                 drain(&mut stderr, &mut err)?;
-                if !status.success() {
+                if !query_status_accepted(status, &out, &err, allow_empty, reject_diagnostics) {
                     return Err(ManagementError::Failed(format!(
                         "{program} failed ({status}): {}",
                         runtime_log::sanitize_text(&String::from_utf8_lossy(&err))
@@ -91,6 +121,18 @@ pub(crate) fn run_read_command(
         let _ = child.wait();
     }
     result
+}
+
+fn query_status_accepted(
+    status: std::process::ExitStatus,
+    stdout: &[u8],
+    stderr: &[u8],
+    allow_empty: bool,
+    reject_diagnostics: bool,
+) -> bool {
+    (!reject_diagnostics || stderr.is_empty())
+        && (status.success()
+            || (allow_empty && status.code() == Some(1) && stdout.is_empty() && stderr.is_empty()))
 }
 
 fn io_error(error: std::io::Error) -> ManagementError {
@@ -157,6 +199,9 @@ pub(super) fn query(
         PackageBackend::Dnf4 | PackageBackend::Dnf5 => {
             rpm_records(backend, scope, request.target.as_deref(), cancelled)?
         }
+        PackageBackend::Pacman => {
+            pacman::records(scope, request.target.as_deref(), &request.filter, cancelled)?
+        }
     };
     let filter = request.filter.to_lowercase();
     records.retain(|record| {
@@ -165,7 +210,7 @@ pub(super) fn query(
             .as_ref()
             .is_none_or(|id| record.id(backend) == *id || record.name == *id)
             && (filter.is_empty()
-                || format!("{} {}", record.name, record.summary)
+                || format!("{} {} {}", record.name, record.summary, record.description)
                     .to_lowercase()
                     .contains(&filter))
     });
@@ -179,15 +224,21 @@ pub(super) fn query(
     });
     let count = records.len();
     records.truncate(MAX_ROWS);
-    let mut notices = vec![
-        "Lists use the existing repository cache. Refresh sources to download new metadata.".into(),
-    ];
+    let mut notices = if backend == PackageBackend::Pacman {
+        vec!["Arch lists use the existing repository cache. Installing or upgrading refreshes repositories and upgrades the entire system; review pacman's actual plan. Standalone refresh and partial upgrades are not supported.".into(),
+             "Foreign installed packages can be inspected and removed; building or updating AUR packages is not supported. Pacman may preserve configuration files as .pacnew or .pacsave.".into()]
+    } else {
+        vec![
+            "Lists use the existing repository cache. Refresh sources to download new metadata."
+                .into(),
+        ]
+    };
     if count > MAX_ROWS {
         notices.push(format!(
             "Showing the first {MAX_ROWS} matching packages; enter a more specific search."
         ));
     }
-    if backend != PackageBackend::Apt {
+    if matches!(backend, PackageBackend::Dnf4 | PackageBackend::Dnf5) {
         notices.push("RPM may preserve changed configuration files as .rpmnew or .rpmsave; review package output after changes.".into());
     }
     let mut snapshot = ManagementSnapshot {
@@ -205,12 +256,22 @@ pub(super) fn query(
             action("scope_search", "Search packages", false),
             action("scope_installed", "Installed packages", false),
             action("scope_updates", "Available updates", false),
-            action("refresh", "Refresh sources", true),
-            action("upgrade_all", "Upgrade all packages", true),
         ],
         notices,
         backend: backend.id().into(),
     };
+    if backend == PackageBackend::Pacman {
+        snapshot.actions.push(action(
+            "pacman_upgrade_all",
+            "Refresh repositories and upgrade the entire system",
+            true,
+        ));
+    } else {
+        snapshot.actions.extend([
+            action("refresh", "Refresh sources", true),
+            action("upgrade_all", "Upgrade all packages", true),
+        ]);
+    }
     // Scope selectors are query actions, never privileged commands.
     for action in &mut snapshot.actions[..3] {
         action.confirm = false;
@@ -240,12 +301,53 @@ fn to_row(record: PackageRecord, backend: PackageBackend, scope: &str) -> Manage
     if scope != "installed" && !record.version.is_empty() {
         identity.insert("available_version".into(), record.version.clone());
     }
+    if backend == PackageBackend::Pacman && !record.repository.is_empty() {
+        identity.insert("repository".into(), record.repository.clone());
+    }
+    if backend == PackageBackend::Pacman && scope == "installed" {
+        identity.insert("installed_architecture".into(), record.architecture.clone());
+        if let Some((_, version)) = record
+            .details
+            .iter()
+            .find(|(key, _)| key == "Cached repository version")
+        {
+            // The details show a candidate even though Installed's main
+            // version and architecture still describe the local package.
+            identity.insert("cached_available_version".into(), version.clone());
+        }
+    } else if let (PackageBackend::Pacman, Some((_, architecture))) = (
+        backend,
+        record
+            .details
+            .iter()
+            .find(|(key, _)| key == "Installed architecture"),
+    ) {
+        identity.insert("installed_architecture".into(), architecture.clone());
+    }
     let mut actions = Vec::new();
     if record.installed_version.is_some() {
         actions.push(action("remove", "Remove package", true));
-        actions.push(action("upgrade", "Upgrade package", true));
+        if backend == PackageBackend::Pacman {
+            if !record.repository.is_empty() {
+                actions.push(action(
+                    "pacman_upgrade",
+                    "Upgrade package and the entire system",
+                    true,
+                ));
+            }
+        } else {
+            actions.push(action("upgrade", "Upgrade package", true));
+        }
     } else {
-        actions.push(action("install", "Install package", true));
+        actions.push(if backend == PackageBackend::Pacman {
+            action(
+                "pacman_install",
+                "Install package and upgrade the entire system",
+                true,
+            )
+        } else {
+            action("install", "Install package", true)
+        });
     }
     let mut detail = record.details;
     if !record.description.is_empty() {
@@ -488,24 +590,61 @@ pub(super) fn validate_identity(
     expected: &BTreeMap<String, String>,
     cancelled: &AtomicBool,
 ) -> Result<(), ManagementError> {
-    let installed = if backend == PackageBackend::Apt {
-        apt_installed(cancelled)?
-    } else {
-        rpm_installed(cancelled)?
+    let installed = match backend {
+        PackageBackend::Apt => apt_installed(cancelled)?,
+        PackageBackend::Dnf4 | PackageBackend::Dnf5 => rpm_installed(cancelled)?,
+        PackageBackend::Pacman => pacman::installed(cancelled)?,
     };
     let actual = installed
         .iter()
         .find(|record| record.id(backend) == target || record.name == target);
-    if let Some(version) = expected.get("installed_version") {
-        if actual.map(|record| record.version.as_str()).unwrap_or("") != version {
+    validate_installed_identity(target, backend, action, expected, actual)?;
+    // Cached candidate identity is checked before launch. Pacman then refreshes
+    // repositories as part of the explicitly requested full-system upgrade;
+    // the running manager shows and confirms that final transaction itself.
+    if backend == PackageBackend::Pacman && matches!(action, "pacman_install" | "pacman_upgrade") {
+        let candidates = pacman::records("search", Some(target), "", cancelled)?;
+        validate_pacman_candidate(target, expected, &candidates)?;
+    } else if let Some(version) = expected
+        .get("available_version")
+        .filter(|_| matches!(action, "install" | "upgrade"))
+    {
+        let candidates = match backend {
+            PackageBackend::Apt => apt_records("search", Some(target), "", cancelled)?,
+            PackageBackend::Dnf4 | PackageBackend::Dnf5 => {
+                rpm_records(backend, "search", Some(target), cancelled)?
+            }
+            PackageBackend::Pacman => unreachable!("pacman actions are validated above"),
+        };
+        if !candidates.iter().any(|record| {
+            (record.id(backend) == target || record.name == target) && record.version == *version
+        }) {
             return Err(ManagementError::Conflict(
-                "The installed package changed; refresh the package list before continuing".into(),
+                "The available package version changed; refresh the list and confirm again".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_installed_identity(
+    target: &str,
+    backend: PackageBackend,
+    action: &str,
+    expected: &BTreeMap<String, String>,
+    actual: Option<&PackageRecord>,
+) -> Result<(), ManagementError> {
+    if expected.get("installed_version").is_some_and(|version| {
+        actual.map(|record| record.version.as_str()).unwrap_or("") != version
+    }) {
+        return Err(ManagementError::Conflict(
+            "The installed package changed; refresh the package list before continuing".into(),
+        ));
     }
     if let Some(name) = expected.get("name") {
         let matches = match backend {
             PackageBackend::Apt => target.split(':').next() == Some(name),
+            PackageBackend::Pacman => target == name,
             _ => {
                 target == name
                     || expected
@@ -519,27 +658,53 @@ pub(super) fn validate_identity(
             ));
         }
     }
-    // A displayed repository version is part of the user's selected operation.
-    // An already-refreshed cache must not silently turn a confirmed single-package
-    // operation into installation of another version. The running manager still
-    // resolves its own transaction and owns its actual confirmation afterwards.
-    if matches!(action, "install" | "upgrade") {
-        if let Some(version) = expected.get("available_version") {
-            let candidates = if backend == PackageBackend::Apt {
-                apt_records("search", Some(target), "", cancelled)?
-            } else {
-                rpm_records(backend, "search", Some(target), cancelled)?
-            };
-            if !candidates.iter().any(|record| {
-                (record.id(backend) == target || record.name == target)
-                    && record.version == *version
-            }) {
-                return Err(ManagementError::Conflict(
-                    "The available package version changed; refresh the list and confirm again"
-                        .into(),
-                ));
-            }
-        }
+    if backend == PackageBackend::Pacman
+        && expected
+            .get("installed_architecture")
+            .is_some_and(|architecture| {
+                actual.is_some_and(|record| record.architecture != *architecture)
+            })
+    {
+        return Err(ManagementError::Conflict(
+            "The installed package architecture changed; refresh the list".into(),
+        ));
+    }
+    if backend == PackageBackend::Pacman
+        && matches!(action, "remove" | "pacman_upgrade")
+        && actual.is_none()
+    {
+        return Err(ManagementError::Conflict(
+            "The selected package is no longer installed; refresh the list".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_pacman_candidate(
+    target: &str,
+    expected: &BTreeMap<String, String>,
+    candidates: &[PackageRecord],
+) -> Result<(), ManagementError> {
+    // -S accepts groups and virtual providers too. Only a concrete package
+    // in a configured repository is an authorized single-package target.
+    let candidate = candidates.iter().find(|record| record.name == target).ok_or_else(|| {
+        ManagementError::Unavailable("The selected package is not in a configured pacman repository; AUR and group operations are not supported".into())
+    })?;
+    if expected
+        .get("available_version")
+        .or_else(|| expected.get("cached_available_version"))
+        .is_some_and(|version| candidate.version != *version)
+        || expected
+            .get("repository")
+            .is_some_and(|repository| candidate.repository != *repository)
+        || (expected.contains_key("available_version")
+            && expected
+                .get("architecture")
+                .is_some_and(|architecture| candidate.architecture != *architecture))
+    {
+        return Err(ManagementError::Conflict(
+            "The cached package candidate changed; refresh the list and confirm again".into(),
+        ));
     }
     Ok(())
 }
@@ -548,6 +713,234 @@ pub(super) fn validate_identity(
 mod tests {
     use super::*;
     use crate::management::ManagementKind;
+
+    fn pacman_record(installed: bool, repository: &str) -> PackageRecord {
+        PackageRecord {
+            name: "demo".into(),
+            architecture: "x86_64".into(),
+            version: "2:1.0-3".into(),
+            summary: "Demo package".into(),
+            description: "Demo package details".into(),
+            repository: repository.into(),
+            installed_version: installed.then(|| "2:1.0-3".into()),
+            details: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn pacman_rows_use_plain_names_and_explicit_system_upgrade_actions() {
+        let native = to_row(
+            pacman_record(true, "core"),
+            PackageBackend::Pacman,
+            "installed",
+        );
+        assert_eq!(native.id, "demo");
+        assert_eq!(native.identity["architecture"], "x86_64");
+        assert_eq!(native.identity["installed_architecture"], "x86_64");
+        assert_eq!(native.identity["repository"], "core");
+        assert!(!native.identity.contains_key("available_version"));
+        assert_eq!(
+            native
+                .actions
+                .iter()
+                .map(|action| action.id.as_str())
+                .collect::<Vec<_>>(),
+            ["remove", "pacman_upgrade"]
+        );
+        assert!(
+            native
+                .actions
+                .iter()
+                .all(|action| action.confirm && action.privileged)
+        );
+        let foreign = to_row(pacman_record(true, ""), PackageBackend::Pacman, "installed");
+        assert_eq!(foreign.actions.len(), 1);
+        assert_eq!(foreign.actions[0].id, "remove");
+        let available = to_row(
+            pacman_record(false, "extra"),
+            PackageBackend::Pacman,
+            "search",
+        );
+        assert_eq!(available.actions[0].id, "pacman_install");
+        assert!(available.actions[0].label.contains("entire system"));
+        assert_eq!(available.identity["available_version"], "2:1.0-3");
+        assert!(!available.identity.contains_key("installed_architecture"));
+    }
+
+    #[test]
+    fn pacman_revalidates_installed_and_candidate_identity_independently() {
+        let local = pacman_record(true, "");
+        let installed_row = to_row(local.clone(), PackageBackend::Pacman, "installed");
+        let expected = &installed_row.identity;
+        assert!(
+            validate_installed_identity(
+                "demo",
+                PackageBackend::Pacman,
+                "remove",
+                expected,
+                Some(&local)
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_installed_identity("demo", PackageBackend::Pacman, "remove", expected, None)
+                .is_err()
+        );
+        assert!(
+            validate_installed_identity(
+                "another",
+                PackageBackend::Pacman,
+                "remove",
+                expected,
+                Some(&local)
+            )
+            .is_err()
+        );
+        for changed in [
+            PackageRecord {
+                version: "2:1.0-4".into(),
+                ..local.clone()
+            },
+            PackageRecord {
+                architecture: "any".into(),
+                ..local.clone()
+            },
+        ] {
+            assert!(matches!(
+                validate_installed_identity(
+                    "demo",
+                    PackageBackend::Pacman,
+                    "remove",
+                    expected,
+                    Some(&changed)
+                ),
+                Err(ManagementError::Conflict(_))
+            ));
+        }
+        let candidate = PackageRecord {
+            architecture: "any".into(),
+            repository: "extra".into(),
+            version: "2:1.0-4".into(),
+            details: vec![("Installed architecture".into(), local.architecture.clone())],
+            ..local.clone()
+        };
+        let search_row = to_row(candidate.clone(), PackageBackend::Pacman, "search");
+        assert!(
+            validate_installed_identity(
+                "demo",
+                PackageBackend::Pacman,
+                "pacman_upgrade",
+                &search_row.identity,
+                Some(&local)
+            )
+            .is_ok(),
+            "repository architecture may legitimately change independently of local architecture"
+        );
+        assert_eq!(search_row.identity["installed_architecture"], "x86_64");
+        let changed_local = PackageRecord {
+            architecture: "aarch64".into(),
+            ..local.clone()
+        };
+        assert!(matches!(
+            validate_installed_identity(
+                "demo",
+                PackageBackend::Pacman,
+                "remove",
+                &search_row.identity,
+                Some(&changed_local)
+            ),
+            Err(ManagementError::Conflict(_))
+        ));
+        assert!(
+            validate_pacman_candidate(
+                "demo",
+                &search_row.identity,
+                std::slice::from_ref(&candidate)
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_pacman_candidate(
+                "group-not-a-package",
+                &BTreeMap::new(),
+                std::slice::from_ref(&candidate)
+            )
+            .is_err()
+        );
+        for changed in [
+            PackageRecord {
+                repository: "custom".into(),
+                ..candidate.clone()
+            },
+            PackageRecord {
+                version: "3:1.0-1".into(),
+                ..candidate.clone()
+            },
+            PackageRecord {
+                architecture: "aarch64".into(),
+                ..candidate.clone()
+            },
+        ] {
+            assert!(matches!(
+                validate_pacman_candidate("demo", &search_row.identity, &[changed]),
+                Err(ManagementError::Conflict(_))
+            ));
+        }
+        let mut local_with_preview = local.clone();
+        local_with_preview.repository = "extra".into();
+        local_with_preview.details.push((
+            "Cached repository version".into(),
+            candidate.version.clone(),
+        ));
+        let installed_preview = to_row(local_with_preview, PackageBackend::Pacman, "installed");
+        assert_eq!(
+            installed_preview.identity["cached_available_version"],
+            "2:1.0-4"
+        );
+        assert!(
+            validate_pacman_candidate(
+                "demo",
+                &installed_preview.identity,
+                std::slice::from_ref(&candidate)
+            )
+            .is_ok(),
+            "Installed scope must not compare the local architecture to the candidate architecture"
+        );
+        let changed = PackageRecord {
+            version: "2:1.0-5".into(),
+            ..candidate
+        };
+        assert!(matches!(
+            validate_pacman_candidate("demo", &installed_preview.identity, &[changed]),
+            Err(ManagementError::Conflict(_))
+        ));
+    }
+
+    #[test]
+    fn pacman_empty_queries_never_hide_diagnostics_or_other_exit_codes() {
+        let cancelled = AtomicBool::new(false);
+        assert!(run_pacman_sync_command("/bin/sh", &["-c".into(), "printf 'core/demo 1.0-1'; printf 'warning: missing repository database' >&2; exit 0".into()], &cancelled, true).is_err());
+        assert!(run_read_command_allow_empty("/bin/sh", &["-c".into(), "printf 'local metadata'; printf 'warning: missing repository database' >&2; exit 0".into()], &cancelled).is_ok(), "local -Qi data remains usable with sync-cache warnings");
+        assert_eq!(
+            run_read_command_allow_empty("/bin/sh", &["-c".into(), "exit 1".into()], &cancelled),
+            Ok(String::new())
+        );
+        for script in [
+            "printf 'database unavailable' >&2; exit 1",
+            "printf 'unexpected'; exit 1",
+            "exit 2",
+        ] {
+            assert!(
+                run_read_command_allow_empty("/bin/sh", &["-c".into(), script.into()], &cancelled)
+                    .is_err()
+            );
+        }
+        assert!(run_read_command("/bin/sh", &["-c".into(), "exit 1".into()], &cancelled).is_err());
+        assert_eq!(
+            run_read_command_allow_empty("/program/does/not/exist", &[], &AtomicBool::new(true)),
+            Err(ManagementError::Cancelled)
+        );
+    }
 
     #[test]
     fn cancelled_queries_never_start_a_child_process() {

@@ -1,0 +1,33 @@
+Name            : dupe
+Version         : 1:1.0-2
+Description     : A multiline-ready description with literal
+                  punctuation [.]+$ and UTF-8 café; detailed
+                  package description words detailed package
+                  description words detailed package description
+                  words detailed package description words
+                  detailed package description words detailed
+                  package description words detailed package
+                  description words detailed package description
+                  words detailed package description words
+Architecture    : x86_64
+URL             : https://example.invalid/dupe
+Licenses        : GPL  MIT
+Groups          : fixture-group
+Provides        : dupe-compat=1:1.0-2
+Depends On      : glibc>=2.38  some-library>=1:1.2.3-4
+Optional Deps   : optional-one: supports the first extra
+                  capability
+                  optional-two: supports a long optional feature
+                  description with several words
+Required By     : None
+Optional For    : None
+Conflicts With  : dupe-old
+Replaces        : None
+Installed Size  : 2048.00 B
+Packager        : Isolated Test Builder
+                  <builder@example.invalid>
+Build Date      : Wed Nov 15 07:13:20 2023
+Install Date    : Wed Nov 15 07:15:00 2023
+Install Reason  : Explicitly installed
+Install Script  : No
+Validated By    : None

@@ -123,7 +123,7 @@ fn management_action_shortcut(
     id: &str,
 ) -> Option<(&'static str, InputKey)> {
     let letter = match id {
-        "start" | "upgrade_all" | "scan" => 'a',
+        "start" | "upgrade_all" | "pacman_upgrade_all" | "scan" => 'a',
         "stop" if kind == Some(ManagementKind::Processes) => 'p',
         "stop" | "remove" => 'x',
         "restart" | "term" => 't',
@@ -134,8 +134,8 @@ fn management_action_shortcut(
         "kill" => 'k',
         "cont" | "configure" => 'c',
         "nice" | "check" => 'n',
-        "install" | "inspect_network" => 'i',
-        "upgrade" | "unmount" => 'u',
+        "install" | "pacman_install" | "inspect_network" => 'i',
+        "upgrade" | "pacman_upgrade" | "unmount" => 'u',
         "wifi-connect" => 'w',
         "forget" | "wifi-forget" | "forget_saved_wifi" => 'f',
         "mount" => 'm',

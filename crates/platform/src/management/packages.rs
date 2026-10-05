@@ -1,6 +1,7 @@
 //! Repository package management. The privileged helper owns the running PTY.
 //! Queries never refresh repositories or mutate the package database.
 
+mod pacman;
 mod parsing;
 mod query;
 mod runner;
@@ -17,6 +18,7 @@ pub enum PackageBackend {
     Apt,
     Dnf4,
     Dnf5,
+    Pacman,
 }
 
 impl PackageBackend {
@@ -25,6 +27,7 @@ impl PackageBackend {
             Self::Apt => "apt/dpkg",
             Self::Dnf4 => "dnf4",
             Self::Dnf5 => "dnf5",
+            Self::Pacman => "pacman",
         }
     }
     fn program(self) -> &'static str {
@@ -32,6 +35,7 @@ impl PackageBackend {
             Self::Apt => "/usr/bin/apt-get",
             Self::Dnf4 => "/usr/bin/dnf",
             Self::Dnf5 => "/usr/bin/dnf5",
+            Self::Pacman => "/usr/bin/pacman",
         }
     }
 }
@@ -42,19 +46,63 @@ pub fn detect_backend(cancelled: &AtomicBool) -> Result<PackageBackend, Manageme
         return Err(ManagementError::Cancelled);
     }
     let os = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let debian = os.lines().any(|line| {
-        (line.starts_with("ID=") || line.starts_with("ID_LIKE="))
-            && ["debian", "ubuntu"].iter().any(|id| line.contains(id))
-    });
-    if debian && apt_available() {
+    let dnf = Path::new("/usr/bin/dnf").is_file();
+    let dnf_alias_is_5 = dnf
+        && std::fs::canonicalize("/usr/bin/dnf")
+            .ok()
+            .and_then(|path| path.file_name().map(|name| name == "dnf5"))
+            .unwrap_or(false);
+    choose_backend(
+        &os,
+        apt_available(),
+        Path::new("/usr/bin/pacman").is_file(),
+        Path::new("/usr/bin/dnf5").is_file(),
+        dnf,
+        dnf_alias_is_5,
+    )
+}
+
+fn os_family(os: &str, ids: &[&str]) -> bool {
+    os.lines().any(|line| {
+        let Some((key, value)) = line.trim().split_once('=') else {
+            return false;
+        };
+        matches!(key, "ID" | "ID_LIKE")
+            && value
+                .trim()
+                .trim_matches(['\'', '"'])
+                .split_ascii_whitespace()
+                .any(|id| ids.contains(&id))
+    })
+}
+
+fn choose_backend(
+    os: &str,
+    apt: bool,
+    pacman: bool,
+    dnf5: bool,
+    dnf: bool,
+    dnf_alias_is_5: bool,
+) -> Result<PackageBackend, ManagementError> {
+    // An ancillary manager (for example APT used to build Debian packages)
+    // must not replace the native Arch package database.
+    if os_family(os, &["arch"]) {
+        return if pacman {
+            Ok(PackageBackend::Pacman)
+        } else {
+            Err(ManagementError::Unavailable(
+                "Arch Linux package management requires /usr/bin/pacman".into(),
+            ))
+        };
+    }
+    if os_family(os, &["debian", "ubuntu"]) && apt {
         return Ok(PackageBackend::Apt);
     }
-    if Path::new("/usr/bin/dnf5").is_file() {
+    if dnf5 {
         return Ok(PackageBackend::Dnf5);
     }
-    if Path::new("/usr/bin/dnf").is_file() {
-        let target = std::fs::canonicalize("/usr/bin/dnf").unwrap_or_default();
-        if target.file_name().is_some_and(|name| name == "dnf5") {
+    if dnf {
+        if dnf_alias_is_5 {
             // Some installations expose only the dnf alias.
             return Err(ManagementError::Unavailable(
                 "DNF5 was found but /usr/bin/dnf5 is missing".into(),
@@ -62,11 +110,14 @@ pub fn detect_backend(cancelled: &AtomicBool) -> Result<PackageBackend, Manageme
         }
         return Ok(PackageBackend::Dnf4);
     }
-    if apt_available() {
+    if apt {
         return Ok(PackageBackend::Apt);
     }
+    if pacman {
+        return Ok(PackageBackend::Pacman);
+    }
     Err(ManagementError::Unavailable(
-        "APT/dpkg or DNF4/DNF5 is required; PackageKit is not required".into(),
+        "APT/dpkg, DNF4/DNF5 or pacman is required; PackageKit is not required".into(),
     ))
 }
 
@@ -94,7 +145,7 @@ pub(crate) struct PackageRecord {
 
 impl PackageRecord {
     fn id(&self, backend: PackageBackend) -> String {
-        if self.architecture.is_empty() {
+        if self.architecture.is_empty() || backend == PackageBackend::Pacman {
             self.name.clone()
         } else {
             format!(
@@ -122,12 +173,21 @@ pub(crate) struct PackageCommand {
 pub fn validate_target(target: &str, backend: PackageBackend) -> Result<(), ManagementError> {
     let valid = !target.is_empty()
         && target.len() <= 256
-        && target.as_bytes()[0].is_ascii_alphanumeric()
-        && target.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.' | b'_' | b':')
-        })
-        && (backend != PackageBackend::Apt || target.bytes().filter(|b| *b == b':').count() <= 1)
-        && (backend == PackageBackend::Apt || !target.contains(':'));
+        && if backend == PackageBackend::Pacman {
+            // PKGBUILD permits @, _, + as initial characters, but never - or .
+            !matches!(target.as_bytes()[0], b'-' | b'.')
+                && target.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'@' | b'+' | b'-' | b'.' | b'_')
+                })
+        } else {
+            target.as_bytes()[0].is_ascii_alphanumeric()
+                && target.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.' | b'_' | b':')
+                })
+                && (backend != PackageBackend::Apt
+                    || target.bytes().filter(|b| *b == b':').count() <= 1)
+                && (backend == PackageBackend::Apt || !target.contains(':'))
+        };
     if valid {
         Ok(())
     } else {
@@ -147,6 +207,9 @@ fn build_command(
             "Package operations do not accept additional command options".into(),
         ));
     }
+    if backend == PackageBackend::Pacman {
+        return build_pacman_command(command);
+    }
     let mut args: Vec<String> = match backend {
         PackageBackend::Apt => [
             "-o",
@@ -164,6 +227,7 @@ fn build_command(
         .map(String::from)
         .collect(),
         PackageBackend::Dnf4 | PackageBackend::Dnf5 => vec!["--color=never".into()],
+        PackageBackend::Pacman => unreachable!("pacman commands are built separately"),
     };
     match command.action.as_str() {
         "refresh" | "upgrade_all" => {
@@ -219,6 +283,50 @@ fn build_command(
     }
     Ok(PackageCommand {
         program: backend.program().into(),
+        args,
+    })
+}
+
+fn build_pacman_command(command: &ManagementCommand) -> Result<PackageCommand, ManagementError> {
+    let mut args = vec!["--color=never".into()];
+    match command.action.as_str() {
+        "pacman_upgrade_all" => {
+            if command
+                .target
+                .as_ref()
+                .is_some_and(|target| !target.is_empty())
+            {
+                return Err(ManagementError::InvalidInput(
+                    "The full-system upgrade does not take a target".into(),
+                ));
+            }
+            args.extend(["-Syu".into(), "--needed".into()]);
+        }
+        "pacman_install" | "pacman_upgrade" | "remove" => {
+            let target = command
+                .target
+                .as_deref()
+                .ok_or_else(|| ManagementError::InvalidInput("Select a package first".into()))?;
+            validate_target(target, PackageBackend::Pacman)?;
+            if command.action == "remove" {
+                // No recursive/cascade removal, and retain backup config files.
+                args.push("-R".into());
+            } else {
+                // Never create an unsupported partial upgrade with -Sy or a
+                // targeted -S after refreshing databases. AA labels explicitly
+                // disclose that installing/upgrading also upgrades the system.
+                args.extend(["-Syu".into(), "--needed".into()]);
+            }
+            args.extend(["--".into(), target.into()]);
+        }
+        _ => {
+            return Err(ManagementError::InvalidInput(
+                "Arch package operations require an explicitly confirmed full-system upgrade; standalone repository refresh and partial upgrades are not supported".into(),
+            ));
+        }
+    }
+    Ok(PackageCommand {
+        program: PackageBackend::Pacman.program().into(),
         args,
     })
 }
@@ -293,13 +401,13 @@ mod tests {
             "foo\nbar",
             "foo=1.2",
             "",
-            "@core",
             "foo/bar",
         ] {
             for backend in [
                 PackageBackend::Apt,
                 PackageBackend::Dnf4,
                 PackageBackend::Dnf5,
+                PackageBackend::Pacman,
             ] {
                 assert!(
                     validate_target(invalid, backend).is_err(),
@@ -309,6 +417,13 @@ mod tests {
         }
         assert!(validate_target("libc6:amd64", PackageBackend::Apt).is_ok());
         assert!(validate_target("libstdc++.x86_64", PackageBackend::Dnf5).is_ok());
+        assert!(validate_target("libstdc++", PackageBackend::Pacman).is_ok());
+        assert!(validate_target("bash:x86_64", PackageBackend::Pacman).is_err());
+        for name in ["@demo", "_demo", "+demo", "foo@bar"] {
+            assert!(validate_target(name, PackageBackend::Pacman).is_ok());
+        }
+        assert!(validate_target("@core", PackageBackend::Apt).is_err());
+        assert!(validate_target("@core", PackageBackend::Dnf5).is_err());
     }
 
     #[test]
@@ -344,5 +459,100 @@ mod tests {
         assert!(build_command(&request, PackageBackend::Apt).is_err());
         assert!(build_command(&command("upgrade_all", Some("bash")), PackageBackend::Apt).is_err());
         assert!(build_command(&command("purge", Some("bash")), PackageBackend::Apt).is_err());
+    }
+
+    #[test]
+    fn arch_and_derivatives_prefer_the_native_backend() {
+        for os in [
+            "ID=arch\n",
+            "ID=manjaro\nID_LIKE=\"arch\"\n",
+            "ID=endeavouros\nID_LIKE='arch other'\n",
+        ] {
+            assert_eq!(
+                choose_backend(os, true, true, true, true, false),
+                Ok(PackageBackend::Pacman)
+            );
+            assert!(matches!(
+                choose_backend(os, true, false, true, true, false),
+                Err(ManagementError::Unavailable(_))
+            ));
+        }
+        assert!(!os_family(
+            "ID=archival\nID_LIKE=archlinux\nNAME=arch\n",
+            &["arch"]
+        ));
+        assert!(!os_family("# ID=arch\nID_LIKE=notarch\n", &["arch"]));
+        assert_eq!(
+            choose_backend("ID=debian\n", true, true, true, true, false),
+            Ok(PackageBackend::Apt)
+        );
+        assert_eq!(
+            choose_backend("ID=fedora\n", false, true, true, true, false),
+            Ok(PackageBackend::Dnf5)
+        );
+        assert_eq!(
+            choose_backend("", false, true, false, false, false),
+            Ok(PackageBackend::Pacman)
+        );
+        assert!(choose_backend("", false, false, false, true, true).is_err());
+        assert!(choose_backend("", false, false, false, false, false).is_err());
+        assert_eq!(
+            detect_backend(&AtomicBool::new(true)),
+            Err(ManagementError::Cancelled)
+        );
+    }
+
+    #[test]
+    fn pacman_uses_full_system_upgrades_and_nonrecursive_removal() {
+        for action in ["pacman_install", "pacman_upgrade"] {
+            let spec =
+                build_command(&command(action, Some("libstdc++")), PackageBackend::Pacman).unwrap();
+            assert_eq!(spec.program, PathBuf::from("/usr/bin/pacman"));
+            assert_eq!(
+                spec.args,
+                ["--color=never", "-Syu", "--needed", "--", "libstdc++"]
+            );
+        }
+        let all =
+            build_command(&command("pacman_upgrade_all", None), PackageBackend::Pacman).unwrap();
+        assert_eq!(all.args, ["--color=never", "-Syu", "--needed"]);
+        let remove =
+            build_command(&command("remove", Some("bash")), PackageBackend::Pacman).unwrap();
+        assert_eq!(remove.args, ["--color=never", "-R", "--", "bash"]);
+        for action in [
+            "refresh",
+            "install",
+            "upgrade",
+            "upgrade_all",
+            "purge",
+            "autoremove",
+        ] {
+            assert!(build_command(&command(action, Some("bash")), PackageBackend::Pacman).is_err());
+        }
+        assert!(
+            build_command(
+                &command("pacman_upgrade_all", Some("bash")),
+                PackageBackend::Pacman
+            )
+            .is_err()
+        );
+        assert!(build_command(&command("pacman_install", None), PackageBackend::Pacman).is_err());
+        let mut extra = command("pacman_install", Some("bash"));
+        extra.values.insert("flags".into(), "--noconfirm".into());
+        assert!(build_command(&extra, PackageBackend::Pacman).is_err());
+        assert!(
+            build_command(
+                &command("pacman_install", Some("core/bash")),
+                PackageBackend::Pacman
+            )
+            .is_err()
+        );
+        assert!(
+            build_command(
+                &command("pacman_install", Some("bash")),
+                PackageBackend::Apt
+            )
+            .is_err()
+        );
     }
 }

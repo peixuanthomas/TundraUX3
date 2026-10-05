@@ -1,0 +1,9 @@
+Repository      : extra
+Name            : search-literal
+Version         : 1.2-1
+Description     : Tools for C++ [demo].* and
+                  literal description matching
+Architecture    : any
+URL             : https://example.org/literal
+Depends On      : None
+Validated By    : Signature

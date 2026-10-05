@@ -12,7 +12,7 @@ binaries without moving that directory too.  It includes the root GNU GPL v3
 and the Weathr component license. Future releases provide only portable archives.
 
 Required: xdg-open (xdg-utils) and gio (libglib2.0-bin on Debian/Ubuntu,
-glib2 on Fedora).  Recommended for full
+glib2 on Fedora/Arch).  Recommended for full
 desktop integration: a session D-Bus bus, xdg-desktop-portal, polkit, and
 XWayland when the Wayland compositor does not expose a data-control clipboard.
 
@@ -85,8 +85,32 @@ Updates and system authorization
 --------------------------------
 Linux updates require a writable portable directory owned by the current user,
 with tundra-installation.json and both binaries. Old system package installations
-are not updated or overwritten. PackageKit, apt, pacman and RPM update support has
-been removed.
+are not updated or overwritten. Tundra self-update no longer uses PackageKit,
+apt, pacman or RPM. System package management is separate: the Launcher supports
+APT/dpkg, DNF and pacman through the existing AutoAdmin authorization and helper.
+
+On Arch, package lists, search, details and updates read existing pacman metadata
+as the ordinary user, preserving repository priority. Repository candidate queries
+also need the official /usr/bin/pacman-conf bundled with pacman; its resolved effective
+configuration includes Include files. Repository previews/search/updates/install
+and targeted upgrades require Search, Install and Upgrade for every configured
+repository (default Usage=All works). Different roles or fully disabled repositories
+report unsupported. Any sync-query stderr diagnostic rejects incomplete results,
+even an exit-zero missing-database warning; local -Qi can tolerate sync warnings.
+If pacman-conf is missing, sync cache is unavailable or repository configuration is
+unsupported, local installed lists/details and removal remain available, along with
+explicitly confirmed full-system upgrade.
+Foreign installed packages can be listed and removed; no AUR build, install, update
+or helper is provided.
+Install, selected-package upgrade, and refresh/full-system upgrade all use
+/usr/bin/pacman -Syu --needed (with -- package-name for a target). They upgrade the
+whole system to avoid partial upgrades; no standalone -Sy refresh is offered.
+Cached versions are previews. Stale installed/candidate identities are rejected
+before task launch, and pacman confirms the refreshed final versions, dependencies
+and full transaction in the AutoAdmin terminal. Removal uses only -R -- package-name,
+retaining .pacsave behavior without recursive or cascade removal. Check .pacnew
+and .pacsave files according to pacman output. No new password retention or root
+infrastructure is added.
 
 Settings -> Update -> Update mode is saved between runs; Release is the default.
 Release checks the latest published stable GitHub release, downloads the Linux
@@ -124,5 +148,8 @@ id -u, id -ru, id -g, HOME, and USER in Tundra Terminal. Root launch must fail b
 entering the UI. Test forged USER/HOME, missing buses, first/repeated Appearance,
 file permissions, and terminal restoration as well as successful paths.
 
-Automated rollback tests use temporary portable directories. WSL tests do not
-substitute for host desktop-session, hardware or physical-terminal checks.
+Automated rollback tests use temporary portable directories. Arch package smoke
+tests are explicitly read-only; fixture and query results do not validate real
+package writes. Do not run destructive package transactions on a development host.
+WSL tests do not substitute for host desktop-session, hardware or
+physical-terminal checks.

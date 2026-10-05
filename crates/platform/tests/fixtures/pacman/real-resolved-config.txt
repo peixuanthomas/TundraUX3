@@ -1,0 +1,18 @@
+[options]
+RootDir = /
+DBPath = /var/lib/pacman/
+CacheDir = /workspace/shared/pacman-readonly-verification/fixtures/cache
+HookDir = /etc/pacman.d/hooks/
+GPGDir = /workspace/shared/pacman-readonly-verification/fixtures/gpg
+LogFile = /workspace/shared/pacman-readonly-verification/logs/pacman-fixture.log
+Architecture = x86_64
+ParallelDownloads = 1
+CleanMethod = KeepInstalled
+SigLevel = PackageNever
+SigLevel = DatabaseNever
+[first]
+Usage = All
+Server = https://example.invalid/first
+[second]
+Usage = All
+Server = https://example.invalid/second

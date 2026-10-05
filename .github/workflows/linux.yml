@@ -52,7 +52,7 @@ jobs:
           cargo test --locked -p system-services --features runtime
 
   arch:
-    name: Arch Linux local package build
+    name: Arch Linux package management and local build
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
     steps:
@@ -64,6 +64,8 @@ jobs:
           useradd --create-home tundra-ci
           chown -R tundra-ci:tundra-ci "$GITHUB_WORKSPACE"
           runuser -u tundra-ci -- cargo test --locked -p platform --lib source_packages
+          runuser -u tundra-ci -- cargo test --locked -p platform management::packages --lib
+          runuser -u tundra-ci -- cargo test --locked -p platform management::packages::pacman::tests::live_pacman_installed_search_updates_and_details --lib -- --ignored
           runuser -u tundra-ci -- cargo test --locked -p app --lib update::package
           runuser -u tundra-ci -- cargo test --locked -p app --lib arch_builds_real_pacman_package -- --ignored
 

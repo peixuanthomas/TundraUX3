@@ -248,6 +248,9 @@ impl PromptParser {
             });
         }
         if line.contains("Running transaction")
+            || line.starts_with(":: Running pre-transaction hooks")
+            || line.starts_with(":: Processing package changes")
+            || line.starts_with(":: Running post-transaction hooks")
             || line.starts_with("Preparing to unpack ")
             || line.starts_with("Unpacking ")
             || line.starts_with("Setting up ")
@@ -368,5 +371,18 @@ mod tests {
                 .any(|event| matches!(event, ObservedPrompt::Confirm { .. }))
         );
         assert!(events.iter().any(|event| matches!(event, ObservedPrompt::Progress{message,..} if message.contains("too large"))));
+    }
+
+    #[test]
+    fn pacman_transaction_hooks_and_changes_report_the_actual_phase() {
+        let mut parser = PromptParser::default();
+        let events = parser.push(b":: Running pre-transaction hooks...\r\n:: Processing package changes...\r\n:: Running post-transaction hooks...\r\n");
+        assert!(parser.applying);
+        assert_eq!(events.len(), 3);
+        assert!(
+            events
+                .iter()
+                .all(|event| matches!(event, ObservedPrompt::Progress { percent: None, .. }))
+        );
     }
 }

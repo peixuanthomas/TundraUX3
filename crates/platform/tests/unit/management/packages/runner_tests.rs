@@ -102,3 +102,55 @@ fn input_does_not_interrupt_suspend_or_eof_active_package_writes() {
         b"hello\r\x1b[A"
     );
 }
+
+#[test]
+fn real_pty_pacman_provider_and_transaction_prompts_remain_native() {
+    let mut io = Interaction {
+        answers: VecDeque::from([
+            ("Enter a number (default=1):", b"2\r".to_vec()),
+            ("Proceed with installation? [Y/n]", b"y\r".to_vec()),
+        ]),
+        ..Default::default()
+    };
+    let spec = fixture(
+        r#"printf ':: There are 2 providers available:\n1) provider-one  2) provider-two\nEnter a number (default=1): '; read provider; test "$provider" = 2 || exit 6; printf '\nPackages (2) demo-1  dependency-1\n:: Proceed with installation? [Y/n] '; read answer; test "$answer" = y || exit 7; printf '\n:: Processing package changes...\nCOMPLETED\n'"#,
+    );
+    assert!(
+        execute(
+            spec,
+            PackageBackend::Pacman,
+            &mut io,
+            &AtomicBool::new(false)
+        )
+        .unwrap()
+        .contains("exit code 0")
+    );
+    assert!(io.answers.is_empty());
+    assert!(
+        io.progress
+            .iter()
+            .any(|line| line.contains("Processing package changes"))
+    );
+    assert!(String::from_utf8_lossy(&io.output).contains("dependency-1"));
+}
+
+#[test]
+fn real_pty_pacman_decline_does_not_apply_the_plan() {
+    let mut io = Interaction {
+        answers: VecDeque::from([("Proceed with removal? [Y/n]", b"n\r".to_vec())]),
+        ..Default::default()
+    };
+    let spec = fixture(
+        r#"printf ':: Proceed with removal? [Y/n] '; read answer; test "$answer" = y || exit 1; printf UNEXPECTED-APPLY"#,
+    );
+    assert!(
+        execute(
+            spec,
+            PackageBackend::Pacman,
+            &mut io,
+            &AtomicBool::new(false)
+        )
+        .is_err()
+    );
+    assert!(!String::from_utf8_lossy(&io.output).contains("UNEXPECTED-APPLY"));
+}

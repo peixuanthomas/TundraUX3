@@ -1,0 +1,9 @@
+custom-first/duplicate 1.0-2 [installed: 1.0-1]
+    Preferred repository package
+core/bash 2:5.2.037-1 (base) [installed: 2:5.2.026-3]
+    The GNU Bourne Again shell and command language
+extra/duplicate 9.0-4 [installed: 1.0-1]
+    Description only in lower priority
+extra/search-literal 1.2-1
+    Tools for C++ [demo].* and
+    literal description matching
