@@ -428,6 +428,66 @@ fn dismissed_toast_is_immediately_invisible_in_reduced_motion() {
 }
 
 #[test]
+fn toast_inherits_border_shape_and_regular_color_without_filling_the_border_band() {
+    use ratatui::style::{Color, Modifier};
+
+    let area = Rect::new(0, 0, 32, 3);
+    for (shape, corners) in [
+        (BorderShape::Rounded, ["╭", "╮", "╰", "╯"]),
+        (BorderShape::Square, ["┌", "┐", "└", "┘"]),
+    ] {
+        for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
+            let theme = TundraTheme::default()
+                .with_border_shape(shape)
+                .with_border_color(Color::Magenta)
+                .with_accent_color(Color::Yellow);
+            let context = RenderContext::from_theme(
+                &theme,
+                MotionFrame::reduced(Duration::ZERO),
+                capabilities,
+            );
+            for tone in [
+                ToastTone::Info,
+                ToastTone::Success,
+                ToastTone::Warning,
+                ToastTone::Danger,
+            ] {
+                let mut buffer = Buffer::empty(area);
+                Toast::new("已保存 /tmp/note.txt", tone, context.motion).render(
+                    area,
+                    &mut buffer,
+                    &context,
+                );
+                let border_color = match tone {
+                    ToastTone::Info => Color::Magenta,
+                    ToastTone::Success => context.theme.success,
+                    ToastTone::Warning => context.theme.warning,
+                    ToastTone::Danger => context.theme.danger,
+                };
+                for (position, corner) in
+                    [(0, 0), (31, 0), (0, 2), (31, 2)].into_iter().zip(corners)
+                {
+                    assert_eq!(buffer[position].symbol(), corner);
+                }
+                for position in area.positions().filter(|p| {
+                    p.x == area.x
+                        || p.x == area.right() - 1
+                        || p.y == area.y
+                        || p.y == area.bottom() - 1
+                }) {
+                    let cell = &buffer[position];
+                    assert_eq!(cell.fg, border_color);
+                    assert_eq!(cell.bg, context.theme.canvas);
+                    assert!(!cell.modifier.contains(Modifier::BOLD));
+                }
+                assert_eq!(buffer[(1, 1)].symbol(), "已");
+                assert_eq!(buffer[(1, 1)].bg, context.theme.raised);
+            }
+        }
+    }
+}
+
+#[test]
 fn toast_enter_and_exit_progress_remain_self_scheduled_behind_other_overlays() {
     let frame = |millis| MotionFrame {
         now: Duration::from_millis(millis),

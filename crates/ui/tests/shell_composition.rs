@@ -193,3 +193,234 @@ fn editor_screen_content_uses_the_shared_main_without_erasing_shell_chrome() {
             .any(|y| row(&terminal, y).contains("editor content marker"))
     );
 }
+
+fn assert_page_leaves_shell_chrome_untouched(content: ScreenContent<'_>) {
+    let name = match content {
+        ScreenContent::Home(_) => "Home",
+        ScreenContent::Setup(_) => "Setup",
+        ScreenContent::Login(_) => "Login",
+        ScreenContent::BootstrapAdmin(_) => "BootstrapAdmin",
+        ScreenContent::UserManagement(_) => "UserManagement",
+        ScreenContent::Explorer(_) => "Explorer",
+        ScreenContent::Launcher(_) => "Launcher",
+        ScreenContent::CommandLine(_) => "CommandLine",
+        ScreenContent::Editor(_) => "Editor",
+        ScreenContent::Settings(_) => "Settings",
+        ScreenContent::Logs(_) => "Logs",
+        ScreenContent::Management(_) => "Management",
+        ScreenContent::Diagnostics(_) => "Diagnostics",
+        ScreenContent::SystemStatus(_) => "SystemStatus",
+        ScreenContent::Clock(_) => "Clock",
+    };
+    for (width, height) in [(120, 40), (80, 24), (50, 12), (49, 11)] {
+        for shape in [BorderShape::Rounded, BorderShape::Square] {
+            let theme = TundraTheme::default().with_border_shape(shape);
+            let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+            let context = content.render_context(&context);
+            let model = chrome(width, height);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let layout = ShellFrameLayout::new(
+                        frame.area(),
+                        model.status.time_button_label.as_deref(),
+                        &context,
+                    );
+                    render_shell_chrome(frame, &layout, &model, &context);
+                    let before = frame.buffer_mut().clone();
+                    for stage in ["content", "overlay"] {
+                        if stage == "content" {
+                            content.render_content(frame, &layout, &context, None, None);
+                        } else {
+                            content.render_overlay(frame, &layout, &context);
+                        }
+                        for position in frame.area().positions() {
+                            if !layout.main.contains(position) {
+                                assert_eq!(
+                                    frame.buffer_mut()[position], before[position],
+                                    "{name} {stage} changed {position:?} outside main at {width}x{height}"
+                                );
+                            }
+                        }
+                    }
+                })
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
+    let home = HomeViewModel::user(
+        "User",
+        "09:30",
+        vec![ShellEntry::new("Editor", "Edit text")],
+    );
+    let login = LoginViewModel::new(Vec::new(), 0, 0, 0, LoginField::Password, None);
+    let bootstrap = BootstrapAdminViewModel::new("Admin", 0, AuthField::Username, None);
+    let mut setup = SetupViewModel {
+        scroll_offset: 0,
+        step: SetupStep::Language,
+        languages: setup_language_options(),
+        timezones: setup_timezone_options(),
+        selected_language_index: 0,
+        selected_timezone_index: 0,
+        timezone_window_start: 0,
+        admin_username: "Admin".into(),
+        admin_password_len: 12,
+        admin_password_confirm_len: 12,
+        password_requirements: Vec::new(),
+        password_hint: String::new(),
+        focused_field: SetupField::Submit,
+        can_submit: true,
+        border_shape: BorderShape::Rounded,
+        theme_color: ratatui::style::Color::White,
+        theme_color_value: "white".into(),
+        accent_color: ratatui::style::Color::Cyan,
+        accent_color_value: "cyan".into(),
+        custom_color_target: None,
+        custom_color_input: String::new(),
+        custom_color_valid: true,
+        custom_color_conflicts_with_theme: false,
+        custom_color_error: None,
+        error: None,
+    };
+    let mut users = UserManagementViewModel::new("Admin", Vec::new(), 0, None, true, None);
+    let mut explorer = ExplorerViewModel::new("/tmp", Vec::new(), None);
+    let mut launcher = LauncherViewModel::new(Vec::new(), None, LauncherViewMode::Details, true);
+    let command_line = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(120, 40));
+    let mut editor = EditorViewModel::source("sample.txt", "editor content marker");
+    let mut settings = SettingsViewModel {
+        selected_category: SettingsCategory::Appearance,
+        selected_field: SettingsField::BorderColor,
+        cards: vec![SettingsCardViewModel::new(
+            "Appearance",
+            vec![SettingsItemViewModel::new(
+                SettingsField::BorderColor,
+                "Border color",
+                "White",
+                "Choose the border color",
+                SettingsControlKind::Palette,
+            )],
+        )],
+        appearance_preview: None,
+        status: "Ready".into(),
+        locked_message: None,
+        scroll_offset: 0,
+        picker: None,
+        color_editor: None,
+        weather_location_editor: None,
+        file_extensions_editor: None,
+        time_sync_server_editor: None,
+        update: None,
+    };
+    let logs = LogsViewModel::default();
+    let mut management = ManagementViewModel::default();
+    let mut diagnostics = DiagnosticsViewModel::default();
+    let mut system_status = SystemStatusViewModel {
+        content: SystemStatusContentViewModel::User(UserSystemStatusViewModel {
+            storage_status: "Healthy".into(),
+            storage_tone: components::ComponentTone::Success,
+            system_volume_usage: "42%".into(),
+            system_volume_used_percentage: Some(42),
+            network_status: "Connected".into(),
+            network_tone: components::ComponentTone::Success,
+            last_refreshed: "now".into(),
+        }),
+        diagnostics: DiagnosticsViewModel::default(),
+        route: SystemStatusRoute::Dashboard,
+        dashboard: SystemStatusDashboardViewModel::default(),
+        process_sort: SystemStatusProcessSort::default(),
+        selected_row: 0,
+        scroll_offset: 0,
+        refreshing: false,
+        feedback: None,
+    };
+    let mut clock = ClockViewModel::new("09:30");
+    for content in [
+        ScreenContent::Home(&home),
+        ScreenContent::Setup(&setup),
+        ScreenContent::Login(&login),
+        ScreenContent::BootstrapAdmin(&bootstrap),
+        ScreenContent::UserManagement(&users),
+        ScreenContent::Explorer(&explorer),
+        ScreenContent::Launcher(&launcher),
+        ScreenContent::CommandLine(&command_line),
+        ScreenContent::Editor(&editor),
+        ScreenContent::Settings(&settings),
+        ScreenContent::Logs(&logs),
+        ScreenContent::Management(&management),
+        ScreenContent::Diagnostics(&diagnostics),
+        ScreenContent::SystemStatus(&system_status),
+        ScreenContent::Clock(&clock),
+    ] {
+        assert_page_leaves_shell_chrome_untouched(content);
+    }
+    for step in [SetupStep::Timezone, SetupStep::Admin, SetupStep::Appearance] {
+        setup.step = step;
+        assert_page_leaves_shell_chrome_untouched(ScreenContent::Setup(&setup));
+    }
+    setup.custom_color_target = Some(SetupCustomColorTarget::Theme);
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::Setup(&setup));
+    users.form = Some(UserManagementFormViewModel {
+        kind: UserManagementFormKind::Create,
+        title: "Create user".into(),
+        username: "User".into(),
+        display_name: "User".into(),
+        role: "User".into(),
+        password_len: 12,
+        focused_field: UserManagementField::Username,
+        error: None,
+    });
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::UserManagement(&users));
+    explorer.pending_dialog = Some(ExplorerDialogViewModel::new(
+        "Confirm", "Message", "Yes", "No",
+    ));
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::Explorer(&explorer));
+    launcher.confirmation = Some(LauncherConfirmationViewModel {
+        kind: LauncherConfirmationKind::Remove,
+        title: "Remove entry".into(),
+        message: "Remove selected entry?".into(),
+        confirm_label: "Remove".into(),
+        cancel_label: "Cancel".into(),
+        confirm_selected: false,
+    });
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::Launcher(&launcher));
+    for menu in [EditorMenu::File, EditorMenu::Edit, EditorMenu::View] {
+        editor.open_menu = Some(menu);
+        assert_page_leaves_shell_chrome_untouched(ScreenContent::Editor(&editor));
+    }
+    settings.color_editor = Some(SettingsColorEditorViewModel {
+        title: "Color".into(),
+        value: "#123456".into(),
+        error: None,
+    });
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::Settings(&settings));
+    management.form = Some(ManagementForm {
+        title: "Action".into(),
+        message: "Confirm action".into(),
+        ..Default::default()
+    });
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::Management(&management));
+    for tab in DiagnosticsTab::ALL {
+        diagnostics.tab = tab;
+        assert_page_leaves_shell_chrome_untouched(ScreenContent::Diagnostics(&diagnostics));
+    }
+    diagnostics.repair_dialog = Some(DiagnosticsRepairDialogViewModel::default());
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::Diagnostics(&diagnostics));
+    for kind in SystemStatusWidgetKind::ALL {
+        system_status.route = SystemStatusRoute::Detail(kind.detail());
+        assert_page_leaves_shell_chrome_untouched(ScreenContent::SystemStatus(&system_status));
+    }
+    system_status.route = SystemStatusRoute::Dashboard;
+    system_status.dashboard.dialog = Some(SystemStatusDialogViewModel {
+        title: "Discard?".into(),
+        message: "Discard changes?".into(),
+        confirm_label: "Discard".into(),
+        cancel_label: "Cancel".into(),
+        selected_action: 1,
+    });
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::SystemStatus(&system_status));
+    clock.create_dialog = Some(ClockCreateDialogViewModel::default());
+    assert_page_leaves_shell_chrome_untouched(ScreenContent::Clock(&clock));
+}

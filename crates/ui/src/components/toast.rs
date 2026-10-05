@@ -4,8 +4,9 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 
+use super::Surface;
 use crate::{
     MotionDirection, MotionFrame, MotionTransitionKind, RenderContext, schedule_motion_range,
 };
@@ -129,19 +130,20 @@ impl Toast {
             area
         };
         let tokens = context.theme;
-        let tone = match self.tone {
-            ToastTone::Info => tokens.accent_strong,
+        let mut surface_context = context.clone();
+        surface_context.theme.border = match self.tone {
+            ToastTone::Info => tokens.border,
             ToastTone::Success => tokens.success,
             ToastTone::Warning => tokens.warning,
             ToastTone::Danger => tokens.danger,
         };
         let style = Style::default().fg(tokens.text).bg(tokens.raised);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(tone).bg(tokens.raised))
-            .style(style);
-        let inner = block.inner(area);
-        block.render(area, buffer);
+        let surface = Surface::new().bordered(true).raised(true);
+        let inner = surface.inner(area);
+        surface.render(area, buffer, &surface_context);
+        if area.width <= 2 || area.height <= 2 {
+            return;
+        }
         Paragraph::new(self.message.as_str())
             .alignment(HorizontalAlignment::Left)
             .style(style.add_modifier(Modifier::BOLD))
