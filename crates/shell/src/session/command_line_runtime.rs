@@ -29,6 +29,7 @@ const SCROLL_LINES_PER_NOTCH: usize = 3;
 
 /// Private environment contract with the embedded `tundra-cli` REPL.
 const COMMAND_LINE_USERNAME_ENV: &str = "TUNDRA_COMMAND_LINE_USERNAME";
+const COMMAND_LINE_ACCENT_ENV: &str = "TUNDRA_COMMAND_LINE_ACCENT";
 
 static NEXT_PTY_READER_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -61,6 +62,14 @@ impl CommandLinePtyConfig {
         self.env.push((
             OsString::from(COMMAND_LINE_USERNAME_ENV),
             OsString::from(username),
+        ));
+        self
+    }
+
+    pub fn with_accent_color(mut self, color: ratatui::style::Color) -> Self {
+        self.env.push((
+            OsString::from(COMMAND_LINE_ACCENT_ENV),
+            OsString::from(crate::banner::ansi_foreground(color)),
         ));
         self
     }
@@ -839,13 +848,20 @@ impl CommandLineHost {
         }
     }
 
-    pub fn ensure_started(&mut self, platform: &dyn Platform, username: &str) {
+    pub fn ensure_started(
+        &mut self,
+        platform: &dyn Platform,
+        username: &str,
+        accent: ratatui::style::Color,
+    ) {
         if !matches!(self.state, CommandLineHostState::Inactive) {
             return;
         }
 
         let result = resolve_tundra_cli_program().and_then(|program| {
-            let mut config = CommandLinePtyConfig::tundra_cli(program).with_username(username);
+            let mut config = CommandLinePtyConfig::tundra_cli(program)
+                .with_username(username)
+                .with_accent_color(accent);
             let directories = platform
                 .user_dirs_for_user(username)
                 .map_err(io::Error::other)?;

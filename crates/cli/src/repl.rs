@@ -8,7 +8,34 @@ use rustyline::{
     validate::Validator,
 };
 
-struct PromptDisplay;
+struct PromptDisplay {
+    accent: String,
+}
+
+impl PromptDisplay {
+    fn new() -> Self {
+        Self {
+            accent: std::env::var("TUNDRA_COMMAND_LINE_ACCENT")
+                .ok()
+                .and_then(|value| validated_foreground(&value))
+                .unwrap_or_else(|| "\x1b[38;2;99;211;229m".to_string()),
+        }
+    }
+}
+
+fn validated_foreground(value: &str) -> Option<String> {
+    let parameters = value.strip_prefix("\x1b[")?.strip_suffix('m')?;
+    let values = parameters
+        .split(';')
+        .map(str::parse::<u8>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    matches!(
+        values.as_slice(),
+        [30..=37 | 39 | 90..=97] | [38, 5, _] | [38, 2, _, _, _]
+    )
+    .then(|| value.to_string())
+}
 
 impl Completer for PromptDisplay {
     type Candidate = String;
@@ -25,10 +52,17 @@ impl Highlighter for PromptDisplay {
         prompt: &'p str,
         default: bool,
     ) -> Cow<'b, str> {
-        if default && let Some(rest) = prompt.strip_prefix('○') {
+        if default
+            && let Some(identity) = prompt
+                .strip_prefix("○ ")
+                .and_then(|rest| rest.strip_suffix(" >> "))
+        {
             // Only decorate the rendered prompt. Windows rustyline counts CSI
             // bytes as visible text when calculating the undecorated layout.
-            Cow::Owned(format!("○\x1b[777;0z{rest}"))
+            Cow::Owned(format!(
+                "○\x1b[777;0z {}{identity}\x1b[39m >> ",
+                self.accent
+            ))
         } else {
             Cow::Borrowed(prompt)
         }
@@ -58,7 +92,7 @@ where
         Ok(builder) => builder
             .keyseq_timeout(Some(100))
             .color_mode(if embedded {
-                // This hook carries status metadata, not optional prompt colors.
+                // The helper carries both prompt colors and host status metadata.
                 rustyline::ColorMode::Forced
             } else {
                 rustyline::ColorMode::Enabled
@@ -78,16 +112,20 @@ where
             }
         };
     if embedded {
-        editor.set_helper(Some(PromptDisplay));
+        editor.set_helper(Some(PromptDisplay::new()));
     }
     let mut system_session = None;
     println!("System commands run by default. Use /help for UX commands; exit to leave.");
-    println!("默认执行系统命令；UX 命令使用 / 前缀（例如 /help）；exit 退出。");
+    let mut separate_next_prompt = false;
 
     loop {
+        if separate_next_prompt {
+            println!();
+            separate_next_prompt = false;
+        }
         let prompt = repl_prompt(embedded, system_session.as_ref());
         // Keep layout input free of terminal controls on every platform.
-        // PromptDisplay adds the host's marker metadata only during rendering.
+        // PromptDisplay adds colors and marker metadata only during rendering.
         let prompt = if embedded {
             format!("○ {prompt}")
         } else {
@@ -97,6 +135,7 @@ where
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => {
                 report_command_status(embedded, 1);
+                separate_next_prompt = true;
                 continue;
             }
             Err(ReadlineError::Eof) => return 0,
@@ -109,6 +148,7 @@ where
         if line.is_empty() {
             continue;
         }
+        separate_next_prompt = true;
         if is_exit_line(&line) {
             report_command_status(embedded, 0);
             return 0;
@@ -116,13 +156,12 @@ where
         let _ = editor.add_history_entry(line);
 
         let Some(ux_command) = ux_command_input(line) else {
-            let code = run_system_command(&mut system_session, line);
+            let code = run_system_command(&mut system_session, line, embedded);
             if code != 0 && is_likely_ux_command(line) {
                 eprintln!(
                     "This looks like a UX command. Prefix it with '/': /{}",
                     visible_command(line)
                 );
-                eprintln!("这可能是 UX 命令；执行 UX 命令需要前缀“/”。本次未执行 UX 命令。");
             }
             report_command_status(embedded, code);
             continue;
@@ -198,7 +237,6 @@ where
                         "This looks like a system command. Remove the '/' prefix: {}",
                         visible_command(ux_command)
                     );
-                    eprintln!("这可能是系统命令；执行系统命令请去掉前缀“/”。本次未执行。");
                 } else {
                     let _ = crate::help_text::write_error_help(&mut std::io::stderr(), &arguments);
                 }
@@ -316,7 +354,11 @@ fn is_reset_confirmation(answer: &str) -> bool {
 
 /// Executes system input unchanged and returns the operating
 /// system command's status. The REPL intentionally remains open afterwards.
-fn run_system_command(session: &mut Option<SystemCommandSession>, command: &str) -> i32 {
+fn run_system_command(
+    session: &mut Option<SystemCommandSession>,
+    command: &str,
+    embedded: bool,
+) -> i32 {
     if command.trim().is_empty() {
         eprintln!("ERROR: an operating-system command is required");
         return 2;
@@ -334,7 +376,11 @@ fn run_system_command(session: &mut Option<SystemCommandSession>, command: &str)
     match result {
         Ok(result) => {
             let exit_code = result.exit_code;
-            println!("[system exit code: {exit_code}]");
+            if embedded {
+                println!("\x1b[90m[system exit code: {exit_code}]\x1b[39m");
+            } else {
+                println!("[system exit code: {exit_code}]");
+            }
             if let Some(error) = result.state_error {
                 eprintln!(
                     "WARNING: could not retain command state; the next system command will use the last saved environment and directory: {error}"

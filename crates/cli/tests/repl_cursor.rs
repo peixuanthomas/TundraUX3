@@ -33,6 +33,7 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
     ]);
     command.env(CHILD, "1");
     command.env("TUNDRA_COMMAND_LINE_USERNAME", "cursor-test");
+    command.env("TUNDRA_COMMAND_LINE_ACCENT", "\x1b[38;2;12;34;56m");
     command.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(command).unwrap();
     struct StopChild(Box<dyn portable_pty::Child + Send + Sync>);
@@ -115,9 +116,72 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
         writer.write_all(bytes).unwrap();
         writer.flush().unwrap();
     };
+    let submit = |command: &str, failed: bool| {
+        let previous_row = parser.lock().unwrap().screen().cursor_position().0;
+        let start = raw.lock().unwrap().len();
+        send(format!("{command}\r").as_bytes());
+        let status = format!("\x1b[777;1;{}z", u8::from(failed));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if raw.lock().unwrap()[start..]
+                .windows(status.len())
+                .any(|bytes| bytes == status.as_bytes())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no status for {command:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        loop {
+            wait_for(">>", 0);
+            let row = parser.lock().unwrap().screen().cursor_position().0;
+            // ConPTY can forward status metadata before its screen update.
+            // An old empty prompt must not count as the next command's prompt.
+            if (command == "/cls" && row == 1)
+                || (command != "/cls" && row >= (previous_row + 2).min(29))
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no new prompt for {command:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
     wait_for(">>", 0);
     send(b"abc");
     wait_for(">> abc", 0);
+    {
+        let parser = parser.lock().unwrap();
+        let screen = parser.screen();
+        let (row, col) = screen.cursor_position();
+        // Accent stops before the separator and input. Check actual cells,
+        // since escape strings alone cannot detect a color leaking into input.
+        for column in 2..col - 7 {
+            assert_eq!(
+                screen.cell(row, column).unwrap().fgcolor(),
+                vt100::Color::Rgb(12, 34, 56)
+            );
+        }
+        for column in col - 7..col {
+            // ConPTY can group the blank before >> with the preceding color.
+            // Only visible separator and input glyphs need the default color.
+            if screen
+                .cell(row, column)
+                .unwrap()
+                .contents()
+                .trim()
+                .is_empty()
+            {
+                continue;
+            }
+            assert_eq!(
+                screen.cell(row, column).unwrap().fgcolor(),
+                vt100::Color::Default,
+                "input column={column}, row={row}, cursor={col}, line={:?}, raw={:?}",
+                screen.rows(0, 160).nth(usize::from(row)),
+                String::from_utf8_lossy(&raw.lock().unwrap())
+            );
+        }
+    }
     send(b"\x1b[D");
     wait_for(">> abc", 1);
     send(b"X");
@@ -130,6 +194,29 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
     wait_for(">> 中文", 0);
     send(b"\x15/help\r");
     wait_for(">>", 0);
+    for (command, code) in [("echo SPACING_TEST", 0), ("/", 2), ("/help '", 1)] {
+        // Clear old output so the final block is easy to locate without
+        // depending on platform-specific shell errors or help length.
+        submit("/cls", false);
+        submit(command, code != 0);
+        let parser = parser.lock().unwrap();
+        let screen = parser.screen();
+        let (row, _) = screen.cursor_position();
+        assert!(row >= 2, "no command block for {command:?}, row={row}");
+        let rows = screen.rows(0, 160).collect::<Vec<_>>();
+        assert!(rows[usize::from(row - 1)].trim().is_empty(), "{rows:?}");
+        assert!(!rows[usize::from(row - 2)].trim().is_empty(), "{rows:?}");
+        if code == 0 {
+            assert_eq!(rows[usize::from(row - 2)], "[system exit code: 0]");
+            for column in 0..21 {
+                assert_eq!(
+                    screen.cell(row - 2, column).unwrap().fgcolor(),
+                    vt100::Color::Idx(8)
+                );
+            }
+        }
+    }
+    submit("/help", false);
     send(b"\x1b[A");
     wait_for(">> /help", 0);
     parser.lock().unwrap().set_size(30, 50);

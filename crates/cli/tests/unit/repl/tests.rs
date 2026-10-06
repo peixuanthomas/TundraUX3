@@ -2,14 +2,27 @@ use super::*;
 
 #[test]
 fn status_metadata_is_added_only_to_the_rendered_primary_prompt() {
+    let display = PromptDisplay {
+        accent: "\x1b[95m".to_string(),
+    };
     let prompt = "○ user@C:\\Documents >> ";
     assert_eq!(
-        PromptDisplay.highlight_prompt(prompt, true),
-        "○\x1b[777;0z user@C:\\Documents >> "
+        display.highlight_prompt(prompt, true),
+        "○\x1b[777;0z \x1b[95muser@C:\\Documents\x1b[39m >> "
     );
-    assert_eq!(PromptDisplay.highlight_prompt(prompt, false), prompt);
+    assert_eq!(display.highlight_prompt(prompt, false), prompt);
     let reset = "Type RESET to erase TundraUX3 data, or press Enter to cancel: ";
-    assert_eq!(PromptDisplay.highlight_prompt(reset, true), reset);
+    assert_eq!(display.highlight_prompt(reset, true), reset);
+}
+
+#[test]
+fn prompt_color_accepts_only_foreground_sequences() {
+    for sequence in ["\x1b[95m", "\x1b[38;5;200m", "\x1b[38;2;12;34;56m"] {
+        assert_eq!(validated_foreground(sequence).as_deref(), Some(sequence));
+    }
+    for sequence in ["\x1b[2J", "\x1b[0m", "\x1b[38;2;256;0;0m", "\x1b[95m\n"] {
+        assert_eq!(validated_foreground(sequence), None);
+    }
 }
 
 #[test]
@@ -123,5 +136,5 @@ fn exit_and_reset_words_are_exact() {
 #[test]
 fn system_command_returns_its_exit_code() {
     let command = if cfg!(windows) { "exit /B 7" } else { "exit 7" };
-    assert_eq!(run_system_command(&mut None, command), 7);
+    assert_eq!(run_system_command(&mut None, command, false), 7);
 }

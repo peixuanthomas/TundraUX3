@@ -70,6 +70,8 @@ fn repl_defaults_to_system_commands_and_hints_do_not_execute_alternatives() {
         );
         assert!(!stdout.contains("Type RESET"), "{stdout}");
         assert!(stdout.contains("/config set motion reduced"), "{stdout}");
+        assert!(!stdout.contains("默认执行系统命令"), "{stdout}");
+        assert!(!stderr.contains("这可能是"), "{stderr}");
     }
 }
 

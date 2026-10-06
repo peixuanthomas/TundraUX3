@@ -636,14 +636,22 @@ fn cursor_keys_follow_application_cursor_mode() {
 }
 
 #[test]
-fn cli_config_passes_the_current_tundra_username() {
-    let config = CommandLinePtyConfig::tundra_cli("tundra-cli").with_username("AdminUser");
+fn cli_config_passes_the_current_tundra_username_and_accent() {
+    let config = CommandLinePtyConfig::tundra_cli("tundra-cli")
+        .with_username("AdminUser")
+        .with_accent_color(ratatui::style::Color::Rgb(12, 34, 56));
     assert_eq!(
         config.env,
-        [(
-            OsString::from(COMMAND_LINE_USERNAME_ENV),
-            OsString::from("AdminUser")
-        )]
+        [
+            (
+                OsString::from(COMMAND_LINE_USERNAME_ENV),
+                OsString::from("AdminUser")
+            ),
+            (
+                OsString::from(COMMAND_LINE_ACCENT_ENV),
+                OsString::from("\x1b[38;2;12;34;56m")
+            )
+        ]
     );
 }
 

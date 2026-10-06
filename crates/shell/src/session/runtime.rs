@@ -1050,7 +1050,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             .then(|| command_line_host.view_model());
         if state.content_screen() == ShellScreen::CommandLine {
             let username = state.current_home_username().unwrap_or("tundra");
-            command_line_host.ensure_started(platform.as_ref(), username);
+            command_line_host.ensure_started(platform.as_ref(), username, theme.accent_color);
             match command_line_host.poll() {
                 CommandLineHostEvent::None => {
                     let (width, height) = state.terminal_size();

@@ -4,6 +4,7 @@ import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import shlex
@@ -25,10 +26,11 @@ workspace = tempfile.TemporaryDirectory(prefix="tundra-command-state-")
 current_directory = Path.cwd().resolve()
 
 
-def wait_for(marker, timeout=5.0):
+def wait_for(marker, timeout=5.0, strip_colors=False):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if marker in output:
+        visible_output = re.sub(rb"\x1b\[[0-9;]*m", b"", output) if strip_colors else output
+        if marker in visible_output:
             return
         if select.select([master], [], [], max(0, deadline - time.monotonic()))[0]:
             try:
@@ -43,7 +45,7 @@ def wait_for(marker, timeout=5.0):
 
 
 def wait_for_prompt():
-    wait_for(f"input-test@{current_directory} >>".encode())
+    wait_for(f"input-test@{current_directory} >>".encode(), strip_colors=True)
 
 
 def run_command(command, expected=None, code=0):

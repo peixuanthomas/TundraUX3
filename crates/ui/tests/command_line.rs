@@ -87,7 +87,7 @@ fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
 }
 
 #[test]
-fn command_line_prompt_and_input_use_the_normal_output_color() {
+fn command_line_preserves_unstyled_child_prompt_and_input() {
     let prompt = "AdminUser@/home/user/space and 中文 >> ";
     let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
     let mut column = 0;
