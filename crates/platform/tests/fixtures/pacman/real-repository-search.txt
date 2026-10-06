@@ -1,0 +1,10 @@
+first/dupe 1:1.1-1 (fixture-group) [installed: 1:1.0-2]
+    A multiline-ready description with literal punctuation [.]+$
+    and UTF-8 café; detailed package description words detailed
+    package description words detailed package description words
+    detailed package description words detailed package
+    description words detailed package description words
+    detailed package description words detailed package
+    description words detailed package description words
+second/dupe 2:99.0-9 (fixture-group) [installed: 1:1.0-2]
+    Lower priority duplicate match needle

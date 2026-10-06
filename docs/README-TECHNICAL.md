@@ -306,7 +306,11 @@ Linux 首页新增服务、进程、软件包、网络、磁盘五个独立入�
 
 授权程序只持有创建时继承的私有双向连接，不创建可供其他程序连接的会话 socket，也不保存密码或令牌文件。Shell 禁止同用户进程通过 ptrace 或 `/proc` 复制授权，连接描述符带 close-on-exec 标记，不传给外部命令。退出、注销或通信失效时撤销连接，授权程序随后退出；不会因此杀死已启动的独立任务。后台任务的 `control.sock` 保持 root 所有且仅接受 root，授权程序核对固定 `/run/tundraux3-management/<actor>/<operation>/control.sock` 的归属与权限后，将已经连接的描述符交给当前 Shell。新启动的 Shell 需重新授权才能重连旧任务。
 
-网络更改先保存原配置，再通过系统 systemd 服务启动独立恢复助手 `__network-rollback`，应用后等待 120 秒确认。进程信号使用 pidfd，并核对进程启动标识；调整 nice 只作用于主线程。软件包直接运行 APT/dpkg 或 DNF 的实际事务，所有提示原样显示在 AutoAdmin 内嵌终端；输入直接送给软件管理器，不再把 y/n 或配置文件问题改造成 Continue/Cancel 表单。磁盘扫描保持原用户权限，不跟随符号链接或越过挂载点。
+网络更改先保存原配置，再通过系统 systemd 服务启动独立恢复助手 `__network-rollback`，应用后等待 120 秒确认。进程信号使用 pidfd，并核对进程启动标识；调整 nice 只作用于主线程。软件包直接运行 APT/dpkg、DNF 或 pacman 的实际事务，所有提示原样显示在 AutoAdmin 内嵌终端；输入直接送给软件管理器，不再把 y/n 或配置文件问题改造成 Continue/Cancel 表单。磁盘扫描保持原用户权限，不跟随符号链接或越过挂载点。
+
+软件包后端 `PackageBackend::Pacman` 通过固定 `/usr/bin/pacman` 只读命令查询本地与缓存同步数据库，保留原生仓库优先级；仓库候选查询使用 pacman 自带的官方 `/usr/bin/pacman-conf` 解析规范化生效配置及 Include。依赖仓库的预览、搜索、更新列表、安装和目标升级要求每个配置仓库同时启用 `Search`、`Install`、`Upgrade`（默认 `Usage = All` 满足）；不同用途或完全禁用的仓库明确报告不支持，防止无目标查询与实际事务的仓库资格不同。同步查询的任何 stderr 诊断都会拒绝结果，即使退出为 0；本地 `-Qi` 可容忍同步缓存警告。`pacman-conf` 缺失、同步缓存不可用或仓库配置不受支持时，本地已安装列表/详情保留只卸载行操作，全局明确确认的完整系统升级仍可用。foreign 已安装包可查看和卸载，不提供 AUR 构建、安装、更新或助手集成。
+
+`pacman_install`、`pacman_upgrade` 和 `pacman_upgrade_all` 均使用 `pacman -Syu --needed`（指定目标时追加 `-- 软件包名`），刷新源并完整升级系统，避免部分升级；刷新源入口使用同一完整升级事务，不执行单独的 `-Sy`。普通卸载使用 `pacman -R -- 软件包名`，不递归、级联删除或清理配置。任务启动前拒绝已安装版本或缓存候选身份已变化的旧请求；缓存版本只是预览，刷新后的依赖、最终版本和整个系统事务仍由 pacman 原生提示在现有 AA/PTY 流程中确认。`.pacnew`/`.pacsave` 由用户按输出处理，未新增提权基础设施或密码保存。
 
 ### AutoAdmin（AA）
 
@@ -461,7 +465,7 @@ D-Bus 错误字符串。统一错误包括权限拒绝、授权取消、服务�
 
 Linux 自更新只支持当前用户拥有且可写的便携目录，目录中必须有 `tundra-installation.json`、
 `tundra-shell` 和 `tundra-cli`。检查、准备、替换和恢复均校验目录与文件权限。
-不再提供 PackageKit、apt、pacman 或 RPM 更新；系统目录中的旧安装不会被直接替换。
+Tundra 自更新不再使用 PackageKit、apt、pacman 或 RPM；系统目录中的旧安装不会被直接替换。Launcher 的系统软件包管理仍支持 APT/dpkg、DNF 和 pacman，使用独立的 AA 事务流程。
 
 Shell 的 AA 使用一次 sudo 授权覆盖全部内置提权操作；授权程序只接受固定的系统管理、账户和电源请求，不接受任意命令行。AccountsService 和 logind 仍负责实际修改。其他调用方的 polkit 交互适配器仍可注册绑定当前进程与启动时间的 `pkttyagent`，使用独立终端，不接管主终端。
 
@@ -732,6 +736,9 @@ CI 覆盖如下：
 | macOS | `cargo test --workspace --locked --no-run` |
 | Ubuntu | `cargo build/test/clippy --workspace --locked`、PTY smoke、便携打包与更新回退验证 |
 | Fedora | 普通用户 `cargo build --workspace --locked`，身份、日志、平台与系统服务定向测试；发布工作流执行 workspace tests |
+| Arch | 普通用户软件包查询/参数夹具、显式只读 pacman smoke，以及本地软件包构建测试；应用测试不运行真实安装、卸载、仓库刷新或升级事务 |
+
+软件包查询和固定操作测试包含在 Linux workspace 测试中。Arch CI 额外以普通用户执行 `cargo test --locked -p platform management::packages --lib` 和 `cargo test --locked -p platform management::packages::pacman::tests::live_pacman_installed_search_updates_and_details --lib -- --ignored`，后者只读取已有数据库。补充查询验证使用 Debian 官方 Pacman 7.0 与隔离的合成数据库，只执行只读查询并核对数据库 SHA 不变。缓存夹具与只读 smoke 不等于实际 Arch 写事务验收；安装、完整系统升级和卸载不得在开发主机进行破坏性测试。
 
 Linux 的自动测试不触碰用户真实 Trash。发布候选可在 GNOME/KDE 普通用户会话运行原生往返 smoke；它只创建临时项，并在成功后恢复和清理：
 

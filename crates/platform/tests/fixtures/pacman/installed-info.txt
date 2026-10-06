@@ -1,0 +1,42 @@
+Name            : bash
+Version         : 2:5.2.026-3
+Description     : The GNU Bourne Again shell and
+                  command language
+Architecture    : x86_64
+URL             : https://www.gnu.org/software/bash/bash.html
+Licenses        : GPL-3.0-or-later
+Groups          : None
+Provides        : sh
+Depends On      : readline  glibc  ncurses
+Optional Deps   : bash-completion: completion for interactive shells [installed]
+                  readline: editing support
+Required By     : base
+Optional For    : None
+Conflicts With  : None
+Replaces        : None
+Installed Size  : 8.64 MiB
+Packager        : Example Packager <packager@example.org>
+Build Date      : Mon 01 Jan 2024 12:00:00 AM UTC
+Install Date    : Tue 02 Jan 2024 12:00:00 AM UTC
+Install Reason  : Explicitly installed
+Install Script  : No
+Validated By    : Signature
+
+Name            : duplicate
+Version         : 1.0-1
+Description     : Preferred repository package
+Architecture    : any
+Depends On      : bash
+Install Reason  : Installed as a dependency for another package
+Install Script  : No
+Validated By    : Signature
+
+Name            : local-only
+Version         : 1:0.9-12
+Description     : A local package installed outside configured repositories
+Architecture    : aarch64
+URL             : None
+Depends On      : None
+Install Reason  : Explicitly installed
+Install Script  : Yes
+Validated By    : None

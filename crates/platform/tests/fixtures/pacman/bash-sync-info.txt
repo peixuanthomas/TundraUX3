@@ -1,0 +1,18 @@
+Repository      : core
+Name            : bash
+Version         : 2:5.2.037-1
+Description     : The GNU Bourne Again shell and command language
+Architecture    : x86_64
+URL             : https://www.gnu.org/software/bash/bash.html
+Licenses        : GPL-3.0-or-later
+Groups          : base
+Provides        : sh
+Depends On      : readline  glibc  ncurses
+Optional Deps   : bash-completion: completion for interactive shells
+Conflicts With  : None
+Replaces        : None
+Download Size   : 1.78 MiB
+Installed Size  : 8.84 MiB
+Packager        : Example Packager <packager@example.org>
+Build Date      : Mon 05 Oct 2026 12:00:00 AM UTC
+Validated By    : Signature

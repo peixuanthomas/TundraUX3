@@ -1,0 +1,19 @@
+[options]
+RootDir = /
+DBPath = /var/lib/pacman/
+Architecture = x86_64
+[first]
+Usage = All
+Server = https://example.invalid/first
+[second]
+Usage = All
+Server = https://example.invalid/second
+[custom-first]
+Usage = All
+Server = https://example.invalid/custom-first
+[core]
+Usage = All
+Server = https://example.invalid/core
+[extra]
+Usage = All
+Server = https://example.invalid/extra

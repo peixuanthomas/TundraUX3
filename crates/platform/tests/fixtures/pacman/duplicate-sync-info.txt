@@ -1,0 +1,10 @@
+Repository      : custom-first
+Name            : duplicate
+Version         : 1.0-2
+Description     : Preferred repository package
+Architecture    : any
+Depends On      : bash
+Optional Deps   : None
+Download Size   : 1.00 KiB
+Installed Size  : 2.00 KiB
+Validated By    : Signature
