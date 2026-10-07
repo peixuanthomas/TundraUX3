@@ -1490,7 +1490,10 @@ fn shell_render_capabilities(
 }
 
 fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool {
-    if state.auto_admin_visible() || state.active_screen() != ShellScreen::CommandLine {
+    if state.auto_admin_visible()
+        || state.notification_has_active_modal()
+        || state.active_screen() != ShellScreen::CommandLine
+    {
         return false;
     }
 

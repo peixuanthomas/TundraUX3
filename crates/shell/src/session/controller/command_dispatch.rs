@@ -107,6 +107,10 @@ impl ShellSession {
                 let (target, command) = self.route_mouse_input(*mouse, received_at);
                 (target, command)
             }
+            InputEvent::Paste(_) if self.notification_has_active_modal() => (
+                RoutedTarget::Modal(ShellComponent::NotificationDialog),
+                ShellCommand::CaptureOverlayInput,
+            ),
             InputEvent::Paste(value) if self.active_screen() == ShellScreen::Management => (
                 RoutedTarget::Component(ShellComponent::Management),
                 ShellCommand::ManagementPaste(value.clone()),
@@ -1945,6 +1949,10 @@ impl ShellSession {
                 coordinates,
                 click,
             } => {
+                if target == ShellComponent::StatusBar {
+                    self.open_status_details();
+                    return ShellAction::Redraw;
+                }
                 if target == ShellComponent::ContextMenu && self.explorer_overlay_mode.is_some() {
                     self.activate_explorer_overlay_at(coordinates, platform);
                     return ShellAction::Redraw;

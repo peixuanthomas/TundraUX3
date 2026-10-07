@@ -142,10 +142,7 @@ impl ScreenCompositor {
                 _ => {}
             }
         }
-        let notification = (state.content_screen() != ShellScreen::CommandLine
-            || state.active_screen() == ShellScreen::ExitConfirm)
-            .then(|| state.to_notification_view_model())
-            .flatten();
+        let notification = state.to_notification_view_model();
         let time_sync = (state.content_screen() != ShellScreen::CommandLine)
             .then(|| state.to_time_sync_dialog_view_model())
             .flatten();
@@ -220,13 +217,31 @@ impl ScreenCompositor {
         if visible_content {
             content.render_overlay(frame, &layout, context);
         }
-        ui::render_shell_chrome(frame, &layout, &chrome, context);
+        ui::render_shell_chrome_with_status_focus(
+            frame,
+            &layout,
+            &chrome,
+            context,
+            state.focused_component == ShellComponent::StatusBar,
+        );
+        let mut displayed_status = chrome.status.clone();
         if prepared.notification.is_none()
             && prepared.chrome.status.error.is_none()
             && let (Some(toast), Some(area)) = (&self.toast, layout.status_message)
         {
-            toast.render_frame(frame, area, context);
+            // Reuse the status button's resolved colors, including hover/press,
+            // while keeping the existing Toast timing and semantic border style.
+            let mut toast_context = context.clone();
+            if area.width > 2 && area.height > 2 {
+                toast_context.theme.border = frame.buffer_mut()[(area.x, area.y + 1)].fg;
+                toast_context.theme.text = frame.buffer_mut()[(area.x + 1, area.y + 1)].fg;
+            }
+            toast.render_frame(frame, area, &toast_context);
+            if toast.is_visible(context.motion) {
+                displayed_status.toast = Some(toast.message.clone());
+            }
         }
+        state.displayed_status = Some(displayed_status.full_message());
         if shell_modal {
             self.motion.capture_base(frame.buffer_mut(), state);
         }

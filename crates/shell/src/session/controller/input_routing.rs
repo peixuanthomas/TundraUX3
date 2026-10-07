@@ -54,6 +54,18 @@ impl ShellSession {
                     .cloned()
             })
             .or_else(|| {
+                if self.hit_map.target_at(point) == Some(ShellComponent::StatusBar) {
+                    return self.frame_layout.and_then(|layout| {
+                        layout
+                            .status_message
+                            .filter(|area| rect_contains(*area, point))
+                            .map(|area| ui::components::ButtonRegion {
+                                id: "shell.status".into(),
+                                area,
+                                disabled: false,
+                            })
+                    });
+                }
                 // Details rows are drawn as a table, but launch on release just
                 // like icon buttons. Use the same layout as their hit testing.
                 if self.active_screen() != ShellScreen::Launcher
@@ -330,7 +342,9 @@ impl ShellSession {
             && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
             && self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton)
         {
-            if self.active_screen() == ShellScreen::CommandLine {
+            if self.active_screen() == ShellScreen::CommandLine
+                && !self.notification_has_active_modal()
+            {
                 return InputEvent::Key(KeyInput::with_modifiers(
                     InputKey::Char('x'),
                     InputModifiers::CTRL_SHIFT,
@@ -345,6 +359,23 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
+        if self.notification_has_active_modal()
+            && (self.active_screen() == ShellScreen::CommandLine || self.status_details_visible())
+        {
+            if !key.phase.is_press_like() {
+                return (RoutedTarget::Global, ShellCommand::Noop);
+            }
+            if !self.overlay_interaction_ready && key.key != InputKey::Escape {
+                return (
+                    RoutedTarget::Modal(
+                        self.notification_active_modal_component()
+                            .unwrap_or(ShellComponent::NotificationDialog),
+                    ),
+                    ShellCommand::CaptureOverlayInput,
+                );
+            }
+            return self.route_notification_key(key);
+        }
         if self.active_screen() == ShellScreen::CommandLine {
             return (
                 RoutedTarget::Component(ShellComponent::CommandLine),
@@ -549,6 +580,20 @@ impl ShellSession {
                 (
                     RoutedTarget::Component(ShellComponent::ClockButton),
                     self.clock_button_activation_command(),
+                )
+            }
+            _ if self.focused_component == ShellComponent::StatusBar
+                && key.phase == InputPhase::Press
+                && key.is_unmodified_action_key()
+                && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::StatusBar),
+                    ShellCommand::Activate {
+                        target: ShellComponent::StatusBar,
+                        coordinates: (0, 0),
+                        click: ClickKind::Single,
+                    },
                 )
             }
             ShellScreen::Home if matches!(&key.key, InputKey::Left) => (
@@ -1323,6 +1368,22 @@ impl ShellSession {
         }
 
         match &key.key {
+            InputKey::Up | InputKey::Down | InputKey::Home | InputKey::End
+                if self.status_details_visible() && key.is_unmodified_action_key() =>
+            {
+                (
+                    target,
+                    ShellCommand::NotificationScrollMessage {
+                        delta: match key.key {
+                            InputKey::Up => -1,
+                            InputKey::Down => 1,
+                            InputKey::Home => -isize::MAX,
+                            _ => isize::MAX,
+                        },
+                        page: false,
+                    },
+                )
+            }
             InputKey::BackTab if !key.has_non_shift_modifier() => {
                 (target, ShellCommand::NotificationPreviousAction)
             }
@@ -2531,6 +2592,19 @@ impl ShellSession {
 
         match mouse.kind {
             ui::MouseEventKind::Moved => (target, ShellCommand::Hover(hit_target)),
+            ui::MouseEventKind::Down(PointerButton::Left)
+            | ui::MouseEventKind::Click(PointerButton::Left)
+                if hit_target == Some(ShellComponent::StatusBar) =>
+            {
+                (
+                    target,
+                    ShellCommand::Activate {
+                        target: ShellComponent::StatusBar,
+                        coordinates: mouse.coordinates(),
+                        click: ClickKind::Single,
+                    },
+                )
+            }
             ui::MouseEventKind::Down(PointerButton::Left)
                 if hit_target == Some(ShellComponent::ClockButton) =>
             {

@@ -58,6 +58,55 @@ fn text(buffer: &Buffer, area: Rect) -> String {
 }
 
 #[test]
+fn status_details_capture_the_drawn_debug_text_before_click_diagnostics_change() {
+    let mut state = session();
+    state.home_mode = ShellHomeMode::Debug;
+    state.last_key_event = Some("original key".into());
+    state.notify_status("Status with 中文 and 👩‍💻\noriginal second line".repeat(20));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut compositor = ScreenCompositor::default();
+    let prepared = home_frame(&state, 0, true);
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let expected = state.displayed_status.clone().unwrap();
+    let area = state.frame_layout.unwrap().status_message.unwrap();
+    let point = (area.x + 1, area.y + 1);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(
+        state.to_notification_view_model().unwrap().message,
+        expected
+    );
+    assert!(expected.contains("Mouse position: none"));
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .full_message()
+            .contains(&format!("Mouse position: {},{}", point.0, point.1))
+    );
+}
+
+#[test]
+fn status_details_keep_a_toast_visible_during_its_exit_animation() {
+    let mut state = session();
+    state.notify_toast("Read this disappearing toast 中文");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut compositor = ScreenCompositor::default();
+    let prepared = home_frame(&state, 0, false);
+    compositor.synchronize_toast(&prepared.chrome, prepared.context.motion);
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let mut expired = home_frame(&state, 100, false);
+    expired.chrome.status.toast = None;
+    compositor.synchronize_toast(&expired.chrome, expired.context.motion);
+    draw(&mut compositor, &mut terminal, &mut state, &expired);
+    state.open_status_details();
+    assert_eq!(
+        state.to_notification_view_model().unwrap().message,
+        "Read this disappearing toast 中文"
+    );
+}
+
+#[test]
 fn auto_admin_keeps_shell_title_and_status_visible_after_resize() {
     for (width, height) in [(180, 55), (80, 24), (120, 40)] {
         let mut state = session();

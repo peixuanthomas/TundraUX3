@@ -20,6 +20,7 @@ mod notifications;
 mod settings;
 mod settings_devices;
 mod settings_tasks;
+mod status_details;
 pub(super) mod system_status;
 mod time_sync;
 mod touch_pages;

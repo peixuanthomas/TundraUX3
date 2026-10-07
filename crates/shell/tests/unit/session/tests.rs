@@ -5055,8 +5055,23 @@ fn explorer_never_receives_shell_chrome_pointer_commands_and_clears_drag() {
     );
 
     let status = hit_region_center(&state, ShellComponent::StatusBar);
-    for input in [
+    let routed = state.route_input_at(
         InputEvent::mouse_down(PointerButton::Left, status),
+        Instant::now(),
+    );
+    assert_eq!(
+        routed.target,
+        RoutedTarget::Component(ShellComponent::StatusBar)
+    );
+    assert_eq!(
+        routed.command,
+        ShellCommand::Activate {
+            target: ShellComponent::StatusBar,
+            coordinates: status,
+            click: ClickKind::Single,
+        }
+    );
+    for input in [
         InputEvent::mouse_down(PointerButton::Right, status),
         InputEvent::Mouse(ui::MouseEvent {
             position: ui::Point::new(status.0, status.1),

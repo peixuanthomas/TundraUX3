@@ -10,7 +10,7 @@ use super::{
     TimeSyncDialogViewModel,
 };
 use crate::components::{Button, Surface, terminal_width, truncate_to_terminal_width};
-use crate::screens::notifications::{notification_tone_prefix, notification_tone_style};
+use crate::screens::notifications::notification_tone_style;
 use crate::{RenderContext, TundraTheme};
 
 const STATUS_TIME_BUTTON_HORIZONTAL_CHROME: u16 = 4;
@@ -145,6 +145,17 @@ pub fn render_shell_chrome(
     chrome: &ShellChromeViewModel,
     context: &RenderContext,
 ) {
+    render_shell_chrome_with_status_focus(frame, layout, chrome, context, false);
+}
+
+/// The compositor supplies the logical keyboard focus for the status message button.
+pub fn render_shell_chrome_with_status_focus(
+    frame: &mut Frame<'_>,
+    layout: &ShellFrameLayout,
+    chrome: &ShellChromeViewModel,
+    context: &RenderContext,
+    status_focused: bool,
+) {
     if layout.is_compact() {
         if layout.bounds.is_empty() {
             return;
@@ -194,7 +205,7 @@ pub fn render_shell_chrome(
         button.state.hovered = chrome.back_button_hovered;
         button.render_frame(frame, area, &context.compatibility_theme());
     }
-    render_status(frame, status, layout, chrome, context);
+    render_status(frame, status, layout, chrome, context, status_focused);
 }
 
 fn render_top(
@@ -256,6 +267,7 @@ fn render_status(
     layout: &ShellFrameLayout,
     chrome: &ShellChromeViewModel,
     context: &RenderContext,
+    status_focused: bool,
 ) {
     if area.is_empty() {
         return;
@@ -266,14 +278,25 @@ fn render_status(
         .bordered(true);
     surface.render_frame(frame, area, context);
     if let Some(message) = layout.status_message {
+        let (text, style) = status_presentation(&chrome.status, &theme);
+        let mut message_theme = theme.clone();
+        message_theme.foreground = style.fg.unwrap_or(theme.foreground);
+        let mut button = Button::new("shell.status", "");
+        button.state.focused = status_focused;
+        button.render_surface_frame(frame, message, &message_theme);
+        if message.width > 2 {
+            let title_style = frame.buffer_mut()[(message.x, message.y)].style();
+            let title = truncate_status_text(&i18n::tr!("ui-shell-status"), message.width - 2);
+            let title_width = u16::try_from(terminal_width(&title)).unwrap_or(message.width - 2);
+            frame.render_widget(
+                Paragraph::new(title).style(title_style),
+                Rect::new(message.x + 1, message.y, title_width, 1),
+            );
+        }
         let inner = surface.inner(message);
         if !inner.is_empty() {
-            let (text, style) = status_presentation(&chrome.status, &theme);
             frame.render_widget(
-                Paragraph::new(Line::styled(
-                    truncate_status_text(&text, inner.width),
-                    style,
-                )),
+                Paragraph::new(truncate_status_text(&text, inner.width)),
                 inner,
             );
         }
@@ -325,16 +348,16 @@ pub fn status_time_button_area(status: Rect, label: &str) -> Rect {
 }
 
 fn status_presentation(status: &crate::StatusViewModel, theme: &TundraTheme) -> (String, Style) {
-    if let Some(alert) = &status.error {
+    if status.error.is_some() {
         return (
-            format!("{} {alert}", notification_tone_prefix(status.alert_tone)),
+            status.full_message(),
             notification_tone_style(status.alert_tone, theme),
         );
     }
-    if let Some(toast) = &status.toast {
-        return (toast.clone(), theme.muted_style());
+    if status.toast.is_some() {
+        return (status.full_message(), theme.muted_style());
     }
-    (status.status.clone(), theme.body_style())
+    (status.full_message(), theme.body_style())
 }
 
 fn truncate_status_text(text: &str, width: u16) -> String {

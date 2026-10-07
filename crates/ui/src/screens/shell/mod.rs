@@ -13,7 +13,7 @@ pub use model::{
     ExitConfirmViewModel, ShellChromeViewModel, StatusViewModel, TimeSyncDialogViewModel,
 };
 pub(crate) use render::fit_cell;
-pub use render::{render_compact_home, render_shell_chrome};
+pub use render::{render_compact_home, render_shell_chrome, render_shell_chrome_with_status_focus};
 pub use render::{
     render_exit_confirmation, render_exit_confirmation_contextual, render_time_sync_failure_dialog,
     render_time_sync_failure_dialog_contextual, status_time_button_area,

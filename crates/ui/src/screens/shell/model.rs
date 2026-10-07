@@ -11,6 +11,19 @@ pub struct StatusViewModel {
     pub time_button_selected: bool,
 }
 
+impl StatusViewModel {
+    /// The full message chosen for the status bar, before flattening or truncation.
+    pub fn full_message(&self) -> String {
+        if let Some(alert) = &self.error {
+            return format!(
+                "{} {alert}",
+                crate::screens::notifications::notification_tone_prefix(self.alert_tone)
+            );
+        }
+        self.toast.as_ref().unwrap_or(&self.status).clone()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TimeSyncDialogViewModel;
 

@@ -183,6 +183,26 @@ def signal_process_group(child: subprocess.Popen, signal_number: int) -> None:
         pass
 
 
+def check_status_details(master: int, output: bytearray, child: subprocess.Popen) -> None:
+    # A 40-row Shell keeps its status message at row 39 (SGR is one-based).
+    offset = len(output)
+    os.write(master, b"\x1b[<0;12;39M")
+    read_available(master, output, 0.1)
+    if b"Status details" in output[offset:]:
+        raise SystemExit("status details opened before mouse release")
+    os.write(master, b"\x1b[<0;12;39m")
+    if not wait_for_output(master, output, b"Status details", child, 5.0, offset):
+        raise SystemExit("status message did not open its details:\n" + output_diagnostic(output[offset:]))
+    # Let modal entry finish before testing its keyboard dismissal.
+    deadline = time.monotonic() + 0.7
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    os.write(master, b"\x1b")
+    deadline = time.monotonic() + 0.7
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+
+
 def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) == 2 else "target/debug/tundra-shell")
     if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -343,6 +363,8 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle before pointer regression")
 
+        check_status_details(master, output, child)
+
         # Exercise the companion CLI launched by the real Shell, not just a
         # standalone REPL. Rebuilding Shell alone can leave an older CLI beside it.
         launcher_offset = len(output)
@@ -363,6 +385,7 @@ def main() -> int:
             read_available(master, output, 0.1)
         if "○".encode() not in output[prompt_offset:]:
             raise SystemExit("embedded CLI did not render a pending command marker")
+        check_status_details(master, output, child)
         command_directory = isolated / "command path 中文 $; ' [x]"
         command_directory.mkdir()
         os.write(master, ("cd " + shlex.quote(str(command_directory)) + "\r").encode())
@@ -605,7 +628,7 @@ def main() -> int:
         shutil.rmtree(isolated, ignore_errors=True)
 
     print(
-        "Linux PTY Explorer terminal cwd/return, embedded CLI paths/status markers, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
+        "Linux PTY status details, Explorer terminal cwd/return, CLI paths/status markers, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
         f"sentinel visible in {sentinel_latency:.3f}s)"

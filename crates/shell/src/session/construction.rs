@@ -312,6 +312,7 @@ impl ShellSession {
             hovered_component: None,
             active_popup: None,
             frame_layout: None,
+            displayed_status: None,
             hit_map: ShellHitMap::empty(terminal_size),
             hit_map_generation: 0,
             overlay_interaction_ready: true,

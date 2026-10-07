@@ -336,6 +336,28 @@ fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
 }
 
 #[test]
+fn command_line_runtime_keeps_notification_keys_and_mouse_out_of_the_child() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    state.screen_stack = vec![ShellScreen::Home, ShellScreen::CommandLine];
+    state.refresh_hit_map();
+    state.open_status_details();
+    for input in [
+        InputEvent::key(InputKey::Escape),
+        InputEvent::key(InputKey::Char('x')),
+        InputEvent::paste("child input"),
+        InputEvent::mouse_down(PointerButton::Left, (50, 20)),
+        InputEvent::mouse_up(PointerButton::Left, (50, 20)),
+    ] {
+        assert!(!command_line_captures_input(&state, &input));
+    }
+    state.notify_critical_modal("Critical", "Read this first", vec![]);
+    assert!(!command_line_captures_input(
+        &state,
+        &InputEvent::key(InputKey::Enter)
+    ));
+}
+
+#[test]
 fn mouse_motion_flood_is_consumed_in_a_few_render_batches() {
     let source = Rc::new(RefCell::new(
         (0..10_000)

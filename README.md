@@ -41,6 +41,8 @@ Independent use of all three input methods is a core design requirement:
 
 Support is being improved across pages. Mouse and touch interaction require a terminal that forwards the corresponding pointer events. Text entry still needs an input method, such as a physical keyboard or a terminal/system-provided on-screen keyboard; TundraUX3 does not currently include its own on-screen keyboard. Complete mouse-only or touch-only text-entry workflows therefore depend on the surrounding environment.
 
+Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action.
+
 ## Get started
 
 Use an interactive terminal with at least **108 columns × 20 rows** for the default interface. Some applications, including the built-in command line, need more vertical space. Mouse and touch support depend on the terminal in use.
