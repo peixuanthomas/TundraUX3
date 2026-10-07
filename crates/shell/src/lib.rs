@@ -1,6 +1,8 @@
 mod auto_admin_preview;
 mod clock_scheduler;
+mod screen_keyboard;
 pub use auto_admin_preview::run_auto_admin_style_preview;
+pub use screen_keyboard::run_screen_keyboard;
 pub use ui::AutoAdminPreviewStyle;
 
 use std::time::Duration;

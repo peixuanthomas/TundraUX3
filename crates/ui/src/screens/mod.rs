@@ -17,6 +17,8 @@ mod management;
 pub use management::*;
 pub(crate) mod notifications;
 mod panic;
+mod screen_keyboard;
+pub use screen_keyboard::*;
 pub(crate) mod settings;
 pub(crate) mod shell;
 pub(crate) mod system_status;

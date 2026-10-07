@@ -113,6 +113,7 @@ fn ux_hints_recognize_invalid_subcommands_without_guessing_unknown_names() {
         "config get",
         "config invalid",
         "debug invalid",
+        "debug screen-keyboard",
         "new",
     ] {
         assert!(is_likely_ux_command(line), "{line}");

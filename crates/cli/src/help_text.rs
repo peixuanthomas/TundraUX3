@@ -64,6 +64,10 @@ pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "Usage: tundra-cli debug <command>")?;
     writeln!(
         output,
+        "  screen-keyboard  Try an English QWERTY keyboard with temporary text"
+    )?;
+    writeln!(
+        output,
         "  test-aa-style1  AA preview: dimmed page + centered caution frame"
     )?;
     writeln!(
@@ -259,6 +263,7 @@ pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, cra
         | "debug test-aa-style1"
         | "debug test-aa-style2"
         | "debug test-aa-style3"
+        | "debug screen-keyboard"
         | "debug test-matrix"
         | "debug test-watchdog-error"
         | "debug test-watchdog-critical"
@@ -361,6 +366,9 @@ pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io:
         "debug test-aa-style1" | "debug test-aa-style2" | "debug test-aa-style3" => {
             "Preview an AutoAdmin (AA) warning style without running operations or saving settings. Requires an interactive terminal. C: confirmation; R: running; F: finished; B: compare the background before/after dimming. Tab/arrow keys and mouse select buttons; Enter activates; Esc/Ctrl+C returns."
         }
+        "debug screen-keyboard" => {
+            "Open a standalone English QWERTY screen keyboard. Click a letter or type A-Z; clicked letters are lowercase and physical keys preserve case. Backspace removes the last letter; Clear empties the text. Tab/arrows select a button; Enter/Space activates it. Exit or Esc/Ctrl+C returns. Requires an interactive external terminal; unavailable in embedded Command Line. Text is temporary; no text is sent to other applications or saved.\nRun from an external terminal: tundra-cli debug screen-keyboard."
+        }
         "debug test-watchdog-error" | "debug test-watchdog-critical" => {
             "Write an intentional diagnostic report and print its JSON/text paths. Requires the normal CLI watchdog runtime."
         }
@@ -388,6 +396,7 @@ pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std:
                 | "test-aa-style1"
                 | "test-aa-style2"
                 | "test-aa-style3"
+                | "screen-keyboard"
                 | "test-matrix"
                 | "test-watchdog-error"
                 | "test-watchdog-critical"

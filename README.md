@@ -39,7 +39,7 @@ Independent use of all three input methods is a core design requirement:
 | **Mouse alone** | Use visible buttons, menus, selectors, and scrollbars without depending on keyboard shortcuts. |
 | **Touchscreen alone** | Tap controls and drag scrollbars without needing a physical keyboard or mouse. |
 
-Support is being improved across pages. Mouse and touch interaction require a terminal that forwards the corresponding pointer events. Text entry still needs an input method, such as a physical keyboard or a terminal/system-provided on-screen keyboard; TundraUX3 does not currently include its own on-screen keyboard. Complete mouse-only or touch-only text-entry workflows therefore depend on the surrounding environment.
+Support is being improved across pages. Mouse and touch interaction require a terminal that forwards the corresponding pointer events. Text entry in application forms still needs an input method, such as a physical keyboard or a terminal/system-provided on-screen keyboard. An English QWERTY on-screen keyboard demo is available through `tundra-cli debug screen-keyboard` in an external terminal; it displays the text you type and has an Exit button, but is not yet connected to application forms. Complete mouse-only or touch-only text-entry workflows therefore depend on the surrounding environment.
 
 Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action.
 

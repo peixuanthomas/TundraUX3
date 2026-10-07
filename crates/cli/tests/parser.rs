@@ -28,6 +28,7 @@ fn simple_commands_dispatch_from_a_table() {
         (&["debug", "-h"], CliCommand::DebugHelp),
         (&["debug", "test-frost"], CliCommand::TestFrost),
         (&["debug", "test-matrix"], CliCommand::TestMatrix),
+        (&["debug", "screen-keyboard"], CliCommand::ScreenKeyboard),
         (
             &["debug", "test-aa-style1"],
             CliCommand::TestAaStyle(shell::AutoAdminPreviewStyle::Caution),
@@ -73,6 +74,7 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
         "test-frost",
         "test-matrix",
         "weathr",
+        "screen-keyboard",
         "sudo",
     ] {
         assert_eq!(
@@ -99,6 +101,7 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
         "test-aa-style1",
         "test-aa-style2",
         "test-aa-style3",
+        "screen-keyboard",
     ] {
         assert_eq!(
             parse_args(["debug", name, "extra"]),
@@ -109,6 +112,35 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
     let mut stderr = Vec::new();
     assert_eq!(run(["weathr"], &mut stdout, &mut stderr), 2);
     assert!(String::from_utf8_lossy(&stderr).contains("unknown command: weathr"));
+}
+
+#[test]
+fn screen_keyboard_help_is_available_without_starting_the_demo() {
+    for args in [
+        ["debug", "screen-keyboard", "--help"],
+        ["help", "debug", "screen-keyboard"],
+    ] {
+        assert_eq!(
+            parse_args(args),
+            Ok(CliCommand::TopicHelp("debug screen-keyboard".to_owned()))
+        );
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(run(args, &mut stdout, &mut stderr), 0);
+        let text = String::from_utf8(stdout).unwrap();
+        assert!(text.contains("English QWERTY"));
+        assert!(text.contains("Backspace"));
+        assert!(text.contains("external terminal: tundra-cli debug screen-keyboard"));
+        assert!(stderr.is_empty());
+    }
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(run(["debug", "help"], &mut stdout, &mut stderr), 0);
+    assert!(
+        String::from_utf8(stdout)
+            .unwrap()
+            .contains("screen-keyboard")
+    );
 }
 
 #[test]

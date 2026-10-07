@@ -188,6 +188,22 @@ where
         Ok(CliCommand::TestAaStyle(style)) => run_animation_preview(stderr, "AA style", || {
             shell::run_auto_admin_style_preview(stdout, style)
         }),
+        Ok(CliCommand::ScreenKeyboard) => run_animation_preview(stderr, "screen keyboard", || {
+            let paths = platform.app_paths().map_err(std::io::Error::other)?;
+            let storage = StorageManager::from_layout(StorageLayout::from_app_paths(&paths));
+            let config = if storage.layout().config_path.exists() {
+                storage.load_config().map_err(std::io::Error::other)?
+            } else {
+                StorageConfig::default()
+            };
+            let root = asset_root
+                .map(Path::to_path_buf)
+                .map_or_else(i18n::default_asset_root, Ok)
+                .map_err(std::io::Error::other)?;
+            let language = i18n::LanguageSnapshot::load_startup(root, &config.language, 1);
+            let _language = i18n::enter_snapshot(std::sync::Arc::new(language.snapshot));
+            shell::run_screen_keyboard(stdout, &config.appearance)
+        }),
         Ok(CliCommand::TestMatrix) => {
             run_configured_animation_preview(platform, stderr, "Matrix", |color| {
                 shell::run_matrix_animation_preview_with_color(stdout, color)

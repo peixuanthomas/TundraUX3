@@ -201,6 +201,12 @@ where
         }
 
         let code = match parse_args(&arguments) {
+            Ok(CliCommand::ScreenKeyboard) if embedded => {
+                eprintln!(
+                    "ERROR: screen keyboard requires an external terminal. Run: tundra-cli debug screen-keyboard"
+                );
+                1
+            }
             Ok(CliCommand::TestWatchdogPanic) if embedded => {
                 println!("Triggering a real Shell panic; the current session will be discarded.");
                 return shell::COMMAND_LINE_PANIC_EXIT_CODE as i32;

@@ -37,6 +37,32 @@ fn run_repl(test: &str, input: &str, embedded: bool) -> Output {
 }
 
 #[test]
+fn embedded_repl_screen_keyboard_points_to_external_cli_and_keeps_reading() {
+    run_child_if_requested();
+    let output = run_repl(
+        "embedded_repl_screen_keyboard_points_to_external_cli_and_keeps_reading",
+        "/debug screen-keyboard\n/help\nexit\n",
+        true,
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("screen keyboard requires an external terminal"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("tundra-cli debug screen-keyboard"),
+        "{stderr}"
+    );
+    assert!(
+        stdout.contains("Usage: tundra-cli"),
+        "the REPL should process the next command: {stdout}"
+    );
+    assert!(!stdout.contains("Typed text"));
+}
+
+#[test]
 fn repl_defaults_to_system_commands_and_hints_do_not_execute_alternatives() {
     run_child_if_requested();
     for embedded in [false, true] {
