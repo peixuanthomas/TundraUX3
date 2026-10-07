@@ -1,6 +1,100 @@
 use super::*;
 
 #[test]
+fn prepared_update_waits_for_auto_admin_completion_or_rejection() {
+    for approve in [false, true] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (responses, _inputs) = mpsc::channel();
+        let job = state
+            .begin_auto_admin("System operation".into(), true, responses)
+            .unwrap();
+        let manifest = PathBuf::from("prepared-update.json");
+        state
+            .settings_task_runtime
+            .shared
+            .update_event_tx
+            .send(SettingsUpdateTaskEvent::PrepareCompleted(Ok(
+                manifest.clone()
+            )))
+            .unwrap();
+
+        // Draining the prepared result must keep it while AA is still waiting.
+        for _ in 0..2 {
+            state.poll_settings_background_tasks();
+            assert!(!state.shutdown_requested);
+            assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
+            assert_eq!(
+                state.settings_update_state.phase,
+                Some(app::update::UpdatePhase::WaitingForRestart)
+            );
+            assert_eq!(
+                state.settings_update_state.status,
+                i18n::LocalizedText::from(i18n::msg!("progress-phase-restart"))
+            );
+        }
+        assert!(state.settings_task_runtime.drain_update_events().is_empty());
+        assert!(
+            state
+                .settings_task_runtime
+                .shared
+                .update_worker
+                .lock()
+                .unwrap()
+                .is_none()
+        );
+
+        let key = if approve {
+            InputKey::Enter
+        } else {
+            InputKey::Escape
+        };
+        assert!(state.handle_auto_admin_input(&InputEvent::key(key)));
+        if approve {
+            assert!(state.auto_admin_running());
+            assert!(!state.auto_admin_view().unwrap().confirming);
+            state.poll_settings_background_tasks();
+            assert!(!state.shutdown_requested);
+            assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
+            job.finish(Ok("Done".into()));
+        }
+
+        assert!(!state.auto_admin_running());
+        state.poll_settings_background_tasks();
+        assert!(state.shutdown_requested);
+        assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
+        assert_eq!(
+            state.settings_update_state.status,
+            i18n::LocalizedText::from(i18n::msg!("settings-update-restarting"))
+        );
+    }
+}
+
+#[test]
+fn prepared_update_without_auto_admin_still_restarts_immediately() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let manifest = PathBuf::from("prepared-update.json");
+    state
+        .settings_task_runtime
+        .shared
+        .update_event_tx
+        .send(SettingsUpdateTaskEvent::PrepareCompleted(Ok(
+            manifest.clone()
+        )))
+        .unwrap();
+    state.poll_settings_background_tasks();
+    assert!(state.shutdown_requested);
+    assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
+}
+
+#[test]
 fn busy_update_disables_mode_switch_and_start() {
     let mut state = checked_update_state(app::update::UpdateRelation::Behind { remote_ahead: 1 });
     state.busy = true;

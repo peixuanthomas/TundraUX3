@@ -82,7 +82,7 @@ pub fn run_auto_admin_style_preview(
                 } else if model.finished {
                     1
                 } else {
-                    4
+                    3
                 };
                 let selected = if model.confirming {
                     usize::from(!model.approve_selected)
@@ -177,7 +177,7 @@ fn set_phase(model: &mut AutoAdminViewModel, phase: u8) {
 }
 
 fn activate(model: &mut AutoAdminViewModel, index: usize) -> bool {
-    if model.finished || (!model.confirming && index == 3) {
+    if model.finished {
         return true;
     }
     if model.confirming {

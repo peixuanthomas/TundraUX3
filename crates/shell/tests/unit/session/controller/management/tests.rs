@@ -680,19 +680,20 @@ fn state() -> ShellSession {
 }
 
 #[test]
-fn terminal_button_reopens_auto_admin_instead_of_a_second_input_surface() {
+fn terminal_button_reopens_finished_auto_admin_instead_of_a_second_input_surface() {
     let mut state = state();
     let (responses, _inputs) = mpsc::channel();
     let job = state
         .begin_auto_admin("Operation".into(), false, responses)
         .unwrap();
     state.management_state.auto_admin_job = Some(job.clone());
+    job.finish(Ok("Done".into()));
     state.close_auto_admin();
     assert!(!state.auto_admin_visible());
     state.management_touch_control(ui::ManagementControl::Terminal);
     assert!(state.auto_admin_visible());
     assert!(!state.management_state.terminal_mode);
-    assert!(job.running());
+    assert!(!job.running());
 }
 
 #[test]

@@ -26,7 +26,7 @@ pub struct AutoAdminLayout {
     pub terminal: Rect,
     pub status: Rect,
     pub input: Rect,
-    pub buttons: [Rect; 4],
+    pub buttons: [Rect; 3],
 }
 
 /// Receives the full Shell bounds so drawing, hit testing and PTY sizing all
@@ -138,7 +138,7 @@ fn authorization_layout(bounds: Rect, model: &AutoAdminViewModel) -> (AutoAdminL
     } else if model.finished {
         1
     } else {
-        4
+        3
     };
     let button_gap = if inner.width >= 40 { 2 } else { 0 };
     let button_width = inner.width.saturating_sub(button_gap * (count - 1)) / count;
@@ -248,11 +248,6 @@ pub(super) fn render_auto_admin_contents(
             ("aa.y", "y".into(), model.button_focus == Some(0)),
             ("aa.n", "n".into(), model.button_focus == Some(1)),
             ("aa.enter", "Enter".into(), model.button_focus == Some(2)),
-            (
-                "aa.close",
-                i18n::tr!("aa-background"),
-                model.button_focus == Some(3),
-            ),
         ]
     };
     let theme = context.compatibility_theme();

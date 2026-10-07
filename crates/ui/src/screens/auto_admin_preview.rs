@@ -69,7 +69,7 @@ pub fn auto_admin_preview_layout(
     } else if model.finished {
         1
     } else {
-        4
+        3
     };
     let buttons = Layout::horizontal(vec![Constraint::Ratio(1, count); count as usize])
         .spacing(u16::from(width >= 50))

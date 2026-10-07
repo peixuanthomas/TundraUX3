@@ -1708,12 +1708,15 @@ impl ShellSession {
                     self.settings_update_state.busy = false;
                     self.settings_update_state.phase =
                         Some(app::update::UpdatePhase::WaitingForRestart);
-                    self.settings_update_state.status =
-                        i18n::msg!("settings-update-restarting").into();
+                    self.settings_update_state.status = i18n::msg!("progress-phase-restart").into();
                     self.update_apply_manifest = Some(manifest_path);
-                    self.shutdown_requested = true;
                 }
             }
+        }
+        // Keep a prepared update until AA finishes or its confirmation is rejected.
+        if self.update_apply_manifest.is_some() && !self.auto_admin_running() {
+            self.settings_update_state.status = i18n::msg!("settings-update-restarting").into();
+            self.shutdown_requested = true;
         }
     }
 

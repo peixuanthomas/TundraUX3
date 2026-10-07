@@ -33,7 +33,7 @@ fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
                 assert_eq!(area.intersection(bounds), area);
             }
             for (a, left) in layout.buttons.iter().enumerate() {
-                if a < if confirming { 2 } else { 4 } {
+                if a < if confirming { 2 } else { 3 } {
                     assert!(left.width > 0 && left.height > 0);
                 }
                 for right in layout.buttons.iter().skip(a + 1) {
@@ -143,7 +143,7 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
             .draw(|frame| ui::render_auto_admin(frame, bounds, &model, &RenderContext::default()))
             .unwrap();
         let unfocused = terminal.backend().buffer().clone();
-        for index in 0..4 {
+        for index in 0..3 {
             model.button_focus = Some(index);
             terminal
                 .draw(|frame| {
@@ -179,6 +179,70 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
                 );
             }
             assert!(!hint.contains('•'));
+        }
+    }
+}
+
+#[test]
+fn auto_admin_and_previews_show_close_only_after_the_task_ends() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    let bounds = Rect::new(0, 0, 120, 40);
+    for language in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        assert!(!i18n::tr!("aa-terminal-hint").contains("F12"));
+        assert!(!i18n::tr!("aa-input-required").contains("F12"));
+        for (confirming, finished, expected) in [
+            (true, false, &["aa.approve", "aa.deny"][..]),
+            (false, false, &["aa.y", "aa.n", "aa.enter"][..]),
+            (false, true, &["aa.close"][..]),
+        ] {
+            let model = model(confirming, finished);
+            for style in [
+                None,
+                Some(ui::AutoAdminPreviewStyle::Caution),
+                Some(ui::AutoAdminPreviewStyle::Danger),
+                Some(ui::AutoAdminPreviewStyle::Authorization),
+            ] {
+                let theme = TundraTheme::default();
+                let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+                let mut context =
+                    RenderContext::from_theme(&theme, Default::default(), Default::default());
+                context.buttons = Some(buttons.clone());
+                let mut terminal =
+                    Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        if let Some(style) = style {
+                            ui::render_auto_admin_preview(frame, bounds, &model, style, &context);
+                        } else {
+                            ui::render_auto_admin(frame, bounds, &model, &context);
+                        }
+                    })
+                    .unwrap();
+                let layout = style.map_or_else(
+                    || ui::auto_admin_layout(bounds, &model),
+                    |style| ui::auto_admin_preview_layout(bounds, &model, style).0,
+                );
+                let regions = buttons.regions();
+                assert_eq!(
+                    regions
+                        .iter()
+                        .map(|region| region.id.as_str())
+                        .collect::<Vec<_>>(),
+                    expected,
+                    "{language}, {style:?}, confirming={confirming}, finished={finished}"
+                );
+                for (region, area) in regions.iter().zip(layout.buttons) {
+                    assert_eq!(region.area, area);
+                    assert!(!region.disabled);
+                }
+                for area in layout.buttons.iter().skip(expected.len()) {
+                    assert_eq!(*area, Rect::default());
+                }
+            }
         }
     }
 }
@@ -288,7 +352,7 @@ fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
                         } else if finished {
                             1
                         } else {
-                            4
+                            3
                         }) {
                             assert!(area.width > 0 && area.height > 0);
                             assert!(
@@ -319,7 +383,7 @@ fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
 #[test]
 fn confirmation_and_empty_results_are_compact_with_actions_centered_in_content() {
     let bounds = Rect::new(0, 0, 208, 55);
-    for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 4)] {
+    for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 3)] {
         let model = model(confirming, finished);
         let layout = ui::auto_admin_layout(bounds, &model);
         let first = layout.buttons[0];

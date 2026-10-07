@@ -633,6 +633,11 @@ impl ShellSession {
     }
     pub(in crate::session) fn close_auto_admin(&mut self) {
         if let Some(job) = &self.auto_admin.job {
+            // Keep execution and all of its questions in the foreground until
+            // the worker reports completion, failure or disconnection.
+            if job.phase() == RUNNING {
+                return;
+            }
             job.decide(false);
         }
         self.auto_admin.visible = false;
@@ -770,11 +775,11 @@ impl ShellSession {
                 self.auto_admin.pointer = None;
                 return false;
             }
-            InputEvent::Key(key)
-                if key.phase == InputPhase::Press && key.key == InputKey::F(12) =>
-            {
-                self.close_auto_admin();
-                self.auto_admin.action_key = Some((key.key.clone(), received_at));
+            InputEvent::Key(key) if key.key == InputKey::F(12) => {
+                if key.phase == InputPhase::Press {
+                    self.close_auto_admin();
+                    self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                }
             }
             InputEvent::Key(key) if job.phase() == WAITING && key.phase == InputPhase::Press => {
                 match key.key {
@@ -832,13 +837,13 @@ impl ShellSession {
                 if key.phase.is_press_like() {
                     match key.key {
                         InputKey::BackTab | InputKey::Left | InputKey::Up => {
-                            self.auto_admin.button_focus = Some((index + 3) % 4);
+                            self.auto_admin.button_focus = Some((index + 2) % 3);
                         }
                         InputKey::Tab if key.modifiers.shift => {
-                            self.auto_admin.button_focus = Some((index + 3) % 4);
+                            self.auto_admin.button_focus = Some((index + 2) % 3);
                         }
                         InputKey::Tab | InputKey::Right | InputKey::Down => {
-                            self.auto_admin.button_focus = Some((index + 1) % 4);
+                            self.auto_admin.button_focus = Some((index + 1) % 3);
                         }
                         InputKey::Escape => {
                             self.auto_admin.button_focus = None;
@@ -970,7 +975,6 @@ impl ShellSession {
                 2 => {
                     job.key(&KeyInput::new(InputKey::Enter));
                 }
-                3 => self.close_auto_admin(),
                 _ => {}
             },
             _ => {}

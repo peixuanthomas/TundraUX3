@@ -23,7 +23,12 @@ fn default_enter_approval_reaches_the_linux_authorization_adapter() {
 }
 
 #[test]
-fn embedded_auth_pty_accepts_password_and_yn_and_resizes_without_echoing_secret() {
+fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
     let (tx, _rx) = mpsc::channel();
     let job = AutoAdminJob::new(
         "PTY fixture".into(),
@@ -31,6 +36,11 @@ fn embedded_auth_pty_accepts_password_and_yn_and_resizes_without_echoing_secret(
         tx,
     );
     let tty = job.open_terminal().unwrap();
+    state.auto_admin = AutoAdminState {
+        job: Some(job.clone()),
+        visible: true,
+        ..Default::default()
+    };
     let mut command = Command::new("/usr/bin/timeout");
     command.args(["5", "/bin/sh", "-c", r#"printf 'Password: '; read password; test "$password" = 'test-secret' || exit 4; printf '\nContinue? [y/n] '; read answer; test "$answer" = y || exit 5; printf '\nSIZE:'; stty size; printf 'DONE\n'"#])
         .stdin(tty.try_clone().unwrap()).stdout(tty.try_clone().unwrap()).stderr(tty);
@@ -51,18 +61,26 @@ fn embedded_auth_pty_accepts_password_and_yn_and_resizes_without_echoing_secret(
         job.poll_terminal();
         let output = job.0.display.lock().unwrap().parser.screen().contents();
         if output.contains("Password:") && !sent_password {
+            state.apply_input(InputEvent::key(InputKey::F(12)));
+            assert!(state.auto_admin_visible());
+            assert_eq!(job.phase(), RUNNING);
             job.resize(Rect::new(0, 0, 82, 19));
-            job.paste("test-secret");
-            job.key(&KeyInput::new(InputKey::Enter));
+            state.apply_input(InputEvent::Paste("test-secret".into()));
+            state.apply_input(InputEvent::key(InputKey::Enter));
             sent_password = true;
         }
         if output.contains("[y/n]") && !sent_yes {
-            job.key(&KeyInput::new(InputKey::Char('y')));
-            job.key(&KeyInput::new(InputKey::Enter));
+            state.apply_input(InputEvent::key(InputKey::F(12)));
+            assert!(state.auto_admin_visible());
+            assert_eq!(job.phase(), RUNNING);
+            state.apply_input(InputEvent::key(InputKey::Char('y')));
+            state.apply_input(InputEvent::key(InputKey::Enter));
             sent_yes = true;
         }
+        assert!(state.auto_admin_visible());
         if let Some(status) = child.try_wait().unwrap() {
             assert!(status.success(), "{output}");
+            job.finish(Ok("Done".into()));
             break;
         }
         if Instant::now() >= deadline {
@@ -78,4 +96,8 @@ fn embedded_auth_pty_accepts_password_and_yn_and_resizes_without_echoing_secret(
     assert!(output.contains("19 82"), "{output}");
     assert!(!output.contains("test-secret"));
     assert!(sent_password && sent_yes);
+    assert!(state.auto_admin_visible());
+    assert!(state.auto_admin_view().unwrap().finished);
+    state.apply_input(InputEvent::key(InputKey::Escape));
+    assert!(!state.auto_admin_visible());
 }

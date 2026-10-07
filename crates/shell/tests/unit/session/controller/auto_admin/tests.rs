@@ -348,12 +348,16 @@ fn running_buttons_are_keyboard_accessible_without_stealing_terminal_tab() {
     assert_eq!(state.auto_admin.button_focus, None);
     state.apply_input(InputEvent::key(InputKey::F(6)));
     state.apply_input(InputEvent::key(InputKey::Left));
-    assert_eq!(state.auto_admin.button_focus, Some(3));
+    assert_eq!(state.auto_admin.button_focus, Some(2));
+    state.apply_input(InputEvent::key(InputKey::Right));
+    assert_eq!(state.auto_admin.button_focus, Some(0));
+    state.apply_input(InputEvent::key(InputKey::BackTab));
+    assert_eq!(state.auto_admin.button_focus, Some(2));
     state.apply_input(InputEvent::key(InputKey::Enter));
-    assert!(!state.auto_admin_visible());
+    assert!(state.auto_admin_visible());
     assert_eq!(job.phase(), RUNNING);
+    assert!(matches!(rx.try_recv().unwrap(), OperationInput::Terminal { bytes } if bytes == b"\r"));
     assert!(rx.try_recv().is_err());
-    state.apply_input(InputEvent::key(InputKey::F(12)));
     job.finish(Ok("Done".into()));
     state.apply_input(InputEvent::key(InputKey::Space));
     assert!(!state.auto_admin_visible());
@@ -361,44 +365,165 @@ fn running_buttons_are_keyboard_accessible_without_stealing_terminal_tab() {
 
 #[test]
 fn closing_auto_admin_consumes_the_action_key_before_it_can_reach_the_page() {
-    for finished in [false, true] {
+    for key in [
+        InputKey::Enter,
+        InputKey::Space,
+        InputKey::Escape,
+        InputKey::F(12),
+    ] {
         let mut state = ShellSession::new_for_home_mode(
             ShellLaunchConfig::default(),
             (120, 40),
             ShellHomeMode::User,
         );
         let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
-        if finished {
-            job.finish(Ok("Done".into()));
-        }
+        job.finish(Ok("Done".into()));
         state.auto_admin = AutoAdminState {
             job: Some(job),
             visible: true,
-            button_focus: Some(3),
             ..Default::default()
         };
         let at = Instant::now();
-        assert!(state.handle_auto_admin_input_at(&InputEvent::key(InputKey::Enter), at));
+        assert!(state.handle_auto_admin_input_at(&InputEvent::key(key.clone()), at));
         assert!(!state.auto_admin_visible());
         for millis in [1, 50, 500, 600] {
             assert!(state.handle_auto_admin_input_at(
-                &InputEvent::key(InputKey::Enter),
+                &InputEvent::key(key.clone()),
                 at + Duration::from_millis(millis)
             ));
         }
         assert!(rx.try_recv().is_err());
         assert!(state.handle_auto_admin_input_at(
             &InputEvent::Key(KeyInput::with_phase(
-                InputKey::Enter,
+                key.clone(),
                 InputModifiers::NONE,
                 InputPhase::Release,
             )),
             at + Duration::from_millis(601)
         ));
-        assert!(!state.handle_auto_admin_input_at(
-            &InputEvent::key(InputKey::Enter),
-            at + Duration::from_millis(602)
-        ));
+        // F12 intentionally opens a finished result again after the key is released.
+        if key != InputKey::F(12) {
+            assert!(!state.handle_auto_admin_input_at(
+                &InputEvent::key(key),
+                at + Duration::from_millis(602)
+            ));
+        }
+    }
+}
+
+#[test]
+fn running_task_cannot_be_closed_or_hidden_before_it_finishes() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+    state.auto_admin = AutoAdminState {
+        job: Some(job.clone()),
+        visible: true,
+        ..Default::default()
+    };
+    let old_screen = state.active_screen();
+
+    state.close_auto_admin();
+    assert!(state.auto_admin_visible());
+    // An obsolete fourth-button action cannot send an active task to the background.
+    state.activate_auto_admin_button(&job, 3);
+    assert!(state.auto_admin_visible());
+    state.apply_input(InputEvent::key(InputKey::F(12)));
+    state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(12)).repeated()));
+    state.apply_input(InputEvent::Key(KeyInput::with_phase(
+        InputKey::F(12),
+        InputModifiers::NONE,
+        InputPhase::Release,
+    )));
+    state.apply_input(InputEvent::key(InputKey::F(12)));
+    assert!(state.auto_admin_visible());
+    assert!(rx.try_recv().is_err(), "F12 must not reach the child");
+
+    for input in [
+        InputEvent::mouse_down(PointerButton::Left, (0, 0)),
+        InputEvent::mouse_up(PointerButton::Left, (0, 0)),
+        InputEvent::FocusLost,
+        InputEvent::FocusGained,
+        InputEvent::key(InputKey::Escape),
+    ] {
+        assert_eq!(state.apply_input(input), ShellAction::Redraw);
+        assert!(state.auto_admin_visible());
+        assert_eq!(job.phase(), RUNNING);
+        assert_eq!(state.active_screen(), old_screen);
+    }
+    assert!(
+        matches!(rx.try_recv().unwrap(), OperationInput::Terminal { bytes } if bytes == b"\x1b")
+    );
+    assert!(rx.try_recv().is_err());
+
+    job.finish(Ok("Done".into()));
+    state.close_auto_admin();
+    assert!(!state.auto_admin_visible());
+}
+
+#[test]
+fn completed_failed_and_disconnected_tasks_can_be_closed() {
+    for event in [
+        OperationEvent::Completed {
+            message: "Done".into(),
+        },
+        OperationEvent::Failed {
+            message: "Fixture failed".into(),
+        },
+        OperationEvent::Disconnected {
+            message: "Fixture disconnected".into(),
+        },
+    ] {
+        for key in [
+            InputKey::Enter,
+            InputKey::Space,
+            InputKey::Escape,
+            InputKey::F(12),
+        ] {
+            let mut state = ShellSession::new_for_home_mode(
+                ShellLaunchConfig::default(),
+                (120, 40),
+                ShellHomeMode::User,
+            );
+            let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+            state.auto_admin = AutoAdminState {
+                job: Some(job.clone()),
+                visible: true,
+                ..Default::default()
+            };
+            job.emit(&event);
+            assert!(state.auto_admin_visible());
+            assert_eq!(job.phase(), FINISHED);
+            assert!(state.auto_admin_view().unwrap().finished);
+            state.apply_input(InputEvent::key(key));
+            assert!(!state.auto_admin_visible());
+            assert!(rx.try_recv().is_err());
+        }
+
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+        state.auto_admin = AutoAdminState {
+            job: Some(job.clone()),
+            visible: true,
+            ..Default::default()
+        };
+        job.emit(&event);
+        let button =
+            ui::auto_admin_layout(Rect::new(0, 0, 120, 40), &state.auto_admin_view().unwrap())
+                .buttons[0];
+        let point = (button.x, button.y);
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        assert!(state.auto_admin_visible());
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        assert!(!state.auto_admin_visible());
+        assert!(rx.try_recv().is_err());
     }
 }
 
@@ -489,7 +614,7 @@ fn password_is_never_added_to_terminal_output_or_debug_text() {
 }
 
 #[test]
-fn modal_captures_ctrl_c_escape_and_page_shortcuts_and_reopens_with_f12() {
+fn modal_captures_ctrl_c_escape_and_page_shortcuts_and_stays_visible_with_f12() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -516,12 +641,12 @@ fn modal_captures_ctrl_c_escape_and_page_shortcuts_and_reopens_with_f12() {
     assert!(state.last_key_event.is_none());
     assert_eq!(rx.try_iter().count(), 3);
     state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(12))));
-    assert!(!state.auto_admin_visible());
+    assert!(state.auto_admin_visible());
     assert!(state.auto_admin_running());
     state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(12))));
     assert!(
-        !state.auto_admin_visible(),
-        "holding F12 must not repeatedly reopen the modal"
+        state.auto_admin_visible(),
+        "holding F12 must keep the active task in the foreground"
     );
     state.apply_input(InputEvent::Key(KeyInput::with_phase(
         InputKey::F(12),
@@ -530,6 +655,7 @@ fn modal_captures_ctrl_c_escape_and_page_shortcuts_and_reopens_with_f12() {
     )));
     state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(12))));
     assert!(state.auto_admin_visible());
+    assert!(rx.try_recv().is_err(), "F12 must not reach the child");
 }
 
 #[test]
@@ -570,7 +696,7 @@ fn finished_terminal_keeps_keyboard_scrollback_available() {
 }
 
 #[test]
-fn hiding_pending_approval_denies_it_and_reopening_cannot_approve_it() {
+fn closing_pending_approval_denies_it_and_reopening_cannot_approve_it() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (80, 24),
