@@ -1,10 +1,14 @@
 //! Standalone English keyboard demo. The host owns input and temporary text.
+use std::collections::VecDeque;
+
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Paragraph},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     RenderContext,
@@ -13,10 +17,33 @@ use crate::{
 
 pub const SCREEN_KEYBOARD_LETTERS: &str = "qwertyuiopasdfghjklzxcvbnm";
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScreenKeyboardModifiers {
+    pub shift: bool,
+    pub caps_lock: bool,
+    pub left_ctrl: bool,
+    pub right_ctrl: bool,
+    pub alt: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenKeyboardAction {
     Letter(char),
+    Character(char),
+    Function(u8),
+    Escape,
+    Tab,
+    CapsLock,
     Backspace,
+    Enter,
+    Shift,
+    Space,
+    LeftCtrl,
+    RightCtrl,
+    Alt,
+    ToggleKeyboard,
+    Copy,
+    Paste,
     Clear,
     Exit,
 }
@@ -25,19 +52,123 @@ impl ScreenKeyboardAction {
     pub fn button_id(self) -> String {
         match self {
             Self::Letter(letter) => format!("screen-keyboard.letter.{letter}"),
-            Self::Backspace => "screen-keyboard.backspace".to_owned(),
-            Self::Clear => "screen-keyboard.clear".to_owned(),
-            Self::Exit => "screen-keyboard.exit".to_owned(),
+            Self::Character(character) => {
+                format!("screen-keyboard.character.{:02x}", character as u32)
+            }
+            Self::Function(number) => format!("screen-keyboard.function.{number}"),
+            action => format!(
+                "screen-keyboard.{}",
+                match action {
+                    Self::Escape => "escape",
+                    Self::Tab => "tab",
+                    Self::CapsLock => "caps-lock",
+                    Self::Backspace => "backspace",
+                    Self::Enter => "enter",
+                    Self::Shift => "shift",
+                    Self::Space => "space",
+                    Self::LeftCtrl => "left-ctrl",
+                    Self::RightCtrl => "right-ctrl",
+                    Self::Alt => "alt",
+                    Self::ToggleKeyboard => "toggle",
+                    Self::Copy => "copy",
+                    Self::Paste => "paste",
+                    Self::Clear => "clear",
+                    Self::Exit => "exit",
+                    _ => unreachable!(),
+                }
+            ),
         }
     }
 
-    fn label(self) -> String {
+    /// Maps a keycap to text. Ctrl and Alt combinations are handled by the host.
+    pub fn character(self, modifiers: ScreenKeyboardModifiers) -> Option<char> {
         match self {
-            Self::Letter(letter) => letter.to_ascii_uppercase().to_string(),
-            Self::Backspace => i18n::tr!("screen-keyboard-backspace"),
-            Self::Clear => i18n::tr!("screen-keyboard-clear"),
-            Self::Exit => i18n::tr!("screen-keyboard-exit"),
+            Self::Letter(letter) => Some(if modifiers.shift ^ modifiers.caps_lock {
+                letter.to_ascii_uppercase()
+            } else {
+                letter.to_ascii_lowercase()
+            }),
+            Self::Character(character) => Some(if modifiers.shift {
+                match character {
+                    '\u{0060}' => '~',
+                    '1' => '!',
+                    '2' => '@',
+                    '3' => '#',
+                    '4' => '$',
+                    '5' => '%',
+                    '6' => '^',
+                    '7' => '&',
+                    '8' => '*',
+                    '9' => '(',
+                    '0' => ')',
+                    '-' => '_',
+                    '=' => '+',
+                    '[' => '{',
+                    ']' => '}',
+                    '\\' => '|',
+                    ';' => ':',
+                    '\'' => '"',
+                    ',' => '<',
+                    '.' => '>',
+                    '/' => '?',
+                    other => other,
+                }
+            } else {
+                character
+            }),
+            Self::Space => Some(' '),
+            Self::Enter => Some('\n'),
+            Self::Tab => Some('\t'),
+            _ => None,
         }
+    }
+
+    fn label(self, modifiers: ScreenKeyboardModifiers, collapsed: bool) -> String {
+        let (label, latched) = match self {
+            Self::Letter(letter) => return letter.to_ascii_uppercase().to_string(),
+            Self::Character(_) => {
+                return self.character(modifiers).unwrap().to_string();
+            }
+            Self::Function(number) => return format!("F{number}"),
+            Self::Escape => ("Esc".to_owned(), false),
+            Self::Tab => ("Tab".to_owned(), false),
+            Self::CapsLock => ("CapsLock".to_owned(), modifiers.caps_lock),
+            Self::Backspace => (i18n::tr!("screen-keyboard-backspace"), false),
+            Self::Enter => ("Enter".to_owned(), false),
+            Self::Shift => ("Shift".to_owned(), modifiers.shift),
+            Self::Space => (i18n::tr!("screen-keyboard-space"), false),
+            Self::LeftCtrl => ("Ctrl".to_owned(), modifiers.left_ctrl),
+            Self::RightCtrl => ("RCtrl".to_owned(), modifiers.right_ctrl),
+            Self::Alt => ("Alt".to_owned(), modifiers.alt),
+            Self::ToggleKeyboard => (
+                i18n::tr!(if collapsed {
+                    "screen-keyboard-show"
+                } else {
+                    "screen-keyboard-hide"
+                }),
+                false,
+            ),
+            Self::Copy => (i18n::tr!("screen-keyboard-copy"), false),
+            Self::Paste => (i18n::tr!("screen-keyboard-paste"), false),
+            Self::Clear => (i18n::tr!("screen-keyboard-clear"), false),
+            Self::Exit => (i18n::tr!("screen-keyboard-exit"), false),
+        };
+        if latched { format!("{label}*") } else { label }
+    }
+
+    fn minimum_width(self, bordered: bool) -> u16 {
+        let latched = ScreenKeyboardModifiers {
+            shift: true,
+            caps_lock: true,
+            left_ctrl: true,
+            right_ctrl: true,
+            alt: true,
+        };
+        let visible = self.label(latched, false);
+        let collapsed = self.label(latched, true);
+        UnicodeWidthStr::width(visible.as_str()).max(UnicodeWidthStr::width(collapsed.as_str()))
+            as u16
+            + if bordered { 2 } else { 0 }
     }
 }
 
@@ -61,94 +192,261 @@ impl ScreenKeyboardButtonLayout {
 pub struct ScreenKeyboardLayout {
     pub title: Rect,
     pub text: Rect,
+    pub status: Rect,
     pub hint: Rect,
+    pub keyboard: Rect,
     pub buttons: Vec<ScreenKeyboardButtonLayout>,
     pub bordered_buttons: bool,
     pub usable: bool,
+    pub collapsed: bool,
 }
 
 pub struct ScreenKeyboardViewModel<'a> {
     pub text: &'a str,
     pub focus: ScreenKeyboardAction,
+    pub modifiers: ScreenKeyboardModifiers,
+    pub last_key: &'a str,
+    pub message: &'a str,
+}
+
+fn append_row(
+    buttons: &mut Vec<ScreenKeyboardButtonLayout>,
+    area: Rect,
+    keys: &[(ScreenKeyboardAction, u16)],
+    bordered: bool,
+) {
+    if area.is_empty() || keys.is_empty() {
+        return;
+    }
+    let gap = u16::from(area.width >= keys.len() as u16 * 2 - 1);
+    let available = area.width.saturating_sub(gap * (keys.len() as u16 - 1));
+    let minimum: Vec<u16> = keys
+        .iter()
+        .map(|(action, _)| action.minimum_width(bordered))
+        .collect();
+    let required: u16 = minimum.iter().sum();
+    let mut widths = vec![None; keys.len()];
+    if required <= available {
+        let mut remaining = u32::from(available);
+        let mut remaining_weight: u32 = keys.iter().map(|(_, weight)| u32::from(*weight)).sum();
+        loop {
+            // Reserve only keys whose proportional share would clip the label.
+            // The others keep their physical width relative to each other.
+            let constrained: Vec<_> = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (_, weight))| {
+                    (widths[index].is_none()
+                        && remaining * u32::from(*weight)
+                            < u32::from(minimum[index]) * remaining_weight)
+                        .then_some(index)
+                })
+                .collect();
+            if constrained.is_empty() {
+                break;
+            }
+            for index in constrained {
+                widths[index] = Some(minimum[index]);
+                remaining -= u32::from(minimum[index]);
+                remaining_weight -= u32::from(keys[index].1);
+            }
+        }
+        let mut accumulated_weight = 0_u32;
+        let mut allocated = 0_u32;
+        for (index, (_, weight)) in keys.iter().enumerate() {
+            if widths[index].is_none() {
+                accumulated_weight += u32::from(*weight);
+                let next = remaining * accumulated_weight / remaining_weight;
+                widths[index] = Some((next - allocated) as u16);
+                allocated = next;
+            }
+        }
+    } else {
+        // Tiny toolbars keep their actions reachable even when labels clip.
+        for (index, width) in widths.iter_mut().enumerate() {
+            *width = Some(
+                ((index + 1) as u32 * u32::from(available) / keys.len() as u32) as u16
+                    - (index as u32 * u32::from(available) / keys.len() as u32) as u16,
+            );
+        }
+    }
+    let mut x = area.x;
+    for (index, (action, _)) in keys.iter().enumerate() {
+        let width = widths[index].unwrap();
+        if width > 0 {
+            buttons.push(ScreenKeyboardButtonLayout {
+                action: *action,
+                area: Rect::new(x, area.y, width, area.height),
+            });
+        }
+        x = x.saturating_add(width + gap);
+    }
+}
+
+fn toolbar(width: u16) -> Vec<(ScreenKeyboardAction, u16)> {
+    use ScreenKeyboardAction::*;
+    match width {
+        0 => vec![],
+        1 => vec![(Exit, 1)],
+        2 => vec![(ToggleKeyboard, 1), (Exit, 1)],
+        3 => vec![(ToggleKeyboard, 1), (Copy, 1), (Exit, 1)],
+        4 => vec![(ToggleKeyboard, 1), (Copy, 1), (Paste, 1), (Exit, 1)],
+        _ => vec![
+            (ToggleKeyboard, 3),
+            (Copy, 2),
+            (Paste, 2),
+            (Clear, 2),
+            (Exit, 2),
+        ],
+    }
 }
 
 /// Rendering and input both consume these exact button rectangles.
-pub fn screen_keyboard_layout(bounds: Rect) -> ScreenKeyboardLayout {
-    let usable = bounds.width >= 39 && bounds.height >= 10;
-    if !usable {
-        return ScreenKeyboardLayout {
-            title: Rect::new(bounds.x, bounds.y, bounds.width, bounds.height.min(1)),
-            text: Rect::default(),
-            hint: Rect::new(
-                bounds.x,
-                bounds.y.saturating_add(1),
-                bounds.width,
-                bounds.height.saturating_sub(2),
-            ),
-            buttons: if bounds.width > 0 && bounds.height > 1 {
-                vec![ScreenKeyboardButtonLayout {
-                    action: ScreenKeyboardAction::Exit,
-                    area: Rect::new(bounds.x, bounds.bottom() - 1, bounds.width, 1),
-                }]
-            } else {
-                Vec::new()
-            },
-            bordered_buttons: false,
-            usable,
-        };
-    }
-
-    let bordered_buttons = bounds.width >= 59 && bounds.height >= 18;
-    let button_height = if bordered_buttons { 3 } else { 1 };
-    let width = bounds.width.min(79);
-    let height = 6 + 4 * button_height;
-    let x = bounds.x + (bounds.width - width) / 2;
-    let y = bounds.y + (bounds.height - height) / 2;
-    let key_width = ((width - 9) / 10).min(7);
-    let step = key_width + 1;
-    let mut buttons = Vec::with_capacity(29);
-    for (row, letters) in ["qwertyuiop", "asdfghjkl", "zxcvbnm"].iter().enumerate() {
-        let row_width = letters.len() as u16 * step - 1;
-        let row_x = x + (width - row_width) / 2;
-        for (column, letter) in letters.chars().enumerate() {
-            buttons.push(ScreenKeyboardButtonLayout {
-                action: ScreenKeyboardAction::Letter(letter),
-                area: Rect::new(
-                    row_x + column as u16 * step,
-                    y + 5 + row as u16 * button_height,
-                    key_width,
-                    button_height,
-                ),
-            });
-        }
-    }
-    let action_width = (width - 2) / 3;
-    for (column, action) in [
-        ScreenKeyboardAction::Backspace,
-        ScreenKeyboardAction::Clear,
-        ScreenKeyboardAction::Exit,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        buttons.push(ScreenKeyboardButtonLayout {
-            action,
-            area: Rect::new(
-                x + column as u16 * (action_width + 1),
-                y + 5 + 3 * button_height,
-                action_width,
-                button_height,
-            ),
-        });
-    }
-    ScreenKeyboardLayout {
-        title: Rect::new(x, y, width, 1),
-        text: Rect::new(x, y + 1, width, 3),
-        hint: Rect::new(x, y + height - 1, width, 1),
-        buttons,
+pub fn screen_keyboard_layout(bounds: Rect, collapsed: bool) -> ScreenKeyboardLayout {
+    use ScreenKeyboardAction::*;
+    let usable = bounds.width >= 60 && bounds.height >= 14;
+    let keyboard_y = if collapsed {
+        bounds.bottom().saturating_sub(u16::from(bounds.height > 0))
+    } else {
+        bounds.y + bounds.height / 2
+    };
+    let keyboard = Rect::new(
+        bounds.x,
+        keyboard_y,
+        bounds.width,
+        bounds.bottom().saturating_sub(keyboard_y),
+    );
+    let upper_height = keyboard_y.saturating_sub(bounds.y);
+    let bordered_buttons = !collapsed && bounds.width >= 104 && keyboard.height >= 21;
+    let mut layout = ScreenKeyboardLayout {
+        title: Rect::new(
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            u16::from(upper_height > 0),
+        ),
+        text: Rect::new(
+            bounds.x,
+            bounds.y + u16::from(upper_height > 0),
+            bounds.width,
+            upper_height.saturating_sub(3),
+        ),
+        status: Rect::new(
+            bounds.x,
+            keyboard_y.saturating_sub(2).max(bounds.y),
+            bounds.width,
+            u16::from(upper_height >= 3),
+        ),
+        hint: Rect::new(
+            bounds.x,
+            keyboard_y.saturating_sub(1).max(bounds.y),
+            bounds.width,
+            u16::from(upper_height >= 2),
+        ),
+        keyboard,
+        buttons: Vec::with_capacity(74),
         bordered_buttons,
         usable,
+        collapsed,
+    };
+    if keyboard.is_empty() {
+        return layout;
     }
+    if collapsed || !usable {
+        append_row(
+            &mut layout.buttons,
+            Rect::new(bounds.x, bounds.bottom() - 1, bounds.width, 1),
+            &toolbar(bounds.width),
+            false,
+        );
+        return layout;
+    }
+
+    let mut function_row = vec![(Escape, 2)];
+    function_row.extend((1..=12).map(|number| (Function(number), 1)));
+    let mut number_row: Vec<_> = "\u{0060}1234567890-="
+        .chars()
+        .map(|character| (Character(character), 1))
+        .collect();
+    number_row.push((Backspace, 3));
+    let mut qwerty_row = vec![(Tab, 2)];
+    qwerty_row.extend("qwertyuiop".chars().map(|letter| (Letter(letter), 1)));
+    qwerty_row.extend("[]\\".chars().map(|character| (Character(character), 1)));
+    let mut home_row = vec![(CapsLock, 2)];
+    home_row.extend("asdfghjkl".chars().map(|letter| (Letter(letter), 1)));
+    home_row.extend(";'".chars().map(|character| (Character(character), 1)));
+    home_row.push((Enter, 2));
+    let mut shift_row = vec![(Shift, 2)];
+    shift_row.extend("zxcvbnm".chars().map(|letter| (Letter(letter), 1)));
+    shift_row.extend(",./".chars().map(|character| (Character(character), 1)));
+    let rows = [
+        function_row,
+        number_row,
+        qwerty_row,
+        home_row,
+        shift_row,
+        vec![(LeftCtrl, 2), (Alt, 2), (Space, 8), (RightCtrl, 2)],
+        toolbar(bounds.width),
+    ];
+    let button_height = if bordered_buttons { 3 } else { 1 };
+    for (index, keys) in rows.iter().enumerate() {
+        let y = keyboard.y + (index as u32 * u32::from(keyboard.height - button_height) / 6) as u16;
+        append_row(
+            &mut layout.buttons,
+            Rect::new(bounds.x, y, bounds.width, button_height),
+            keys,
+            bordered_buttons,
+        );
+    }
+    layout
+}
+
+/// Wrap complete graphemes and retain the newest screenful, including empty lines.
+fn newest_text_lines(text: &str, width: u16, height: u16) -> Vec<Line<'static>> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let mut lines = VecDeque::with_capacity(height as usize);
+    let mut push_line = |line: String| {
+        if lines.len() == height as usize {
+            lines.pop_front();
+        }
+        lines.push_back(Line::raw(line));
+    };
+    for source_line in text.split('\n') {
+        let mut current = String::new();
+        let mut columns = 0_usize;
+        // Ratatui omits control characters from styled_graphemes, so expand tabs
+        // before asking it for the printable graphemes in each segment.
+        for (index, segment) in source_line.trim_end_matches('\r').split('\t').enumerate() {
+            if index > 0 {
+                let spaces = 4 - columns % 4;
+                for _ in 0..spaces {
+                    if columns == width as usize {
+                        push_line(std::mem::take(&mut current));
+                        columns = 0;
+                    }
+                    current.push(' ');
+                    columns += 1;
+                }
+            }
+            let span = Span::raw(segment);
+            for grapheme in span.styled_graphemes(Style::default()) {
+                let glyph_width = UnicodeWidthStr::width(grapheme.symbol);
+                if glyph_width > width as usize {
+                    continue;
+                }
+                if columns + glyph_width > width as usize {
+                    push_line(std::mem::take(&mut current));
+                    columns = 0;
+                }
+                current.push_str(grapheme.symbol);
+                columns += glyph_width;
+            }
+        }
+        push_line(current);
+    }
+    lines.into_iter().collect()
 }
 
 pub fn render_screen_keyboard(
@@ -167,30 +465,36 @@ pub fn render_screen_keyboard(
             .style(body.fg(context.theme.accent).add_modifier(Modifier::BOLD)),
         layout.title,
     );
-    if layout.usable {
+    if !layout.text.is_empty() {
         let surface = Surface::new()
-            .bordered(true)
+            .bordered(layout.text.width >= 3 && layout.text.height >= 3)
             .titled(i18n::tr!("screen-keyboard-text"));
         surface.render_frame(frame, layout.text, context);
         let inner = surface.inner(layout.text);
-        // Keep the newest letters visible instead of letting long input clip.
-        let start = model
-            .text
-            .char_indices()
-            .rev()
-            .nth(inner.width.saturating_sub(1) as usize)
-            .map_or(0, |(index, _)| index);
-        let visible = &model.text[start..];
+        let placeholder;
+        let text = if model.text.is_empty() {
+            placeholder = i18n::tr!("screen-keyboard-placeholder");
+            &placeholder
+        } else {
+            model.text
+        };
         frame.render_widget(
-            Paragraph::new(if model.text.is_empty() {
-                i18n::tr!("screen-keyboard-placeholder")
-            } else {
-                visible.to_owned()
-            })
-            .style(body.bg(context.theme.surface)),
+            Paragraph::new(newest_text_lines(text, inner.width, inner.height))
+                .style(body.bg(context.theme.surface)),
             inner,
         );
     }
+    let status = if model.last_key.is_empty() {
+        model.message.to_owned()
+    } else {
+        format!(
+            "{}: {}  {}",
+            i18n::tr!("screen-keyboard-last-key"),
+            model.last_key,
+            model.message
+        )
+    };
+    frame.render_widget(Paragraph::new(status).style(body), layout.status);
     frame.render_widget(
         Paragraph::new(i18n::tr!(if layout.usable {
             "screen-keyboard-hint"
@@ -202,7 +506,11 @@ pub fn render_screen_keyboard(
     );
     let theme = context.compatibility_theme();
     for target in &layout.buttons {
-        let mut button = Button::new(target.action.button_id(), target.action.label());
+        let mut button = Button::new(
+            target.action.button_id(),
+            target.action.label(model.modifiers, layout.collapsed),
+        )
+        .with_bracketed_label(false);
         button.set_focused(target.action == model.focus);
         if layout.bordered_buttons {
             button.render_frame(frame, target.area, &theme);

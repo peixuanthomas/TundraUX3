@@ -60,6 +60,60 @@ fn button_keyboard_and_mouse_activate_the_same_component() {
 }
 
 #[test]
+fn literal_button_labels_preserve_text_width_and_shared_interaction_styles() {
+    let area = Rect::new(0, 0, 16, 3);
+    let theme = TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180));
+    assert_eq!(Button::new("key", "Q").rendered_label_width(), 3);
+    for label in ["Q", "[", "]", "Shift*", "界"] {
+        let mut button = Button::new("key", label).with_bracketed_label(false);
+        assert_eq!(
+            button.rendered_label_width(),
+            if label == "界" { 2 } else { label.len() }
+        );
+        for borderless in [false, true] {
+            for (focused, hovered, pressed, disabled, expected) in [
+                (false, false, false, false, theme.foreground),
+                (true, false, false, false, theme.accent_color),
+                (false, true, false, false, theme.accent_color),
+                (false, true, true, false, theme.button_pressed_color()),
+                (true, true, true, true, Color::DarkGray),
+            ] {
+                button.state.focused = focused;
+                button.state.hovered = hovered;
+                button.state.active = pressed;
+                button.state.disabled = disabled;
+                let mut buffer = Buffer::empty(area);
+                if borderless {
+                    button.render_borderless(area, &mut buffer, &theme);
+                } else {
+                    button.render(area, &mut buffer, &theme);
+                }
+                let row = u16::from(!borderless);
+                let inner = if borderless {
+                    area
+                } else {
+                    Rect::new(1, row, 14, 1)
+                };
+                let rendered = (inner.x..inner.right())
+                    .map(|x| buffer[(x, row)].symbol())
+                    .collect::<String>();
+                assert_eq!(rendered.trim(), label);
+                let first = label.chars().next().unwrap().to_string();
+                assert_eq!(
+                    buffer
+                        .content()
+                        .iter()
+                        .find(|cell| cell.symbol() == first)
+                        .unwrap()
+                        .fg,
+                    expected
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn focused_buttons_use_accent_borders_while_inputs_keep_the_configured_border() {
     let area = Rect::new(0, 0, 16, 3);
     let theme = TundraTheme::default().with_border_color(Color::LightGreen);

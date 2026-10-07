@@ -130,6 +130,10 @@ fn screen_keyboard_help_is_available_without_starting_the_demo() {
         let text = String::from_utf8(stdout).unwrap();
         assert!(text.contains("English QWERTY"));
         assert!(text.contains("Backspace"));
+        assert!(text.contains("F1-F12"));
+        assert!(text.contains("CapsLock"));
+        assert!(text.contains("Copy/Ctrl+C copies all text"));
+        assert!(text.contains("lower half"));
         assert!(text.contains("external terminal: tundra-cli debug screen-keyboard"));
         assert!(stderr.is_empty());
     }

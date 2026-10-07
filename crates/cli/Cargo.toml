@@ -36,3 +36,5 @@ ascii-assets = { path = "../ascii-assets" }
 [dev-dependencies]
 portable-pty = "0.9"
 vt100 = "0.15.2"
+ui = { path = "../ui" }
+ratatui.workspace = true

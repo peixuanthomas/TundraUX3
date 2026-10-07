@@ -1,6 +1,7 @@
 //! Exercise the debug command's real terminal input and rendered button colors.
 use platform::{AppPaths, Platform, UserDirs, mock::MockPlatform};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use ratatui::layout::Rect;
 use std::{
     fs,
     io::{Read, Write},
@@ -9,6 +10,7 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use ui::{ScreenKeyboardAction, components::Surface};
 
 const TEST_NAME: &str = "screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal";
 const CHILD_ROOT: &str = "TUNDRA_TEST_SCREEN_KEYBOARD_ROOT";
@@ -20,11 +22,14 @@ const ACCENT: vt100::Color = vt100::Color::Rgb(12, 34, 56);
 // Each channel moves 35% toward white, as required for a held button.
 const PRESSED: vt100::Color = vt100::Color::Rgb(97, 111, 125);
 const TEXT: vt100::Color = vt100::Color::Rgb(230, 241, 244);
+const SEEDED_CLIPBOARD: &str = "Seed中文\nλZ\u{1}";
+const COPIED_TEXT: &str = "Seed中文\nλZ\nΩ\nTail\nPaste汉!";
 
 #[test]
 fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     if let Some(root) = std::env::var_os(CHILD_ROOT) {
         let platform = fixture_platform(Path::new(&root));
+        platform.set_clipboard_text(SEEDED_CLIPBOARD);
         #[cfg(windows)]
         let original_input_mode = console_input_mode();
         println!("{PRIMARY_MARKER}");
@@ -35,6 +40,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
             &mut std::io::stdout(),
             &mut std::io::stderr(),
         );
+        assert_eq!(platform.read_clipboard_text().unwrap(), COPIED_TEXT);
         // Windows mouse capture is a console mode, not an output escape code.
         #[cfg(windows)]
         assert_eq!(console_input_mode(), original_input_mode);
@@ -48,8 +54,11 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     terminal.wait_for("initial keyboard", |screen| {
         screen.alternate_screen()
             && screen.contents().contains("Typed text")
-            && screen.contents().contains("Click a letter or type A")
+            && screen.contents().contains("F12")
+            && screen.contents().contains("Copy")
+            && screen.contents().contains("Paste")
     });
+    let empty_text = typed_text(terminal.parser.screen(), false);
     assert!(terminal.parser.screen().hide_cursor());
     #[cfg(not(windows))]
     {
@@ -65,21 +74,26 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
 
     terminal.send(b"aBc");
     terminal.wait_for("physical letter input", |screen| {
-        typed_text(screen).is_some_and(|text| text == "aBc")
+        typed_text(screen, false) == "aBc"
     });
-    // Locate visible labels instead of coupling the test to a fixed layout.
-    let q = letter_position(terminal.parser.screen(), "Q");
+    // Rendering, hit testing, and this PTY probe share the same rectangles.
+    // Inspect visible label cells because ConPTY can color adjacent blank cells.
+    let q = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Letter('q'),
+    );
     terminal.mouse(35, q, false); // SGR mouse move without a held button.
     terminal.wait_for("letter hover accent", |screen| {
         color_at(screen, q) == ACCENT
     });
     terminal.mouse(0, q, false);
     terminal.wait_for("held letter lighter accent", |screen| {
-        color_at(screen, q) == PRESSED && typed_text(screen).is_some_and(|text| text == "aBc")
+        color_at(screen, q) == PRESSED && typed_text(screen, false) == "aBc"
     });
     terminal.mouse(0, q, true);
     terminal.wait_for("released letter and cleared pointer accent", |screen| {
-        color_at(screen, q) == TEXT && typed_text(screen).is_some_and(|text| text == "aBcq")
+        color_at(screen, q) == TEXT && typed_text(screen, false) == "aBcq"
     });
     // An identical motion report after release must not resurrect hover.
     terminal.mouse(35, q, false);
@@ -88,11 +102,15 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     });
     terminal.send(b"D");
     terminal.wait_for("stationary pointer after click", |screen| {
-        color_at(screen, q) == TEXT && typed_text(screen).is_some_and(|text| text == "aBcqD")
+        color_at(screen, q) == TEXT && typed_text(screen, false) == "aBcqD"
     });
 
     let outside = (0, 0);
-    let d = letter_position(terminal.parser.screen(), "D");
+    let d = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Letter('d'),
+    );
     terminal.wait_for("physical key selects its button", |screen| {
         color_at(screen, d) == ACCENT
     });
@@ -118,10 +136,236 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     // A later physical key proves the release was processed without adding q.
     terminal.send(b"E");
     terminal.wait_for("dragged letter was cancelled", |screen| {
-        typed_text(screen).is_some_and(|text| text == "aBcqDE")
+        typed_text(screen, false) == "aBcqDE"
     });
 
-    let exit = text_position(terminal.parser.screen(), "Exit").unwrap();
+    terminal.click(
+        ScreenKeyboardAction::Character('1'),
+        false,
+        "digit click",
+        |screen| typed_text(screen, false) == "aBcqDE1",
+    );
+    terminal.click(
+        ScreenKeyboardAction::Character(';'),
+        false,
+        "symbol click",
+        |screen| typed_text(screen, false) == "aBcqDE1;",
+    );
+    terminal.click(
+        ScreenKeyboardAction::Shift,
+        false,
+        "one-shot Shift",
+        |screen| last_key(screen, false).contains("Shift"),
+    );
+    terminal.click(
+        ScreenKeyboardAction::Character('1'),
+        false,
+        "shifted digit",
+        |screen| {
+            typed_text(screen, false) == "aBcqDE1;!" && last_key(screen, false).contains("Shift+!")
+        },
+    );
+    terminal.click(
+        ScreenKeyboardAction::Character('1'),
+        false,
+        "Shift was consumed",
+        |screen| typed_text(screen, false) == "aBcqDE1;!1",
+    );
+    terminal.click(
+        ScreenKeyboardAction::Function(12),
+        false,
+        "function key",
+        |screen| {
+            last_key(screen, false).contains("F12") && typed_text(screen, false) == "aBcqDE1;!1"
+        },
+    );
+    for (modifier, key, expected) in [
+        (
+            ScreenKeyboardAction::LeftCtrl,
+            ScreenKeyboardAction::Letter('a'),
+            "Ctrl+A",
+        ),
+        (
+            ScreenKeyboardAction::RightCtrl,
+            ScreenKeyboardAction::Letter('a'),
+            "RCtrl+A",
+        ),
+        (
+            ScreenKeyboardAction::Alt,
+            ScreenKeyboardAction::Function(1),
+            "Alt+F1",
+        ),
+    ] {
+        terminal.click(modifier, false, "modifier toggle", |_| true);
+        terminal.click(key, false, expected, |screen| {
+            last_key(screen, false).contains(expected) && typed_text(screen, false) == "aBcqDE1;!1"
+        });
+    }
+    terminal.click(
+        ScreenKeyboardAction::Letter('a'),
+        false,
+        "Ctrl and Alt were consumed",
+        |screen| typed_text(screen, false) == "aBcqDE1;!1a",
+    );
+    terminal.click(
+        ScreenKeyboardAction::CapsLock,
+        false,
+        "Caps Lock on",
+        |screen| last_key(screen, false).contains("CapsLock"),
+    );
+    terminal.click(
+        ScreenKeyboardAction::Letter('q'),
+        false,
+        "Caps Lock first letter",
+        |screen| typed_text(screen, false) == "aBcqDE1;!1aQ",
+    );
+    terminal.click(
+        ScreenKeyboardAction::Letter('w'),
+        false,
+        "Caps Lock remains active",
+        |screen| typed_text(screen, false) == "aBcqDE1;!1aQW",
+    );
+    terminal.click(
+        ScreenKeyboardAction::CapsLock,
+        false,
+        "Caps Lock off",
+        |screen| last_key(screen, false).contains("CapsLock"),
+    );
+    terminal.click(
+        ScreenKeyboardAction::Letter('q'),
+        false,
+        "Caps Lock was disabled",
+        |screen| typed_text(screen, false) == "aBcqDE1;!1aQWq",
+    );
+    terminal.click(ScreenKeyboardAction::Tab, false, "virtual Tab", |screen| {
+        last_key(screen, false).contains("Tab")
+    });
+    terminal.click(
+        ScreenKeyboardAction::Backspace,
+        false,
+        "backspace removes Tab",
+        |screen| typed_text(screen, false) == "aBcqDE1;!1aQWq",
+    );
+
+    terminal.click(
+        ScreenKeyboardAction::Clear,
+        false,
+        "clear before clipboard test",
+        |screen| typed_text(screen, false) == empty_text,
+    );
+    terminal.click(
+        ScreenKeyboardAction::Paste,
+        false,
+        "paste from mock clipboard",
+        |screen| typed_text(screen, false) == "Seed中文\nλZ",
+    );
+    terminal.click(
+        ScreenKeyboardAction::Enter,
+        false,
+        "virtual Enter",
+        |screen| last_key(screen, false).contains("Enter"),
+    );
+    terminal.send("Ω\rTail".as_bytes());
+    terminal.wait_for("Unicode and physical Enter", |screen| {
+        typed_text(screen, false) == "Seed中文\nλZ\nΩ\nTail"
+    });
+    terminal.click(
+        ScreenKeyboardAction::Copy,
+        false,
+        "copy all lines",
+        |screen| last_key(screen, false).contains("Copy"),
+    );
+    terminal.click(
+        ScreenKeyboardAction::Clear,
+        false,
+        "clear copied text",
+        |screen| typed_text(screen, false) == empty_text,
+    );
+    terminal.click(
+        ScreenKeyboardAction::Paste,
+        false,
+        "paste restores every copied line",
+        |screen| typed_text(screen, false) == "Seed中文\nλZ\nΩ\nTail",
+    );
+    // Unix emits one Paste event for bracketed input. Windows console input
+    // records expose its contents as individual keys, so its actual clipboard
+    // paste path is covered above and equivalent text is entered here.
+    #[cfg(not(windows))]
+    terminal.send("\x1b[200~\nPaste汉\x07!\x1b[201~".as_bytes());
+    #[cfg(windows)]
+    terminal.send("\rPaste汉!".as_bytes());
+    terminal.wait_for("pasted or typed multiline Unicode", |screen| {
+        typed_text(screen, false) == COPIED_TEXT
+    });
+    terminal.send(b"\x03");
+    terminal.wait_for("physical Ctrl+C copies instead of exiting", |screen| {
+        screen.alternate_screen() && last_key(screen, false).contains("Ctrl+C")
+    });
+
+    terminal.click(
+        ScreenKeyboardAction::ToggleKeyboard,
+        false,
+        "hide keyboard",
+        |screen| {
+            screen.contents().contains("Show")
+                && !screen.contents().contains("F12")
+                && typed_text(screen, true) == COPIED_TEXT
+        },
+    );
+    terminal.click(
+        ScreenKeyboardAction::ToggleKeyboard,
+        true,
+        "show keyboard",
+        |screen| {
+            screen.contents().contains("Hide")
+                && screen.contents().contains("F12")
+                && typed_text(screen, false) == COPIED_TEXT
+        },
+    );
+
+    terminal.click(
+        ScreenKeyboardAction::Clear,
+        false,
+        "clear before wrapping",
+        |screen| typed_text(screen, false) == empty_text,
+    );
+    let wrapped = format!("wrap-{}\n中文", "0123456789".repeat(8));
+    terminal.send(wrapped.replace('\n', "\r").as_bytes());
+    terminal.wait_for("long text wraps without losing characters", |screen| {
+        let lines = typed_lines(screen, false);
+        lines.len() >= 3 && lines.concat() == wrapped.replace('\n', "")
+    });
+    let old_q = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Letter('q'),
+    );
+    terminal.mouse(0, old_q, false);
+    terminal.wait_for("press before resize", |screen| {
+        color_at(screen, old_q) == PRESSED
+    });
+    terminal.resize(20, 64);
+    terminal.wait_for("responsive keyboard after resize", |screen| {
+        screen.contents().contains("F12")
+            && text_in(
+                screen,
+                button_area(screen, false, ScreenKeyboardAction::Letter('q')),
+            )
+            .concat()
+            .contains('Q')
+            && typed_lines(screen, false).concat() == wrapped.replace('\n', "")
+    });
+    let resized_q = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Letter('q'),
+    );
+    terminal.mouse(0, resized_q, true);
+    terminal.send(b"x");
+    terminal.wait_for("resize cancels the pending click", |screen| {
+        typed_lines(screen, false).concat() == format!("{}x", wrapped.replace('\n', ""))
+    });
+    let exit = button_position(terminal.parser.screen(), false, ScreenKeyboardAction::Exit);
     terminal.mouse(35, exit, false);
     terminal.wait_for("exit hover", |screen| color_at(screen, exit) == ACCENT);
     terminal.mouse(0, exit, false);
@@ -269,6 +513,38 @@ impl PtySession {
         );
     }
 
+    fn click(
+        &mut self,
+        action: ScreenKeyboardAction,
+        collapsed: bool,
+        description: &str,
+        expected: impl Fn(&vt100::Screen) -> bool,
+    ) {
+        let position = button_position(self.parser.screen(), collapsed, action);
+        self.mouse(0, position, false);
+        self.wait_for(description, |screen| color_at(screen, position) == PRESSED);
+        self.mouse(0, position, true);
+        // A modifier can change labels after release. Consume that redraw before
+        // locating the next button, even when its resulting state is checked later.
+        self.wait_for(description, |screen| {
+            color_at(screen, position) != PRESSED && expected(screen)
+        });
+    }
+
+    fn resize(&mut self, rows: u16, cols: u16) {
+        self.master
+            .as_ref()
+            .unwrap()
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        self.parser.set_size(rows, cols);
+    }
+
     fn receive(&mut self) {
         if let Ok(bytes) = self.output.recv_timeout(Duration::from_millis(20)) {
             self.raw.extend_from_slice(&bytes);
@@ -358,29 +634,63 @@ impl Drop for PtySession {
     }
 }
 
-fn text_position(screen: &vt100::Screen, text: &str) -> Option<(u16, u16)> {
-    screen.rows(0, COLS).enumerate().find_map(|(row, line)| {
-        let byte = line.find(text)?;
-        Some((row as u16, line[..byte].chars().count() as u16))
-    })
+fn layout(screen: &vt100::Screen, collapsed: bool) -> ui::ScreenKeyboardLayout {
+    let (rows, cols) = screen.size();
+    ui::screen_keyboard_layout(Rect::new(0, 0, cols, rows), collapsed)
 }
 
-fn letter_position(screen: &vt100::Screen, letter: &str) -> (u16, u16) {
-    let text_row = text_position(screen, "Typed text").unwrap().0;
-    for row in text_row + 3..ROWS {
-        for column in 0..COLS {
-            if screen.cell(row, column).unwrap().contents() == letter {
-                return (row, column);
+fn button_position(
+    screen: &vt100::Screen,
+    collapsed: bool,
+    action: ScreenKeyboardAction,
+) -> (u16, u16) {
+    let area = button_area(screen, collapsed, action);
+    for row in area.y..area.bottom() {
+        for col in area.x..area.right() {
+            if !screen.cell(row, col).unwrap().contents().trim().is_empty() {
+                return (row, col);
             }
         }
     }
-    panic!("no letter {letter:?} in {:?}", screen.contents());
+    panic!(
+        "button {action:?} has no visible label in {:?}",
+        screen.contents()
+    );
 }
 
-fn typed_text(screen: &vt100::Screen) -> Option<String> {
-    let row = text_position(screen, "Typed text")?.0 + 1;
-    let line = screen.rows(0, COLS).nth(usize::from(row))?;
-    Some(line.trim().trim_matches(['│', '┃', '|']).trim().to_string())
+fn button_area(screen: &vt100::Screen, collapsed: bool, action: ScreenKeyboardAction) -> Rect {
+    layout(screen, collapsed)
+        .buttons
+        .into_iter()
+        .find(|button| button.action == action)
+        .unwrap_or_else(|| panic!("button {action:?} missing in {:?}", screen.contents()))
+        .area
+}
+
+fn text_in(screen: &vt100::Screen, area: Rect) -> Vec<String> {
+    let mut lines: Vec<_> = screen
+        .rows(area.x, area.width)
+        .skip(usize::from(area.y))
+        .take(usize::from(area.height))
+        .map(|line| line.trim_end().to_string())
+        .collect();
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    lines
+}
+
+fn typed_lines(screen: &vt100::Screen, collapsed: bool) -> Vec<String> {
+    let text = layout(screen, collapsed).text;
+    text_in(screen, Surface::new().bordered(true).inner(text))
+}
+
+fn typed_text(screen: &vt100::Screen, collapsed: bool) -> String {
+    typed_lines(screen, collapsed).join("\n")
+}
+
+fn last_key(screen: &vt100::Screen, collapsed: bool) -> String {
+    text_in(screen, layout(screen, collapsed).status).join("\n")
 }
 
 fn color_at(screen: &vt100::Screen, (row, column): (u16, u16)) -> vt100::Color {

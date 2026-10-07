@@ -86,6 +86,7 @@ pub struct Button {
     pub id: ComponentId,
     pub label: String,
     pub state: ComponentState,
+    pub bracketed_label: bool,
 }
 
 impl Button {
@@ -103,7 +104,14 @@ impl Button {
             id: id.into(),
             label: label.into(),
             state: ComponentState::default(),
+            bracketed_label: true,
         }
+    }
+
+    /// Keeps the shared button's interaction styles while allowing literal keycaps.
+    pub fn with_bracketed_label(mut self, bracketed: bool) -> Self {
+        self.bracketed_label = bracketed;
+        self
     }
 
     pub fn set_focused(&mut self, focused: bool) {
@@ -226,7 +234,7 @@ impl Button {
         frame.render_widget(self.surface_widget(area, theme), area);
     }
 
-    /// Width of the button label after applying the shared square-bracket affordance.
+    /// Width of the button label after applying its configured decoration.
     pub fn rendered_label_width(&self) -> usize {
         self.display_label()
             .lines()
@@ -257,6 +265,9 @@ impl Button {
     }
 
     fn display_label(&self) -> Cow<'_, str> {
+        if !self.bracketed_label {
+            return Cow::Borrowed(self.label.as_str());
+        }
         let trimmed = self.label.trim();
         if trimmed.is_empty() || (trimmed.starts_with('[') && trimmed.ends_with(']')) {
             return Cow::Borrowed(self.label.as_str());

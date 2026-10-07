@@ -202,7 +202,7 @@ where
                 .map_err(std::io::Error::other)?;
             let language = i18n::LanguageSnapshot::load_startup(root, &config.language, 1);
             let _language = i18n::enter_snapshot(std::sync::Arc::new(language.snapshot));
-            shell::run_screen_keyboard(stdout, &config.appearance)
+            shell::run_screen_keyboard(stdout, &config.appearance, platform)
         }),
         Ok(CliCommand::TestMatrix) => {
             run_configured_animation_preview(platform, stderr, "Matrix", |color| {

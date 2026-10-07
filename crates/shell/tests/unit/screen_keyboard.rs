@@ -7,7 +7,7 @@ fn key(key: Key) -> InputEvent {
 }
 
 fn layout() -> ScreenKeyboardLayout {
-    ui::screen_keyboard_layout(Rect::new(0, 0, 80, 24))
+    ui::screen_keyboard_layout(Rect::new(0, 0, 80, 24), false)
 }
 
 fn mouse(layout: &ScreenKeyboardLayout, letter: char, kind: MouseEventKind) -> InputEvent {
@@ -25,7 +25,7 @@ fn mouse(layout: &ScreenKeyboardLayout, letter: char, kind: MouseEventKind) -> I
 }
 
 #[test]
-fn screen_keyboard_types_only_english_letters_and_preserves_physical_case() {
+fn screen_keyboard_types_printable_keys_and_preserves_physical_case() {
     let layout = layout();
     let now = Instant::now();
     let mut state = ScreenKeyboardState::default();
@@ -45,10 +45,15 @@ fn screen_keyboard_types_only_english_letters_and_preserves_physical_case() {
     ] {
         assert!(!state.handle_input(input, &layout, now));
     }
-    assert_eq!(state.text, "aZb");
+    assert_eq!(state.text, "aZb1中paste");
+    assert_eq!(state.last_key, "Alt+A");
     state.handle_input(key(Key::Backspace), &layout, now);
-    assert_eq!(state.text, "aZ");
+    assert_eq!(state.text, "aZb1中past");
+    state.handle_input(key(Key::Enter), &layout, now);
+    state.handle_input(key(Key::Space), &layout, now);
+    assert_eq!(state.text, "aZb1中past\n ");
     state.focus = ScreenKeyboardAction::Clear;
+    state.navigating_buttons = true;
     state.handle_input(key(Key::Enter), &layout, now);
     assert_eq!(state.text, "");
     state.focus = ScreenKeyboardAction::Exit;
@@ -65,13 +70,161 @@ fn screen_keyboard_navigation_uses_rows_and_supports_reverse_tab() {
     assert_eq!(state.focus, ScreenKeyboardAction::Letter('a'));
     state.handle_input(key(Key::Down), &layout, now);
     assert_eq!(state.focus, ScreenKeyboardAction::Letter('z'));
-    state.handle_input(key(Key::Up), &layout, now);
-    assert_eq!(state.focus, ScreenKeyboardAction::Letter('s'));
     state.focus = ScreenKeyboardAction::Letter('q');
     state.handle_input(key(Key::BackTab), &layout, now);
-    assert_eq!(state.focus, ScreenKeyboardAction::Exit);
+    assert_eq!(state.focus, ScreenKeyboardAction::Tab);
     state.handle_input(key(Key::Tab), &layout, now);
     assert_eq!(state.focus, ScreenKeyboardAction::Letter('q'));
+}
+
+#[test]
+fn screen_keyboard_modifiers_symbols_tabs_and_function_keys() {
+    use ScreenKeyboardAction::*;
+    let mut state = ScreenKeyboardState::default();
+    for action in [
+        Shift,
+        Character('1'),
+        Letter('a'),
+        CapsLock,
+        Letter('b'),
+        Shift,
+        Letter('c'),
+        CapsLock,
+        Tab,
+        Space,
+        Enter,
+    ] {
+        assert!(!state.activate(action));
+    }
+    assert_eq!(state.text, "!aBc\t \n");
+    assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
+    for (modifier, expected) in [(LeftCtrl, "Ctrl+A"), (RightCtrl, "RCtrl+A"), (Alt, "Alt+A")] {
+        state.activate(modifier);
+        state.activate(Letter('a'));
+        assert_eq!(state.last_key, expected);
+        assert_eq!(
+            state.text, "!aBc\t \n",
+            "combinations must not type letters"
+        );
+        assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
+    }
+    state.activate(Alt);
+    state.activate(Function(12));
+    assert_eq!(state.last_key, "Alt+F12");
+    state.handle_input(key(Key::F(2)), &layout(), Instant::now());
+    assert_eq!(state.last_key, "F2");
+    state.activate(Shift);
+    state.activate(Alt);
+    state.activate(LeftCtrl);
+    state.handle_input(InputEvent::FocusLost, &layout(), Instant::now());
+    assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
+}
+
+#[test]
+fn screen_keyboard_physical_combinations_do_not_activate_focused_buttons() {
+    for (key, name) in [
+        (Key::Enter, "Enter"),
+        (Key::Space, "Space"),
+        (Key::Tab, "Tab"),
+    ] {
+        for (modifier, prefix) in [(KeyModifiers::CTRL, "Ctrl"), (KeyModifiers::ALT, "Alt")] {
+            let mut state = ScreenKeyboardState::default();
+            let input = InputEvent::Key(KeyEvent::with_modifiers(key.clone(), modifier));
+            assert!(!state.handle_input(input, &layout(), Instant::now()));
+            assert_eq!(state.text, "");
+            assert_eq!(state.last_key, format!("{prefix}+{name}"));
+        }
+    }
+    let mut state = ScreenKeyboardState::default();
+    let input = InputEvent::Key(KeyEvent::with_modifiers(Key::BackTab, KeyModifiers::CTRL));
+    state.handle_input(input, &layout(), Instant::now());
+    assert_eq!(state.text, "");
+    assert_eq!(state.last_key, "Ctrl+Shift+Tab");
+}
+
+#[test]
+fn screen_keyboard_copy_paste_and_failures_preserve_text() {
+    use platform::{
+        AppPaths, Platform, UserDirs,
+        mock::{MockPlatform, UnsupportedPlatform},
+    };
+    let root = std::env::temp_dir().join("tundra-screen-keyboard-clipboard");
+    let dirs = UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Videos"),
+        root.join("Music"),
+        root.join("Data"),
+    )
+    .unwrap();
+    let paths = AppPaths::from_parts(
+        root.join("config.toml"),
+        root.join("state"),
+        root.join("cache"),
+        root.join("logs"),
+        root.join("temp"),
+    )
+    .unwrap();
+    let platform = MockPlatform::new(dirs, paths);
+    let mut state = ScreenKeyboardState::default();
+    state.text = "原文".to_owned();
+    platform.set_clipboard_text("\r\n中文\t🙂\0\u{7}");
+    state.activate(ScreenKeyboardAction::Paste);
+    state.apply_clipboard(&platform);
+    assert_eq!(state.text, "原文\n中文\t🙂");
+    let copy = InputEvent::Key(KeyEvent::with_modifiers(Key::Char('c'), KeyModifiers::CTRL));
+    assert!(
+        !state.handle_input(copy, &layout(), Instant::now()),
+        "Ctrl+C copies instead of exiting"
+    );
+    state.apply_clipboard(&platform);
+    assert_eq!(platform.read_clipboard_text().unwrap(), state.text);
+    state.activate(ScreenKeyboardAction::Clear);
+    state.activate(ScreenKeyboardAction::RightCtrl);
+    state.activate(ScreenKeyboardAction::Letter('v'));
+    assert_eq!(state.last_key, "RCtrl+V");
+    state.apply_clipboard(&platform);
+    assert_eq!(state.text, "原文\n中文\t🙂");
+    for action in [ScreenKeyboardAction::Copy, ScreenKeyboardAction::Paste] {
+        state.activate(action);
+        state.apply_clipboard(&UnsupportedPlatform);
+        assert_eq!(state.text, "原文\n中文\t🙂");
+        assert!(!state.message.is_empty());
+        assert!(state.pending_clipboard.is_none());
+    }
+}
+
+#[test]
+fn screen_keyboard_collapse_keeps_text_and_cancels_old_key_capture() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let expanded = ui::screen_keyboard_layout(bounds, false);
+    let now = Instant::now();
+    let mut state = ScreenKeyboardState::default();
+    state.text = "keep me".to_owned();
+    state.handle_input(
+        mouse(&expanded, 'q', MouseEventKind::Down(MouseButton::Left)),
+        &expanded,
+        now,
+    );
+    state.activate(ScreenKeyboardAction::ToggleKeyboard);
+    assert!(state.collapsed);
+    assert!(state.pressed.is_none());
+    let collapsed = ui::screen_keyboard_layout(bounds, true);
+    state.ensure_visible_focus(&collapsed);
+    assert_eq!(state.focus, ScreenKeyboardAction::ToggleKeyboard);
+    state.handle_input(
+        mouse(&expanded, 'q', MouseEventKind::Up(MouseButton::Left)),
+        &collapsed,
+        now,
+    );
+    assert_eq!(state.text, "keep me");
+    state.handle_input(key(Key::Char('!')), &collapsed, now);
+    assert_eq!(state.text, "keep me!");
+    state.activate(ScreenKeyboardAction::ToggleKeyboard);
+    assert!(!state.collapsed);
+    assert_eq!(state.text, "keep me!");
 }
 
 #[test]
@@ -167,6 +320,9 @@ fn key_colors(
                 &ScreenKeyboardViewModel {
                     text: &state.text,
                     focus: state.focus,
+                    modifiers: state.modifiers,
+                    last_key: &state.last_key,
+                    message: &state.message,
                 },
                 &context,
             );
