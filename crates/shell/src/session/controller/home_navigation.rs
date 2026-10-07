@@ -119,6 +119,7 @@ impl ShellSession {
         self.auto_admin = AutoAdminState::default();
         self.management_background.clear();
         self.launcher_drag = None;
+        self.command_line_start_directory = None;
         self.replace_explorer_state(None);
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();

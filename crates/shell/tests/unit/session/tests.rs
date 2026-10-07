@@ -5301,6 +5301,301 @@ fn explorer_routing_test_state() -> ShellSession {
     state
 }
 
+fn explorer_terminal_test_fixture() -> (
+    ShellSession,
+    platform::mock::MockPlatform,
+    SystemStatusTempGuard,
+) {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "tundra-shell-explorer-terminal-{}-{unique}",
+        std::process::id()
+    ));
+    let guard = SystemStatusTempGuard(root.clone());
+    let directory = root.join("中文 空格 & $ ` ' (folder)");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut explorer = ExplorerState::new(&directory, false);
+    for name in ["first.txt", "second.txt"] {
+        let path = directory.join(name);
+        std::fs::write(&path, "fixture").unwrap();
+        explorer.all_entries.push(app::explorer::ExplorerEntry {
+            name: name.into(),
+            path: path.clone(),
+            trash_id: None,
+            original_path: None,
+            kind: app::explorer::ExplorerEntryKind::File,
+            size: 7,
+            modified: None,
+            attributes: FileAttributes {
+                path,
+                is_file: true,
+                is_dir: false,
+                len: 7,
+                readonly: false,
+                modified: None,
+                hidden: false,
+                system: false,
+                archive: false,
+                symlink: false,
+                junction: false,
+                reparse_point: false,
+                shortcut: false,
+            },
+            open_policy: platform::FileOpenPolicy::SystemDefault,
+            type_label: "Text".into(),
+            icon_key: "file".into(),
+            metadata_warning: None,
+        });
+    }
+    explorer.apply_projection();
+    explorer.select_all();
+    let mut state = explorer_routing_test_state();
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Explorer];
+    state.replace_explorer_state(Some(explorer));
+    state.refresh_hit_map();
+    let dirs = platform::UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Videos"),
+        root.join("Music"),
+        root.join("AppData"),
+    )
+    .unwrap();
+    let paths = platform::build_windows_app_paths(
+        root.join("Roaming"),
+        root.join("Local"),
+        root.join("Temp"),
+    )
+    .unwrap();
+    (state, platform::mock::MockPlatform::new(dirs, paths), guard)
+}
+
+fn explorer_test_layout(state: &ShellSession) -> ui::ExplorerLayout {
+    let terminal = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
+    let ui::ShellLayout::Full { main, .. } = state.shell_layout_for(terminal) else {
+        panic!("expected full shell layout");
+    };
+    ui::explorer_layout(main, &state.to_explorer_view_model())
+}
+
+fn explorer_test_context_menu(state: &ShellSession) -> ui::ExplorerContextMenuViewModel {
+    let Some(ui::ExplorerOverlayViewModel::ContextMenu(menu)) =
+        state.to_explorer_view_model().overlay
+    else {
+        panic!("expected Explorer context menu");
+    };
+    menu
+}
+
+fn open_explorer_blank_context_for_test(state: &mut ShellSession, platform: &dyn Platform) {
+    let layout = explorer_test_layout(state);
+    let point = (layout.table_body.x, layout.table_body.bottom() - 1);
+    assert_eq!(
+        layout.hit_test(point.0, point.1),
+        Some(ui::ExplorerHitTarget::EmptyTable)
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, point),
+        platform,
+    );
+}
+
+#[test]
+fn explorer_blank_context_opens_terminal_at_directory_and_returns_without_reusing_it() {
+    for (use_mouse, locale, label) in [
+        (true, "en-US", "Open Terminal Here"),
+        (false, "zh-CN", "在此处打开终端"),
+    ] {
+        let (mut state, platform, guard) = explorer_terminal_test_fixture();
+        state.language = Arc::new(
+            i18n::LanguageSnapshot::load(&guard.0, locale, 1)
+                .unwrap()
+                .snapshot,
+        );
+        state.refresh_hit_map();
+        let selected = state
+            .app
+            .explorer_state()
+            .unwrap()
+            .effective_selected_paths();
+        assert_eq!(selected.len(), 2);
+
+        let row = explorer_test_layout(&state).rows[0].area;
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Right, (row.x, row.y)),
+            &platform,
+        );
+        assert!(
+            explorer_test_context_menu(&state)
+                .items
+                .iter()
+                .all(|item| item.id != "open-terminal"),
+            "a file selection has no directory terminal action"
+        );
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+        open_explorer_blank_context_for_test(&mut state, &platform);
+        let explorer = state.app.explorer_state().unwrap().clone();
+        assert!(explorer.effective_selected_paths().is_empty());
+        let directory = explorer.current_path.clone();
+        let menu = explorer_test_context_menu(&state);
+        let index = menu
+            .items
+            .iter()
+            .position(|item| item.id == "open-terminal")
+            .unwrap();
+        assert!(menu.items[index].enabled);
+        assert_eq!(menu.items[index].label, label);
+
+        if use_mouse {
+            let control = explorer_test_layout(&state)
+                .overlay
+                .unwrap()
+                .controls
+                .into_iter()
+                .find(|control| control.control == ui::ExplorerOverlayControl::ContextItem(index))
+                .unwrap();
+            let point = (control.area.x, control.area.y);
+            state.apply_input_with_platform(
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+            );
+            state.apply_input_with_platform(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+            );
+        } else {
+            for _ in 0..index {
+                state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+            }
+            assert_eq!(
+                explorer_test_context_menu(&state).selected_index,
+                Some(index)
+            );
+            state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        }
+
+        assert_eq!(state.active_screen(), ShellScreen::CommandLine);
+        assert_eq!(state.focused_component(), ShellComponent::CommandLine);
+        assert_eq!(
+            state.command_line_start_directory.as_ref(),
+            Some(&directory)
+        );
+        assert!(state.active_popup.is_none());
+        assert!(state.explorer_overlay_mode.is_none());
+        assert_eq!(state.app.explorer_state(), Some(&explorer));
+        state.close_command_line();
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        assert_eq!(state.focused_component(), ShellComponent::Explorer);
+        assert!(state.command_line_start_directory.is_none());
+        assert_eq!(state.app.explorer_state(), Some(&explorer));
+
+        state.screen_stack.push(ShellScreen::Launcher);
+        state.focused_component = ShellComponent::Launcher;
+        state.launcher_selected_index = state
+            .built_in_launcher_applications()
+            .iter()
+            .position(|application| application.id == app::COMMAND_LINE_APPLICATION.id)
+            .unwrap();
+        state.refresh_hit_map();
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        assert_eq!(state.active_screen(), ShellScreen::CommandLine);
+        assert!(state.command_line_start_directory.is_none());
+        state.close_command_line();
+        assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    }
+}
+
+#[test]
+fn explorer_terminal_action_cannot_bypass_permissions_size_or_trash_location() {
+    let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+    set_test_auth_role(&mut state, UserRole::User);
+    assert!(!state.can_execute_command_line());
+    open_explorer_blank_context_for_test(&mut state, &platform);
+    let menu = explorer_test_context_menu(&state);
+    let index = menu
+        .items
+        .iter()
+        .position(|item| item.id == "open-terminal")
+        .unwrap();
+    assert!(!menu.items[index].enabled);
+    let control = explorer_test_layout(&state)
+        .overlay
+        .unwrap()
+        .controls
+        .into_iter()
+        .find(|control| control.control == ui::ExplorerOverlayControl::ContextItem(index))
+        .unwrap();
+    assert!(!control.enabled);
+    let point = (control.area.x, control.area.y);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, point),
+        &platform,
+    );
+    state.apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, point), &platform);
+    for _ in 0..index {
+        state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    }
+    assert_eq!(
+        explorer_test_context_menu(&state).selected_index,
+        Some(index)
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    state.activate_explorer_overlay_control(
+        ui::ExplorerOverlayControl::ContextItem(index),
+        &platform,
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(state.command_line_start_directory.is_none());
+    assert!(state.active_popup.is_some());
+    let directory = state.app.explorer_state().unwrap().current_path.clone();
+    state.open_command_line_at(Some(directory.clone()));
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(state.command_line_start_directory.is_none());
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.close_explorer_popup();
+
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.terminal_size = (107, 22);
+    state.refresh_hit_map();
+    open_explorer_blank_context_for_test(&mut state, &platform);
+    let index = explorer_test_context_menu(&state)
+        .items
+        .iter()
+        .position(|item| item.id == "open-terminal")
+        .unwrap();
+    for _ in 0..index {
+        state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    }
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(state.command_line_start_directory.is_none());
+    assert!(state.active_popup.is_none());
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.terminal_size = (120, 40);
+    state.update_explorer_state(|explorer| {
+        explorer.current_location = app::explorer::ExplorerLocation::Trash;
+        explorer.entries.clear();
+        explorer.all_entries.clear();
+        explorer.clear_selection();
+    });
+    state.refresh_hit_map();
+    open_explorer_blank_context_for_test(&mut state, &platform);
+    assert!(
+        explorer_test_context_menu(&state)
+            .items
+            .iter()
+            .all(|item| item.id != "open-terminal")
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(state.command_line_start_directory.is_none());
+}
+
 #[test]
 fn explorer_search_shortcut_preserves_text_input_and_sort() {
     let mut state = explorer_routing_test_state();

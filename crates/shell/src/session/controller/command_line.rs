@@ -2,6 +2,10 @@ use super::super::*;
 
 impl ShellSession {
     pub(in crate::session) fn open_command_line(&mut self) {
+        self.open_command_line_at(None);
+    }
+
+    pub(in crate::session) fn open_command_line_at(&mut self, directory: Option<PathBuf>) {
         let authorization = PermissionService::new(self.debug_policy).authorize(
             self.app.auth_session(),
             PermissionAction::ExecuteCommandLine,
@@ -38,6 +42,7 @@ impl ShellSession {
         }
 
         if self.active_screen() != ShellScreen::CommandLine {
+            self.command_line_start_directory = directory;
             self.screen_stack.push(ShellScreen::CommandLine);
         }
         self.focused_component = ShellComponent::CommandLine;
@@ -48,12 +53,16 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn close_command_line(&mut self) {
+        self.command_line_start_directory = None;
         if self.active_screen() == ShellScreen::CommandLine {
             self.screen_stack.pop();
         }
         if self.active_screen() == ShellScreen::Launcher {
             self.focused_component = ShellComponent::Launcher;
             self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
+        } else if self.active_screen() == ShellScreen::Explorer {
+            self.focused_component = ShellComponent::Explorer;
+            self.notify_status(i18n::msg!("shell-explorer"));
         } else {
             self.pop_to_home();
             self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));

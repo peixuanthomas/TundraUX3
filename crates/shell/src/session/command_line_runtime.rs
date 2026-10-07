@@ -9,7 +9,7 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 use ratatui::layout::Rect;
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -302,6 +302,23 @@ impl CommandLinePty {
             }
         }
         if let Some(cwd) = config.cwd {
+            // portable-pty falls back to the user's home for an invalid cwd.
+            // An explicitly requested folder must instead fail visibly.
+            let metadata = std::fs::metadata(&cwd).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "Could not open Command Line directory {}: {error}",
+                        cwd.display()
+                    ),
+                )
+            })?;
+            if !metadata.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotADirectory,
+                    format!("Command Line directory is not a folder: {}", cwd.display()),
+                ));
+            }
             command.cwd(cwd);
         }
         // The child needs a color-capable, non-host terminal.  The in-memory
@@ -853,6 +870,7 @@ impl CommandLineHost {
         platform: &dyn Platform,
         username: &str,
         accent: ratatui::style::Color,
+        directory: Option<&Path>,
     ) {
         if !matches!(self.state, CommandLineHostState::Inactive) {
             return;
@@ -862,12 +880,16 @@ impl CommandLineHost {
             let mut config = CommandLinePtyConfig::tundra_cli(program)
                 .with_username(username)
                 .with_accent_color(accent);
-            let directories = platform
-                .user_dirs_for_user(username)
-                .map_err(io::Error::other)?;
-            let documents = directories.documents();
-            if documents.is_dir() {
-                config.cwd = Some(documents.to_path_buf());
+            if let Some(directory) = directory {
+                config.cwd = Some(directory.to_path_buf());
+            } else {
+                let directories = platform
+                    .user_dirs_for_user(username)
+                    .map_err(io::Error::other)?;
+                let documents = directories.documents();
+                if documents.is_dir() {
+                    config.cwd = Some(documents.to_path_buf());
+                }
             }
             CommandLinePty::spawn(config, &self.reader_tasks)
         });

@@ -1,6 +1,7 @@
 # UI explorer messages.
 
 ui-explorer-explorer = Explorer
+ui-explorer-open-terminal-here = Open Terminal Here
 ui-explorer-explorer-ascii-assets-are-unavailable = Explorer ASCII assets are unavailable
 ui-explorer-edit-button = { "[" }Edit]
 ui-explorer-quick-access = Quick access

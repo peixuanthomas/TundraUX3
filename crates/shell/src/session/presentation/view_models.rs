@@ -1920,6 +1920,7 @@ impl ShellSession {
                         trash_has_items: !state.entries.is_empty(),
                         focused_index: self.explorer_overlay_selection,
                         can_manage_launcher: self.can_manage_launcher(),
+                        can_execute_command_line: self.can_execute_command_line(),
                         launcher_eligible_count: state
                             .effective_selected_paths()
                             .iter()

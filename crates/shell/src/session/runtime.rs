@@ -1054,7 +1054,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 .tokens()
                 .for_capability(shell_render_capabilities(terminal_graphics_probe).color)
                 .accent;
-            command_line_host.ensure_started(platform.as_ref(), username, accent);
+            command_line_host.ensure_started(
+                platform.as_ref(),
+                username,
+                accent,
+                state.command_line_start_directory.as_deref(),
+            );
             match command_line_host.poll() {
                 CommandLineHostEvent::None => {
                     let (width, height) = state.terminal_size();

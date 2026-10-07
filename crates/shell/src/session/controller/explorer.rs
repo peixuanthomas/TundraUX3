@@ -998,6 +998,16 @@ impl ShellSession {
                     }
                     "new-folder" => self.begin_explorer_input(ExplorerInputMode::NewFolder),
                     "new-text" => self.begin_explorer_input(ExplorerInputMode::NewTextFile),
+                    "open-terminal" => {
+                        if let Some(directory) = self
+                            .app
+                            .explorer_state()
+                            .and_then(|state| state.current_location.path())
+                            .map(|directory| directory.to_path_buf())
+                        {
+                            self.open_command_line_at(Some(directory));
+                        }
+                    }
                     "paste" => self.apply_explorer_command(ExplorerCommand::Paste, platform),
                     "select-all" => {
                         self.apply_explorer_command(ExplorerCommand::SelectAll, platform)

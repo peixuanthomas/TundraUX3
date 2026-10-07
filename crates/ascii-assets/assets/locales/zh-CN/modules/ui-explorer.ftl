@@ -1,6 +1,7 @@
 # UI explorer messages.
 
 ui-explorer-explorer = 文件管理器
+ui-explorer-open-terminal-here = 在此处打开终端
 ui-explorer-explorer-ascii-assets-are-unavailable = 文件管理器 ASCII 资源不可用
 ui-explorer-edit-button = { "[" }编辑]
 ui-explorer-quick-access = 快速访问

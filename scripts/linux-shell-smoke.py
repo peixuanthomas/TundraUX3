@@ -363,7 +363,7 @@ def main() -> int:
             read_available(master, output, 0.1)
         if "○".encode() not in output[prompt_offset:]:
             raise SystemExit("embedded CLI did not render a pending command marker")
-        command_directory = isolated / "command path 中文"
+        command_directory = isolated / "command path 中文 $; ' [x]"
         command_directory.mkdir()
         os.write(master, ("cd " + shlex.quote(str(command_directory)) + "\r").encode())
         if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, prompt_offset, ignore_spaces=True):
@@ -386,12 +386,17 @@ def main() -> int:
         expected_prompt = f"{username}@{command_directory} >>".encode()
         if not wait_for_output(master, output, expected_prompt, child, 5.0, prompt_offset, ignore_spaces=True):
             raise SystemExit("embedded CLI did not display the new absolute path after cd:\n" + output_diagnostic(output[prompt_offset:]))
+        # A full frame also contains old prompts in the scrollback. Let the
+        # child finish handling SIGWINCH before sending the next command.
+        resize_deadline = time.monotonic() + 0.5
+        while time.monotonic() < resize_deadline:
+            read_available(master, output, 0.05)
         launcher_offset = len(output)
         os.write(master, b"exit\r")
-        if not wait_for_output(master, output, b"Command Line", child, 5.0, launcher_offset):
-            raise SystemExit("embedded CLI did not return to Launcher")
+        if not wait_for_output(master, output, b"Editor", child, 5.0, launcher_offset):
+            raise SystemExit("embedded CLI did not return to Launcher:\n" + output_diagnostic(output[launcher_offset:]))
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
-            raise SystemExit("Launcher did not settle after CLI exit")
+            raise SystemExit("Launcher did not settle after CLI exit:\n" + output_diagnostic(output[launcher_offset:]))
         home_offset = len(output)
         os.write(master, b"\x1b")
         if not wait_for_output(master, output, b"Explorer", child, 5.0, home_offset):
@@ -400,6 +405,63 @@ def main() -> int:
         os.kill(child.pid, signal.SIGWINCH)
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle after CLI verification")
+
+        # Open the same exact directory through Explorer's blank-space menu.
+        # Quotes, dollar signs and semicolons must stay part of the directory
+        # name: this entry sets the child cwd rather than typing a cd command.
+        explorer_offset = len(output)
+        os.write(master, b"e")
+        if not wait_for_output(master, output, b"Quick access", child, 5.0, explorer_offset):
+            raise SystemExit("Explorer did not open before terminal directory verification")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Explorer did not settle before editing its directory")
+        address_offset = len(output)
+        os.write(master, b"\x0c")
+        if not wait_for_output(master, output, b"Absolute path", child, 5.0, address_offset, ignore_spaces=True):
+            raise SystemExit("Explorer address editor did not open:\n" + output_diagnostic(output[address_offset:]))
+        os.write(master, b"\x01\x1b[200~" + str(command_directory).encode() + b"\x1b[201~\r")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Explorer did not settle at the requested directory")
+        menu_offset = len(output)
+        os.write(master, b"\x1b[<2;80;20M")
+        if not wait_for_output(master, output, b"Open Terminal Here", child, 5.0, menu_offset):
+            raise SystemExit("Explorer blank-space menu did not offer Open Terminal Here:\n" + output_diagnostic(output[menu_offset:]))
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Explorer context menu did not settle")
+        prompt_offset = len(output)
+        os.write(master, b"\x1b[B\x1b[B\x1b[B\r")
+        if not wait_for_output(master, output, f"{username}@/".encode(), child, 10.0, prompt_offset):
+            raise SystemExit("Explorer terminal entry did not launch the embedded CLI")
+        entry_deadline = time.monotonic() + 1.0
+        while time.monotonic() < entry_deadline:
+            read_available(master, output, 0.1)
+        prompt_offset = len(output)
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 139, 0, 0))
+        os.kill(child.pid, signal.SIGWINCH)
+        if not wait_for_output(master, output, expected_prompt, child, 5.0, prompt_offset, ignore_spaces=True):
+            raise SystemExit("Explorer terminal did not start in the exact directory:\n" + output_diagnostic(output[prompt_offset:]))
+        resize_deadline = time.monotonic() + 0.5
+        while time.monotonic() < resize_deadline:
+            read_available(master, output, 0.05)
+        cwd_offset = len(output)
+        os.write(master, b"printf 'EXPLORER_CWD=%s\\n' \"$PWD\"\r")
+        expected_cwd = f"EXPLORER_CWD={command_directory}".encode()
+        if not wait_for_output(master, output, expected_cwd, child, 5.0, cwd_offset, ignore_spaces=True):
+            raise SystemExit("Explorer terminal child had the wrong working directory:\n" + output_diagnostic(output[cwd_offset:]))
+        explorer_offset = len(output)
+        os.write(master, b"exit\r")
+        if not wait_for_output(master, output, b"Quick access", child, 5.0, explorer_offset):
+            raise SystemExit("Explorer terminal did not return to Explorer")
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Explorer did not settle after terminal exit")
+        home_offset = len(output)
+        os.write(master, b"\x1b")
+        if not wait_for_output(master, output, b"Launcher", child, 5.0, home_offset):
+            raise SystemExit("Explorer did not return to Home after terminal verification")
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
+        os.kill(child.pid, signal.SIGWINCH)
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Home did not settle after Explorer terminal verification")
 
         # Reproduce Escape and an SGR report in the same terminal read. The
         # report's final M must never become Home's System Status shortcut.
@@ -543,7 +605,7 @@ def main() -> int:
         shutil.rmtree(isolated, ignore_errors=True)
 
     print(
-        "Linux PTY embedded CLI paths/status markers, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
+        "Linux PTY Explorer terminal cwd/return, embedded CLI paths/status markers, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
         f"sentinel visible in {sentinel_latency:.3f}s)"

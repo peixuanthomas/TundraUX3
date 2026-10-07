@@ -187,6 +187,109 @@ fn embedded_panic_exit_enters_fullscreen_panic_without_login_or_dialog() {
 
 #[cfg(any(windows, unix))]
 #[test]
+fn pty_rejects_invalid_start_directories_before_running_the_child() {
+    use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
+
+    let root = std::env::temp_dir().join(format!(
+        "tundra-command-line-invalid-cwd-test-{}-{}",
+        std::process::id(),
+        NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("ordinary-file");
+    std::fs::write(&file, "not a directory").unwrap();
+    let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+        root.join("reports"),
+        root.join("fallback"),
+        root.join("data"),
+        "command-line-invalid-cwd-test",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .expect("isolated watchdog");
+    let app = process
+        .register_app(AppDescriptor::new(
+            AppId::from_static("shell.command-line-invalid-cwd-test"),
+            "Command Line Start Directory Test",
+            env!("CARGO_PKG_VERSION"),
+            AppCriticality::Optional,
+        ))
+        .expect("test app watchdog");
+    let reader_tasks = app.task_group("pty-reader");
+    #[cfg(windows)]
+    let (program, args) = (
+        "cmd.exe",
+        vec!["/D", "/C", "echo started>\"%TUNDRA_CWD_MARKER%\""],
+    );
+    #[cfg(unix)]
+    let (program, args) = ("/bin/sh", vec!["-c", ": > \"$TUNDRA_CWD_MARKER\""]);
+    let spawn_marker = |cwd: &Path, marker: &Path| {
+        CommandLinePty::spawn(
+            CommandLinePtyConfig {
+                program: program.into(),
+                args: args.iter().copied().map(OsString::from).collect(),
+                env: vec![("TUNDRA_CWD_MARKER".into(), marker.as_os_str().to_owned())],
+                cwd: Some(cwd.to_owned()),
+                columns: DEFAULT_COLUMNS,
+                rows: DEFAULT_ROWS,
+                scrollback_lines: 0,
+            },
+            &reader_tasks,
+        )
+    };
+
+    let valid_marker = root.join("started-valid");
+    let pty = spawn_marker(&root, &valid_marker).expect("valid start directory");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = pty.try_wait().expect("fixture child status") {
+            assert!(status.success);
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "marker command did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(pty);
+    assert!(
+        valid_marker.is_file(),
+        "the fixture command must really execute"
+    );
+
+    for (cwd, marker, expected_kind) in [
+        (
+            root.join("missing-directory"),
+            root.join("started-missing"),
+            io::ErrorKind::NotFound,
+        ),
+        (
+            file,
+            root.join("started-file"),
+            io::ErrorKind::NotADirectory,
+        ),
+    ] {
+        let error = match spawn_marker(&cwd, &marker) {
+            Ok(pty) => {
+                drop(pty);
+                panic!("invalid start directory was accepted: {}", cwd.display());
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), expected_kind, "{}", error);
+        assert!(error.to_string().contains(cwd.to_string_lossy().as_ref()));
+        assert!(!marker.exists(), "invalid cwd must not execute the child");
+    }
+
+    drop(reader_tasks);
+    drop(app);
+    drop(process);
+    runtime.shutdown().expect("watchdog shutdown");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(windows, unix))]
+#[test]
 fn pty_process_runs_inside_platform_containment() {
     use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
 

@@ -229,6 +229,7 @@ pub(in crate::session) struct ExplorerContextMenuInput {
     pub(in crate::session) trash_has_items: bool,
     pub(in crate::session) focused_index: usize,
     pub(in crate::session) can_manage_launcher: bool,
+    pub(in crate::session) can_execute_command_line: bool,
     pub(in crate::session) launcher_eligible_count: usize,
 }
 
@@ -244,6 +245,7 @@ pub(in crate::session) fn explorer_context_menu_view_model(
         trash_has_items,
         focused_index,
         can_manage_launcher,
+        can_execute_command_line,
         launcher_eligible_count,
     } = input;
     let item = |id: &str, label: String, enabled: bool, dangerous: bool| {
@@ -336,6 +338,12 @@ pub(in crate::session) fn explorer_context_menu_view_model(
                 "paste",
                 i18n::tr!("shell-paste"),
                 clipboard_available,
+                false,
+            ),
+            item(
+                "open-terminal",
+                i18n::tr!("ui-explorer-open-terminal-here"),
+                can_execute_command_line,
                 false,
             ),
             item("refresh", i18n::tr!("shell-refresh"), true, false),

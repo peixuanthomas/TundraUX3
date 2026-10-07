@@ -342,6 +342,8 @@ Explorer 维护过滤、排序、多选、历史、剪贴板、拖放、冲突�
 
 批量操作使用当前可见列表中的已选项：Ctrl/Cmd+点击或空格逐项勾选，Shift+点击/方向键连续选择，Ctrl/Cmd+Shift 扩大选择时保留原有勾选。Ctrl/Cmd+方向键只移动焦点；Home/End 和 PageUp/PageDown 跳到首尾或翻页，可配合 Shift 选择。Ctrl/Cmd+A 全选、Ctrl/Cmd+I 反选、Ctrl/Cmd+Shift+A 取消选择。C/X/V 复制、剪切和粘贴全部已选文件或文件夹，D 或 Delete 按删除确认设置将它们移入系统回收站。所有已选文件行持续显示选中底色，鼠标操作不会隐藏已选范围；普通点击恢复单选，Ctrl+点击已选文件会取消该项。右键或 Shift+F10 打开菜单，提供选择操作和粘贴入口；点击菜单外的页面空白处或按 Esc 关闭菜单，关闭点击不会同时操作下方文件；过滤掉的条目不参与批量操作。N/T 新建文件夹/文本文件、F2 重命名单个已选项、Alt+Up 返回上级目录；Ctrl/Cmd+C/X/V 保留为兼容快捷键。文件操作单键仅在浏览列表或菜单时生效；输入路径、搜索词、新文件名和重命名时，C/X/V/D 等字母用于正常输入。
 
+在普通目录的列表空白处右键，可选择“在此处打开终端”，以当前目录启动内建 Command Line；路径直接作为子进程工作目录传入，中文、空格和特殊字符无需拼成命令。此入口沿用 Command Line 权限检查，无权限时禁用，回收站和文件选中菜单不提供此项。退出终端后返回原文件管理器目录；从 Launcher 打开终端仍使用默认的用户文档目录。
+
 点击路径栏“编辑”或按 Ctrl/Cmd+L 后，光标位于现有路径末尾，直接输入会追加文字。左右键移动光标，Shift+左右键选择文字；Home/End 跳到首尾，也可配合 Shift 选择。Ctrl/Cmd+A 全选路径，输入或粘贴替换选中的部分；Backspace 删除前一个字符，Delete 删除后一个字符，有选中内容时都删除选中的部分。输入和粘贴的 `/`、`\` 自动转换为当前系统的路径分隔符；长路径编辑时随光标横向滚动。
 
 Windows、macOS 和 Linux 的 Trash 实现均封装在 `platform`，APP 不拼接系统回收站路径，也不直接调用平台命令。
@@ -372,7 +374,7 @@ Launcher 存储平台可执行项目及固定顺序，支持图标/列表视图�
 
 Launcher 固定提供 **Editor**；Linux 当前用户及 Windows/macOS 本地管理员还会在第一项看到 **Command Line**。这些内建应用不写入 Launcher 配置，不能删除或拖动排序。图标由 `launcher_icons.toml` 中的 built-in application ID 定义。
 
-打开 Command Line 后，`CommandLineHost` 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，以 `xterm-256color` 运行，并使用有 2,000 行回滚的 vt100 内存屏幕解析子终端单元格，再在 Tundra chrome 中绘制。提示符和输入使用普通命令输出的文字颜色，不单独套用强调色。子进程输出不会直接写入宿主终端；所有 OSC 控制串（包括 OSC 52 剪贴板请求）都会被过滤。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理子进程树（Windows Job Object、Unix 进程组）；输入 `exit` 正常返回 Launcher。子 CLI 以退出码 `75` 请求重置时，Shell 统一完成重置并重启。
+打开 Command Line 后，`CommandLineHost` 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，以 `xterm-256color` 运行，并使用有 2,000 行回滚的 vt100 内存屏幕解析子终端单元格，再在 Tundra chrome 中绘制。提示符和输入使用普通命令输出的文字颜色，不单独套用强调色。子进程输出不会直接写入宿主终端；所有 OSC 控制串（包括 OSC 52 剪贴板请求）都会被过滤。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理子进程树（Windows Job Object、Unix 进程组）；输入 `exit` 正常返回打开终端前的 Launcher 或 Explorer。子 CLI 以退出码 `75` 请求重置时，Shell 统一完成重置并重启。
 
 `cargo run -p shell` 只构建主界面，不会重新构建 `tundra-cli` 可执行文件。若更新源码后 Command Line 仍显示旧提示符，先运行 `cargo build --locked -p cli` 再启动 Shell；发布模式需要对应使用 `--release`。两者必须放在同一构建目录，便携包也应一起更新两个程序。
 

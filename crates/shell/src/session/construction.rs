@@ -239,6 +239,7 @@ impl ShellSession {
             launcher_drag: None,
             launcher_task_runtime: None,
             launcher_refresh_request: None,
+            command_line_start_directory: None,
             explorer_input_mode: ExplorerInputMode::Browse,
             explorer_search_shortcut_held: None,
             explorer_input: String::new(),
