@@ -5,7 +5,7 @@ use ui::{
     RenderContext, SCREEN_KEYBOARD_LETTERS, ScreenKeyboardAction, ScreenKeyboardLayout,
     ScreenKeyboardModifiers, ScreenKeyboardViewModel, TundraTheme,
     components::{ButtonFrame, Surface},
-    render_screen_keyboard, screen_keyboard_layout,
+    render_screen_keyboard, screen_keyboard_layout, screen_keyboard_layout_with_visibility,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -119,9 +119,20 @@ fn keyboard_uses_seven_full_width_rows_in_the_bottom_half() {
     }
     let compact = screen_keyboard_layout(Rect::new(0, 0, 80, 24), false);
     assert!(!compact.bordered_buttons);
+    assert_eq!(
+        key_area(&compact, ScreenKeyboardAction::Letter('q')).height,
+        2
+    );
     let bordered = screen_keyboard_layout(Rect::new(0, 0, 104, 42), false);
     assert!(bordered.bordered_buttons);
-    assert!(bordered.buttons.iter().all(|key| key.area.height == 3));
+    assert_eq!(
+        key_area(&bordered, ScreenKeyboardAction::Letter('q')).height,
+        3
+    );
+    assert_eq!(
+        key_area(&bordered, ScreenKeyboardAction::ToggleKeyboard).height,
+        1
+    );
     let wide = screen_keyboard_layout(Rect::new(0, 0, 160, 24), false);
     assert!(key_area(&wide, Letter('q')).width > key_area(&compact, Letter('q')).width);
 }
@@ -306,7 +317,7 @@ fn small_windows_render_safely_and_keep_controls_reachable() {
 }
 
 #[test]
-fn keycaps_are_literal_and_latches_do_not_reuse_hover_colors() {
+fn keycaps_are_literal_and_latches_stay_bright_without_pointer_or_keyboard_focus() {
     use ScreenKeyboardAction::*;
     for bounds in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 104, 42)] {
         let mut model = view("");
@@ -322,15 +333,15 @@ fn keycaps_are_literal_and_latches_do_not_reuse_hover_colors() {
         context.buttons = Some(interactions);
         let (layout, buffer) = draw(bounds, false, &model, &context);
         for (action, expected) in [
-            (Letter('q'), "Q"),
+            (Letter('q'), "q"),
             (Character('1'), "!"),
             (Character('['), "{"),
             (Character(']'), "}"),
-            (Shift, "Shift*"),
-            (CapsLock, "CapsLock*"),
-            (LeftCtrl, "Ctrl*"),
-            (RightCtrl, "RCtrl*"),
-            (Alt, "Alt*"),
+            (Shift, "Shift"),
+            (CapsLock, "CapsLock"),
+            (LeftCtrl, "Ctrl"),
+            (RightCtrl, "RCtrl"),
+            (Alt, "Alt"),
             (Function(12), "F12"),
         ] {
             let area = key_area(&layout, action);
@@ -339,9 +350,18 @@ fn keycaps_are_literal_and_latches_do_not_reuse_hover_colors() {
             } else {
                 area
             };
-            assert_eq!(row_text(&buffer, inner, inner.y).trim(), expected);
+            let row = (inner.y..inner.bottom())
+                .find(|&y| row_text(&buffer, inner, y).trim() == expected)
+                .unwrap_or_else(|| panic!("missing {expected} in {area:?}"));
             for x in inner.x..inner.right() {
-                assert_eq!(buffer[(x, inner.y)].fg, context.theme.text);
+                assert_eq!(
+                    buffer[(x, row)].fg,
+                    if action.is_latched(model.modifiers) {
+                        context.compatibility_theme().button_pressed_color()
+                    } else {
+                        context.theme.text
+                    }
+                );
             }
         }
         model.modifiers = Default::default();
@@ -353,10 +373,97 @@ fn keycaps_are_literal_and_latches_do_not_reuse_hover_colors() {
             } else {
                 area
             };
-            assert_eq!(
-                row_text(&buffer, inner, inner.y).trim(),
-                action.character(Default::default()).unwrap().to_string()
+            let expected = action.character(Default::default()).unwrap().to_string();
+            assert!(
+                (inner.y..inner.bottom()).any(|y| row_text(&buffer, inner, y).trim() == expected)
             );
+        }
+    }
+}
+
+#[test]
+fn keys_show_only_the_current_character_with_shift_and_caps_lock() {
+    use ScreenKeyboardAction::*;
+    for (bounds, bordered) in [
+        (Rect::new(0, 0, 60, 14), false),
+        (Rect::new(0, 0, 80, 24), false),
+        (Rect::new(0, 0, 104, 42), true),
+        (Rect::new(0, 0, 80, 32), false),
+        (Rect::new(0, 0, 104, 56), true),
+    ] {
+        for capabilities in [
+            ui::RenderCapabilities::default(),
+            ui::RenderCapabilities::ansi(),
+        ] {
+            let theme = TundraTheme::default_dark();
+            let mut context = RenderContext::from_theme(&theme, Default::default(), capabilities);
+            let mut interactions = ButtonFrame::new(None, None, &context.compatibility_theme());
+            interactions.keyboard_focus_visible = false;
+            context.buttons = Some(interactions);
+            for (shift, caps_lock) in [(false, false), (true, false), (false, true), (true, true)] {
+                let mut model = view("");
+                model.modifiers.shift = shift;
+                model.modifiers.caps_lock = caps_lock;
+                let (layout, buffer) = draw(bounds, false, &model, &context);
+                assert_eq!(layout.bordered_buttons, bordered);
+                for (action, expected) in [
+                    (Character('1'), if shift { "!" } else { "1" }),
+                    (Character('['), if shift { "{" } else { "[" }),
+                    (Letter('q'), if shift ^ caps_lock { "Q" } else { "q" }),
+                ] {
+                    let area = key_area(&layout, action);
+                    let inner = if bordered {
+                        Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2)
+                    } else {
+                        area
+                    };
+                    let labels: Vec<_> = (inner.y..inner.bottom())
+                        .map(|y| row_text(&buffer, inner, y).trim().to_owned())
+                        .filter(|label| !label.is_empty())
+                        .collect();
+                    assert_eq!(labels, [expected], "{bounds:?}, {action:?}");
+                    let center_y = inner.y + inner.height.saturating_sub(1) / 2;
+                    assert_eq!(row_text(&buffer, inner, center_y).trim(), expected);
+                    for x in inner.x..inner.right() {
+                        assert_eq!(buffer[(x, center_y)].fg, context.theme.text);
+                    }
+                    assert_eq!(
+                        action.character(model.modifiers).unwrap().to_string(),
+                        expected
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sliding_keyboard_keeps_toolbar_fixed_and_matches_visible_hit_regions() {
+    use ScreenKeyboardAction::*;
+    for bounds in [
+        Rect::new(0, 0, 80, 24),
+        Rect::new(4, 3, 104, 56),
+        Rect::new(0, 0, u16::MAX, u16::MAX),
+    ] {
+        let expanded = screen_keyboard_layout(bounds, false);
+        let toolbar = key_area(&expanded, ToggleKeyboard);
+        let mut previous_y = expanded.keyboard.y;
+        for visibility in [1_000, 875, 500, 250, 1, 0] {
+            let layout = screen_keyboard_layout_with_visibility(bounds, true, visibility);
+            assert_eq!(key_area(&layout, ToggleKeyboard), toolbar);
+            assert!(layout.keyboard.y >= previous_y);
+            previous_y = layout.keyboard.y;
+            assert_eq!(layout.hint.bottom(), layout.keyboard.y);
+            for (index, button) in layout.buttons.iter().enumerate() {
+                assert_eq!(button.area.intersection(bounds), button.area);
+                assert_eq!(button.region().area, button.area);
+                for other in layout.buttons.iter().skip(index + 1) {
+                    assert!(button.area.intersection(other.area).is_empty());
+                }
+            }
+            if visibility == 0 {
+                assert_eq!(layout.buttons.len(), 5);
+            }
         }
     }
 }

@@ -154,8 +154,13 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     terminal.click(
         ScreenKeyboardAction::Shift,
         false,
-        "one-shot Shift",
-        |screen| last_key(screen, false).contains("Shift"),
+        "latched Shift",
+        |screen| {
+            color_at(
+                screen,
+                button_position(screen, false, ScreenKeyboardAction::Shift),
+            ) == PRESSED
+        },
     );
     terminal.click(
         ScreenKeyboardAction::Character('1'),
@@ -168,15 +173,32 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     terminal.click(
         ScreenKeyboardAction::Character('1'),
         false,
-        "Shift was consumed",
-        |screen| typed_text(screen, false) == "aBcqDE1;!1",
+        "Shift remains held",
+        |screen| typed_text(screen, false) == "aBcqDE1;!!",
+    );
+    terminal.click(
+        ScreenKeyboardAction::Shift,
+        false,
+        "release Shift",
+        |screen| {
+            color_at(
+                screen,
+                button_position(screen, false, ScreenKeyboardAction::Shift),
+            ) == TEXT
+        },
+    );
+    terminal.click(
+        ScreenKeyboardAction::Character('1'),
+        false,
+        "unshifted digit after release",
+        |screen| typed_text(screen, false) == "aBcqDE1;!!1",
     );
     terminal.click(
         ScreenKeyboardAction::Function(12),
         false,
         "function key",
         |screen| {
-            last_key(screen, false).contains("F12") && typed_text(screen, false) == "aBcqDE1;!1"
+            last_key(screen, false).contains("F12") && typed_text(screen, false) == "aBcqDE1;!!1"
         },
     );
     for (modifier, key, expected) in [
@@ -198,14 +220,19 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     ] {
         terminal.click(modifier, false, "modifier toggle", |_| true);
         terminal.click(key, false, expected, |screen| {
-            last_key(screen, false).contains(expected) && typed_text(screen, false) == "aBcqDE1;!1"
+            last_key(screen, false).contains(expected)
+                && typed_text(screen, false) == "aBcqDE1;!!1"
+                && color_at(screen, button_position(screen, false, modifier)) == PRESSED
+        });
+        terminal.click(modifier, false, "release modifier", |screen| {
+            color_at(screen, button_position(screen, false, modifier)) == TEXT
         });
     }
     terminal.click(
         ScreenKeyboardAction::Letter('a'),
         false,
-        "Ctrl and Alt were consumed",
-        |screen| typed_text(screen, false) == "aBcqDE1;!1a",
+        "Ctrl and Alt were released",
+        |screen| typed_text(screen, false) == "aBcqDE1;!!1a",
     );
     terminal.click(
         ScreenKeyboardAction::CapsLock,
@@ -217,13 +244,13 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         ScreenKeyboardAction::Letter('q'),
         false,
         "Caps Lock first letter",
-        |screen| typed_text(screen, false) == "aBcqDE1;!1aQ",
+        |screen| typed_text(screen, false) == "aBcqDE1;!!1aQ",
     );
     terminal.click(
         ScreenKeyboardAction::Letter('w'),
         false,
         "Caps Lock remains active",
-        |screen| typed_text(screen, false) == "aBcqDE1;!1aQW",
+        |screen| typed_text(screen, false) == "aBcqDE1;!!1aQW",
     );
     terminal.click(
         ScreenKeyboardAction::CapsLock,
@@ -235,7 +262,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         ScreenKeyboardAction::Letter('q'),
         false,
         "Caps Lock was disabled",
-        |screen| typed_text(screen, false) == "aBcqDE1;!1aQWq",
+        |screen| typed_text(screen, false) == "aBcqDE1;!!1aQWq",
     );
     terminal.click(ScreenKeyboardAction::Tab, false, "virtual Tab", |screen| {
         last_key(screen, false).contains("Tab")
@@ -244,7 +271,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         ScreenKeyboardAction::Backspace,
         false,
         "backspace removes Tab",
-        |screen| typed_text(screen, false) == "aBcqDE1;!1aQWq",
+        |screen| typed_text(screen, false) == "aBcqDE1;!!1aQWq",
     );
 
     terminal.click(
@@ -302,15 +329,35 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         screen.alternate_screen() && last_key(screen, false).contains("Ctrl+C")
     });
 
-    terminal.click(
-        ScreenKeyboardAction::ToggleKeyboard,
+    let toggle = button_position(
+        terminal.parser.screen(),
         false,
-        "hide keyboard",
-        |screen| {
-            screen.contents().contains("Show")
-                && !screen.contents().contains("F12")
-                && typed_text(screen, true) == COPIED_TEXT
-        },
+        ScreenKeyboardAction::ToggleKeyboard,
+    );
+    terminal.mouse(0, toggle, false);
+    terminal.wait_for("hide press", |screen| color_at(screen, toggle) == PRESSED);
+    let started = Instant::now();
+    terminal.mouse(0, toggle, true);
+    let original_function_y = button_area(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Function(12),
+    )
+    .y;
+    terminal.wait_for("keyboard slides through intermediate rows", |screen| {
+        screen
+            .rows(0, COLS)
+            .enumerate()
+            .any(|(row, text)| row > usize::from(original_function_y) && text.contains("F12"))
+    });
+    terminal.wait_for("hide keyboard", |screen| {
+        screen.contents().contains("Show")
+            && !screen.contents().contains("F12")
+            && typed_text(screen, true) == COPIED_TEXT
+    });
+    assert!(
+        started.elapsed() >= Duration::from_millis(320),
+        "saved 50% speed must slow the 220ms transition"
     );
     terminal.click(
         ScreenKeyboardAction::ToggleKeyboard,
@@ -318,10 +365,80 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         "show keyboard",
         |screen| {
             screen.contents().contains("Hide")
-                && screen.contents().contains("F12")
+                && text_in(
+                    screen,
+                    button_area(screen, false, ScreenKeyboardAction::Function(12)),
+                )
+                .concat()
+                .contains("F12")
                 && typed_text(screen, false) == COPIED_TEXT
         },
     );
+    terminal.assert_stays("expanded keyboard settles", |screen| {
+        screen.contents().contains("F12")
+    });
+
+    terminal.resize(36, 80);
+    terminal.wait_for("taller keys show only the current digit", |screen| {
+        let area = button_area(screen, false, ScreenKeyboardAction::Character('1'));
+        let labels = text_in(screen, area);
+        area.height >= 2
+            && labels.iter().any(|label| label.trim() == "1")
+            && !labels.iter().any(|label| label.contains('!'))
+            && text_in(
+                screen,
+                button_area(screen, false, ScreenKeyboardAction::Shift),
+            )
+            .concat()
+            .contains("Shift")
+            && text_in(
+                screen,
+                button_area(screen, false, ScreenKeyboardAction::Exit),
+            )
+            .concat()
+            .contains("Exit")
+    });
+    terminal.click(
+        ScreenKeyboardAction::Shift,
+        false,
+        "Shift swaps the active glyph",
+        |screen| {
+            let area = button_area(screen, false, ScreenKeyboardAction::Character('1'));
+            let labels: Vec<_> = text_in(screen, area)
+                .into_iter()
+                .map(|label| label.trim().to_owned())
+                .filter(|label| !label.is_empty())
+                .collect();
+            labels == ["!"]
+                && color_at(
+                    screen,
+                    button_position(screen, false, ScreenKeyboardAction::Character('1')),
+                ) == TEXT
+        },
+    );
+    terminal.click(
+        ScreenKeyboardAction::Shift,
+        false,
+        "release Shift before wrapping",
+        |screen| {
+            color_at(
+                screen,
+                button_position(screen, false, ScreenKeyboardAction::Shift),
+            ) == TEXT
+        },
+    );
+    terminal.resize(ROWS, COLS);
+    terminal.wait_for("compact keyboard after tall layout", |screen| {
+        screen.size() == (ROWS, COLS)
+            && button_area(screen, false, ScreenKeyboardAction::Character('1')).height == 2
+            && screen.contents().contains("F12")
+            && text_in(
+                screen,
+                button_area(screen, false, ScreenKeyboardAction::Exit),
+            )
+            .concat()
+            .contains("Exit")
+    });
 
     terminal.click(
         ScreenKeyboardAction::Clear,
@@ -352,7 +469,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
                 button_area(screen, false, ScreenKeyboardAction::Letter('q')),
             )
             .concat()
-            .contains('Q')
+            .contains('q')
             && typed_lines(screen, false).concat() == wrapped.replace('\n', "")
     });
     let resized_q = button_position(
@@ -430,7 +547,8 @@ impl Fixture {
         ));
         let mut config = storage::StorageConfig::default();
         config.appearance.accent_color = storage::BorderColor::Rgb(12, 34, 56);
-        config.appearance.motion_preference = storage::MotionPreference::Reduced;
+        config.appearance.motion_preference = storage::MotionPreference::Full;
+        config.appearance.animation_speed_percent = 50;
         storage.save_config(&config).unwrap();
         fixture
     }
@@ -527,7 +645,17 @@ impl PtySession {
         // A modifier can change labels after release. Consume that redraw before
         // locating the next button, even when its resulting state is checked later.
         self.wait_for(description, |screen| {
-            color_at(screen, position) != PRESSED && expected(screen)
+            let modifier = match action {
+                ScreenKeyboardAction::Shift => Some("Shift"),
+                ScreenKeyboardAction::CapsLock => Some("CapsLock"),
+                ScreenKeyboardAction::LeftCtrl => Some("Ctrl"),
+                ScreenKeyboardAction::RightCtrl => Some("RCtrl"),
+                ScreenKeyboardAction::Alt => Some("Alt"),
+                _ => None,
+            };
+            (color_at(screen, position) != PRESSED
+                || modifier.is_some_and(|name| last_key(screen, collapsed).contains(name)))
+                && expected(screen)
         });
     }
 
@@ -647,7 +775,10 @@ fn button_position(
     let area = button_area(screen, collapsed, action);
     for row in area.y..area.bottom() {
         for col in area.x..area.right() {
-            if !screen.cell(row, col).unwrap().contents().trim().is_empty() {
+            let cell = screen.cell(row, col).unwrap();
+            if !cell.contents().trim().is_empty()
+                && matches!(cell.fgcolor(), TEXT | ACCENT | PRESSED)
+            {
                 return (row, col);
             }
         }

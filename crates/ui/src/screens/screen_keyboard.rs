@@ -124,36 +124,49 @@ impl ScreenKeyboardAction {
     }
 
     fn label(self, modifiers: ScreenKeyboardModifiers, collapsed: bool) -> String {
-        let (label, latched) = match self {
-            Self::Letter(letter) => return letter.to_ascii_uppercase().to_string(),
-            Self::Character(_) => {
+        match self {
+            Self::Letter(_) | Self::Character(_) => {
                 return self.character(modifiers).unwrap().to_string();
             }
             Self::Function(number) => return format!("F{number}"),
-            Self::Escape => ("Esc".to_owned(), false),
-            Self::Tab => ("Tab".to_owned(), false),
-            Self::CapsLock => ("CapsLock".to_owned(), modifiers.caps_lock),
-            Self::Backspace => (i18n::tr!("screen-keyboard-backspace"), false),
-            Self::Enter => ("Enter".to_owned(), false),
-            Self::Shift => ("Shift".to_owned(), modifiers.shift),
-            Self::Space => (i18n::tr!("screen-keyboard-space"), false),
-            Self::LeftCtrl => ("Ctrl".to_owned(), modifiers.left_ctrl),
-            Self::RightCtrl => ("RCtrl".to_owned(), modifiers.right_ctrl),
-            Self::Alt => ("Alt".to_owned(), modifiers.alt),
-            Self::ToggleKeyboard => (
-                i18n::tr!(if collapsed {
-                    "screen-keyboard-show"
-                } else {
-                    "screen-keyboard-hide"
-                }),
-                false,
-            ),
-            Self::Copy => (i18n::tr!("screen-keyboard-copy"), false),
-            Self::Paste => (i18n::tr!("screen-keyboard-paste"), false),
-            Self::Clear => (i18n::tr!("screen-keyboard-clear"), false),
-            Self::Exit => (i18n::tr!("screen-keyboard-exit"), false),
-        };
-        if latched { format!("{label}*") } else { label }
+            Self::Escape => "Esc".to_owned(),
+            Self::Tab => "Tab".to_owned(),
+            Self::CapsLock => "CapsLock".to_owned(),
+            Self::Backspace => i18n::tr!("screen-keyboard-backspace"),
+            Self::Enter => "Enter".to_owned(),
+            Self::Shift => "Shift".to_owned(),
+            Self::Space => i18n::tr!("screen-keyboard-space"),
+            Self::LeftCtrl => "Ctrl".to_owned(),
+            Self::RightCtrl => "RCtrl".to_owned(),
+            Self::Alt => "Alt".to_owned(),
+            Self::ToggleKeyboard => i18n::tr!(if collapsed {
+                "screen-keyboard-show"
+            } else {
+                "screen-keyboard-hide"
+            }),
+            Self::Copy => i18n::tr!("screen-keyboard-copy"),
+            Self::Paste => i18n::tr!("screen-keyboard-paste"),
+            Self::Clear => i18n::tr!("screen-keyboard-clear"),
+            Self::Exit => i18n::tr!("screen-keyboard-exit"),
+        }
+    }
+
+    pub fn is_latched(self, modifiers: ScreenKeyboardModifiers) -> bool {
+        match self {
+            Self::Shift => modifiers.shift,
+            Self::CapsLock => modifiers.caps_lock,
+            Self::LeftCtrl => modifiers.left_ctrl,
+            Self::RightCtrl => modifiers.right_ctrl,
+            Self::Alt => modifiers.alt,
+            _ => false,
+        }
+    }
+
+    fn is_toolbar(self) -> bool {
+        matches!(
+            self,
+            Self::ToggleKeyboard | Self::Copy | Self::Paste | Self::Clear | Self::Exit
+        )
     }
 
     fn minimum_width(self, bordered: bool) -> u16 {
@@ -303,13 +316,24 @@ fn toolbar(width: u16) -> Vec<(ScreenKeyboardAction, u16)> {
 
 /// Rendering and input both consume these exact button rectangles.
 pub fn screen_keyboard_layout(bounds: Rect, collapsed: bool) -> ScreenKeyboardLayout {
+    screen_keyboard_layout_with_visibility(bounds, collapsed, if collapsed { 0 } else { 1_000 })
+}
+
+/// Slides key rows while keeping the toolbar stationary and sharing hit regions.
+/// Visibility is in thousandths; the host supplies the animated value.
+pub fn screen_keyboard_layout_with_visibility(
+    bounds: Rect,
+    collapsed: bool,
+    visibility: u16,
+) -> ScreenKeyboardLayout {
     use ScreenKeyboardAction::*;
     let usable = bounds.width >= 60 && bounds.height >= 14;
-    let keyboard_y = if collapsed {
-        bounds.bottom().saturating_sub(u16::from(bounds.height > 0))
-    } else {
-        bounds.y + bounds.height / 2
-    };
+    let expanded_y = bounds.y + bounds.height / 2;
+    let toolbar_y = bounds.bottom().saturating_sub(u16::from(bounds.height > 0));
+    let slide = (u32::from(toolbar_y.saturating_sub(expanded_y))
+        * u32::from(1_000 - visibility.min(1_000))
+        / 1_000) as u16;
+    let keyboard_y = expanded_y + slide;
     let keyboard = Rect::new(
         bounds.x,
         keyboard_y,
@@ -317,7 +341,17 @@ pub fn screen_keyboard_layout(bounds: Rect, collapsed: bool) -> ScreenKeyboardLa
         bounds.bottom().saturating_sub(keyboard_y),
     );
     let upper_height = keyboard_y.saturating_sub(bounds.y);
-    let bordered_buttons = !collapsed && bounds.width >= 104 && keyboard.height >= 21;
+    let keys_height = toolbar_y.saturating_sub(expanded_y);
+    let button_height = (keys_height / 6).clamp(1, 5);
+    let bordered_buttons = bounds.width >= 104 && button_height >= 3;
+    let mut row_heights = [button_height; 6];
+    let preferred_character_height = if bordered_buttons { 4 } else { 2 };
+    // Give character rows more height when there is room for comfortable keys.
+    if button_height < preferred_character_height
+        && keys_height >= button_height * 2 + preferred_character_height * 4
+    {
+        row_heights[1..5].fill(preferred_character_height);
+    }
     let mut layout = ScreenKeyboardLayout {
         title: Rect::new(
             bounds.x,
@@ -352,7 +386,7 @@ pub fn screen_keyboard_layout(bounds: Rect, collapsed: bool) -> ScreenKeyboardLa
     if keyboard.is_empty() {
         return layout;
     }
-    if collapsed || !usable {
+    if visibility == 0 || !usable {
         append_row(
             &mut layout.buttons,
             Rect::new(bounds.x, bounds.bottom() - 1, bounds.width, 1),
@@ -386,18 +420,30 @@ pub fn screen_keyboard_layout(bounds: Rect, collapsed: bool) -> ScreenKeyboardLa
         home_row,
         shift_row,
         vec![(LeftCtrl, 2), (Alt, 2), (Space, 8), (RightCtrl, 2)],
-        toolbar(bounds.width),
     ];
-    let button_height = if bordered_buttons { 3 } else { 1 };
+    let visible_keys = Rect::new(bounds.x, keyboard_y, bounds.width, toolbar_y - keyboard_y);
+    let spare = keys_height.saturating_sub(row_heights.iter().sum());
+    let mut preceding_height = 0_u32;
     for (index, keys) in rows.iter().enumerate() {
-        let y = keyboard.y + (index as u32 * u32::from(keyboard.height - button_height) / 6) as u16;
+        let y = u32::from(keyboard.y) + preceding_height + index as u32 * u32::from(spare) / 5;
+        let height = row_heights[index];
+        preceding_height += u32::from(height);
+        if y >= u32::from(toolbar_y) {
+            continue;
+        }
         append_row(
             &mut layout.buttons,
-            Rect::new(bounds.x, y, bounds.width, button_height),
+            Rect::new(bounds.x, y as u16, bounds.width, height).intersection(visible_keys),
             keys,
             bordered_buttons,
         );
     }
+    append_row(
+        &mut layout.buttons,
+        Rect::new(bounds.x, toolbar_y, bounds.width, 1),
+        &toolbar(bounds.width),
+        false,
+    );
     layout
 }
 
@@ -510,9 +556,11 @@ pub fn render_screen_keyboard(
             target.action.button_id(),
             target.action.label(model.modifiers, layout.collapsed),
         )
-        .with_bracketed_label(false);
+        .with_bracketed_label(false)
+        .with_centered_label(true)
+        .with_latched(target.action.is_latched(model.modifiers));
         button.set_focused(target.action == model.focus);
-        if layout.bordered_buttons {
+        if layout.bordered_buttons && !target.action.is_toolbar() {
             button.render_frame(frame, target.area, &theme);
         } else {
             button.render_borderless_frame(frame, target.area, &theme);
