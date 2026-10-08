@@ -276,6 +276,74 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
         raise SystemExit("Launcher did not settle after management verification")
 
 
+def check_package_and_log_views(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
+    """Visit read-only package views and the log menu through the real Shell."""
+    columns = 140
+
+    def step(keys: bytes, marker: bytes, label: str, timeout: float = 15.0) -> None:
+        nonlocal columns
+        offset = len(output)
+        os.write(master, keys)
+        deadline = time.monotonic() + 0.6
+        while time.monotonic() < deadline:
+            read_available(master, output, 0.05)
+        # Force a complete frame: incremental terminal writes can leave the
+        # expected title unchanged, especially after dismissing a small menu.
+        columns = 139 if columns == 140 else 140
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, columns, 0, 0))
+        os.kill(child.pid, signal.SIGWINCH)
+        if not wait_for_output(master, output, marker, child, timeout, offset, ignore_spaces=True):
+            raise SystemExit(f"{label}:\n" + output_diagnostic(output[offset:]))
+        # Let modal entry/exit complete before injecting the next action.
+        deadline = time.monotonic() + 0.6
+        while time.monotonic() < deadline:
+            read_available(master, output, 0.05)
+
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    wait_for_output_quiet(master, output, child, quiet_period=0.2)
+    # The fixed Linux catalog places Packages seventh and Logs fourth.
+    step(b"\x1b[H" + b"\x1b[B" * 6 + b"\r", b"Installed packages", "Packages did not open")
+    # Installed rows must return after leaving the full detail page, even
+    # when a detail query targeted only the first package.
+    if Path("/usr/bin/dpkg-query").is_file():
+        installed = subprocess.check_output([
+            "/usr/bin/dpkg-query", "-W", "-f=${db:Status-Abbrev} ${Package}\\n"
+        ], env={**os.environ, "LC_ALL": "C.UTF-8"}).decode().splitlines()
+        names = sorted({line[4:] for line in installed if line.startswith("ii ")})
+        if len(names) >= 2:
+            if not wait_for_output(master, output, names[1].encode(), child, 15.0):
+                raise SystemExit("Installed package list did not load")
+            step(b"\x1bOS", names[0].encode(), "Package detail did not load")
+            step(b"\x1b", names[1].encode(), "Escape from details did not restore package rows")
+    for key, title in ((b"\x1b[17~", b"Search packages"),
+                       (b"\x1b[19~", b"Available updates"),
+                       (b"\x1b[18~", b"Installed packages")):
+        step(key, title, "Package scope shortcut did not switch views", timeout=45.0)
+        if key == b"\x1b[17~" and Path("/usr/bin/dpkg-query").is_file():
+            step(b"sbash\r", b"Bourne Again", "Package search did not load matching metadata", timeout=45.0)
+    if Path("/usr/bin/dpkg-query").is_file() and len(names) >= 2:
+        step(b"\x15", names[1].encode(), "Clearing package search did not restore installed rows")
+    # View actions are the final six menu items, in the same order on every
+    # package page. Only navigation is submitted here; no system write runs.
+    for upward, title in ((2, b"Software sources"), (1, b"Configuration conflicts"), (0, b"Package status")):
+        step(b"\t\x1b[F\r", b"Close", "Package More actions did not open")
+        step(b"\x1b[F" + b"\x1b[A" * upward + b"\r", title,
+             "Package auxiliary view did not open", timeout=45.0)
+        step(b"\x1b[18~", b"Installed packages", "Auxiliary view could not return to packages")
+    step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Packages did not return to Launcher")
+    step(b"\x1b[H" + b"\x1b[B" * 3 + b"\r", b"UX log", "Logs did not open")
+    step(b"\x1b[21~", b"Service, boot or file", "Log More actions did not open")
+    # End selects the explicit close action, and Space activates it.
+    step(b"\x1b[F ", b"UX events", "Log menu close did not restore its page")
+    step(b"\x1b[21~", b"Service, boot or file", "Log menu did not reopen")
+    # Clicking outside the centered menu closes it without opening a covered
+    # category or toolbar control. The layout tests check exact bounds/colors.
+    step(b"\x1b[<0;3;6M\x1b[<0;3;6m", b"UX log", "Log menu outside click did not close it")
+    step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Logs did not return to Launcher")
+    print("PASS: all six package views, detail return, and log menu keyboard/outside-click dismissal")
+
+
 def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) == 2 else "target/debug/tundra-shell")
     if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -356,6 +424,11 @@ def main() -> int:
             os.write(master, b"\r")
             if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
                 raise SystemExit("shell did not settle after the graphics warning")
+            # A quiet gap can occur before the close animation starts. Do not
+            # send Language's Enter while the warning still owns keyboard input.
+            deadline = time.monotonic() + 0.8
+            while time.monotonic() < deadline:
+                read_available(master, output, 0.05)
 
         # Linux onboarding reuses Language and Timezone, skipping account creation.
         # Match page-specific controls: incremental rendering can split the
@@ -494,6 +567,7 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Launcher did not settle after CLI exit:\n" + output_diagnostic(output[launcher_offset:]))
         check_management_menu(master, slave, output, child)
+        check_package_and_log_views(master, slave, output, child)
         home_offset = len(output)
         os.write(master, b"\x1b")
         if not wait_for_output(master, output, b"Explorer", child, 5.0, home_offset):

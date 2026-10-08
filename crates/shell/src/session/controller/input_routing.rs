@@ -44,6 +44,19 @@ impl ShellSession {
             // Covered toolbar buttons must not consume the outside click.
             return None;
         }
+        if self.active_screen() == ShellScreen::Logs
+            && self.logs_has_active_overlay()
+            && self
+                .logs_main_area()
+                .is_some_and(|main| rect_contains(main, point))
+        {
+            // A newly opened modal can still have the previous page's button
+            // registry until the next frame. Never capture a covered button.
+            return self.logs_button_at(point);
+        }
+        if self.management_overlay_contains(point) {
+            return self.management_button_at(point);
+        }
         self.management_button_at(point)
             .or_else(|| self.logs_button_at(point))
             .or_else(|| {

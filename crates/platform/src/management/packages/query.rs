@@ -356,9 +356,26 @@ fn to_row(record: PackageRecord, backend: PackageBackend, scope: &str) -> Manage
             action("install", "Install package", true)
         });
     }
-    let mut detail = record.details;
+    let mut detail = vec![
+        ("Package".into(), record.name.clone()),
+        ("Architecture".into(), record.architecture.clone()),
+        (
+            "Installed".into(),
+            if installed.is_empty() {
+                "—".into()
+            } else {
+                installed.into()
+            },
+        ),
+    ];
+    if scope != "installed" && !record.version.is_empty() {
+        detail.push(("Available".into(), record.version.clone()));
+    }
+    detail.extend(record.details);
     if !record.description.is_empty() {
         detail.push(("Description".into(), record.description));
+    } else if !record.summary.is_empty() {
+        detail.push(("Description".into(), record.summary.clone()));
     }
     if !record.repository.is_empty() {
         detail.push(("Repository".into(), record.repository));
@@ -396,6 +413,27 @@ fn apt_records(
     let installed = apt_installed(cancelled)?;
     if scope == "installed" && target.is_none() {
         return Ok(installed);
+    }
+    if scope == "installed" {
+        let target = target.unwrap();
+        if !installed
+            .iter()
+            .any(|record| record.id(PackageBackend::Apt) == target || record.name == target)
+        {
+            return Ok(Vec::new());
+        }
+        // Installed metadata remains useful when the repository is disabled,
+        // its cache is missing, or the installed version is no longer offered.
+        let text = run_read_command(
+            "/usr/bin/dpkg-query",
+            &["--status".into(), "--".into(), target.into()],
+            cancelled,
+        )?;
+        let mut records = parsing::apt_records(&text)?;
+        for record in &mut records {
+            record.installed_version = Some(record.version.clone());
+        }
+        return Ok(records);
     }
     // Reading dumpavail loads every version's full description and dependencies;
     // ordinary Ubuntu repositories can exceed hundreds of MiB. Obtain a compact
@@ -460,8 +498,6 @@ fn apt_records(
                     .iter()
                     .any(|(name, version)| *name == record.name && *version == record.version)
         });
-    } else if scope == "installed" {
-        available.retain(|record| record.installed_version.is_some());
     }
     Ok(available)
 }
@@ -543,8 +579,28 @@ fn rpm_records(
     cancelled: &AtomicBool,
 ) -> Result<Vec<PackageRecord>, ManagementError> {
     let installed = rpm_installed(cancelled)?;
-    if scope == "installed" && target.is_none() {
-        return Ok(installed);
+    if scope == "installed" {
+        let mut records = installed;
+        if let Some(target) = target {
+            records.retain(|record| record.id(backend) == target || record.name == target);
+            if !records.is_empty() {
+                let description = run_read_command(
+                    "/usr/bin/rpm",
+                    &[
+                        "-q".into(),
+                        "--qf".into(),
+                        "%{DESCRIPTION}\n".into(),
+                        "--".into(),
+                        target.into(),
+                    ],
+                    cancelled,
+                )?;
+                for record in &mut records {
+                    record.description = description.clone();
+                }
+            }
+        }
+        return Ok(records);
     }
     let mut args = vec![
         "-C".into(),
@@ -556,8 +612,6 @@ fn rpm_records(
     ];
     if scope == "updates" {
         args.push("--upgrades".into());
-    } else if scope == "installed" {
-        args.push("--installed".into());
     }
     if let Some(target) = target {
         args.extend(["--".into(), target.into()]);
@@ -732,6 +786,37 @@ mod tests {
             installed_version: installed.then(|| "2:1.0-3".into()),
             details: Vec::new(),
         }
+    }
+
+    #[test]
+    fn installed_package_rows_show_summary_and_local_identity_before_details_load() {
+        let row = to_row(
+            PackageRecord {
+                name: "demo".into(),
+                architecture: "amd64".into(),
+                version: "1.2".into(),
+                installed_version: Some("1.2".into()),
+                summary: "Locally installed program".into(),
+                description: String::new(),
+                repository: String::new(),
+                details: vec![("Package status".into(), "ii ".into())],
+            },
+            PackageBackend::Apt,
+            "installed",
+        );
+        assert_eq!(row.id, "demo:amd64");
+        assert!(row.detail.contains(&("Package".into(), "demo".into())));
+        assert!(
+            row.detail
+                .contains(&("Architecture".into(), "amd64".into()))
+        );
+        assert!(row.detail.contains(&("Installed".into(), "1.2".into())));
+        assert!(
+            row.detail
+                .contains(&("Description".into(), "Locally installed program".into()))
+        );
+        assert!(!row.detail.iter().any(|(key, _)| key == "Available"));
+        assert!(row.actions.iter().any(|action| action.id == "remove"));
     }
 
     #[test]
@@ -1051,6 +1136,30 @@ mod tests {
             .unwrap();
         assert!(!bash.cells[1].is_empty());
         let target = bash.id.clone();
+        request.target = Some(target.clone());
+        let local_details = query(&request, &cancelled).unwrap();
+        assert_eq!(local_details.rows.len(), 1);
+        let local = &local_details.rows[0];
+        assert_eq!(
+            local.identity["installed_version"],
+            bash.identity["installed_version"]
+        );
+        assert!(
+            local
+                .detail
+                .iter()
+                .any(|(key, text)| key == "Description" && text.contains("shell"))
+        );
+        assert!(
+            apt_records(
+                "installed",
+                Some("tundra-missing-package-946395"),
+                "",
+                &cancelled
+            )
+            .unwrap()
+            .is_empty()
+        );
         request.scope = "search".into();
         request.target = Some(target);
         let details = query(&request, &cancelled).unwrap();

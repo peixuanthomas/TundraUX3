@@ -241,16 +241,19 @@ fn lock_owners(text: &str, device: u64, inode: u64) -> Vec<u32> {
 
 pub(super) fn view_actions() -> Vec<ManagementAction> {
     [
+        ("search", "Search packages"),
+        ("installed", "Installed packages"),
+        ("updates", "Available updates"),
         ("sources", "Software sources"),
         ("conflicts", "Configuration conflicts"),
         ("status", "Package status"),
     ]
     .into_iter()
     .map(|(scope, label)| ManagementAction {
-        id: "set_view".into(),
+        id: format!("scope_{scope}"),
         label: label.into(),
         values: BTreeMap::from([("scope".into(), scope.into())]),
-        group: "inspect".into(),
+        group: "view".into(),
         ..Default::default()
     })
     .collect()
@@ -321,7 +324,7 @@ pub(super) fn query(
     let rows = candidates.into_iter().filter(|path| filter.is_empty() || path.to_string_lossy().to_ascii_lowercase().contains(&filter)).map(|candidate| {
         let current = conflict_original(&candidate).unwrap();
         let values = BTreeMap::from([("path".into(), current.to_string_lossy().into_owned()), ("compare_path".into(), candidate.to_string_lossy().into_owned()), ("validator".into(), "auto".into())]);
-        ManagementRow { id: candidate.to_string_lossy().into_owned(), cells: vec![current.to_string_lossy().into_owned(), candidate.to_string_lossy().into_owned()], detail: vec![("Merge guidance".into(), "Compare the preserved candidate, edit the current file and review the difference before saving".into())], actions: vec![ManagementAction { id: "edit_system_config".into(), label: "Compare configuration".into(), values, primary: true, ..Default::default() }], ..Default::default() }
+        ManagementRow { id: candidate.to_string_lossy().into_owned(), cells: vec![current.to_string_lossy().into_owned(), candidate.to_string_lossy().into_owned()], detail: vec![("Current file".into(), current.to_string_lossy().into_owned()), ("Preserved configuration".into(), candidate.to_string_lossy().into_owned()), ("Merge guidance".into(), "Compare the preserved candidate, edit the current file and review the difference before saving".into())], actions: vec![ManagementAction { id: "compare_package_config".into(), label: "Compare configuration".into(), values, primary: true, ..Default::default() }], ..Default::default() }
     }).collect();
     let mut notices = Vec::new();
     if denied > 0 {
@@ -432,6 +435,50 @@ pub(super) fn check_database(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_package_subview_offers_the_same_six_read_only_destinations() {
+        let actions = view_actions();
+        assert_eq!(
+            actions
+                .iter()
+                .map(|action| action.id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "scope_search",
+                "scope_installed",
+                "scope_updates",
+                "scope_sources",
+                "scope_conflicts",
+                "scope_status"
+            ]
+        );
+        for action in &actions {
+            assert!(!action.privileged && !action.confirm);
+            assert!(action.fields.is_empty());
+            assert_eq!(
+                action.values["scope"],
+                action.id.strip_prefix("scope_").unwrap()
+            );
+            assert_eq!(action.group, "view");
+        }
+        for backend in [
+            PackageBackend::Apt,
+            PackageBackend::Dnf4,
+            PackageBackend::Dnf5,
+            PackageBackend::Pacman,
+        ] {
+            let recovery = recovery_actions(backend);
+            for destination in &actions {
+                assert_eq!(
+                    recovery
+                        .iter()
+                        .filter(|action| action.id == destination.id)
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
     #[test]
     fn stale_dnf_pid_never_identifies_an_unrelated_python_process() {
         let executable = Some(Path::new("/usr/bin/python3"));

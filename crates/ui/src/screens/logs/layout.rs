@@ -2,7 +2,7 @@ use ratatui::layout::Rect;
 
 use super::{LogsCategory, LogsSection, LogsViewModel};
 use crate::components::{TabItem, Tabs};
-use crate::screens::shell::{inset_rect, line_in_rect, rect_contains};
+use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains};
 use crate::{DiagnosticsContentLayout, DiagnosticsHitTarget, diagnostics_content_layout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +24,8 @@ pub enum LogsHitTarget {
     Scrollbar,
     Follow,
     More,
+    CloseMore,
+    MoreScrollbar,
     Filters,
     FormField(usize),
     FormApply,
@@ -61,6 +63,7 @@ pub struct LogsLayout {
     pub detail_scrollbar: Option<crate::ManagementScrollbar>,
     pub menu: Rect,
     pub menu_controls: Vec<LogsControlLayout>,
+    pub menu_scrollbar: Option<crate::ManagementScrollbar>,
 }
 
 pub(super) fn category_tabs() -> Tabs {
@@ -115,6 +118,7 @@ pub fn logs_more_controls() -> Vec<(LogsHitTarget, String)> {
             LogsHitTarget::RelatedEvents,
             i18n::tr!("ui-logs-show-events"),
         ),
+        (LogsHitTarget::CloseMore, i18n::tr!("management-form-close")),
     ]
 }
 
@@ -212,39 +216,78 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         false,
     );
     let menu_items = logs_more_controls();
+    let menu_bounds = if main.width >= 12 && main.height >= 8 {
+        inset_rect(main, 1)
+    } else {
+        main
+    };
     let menu_width = menu_items
         .iter()
-        .map(|(_, label)| crate::components::terminal_width(label) as u16 + 4)
+        .map(|(_, label)| crate::components::terminal_width(label) as u16 + 9)
         .max()
-        .unwrap_or(20)
-        .min(main.width);
-    let menu_height = (menu_items.len() as u16 + 2).min(main.height);
-    let menu = Rect::new(
-        main.right().saturating_sub(menu_width),
-        main.y,
-        menu_width,
-        menu_height,
+        .unwrap_or(40)
+        .max(40)
+        .min(menu_bounds.width);
+    let menu_height = (menu_items.len() as u16 + 5).min(menu_bounds.height);
+    let menu = centered_rect(menu_bounds, menu_width, menu_height);
+    let menu_inner = crate::components::Surface::new().bordered(true).inner(menu);
+    let horizontal_padding = u16::from(menu_inner.width >= 8) * 2;
+    let vertical_padding = u16::from(menu_inner.height >= menu_items.len() as u16 + 3);
+    let menu_body = Rect::new(
+        menu_inner.x + horizontal_padding,
+        menu_inner.y + vertical_padding,
+        menu_inner.width.saturating_sub(horizontal_padding * 2),
+        menu_inner.height.saturating_sub(vertical_padding * 2),
     );
+    let close = line_in_rect(menu_body, menu_body.bottom().saturating_sub(1));
+    let gap = u16::from(menu_body.height >= menu_items.len() as u16 + 1);
+    let capacity = usize::from(menu_body.height.saturating_sub(1 + gap));
+    let option_count = menu_items.len().saturating_sub(1);
+    let start = model
+        .more_selected
+        .unwrap_or(0)
+        .min(option_count.saturating_sub(1))
+        .saturating_sub(capacity.saturating_sub(1))
+        .min(option_count.saturating_sub(capacity));
+    let menu_scrollbar = if model.more_selected.is_some() {
+        crate::management_scrollbar(
+            crate::ManagementScrollTarget::Choices,
+            Rect::new(
+                menu_body.right().saturating_sub(1),
+                menu_body.y,
+                u16::from(menu_body.width > 0),
+                capacity as u16,
+            ),
+            option_count,
+            capacity,
+            start,
+            false,
+        )
+    } else {
+        None
+    };
     let menu_controls = if model.more_selected.is_some() {
-        let capacity = usize::from(menu.height.saturating_sub(2));
-        let start = model
-            .more_selected
-            .unwrap_or(0)
-            .saturating_sub(capacity.saturating_sub(1));
         menu_items
             .into_iter()
+            .take(option_count)
             .skip(start)
             .take(capacity)
             .enumerate()
             .map(|(index, (target, _))| LogsControlLayout {
                 target,
                 area: Rect::new(
-                    menu.x + 1,
-                    menu.y + 1 + index as u16,
-                    menu.width.saturating_sub(2),
+                    menu_body.x,
+                    menu_body.y + index as u16,
+                    menu_body
+                        .width
+                        .saturating_sub(u16::from(menu_scrollbar.is_some())),
                     1,
                 ),
             })
+            .chain((!close.is_empty()).then_some(LogsControlLayout {
+                target: LogsHitTarget::CloseMore,
+                area: close,
+            }))
             .collect()
     } else {
         vec![]
@@ -265,6 +308,7 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         detail_scrollbar,
         menu,
         menu_controls,
+        menu_scrollbar,
     }
 }
 
@@ -294,6 +338,12 @@ pub fn logs_hit_test(
             .map(|(index, _)| LogsHitTarget::FormField(*index));
     }
     if model.more_selected.is_some() {
+        if layout
+            .menu_scrollbar
+            .is_some_and(|bar| rect_contains(bar.track, x, y))
+        {
+            return Some(LogsHitTarget::MoreScrollbar);
+        }
         return layout
             .menu_controls
             .iter()

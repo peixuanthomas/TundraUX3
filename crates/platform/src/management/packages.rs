@@ -446,14 +446,22 @@ pub fn query(
     cancelled: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
     let backend = detect_backend(cancelled)?;
-    if request.scope == "sources" {
-        return sources::query(request, backend, cancelled);
+    let mut result = match request.scope.as_str() {
+        "sources" => sources::query(request, backend, cancelled)?,
+        "conflicts" | "status" => status::query(request, backend, cancelled)?,
+        _ => query::query(request, cancelled)?,
+    };
+    // Every subview must provide a route back to the package lists, even when
+    // it is empty. Do not repeat selectors already supplied by that subview.
+    for action in status::view_actions() {
+        if !result
+            .actions
+            .iter()
+            .any(|existing| existing.id == action.id)
+        {
+            result.actions.push(action);
+        }
     }
-    if matches!(request.scope.as_str(), "conflicts" | "status") {
-        return status::query(request, backend, cancelled);
-    }
-    let mut result = query::query(request, cancelled)?;
-    result.actions.extend(status::view_actions());
     if let Ok(busy) = status::busy_status(backend) {
         if busy.busy {
             result.notices.push(busy.message);

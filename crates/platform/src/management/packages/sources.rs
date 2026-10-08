@@ -395,6 +395,10 @@ pub(super) fn query(
                     "inherited".into(),
                     path.to_string_lossy().into_owned(),
                 ],
+                detail: vec![(
+                    "Configuration file".into(),
+                    path.to_string_lossy().into_owned(),
+                )],
                 actions: vec![edit_action(&path)],
                 ..Default::default()
             });
@@ -443,6 +447,22 @@ pub(super) fn query(
                     .into(),
                     path.to_string_lossy().into_owned(),
                 ],
+                detail: vec![
+                    ("Source".into(), runtime_log::sanitize_text(&source.name)),
+                    (
+                        "State".into(),
+                        if source.enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
+                        .into(),
+                    ),
+                    (
+                        "Configuration file".into(),
+                        path.to_string_lossy().into_owned(),
+                    ),
+                ],
                 actions,
                 identity: BTreeMap::from([
                     ("source_path".into(), path.to_string_lossy().into_owned()),
@@ -467,8 +487,9 @@ pub(super) fn query(
 
 fn edit_action(path: &Path) -> ManagementAction {
     ManagementAction {
-        id: "edit_system_config".into(),
+        id: "edit_package_source".into(),
         label: "Edit source file".into(),
+        primary: true,
         group: "configuration".into(),
         values: BTreeMap::from([
             ("path".into(), path.to_string_lossy().into_owned()),
@@ -503,6 +524,7 @@ fn add_action(backend: PackageBackend) -> ManagementAction {
     ManagementAction {
         id: "source_add".into(),
         label: "Add software source".into(),
+        primary: true,
         fields,
         group: "configuration".into(),
         values: BTreeMap::from([("backend".into(), backend.id().into())]),

@@ -598,8 +598,16 @@ fn management_menu_paging_keys_keep_secondary_actions_reachable() {
         "only the more-actions entry stays on the page"
     );
     click_management_point(&mut session, (layout.actions[0].x, layout.actions[0].y));
+    let visible_rows = ui::management_layout(
+        session.management_main(),
+        &session.to_management_view_model(),
+    )
+    .choice_rows
+    .len()
+    .max(1);
     session.handle_management_key(&KeyInput::new(InputKey::PageDown));
-    assert_eq!(session.management_state.choice_selected, 7);
+    let selected = visible_rows.min(7);
+    assert_eq!(session.management_state.choice_selected, selected);
     assert!(matches!(
         &session.management_state.form.as_ref().unwrap().purpose,
         FormPurpose::Menu(_)
@@ -608,7 +616,12 @@ fn management_menu_paging_keys_keep_secondary_actions_reachable() {
         session.management_main(),
         &session.to_management_view_model(),
     );
-    assert!(layout.choice_rows.iter().any(|(index, _)| *index == 7));
+    assert!(
+        layout
+            .choice_rows
+            .iter()
+            .any(|(index, _)| *index == selected)
+    );
     session.handle_management_key(&KeyInput::new(InputKey::Home));
     assert_eq!(session.management_state.choice_selected, 0);
     session.handle_management_key(&KeyInput::new(InputKey::End));
@@ -1289,4 +1302,337 @@ fn more_menu_shortcuts_open_the_named_action_and_held_keys_do_not_type_into_its_
             .is_empty()
     );
     assert!(state.management_state.operation_job.is_none());
+}
+
+fn package_list_state() -> ShellSession {
+    let mut session = state();
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    session.management_state.kind = Some(ManagementKind::Packages);
+    session.management_state.query = Some(ManagementQuery::new(ManagementKind::Packages));
+    session.management_state.snapshot = ManagementSnapshot {
+        backend: "apt/dpkg".into(),
+        columns: vec![
+            "Package".into(),
+            "Installed".into(),
+            "Available".into(),
+            "Description".into(),
+        ],
+        rows: ["alpha:amd64", "bash:amd64", "omega:amd64"]
+            .into_iter()
+            .map(|id| ManagementRow {
+                id: id.into(),
+                cells: vec![id.into(), "1".into(), String::new(), "Summary".into()],
+                actions: vec![ManagementAction {
+                    id: "remove".into(),
+                    label: "Remove".into(),
+                    privileged: true,
+                    confirm: true,
+                    primary: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    };
+    session.management_state.selected = 1;
+    session
+}
+
+#[test]
+fn all_package_subviews_keep_navigation_after_empty_or_failed_queries() {
+    for scope in [
+        "installed",
+        "search",
+        "updates",
+        "sources",
+        "conflicts",
+        "status",
+    ] {
+        let mut session = package_list_state();
+        session.management_state.snapshot = ManagementSnapshot::default();
+        session.management_state.query.as_mut().unwrap().scope = scope.into();
+        let actions = session.all_management_actions();
+        for destination in [
+            "search",
+            "installed",
+            "updates",
+            "sources",
+            "conflicts",
+            "status",
+        ] {
+            assert_eq!(
+                actions
+                    .iter()
+                    .filter(|(action, _)| action.id == format!("scope_{destination}"))
+                    .count(),
+                1
+            );
+        }
+        assert!(
+            session
+                .to_management_view_model()
+                .title
+                .contains(&management_label(&format!("scope-{scope}"), scope))
+        );
+        session.handle_management_key(&KeyInput::new(InputKey::F(7)));
+        assert_eq!(
+            session.management_state.query.as_ref().unwrap().scope,
+            "installed"
+        );
+        assert!(session.management_state.operation_job.is_none());
+    }
+}
+
+#[test]
+fn switching_package_subviews_clears_old_file_target_filter_and_focus() {
+    let mut session = package_list_state();
+    let query = session.management_state.query.as_mut().unwrap();
+    query.scope = "conflicts".into();
+    query.target = Some("/etc/demo.conf.dpkg-dist".into());
+    query.filter = "demo.conf".into();
+    query.options.insert("scope-only".into(), "old".into());
+    session.management_state.filter_input = "demo.conf".into();
+    session.management_state.filtering = true;
+    session.management_state.details_only = true;
+    session.management_state.terminal_mode = true;
+    session.management_state.selected_action = 3;
+    session.management_state.actions_focused = true;
+    session.perform_management_action(
+        ManagementAction {
+            id: "scope_installed".into(),
+            ..Default::default()
+        },
+        None,
+    );
+    let query = session.management_state.query.as_ref().unwrap();
+    assert_eq!(query.scope, "installed");
+    assert!(query.target.is_none() && query.filter.is_empty() && query.options.is_empty());
+    assert!(session.management_state.filter_input.is_empty());
+    assert!(
+        !session.management_state.filtering
+            && !session.management_state.details_only
+            && !session.management_state.terminal_mode
+    );
+    assert_eq!(session.management_state.selected_action, 0);
+    assert!(!session.management_state.actions_focused);
+    assert!(session.management_state.operation_job.is_none());
+}
+
+#[test]
+fn package_details_keep_all_rows_and_escape_returns_to_the_list() {
+    for open_key in [InputKey::Enter, InputKey::F(4)] {
+        let mut session = package_list_state();
+        let before = session.management_state.snapshot.clone();
+        session.handle_management_key(&KeyInput::new(open_key));
+        assert!(session.management_state.details_only);
+        assert_eq!(
+            session
+                .management_state
+                .query
+                .as_ref()
+                .unwrap()
+                .target
+                .as_deref(),
+            Some("bash:amd64")
+        );
+        let mut snapshot = before.clone();
+        let mut detailed = snapshot.rows[1].clone();
+        detailed.detail = vec![("Description".into(), "A useful shell".into())];
+        merge_package_details(
+            &mut snapshot,
+            "bash:amd64",
+            Ok(ManagementSnapshot {
+                rows: vec![detailed.clone()],
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(snapshot.rows.len(), before.rows.len());
+        assert_eq!(snapshot.rows[0], before.rows[0]);
+        assert_eq!(snapshot.rows[1], detailed);
+        assert_eq!(snapshot.rows[2], before.rows[2]);
+        let (job, _) = session.management_job();
+        *job.0.snapshot.lock().unwrap() = Some(Ok(snapshot));
+        session.management_state.query_job = Some(job);
+        session.poll_management();
+        assert_eq!(session.management_state.selected, 1);
+        assert!(
+            session
+                .to_management_view_model()
+                .details
+                .contains("A useful shell")
+        );
+        session.handle_management_key(&KeyInput::new(InputKey::Escape));
+        assert!(!session.management_state.details_only);
+        assert!(
+            session
+                .management_state
+                .query
+                .as_ref()
+                .unwrap()
+                .target
+                .is_none()
+        );
+        assert_eq!(session.active_screen(), ShellScreen::Management);
+        assert_eq!(session.management_state.snapshot.rows.len(), 3);
+        assert!(!session.management_state.actions_focused);
+    }
+}
+
+#[test]
+fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_search_text() {
+    let mut session = package_list_state();
+    session.management_state.filter_input = "shell".into();
+    session.management_state.query.as_mut().unwrap().filter = "shell".into();
+    session.perform_management_action(
+        ManagementAction {
+            id: "scope_search".into(),
+            ..Default::default()
+        },
+        None,
+    );
+    assert_eq!(session.management_state.filter_input, "shell");
+    assert_eq!(
+        session.management_state.query.as_ref().unwrap().filter,
+        "shell"
+    );
+    session.management_state.selected = 1;
+    session.handle_management_key(&KeyInput::new(InputKey::F(4)));
+    session.handle_management_key(&KeyInput::new(InputKey::Down));
+    assert_eq!(session.management_state.selected, 2);
+    assert_eq!(
+        session
+            .management_state
+            .query
+            .as_ref()
+            .unwrap()
+            .target
+            .as_deref(),
+        Some("omega:amd64")
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::Escape));
+    assert!(
+        session
+            .management_state
+            .query
+            .as_ref()
+            .unwrap()
+            .target
+            .is_none()
+    );
+    assert_eq!(
+        session.management_state.query.as_ref().unwrap().filter,
+        "shell"
+    );
+}
+
+#[test]
+fn unavailable_package_detail_keeps_local_rows_and_exposes_the_error() {
+    let mut session = package_list_state();
+    merge_package_details(
+        &mut session.management_state.snapshot,
+        "bash:amd64",
+        Err(ManagementError::Unavailable(
+            "Repository cache is missing".into(),
+        )),
+    )
+    .unwrap();
+    assert_eq!(session.management_state.snapshot.rows.len(), 3);
+    assert_eq!(
+        session.management_state.snapshot.rows[1].actions[0].id,
+        "remove"
+    );
+    assert!(
+        session
+            .to_management_view_model()
+            .details
+            .contains("Repository cache is missing")
+    );
+    assert_eq!(
+        merge_package_details(
+            &mut session.management_state.snapshot,
+            "bash:amd64",
+            Err(ManagementError::Cancelled)
+        ),
+        Err(ManagementError::Cancelled)
+    );
+}
+
+#[test]
+fn package_navigation_remains_enabled_during_a_background_operation() {
+    let mut session = package_list_state();
+    let (job, _) = session.management_job();
+    session.management_state.operation_job = Some(job.clone());
+    let more = session
+        .management_actions()
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    session.activate_management_action(more);
+    let model = session.to_management_view_model();
+    let FormPurpose::Menu(items) = &session.management_state.form.as_ref().unwrap().purpose else {
+        panic!("expected menu");
+    };
+    let choice = model.form.unwrap().choice.unwrap();
+    let installed = items
+        .iter()
+        .position(|(action, _)| action.id == "scope_installed")
+        .unwrap();
+    assert!(!choice.disabled[installed]);
+    let remove = items
+        .iter()
+        .position(|(action, _)| action.id == "remove")
+        .unwrap();
+    assert!(choice.disabled[remove]);
+    session.handle_management_key(&KeyInput::new(InputKey::F(7)));
+    assert_eq!(
+        session.management_state.query.as_ref().unwrap().scope,
+        "installed"
+    );
+    assert_eq!(session.management_state.operation_job, Some(job));
+}
+
+#[test]
+fn configuration_snapshots_and_completion_preserve_the_package_page() {
+    for action in ["history", "read"] {
+        let mut session = package_list_state();
+        let before = session.management_state.snapshot.clone();
+        session.management_state.configuration_operation = true;
+        session.management_state.received_snapshot = true;
+        session.editor_config.pending_action = Some(action.into());
+        let (job, _) = session.management_job();
+        job.0.events.lock().unwrap().extend([
+            OperationEvent::Snapshot {
+                snapshot: ManagementSnapshot {
+                    backend: "config-history".into(),
+                    rows: vec![ManagementRow {
+                        id: "backup-1".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            },
+            OperationEvent::Completed {
+                message: "Configuration read".into(),
+            },
+        ]);
+        session.management_state.operation_job = Some(job);
+        session.poll_management();
+        assert_eq!(session.management_state.snapshot, before);
+        assert!(session.management_state.received_snapshot);
+        assert!(session.management_state.outcome.is_none());
+        assert!(
+            !session
+                .management_state
+                .status
+                .contains("Configuration read")
+        );
+        if action == "history" {
+            assert_eq!(session.editor_config.history.rows[0].id, "backup-1");
+            session.cancel_management_form();
+            assert!(session.management_state.form.is_none());
+        }
+        assert_eq!(session.active_screen(), ShellScreen::Management);
+    }
 }

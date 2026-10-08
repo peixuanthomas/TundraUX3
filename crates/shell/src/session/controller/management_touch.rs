@@ -5,6 +5,10 @@ fn management_form_is_menu(form: &ManagementEditor) -> bool {
         || matches!(&form.purpose, FormPurpose::Configuration(action) if action == "menu")
 }
 
+#[cfg(test)]
+#[path = "../../../tests/unit/session/controller/management_touch/tests.rs"]
+mod tests;
+
 impl ShellSession {
     pub(super) fn handle_management_choice_key(&mut self, key: &KeyInput) -> bool {
         let Some(index) = self.management_state.choice_field else {
@@ -14,6 +18,10 @@ impl ShellSession {
             return true;
         }
         let selected = self.management_state.choice_selected;
+        let page = ui::management_layout(self.management_main(), &self.to_management_view_model())
+            .choice_rows
+            .len()
+            .max(1);
         let count = self
             .management_state
             .form
@@ -84,11 +92,14 @@ impl ShellSession {
             }
             InputKey::PageUp => {
                 self.management_state.choice_selected =
-                    self.management_state.choice_selected.saturating_sub(8)
+                    self.management_state.choice_selected.saturating_sub(page)
             }
             InputKey::PageDown => {
-                self.management_state.choice_selected =
-                    (self.management_state.choice_selected + 8).min(count.saturating_sub(1))
+                self.management_state.choice_selected = self
+                    .management_state
+                    .choice_selected
+                    .saturating_add(page)
+                    .min(count.saturating_sub(1))
             }
             InputKey::Home => self.management_state.choice_selected = 0,
             InputKey::End => self.management_state.choice_selected = count.saturating_sub(1),
@@ -123,9 +134,28 @@ impl ShellSession {
             }
             _ => {}
         }
-        self.management_state.choice_scroll =
-            self.management_state.choice_selected.saturating_sub(3);
+        self.keep_management_choice_visible();
         true
+    }
+    fn keep_management_choice_visible(&mut self) {
+        if self.management_state.choice_field.is_none() {
+            return;
+        }
+        let model = self.to_management_view_model();
+        let Some(choice) = model.form.as_ref().and_then(|form| form.choice.as_ref()) else {
+            return;
+        };
+        let layout = ui::management_layout(self.management_main(), &model);
+        let page = layout.choice_rows.len().max(1);
+        let start = layout.choice_rows.first().map_or(0, |(index, _)| *index);
+        let selected = choice.selected.min(choice.values.len().saturating_sub(1));
+        self.management_state.choice_scroll = if selected < start {
+            selected
+        } else if selected >= start.saturating_add(page) {
+            selected.saturating_add(1).saturating_sub(page)
+        } else {
+            start
+        };
     }
     pub(super) fn open_management_choice_field(&mut self, index: usize) {
         let Some(field) = self
@@ -146,8 +176,9 @@ impl ShellSession {
             .unwrap_or(0);
         self.management_state.choice_field = Some(index);
         self.management_state.choice_selected = selected;
-        self.management_state.choice_scroll = selected.saturating_sub(3);
+        self.management_state.choice_scroll = 0;
         self.management_state.choice_columns = 0;
+        self.keep_management_choice_visible();
     }
     pub(in crate::session) fn cancel_management_pointer_gesture(&mut self) {
         self.management_state.scrollbar_grab = None;
@@ -155,6 +186,12 @@ impl ShellSession {
     pub(in crate::session) fn management_pointer_drag_active(&self) -> bool {
         (self.active_screen() == ShellScreen::Management || self.config_editor_form_visible())
             && self.management_state.scrollbar_grab.is_some()
+    }
+    pub(in crate::session) fn management_overlay_contains(&self, point: CellPosition) -> bool {
+        (self.active_screen() == ShellScreen::Management || self.config_editor_form_visible())
+            && self.management_state.form.is_some()
+            && !self.management_state.terminal_mode
+            && rect_contains(self.management_main(), point)
     }
     pub(super) fn reset_management_form_view(&mut self) {
         self.management_state.form_field_scroll = None;
@@ -213,24 +250,7 @@ impl ShellSession {
                 self.apply_management_filter();
             }
             ui::ManagementControl::Details => {
-                if self.management_state.snapshot.rows.is_empty() {
-                    return;
-                }
-                self.management_state.details_only = !self.management_state.details_only;
-                self.management_state.details_scroll = 0;
-                self.management_state.actions_focused = true;
-                if let Some(id) = self
-                    .management_state
-                    .snapshot
-                    .rows
-                    .get(self.management_state.selected)
-                    .map(|row| row.id.clone())
-                {
-                    if let Some(query) = &mut self.management_state.query {
-                        query.target = Some(id);
-                    }
-                    self.refresh_management();
-                }
+                self.toggle_management_details();
             }
             ui::ManagementControl::Terminal => {
                 if let Some(job) = self.management_state.auto_admin_job.clone() {
@@ -542,8 +562,9 @@ impl ShellSession {
                 if let Some(selected) = choice {
                     self.management_state.choice_field = Some(*index);
                     self.management_state.choice_selected = selected;
-                    self.management_state.choice_scroll = selected.saturating_sub(3);
+                    self.management_state.choice_scroll = 0;
                     self.management_state.choice_columns = 0;
+                    self.keep_management_choice_visible();
                 }
             }
             return;

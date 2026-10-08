@@ -53,6 +53,161 @@ fn more_menu_reuses_button_geometry_and_covers_background_controls() {
     let output = render(120, 32, &model, &theme);
     assert!(terminal_output(&output).contains("Service, boot or file"));
 }
+
+#[test]
+fn more_dialog_is_centered_and_keeps_space_around_centered_labels() {
+    let mut model = model();
+    model.more_selected = Some(0);
+    for main in [Rect::new(3, 5, 120, 30), Rect::new(0, 1, 49, 10)] {
+        let layout = logs_layout(main, &model);
+        let menu = layout.menu;
+        assert!(menu.width < main.width && menu.height <= main.height);
+        assert!(menu.x > main.x && menu.right() < main.right());
+        assert!((menu.x - main.x).abs_diff(main.right() - menu.right()) <= 1);
+        assert!((menu.y - main.y).abs_diff(main.bottom() - menu.bottom()) <= 1);
+        assert!(layout.menu_controls.iter().all(|control| {
+            control.area.x >= menu.x + 3 && control.area.right() <= menu.right() - 3
+        }));
+        assert!(
+            layout
+                .menu_controls
+                .iter()
+                .any(|control| control.target == LogsHitTarget::CloseMore)
+        );
+        let theme = TundraTheme::default_dark();
+        let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        context.buttons = Some(buttons.clone());
+        let mut terminal = Terminal::new(TestBackend::new(main.right(), main.bottom())).unwrap();
+        terminal
+            .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
+            .unwrap();
+        assert_eq!(
+            buttons.regions().len(),
+            layout.menu_controls.len(),
+            "covered buttons must not receive pointer feedback"
+        );
+        for control in &layout.menu_controls {
+            let row = (control.area.x..control.area.right())
+                .map(|x| terminal.backend().buffer()[(x, control.area.y)].symbol())
+                .collect::<String>();
+            let leading = row.len() - row.trim_start().len();
+            let trailing = row.len() - row.trim_end().len();
+            assert!(
+                leading.abs_diff(trailing) <= 1,
+                "label is not centered: {row:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn compact_more_dialog_scrolls_options_and_keeps_close_visible() {
+    let mut model = model();
+    let main = Rect::new(0, 1, 49, 10);
+    for selected in [0, 4, 6, 7] {
+        model.more_selected = Some(selected);
+        let layout = logs_layout(main, &model);
+        let selected_target = ui::logs_more_controls()[selected].0;
+        assert!(
+            layout
+                .menu_controls
+                .iter()
+                .any(|control| control.target == selected_target)
+        );
+        let scrollbar = layout.menu_scrollbar.expect("short dialog needs scrolling");
+        assert_eq!(
+            logs_hit_test(main, &model, (scrollbar.track.x, scrollbar.track.y)),
+            Some(LogsHitTarget::MoreScrollbar)
+        );
+        let close = layout
+            .menu_controls
+            .iter()
+            .find(|control| control.target == LogsHitTarget::CloseMore)
+            .unwrap();
+        assert_eq!(
+            logs_hit_test(main, &model, (close.area.x, close.area.y)),
+            Some(LogsHitTarget::CloseMore)
+        );
+    }
+}
+
+#[test]
+fn more_dialog_buttons_keep_shared_keyboard_hover_and_pressed_colors() {
+    let mut model = model();
+    model.more_selected = Some(0);
+    let main = main_area();
+    let layout = logs_layout(main, &model);
+    let selected = &layout.menu_controls[0];
+    let other = &layout.menu_controls[1];
+    let theme = TundraTheme::default_dark();
+    for (keyboard, hovered, pressed, expected) in [
+        (true, None, None, theme.button_accent_color()),
+        (false, Some(selected), None, theme.button_accent_color()),
+        (
+            false,
+            Some(selected),
+            Some(selected),
+            theme.button_pressed_color(),
+        ),
+        (false, Some(other), None, theme.foreground),
+        (false, None, None, theme.foreground),
+    ] {
+        let region = |control: &ui::LogsControlLayout| ui::components::ButtonRegion {
+            id: ui::logs_control_id(&model, control.target).into(),
+            area: control.area,
+            disabled: false,
+        };
+        let mut buttons =
+            ui::components::ButtonFrame::new(hovered.map(region), pressed.map(region), &theme);
+        buttons.keyboard_focus_visible = keyboard;
+        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        context.buttons = Some(buttons);
+        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        terminal
+            .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
+            .unwrap();
+        for x in selected.area.x..selected.area.right() {
+            assert_eq!(
+                terminal.backend().buffer()[(x, selected.area.y)].fg,
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn more_dialog_leaves_global_chrome_untouched_at_all_sizes() {
+    let mut model = model();
+    model.more_selected = Some(7);
+    for (width, height) in [(0, 0), (1, 1), (40, 10), (49, 11), (120, 32)] {
+        let area = Rect::new(0, 0, width, height);
+        let context = RenderContext::from_theme(
+            &TundraTheme::default_dark(),
+            Default::default(),
+            Default::default(),
+        );
+        let main = ui::ShellFrameLayout::new(area, None, &context).main;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                for y in 0..height {
+                    for x in 0..width {
+                        frame.buffer_mut()[(x, y)].set_symbol("x");
+                    }
+                }
+                ui::render_logs_content(frame, main, &model, &context);
+            })
+            .unwrap();
+        for y in 0..height {
+            for x in 0..width {
+                if !main.contains((x, y).into()) {
+                    assert_eq!(terminal.backend().buffer()[(x, y)].symbol(), "x");
+                }
+            }
+        }
+    }
+}
 fn main_area() -> Rect {
     match compute_shell_layout(Rect::new(0, 0, 120, 32)) {
         ShellLayout::Full { main, .. } => main,

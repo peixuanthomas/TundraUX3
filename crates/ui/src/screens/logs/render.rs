@@ -33,6 +33,9 @@ pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
 }
 
 pub fn logs_control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> bool {
+    if target == LogsHitTarget::CloseMore {
+        return true;
+    }
     if !model.diagnostics.can_view_details {
         return false;
     }
@@ -239,7 +242,11 @@ pub fn render_logs_content(
     model: &LogsViewModel,
     context: &RenderContext,
 ) {
-    let theme = context.compatibility_theme();
+    let mut background_context = context.clone();
+    if model.more_selected.is_some() || model.filter_form.is_some() {
+        background_context.buttons = None;
+    }
+    let theme = background_context.compatibility_theme();
 
     let layout = logs_layout(main, model);
     Surface::new()
@@ -315,7 +322,7 @@ pub fn render_logs_content(
                     &layout.content,
                     &content,
                     &theme,
-                    context,
+                    &background_context,
                     &title,
                     (model.category == LogsCategory::Linux || model.section == LogsSection::Events)
                         .then_some((
@@ -359,6 +366,7 @@ pub fn render_logs_content(
         layout.footer,
     );
     if let Some(selected) = model.more_selected {
+        let theme = context.compatibility_theme();
         frame.render_widget(Clear, layout.menu);
         Surface::new()
             .bordered(true)
@@ -372,12 +380,16 @@ pub fn render_logs_content(
                 .enumerate()
                 .find(|(_, item)| item.0 == control.target)
             {
-                let mut button = Button::new(logs_control_id(model, control.target), label.clone());
+                let mut button = Button::new(logs_control_id(model, control.target), label.clone())
+                    .with_centered_label(true);
                 button.state.selected = index == selected;
                 button.set_focused(index == selected);
                 button.set_disabled(!logs_control_enabled(model, control.target));
                 button.render_borderless_frame(frame, control.area, &theme);
             }
+        }
+        if let Some(bar) = layout.menu_scrollbar {
+            bar.render(frame, context);
         }
     }
     if let Some(form) = &model.filter_form {

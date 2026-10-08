@@ -48,6 +48,7 @@ pub struct ManagementViewModel {
     pub action_ids: Vec<String>,
     pub title: String,
     pub columns: Vec<String>,
+    pub column_width_limits: Vec<usize>,
     pub rows: Vec<Vec<String>>,
     pub selected: usize,
     pub scroll: usize,
@@ -117,7 +118,16 @@ impl ManagementScrollbar {
         };
         let travel = usize::from(length.saturating_sub(thumb));
         if travel == 0 {
-            return 0;
+            // A one-cell track has no room for its thumb to travel. Pressing
+            // it must preserve the current position; dragging beyond either
+            // end still allows a very small menu to reach its first/last item.
+            return if coordinate < start {
+                0
+            } else if coordinate >= start.saturating_add(length) {
+                self.content_len.saturating_sub(self.viewport_len)
+            } else {
+                self.offset
+            };
         }
         let position =
             usize::from(coordinate.saturating_sub(start).saturating_sub(grab)).min(travel);
@@ -210,6 +220,60 @@ fn inner(area: Rect) -> Rect {
         area.y.saturating_add(1),
         area.width.saturating_sub(2),
         area.height.saturating_sub(2),
+    )
+}
+fn management_choice_is_menu(form: &ManagementForm) -> bool {
+    matches!(form.identity.as_str(), "more-actions" | "config-menu")
+}
+fn management_choice_width(form: &ManagementForm, choice: &ManagementChoices) -> usize {
+    let decoration = if management_choice_is_menu(form) {
+        0
+    } else {
+        4
+    };
+    choice
+        .values
+        .iter()
+        .map(|value| value.width().saturating_add(decoration))
+        .max()
+        .unwrap_or(0)
+}
+fn choice_form(main: Rect, form: &ManagementForm, choice: &ManagementChoices) -> Rect {
+    let content_width = management_choice_width(form, choice)
+        .max(form.title.width())
+        .max(i18n::tr!("management-form-close").width() + 2);
+    let width = content_width
+        .saturating_add(6)
+        .clamp(24, 88)
+        .min(usize::from(
+            main.width.saturating_sub(u16::from(main.width > 8) * 2),
+        )) as u16;
+    let horizontal = management_choice_width(form, choice) > usize::from(width.saturating_sub(6));
+    let height = choice
+        .values
+        .len()
+        .saturating_add(6 + usize::from(horizontal))
+        .min(usize::from(
+            main.height.saturating_sub(u16::from(main.height > 8) * 2),
+        )) as u16;
+    Rect::new(
+        main.x + main.width.saturating_sub(width) / 2,
+        main.y + main.height.saturating_sub(height) / 2,
+        width,
+        height,
+    )
+}
+fn choice_form_inner(form: Rect) -> Rect {
+    let content = inner(form).intersection(form);
+    // Keep a blank row and two blank columns between menu items and the border.
+    // Small terminals spend these cells on reachable items instead.
+    let horizontal = if content.width >= 10 { 2 } else { 0 };
+    let vertical = u16::from(content.height >= 5);
+    Rect::new(
+        content.x + horizontal,
+        content.y + vertical,
+        content.width.saturating_sub(horizontal * 2),
+        content.height.saturating_sub(vertical * 2),
     )
 }
 fn right_track(area: Rect) -> Rect {
@@ -429,7 +493,7 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         .iter()
         .enumerate()
         .map(|(index, label)| {
-            model
+            let natural = model
                 .rows
                 .iter()
                 .filter_map(|row| row.get(index))
@@ -437,7 +501,11 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
                 .max()
                 .unwrap_or(0)
                 .max(label.width())
-                .max(4)
+                .max(4);
+            model
+                .column_width_limits
+                .get(index)
+                .map_or(natural, |limit| natural.min((*limit).max(label.width())))
                 + 2
         })
         .collect::<Vec<_>>();
@@ -517,16 +585,24 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
             );
         }
     }
-    let form_width = main.width.saturating_sub(2).min(88);
-    let form_height = main.height.saturating_sub(2).max(1);
-    let form = Rect::new(
-        main.x + main.width.saturating_sub(form_width) / 2,
-        main.y + main.height.saturating_sub(form_height) / 2,
-        form_width,
-        form_height,
-    );
-    let form_inner = inner(form);
     let form_model = model.form.as_ref();
+    let form_width = main.width.saturating_sub(2).min(88);
+    let form_height = main.height.saturating_sub(2).max(1).min(main.height);
+    let form = form_model
+        .and_then(|form| {
+            form.choice
+                .as_ref()
+                .map(|choice| choice_form(main, form, choice))
+        })
+        .unwrap_or_else(|| {
+            Rect::new(
+                main.x + main.width.saturating_sub(form_width) / 2,
+                main.y + main.height.saturating_sub(form_height) / 2,
+                form_width,
+                form_height,
+            )
+        });
+    let form_inner = inner(form);
     let message_len = form_model.map_or(0, |form| {
         management_wrapped_lines(&form.message, form_inner.width.saturating_sub(1)).len()
     });
@@ -628,11 +704,24 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     let mut choice_cancel = Rect::default();
     if let Some(choice) = form_model.and_then(|form| form.choice.as_ref()) {
         choice_panel = Some(form);
+        let choice_inner = choice_form_inner(form);
+        let content_width = management_choice_width(form_model.unwrap(), choice);
+        let footer_height = u16::from(choice_inner.height > 0);
+        let gap = u16::from(choice_inner.height > 3);
+        let available = choice_inner.height.saturating_sub(footer_height + gap);
+        let mut vertical = choice.values.len() > usize::from(available);
+        let mut horizontal =
+            content_width > usize::from(choice_inner.width.saturating_sub(u16::from(vertical)));
+        vertical |=
+            choice.values.len() > usize::from(available.saturating_sub(u16::from(horizontal)));
+        horizontal |=
+            content_width > usize::from(choice_inner.width.saturating_sub(u16::from(vertical)));
+        let row_height = available.saturating_sub(u16::from(horizontal));
         let rows = Rect::new(
-            form_inner.x,
-            form_inner.y,
-            form_inner.width.saturating_sub(1),
-            form_inner.height.saturating_sub(3),
+            choice_inner.x,
+            choice_inner.y,
+            choice_inner.width.saturating_sub(u16::from(vertical)),
+            row_height,
         );
         let count = usize::from(rows.height);
         let start = choice.scroll.min(choice.values.len().saturating_sub(count));
@@ -647,14 +736,19 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
             })
             .collect();
         choice_cancel = Rect::new(
-            form_inner.x,
-            form_inner.bottom().saturating_sub(1),
-            form_inner.width,
-            1,
+            choice_inner.x,
+            choice_inner.bottom().saturating_sub(footer_height),
+            choice_inner.width,
+            footer_height,
         );
         if let Some(bar) = management_scrollbar(
             ManagementScrollTarget::Choices,
-            right_track(form_inner),
+            Rect::new(
+                choice_inner.right().saturating_sub(1),
+                rows.y,
+                u16::from(vertical),
+                rows.height,
+            ),
             choice.values.len(),
             count,
             start,
@@ -662,16 +756,15 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         ) {
             scrollbars.push(bar);
         }
-        let width = choice
-            .values
-            .iter()
-            .map(|value| value.width() + 4)
-            .max()
-            .unwrap_or(0);
         if let Some(bar) = management_scrollbar(
             ManagementScrollTarget::ChoiceColumns,
-            Rect::new(rows.x, rows.bottom(), rows.width, 1),
-            width,
+            Rect::new(
+                rows.x,
+                rows.bottom(),
+                rows.width,
+                u16::from(horizontal && available > 0),
+            ),
+            content_width,
             usize::from(rows.width),
             choice.columns,
             true,
@@ -862,6 +955,13 @@ pub fn render_management_content(
     if main.is_empty() {
         return;
     }
+    let mut content_context = context.clone();
+    if model.form.is_some() {
+        // A form owns the main area's buttons. Keep the covered page visible,
+        // but do not register its controls or pass pointer feedback to them.
+        content_context.buttons = None;
+    }
+    let context = &content_context;
     let theme = context.compatibility_theme();
     let layout = management_layout(main, model);
     let selected = theme
@@ -884,7 +984,7 @@ pub fn render_management_content(
         .with_cursor_symbol("_")
         .with_horizontal_scroll(true);
     filter.set_value(&model.filter);
-    filter.set_focused(model.filtering);
+    filter.set_focused(model.filtering && model.form.is_none());
     filter.render_borderless_frame_with_prefix(
         frame,
         layout.filter,
@@ -929,6 +1029,17 @@ pub fn render_management_content(
                 .enumerate()
                 .map(|(index, value)| {
                     let width = layout.column_widths.get(index).copied().unwrap_or(6);
+                    let value = if value.width() > width.saturating_sub(2) {
+                        format!(
+                            "{}…",
+                            crate::components::truncate_to_terminal_width(
+                                value,
+                                width.saturating_sub(3)
+                            )
+                        )
+                    } else {
+                        value.clone()
+                    };
                     format!(
                         "{}{}",
                         value,
@@ -986,7 +1097,8 @@ pub fn render_management_content(
             if let Some((label, enabled)) = model.actions.get(index) {
                 let mut button = Button::new(management_action_id(model, index), label.clone());
                 button.set_disabled(!enabled);
-                button.state.selected = model.actions_focused && model.selected_action == index;
+                button.state.selected =
+                    model.form.is_none() && model.actions_focused && model.selected_action == index;
                 button.render_borderless_frame(frame, *area, &theme);
             }
         }
@@ -1058,27 +1170,9 @@ pub fn render_management_overlay(
     if let Some(choice) = &form.choice {
         for (index, area) in &layout.choice_rows {
             let value = &choice.values[*index];
-            let is_menu = matches!(form.identity.as_str(), "more-actions" | "config-menu");
+            let is_menu = management_choice_is_menu(form);
             let text = if is_menu {
-                if let Some((label, shortcut)) = value.rsplit_once("    ") {
-                    let budget = usize::from(area.width).saturating_sub(shortcut.width() + 1);
-                    let mut used = 0;
-                    let left = label
-                        .chars()
-                        .take_while(|c| {
-                            used += c.width().unwrap_or(0);
-                            used <= budget
-                        })
-                        .collect::<String>();
-                    format!(
-                        "{left}{}{shortcut}",
-                        " ".repeat(
-                            usize::from(area.width).saturating_sub(left.width() + shortcut.width())
-                        )
-                    )
-                } else {
-                    value.clone()
-                }
+                value.clone()
             } else {
                 format!(
                     "{} {value}",

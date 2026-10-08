@@ -1,14 +1,19 @@
 use super::*;
 
 impl ShellSession {
+    pub(in crate::session) fn logs_has_active_overlay(&self) -> bool {
+        self.logs_state.more_selected.is_some() || self.logs_state.filter_form.is_some()
+    }
     pub(in crate::session) fn cancel_logs_pointer_gesture(&mut self) {
         self.logs_state.scrollbar_grab = None;
         self.logs_state.detail_scrollbar_grab = None;
+        self.logs_state.more_scrollbar_grab = None;
     }
     pub(in crate::session) fn logs_pointer_drag_active(&self) -> bool {
         self.active_screen() == ShellScreen::Logs
             && (self.logs_state.scrollbar_grab.is_some()
-                || self.logs_state.detail_scrollbar_grab.is_some())
+                || self.logs_state.detail_scrollbar_grab.is_some()
+                || self.logs_state.more_scrollbar_grab.is_some())
     }
     pub(in crate::session) fn logs_button_at(
         &self,
@@ -98,7 +103,11 @@ impl ShellSession {
             ui::LogsHitTarget::FilterModule => self.logs_filter_module(),
             ui::LogsHitTarget::FilterTime => self.logs_filter_time(),
             ui::LogsHitTarget::Follow => self.logs_follow_control(),
-            ui::LogsHitTarget::More => self.logs_state.more_selected = Some(0),
+            ui::LogsHitTarget::More => {
+                self.cancel_logs_pointer_gesture();
+                self.logs_state.more_selected = Some(0);
+            }
+            ui::LogsHitTarget::CloseMore => self.logs_state.more_selected = None,
             ui::LogsHitTarget::Filters => self.logs_open_filter_form(),
             ui::LogsHitTarget::FormApply => self.logs_apply_filter_form(),
             ui::LogsHitTarget::FormCancel => self.logs_state.filter_form = None,
@@ -129,6 +138,24 @@ impl ShellSession {
             _ => {}
         }
     }
+    pub(super) fn logs_move_more_selection(&mut self, direction: isize, wrap: bool) {
+        let Some(selected) = self.logs_state.more_selected else {
+            return;
+        };
+        let options = ui::logs_more_controls();
+        let model = self.to_logs_view_model();
+        for distance in 1..=options.len() {
+            let index = selected as isize + direction * distance as isize;
+            if !wrap && !(0..options.len() as isize).contains(&index) {
+                break;
+            }
+            let index = index.rem_euclid(options.len() as isize) as usize;
+            if ui::logs_control_enabled(&model, options[index].0) {
+                self.logs_state.more_selected = Some(index);
+                break;
+            }
+        }
+    }
     pub(in crate::session) fn handle_logs_pointer(&mut self, mouse: MouseInput) {
         let Some(main) = self.logs_main_area() else {
             return;
@@ -157,12 +184,10 @@ impl ShellSession {
             if self.logs_state.filter_form.is_some() {
                 return;
             }
-            if let Some(selected) = self.logs_state.more_selected {
-                self.logs_state.more_selected = Some(
-                    selected
-                        .saturating_add_signed(delta.signum())
-                        .min(ui::logs_more_controls().len().saturating_sub(1)),
-                );
+            if self.logs_state.more_selected.is_some() {
+                if layout.menu.contains(point.into()) && delta != 0 {
+                    self.logs_move_more_selection(delta.signum(), false);
+                }
                 return;
             }
             if layout.content.detail_panel.contains(point.into()) {
@@ -190,15 +215,22 @@ impl ShellSession {
             return;
         }
         let Some(target) = ui::logs_hit_test(main, &model, point) else {
-            if self.logs_state.more_selected.is_some() {
+            if self.logs_state.more_selected.is_some() && !layout.menu.contains(point.into()) {
                 self.logs_state.more_selected = None;
             }
             return;
         };
-        if self.logs_state.more_selected.is_some() {
+        if self.logs_state.more_selected.is_some() && target != ui::LogsHitTarget::MoreScrollbar {
             self.logs_state.more_selected = None;
         }
         match target {
+            ui::LogsHitTarget::MoreScrollbar => {
+                self.logs_state.scrollbar_grab = None;
+                self.logs_state.detail_scrollbar_grab = None;
+                self.logs_state.more_scrollbar_grab =
+                    layout.menu_scrollbar.map(|bar| bar.grab_at(point));
+                self.drag_logs_scrollbar(point);
+            }
             ui::LogsHitTarget::Scrollbar => {
                 self.logs_state.detail_scrollbar_grab = None;
                 self.logs_state.scrollbar_grab = Some(
@@ -243,6 +275,21 @@ impl ShellSession {
             return;
         };
         let layout = ui::logs_layout(main, &self.to_logs_view_model());
+        if let Some(grab) = self.logs_state.more_scrollbar_grab {
+            if let Some(bar) = layout.menu_scrollbar {
+                let selected = bar.offset_at(point, grab) + bar.viewport_len.saturating_sub(1);
+                self.logs_state.more_selected = Some(selected);
+                if !ui::logs_control_enabled(
+                    &self.to_logs_view_model(),
+                    ui::logs_more_controls()[selected].0,
+                ) {
+                    self.logs_move_more_selection(1, false);
+                }
+            } else {
+                self.cancel_logs_pointer_gesture();
+            }
+            return;
+        }
         if let Some(grab) = self.logs_state.detail_scrollbar_grab {
             if let Some(bar) = layout.detail_scrollbar {
                 self.logs_state.detail_scroll = bar.offset_at(point, grab);

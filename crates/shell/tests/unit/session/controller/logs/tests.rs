@@ -104,6 +104,170 @@ fn more_menu_opens_filters_and_applies_service_boot_and_file_choices() {
 }
 
 #[test]
+fn more_dialog_navigation_skips_disabled_actions_and_space_closes() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.job = None;
+    key(&mut state, "F10");
+    state.logs_state.more_selected = Some(4);
+    key(&mut state, "Down");
+    assert_eq!(state.logs_state.more_selected, Some(7));
+    key(&mut state, "Home");
+    assert_eq!(state.logs_state.more_selected, Some(0));
+    key(&mut state, "End");
+    assert_eq!(state.logs_state.more_selected, Some(7));
+    key(&mut state, "Tab");
+    assert_eq!(state.logs_state.more_selected, Some(0));
+    state.logs_state.more_selected = Some(5);
+    key(&mut state, "Enter");
+    assert_eq!(state.logs_state.more_selected, Some(5));
+    assert_eq!(state.logs_state.section, ui::LogsSection::Events);
+    key(&mut state, "End");
+    state.handle_logs_key(&KeyInput::new(InputKey::Space));
+    assert!(state.logs_state.more_selected.is_none());
+    assert_eq!(state.active_screen(), ShellScreen::Logs);
+}
+
+#[test]
+fn more_dialog_blocks_stale_background_buttons_before_its_first_redraw() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.job = None;
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    let control = layout
+        .controls
+        .iter()
+        .find(|control| control.target == ui::LogsHitTarget::Refresh)
+        .unwrap();
+    let region = state
+        .logs_button_at((control.area.x, control.area.y))
+        .unwrap();
+    state.button_regions.push(region.clone());
+    key(&mut state, "F10");
+    assert!(state.button_at((region.area.x, region.area.y)).is_none());
+    state.handle_logs_pointer(MouseInput::down(
+        region.area.x,
+        region.area.y,
+        PointerButton::Left,
+    ));
+    assert!(state.logs_state.more_selected.is_none());
+    assert!(
+        state.logs_state.job.is_none(),
+        "outside dismissal must not refresh the covered page"
+    );
+    key(&mut state, "F10");
+    key(&mut state, "Enter");
+    assert!(state.logs_state.filter_form.is_some());
+    assert!(state.button_at((region.area.x, region.area.y)).is_none());
+}
+
+#[test]
+fn more_dialog_waits_for_release_and_cancels_press_on_drag_resize_or_focus_loss() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.job = None;
+    key(&mut state, "F10");
+    let main = state.logs_main_area().unwrap();
+    let layout = ui::logs_layout(main, &state.to_logs_view_model());
+    let control = layout
+        .menu_controls
+        .iter()
+        .find(|control| control.target == ui::LogsHitTarget::FilterLevel)
+        .unwrap();
+    let point = (control.area.x, control.area.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert_eq!(state.logs_state.query.min_level, None);
+    assert!(state.logs_state.more_selected.is_some());
+    state.apply_input(InputEvent::mouse_drag(
+        PointerButton::Left,
+        (layout.menu.x, layout.menu.y),
+    ));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.logs_state.query.min_level, None);
+    assert!(state.logs_state.more_selected.is_some());
+    for cancelled in [
+        InputEvent::FocusLost,
+        InputEvent::Resize {
+            width: 120,
+            height: 40,
+        },
+    ] {
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        state.apply_input(cancelled);
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        assert_eq!(state.logs_state.query.min_level, None);
+        assert!(state.logs_state.more_selected.is_some());
+    }
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.logs_state.query.min_level, Some(LogLevel::Warning));
+    assert!(state.logs_state.more_selected.is_none());
+}
+
+#[test]
+fn more_dialog_padding_and_outside_wheel_do_not_change_or_dismiss_the_selection() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.job = None;
+    key(&mut state, "F10");
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    let padding = (layout.menu.x + 1, layout.menu.y + 1);
+    state.handle_logs_pointer(MouseInput::down(padding.0, padding.1, PointerButton::Left));
+    assert_eq!(state.logs_state.more_selected, Some(0));
+    state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, (0, 1)));
+    assert_eq!(state.logs_state.more_selected, Some(0));
+    assert_eq!(state.logs_state.scroll, 0);
+    state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, padding));
+    assert_eq!(state.logs_state.more_selected, Some(1));
+    state.logs_state.more_selected = Some(0);
+    state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Up, padding));
+    assert_eq!(
+        state.logs_state.more_selected,
+        Some(0),
+        "scrolling stops at the first option"
+    );
+    let close = layout
+        .menu_controls
+        .iter()
+        .find(|control| control.target == ui::LogsHitTarget::CloseMore)
+        .unwrap();
+    let point = (close.area.x, close.area.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(state.logs_state.more_selected.is_some());
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(state.logs_state.more_selected.is_none());
+}
+
+#[test]
+fn compact_more_dialog_scrollbar_drags_within_the_dialog_and_cancels_on_focus_loss() {
+    let mut state = state(UserRole::User);
+    state.terminal_size = (49, 11);
+    state.open_logs();
+    state.logs_state.job = None;
+    key(&mut state, "F10");
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    let bar = layout.menu_scrollbar.unwrap();
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (bar.thumb.x, bar.thumb.y),
+    ));
+    assert!(state.logs_pointer_drag_active());
+    state.apply_input(InputEvent::mouse_drag(
+        PointerButton::Left,
+        (bar.track.x, bar.track.bottom()),
+    ));
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    assert_eq!(
+        layout.menu_scrollbar.unwrap().offset,
+        bar.content_len - bar.viewport_len
+    );
+    assert_eq!(state.logs_state.scroll, 0);
+    state.apply_input(InputEvent::FocusLost);
+    assert!(!state.logs_pointer_drag_active());
+    assert!(state.logs_state.more_selected.is_some());
+}
+
+#[test]
 fn live_buffer_is_bounded_without_duplicate_events() {
     let mut old = LogsSnapshot::default();
     old.result.events = (0..1200)

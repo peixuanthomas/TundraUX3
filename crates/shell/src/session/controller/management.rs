@@ -233,6 +233,61 @@ fn management_detail_value(kind: Option<ManagementKind>, key: &str, value: &str)
     }
 }
 
+fn management_view_action(action: &ManagementAction) -> bool {
+    action.id == "set_view" || action.id.starts_with("scope_")
+}
+
+fn query_management_snapshot(
+    query: &ManagementQuery,
+    cancelled: &AtomicBool,
+) -> Result<ManagementSnapshot, ManagementError> {
+    let package_details = query.kind == ManagementKind::Packages
+        && matches!(
+            query.scope.as_str(),
+            "" | "installed" | "search" | "updates"
+        )
+        && query.target.is_some();
+    if !package_details {
+        return platform::management::query(query, cancelled);
+    }
+    // Package detail queries return one package. Keep the current list visible
+    // and replace only the selected row with its richer metadata.
+    let mut list_query = query.clone();
+    list_query.target = None;
+    let mut snapshot = platform::management::query(&list_query, cancelled)?;
+    let mut details_query = query.clone();
+    details_query.filter.clear();
+    let details = platform::management::query(&details_query, cancelled);
+    merge_package_details(&mut snapshot, query.target.as_deref().unwrap(), details)?;
+    Ok(snapshot)
+}
+
+fn merge_package_details(
+    snapshot: &mut ManagementSnapshot,
+    target: &str,
+    details: Result<ManagementSnapshot, ManagementError>,
+) -> Result<(), ManagementError> {
+    let row = snapshot.rows.iter_mut().find(|row| row.id == target);
+    match details {
+        Ok(details) => {
+            if let (Some(row), Some(detail)) =
+                (row, details.rows.into_iter().find(|row| row.id == target))
+            {
+                *row = detail;
+            }
+        }
+        Err(ManagementError::Cancelled) => return Err(ManagementError::Cancelled),
+        Err(error) => {
+            // A cache or detail failure must not discard a usable installed
+            // list or its removal actions. Show the actual error with the row.
+            if let Some(row) = row {
+                row.detail.push(("Details".into(), error.to_string()));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl ShellSession {
     pub(in crate::session) fn open_management(&mut self, kind: ManagementKind) {
         if !cfg!(target_os = "linux") || self.app.auth_session().is_none() || self.is_strict_guest()
@@ -300,7 +355,7 @@ impl ShellSession {
         ))
         .expect("bounded task identifier");
         match group.spawn_thread(TaskSpec::one_shot(task), move || {
-            let result = platform::management::query(&query, &cancelled);
+            let result = query_management_snapshot(&query, &cancelled);
             if let Some(output) = output.upgrade() {
                 *output.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
             }
@@ -425,6 +480,7 @@ impl ShellSession {
                             }
                         });
                     self.management_state.snapshot = snapshot;
+                    self.management_state.problem = None;
                 }
                 Err(e) => {
                     let problem = problem::OperationProblem::from_error(&e);
@@ -487,10 +543,10 @@ impl ShellSession {
                     );
                 }
                 OperationEvent::Snapshot { snapshot } => {
-                    if self.management_state.configuration_operation
-                        && self.editor_config.pending_action.as_deref() == Some("history")
-                    {
-                        self.editor_config.history = snapshot;
+                    if self.management_state.configuration_operation {
+                        if self.editor_config.pending_action.as_deref() == Some("history") {
+                            self.editor_config.history = snapshot;
+                        }
                         continue;
                     }
                     self.management_state.query_job = None;
@@ -620,6 +676,19 @@ impl ShellSession {
             self.management_state.configuration_operation = false;
             if config_operation {
                 self.finish_config_operation();
+                if self.editor_config.pending_action.is_none() {
+                    self.management_state.outcome = None;
+                    self.management_state.status =
+                        if self.management_state.snapshot.notices.is_empty() {
+                            format!(
+                                "{} · {}",
+                                self.management_state.snapshot.backend,
+                                self.management_state.snapshot.rows.len()
+                            )
+                        } else {
+                            self.management_state.snapshot.notices.join("; ")
+                        };
+                }
             }
             if !config_operation && !self.management_state.received_snapshot {
                 self.refresh_management();
@@ -682,6 +751,38 @@ impl ShellSession {
                 .cloned()
                 .map(|a| (a, None)),
         );
+        if self.management_state.kind == Some(ManagementKind::Packages) {
+            // Navigation must also remain available after a failed query or
+            // when a subview has no rows.
+            for scope in [
+                "search",
+                "installed",
+                "updates",
+                "sources",
+                "conflicts",
+                "status",
+            ] {
+                let id = format!("scope_{scope}");
+                if !actions.iter().any(|(action, _)| {
+                    action.id == id
+                        || (action.id == "set_view"
+                            && action
+                                .values
+                                .get("scope")
+                                .is_some_and(|value| value == scope))
+                }) {
+                    actions.push((
+                        ManagementAction {
+                            id,
+                            label: management_label(&format!("scope-{scope}"), scope),
+                            group: "view".into(),
+                            ..Default::default()
+                        },
+                        None,
+                    ));
+                }
+            }
+        }
         if self.management_state.operation_job.is_some() {
             actions.push((
                 ManagementAction {
@@ -801,6 +902,7 @@ impl ShellSession {
         if (self.management_state.operation_job.is_some()
             || self.management_state.draft_job.is_some())
             && action.id != "cancel_operation"
+            && !management_view_action(&action)
         {
             self.management_state.status = i18n::tr!("management-operation-running");
             return;
@@ -901,7 +1003,10 @@ impl ShellSession {
             }
             return;
         }
-        if action.id == "edit_system_config" {
+        if matches!(
+            action.id.as_str(),
+            "edit_system_config" | "edit_package_source" | "compare_package_config"
+        ) {
             if let Some(path) = values.get("path") {
                 let path = PathBuf::from(path);
                 let draft = values.get("content").map(|content| ConfigDraft {
@@ -964,8 +1069,14 @@ impl ShellSession {
                 });
             return;
         }
-        if action.id == "set_view" || action.id.starts_with("scope_") {
+        if management_view_action(&action) {
+            let package_view = self.management_state.kind == Some(ManagementKind::Packages);
+            let mut keep_package_filter = false;
             if let Some(query) = &mut self.management_state.query {
+                let old_package_list = matches!(
+                    query.scope.as_str(),
+                    "" | "search" | "installed" | "updates"
+                );
                 if let Some(scope) = action.id.strip_prefix("scope_") {
                     query.scope = scope.into();
                 }
@@ -976,6 +1087,35 @@ impl ShellSession {
                         query.options.insert(key, value);
                     }
                 }
+                if package_view {
+                    keep_package_filter = old_package_list
+                        && matches!(
+                            query.scope.as_str(),
+                            "" | "search" | "installed" | "updates"
+                        );
+                    query.target = None;
+                    if !keep_package_filter {
+                        query.filter.clear();
+                    }
+                    query.options.clear();
+                }
+            }
+            if package_view {
+                if !keep_package_filter {
+                    self.management_state.filter_input.clear();
+                }
+                self.management_state.filtering = false;
+                self.management_state.details_only = false;
+                self.management_state.terminal_mode = false;
+                self.management_state.details_scroll = 0;
+                self.management_state.selected = 0;
+                self.management_state.scroll = 0;
+                self.management_state.table_scroll = 0;
+                self.management_state.action_scroll = None;
+                self.management_state.selected_action = 0;
+                self.management_state.actions_focused = false;
+                self.management_state.list_scroll_explicit = false;
+                self.management_state.outcome = None;
             }
             self.refresh_management();
             return;
@@ -1190,7 +1330,9 @@ impl ShellSession {
                 *job.0.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
                 self.management_state.operation_job = Some(job);
                 self.management_state.outcome = None;
-                self.management_state.received_snapshot = false;
+                if !configuration_operation {
+                    self.management_state.received_snapshot = false;
+                }
                 self.management_state.output.clear();
                 self.management_state.parser = None;
                 self.management_state.status = i18n::tr!("management-working");
@@ -1599,6 +1741,12 @@ impl ShellSession {
             self.management_state.shortcut_repeat_guard = Some(key.key.clone());
         }
         match key.key {
+            InputKey::Escape
+                if self.management_state.kind == Some(ManagementKind::Packages)
+                    && self.management_state.details_only =>
+            {
+                self.toggle_management_details();
+            }
             InputKey::Escape => {
                 self.screen_stack.pop();
                 self.focused_component = if self.active_screen() == ShellScreen::Launcher {
@@ -1621,6 +1769,10 @@ impl ShellSession {
                 if self.management_state.actions_focused {
                     self.activate_management_action(self.management_state.selected_action);
                 } else {
+                    if self.management_state.kind == Some(ManagementKind::Packages) {
+                        self.toggle_management_details();
+                        return;
+                    }
                     self.management_state.actions_focused = true;
                     if let Some(id) = self
                         .management_state
@@ -1665,7 +1817,67 @@ impl ShellSession {
             }
             _ => {}
         }
+        if self.management_state.kind == Some(ManagementKind::Packages)
+            && self.management_state.details_only
+            && !self.management_state.actions_focused
+            && matches!(
+                key.key,
+                InputKey::Up
+                    | InputKey::Down
+                    | InputKey::PageUp
+                    | InputKey::PageDown
+                    | InputKey::Home
+                    | InputKey::End
+            )
+        {
+            let target = self
+                .management_state
+                .snapshot
+                .rows
+                .get(self.management_state.selected)
+                .map(|row| row.id.clone());
+            if let Some(query) = &mut self.management_state.query {
+                if matches!(
+                    query.scope.as_str(),
+                    "" | "search" | "installed" | "updates"
+                ) && query.target != target
+                {
+                    query.target = target;
+                    self.management_state.details_scroll = 0;
+                    self.refresh_management();
+                }
+            }
+        }
         self.clamp_management_scroll();
+    }
+    pub(super) fn toggle_management_details(&mut self) {
+        if self.management_state.snapshot.rows.is_empty() && !self.management_state.details_only {
+            return;
+        }
+        self.management_state.details_only = !self.management_state.details_only;
+        self.management_state.details_scroll = 0;
+        let package_view = self.management_state.kind == Some(ManagementKind::Packages);
+        self.management_state.actions_focused = !package_view;
+        let target = self
+            .management_state
+            .snapshot
+            .rows
+            .get(self.management_state.selected)
+            .map(|row| row.id.clone());
+        let details_only = self.management_state.details_only;
+        if let Some(query) = &mut self.management_state.query {
+            query.target = if package_view
+                && (!details_only
+                    || !matches!(
+                        query.scope.as_str(),
+                        "" | "installed" | "search" | "updates"
+                    )) {
+                None
+            } else {
+                target
+            };
+        }
+        self.refresh_management();
     }
     fn management_main(&self) -> Rect {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
@@ -1727,6 +1939,16 @@ impl ShellSession {
         let actions = self.management_actions();
         ui::ManagementViewModel {
             scope_id: format!("{:?}", s.kind),
+            column_width_limits: if s.kind == Some(ManagementKind::Packages) {
+                match s.query.as_ref().map(|query| query.scope.as_str()) {
+                    Some("sources") => vec![28, 10, 42],
+                    Some("conflicts") => vec![36, 36],
+                    Some("status") => Vec::new(),
+                    _ => vec![22, 16, 16, 42],
+                }
+            } else {
+                Vec::new()
+            },
             action_ids: actions
                 .iter()
                 .map(|(action, row)| {
@@ -1738,7 +1960,15 @@ impl ShellSession {
                     )
                 })
                 .collect(),
-            title: s.kind.map(management_title).unwrap_or_default(),
+            title: s.kind.map(|kind| {
+                let title = management_title(kind);
+                if kind == ManagementKind::Packages {
+                    let scope = s.query.as_ref().map(|query| query.scope.as_str()).filter(|scope| !scope.is_empty()).unwrap_or("installed");
+                    format!("{title} · {}", management_label(&format!("scope-{scope}"), scope))
+                } else {
+                    title
+                }
+            }).unwrap_or_default(),
             columns: s
                 .snapshot
                 .columns
@@ -1776,7 +2006,7 @@ impl ShellSession {
                     let label = action_label(a);
                     (
                         label,
-                        a.disabled_reason.is_none() && (s.operation_job.is_none() || matches!(a.id.as_str(),"cancel_operation"|"more_actions"|"current_task")),
+                        a.disabled_reason.is_none() && (s.operation_job.is_none() || management_view_action(a) || matches!(a.id.as_str(),"cancel_operation"|"more_actions"|"current_task")),
                     )
                 })
                 .collect(),
@@ -1784,7 +2014,7 @@ impl ShellSession {
                 .iter()
                 .map(|(action, _)| {
                     action.disabled_reason.clone().unwrap_or_else(|| {
-                        if s.operation_job.is_some() && action.id != "cancel_operation" {
+                        if s.operation_job.is_some() && action.id != "cancel_operation" && !management_view_action(action) {
                             i18n::tr!("management-operation-running")
                         } else if action.privileged {
                             i18n::tr!("management-touch-authorization")
@@ -1848,7 +2078,7 @@ impl ShellSession {
                     cancel_disabled: matches!(&f.purpose, FormPurpose::Answer(id) if id.starts_with("package-config-")),
                     choice: s.choice_field.and_then(|index| {
                         f.fields.get(index).map(|field| ui::ManagementChoices {
-                            disabled: match &f.purpose { FormPurpose::Menu(items)=>items.iter().map(|(a,_)|a.disabled_reason.is_some() || (s.operation_job.is_some() && a.id!="cancel_operation")).collect(),_=>vec![] },
+                            disabled: match &f.purpose { FormPurpose::Menu(items)=>items.iter().map(|(a,_)|a.disabled_reason.is_some() || (s.operation_job.is_some() && a.id!="cancel_operation" && !management_view_action(a))).collect(),_=>vec![] },
                             field: index,
                             values: field.choices.clone(),
                             selected: s.choice_selected,

@@ -29,6 +29,7 @@ pub(in crate::session) struct LogsUiState {
     last_refresh: Option<Instant>,
     background_refresh: bool,
     more_selected: Option<usize>,
+    more_scrollbar_grab: Option<u16>,
     filter_form: Option<ui::ManagementForm>,
 }
 
@@ -80,6 +81,7 @@ impl ShellSession {
         self.focused_component = ShellComponent::Logs;
         self.request_logs_job(None);
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
+        self.refresh_hit_map();
     }
 
     pub(in crate::session) fn open_service_logs(&mut self, unit: &str, scope: &str) {
@@ -412,7 +414,7 @@ impl ShellSession {
             self.logs_state.snapshot.incidents.len()
         }
     }
-    fn logs_main_area(&self) -> Option<Rect> {
+    pub(super) fn logs_main_area(&self) -> Option<Rect> {
         match self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)) {
             ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => Some(main),
         }
@@ -748,21 +750,30 @@ impl ShellSession {
             return;
         }
         if let Some(selected) = self.logs_state.more_selected {
-            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+            if key.has_non_shift_modifier() {
                 return;
             }
             let controls = ui::logs_more_controls();
             match key.key {
-                InputKey::Escape => self.logs_state.more_selected = None,
-                InputKey::Up | InputKey::BackTab => {
-                    self.logs_state.more_selected = Some(selected.saturating_sub(1))
+                InputKey::Escape | InputKey::F(10) if key.phase == InputPhase::Press => {
+                    self.logs_state.more_selected = None
                 }
-                InputKey::Down | InputKey::Tab => {
-                    self.logs_state.more_selected =
-                        Some((selected + 1).min(controls.len().saturating_sub(1)))
+                InputKey::Up | InputKey::BackTab => self.logs_move_more_selection(-1, true),
+                InputKey::Down | InputKey::Tab => self.logs_move_more_selection(1, true),
+                InputKey::Home => {
+                    self.logs_state.more_selected = Some(controls.len().saturating_sub(1));
+                    self.logs_move_more_selection(1, true);
                 }
-                InputKey::Enter => {
-                    if let Some((target, _)) = controls.get(selected) {
+                InputKey::End => {
+                    self.logs_state.more_selected = Some(0);
+                    self.logs_move_more_selection(-1, true);
+                }
+                InputKey::Enter | InputKey::Space | InputKey::Char(' ')
+                    if key.phase == InputPhase::Press =>
+                {
+                    if let Some((target, _)) = controls.get(selected)
+                        && ui::logs_control_enabled(&self.to_logs_view_model(), *target)
+                    {
                         let target = *target;
                         self.logs_state.more_selected = None;
                         self.logs_touch_action(target);
