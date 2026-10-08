@@ -1,7 +1,9 @@
 //! Network management keeps the configuration owner and the running daemon separate.
 //! Changes are guarded by a root-owned recovery service, never by a Shell thread.
 mod config;
+mod diagnostics;
 mod transaction;
+mod wifi;
 
 use super::*;
 use serde_json::Value as Json;
@@ -18,6 +20,8 @@ use zbus::blocking::{Connection, Proxy, connection::Builder};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 pub use transaction::rollback_transaction;
+pub use transaction::{confirm_transaction, transaction_status};
+pub use wifi::{WifiAccessPoint, scan_wifi};
 
 const NM: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
@@ -30,10 +34,10 @@ pub fn query(
         .map_err(|e| ManagementError::Failed(format!("Cannot read ip address output: {e}")))?;
     let mut snapshot = ManagementSnapshot {
         columns: vec![
-            "Interface".into(),
+            "Network / interface".into(),
             "State".into(),
-            "Addresses".into(),
-            "Configuration owner".into(),
+            "Address / signal".into(),
+            "Configuration / security".into(),
         ],
         backend: "Linux network configuration owners".into(),
         ..Default::default()
@@ -51,7 +55,7 @@ pub fn query(
         let Some(name) = entry["ifname"].as_str() else {
             continue;
         };
-        if name == "lo" || !name.contains(&query.filter) {
+        if name == "lo" {
             continue;
         }
         let owner = config::detect(name);
@@ -90,6 +94,8 @@ pub fn query(
         };
         row.identity.insert("owner".into(), owner.label().into());
         row.identity.insert("source".into(), owner.source_display());
+        row.identity
+            .insert("active_uuid".into(), owner.uuid.clone());
         if let Some(path) = owner.path.as_ref() {
             if let Ok(bytes) = std::fs::read(path) {
                 row.identity
@@ -106,11 +112,11 @@ pub fn query(
             ..Default::default()
         });
         if owner.kind == config::OwnerKind::NetworkManager
-            && std::path::Path::new(&format!("/sys/class/net/{name}/wireless")).exists()
+            && nm_device(name).is_ok_and(|device| device.device_type == 2)
         {
             row.actions.push(ManagementAction {
-                id: "wifi-connect".into(),
-                label: "Connect to Wi-Fi".into(),
+                id: "wifi-hidden".into(),
+                label: "Connect to hidden network".into(),
                 fields: vec![
                     field("ssid", "SSID", "", true, &[]),
                     field(
@@ -128,23 +134,29 @@ pub fn query(
                 confirm: true,
                 privileged: true,
                 disabled_reason: owner.reason.clone().or_else(recovery_unavailable),
+                ..Default::default()
             });
-            if let Ok(access_points) = run(
-                "nmcli",
-                &[
-                    "--terse",
-                    "--fields",
-                    "SSID,SECURITY,SIGNAL",
-                    "device",
-                    "wifi",
-                    "list",
-                    "ifname",
-                    name,
-                ],
-                cancelled,
-            ) {
-                row.detail
-                    .push(("Visible Wi-Fi networks".into(), access_points));
+            row.actions.push(ManagementAction {
+                id: "wifi-scan".into(),
+                label: "Scan Wi-Fi".into(),
+                ..Default::default()
+            });
+            match scan_wifi(name, cancelled) {
+                Ok(points) => snapshot.rows.extend(
+                    points
+                        .into_iter()
+                        .filter(|ap| {
+                            query.filter.is_empty()
+                                || String::from_utf8_lossy(&ap.ssid).contains(&query.filter)
+                                || name.contains(&query.filter)
+                        })
+                        .map(|ap| {
+                            wifi::row(ap, &row, owner.reason.clone().or_else(recovery_unavailable))
+                        }),
+                ),
+                Err(error) => row
+                    .detail
+                    .push(("Wi-Fi scan".into(), format!("Unavailable: {error}"))),
             }
             if !owner.uuid.is_empty() {
                 for (id, label) in [
@@ -164,14 +176,16 @@ pub fn query(
         }
         row.actions.push(ManagementAction {
             id: "check".into(),
-            label: "Check DNS and target connection".into(),
+            label: "Diagnose connection".into(),
             fields: vec![
-                field("host", "Host or IP", "", true, &[]),
+                field("host", "Host or IP", "example.com", true, &[]),
                 field("port", "TCP port", "443", true, &[]),
             ],
             ..Default::default()
         });
-        snapshot.rows.push(row);
+        if query.filter.is_empty() || name.contains(&query.filter) {
+            snapshot.rows.push(row);
+        }
     }
     if let Ok(profiles) = saved_wifi_profiles() {
         let active = run(
@@ -181,6 +195,9 @@ pub fn query(
         )
         .unwrap_or_default();
         for profile in profiles {
+            if !query.filter.is_empty() && !profile.id.contains(&query.filter) {
+                continue;
+            }
             let Some(path) = profile
                 .filename
                 .as_ref()
@@ -228,7 +245,6 @@ pub fn query(
             });
         }
     }
-    snapshot.notices.push("Changes require a configuration source that can be identified exactly and an independent system recovery service. Confirmation expires after 120 seconds.".into());
     Ok(snapshot)
 }
 
@@ -238,6 +254,21 @@ pub fn execute(
     interaction: &mut dyn OperationInteraction,
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
+    if matches!(command.action.as_str(), "confirm" | "transaction-status") {
+        let id = command.target.as_deref().ok_or_else(|| {
+            ManagementError::InvalidInput("Enter a network transaction ID.".into())
+        })?;
+        if command.action == "confirm" {
+            return confirm_transaction(
+                id,
+                context.actor_uid,
+                confirmation_decision(command.values.get("decision").map(String::as_str))?,
+            );
+        }
+        let snapshot = transaction_status(id, context.actor_uid)?;
+        interaction.emit(OperationEvent::Snapshot { snapshot });
+        return Ok("Network transaction status read.".into());
+    }
     if command.action == "inspect_network" {
         if unsafe { libc::geteuid() } != 0 {
             return Err(ManagementError::PermissionDenied(
@@ -252,17 +283,44 @@ pub fn execute(
         return forget_saved_wifi(command, interaction, cancelled);
     }
     let name = command
-        .target
-        .as_deref()
+        .identity
+        .get("interface")
+        .map(String::as_str)
+        .or(command.target.as_deref())
         .ok_or_else(|| ManagementError::InvalidInput("Select a network interface".into()))?;
     validate_interface(name)?;
     verify_identity(name, &command.identity)?;
-    if command.action == "check" {
-        return check_target(name, &command.values, interaction, cancelled);
+    if matches!(command.action.as_str(), "check" | "check-again") {
+        let snapshot = diagnostics::diagnose(name, &command.values, cancelled)?;
+        let result = snapshot.notices.join("\n");
+        interaction.emit(OperationEvent::Snapshot { snapshot });
+        return Ok(result);
+    }
+    if command.action == "network-list" {
+        let snapshot = query(
+            &ManagementQuery {
+                filter: name.into(),
+                ..ManagementQuery::new(ManagementKind::Network)
+            },
+            cancelled,
+        )?;
+        interaction.emit(OperationEvent::Snapshot { snapshot });
+        return Ok("Network list loaded.".into());
+    }
+    if command.action == "wifi-scan" {
+        wifi::request_scan(name)?;
+        let snapshot = query(&ManagementQuery::new(ManagementKind::Network), cancelled)?;
+        interaction.emit(OperationEvent::Snapshot { snapshot });
+        return Ok("Wi-Fi scan requested. Refresh the list for new networks.".into());
     }
     if !matches!(
         command.action.as_str(),
-        "configure" | "wifi-connect" | "wifi-disconnect" | "wifi-forget"
+        "configure"
+            | "wifi-connect"
+            | "wifi-connect-password"
+            | "wifi-hidden"
+            | "wifi-disconnect"
+            | "wifi-forget"
     ) {
         return Err(ManagementError::InvalidInput(
             "Unknown network action".into(),
@@ -279,12 +337,15 @@ pub fn execute(
     }
     if command.identity.get("owner") != Some(&owner.label().to_string())
         || command.identity.get("source") != Some(&owner.source_display())
+        || command.identity.get("active_uuid") != Some(&owner.uuid)
     {
         return Err(ManagementError::Conflict(
             "The interface configuration owner changed; refresh the list".into(),
         ));
     }
-    if let Some(path) = &owner.path {
+    if matches!(command.action.as_str(), "configure" | "wifi-forget")
+        && let Some(path) = &owner.path
+    {
         let bytes = std::fs::read(path).map_err(io_error)?;
         if command.identity.get("configuration") != Some(&fingerprint(&bytes)) {
             return Err(ManagementError::Conflict(
@@ -295,25 +356,36 @@ pub fn execute(
     check_cancelled(cancelled)?;
     let plan = if command.action == "configure" {
         config::prepare(&owner, name, &command.values)?
-    } else if command.action == "wifi-connect" {
+    } else if matches!(
+        command.action.as_str(),
+        "wifi-connect" | "wifi-connect-password" | "wifi-hidden"
+    ) {
         if owner.kind != config::OwnerKind::NetworkManager {
             return Err(ManagementError::Unavailable(
                 "Personal Wi-Fi changes require native NetworkManager ownership".into(),
             ));
         }
-        config::prepare_wifi(&owner, name, &command.values)?
+        config::prepare_wifi(
+            &owner,
+            name,
+            &wifi::selected_values(command, name, cancelled)?,
+        )?
     } else {
         config::prepare_wifi_action(&owner, name, &command.action)?
     };
     interaction.emit(OperationEvent::Output {
         text: plan.preview.clone(),
     });
-    let decision = interaction.ask(
-        "network-preview",
-        "Apply the displayed network settings temporarily?",
-        &["Apply".into(), "Cancel".into()],
-        false,
-    )?;
+    let decision = if plan.operation == "wifi-connect" {
+        "Apply".into()
+    } else {
+        interaction.ask(
+            "network-preview",
+            "Apply the displayed network settings temporarily?",
+            &["Apply".into(), "Cancel".into()],
+            false,
+        )?
+    };
     if !decision.eq_ignore_ascii_case("Apply") {
         return Err(ManagementError::Cancelled);
     }
@@ -329,6 +401,16 @@ pub fn execute(
         ));
     }
     transaction::apply(plan, context, interaction, cancelled)
+}
+
+fn confirmation_decision(value: Option<&str>) -> Result<bool, ManagementError> {
+    match value.unwrap_or("keep") {
+        "keep" => Ok(true),
+        "revert" => Ok(false),
+        _ => Err(ManagementError::InvalidInput(
+            "Decision must be keep or revert".into(),
+        )),
+    }
 }
 
 fn settings_fields() -> Vec<ManagementField> {
@@ -458,6 +540,18 @@ pub(super) fn run(
     args: &[&str],
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
+    let (output, error, status) = run_status(name, args, cancelled)?;
+    if status != 0 {
+        return Err(ManagementError::Failed(format!("{name} failed: {error}")));
+    }
+    Ok(output)
+}
+
+pub(super) fn run_status(
+    name: &str,
+    args: &[&str],
+    cancelled: &AtomicBool,
+) -> Result<(String, String, i32), ManagementError> {
     let mut child = Command::new(program(name)?)
         .args(args)
         .env_clear()
@@ -530,10 +624,7 @@ pub(super) fn run(
     };
     let output = String::from_utf8_lossy(&output).trim().to_string();
     let error = String::from_utf8_lossy(&error).trim().to_string();
-    if !status.success() {
-        return Err(ManagementError::Failed(format!("{name} failed: {error}")));
-    }
-    Ok(output)
+    Ok((output, error, status.code().unwrap_or(1)))
 }
 
 pub(super) fn check_cancelled(cancelled: &AtomicBool) -> Result<(), ManagementError> {
@@ -571,6 +662,7 @@ pub(super) struct NmDevice {
     pub connection: String,
     pub filename: Option<PathBuf>,
     pub managed: bool,
+    pub device_type: u32,
 }
 
 pub(super) fn nm_device(name: &str) -> Result<NmDevice, ManagementError> {
@@ -598,12 +690,14 @@ pub(super) fn nm_device(name: &str) -> Result<NmDevice, ManagementError> {
     )
     .map_err(dbus_error)?;
     let managed: bool = device.get_property("Managed").map_err(dbus_error)?;
+    let device_type: u32 = device.get_property("DeviceType").map_err(dbus_error)?;
     let active: OwnedObjectPath = device
         .get_property("ActiveConnection")
         .map_err(dbus_error)?;
     let mut result = NmDevice {
         path: path.to_string(),
         managed,
+        device_type,
         ..Default::default()
     };
     if active.as_str() != "/" {
@@ -630,20 +724,14 @@ pub(super) fn nm_device(name: &str) -> Result<NmDevice, ManagementError> {
     Ok(result)
 }
 
-pub(super) fn add_wifi(
-    name: &str,
-    uuid: &str,
-    ssid: &str,
-    security: &str,
-    password: &str,
-) -> Result<(), ManagementError> {
+fn add_wifi(name: &str, uuid: &str, wifi: &config::Wifi) -> Result<(), ManagementError> {
     let bus = bus()?;
     let device = nm_device(name)?;
     let mut settings = HashMap::<&str, HashMap<&str, Value<'_>>>::new();
     settings.insert(
         "connection",
         HashMap::from([
-            ("id", Value::from(ssid)),
+            ("id", Value::from(wifi.ssid.as_str())),
             ("uuid", Value::from(uuid)),
             ("type", Value::from("802-11-wireless")),
             ("interface-name", Value::from(name)),
@@ -653,22 +741,32 @@ pub(super) fn add_wifi(
     settings.insert(
         "802-11-wireless",
         HashMap::from([
-            ("ssid", Value::from(ssid.as_bytes().to_vec())),
+            ("ssid", Value::from(wifi.ssid_bytes.clone())),
             ("mode", Value::from("infrastructure")),
         ]),
     );
-    settings.insert("ipv4", HashMap::from([("method", Value::from("auto"))]));
+    settings.insert(
+        "ipv4",
+        HashMap::from([
+            ("method", Value::from("auto")),
+            ("may-fail", Value::from(false)),
+        ]),
+    );
     settings.insert("ipv6", HashMap::from([("method", Value::from("auto"))]));
-    if security != "open" {
+    if wifi.security != "open" {
         let mut wireless_security = HashMap::from([
             (
                 "key-mgmt",
-                Value::from(if security == "wpa3" { "sae" } else { "wpa-psk" }),
+                Value::from(if wifi.security == "wpa3" {
+                    "sae"
+                } else {
+                    "wpa-psk"
+                }),
             ),
-            ("psk", Value::from(password)),
+            ("psk", Value::from(wifi.password.as_str())),
             ("proto", Value::from(vec!["rsn"])),
         ]);
-        if security == "wpa3" {
+        if wifi.security == "wpa3" {
             wireless_security.insert("pmf", Value::from(3_u32));
         }
         settings.insert("802-11-wireless-security", wireless_security);
@@ -689,7 +787,12 @@ pub(super) fn add_wifi(
                 settings,
                 OwnedObjectPath::try_from(device.path)
                     .map_err(|e| ManagementError::Failed(e.to_string()))?,
-                OwnedObjectPath::try_from("/").unwrap(),
+                OwnedObjectPath::try_from(if wifi.ap_path.is_empty() {
+                    "/"
+                } else {
+                    wifi.ap_path.as_str()
+                })
+                .map_err(|e| ManagementError::InvalidInput(e.to_string()))?,
                 options,
             ),
         )
@@ -719,13 +822,21 @@ pub(super) fn save_nm(uuid: &str) -> Result<(), ManagementError> {
     connection.call::<_, _, ()>("Save", &()).map_err(dbus_error)
 }
 
-struct SavedWifi {
+pub(super) struct SavedWifi {
     uuid: String,
     id: String,
     filename: Option<PathBuf>,
+    ssid: Vec<u8>,
+    security: String,
+    interface: String,
+    password_saved: bool,
+    ipv4: String,
+    ipv6: String,
+    require_ipv4: bool,
+    require_ipv6: bool,
 }
 
-fn saved_wifi_profiles() -> Result<Vec<SavedWifi>, ManagementError> {
+pub(super) fn saved_wifi_profiles() -> Result<Vec<SavedWifi>, ManagementError> {
     let bus = bus()?;
     let names = zbus::blocking::fdo::DBusProxy::new(&bus).map_err(dbus_error)?;
     if !names
@@ -771,10 +882,59 @@ fn saved_wifi_profiles() -> Result<Vec<SavedWifi>, ManagementError> {
         let filename = profile
             .get_property::<String>("Filename")
             .unwrap_or_default();
+        let string = |section: &str, key: &str| {
+            settings
+                .get(section)
+                .and_then(|s| s.get(key))
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| String::try_from(v).ok())
+                .unwrap_or_default()
+        };
+        let ssid = settings
+            .get("802-11-wireless")
+            .and_then(|s| s.get("ssid"))
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| Vec::<u8>::try_from(v).ok())
+            .unwrap_or_default();
+        let security = match string("802-11-wireless-security", "key-mgmt").as_str() {
+            "wpa-psk" => "wpa2",
+            "sae" => "wpa3",
+            "wpa-eap" | "ieee8021x" => "enterprise",
+            "" if !settings.contains_key("802-11-wireless-security") => "open",
+            _ => "unsupported",
+        }
+        .to_string();
+        // Never expose secrets in a snapshot. If the daemon cannot confirm a saved
+        // secret, the form asks for one rather than starting an unattended prompt.
+        let secrets: Result<HashMap<String, HashMap<String, OwnedValue>>, _> =
+            profile.call("GetSecrets", &("802-11-wireless-security",));
+        let password_saved = security == "open"
+            || secrets
+                .ok()
+                .and_then(|mut s| s.remove("802-11-wireless-security"))
+                .and_then(|mut s| s.remove("psk"))
+                .and_then(|v| String::try_from(v).ok())
+                .is_some_and(|secret| !zeroize::Zeroizing::new(secret).is_empty());
+        let required = |section: &str| {
+            settings
+                .get(section)
+                .and_then(|s| s.get("may-fail"))
+                .and_then(|v| v.try_clone().ok())
+                .and_then(|v| bool::try_from(v).ok())
+                == Some(false)
+        };
         output.push(SavedWifi {
             uuid: get("uuid"),
             id: get("id"),
             filename: (!filename.is_empty()).then(|| PathBuf::from(filename)),
+            ssid,
+            security,
+            interface: string("connection", "interface-name"),
+            password_saved,
+            ipv4: string("ipv4", "method"),
+            ipv6: string("ipv6", "method"),
+            require_ipv4: required("ipv4"),
+            require_ipv6: required("ipv6"),
         });
     }
     Ok(output)
@@ -873,77 +1033,19 @@ fn forget_saved_wifi(
     ))
 }
 
-fn check_target(
-    name: &str,
-    values: &BTreeMap<String, String>,
-    interaction: &mut dyn OperationInteraction,
-    cancelled: &AtomicBool,
-) -> Result<String, ManagementError> {
-    let host = values
-        .get("host")
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() <= 253
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b".-:".contains(&b))
-        })
-        .ok_or_else(|| ManagementError::InvalidInput("Enter a host name or IP address".into()))?;
-    let port = values
-        .get("port")
-        .and_then(|p| p.parse::<u16>().ok())
-        .filter(|p| *p != 0)
-        .ok_or_else(|| {
-            ManagementError::InvalidInput("TCP port must be between 1 and 65535".into())
-        })?;
-    let ips = if let Ok(ip) = host.parse::<IpAddr>() {
-        vec![ip]
-    } else {
-        let result = run("getent", &["ahosts", host], cancelled)?;
-        let mut ips = result
-            .lines()
-            .filter_map(|l| l.split_whitespace().next()?.parse::<IpAddr>().ok())
-            .collect::<Vec<_>>();
-        ips.sort();
-        ips.dedup();
-        interaction.emit(OperationEvent::Output {
-            text: format!("System DNS resolved {host}: {ips:?}"),
-        });
-        ips
-    };
-    if ips.is_empty() {
-        return Err(ManagementError::Failed("DNS returned no address".into()));
-    }
-    let mut errors = Vec::new();
-    for ip in ips.iter().take(8) {
-        check_cancelled(cancelled)?;
-        let route: Json = serde_json::from_str(&run(
-            "ip",
-            &["-j", "route", "get", &ip.to_string()],
-            cancelled,
-        )?)
-        .map_err(|e| ManagementError::Failed(e.to_string()))?;
-        if route[0]["dev"].as_str() != Some(name) {
-            errors.push(format!("{ip}: system route uses another interface"));
-            continue;
-        }
-        match TcpStream::connect_timeout(
-            &std::net::SocketAddr::new(*ip, port),
-            Duration::from_secs(5),
-        ) {
-            Ok(_) => {
-                return Ok(format!(
-                    "DNS/route check succeeded; TCP {host}:{port} was reachable through {name}"
-                ));
-            }
-            Err(e) => errors.push(format!("{ip}: {e}")),
-        }
-    }
-    Err(ManagementError::Failed(errors.join("; ")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn confirmation_rejects_typographical_errors_without_restoring() {
+        assert_eq!(confirmation_decision(None).unwrap(), true);
+        assert_eq!(confirmation_decision(Some("keep")).unwrap(), true);
+        assert_eq!(confirmation_decision(Some("revert")).unwrap(), false);
+        assert!(matches!(
+            confirmation_decision(Some("typo")),
+            Err(ManagementError::InvalidInput(_))
+        ));
+    }
     #[test]
     fn rejects_interface_option_and_path_injection() {
         for name in ["", "-a", "eth0/other", "eth0\n", "1234567890123456"] {
@@ -956,5 +1058,33 @@ mod tests {
     #[test]
     fn configuration_change_detector_tracks_content() {
         assert_ne!(fingerprint(b"one"), fingerprint(b"two"));
+    }
+    #[test]
+    #[ignore = "read-only live Linux interface and diagnosis check"]
+    fn live_network_inventory_and_diagnosis_are_read_only() {
+        let before = std::fs::read("/etc/fstab").unwrap_or_default();
+        let cancelled = AtomicBool::new(false);
+        let snapshot = query(&ManagementQuery::new(ManagementKind::Network), &cancelled).unwrap();
+        let row = snapshot
+            .rows
+            .iter()
+            .find(|row| row.identity.contains_key("ifindex") && !row.id.starts_with("wifi:"))
+            .expect("one non-loopback Linux interface");
+        assert_eq!(
+            interface_identity(&row.id).unwrap().get("ifindex"),
+            row.identity.get("ifindex")
+        );
+        let diagnosis = diagnostics::diagnose(
+            &row.id,
+            &BTreeMap::from([
+                ("host".into(), "127.0.0.1".into()),
+                ("port".into(), "9".into()),
+            ]),
+            &cancelled,
+        )
+        .unwrap();
+        assert_eq!(diagnosis.rows.len(), 7);
+        assert_eq!(diagnosis.rows[5].cells[1], "Not applicable");
+        assert_eq!(std::fs::read("/etc/fstab").unwrap_or_default(), before);
     }
 }

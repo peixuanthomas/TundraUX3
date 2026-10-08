@@ -756,6 +756,8 @@ pub(super) struct FileChange {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Plan {
+    #[serde(default)]
+    pub defer_confirmation: bool,
     pub operation: String,
     pub identity: BTreeMap<String, String>,
     pub kind: OwnerKind,
@@ -768,11 +770,43 @@ pub(super) struct Plan {
     pub wifi: Option<Wifi>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Wifi {
     pub ssid: String,
+    #[serde(default)]
+    pub ssid_bytes: Vec<u8>,
     pub security: String,
+    #[serde(skip)]
     pub password: String,
+    #[serde(default)]
+    pub saved_uuid: String,
+    #[serde(default)]
+    pub ap_path: String,
+    #[serde(default)]
+    pub ipv4: String,
+    #[serde(default)]
+    pub ipv6: String,
+    #[serde(default)]
+    pub require_ipv4: bool,
+    #[serde(default)]
+    pub require_ipv6: bool,
+}
+
+impl std::fmt::Debug for Wifi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wifi")
+            .field("ssid", &self.ssid)
+            .field("security", &self.security)
+            .field("password", &"[redacted]")
+            .field("saved_uuid", &self.saved_uuid)
+            .finish()
+    }
+}
+impl Drop for Wifi {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.password.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -886,6 +920,9 @@ pub(super) fn prepare(
 ) -> Result<Plan, ManagementError> {
     let a = addresses(values)?;
     let mut plan = Plan {
+        defer_confirmation: values
+            .get("defer_confirmation")
+            .is_some_and(|v| v == "true"),
         operation: "configure".into(),
         identity: interface_identity(name)?,
         kind: owner.kind,
@@ -1297,21 +1334,54 @@ pub(super) fn prepare_wifi(
     let ssid = values.get("ssid").cloned().unwrap_or_default();
     let security = values.get("security").cloned().unwrap_or_default();
     let password = values.get("password").cloned().unwrap_or_default();
-    if ssid.is_empty()
-        || ssid.len() > 32
-        || ssid.contains(['\0', '\n', '\r'])
+    let ssid_bytes = if let Some(hex) = values.get("ssid_hex") {
+        wifi::decode_ssid(hex)?
+    } else {
+        ssid.as_bytes().to_vec()
+    };
+    if ssid_bytes.is_empty()
+        || ssid_bytes.len() > 32
+        || !values.contains_key("ssid_hex") && ssid.contains(['\0', '\n', '\r'])
         || !matches!(security.as_str(), "open" | "wpa2" | "wpa3")
     {
         return Err(ManagementError::InvalidInput(
             "Enter an SSID of 1–32 bytes and choose open, WPA2 or WPA3 personal security".into(),
         ));
     }
-    validate_wifi_password(&security, &password)?;
-    let new_uuid = fs::read_to_string("/proc/sys/kernel/random/uuid")
-        .map_err(io_error)?
-        .trim()
-        .into();
+    let saved_uuid = values.get("saved_uuid").cloned().unwrap_or_default();
+    let saved = if saved_uuid.is_empty() {
+        None
+    } else {
+        Some(
+            saved_wifi_profiles()?
+                .into_iter()
+                .find(|p| {
+                    p.uuid == saved_uuid
+                        && p.ssid == ssid_bytes
+                        && p.security == security
+                        && (p.interface.is_empty() || p.interface == name)
+                        && p.password_saved
+                })
+                .ok_or_else(|| {
+                    ManagementError::Conflict(
+                        "The saved Wi-Fi profile changed. Enter the password again.".into(),
+                    )
+                })?,
+        )
+    };
+    if saved.is_none() {
+        validate_wifi_password(&security, &password)?;
+    }
+    let new_uuid = if saved.is_some() {
+        String::new()
+    } else {
+        fs::read_to_string("/proc/sys/kernel/random/uuid")
+            .map_err(io_error)?
+            .trim()
+            .into()
+    };
     Ok(Plan {
+        defer_confirmation: false,
         operation: "wifi-connect".into(),
         identity: interface_identity(name)?,
         kind: OwnerKind::NetworkManager,
@@ -1321,12 +1391,25 @@ pub(super) fn prepare_wifi(
         files: Vec::new(),
         arguments: Vec::new(),
         preview: format!(
-            "Connect {name} to SSID {ssid:?} using {security}. A new profile is first kept in memory; it is saved only after confirmation. The previous connection will be restored if unconfirmed."
+            "Connect {name} to {ssid:?} using {security}. The helper verifies the selected network and address before saving. Failure restores the previous connection."
         ),
         wifi: Some(Wifi {
             ssid,
+            ssid_bytes,
             security,
             password,
+            saved_uuid,
+            ap_path: values.get("ap_path").cloned().unwrap_or_default(),
+            ipv4: saved
+                .as_ref()
+                .map(|p| p.ipv4.clone())
+                .unwrap_or_else(|| "auto".into()),
+            ipv6: saved
+                .as_ref()
+                .map(|p| p.ipv6.clone())
+                .unwrap_or_else(|| "auto".into()),
+            require_ipv4: saved.as_ref().map(|p| p.require_ipv4).unwrap_or(true),
+            require_ipv6: saved.as_ref().map(|p| p.require_ipv6).unwrap_or(false),
         }),
     })
 }
@@ -1361,7 +1444,7 @@ pub(super) fn prepare_wifi_action(
 ) -> Result<Plan, ManagementError> {
     if owner.kind != OwnerKind::NetworkManager
         || owner.uuid.is_empty()
-        || !Path::new(&format!("/sys/class/net/{name}/wireless")).exists()
+        || nm_device(name)?.device_type != 2
     {
         return Err(ManagementError::Unavailable(
             "Disconnect/forget requires an active native NetworkManager Wi-Fi profile".into(),
@@ -1383,6 +1466,7 @@ pub(super) fn prepare_wifi_action(
         });
     }
     Ok(Plan {
+        defer_confirmation: false,
         operation: operation.into(),
         identity: interface_identity(name)?,
         kind: OwnerKind::NetworkManager,
