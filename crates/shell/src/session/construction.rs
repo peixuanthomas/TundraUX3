@@ -274,6 +274,7 @@ impl ShellSession {
             editor_recovery_dirty_since: None,
             editor_last_recovery_write: None,
             editor_read_session: None,
+            editor_config: ConfigEditorState::default(),
             diagnostics_task_runtime: runtime_services.diagnostics,
             logs_state: LogsUiState::default(),
             management_state: ManagementState::default(),

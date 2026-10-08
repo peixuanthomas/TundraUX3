@@ -46,6 +46,19 @@ pub enum EditorToolbarAction {
 pub enum EditorMenuAction {
     Toolbar(EditorToolbarAction),
     Mode(EditorMode),
+    Config(EditorConfigAction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorConfigAction {
+    Menu,
+    Open,
+    Preview,
+    Check,
+    Properties,
+    History,
+    Reload,
+    Logs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,6 +528,8 @@ impl EditorToolbarState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorViewModel {
+    pub configuration: bool,
+    pub config_form: Option<Box<crate::ManagementViewModel>>,
     pub file_name: String,
     pub path_hint: Option<String>,
     pub dirty: bool,
@@ -590,6 +605,8 @@ pub struct EditorViewModel {
 impl EditorViewModel {
     pub fn new(file_name: impl Into<String>, blocks: Vec<EditorRenderBlock>) -> Self {
         Self {
+            configuration: false,
+            config_form: None,
             file_name: file_name.into(),
             path_hint: None,
             dirty: false,

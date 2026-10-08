@@ -92,6 +92,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_editor(&mut self) {
+        if self.config_editor_active() {
+            self.notify_toast(i18n::msg!("config-editor-finish-document"));
+            return;
+        }
         if self.editor_load_state.is_some() || self.editor_save_state.is_some() {
             self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
                 "shell-finish-or-cancel-the-active-editor-file-operation-before-creating-a-document"
@@ -273,6 +277,10 @@ impl ShellSession {
             .path
             .as_ref()
             .map(|path| path.display().to_string());
+        model.configuration = self.config_editor_active();
+        if self.config_editor_form_visible() {
+            model.config_form = Some(Box::new(self.to_management_view_model()));
+        }
         model.dirty = state.is_dirty();
         let saving = self.editor_save_state.is_some();
         model.read_only = state.is_read_only() || saving;
@@ -697,6 +705,18 @@ impl ShellSession {
         command: app::editor::EditorCommand,
         platform: &dyn Platform,
     ) {
+        if self.editor_config.pending_action.is_some() {
+            return;
+        }
+        if self.config_editor_active()
+            && matches!(
+                command,
+                app::editor::EditorCommand::RequestOpen | app::editor::EditorCommand::RequestSaveAs
+            )
+        {
+            self.notify_toast(i18n::msg!("config-editor-finish-document"));
+            return;
+        }
         if self.editor_save_state.is_some() || self.editor_load_state.is_some() {
             return;
         }
@@ -925,6 +945,15 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) {
+        if self.config_editor_form_visible() {
+            self.handle_management_key(&key);
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if key.key == InputKey::F(10) && key.phase == InputPhase::Press {
+            self.config_editor_action(ui::EditorConfigAction::Menu);
+            return;
+        }
         let cursor_direction = editor_cursor_direction(&key);
         if key.phase == InputPhase::Release {
             if self
@@ -1031,6 +1060,10 @@ impl ShellSession {
             };
             let command = match (character, key.modifiers.shift) {
                 ('n', _) => {
+                    if self.config_editor_active() {
+                        self.notify_toast(i18n::msg!("config-editor-finish-document"));
+                        return;
+                    }
                     if self
                         .app
                         .editor_state()
@@ -1073,9 +1106,7 @@ impl ShellSession {
                 ('v', _) => app::editor::EditorCommand::RequestPaste,
                 ('a', _) => app::editor::EditorCommand::SelectAll,
                 ('f', _) => {
-                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                        "shell-find-is-not-available-in-this-build"
-                    )));
+                    self.open_editor_find();
                     return;
                 }
                 ('h', _) => {
@@ -1436,6 +1467,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn handle_editor_paste(&mut self, value: String) {
+        if self.config_editor_form_visible() {
+            self.handle_management_paste(&value);
+            return;
+        }
         self.editor_cursor_acceleration = None;
         self.editor_quick_menu_anchor = None;
         let platform = platform::native_platform();
@@ -1447,6 +1482,10 @@ impl ShellSession {
         mouse: MouseInput,
         platform: &dyn Platform,
     ) {
+        if self.config_editor_form_visible() {
+            self.handle_management_pointer(mouse);
+            return;
+        }
         let coordinates = mouse.coordinates();
         let (hit, document_hit) = self.editor_hit_targets_at(coordinates);
         if !matches!(
@@ -1582,6 +1621,9 @@ impl ShellSession {
                         self.editor_open_menu = None;
                         self.editor_selected_toolbar_action = None;
                         match action {
+                            ui::EditorMenuAction::Config(action) => {
+                                self.config_editor_action(action)
+                            }
                             ui::EditorMenuAction::Toolbar(action) => {
                                 self.activate_editor_toolbar(action, platform);
                             }
@@ -1933,6 +1975,15 @@ impl ShellSession {
         action: ui::EditorToolbarAction,
         platform: &dyn Platform,
     ) {
+        if self.config_editor_active()
+            && matches!(
+                action,
+                ui::EditorToolbarAction::New | ui::EditorToolbarAction::Open
+            )
+        {
+            self.notify_toast(i18n::msg!("config-editor-finish-document"));
+            return;
+        }
         use app::editor::{EditorCommand, FormatCommand};
         if self
             .app
@@ -2023,7 +2074,11 @@ impl ShellSession {
                     title: None,
                 })
             }
-            ui::EditorToolbarAction::Find | ui::EditorToolbarAction::More => {
+            ui::EditorToolbarAction::Find => {
+                self.open_editor_find();
+                return;
+            }
+            ui::EditorToolbarAction::More => {
                 self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-use-source-mode-for-this-operation"
                 )));
@@ -2660,6 +2715,14 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_editor_path(&mut self, path: std::path::PathBuf) -> bool {
+        if self.config_editor_active() {
+            self.notify_toast(i18n::msg!("config-editor-finish-document"));
+            return false;
+        }
+        if Self::is_system_config_path(&path) {
+            self.begin_config_editor(path, None, None, None, "system".into());
+            return self.config_editor_active();
+        }
         let replacing_dirty = self.app.editor_state().is_some_and(EditorState::is_dirty);
         if replacing_dirty && !self.editor_discard_for_open {
             self.report_editor_error(
@@ -2834,6 +2897,14 @@ impl ShellSession {
         snapshot: app::editor::SaveSnapshot,
         _platform: &dyn Platform,
     ) -> bool {
+        if self.config_editor_active() {
+            self.config_editor_action(ui::EditorConfigAction::Preview);
+            return false;
+        }
+        if Self::is_system_config_path(&path) {
+            self.begin_config_save(path);
+            return false;
+        }
         if self.editor_save_state.is_some() || self.editor_load_state.is_some() {
             return false;
         }
@@ -3090,6 +3161,9 @@ impl ShellSession {
     pub(in crate::session) fn editor_recovery_context(
         &self,
     ) -> Option<(platform::AppPaths, String)> {
+        if self.config_editor_active() {
+            return None;
+        }
         let storage = self.storage_manager.as_ref()?;
         let user_key = self.app.auth_session()?.user_id.clone();
         let app_paths = app_paths_from_storage_layout(storage.layout()).ok()?;
@@ -3097,6 +3171,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn finish_editor_close(&mut self, _discard: bool) {
+        if self.editor_config.pending_action.is_some() {
+            self.notify_toast(i18n::msg!("management-operation-running"));
+            return;
+        }
         self.notification_dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
         if self.editor_read_session.is_none() {
             self.clear_editor_recovery();
@@ -3122,6 +3200,8 @@ impl ShellSession {
         self.editor_discard_for_open = false;
         self.editor_message = None;
         self.editor_read_session = None;
+        self.editor_config = Default::default();
+        self.management_state_clear_config_form();
         if self.active_screen() == ShellScreen::Editor {
             self.screen_stack.pop();
         }
@@ -3134,6 +3214,9 @@ impl ShellSession {
         {
             self.focused_component = ShellComponent::Launcher;
             self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
+            self.refresh_hit_map();
+        } else if self.active_screen() == ShellScreen::Management {
+            self.focused_component = ShellComponent::Management;
             self.refresh_hit_map();
         } else if self.active_screen() == ShellScreen::Logs {
             self.focused_component = ShellComponent::Logs;

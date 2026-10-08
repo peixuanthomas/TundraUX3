@@ -869,6 +869,10 @@ pub(super) fn menu_popup_layout(
                         .is_enabled(action, model.read_only, model.mode)
                 }
                 EditorMenuAction::Mode(_) => true,
+                EditorMenuAction::Config(action) => {
+                    matches!(action, EditorConfigAction::Menu | EditorConfigAction::Open)
+                        || model.configuration
+                }
             },
         })
         .collect();
@@ -1087,6 +1091,8 @@ pub(super) fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             Toolbar(ToolbarAction::New),
             Toolbar(ToolbarAction::Open),
             Toolbar(ToolbarAction::Save),
+            #[cfg(target_os = "linux")]
+            EditorMenuAction::Config(EditorConfigAction::Menu),
         ],
         EditorMenu::Edit => vec![
             Toolbar(ToolbarAction::Undo),
@@ -1227,6 +1233,19 @@ pub(super) fn menu_label(menu: EditorMenu) -> String {
 
 pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
     match action {
+        EditorMenuAction::Config(action) => i18n::tr!(format!(
+            "config-editor-{}",
+            match action {
+                EditorConfigAction::Menu => "menu",
+                EditorConfigAction::Open => "open",
+                EditorConfigAction::Preview => "preview",
+                EditorConfigAction::Check => "check",
+                EditorConfigAction::Properties => "properties",
+                EditorConfigAction::History => "history",
+                EditorConfigAction::Reload => "reload",
+                EditorConfigAction::Logs => "logs",
+            }
+        )),
         EditorMenuAction::Toolbar(EditorToolbarAction::New) => i18n::tr!("ui-editor-new"),
         EditorMenuAction::Toolbar(EditorToolbarAction::Open) => i18n::tr!("ui-editor-open"),
         EditorMenuAction::Toolbar(EditorToolbarAction::Save) => i18n::tr!("ui-editor-save"),

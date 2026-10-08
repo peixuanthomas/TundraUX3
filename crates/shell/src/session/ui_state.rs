@@ -663,6 +663,7 @@ pub struct UiSessionState {
     pub(super) editor_recovery_dirty_since: Option<Instant>,
     pub(super) editor_last_recovery_write: Option<Instant>,
     pub(super) editor_read_session: Option<EditorReadSession>,
+    pub(super) editor_config: ConfigEditorState,
     pub(super) diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
     pub(super) logs_state: LogsUiState,
     pub(super) management_state: ManagementState,

@@ -44,6 +44,9 @@ pub fn render_editor_overlay(
     render_menu_popup(frame, &layout, model, theme, context);
     render_quick_menu(frame, &layout, theme, context);
     render_settings(frame, layout, model, theme, context);
+    if let Some(form) = &model.config_form {
+        crate::render_management_overlay(frame, layout.area, form, context);
+    }
 }
 
 fn render_menu_bar(
