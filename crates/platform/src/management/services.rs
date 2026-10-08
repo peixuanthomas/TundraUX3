@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::OwnedObjectPath;
 
+#[path = "services_config.rs"]
+mod config;
+pub use config::prepare_config_draft;
+
 type LoadedUnit = (
     String,
     String,
@@ -125,17 +129,62 @@ pub fn query(
         let selected = query.target.as_deref() == Some(record.name.as_str());
         let mut row = service_row(&record, scope);
         if selected {
-            if let Some(path) = &record.object_path {
-                append_details(&connection, path, &mut row)?;
+            let path = match record.object_path.as_ref() {
+                Some(path) => Ok(path.clone()),
+                // Load metadata for an installed inactive unit without starting it.
+                None => proxy
+                    .call::<_, _, OwnedObjectPath>("LoadUnit", &(record.name.as_str(),))
+                    .map_err(dbus_error),
+            };
+            match path {
+                Ok(path) => append_details(&connection, &path, &mut row, cancelled)?,
+                Err(error) => row.detail.push((
+                    "Service details".into(),
+                    format!("{error}. Refresh or inspect the unit file"),
+                )),
             }
         }
         rows.push(row);
     }
     Ok(ManagementSnapshot {
-        columns: ["Service", "Load", "Active", "Substate", "Startup", "Description"].map(String::from).to_vec(),
-        rows, backend: format!("systemd ({})", scope.id()),
-        notices: vec!["Starting a service and enabling it at startup are separate operations. Static and masked services do not have a simple startup toggle.".into()],
-        actions: vec![ManagementAction { id: "set_view".into(), label: "Choose service scope".into(), fields: vec![ManagementField { id: "scope".into(), label: "Service scope".into(), value: scope.id().into(), choices: vec!["system".into(), "user".into()], required: true, ..Default::default() }], ..Default::default() }],
+        columns: [
+            "Service",
+            "Load",
+            "Active",
+            "Substate",
+            "Startup",
+            "Description",
+        ]
+        .map(String::from)
+        .to_vec(),
+        rows,
+        backend: format!("systemd ({})", scope.id()),
+        notices: Vec::new(),
+        actions: vec![
+            ManagementAction {
+                id: "set_view".into(),
+                label: "Service scope".into(),
+                fields: vec![ManagementField {
+                    id: "scope".into(),
+                    label: "Service scope".into(),
+                    value: scope.id().into(),
+                    choices: vec!["system".into(), "user".into()],
+                    required: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ManagementAction {
+                id: "daemon_reload".into(),
+                label: "Reload service definitions".into(),
+                privileged: scope == Scope::System,
+                confirm: true,
+                values: BTreeMap::from([("scope".into(), scope.id().into())]),
+                group: "configuration".into(),
+                ..Default::default()
+            },
+            config::create_action(scope),
+        ],
     })
 }
 
@@ -195,6 +244,7 @@ fn service_row(record: &ServiceRecord, scope: Scope) -> ManagementRow {
         ("start", "Start"),
         ("stop", "Stop"),
         ("restart", "Restart"),
+        ("reload", "Reload service configuration"),
         ("enable", "Enable at startup"),
         ("disable", "Disable at startup"),
         ("view_logs", "View service logs"),
@@ -219,9 +269,34 @@ fn service_row(record: &ServiceRecord, scope: Scope) -> ManagementRow {
             confirm: id != "view_logs",
             privileged: scope == Scope::System && id != "view_logs",
             disabled_reason,
+            primary: matches!(id, "start" | "stop"),
+            group: if matches!(id, "enable" | "disable") {
+                "startup"
+            } else {
+                "service"
+            }
+            .into(),
+            values: if id == "view_logs" {
+                BTreeMap::from([
+                    ("service".into(), record.name.clone()),
+                    ("scope".into(), scope.id().into()),
+                ])
+            } else {
+                BTreeMap::new()
+            },
             ..Default::default()
         });
     }
+    if template {
+        actions.push(config::instance_action(scope));
+    }
+    actions.push(config::edit_action(&record.name, scope));
+    actions.push(ManagementAction {
+        id: "show_dependencies".into(),
+        label: "View dependencies".into(),
+        group: "inspect".into(),
+        ..Default::default()
+    });
     ManagementRow {
         id: record.name.clone(),
         cells: vec![
@@ -252,6 +327,7 @@ fn append_details(
     connection: &Connection,
     path: &OwnedObjectPath,
     row: &mut ManagementRow,
+    cancelled: &AtomicBool,
 ) -> Result<(), ManagementError> {
     let unit = Proxy::new(
         connection,
@@ -272,6 +348,46 @@ fn append_details(
         row.detail
             .push((property.into(), runtime_log::sanitize_text(&value)));
     }
+    for (property, label) in [
+        ("Requires", "Required services"),
+        ("Wants", "Wanted services"),
+        ("BindsTo", "Bound services"),
+        ("RequiredBy", "Required by"),
+        ("WantedBy", "Wanted by"),
+        ("After", "Start after"),
+        ("Before", "Start before"),
+    ] {
+        match unit.get_property::<Vec<String>>(property) {
+            Ok(values) => row.detail.push((label.into(), values.join(", "))),
+            Err(error) => row
+                .detail
+                .push((label.into(), format!("Unavailable: {error}"))),
+        }
+    }
+    if let Ok(can_reload) = unit.get_property::<bool>("CanReload") {
+        if !can_reload {
+            if let Some(action) = row.actions.iter_mut().find(|action| action.id == "reload") {
+                action.disabled_reason =
+                    Some("This service does not support reload; edit it or restart it".into());
+            }
+        }
+    }
+    if let Ok(invocation) = unit.get_property::<Vec<u8>>("InvocationID") {
+        if invocation.len() == 16 && invocation.iter().any(|byte| *byte != 0) {
+            let id = invocation
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            row.identity.insert("invocation_id".into(), id.clone());
+            if let Some(action) = row
+                .actions
+                .iter_mut()
+                .find(|action| action.id == "view_logs")
+            {
+                action.values.insert("invocation_id".into(), id);
+            }
+        }
+    }
     let service = Proxy::new(
         connection,
         "org.freedesktop.systemd1",
@@ -282,11 +398,73 @@ fn append_details(
     let pid: u32 = service.get_property("MainPID").map_err(dbus_error)?;
     row.detail.push(("Main PID".into(), pid.to_string()));
     let result: String = service.get_property("Result").map_err(dbus_error)?;
-    row.detail.push(("Result".into(), result));
+    row.detail.push(("Result".into(), result.clone()));
+    for property in ["ExecMainCode", "ExecMainStatus"] {
+        if let Ok(value) = service.get_property::<i32>(property) {
+            row.detail.push((property.into(), value.to_string()));
+        }
+    }
+    for property in ["ExecMainStartTimestamp", "ExecMainExitTimestamp"] {
+        if let Ok(value) = service.get_property::<u64>(property) {
+            row.detail.push((property.into(), value.to_string()));
+            if property == "ExecMainStartTimestamp" && value > 0 {
+                row.identity.insert("since_usec".into(), value.to_string());
+                if let Some(action) = row
+                    .actions
+                    .iter_mut()
+                    .find(|action| action.id == "view_logs")
+                {
+                    action.values.insert("since_usec".into(), value.to_string());
+                }
+            }
+        }
+    }
+    if result != "success" {
+        row.detail.push((
+            "Failure guidance".into(),
+            "Review the exit status and logs, then edit configuration or retry".into(),
+        ));
+        let logs = recent_logs(row, cancelled);
+        row.detail.push(("Related logs".into(), logs));
+    }
     Ok(())
 }
 
-fn valid_unit_name(name: &str) -> bool {
+fn recent_logs(row: &ManagementRow, cancelled: &AtomicBool) -> String {
+    let mut args = vec![
+        "--no-pager".into(),
+        "--output=short-iso".into(),
+        "--lines=60".into(),
+        "--boot=0".into(),
+        format!("--unit={}", row.id),
+    ];
+    if row
+        .identity
+        .get("scope")
+        .is_some_and(|scope| scope == "user")
+    {
+        args.push("--user".into());
+    }
+    if let Some(id) = row.identity.get("invocation_id") {
+        args.push(format!("_SYSTEMD_INVOCATION_ID={id}"));
+    } else if let Some(since) = row
+        .identity
+        .get("since_usec")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        args.push(format!("--since=@{}", since / 1_000_000));
+    } else {
+        return "No recent invocation is available; open service logs and choose a boot".into();
+    }
+    match run_read_tool("/usr/bin/journalctl", &args, cancelled) {
+        Ok(text) => runtime_log::sanitize_text(&text),
+        Err(error) => {
+            format!("Cannot read related logs: {error}. Open service logs with permission")
+        }
+    }
+}
+
+pub(crate) fn valid_unit_name(name: &str) -> bool {
     name.ends_with(".service")
         && name.len() > ".service".len()
         && name.len() <= 255
@@ -305,11 +483,33 @@ pub fn execute(
     check_cancelled(cancelled)?;
     if !matches!(
         command.action.as_str(),
-        "start" | "stop" | "restart" | "enable" | "disable"
+        "start" | "stop" | "restart" | "reload" | "enable" | "disable" | "daemon_reload"
     ) {
         return Err(ManagementError::InvalidInput(
             "Unknown service operation".into(),
         ));
+    }
+    let scope = Scope::parse(
+        command
+            .identity
+            .get("scope")
+            .or_else(|| command.values.get("scope"))
+            .map(String::as_str)
+            .unwrap_or(""),
+    )?;
+    if command.action == "daemon_reload" {
+        if command.target.is_some() {
+            return Err(ManagementError::InvalidInput(
+                "Reloading service definitions does not take a unit".into(),
+            ));
+        }
+        if scope == Scope::User && unsafe { libc::getuid() } != context.actor_uid {
+            return Err(ManagementError::PermissionDenied(
+                "Run user-service reload as the original user".into(),
+            ));
+        }
+        run_systemctl(scope, "daemon-reload", None, cancelled)?;
+        return Ok("Service definitions reloaded; refresh service details".into());
     }
     let target = command
         .target
@@ -325,13 +525,6 @@ pub fn execute(
             "Choose an existing service instance rather than a template".into(),
         ));
     }
-    let scope = Scope::parse(
-        command
-            .identity
-            .get("scope")
-            .map(String::as_str)
-            .unwrap_or(""),
-    )?;
     if command.identity.get("unit").map(String::as_str) != Some(target) {
         return Err(ManagementError::Conflict(
             "The selected service changed; refresh before retrying".into(),
@@ -374,7 +567,7 @@ pub fn execute(
         message: format!("{} {} service {target}", command.action, scope.id()),
         percent: None,
     });
-    let output = match run_systemctl(scope, &command.action, target, cancelled) {
+    let output = match run_systemctl(scope, &command.action, Some(target), cancelled) {
         Err(ManagementError::Cancelled) => {
             interaction.emit(OperationEvent::Output {
                 text: "Stopped waiting for systemctl. The systemd job may still complete; refresh the service state before retrying.".into(),
@@ -400,24 +593,20 @@ pub fn execute(
 fn run_systemctl(
     scope: Scope,
     action: &str,
-    unit: &str,
+    unit: Option<&str>,
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
     let mut command = Command::new("/usr/bin/systemctl");
     command
-        .args([
-            scope.argument(),
-            "--no-pager",
-            "--no-ask-password",
-            action,
-            "--",
-            unit,
-        ])
+        .args([scope.argument(), "--no-pager", "--no-ask-password", action])
         .env("LC_ALL", "C")
         .env("SYSTEMD_COLORS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(unit) = unit {
+        command.args(["--", unit]);
+    }
     let mut child = command.spawn().map_err(|error| {
         ManagementError::Unavailable(format!("Cannot launch systemctl: {error}"))
     })?;
@@ -473,6 +662,63 @@ fn run_systemctl(
             }
             if started.elapsed() >= Duration::from_secs(120) {
                 return Err(ManagementError::Failed("The service request timed out; refresh its state before retrying because the systemd job may still be running".into()));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    })();
+    if child.try_wait().is_ok_and(|status| status.is_none()) {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    result
+}
+
+fn run_read_tool(
+    program: &str,
+    args: &[String],
+    cancelled: &AtomicBool,
+) -> Result<String, ManagementError> {
+    let mut child = Command::new(program)
+        .args(args)
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| ManagementError::Unavailable(error.to_string()))?;
+    let result = (|| {
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ManagementError::Failed("Missing stdout".into()))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| ManagementError::Failed("Missing stderr".into()))?;
+        nonblocking(stdout.as_raw_fd())?;
+        nonblocking(stderr.as_raw_fd())?;
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let started = Instant::now();
+        loop {
+            check_cancelled(cancelled)?;
+            drain(&mut stdout, &mut out)?;
+            drain(&mut stderr, &mut err)?;
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|error| ManagementError::Failed(error.to_string()))?
+            {
+                drain(&mut stdout, &mut out)?;
+                drain(&mut stderr, &mut err)?;
+                if !status.success() {
+                    return Err(ManagementError::Failed(
+                        String::from_utf8_lossy(&err).into_owned(),
+                    ));
+                }
+                return Ok(String::from_utf8_lossy(&out).into_owned());
+            }
+            if started.elapsed() > Duration::from_secs(10) {
+                return Err(ManagementError::Failed("Log query timed out".into()));
             }
             std::thread::sleep(Duration::from_millis(20));
         }

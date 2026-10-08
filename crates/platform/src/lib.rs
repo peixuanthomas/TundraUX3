@@ -2,6 +2,8 @@ mod command_session;
 mod diagnostics;
 pub mod installation;
 pub mod linux_logs;
+pub mod log_file;
+pub use log_file::query_log_file;
 pub mod service;
 pub use linux_logs::query_linux_logs;
 mod document;

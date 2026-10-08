@@ -38,4 +38,9 @@ pub struct LogsViewModel {
     pub loading: bool,
     pub filter_summary: String,
     pub feedback: Option<String>,
+    pub following: bool,
+    pub new_events: usize,
+    pub more_selected: Option<usize>,
+    pub filter_form: Option<crate::ManagementForm>,
+    pub selected_file: bool,
 }

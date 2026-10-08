@@ -14,7 +14,7 @@ use ratatui::{
 
 pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
     if model.category == LogsCategory::Linux {
-        if !model.linux_available {
+        if !model.linux_available && !model.selected_file {
             return Some(i18n::tr!(
                 "ui-logs-linux-log-is-unavailable-on-windows-and-macos-ux-log-remains-available"
             ));
@@ -33,6 +33,20 @@ pub(super) fn unavailable_reason(model: &LogsViewModel) -> Option<String> {
 }
 
 pub fn logs_control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> bool {
+    if !model.diagnostics.can_view_details {
+        return false;
+    }
+    if matches!(
+        target,
+        LogsHitTarget::Follow
+            | LogsHitTarget::More
+            | LogsHitTarget::Filters
+            | LogsHitTarget::FormApply
+            | LogsHitTarget::FormCancel
+            | LogsHitTarget::FormField(_)
+    ) {
+        return true;
+    }
     if unavailable_reason(model).is_some() || model.loading {
         return false;
     }
@@ -256,7 +270,7 @@ pub fn render_logs_content(
     }
     let unavailable = unavailable_reason(model);
     let content = content_model(model);
-    for (control, (target, label)) in layout.controls.iter().zip(controls()) {
+    for (control, (target, label)) in layout.controls.iter().zip(controls(model)) {
         let mut button = Button::new(logs_control_id(model, target), label);
         button.set_disabled(!logs_control_enabled(model, target));
         button.render_borderless_frame(frame, control.area, &theme);
@@ -344,4 +358,37 @@ pub fn render_logs_content(
         .style(theme.muted_style()),
         layout.footer,
     );
+    if let Some(selected) = model.more_selected {
+        frame.render_widget(Clear, layout.menu);
+        Surface::new()
+            .bordered(true)
+            .raised(true)
+            .titled(i18n::tr!("ui-logs-more"))
+            .render_frame(frame, layout.menu, context);
+        let options = super::layout::logs_more_controls();
+        for control in &layout.menu_controls {
+            if let Some((index, (_, label))) = options
+                .iter()
+                .enumerate()
+                .find(|(_, item)| item.0 == control.target)
+            {
+                let mut button = Button::new(logs_control_id(model, control.target), label.clone());
+                button.state.selected = index == selected;
+                button.set_focused(index == selected);
+                button.set_disabled(!logs_control_enabled(model, control.target));
+                button.render_borderless_frame(frame, control.area, &theme);
+            }
+        }
+    }
+    if let Some(form) = &model.filter_form {
+        crate::render_management_overlay(
+            frame,
+            main,
+            &crate::ManagementViewModel {
+                form: Some(form.clone()),
+                ..Default::default()
+            },
+            context,
+        );
+    }
 }

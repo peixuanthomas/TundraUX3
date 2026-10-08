@@ -210,19 +210,33 @@ mod implementation {
                 .systemd_scope
                 .as_deref()
                 .is_some_and(|scope| !matches!(scope, "system" | "user"))
-            || (query.systemd_scope.is_some() && query.systemd_unit.is_none())
+            || query
+                .systemd_boot
+                .as_deref()
+                .is_some_and(|boot| !valid_boot(boot))
+            || query
+                .systemd_invocation
+                .as_deref()
+                .is_some_and(|id| !valid_journal_id(id))
         {
             return state(
                 LogSourceState::Unavailable,
                 "Invalid exact systemd service log filter",
             );
         }
-        let mut args: Vec<String> = ["--no-pager", "--output=json", "--reverse", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_TRANSPORT,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,OBJECT_SYSTEMD_UNIT,OBJECT_SYSTEMD_USER_UNIT,UNIT,USER_UNIT,_UID,_KERNEL_DEVICE,_PID,PRIORITY,MESSAGE"].into_iter().map(String::from).collect();
+        let mut args: Vec<String> = ["--no-pager", "--output=json", "--reverse", "--all", "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,_SYSTEMD_INVOCATION_ID,INVOCATION_ID,_TRANSPORT,_SYSTEMD_UNIT,_SYSTEMD_USER_UNIT,OBJECT_SYSTEMD_UNIT,OBJECT_SYSTEMD_USER_UNIT,UNIT,USER_UNIT,_UID,_KERNEL_DEVICE,_PID,PRIORITY,MESSAGE"].into_iter().map(String::from).collect();
         args.push(format!("--lines={}", MAX_RECORDS + 1));
+        if let Some(boot) = &query.systemd_boot {
+            args.push(format!("--boot={boot}"));
+        }
+        let mut matches = Vec::new();
+        if query.systemd_scope.as_deref() == Some("user") && query.systemd_unit.is_none() {
+            args.push("--user".into());
+        }
         if let Some(unit) = &query.systemd_unit {
             if query.systemd_scope.as_deref() == Some("user") {
                 args.push(format!("--user-unit={unit}"));
-                args.push(format!("_UID={}", current_uid()));
+                matches.push(format!("_UID={}", current_uid()));
             } else {
                 args.push(format!("--unit={unit}"));
             }
@@ -252,7 +266,19 @@ mod implementation {
             args.push(format!("--priority=0..{priority}"));
         }
         if query.module.as_deref() == Some("linux.kernel") {
-            args.push("_TRANSPORT=kernel".into());
+            matches.push("_TRANSPORT=kernel".into());
+        }
+        if let Some(id) = &query.systemd_invocation {
+            // Options such as --unit, --boot, --since and --priority constrain
+            // the entire expression. Positional matches must be repeated on
+            // both sides of '+' so the alternate field cannot escape them.
+            args.extend(matches.iter().cloned());
+            args.push(format!("_SYSTEMD_INVOCATION_ID={id}"));
+            args.push("+".into());
+            args.extend(matches);
+            args.push(format!("INVOCATION_ID={id}"));
+        } else {
+            args.extend(matches);
         }
         let journal = run("journalctl", &args);
         let journal_state = capture_state(&journal);
@@ -273,7 +299,10 @@ mod implementation {
                 "Permission denied reading the system journal",
             );
         }
-        if query.systemd_unit.is_some() {
+        if query.systemd_unit.is_some()
+            || query.systemd_boot.is_some()
+            || query.systemd_invocation.is_some()
+        {
             return state(
                 journal_state,
                 "The system journal is unavailable; kernel dmesg cannot provide this service's logs",
@@ -323,6 +352,16 @@ mod implementation {
                 byte.is_ascii_alphanumeric()
                     || matches!(byte, b':' | b'_' | b'.' | b'@' | b'-' | b'\\')
             })
+    }
+
+    fn valid_journal_id(id: &str) -> bool {
+        id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }
+    fn valid_boot(boot: &str) -> bool {
+        valid_journal_id(boot)
+            || boot
+                .parse::<i32>()
+                .is_ok_and(|number| (-10_000..=0).contains(&number) && number.to_string() == boot)
     }
 
     fn current_uid() -> u32 {
@@ -588,7 +627,44 @@ mod implementation {
                         .map(|unit| format!("journal; unit={}", clean(&unit)))
                         .unwrap_or_else(|| "journal; external service".into())
                 });
-                Some((entry, matches_service(&record, query)))
+                let boot = scalar(&record, "_BOOT_ID");
+                let origin_invocation = scalar(&record, "_SYSTEMD_INVOCATION_ID");
+                let related_invocation = scalar(&record, "INVOCATION_ID");
+                let invocation_matches = query.systemd_invocation.as_deref().is_none_or(|id| {
+                    origin_invocation.as_deref() == Some(id)
+                        || related_invocation.as_deref() == Some(id)
+                });
+                let invocation = if query.systemd_invocation.as_deref()
+                    == related_invocation.as_deref()
+                    && related_invocation.is_some()
+                {
+                    related_invocation
+                } else {
+                    origin_invocation.or(related_invocation)
+                };
+                if let Some(boot) = &boot {
+                    entry.native_source = Some(format!(
+                        "{}; boot={}",
+                        entry.native_source.as_deref().unwrap_or("journal"),
+                        clean(boot)
+                    ));
+                }
+                if let Some(invocation) = &invocation {
+                    entry.native_source = Some(format!(
+                        "{}; invocation={}",
+                        entry.native_source.as_deref().unwrap_or("journal"),
+                        clean(invocation)
+                    ));
+                }
+                let exact_boot_matches = query
+                    .systemd_boot
+                    .as_deref()
+                    .filter(|id| valid_journal_id(id))
+                    .is_none_or(|id| boot.as_deref() == Some(id));
+                Some((
+                    entry,
+                    matches_service(&record, query) && exact_boot_matches && invocation_matches,
+                ))
             })();
             match parsed {
                 Some((event, true)) if accepts(&event, query) => result.events.push(event),

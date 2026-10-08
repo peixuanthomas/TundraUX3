@@ -26,11 +26,33 @@ impl ShellSession {
         let main = self.logs_main_area()?;
         let model = self.to_logs_view_model();
         let layout = ui::logs_layout(main, &model);
+        if let Some(form) = &model.filter_form {
+            let form_model = ui::ManagementViewModel {
+                form: Some(form.clone()),
+                ..Default::default()
+            };
+            return ui::management_button_regions(main, &form_model)
+                .into_iter()
+                .find(|region| rect_contains(region.area, point));
+        }
         let region = |id: String, area: Rect, disabled: bool| ui::components::ButtonRegion {
             id: id.into(),
             area,
             disabled,
         };
+        if model.more_selected.is_some() {
+            return layout
+                .menu_controls
+                .iter()
+                .find(|control| rect_contains(control.area, point))
+                .map(|control| {
+                    region(
+                        ui::logs_control_id(&model, control.target),
+                        control.area,
+                        !ui::logs_control_enabled(&model, control.target),
+                    )
+                });
+        }
         for tab in &layout.category_tabs {
             if rect_contains(tab.area, point) {
                 return Some(region(
@@ -60,7 +82,7 @@ impl ShellSession {
         }
         None
     }
-    fn logs_touch_action(&mut self, target: ui::LogsHitTarget) {
+    pub(super) fn logs_touch_action(&mut self, target: ui::LogsHitTarget) {
         match target {
             ui::LogsHitTarget::Category(category) => {
                 self.logs_state.detail_scroll = 0;
@@ -75,6 +97,26 @@ impl ShellSession {
             ui::LogsHitTarget::FilterLevel => self.logs_filter_level(),
             ui::LogsHitTarget::FilterModule => self.logs_filter_module(),
             ui::LogsHitTarget::FilterTime => self.logs_filter_time(),
+            ui::LogsHitTarget::Follow => self.logs_follow_control(),
+            ui::LogsHitTarget::More => self.logs_state.more_selected = Some(0),
+            ui::LogsHitTarget::Filters => self.logs_open_filter_form(),
+            ui::LogsHitTarget::FormApply => self.logs_apply_filter_form(),
+            ui::LogsHitTarget::FormCancel => self.logs_state.filter_form = None,
+            ui::LogsHitTarget::FormField(index) => {
+                if let Some(form) = self.logs_state.filter_form.as_mut() {
+                    form.selected = index;
+                    if let Some(field) = form.fields.get_mut(index)
+                        && !field.choices.is_empty()
+                    {
+                        let index = field
+                            .choices
+                            .iter()
+                            .position(|value| value == &field.value)
+                            .unwrap_or(0);
+                        field.value = field.choices[(index + 1) % field.choices.len()].clone();
+                    }
+                }
+            }
             ui::LogsHitTarget::ClearFilters => {
                 self.handle_logs_key(&KeyInput::new(InputKey::Char('c')))
             }
@@ -105,13 +147,24 @@ impl ShellSession {
             return;
         }
         if let ui::MouseEventKind::Scroll(direction) = mouse.kind {
-            let delta = if direction == ScrollDirection::Up {
+            let delta: isize = if direction == ScrollDirection::Up {
                 -3
             } else if direction == ScrollDirection::Down {
                 3
             } else {
                 0
             };
+            if self.logs_state.filter_form.is_some() {
+                return;
+            }
+            if let Some(selected) = self.logs_state.more_selected {
+                self.logs_state.more_selected = Some(
+                    selected
+                        .saturating_add_signed(delta.signum())
+                        .min(ui::logs_more_controls().len().saturating_sub(1)),
+                );
+                return;
+            }
             if layout.content.detail_panel.contains(point.into()) {
                 if let Some(bar) = layout.detail_scrollbar {
                     self.logs_state.detail_scroll = bar
@@ -125,6 +178,7 @@ impl ShellSession {
                     .saturating_add_signed(delta)
                     .min(self.logs_count().saturating_sub(layout.visible_capacity));
                 self.logs_state.explicit_scroll = true;
+                self.logs_state.paused = true;
             }
             return;
         }
@@ -136,8 +190,14 @@ impl ShellSession {
             return;
         }
         let Some(target) = ui::logs_hit_test(main, &model, point) else {
+            if self.logs_state.more_selected.is_some() {
+                self.logs_state.more_selected = None;
+            }
             return;
         };
+        if self.logs_state.more_selected.is_some() {
+            self.logs_state.more_selected = None;
+        }
         match target {
             ui::LogsHitTarget::Scrollbar => {
                 self.logs_state.detail_scrollbar_grab = None;
@@ -166,6 +226,7 @@ impl ShellSession {
                     Instant::now(),
                 );
                 self.logs_state.selected = index;
+                self.logs_state.paused = true;
                 self.logs_state.detail_scroll = 0;
                 if click == ClickKind::Double {
                     self.logs_open_selected();
@@ -208,5 +269,6 @@ impl ShellSession {
             layout.visible_capacity,
         );
         self.logs_state.explicit_scroll = true;
+        self.logs_state.paused = true;
     }
 }

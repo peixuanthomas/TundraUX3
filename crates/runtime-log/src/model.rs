@@ -96,6 +96,15 @@ pub struct LogQuery {
     /// "system" or the current user's "user" service manager.
     #[serde(default)]
     pub systemd_scope: Option<String>,
+    /// Boot offset (0, -1, ...) or an exact 32-character journal boot ID.
+    #[serde(default)]
+    pub systemd_boot: Option<String>,
+    /// Exact systemd invocation ID for a single run of a service.
+    #[serde(default)]
+    pub systemd_invocation: Option<String>,
+    /// Explicit ordinary log file; access follows the current OS identity.
+    #[serde(default)]
+    pub file_path: Option<PathBuf>,
     pub run_id: Option<String>,
     pub operation_id: Option<String>,
     pub task_id: Option<String>,
@@ -113,6 +122,9 @@ impl Default for LogQuery {
             module: None,
             systemd_unit: None,
             systemd_scope: None,
+            systemd_boot: None,
+            systemd_invocation: None,
+            file_path: None,
             run_id: None,
             operation_id: None,
             task_id: None,
@@ -142,6 +154,14 @@ pub struct LogQueryResult {
     pub notices: Vec<String>,
     pub truncated: bool,
     pub damaged_records: usize,
+    #[serde(default)]
+    pub file_status: Option<LogFileStatus>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogFileStatus {
+    pub identity: String,
+    pub length: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

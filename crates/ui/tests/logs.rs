@@ -31,6 +31,28 @@ fn model() -> LogsViewModel {
         .collect();
     model
 }
+
+#[test]
+fn more_menu_reuses_button_geometry_and_covers_background_controls() {
+    let mut model = model();
+    model.more_selected = Some(0);
+    let main = main_area();
+    let layout = logs_layout(main, &model);
+    for control in &layout.menu_controls {
+        assert!(control.area.right() <= main.right() && control.area.bottom() <= main.bottom());
+        assert_eq!(
+            logs_hit_test(main, &model, (control.area.x, control.area.y)),
+            ui::logs_control_enabled(&model, control.target).then_some(control.target)
+        );
+    }
+    let toolbar = layout.controls[0].area;
+    if !layout.menu.contains((toolbar.x, toolbar.y).into()) {
+        assert_eq!(logs_hit_test(main, &model, (toolbar.x, toolbar.y)), None);
+    }
+    let theme = TundraTheme::default_dark();
+    let output = render(120, 32, &model, &theme);
+    assert!(terminal_output(&output).contains("Service, boot or file"));
+}
 fn main_area() -> Rect {
     match compute_shell_layout(Rect::new(0, 0, 120, 32)) {
         ShellLayout::Full { main, .. } => main,
@@ -80,7 +102,7 @@ fn log_controls_show_working_shortcuts_without_overlap_in_a_narrow_page() {
         .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
         .unwrap();
     let output = terminal_output(&terminal);
-    for hint in ["R/F5", "Enter/O", "C Clear", "I Show", "E Related"] {
+    for hint in ["Refresh", "Open", "Latest", "More actions"] {
         assert!(output.contains(hint), "missing shortcut {hint}");
     }
     for (index, control) in layout.controls.iter().enumerate() {
@@ -307,15 +329,12 @@ fn narrow_log_toolbar_keeps_all_controls_inside_the_page() {
     for size in [(40, 20), (60, 20), (80, 24)] {
         let area = Rect::new(0, 0, size.0, size.1);
         let layout = logs_layout(area, &model);
-        assert_eq!(layout.controls.len(), 8);
+        assert_eq!(layout.controls.len(), 4);
         assert!(layout.controls.iter().all(|control| control.area.width > 0
             && control.area.height > 0
             && control.area.right() <= area.right()
             && control.area.bottom() <= area.bottom()));
-        assert_eq!(
-            layout.controls.last().unwrap().target,
-            LogsHitTarget::RelatedEvents
-        );
+        assert_eq!(layout.controls.last().unwrap().target, LogsHitTarget::More);
     }
 }
 

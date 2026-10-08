@@ -12,6 +12,118 @@ fn global_notification_releases_log_detail_scroll_capture() {
     );
     assert!(state.logs_state.detail_scrollbar_grab.is_none());
 }
+
+#[test]
+fn paused_live_capture_keeps_the_view_and_counts_new_records() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.job = None;
+    let old = runtime_log::RuntimeLogEvent::new(
+        runtime_log::LogContext::default(),
+        LogLevel::Info,
+        runtime_log::LogPhase::Observed,
+        "old",
+    );
+    state.logs_state.snapshot.result.events = vec![old.clone()];
+    state.logs_state.paused = true;
+    state.logs_state.explicit_scroll = true;
+    let new = runtime_log::RuntimeLogEvent::new(
+        runtime_log::LogContext::default(),
+        LogLevel::Info,
+        runtime_log::LogPhase::Observed,
+        "new",
+    );
+    let mut snapshot = LogsSnapshot::default();
+    snapshot.result.events = vec![new, old];
+    state.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+        cancelled: Arc::new(AtomicBool::new(false)),
+        result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
+        worker: Mutex::new(None),
+        background: true,
+    })));
+    state.poll_logs_tasks();
+    assert_eq!(state.logs_state.new_events, 1);
+    assert_eq!(state.logs_state.selected, 1);
+    assert_eq!(state.logs_state.scroll, 1);
+    assert_eq!(state.logs_state.snapshot.result.events[1].message, "old");
+    state.logs_follow_control();
+    assert!(!state.logs_state.paused);
+    assert_eq!(
+        (
+            state.logs_state.selected,
+            state.logs_state.scroll,
+            state.logs_state.new_events
+        ),
+        (0, 0, 0)
+    );
+}
+
+#[test]
+fn more_menu_opens_filters_and_applies_service_boot_and_file_choices() {
+    let mut state = state(UserRole::Admin);
+    state.open_logs();
+    state.logs_state.job = None;
+    key(&mut state, "F10");
+    assert_eq!(state.logs_state.more_selected, Some(0));
+    key(&mut state, "Enter");
+    assert!(state.logs_state.filter_form.is_some());
+    let form = state.logs_state.filter_form.as_mut().unwrap();
+    form.fields
+        .iter_mut()
+        .find(|field| field.id == "unit")
+        .unwrap()
+        .value = "sshd.service".into();
+    form.fields
+        .iter_mut()
+        .find(|field| field.id == "boot")
+        .unwrap()
+        .value = "-1".into();
+    state.logs_apply_filter_form();
+    assert_eq!(
+        state.logs_state.query.systemd_unit.as_deref(),
+        Some("sshd.service")
+    );
+    assert_eq!(state.logs_state.query.systemd_boot.as_deref(), Some("-1"));
+    state.logs_state.job = None;
+    state.logs_open_filter_form();
+    let path = std::env::temp_dir().join("selected-system.log");
+    state
+        .logs_state
+        .filter_form
+        .as_mut()
+        .unwrap()
+        .fields
+        .iter_mut()
+        .find(|field| field.id == "file")
+        .unwrap()
+        .value = path.display().to_string();
+    state.logs_apply_filter_form();
+    assert_eq!(state.logs_state.query.file_path, Some(path));
+    assert!(state.logs_state.query.systemd_unit.is_none());
+    assert!(state.logs_state.query.systemd_boot.is_none());
+}
+
+#[test]
+fn live_buffer_is_bounded_without_duplicate_events() {
+    let mut old = LogsSnapshot::default();
+    old.result.events = (0..1200)
+        .map(|index| {
+            let mut event = runtime_log::RuntimeLogEvent::new(
+                runtime_log::LogContext::default(),
+                LogLevel::Info,
+                runtime_log::LogPhase::Observed,
+                "entry",
+            );
+            event.event_id = format!("entry-{index}");
+            event
+        })
+        .collect();
+    let mut next = LogsSnapshot::default();
+    next.result.events = old.result.events[..200].to_vec();
+    assert_eq!(merge_live_events(&mut next, &old), 0);
+    assert_eq!(next.result.events.len(), 1000);
+    assert!(next.result.truncated);
+}
 fn state(role: UserRole) -> ShellSession {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -36,10 +148,20 @@ fn key(state: &mut ShellSession, value: &str) {
 }
 
 fn press_log_control(state: &mut ShellSession, target: ui::LogsHitTarget) {
+    if !matches!(
+        target,
+        ui::LogsHitTarget::Refresh
+            | ui::LogsHitTarget::Open
+            | ui::LogsHitTarget::Follow
+            | ui::LogsHitTarget::More
+    ) {
+        state.logs_state.more_selected = Some(0);
+    }
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
     let area = layout
         .controls
         .iter()
+        .chain(layout.menu_controls.iter())
         .find(|control| control.target == target)
         .unwrap()
         .area;
@@ -86,6 +208,7 @@ fn disabled_log_controls_cannot_be_activated_by_shortcuts() {
         cancelled: Arc::new(AtomicBool::new(false)),
         result: Mutex::new(None),
         worker: Mutex::new(None),
+        background: false,
     })));
     let before = state.logs_state.clone();
     for label in ["R", "F5", "L", "M", "T", "C", "I", "E", "Enter"] {
@@ -210,6 +333,7 @@ fn refresh_preserves_selected_event_and_scroll() {
         cancelled: Arc::new(AtomicBool::new(false)),
         result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
         worker: Mutex::new(None),
+        background: false,
     })));
     state.poll_logs_tasks();
     assert_eq!(state.logs_state.selected, 1);

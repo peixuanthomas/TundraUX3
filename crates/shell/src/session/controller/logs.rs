@@ -24,6 +24,12 @@ pub(in crate::session) struct LogsUiState {
     editor_snapshot: Option<PathBuf>,
     refreshing_editor: bool,
     return_component: Option<ShellComponent>,
+    paused: bool,
+    new_events: usize,
+    last_refresh: Option<Instant>,
+    background_refresh: bool,
+    more_selected: Option<usize>,
+    filter_form: Option<ui::ManagementForm>,
 }
 
 #[derive(Clone)]
@@ -32,6 +38,7 @@ struct LogsJobShared {
     cancelled: Arc<AtomicBool>,
     result: Mutex<Option<LogsJobResult>>,
     worker: Mutex<Option<ManagedThreadHandle<()>>>,
+    background: bool,
 }
 enum LogsJobResult {
     Snapshot(LogsSnapshot),
@@ -76,6 +83,17 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_service_logs(&mut self, unit: &str, scope: &str) {
+        self.open_related_logs(unit, scope, None, None, None);
+    }
+
+    pub(in crate::session) fn open_related_logs(
+        &mut self,
+        unit: &str,
+        scope: &str,
+        boot_id: Option<&str>,
+        invocation_id: Option<&str>,
+        since_usec: Option<u64>,
+    ) {
         if self
             .app
             .auth_session()
@@ -83,9 +101,14 @@ impl ShellSession {
         {
             return;
         }
-        let Some(query) = service_log_query(unit, scope) else {
+        let Some(mut query) = service_log_query(unit, scope) else {
             return;
         };
+        query.systemd_boot = Some(boot_id.unwrap_or("0").into());
+        query.systemd_invocation = invocation_id.map(String::from);
+        query.since = since_usec
+            .and_then(|micros| i64::try_from(micros).ok())
+            .and_then(chrono::DateTime::from_timestamp_micros);
         self.logs_state.query = query;
         self.logs_state.category = ui::LogsCategory::Linux;
         self.logs_state.section = ui::LogsSection::Events;
@@ -95,6 +118,8 @@ impl ShellSession {
         self.logs_state.scroll = 0;
         self.logs_state.explicit_scroll = false;
         self.logs_state.snapshot = LogsSnapshot::default();
+        self.logs_state.paused = false;
+        self.logs_state.new_events = 0;
         self.open_logs();
     }
 
@@ -147,7 +172,7 @@ impl ShellSession {
             1 => Some(Utc::now() - chrono::Duration::hours(1)),
             2 => Some(Utc::now() - chrono::Duration::days(1)),
             3 => Some(Utc::now() - chrono::Duration::days(7)),
-            _ => None,
+            _ => self.logs_state.query.since,
         };
         let job_context = group.new_log_context(
             "ux.logs",
@@ -166,7 +191,9 @@ impl ShellSession {
             cancelled: Arc::new(AtomicBool::new(false)),
             result: Mutex::new(None),
             worker: Mutex::new(None),
+            background: self.logs_state.background_refresh,
         });
+        self.logs_state.last_refresh = Some(Instant::now());
         let output = Arc::downgrade(&shared);
         let cancelled = shared.cancelled.clone();
         self.logs_state.revision = self.logs_state.revision.wrapping_add(1);
@@ -231,12 +258,36 @@ impl ShellSession {
                     "shell-logs-worker-stopped-before-completing-the-request"
                 )));
             }
+            self.poll_live_logs();
             return;
         };
+        let background = self
+            .logs_state
+            .job
+            .as_ref()
+            .is_some_and(|job| job.0.background);
         self.logs_state.job = None;
         match result {
-            LogsJobResult::Snapshot(snapshot) => {
+            LogsJobResult::Snapshot(mut snapshot) => {
                 let selected_id = self.logs_id_at(self.logs_state.selected);
+                let top_id = self.logs_id_at(self.logs_state.scroll);
+                if background {
+                    let old_status = self.logs_state.snapshot.result.file_status.as_ref();
+                    let current_status = snapshot.result.file_status.as_ref();
+                    if old_status.zip(current_status).is_some_and(|(old, new)| {
+                        old.identity != new.identity || old.length > new.length
+                    }) {
+                        snapshot
+                            .result
+                            .notices
+                            .push(i18n::tr!("ui-logs-file-replaced"));
+                        self.logs_state.snapshot.result.events.clear();
+                    }
+                    let new = merge_live_events(&mut snapshot, &self.logs_state.snapshot);
+                    if self.logs_state.paused {
+                        self.logs_state.new_events = self.logs_state.new_events.saturating_add(new);
+                    }
+                }
                 for event in &snapshot.result.events {
                     if self.logs_state.known_modules.len() < 128
                         && !self
@@ -251,11 +302,25 @@ impl ShellSession {
                 }
                 self.logs_state.known_modules.sort();
                 self.logs_state.snapshot = snapshot;
-                if let Some(index) = selected_id.and_then(|id| {
-                    (0..self.logs_count())
-                        .find(|index| self.logs_id_at(*index).as_ref() == Some(&id))
-                }) {
-                    self.logs_state.selected = index;
+                if background && !self.logs_state.paused {
+                    self.logs_state.selected = 0;
+                    self.logs_state.scroll = 0;
+                    self.logs_state.explicit_scroll = false;
+                } else {
+                    if let Some(index) = selected_id.and_then(|id| {
+                        (0..self.logs_count())
+                            .find(|index| self.logs_id_at(*index).as_ref() == Some(&id))
+                    }) {
+                        self.logs_state.selected = index;
+                    }
+                    if background
+                        && let Some(index) = top_id.and_then(|id| {
+                            (0..self.logs_count())
+                                .find(|index| self.logs_id_at(*index).as_ref() == Some(&id))
+                        })
+                    {
+                        self.logs_state.scroll = index;
+                    }
                 }
                 self.logs_state.selected = self
                     .logs_state
@@ -263,12 +328,22 @@ impl ShellSession {
                     .min(self.logs_count().saturating_sub(1));
                 self.logs_state.feedback = Some(
                     format!(
-                        "{:?}{}",
-                        self.logs_state.snapshot.result.state,
+                        "{}{}",
+                        log_state_label(self.logs_state.snapshot.result.state),
                         if self.logs_state.snapshot.result.notices.is_empty() {
                             String::new()
                         } else {
-                            format!(" — {}", self.logs_state.snapshot.result.notices.join("; "))
+                            format!(
+                                " — {}",
+                                self.logs_state
+                                    .snapshot
+                                    .result
+                                    .notices
+                                    .iter()
+                                    .map(|notice| log_notice_label(notice))
+                                    .collect::<Vec<_>>()
+                                    .join("; ")
+                            )
                         }
                     )
                     .into(),
@@ -343,6 +418,7 @@ impl ShellSession {
         }
     }
     fn logs_move(&mut self, delta: isize) {
+        self.logs_state.paused = true;
         self.logs_state.selected = self
             .logs_state
             .selected
@@ -399,6 +475,8 @@ impl ShellSession {
         self.logs_state.selected = 0;
         self.logs_state.scroll = 0;
         self.logs_state.snapshot = LogsSnapshot::default();
+        self.logs_state.paused = false;
+        self.logs_state.new_events = 0;
         self.request_logs_job(None);
     }
     fn logs_set_section(&mut self, section: ui::LogsSection) {
@@ -435,8 +513,263 @@ impl ShellSession {
         self.request_logs_job(None);
     }
 
+    fn poll_live_logs(&mut self) {
+        if self.active_screen() == ShellScreen::Logs
+            && self.logs_state.job.is_none()
+            && (self.logs_state.category == ui::LogsCategory::Linux
+                || self.logs_state.section == ui::LogsSection::Events)
+            && self
+                .logs_state
+                .last_refresh
+                .is_some_and(|time| time.elapsed() >= Duration::from_secs(1))
+        {
+            self.logs_state.background_refresh = true;
+            self.request_logs_job(None);
+            self.logs_state.background_refresh = false;
+        }
+    }
+    fn logs_follow_control(&mut self) {
+        self.logs_state.paused = !self.logs_state.paused;
+        if !self.logs_state.paused {
+            self.logs_state.selected = 0;
+            self.logs_state.scroll = 0;
+            self.logs_state.explicit_scroll = false;
+            self.logs_state.new_events = 0;
+        }
+    }
+    fn logs_open_filter_form(&mut self) {
+        let query = &self.logs_state.query;
+        let fields = [
+            (
+                "unit",
+                "ui-logs-unit",
+                query.systemd_unit.clone().unwrap_or_default(),
+            ),
+            (
+                "scope",
+                "ui-logs-scope",
+                query
+                    .systemd_scope
+                    .clone()
+                    .unwrap_or_else(|| "system".into()),
+            ),
+            (
+                "boot",
+                "ui-logs-boot",
+                query.systemd_boot.clone().unwrap_or_else(|| "0".into()),
+            ),
+            (
+                "invocation",
+                "ui-logs-invocation",
+                query.systemd_invocation.clone().unwrap_or_default(),
+            ),
+            (
+                "file",
+                "ui-logs-file",
+                query
+                    .file_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+            ),
+        ]
+        .into_iter()
+        .map(|(id, label, value)| ui::ManagementFormField {
+            id: id.into(),
+            label: i18n::tr!(label),
+            value,
+            choices: if id == "scope" {
+                vec!["system".into(), "user".into()]
+            } else {
+                vec![]
+            },
+            ..Default::default()
+        })
+        .collect();
+        self.logs_state.more_selected = None;
+        self.logs_state.filter_form = Some(ui::ManagementForm {
+            identity: "logs.filters".into(),
+            title: i18n::tr!("ui-logs-source-filters"),
+            fields,
+            ..Default::default()
+        });
+    }
+    fn logs_apply_filter_form(&mut self) {
+        let Some(form) = self.logs_state.filter_form.clone() else {
+            return;
+        };
+        let value = |id: &str| {
+            form.fields
+                .iter()
+                .find(|field| field.id == id)
+                .map(|field| field.value.trim())
+                .unwrap_or("")
+        };
+        let mut query = LogQuery {
+            source: LogSource::Linux,
+            ..Default::default()
+        };
+        if !value("file").is_empty() {
+            let path = PathBuf::from(value("file"));
+            if !path.is_absolute() {
+                if let Some(form) = self.logs_state.filter_form.as_mut() {
+                    form.message = i18n::tr!("ui-logs-file-absolute");
+                }
+                return;
+            }
+            query.file_path = Some(path);
+        } else {
+            if !value("unit").is_empty() {
+                let Some(service) = service_log_query(value("unit"), value("scope")) else {
+                    if let Some(form) = self.logs_state.filter_form.as_mut() {
+                        form.message = i18n::tr!("ui-logs-invalid-service");
+                    }
+                    return;
+                };
+                query = service;
+            } else if !matches!(value("scope"), "system" | "user") {
+                return;
+            }
+            query.systemd_scope = Some(value("scope").into());
+            let valid_id =
+                |id: &str| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit());
+            if !value("boot").is_empty() {
+                if !valid_id(value("boot"))
+                    && !value("boot").parse::<i32>().is_ok_and(|number| {
+                        (-10_000..=0).contains(&number) && number.to_string() == value("boot")
+                    })
+                {
+                    if let Some(form) = self.logs_state.filter_form.as_mut() {
+                        form.message = i18n::tr!("ui-logs-invalid-boot");
+                    }
+                    return;
+                }
+                query.systemd_boot = Some(value("boot").into());
+            }
+            if !value("invocation").is_empty() {
+                if !valid_id(value("invocation")) {
+                    if let Some(form) = self.logs_state.filter_form.as_mut() {
+                        form.message = i18n::tr!("ui-logs-invalid-invocation");
+                    }
+                    return;
+                }
+                query.systemd_invocation = Some(value("invocation").into());
+            }
+        }
+        self.logs_state.query = query;
+        self.logs_state.category = ui::LogsCategory::Linux;
+        self.logs_state.section = ui::LogsSection::Events;
+        self.logs_state.time_filter = 0;
+        self.logs_state.filter_form = None;
+        self.logs_state.snapshot = LogsSnapshot::default();
+        self.logs_state.selected = 0;
+        self.logs_state.scroll = 0;
+        self.logs_state.paused = false;
+        self.logs_state.new_events = 0;
+        self.request_logs_job(None);
+    }
+    fn logs_handle_filter_key(&mut self, key: &KeyInput) {
+        if key.phase != InputPhase::Press
+            && !matches!(key.key, InputKey::Char(_) | InputKey::Backspace)
+        {
+            return;
+        }
+        if key.key == InputKey::Escape {
+            self.logs_state.filter_form = None;
+            return;
+        }
+        if key.modifiers.is_control() && key.key == InputKey::Enter {
+            self.logs_apply_filter_form();
+            return;
+        }
+        if key.has_non_shift_modifier() {
+            return;
+        }
+        let Some(form) = self.logs_state.filter_form.as_mut() else {
+            return;
+        };
+        let count = form.fields.len();
+        match key.key {
+            InputKey::Tab if key.modifiers.shift => {
+                form.selected = if form.selected == 0 {
+                    count
+                } else {
+                    form.selected - 1
+                }
+            }
+            InputKey::Tab | InputKey::Down => form.selected = (form.selected + 1) % (count + 1),
+            InputKey::BackTab | InputKey::Up => {
+                form.selected = if form.selected == 0 {
+                    count
+                } else {
+                    form.selected - 1
+                }
+            }
+            InputKey::Enter if form.selected == count => self.logs_apply_filter_form(),
+            InputKey::Enter | InputKey::Left | InputKey::Right => {
+                if let Some(field) = form.fields.get_mut(form.selected)
+                    && !field.choices.is_empty()
+                {
+                    let index = field
+                        .choices
+                        .iter()
+                        .position(|choice| choice == &field.value)
+                        .unwrap_or(0);
+                    field.value = field.choices[(index + 1) % field.choices.len()].clone();
+                }
+            }
+            InputKey::Backspace => {
+                if let Some(field) = form.fields.get_mut(form.selected) {
+                    field.value.pop();
+                }
+            }
+            InputKey::Space => {
+                if let Some(field) = form.fields.get_mut(form.selected) {
+                    field.value.push(' ');
+                }
+            }
+            InputKey::Char(c) if !c.is_control() => {
+                if let Some(field) = form.fields.get_mut(form.selected)
+                    && field.choices.is_empty()
+                {
+                    field.value.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(in crate::session) fn handle_logs_key(&mut self, key: &KeyInput) {
         if !key.phase.is_press_like() {
+            return;
+        }
+        if self.logs_state.filter_form.is_some() {
+            self.logs_handle_filter_key(key);
+            return;
+        }
+        if let Some(selected) = self.logs_state.more_selected {
+            if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
+                return;
+            }
+            let controls = ui::logs_more_controls();
+            match key.key {
+                InputKey::Escape => self.logs_state.more_selected = None,
+                InputKey::Up | InputKey::BackTab => {
+                    self.logs_state.more_selected = Some(selected.saturating_sub(1))
+                }
+                InputKey::Down | InputKey::Tab => {
+                    self.logs_state.more_selected =
+                        Some((selected + 1).min(controls.len().saturating_sub(1)))
+                }
+                InputKey::Enter => {
+                    if let Some((target, _)) = controls.get(selected) {
+                        let target = *target;
+                        self.logs_state.more_selected = None;
+                        self.logs_touch_action(target);
+                    }
+                }
+                _ => {}
+            }
             return;
         }
         let detail_navigation = (key.modifiers.shift || key.modifiers.is_control())
@@ -457,6 +790,9 @@ impl ShellSession {
             InputKey::Char('c' | 'C') => Some(ui::LogsHitTarget::ClearFilters),
             InputKey::Char('i' | 'I') => Some(ui::LogsHitTarget::RelatedIncident),
             InputKey::Char('e' | 'E') => Some(ui::LogsHitTarget::RelatedEvents),
+            InputKey::Char('p' | 'P') => Some(ui::LogsHitTarget::Follow),
+            InputKey::F(10) => Some(ui::LogsHitTarget::More),
+            InputKey::Char('f' | 'F') => Some(ui::LogsHitTarget::Filters),
             _ => None,
         };
         if control.is_some_and(|control| {
@@ -524,16 +860,22 @@ impl ShellSession {
             InputKey::Home => {
                 self.logs_state.selected = 0;
                 self.logs_state.explicit_scroll = false;
+                self.logs_state.paused = false;
+                self.logs_state.new_events = 0;
             }
             InputKey::End => {
                 self.logs_state.selected = self.logs_count().saturating_sub(1);
                 self.logs_state.explicit_scroll = false;
+                self.logs_state.paused = true;
             }
             InputKey::Enter | InputKey::Char('o' | 'O') => self.logs_open_selected(),
             InputKey::Char('r' | 'R') | InputKey::F(5) => self.request_logs_job(None),
             InputKey::Char('l' | 'L') => self.logs_filter_level(),
             InputKey::Char('m' | 'M') => self.logs_filter_module(),
             InputKey::Char('t' | 'T') => self.logs_filter_time(),
+            InputKey::Char('p' | 'P') => self.logs_follow_control(),
+            InputKey::F(10) => self.logs_state.more_selected = Some(0),
+            InputKey::Char('f' | 'F') => self.logs_open_filter_form(),
             InputKey::Char('i' | 'I') if self.logs_state.category == ui::LogsCategory::Ux => {
                 let id = self
                     .logs_state
@@ -679,7 +1021,12 @@ impl ShellSession {
             detail_scroll: state.detail_scroll,
             linux_available: cfg!(target_os = "linux"),
             can_view_system: system,
-            loading: state.job.is_some(),
+            loading: state.job.as_ref().is_some_and(|job| !job.0.background),
+            following: !state.paused,
+            new_events: state.new_events,
+            more_selected: state.more_selected,
+            filter_form: state.filter_form.clone(),
+            selected_file: state.query.file_path.is_some(),
             filter_summary: i18n::tr!(
                 "shell-level-arg1-module-arg2-time-arg3-arg4",
                 arg1 = state
@@ -699,13 +1046,23 @@ impl ShellSession {
                     i18n::tr!("shell-7-days")
                 ][usize::from(state.time_filter)]
                 .clone(),
-                arg4 = if let Some(unit) = &state.query.systemd_unit {
+                arg4 = if let Some(file) = &state.query.file_path {
+                    file.display().to_string()
+                } else if let Some(unit) = &state.query.systemd_unit {
                     format!(
-                        "{}: {} | {}",
+                        "{}: {} · boot={}{}",
                         state.query.systemd_scope.as_deref().unwrap_or("system"),
                         unit,
-                        i18n::tr!("shell-c-clear-filters")
+                        state.query.systemd_boot.as_deref().unwrap_or("all"),
+                        state
+                            .query
+                            .systemd_invocation
+                            .as_ref()
+                            .map(|id| format!(" · run={}", &id[..id.len().min(8)]))
+                            .unwrap_or_default()
                     )
+                } else if let Some(boot) = &state.query.systemd_boot {
+                    format!("boot={boot}")
                 } else {
                     state
                         .query
@@ -719,6 +1076,90 @@ impl ShellSession {
             feedback,
         }
     }
+}
+
+fn log_state_label(state: runtime_log::LogSourceState) -> String {
+    i18n::tr!(match state {
+        runtime_log::LogSourceState::Ready => "ui-logs-state-ready",
+        runtime_log::LogSourceState::Partial => "ui-logs-state-partial",
+        runtime_log::LogSourceState::PermissionDenied => "ui-logs-state-permission",
+        runtime_log::LogSourceState::Unavailable => "ui-logs-state-unavailable",
+        runtime_log::LogSourceState::Unsupported => "ui-logs-state-unsupported",
+        runtime_log::LogSourceState::Cancelled => "ui-logs-state-cancelled",
+    })
+}
+fn log_notice_label(notice: &str) -> String {
+    let key = match notice {
+        "The log file is missing. Check the path or wait for rotation to finish." => {
+            "ui-logs-file-missing"
+        }
+        "Log access denied. Check the file permissions." => "ui-logs-file-denied",
+        "The log file could not be read. Check the file and refresh." => "ui-logs-file-unreadable",
+        "Showing a bounded tail of the file. Earlier records remain in the log file." => {
+            "ui-logs-file-tail"
+        }
+        "The log file was replaced. Refresh to read the new file." => "ui-logs-file-replaced",
+        "Raw file records have no parsed event time or level. Clear event filters to inspect the file." => {
+            "ui-logs-file-unparsed"
+        }
+        "Permission denied reading the system journal" => "ui-logs-journal-denied",
+        _ => return notice.to_string(),
+    };
+    i18n::tr!(key)
+}
+
+fn merge_live_events(new: &mut LogsSnapshot, old: &LogsSnapshot) -> usize {
+    use std::collections::HashSet;
+    const BUFFER: usize = 1000;
+    let existing: HashSet<_> = old
+        .result
+        .events
+        .iter()
+        .map(|event| event.event_id.as_str())
+        .collect();
+    let added = new
+        .result
+        .events
+        .iter()
+        .filter(|event| !existing.contains(event.event_id.as_str()))
+        .count();
+    let mut seen: HashSet<_> = new
+        .result
+        .events
+        .iter()
+        .map(|event| event.event_id.clone())
+        .collect();
+    let offsets: HashSet<_> = new
+        .result
+        .events
+        .iter()
+        .filter(|event| event.event_id.starts_with("file:"))
+        .filter_map(|event| {
+            event
+                .event_id
+                .rsplit_once(':')
+                .map(|(offset, _)| offset.to_string())
+        })
+        .collect();
+    for event in &old.result.events {
+        if event.event_id.starts_with("file:")
+            && event
+                .event_id
+                .rsplit_once(':')
+                .is_some_and(|(offset, _)| offsets.contains(offset))
+        {
+            continue;
+        }
+        if seen.insert(event.event_id.clone()) {
+            new.result.events.push(event.clone());
+        }
+    }
+    if new.result.events.len() > BUFFER {
+        new.result.events.truncate(BUFFER);
+        new.result.truncated = true;
+        new.result.notices.push(i18n::tr!("ui-logs-buffer-limited"));
+    }
+    added
 }
 
 fn service_log_query(unit: &str, scope: &str) -> Option<LogQuery> {

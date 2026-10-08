@@ -47,6 +47,20 @@ pub fn query_snapshot(
         snapshot.result.state = LogSourceState::Cancelled;
         return snapshot;
     }
+    if query.file_path.is_some() {
+        snapshot.result = if matches!(access, LogAccess::User(_)) {
+            LogQueryResult {
+                state: LogSourceState::PermissionDenied,
+                notices: vec![
+                    "Selected system log files require administrator diagnostics access.".into(),
+                ],
+                ..Default::default()
+            }
+        } else {
+            platform::query_log_file(query, cancelled)
+        };
+        return snapshot;
+    }
     if let Err(error) = validate_root(logs_root) {
         snapshot.result.state = LogSourceState::PermissionDenied;
         snapshot.result.notices.push(error);

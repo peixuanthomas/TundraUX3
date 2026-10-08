@@ -22,6 +22,12 @@ pub enum LogsHitTarget {
     RelatedEvents,
     DetailScrollbar,
     Scrollbar,
+    Follow,
+    More,
+    Filters,
+    FormField(usize),
+    FormApply,
+    FormCancel,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogsCategoryTabLayout {
@@ -53,6 +59,8 @@ pub struct LogsLayout {
     pub visible_capacity: usize,
     pub detail_text: Rect,
     pub detail_scrollbar: Option<crate::ManagementScrollbar>,
+    pub menu: Rect,
+    pub menu_controls: Vec<LogsControlLayout>,
 }
 
 pub(super) fn category_tabs() -> Tabs {
@@ -74,10 +82,24 @@ pub(super) fn section_tabs() -> Tabs {
         ],
     )
 }
-pub(super) fn controls() -> Vec<(LogsHitTarget, String)> {
+pub(super) fn controls(model: &LogsViewModel) -> Vec<(LogsHitTarget, String)> {
     vec![
-        (LogsHitTarget::Refresh, i18n::tr!("ui-logs-r-refresh")),
-        (LogsHitTarget::Open, i18n::tr!("ui-logs-o-open")),
+        (LogsHitTarget::Refresh, i18n::tr!("ui-logs-refresh")),
+        (LogsHitTarget::Open, i18n::tr!("ui-logs-open")),
+        (
+            LogsHitTarget::Follow,
+            if model.following {
+                i18n::tr!("ui-logs-pause-scroll")
+            } else {
+                i18n::tr!("ui-logs-back-latest", count = model.new_events)
+            },
+        ),
+        (LogsHitTarget::More, i18n::tr!("ui-logs-more")),
+    ]
+}
+pub fn logs_more_controls() -> Vec<(LogsHitTarget, String)> {
+    vec![
+        (LogsHitTarget::Filters, i18n::tr!("ui-logs-source-filters")),
         (LogsHitTarget::FilterLevel, i18n::tr!("ui-logs-l-level")),
         (LogsHitTarget::FilterModule, i18n::tr!("ui-logs-m-module")),
         (LogsHitTarget::FilterTime, i18n::tr!("ui-logs-t-time")),
@@ -134,7 +156,7 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     };
     let mut x = toolbar.x;
     let mut y = toolbar.y;
-    let controls = controls()
+    let controls = controls(model)
         .into_iter()
         .map(|(target, label)| {
             let width = (unicode_width::UnicodeWidthStr::width(label.as_str()) as u16 + 2)
@@ -189,6 +211,44 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         model.detail_scroll,
         false,
     );
+    let menu_items = logs_more_controls();
+    let menu_width = menu_items
+        .iter()
+        .map(|(_, label)| crate::components::terminal_width(label) as u16 + 4)
+        .max()
+        .unwrap_or(20)
+        .min(main.width);
+    let menu_height = (menu_items.len() as u16 + 2).min(main.height);
+    let menu = Rect::new(
+        main.right().saturating_sub(menu_width),
+        main.y,
+        menu_width,
+        menu_height,
+    );
+    let menu_controls = if model.more_selected.is_some() {
+        let capacity = usize::from(menu.height.saturating_sub(2));
+        let start = model
+            .more_selected
+            .unwrap_or(0)
+            .saturating_sub(capacity.saturating_sub(1));
+        menu_items
+            .into_iter()
+            .skip(start)
+            .take(capacity)
+            .enumerate()
+            .map(|(index, (target, _))| LogsControlLayout {
+                target,
+                area: Rect::new(
+                    menu.x + 1,
+                    menu.y + 1 + index as u16,
+                    menu.width.saturating_sub(2),
+                    1,
+                ),
+            })
+            .collect()
+    } else {
+        vec![]
+    };
     LogsLayout {
         panel: main,
         category_tabs_area,
@@ -203,6 +263,8 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         content,
         detail_text,
         detail_scrollbar,
+        menu,
+        menu_controls,
     }
 }
 
@@ -213,6 +275,34 @@ pub fn logs_hit_test(
 ) -> Option<LogsHitTarget> {
     let layout = logs_layout(main, model);
     let (x, y) = position;
+    if let Some(form) = &model.filter_form {
+        let form_model = crate::ManagementViewModel {
+            form: Some(form.clone()),
+            ..Default::default()
+        };
+        let form_layout = crate::management_layout(main, &form_model);
+        if rect_contains(form_layout.submit, x, y) {
+            return Some(LogsHitTarget::FormApply);
+        }
+        if rect_contains(form_layout.cancel, x, y) {
+            return Some(LogsHitTarget::FormCancel);
+        }
+        return form_layout
+            .fields
+            .iter()
+            .find(|(_, area)| rect_contains(*area, x, y))
+            .map(|(index, _)| LogsHitTarget::FormField(*index));
+    }
+    if model.more_selected.is_some() {
+        return layout
+            .menu_controls
+            .iter()
+            .find(|control| {
+                rect_contains(control.area, x, y)
+                    && super::render::logs_control_enabled(model, control.target)
+            })
+            .map(|control| control.target);
+    }
     if let Some(tab) = layout
         .category_tabs
         .iter()

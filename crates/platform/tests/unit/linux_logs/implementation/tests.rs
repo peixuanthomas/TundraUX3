@@ -19,6 +19,103 @@ fn good(stdout: &str) -> Capture {
 }
 
 #[test]
+fn boot_and_invocation_filters_are_passed_before_record_limit() {
+    let mut query = query();
+    query.systemd_boot = Some("-1".into());
+    query.systemd_invocation = Some("1234567890abcdef1234567890abcdef".into());
+    let result = query_with(&query, &AtomicBool::new(false), |program, args| {
+        assert_eq!(program, "journalctl");
+        assert!(args.contains(&"--boot=-1".into()));
+        assert!(args.contains(&"_SYSTEMD_INVOCATION_ID=1234567890abcdef1234567890abcdef".into()));
+        assert!(args.contains(&"INVOCATION_ID=1234567890abcdef1234567890abcdef".into()));
+        assert!(args.contains(&"+".into()));
+        good("")
+    });
+    assert_eq!(result.state, LogSourceState::Ready);
+    query.systemd_boot = Some("--all".into());
+    let result = query_with(&query, &AtomicBool::new(false), |_, _| {
+        panic!("invalid filter must not spawn")
+    });
+    assert_eq!(result.state, LogSourceState::Unavailable);
+}
+
+#[test]
+fn invocation_alternatives_keep_service_boot_time_and_user_constraints() {
+    for scope in ["system", "user"] {
+        let query = LogQuery {
+            systemd_unit: Some("example.service".into()),
+            systemd_scope: Some(scope.into()),
+            systemd_boot: Some("-1".into()),
+            systemd_invocation: Some("1234567890abcdef1234567890abcdef".into()),
+            since: DateTime::from_timestamp_micros(1_000_000),
+            until: DateTime::from_timestamp_micros(2_000_000),
+            module: Some("linux.kernel".into()),
+            ..query()
+        };
+        let result = query_with(&query, &AtomicBool::new(false), |program, args| {
+            assert_eq!(program, "journalctl");
+            for option in ["--boot=-1", "--since=@1.000000", "--until=@2.000000"] {
+                assert_eq!(args.iter().filter(|arg| *arg == option).count(), 1);
+            }
+            assert!(args.contains(&format!(
+                "--{}unit=example.service",
+                if scope == "user" { "user-" } else { "" }
+            )));
+            let branches: Vec<_> = args
+                .iter()
+                .filter(|arg| !arg.starts_with('-'))
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .split(|arg| *arg == "+")
+                .map(<[_]>::to_vec)
+                .collect();
+            assert_eq!(branches.len(), 2);
+            for branch in &branches {
+                assert!(branch.contains(&"_TRANSPORT=kernel"));
+                if scope == "user" {
+                    assert!(branch.contains(&format!("_UID={}", current_uid()).as_str()));
+                }
+            }
+            assert!(
+                branches[0].contains(&"_SYSTEMD_INVOCATION_ID=1234567890abcdef1234567890abcdef")
+            );
+            assert!(branches[1].contains(&"INVOCATION_ID=1234567890abcdef1234567890abcdef"));
+            good("")
+        });
+        assert_eq!(result.state, LogSourceState::Ready);
+    }
+}
+
+#[test]
+fn invocation_filter_keeps_manager_records_with_a_different_origin_invocation() {
+    let id = "1234567890abcdef1234567890abcdef";
+    let other_id = "abcdef1234567890abcdef1234567890";
+    let mut record: Value = serde_json::from_str(&journal("stdout", 3, 1_000_000)).unwrap();
+    record["_SYSTEMD_INVOCATION_ID"] = Value::String(other_id.into());
+    record["INVOCATION_ID"] = Value::String(id.into());
+    let query = LogQuery {
+        systemd_unit: Some("example.service".into()),
+        systemd_invocation: Some(id.into()),
+        ..query()
+    };
+    let result = parse_journal(serde_json::to_string(&record).unwrap().as_bytes(), &query);
+    assert_eq!(result.events.len(), 1);
+    assert!(
+        result.events[0]
+            .native_source
+            .as_deref()
+            .unwrap()
+            .contains(&format!("invocation={id}"))
+    );
+    record["INVOCATION_ID"] = Value::String(other_id.into());
+    assert!(
+        parse_journal(serde_json::to_string(&record).unwrap().as_bytes(), &query)
+            .events
+            .is_empty()
+    );
+}
+
+#[test]
 fn journal_uses_origin_and_native_priority_not_message_words() {
     let records = format!(
         "{}\n{}",

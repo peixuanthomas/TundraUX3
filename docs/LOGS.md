@@ -41,12 +41,12 @@ tundra-cli logs export --run-id RUN_ID --output ./diagnostics-new
 
 Queries default to the latest 200 events, with a maximum of 10,000. Supported
 filters include source, UTC time range, minimum level, module, run, operation,
-task, and incident. Text and JSONL output are available. There is no unlimited
-follow mode. The standalone CLI relies on current OS identity and file access;
+task, and incident. Text and JSONL output are available. Follow mode keeps
+bounded memory; see the following and filtering section below. The standalone CLI relies on current OS identity and file access;
 it does not accept a claimed administrator role or a TundraUX owner identity.
 
-Exit codes: 0 success (including empty results), 1 source/permission/output
-failure, 2 invalid arguments, 3 partial or truncated results, 130 cancellation.
+Exit codes: 0 success (including empty results), 1 failure or partial/truncated
+results, 2 invalid arguments, 3 permission denied, 4 unsupported, 130 cancellation.
 Diagnostic export creates a new private directory and refuses to overwrite an
 existing target. Its manifest records source status, truncation, damaged records,
 and writer health. Partial exports retain usable records and report omissions.
@@ -174,3 +174,23 @@ isolation, CLI/export, Logs rendering, and asset restoration. CI runs Linux sour
 tests on Ubuntu/Fedora and UX plus Unsupported-source tests on Windows/macOS.
 A successful macOS run does not stand in for a native journal/dmesg integration
 run on Linux.
+
+## 日志跟随与集中排查 / Following and filtering logs
+
+日志应用默认持续收集新日志并滚动到最新内容。手动上滚、选择旧日志或拖动滚动条会暂停自动滚动，后台仍继续收集。暂停时显示新增数量，点击“回到最新”恢复跟随。当前缓冲最多保留 1000 条，达到上限时显示截断提示。
+
+常驻操作是刷新、打开、暂停滚动或回到最新，以及“更多操作”。服务、启动批次、单次运行和文件选择放在二级菜单的筛选表单中。服务、进程和配置任务可携带服务名称、system/user 范围、启动 ID、运行 ID 与开始时间打开日志，并能返回原页面。
+
+指定文件只读取操作系统允许访问的绝对路径，逐次读取有界尾部。文件更换、截断、删除和权限变化都有状态提示。原始文件按行展示；未知的时间和级别不会伪装成解析出的真实记录，不能对原始文件使用事件时间、模块或级别筛选。Linux 拒绝把符号链接当成指定日志文件。
+
+```sh
+tundra-cli logs follow --unit ssh.service --scope system --boot 0 --json
+tundra-cli logs query --unit worker.service --boot -1
+tundra-cli logs follow --file /var/log/syslog --format jsonl
+```
+
+内建 Command Line 使用 `/logs follow …`。JSONL 每行一个事件，状态和截断提示写入标准错误。Ctrl+C 停止跟随，返回 130。文件轮转后跟随新文件；文件临时不存在时继续等待，恢复后继续读取。查询不会修改日志源。
+
+自动测试覆盖有界缓冲、暂停时保留位置并统计新增内容、筛选表单、二级菜单点击区域、服务返回位置、文件截断与轮转，以及真实 CLI 子进程的追加、轮转、截断和 SIGINT。真实终端触屏、各主题实际颜色及操作系统日志权限仍需要对应环境验收。
+
+The log application keeps collecting while scrolling is paused and displays the number of new records. “Latest” resumes following. Service filters support system/user scope, boot ID, invocation ID and time range. Selected text files use bounded tail reads and report rotation, truncation, disappearance or access changes. JSONL records go to stdout; progress and source notices go to stderr. Neither viewing nor following modifies the original log.
