@@ -212,7 +212,11 @@ impl AutoAdminJob {
                 choices,
                 secret,
             } => {
-                print_line(&mut d.parser, prompt);
+                if id == "sudo-password" {
+                    print_line(&mut d.parser, &i18n::tr!("management-system-authorization"));
+                } else {
+                    print_line(&mut d.parser, prompt);
+                }
                 for (index, choice) in choices.iter().enumerate() {
                     print_line(&mut d.parser, &format!("{}: {choice}", index + 1));
                 }

@@ -106,7 +106,7 @@ management-form-hint = Ctrl+Enter 确认 · Esc 取消 · Enter 选择/下一字
 management-choice-hint = ↑↓ / Home / End 选择 · Enter 应用 · Esc 返回
 management-background-question = { $application } 正在等待输入。请从启动器返回该应用；网络配置会在 120 秒未确认后恢复。
 management-config-needs-answer = 软件安装正在写入配置，不能强制取消。请选择保留当前文件或采用软件包版本。
-management-connection-lost = 任务连接未完成或已断开：{ $reason }。这不代表后台操作失败；请先重新连接核对结果，再决定是否重试。
+management-connection-lost = 任务连接已断开。请重新连接查看结果。
 
 management-touch-refresh = [R/F5] 刷新
 management-touch-search = [S] 搜索

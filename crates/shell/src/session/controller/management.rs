@@ -7,6 +7,7 @@ pub(in crate::session) struct ManagementJob(Arc<ManagementJobShared>);
 struct ManagementJobShared {
     cancelled: Arc<AtomicBool>,
     snapshot: Mutex<Option<Result<ManagementSnapshot, ManagementError>>>,
+    draft: Mutex<Option<Result<ConfigDraft, ManagementError>>>,
     events: Mutex<VecDeque<OperationEvent>>,
     responses: mpsc::Sender<OperationInput>,
     worker: Mutex<Option<ManagedThreadHandle<()>>>,
@@ -35,6 +36,8 @@ impl Drop for ManagementJobShared {
 enum FormPurpose {
     Action(ManagementAction, Option<ManagementRow>),
     Answer(String),
+    Menu(Vec<(ManagementAction, Option<ManagementRow>)>),
+    Configuration(String),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagementEditor {
@@ -85,11 +88,14 @@ pub(in crate::session) struct ManagementState {
     outcome: Option<String>,
     received_snapshot: bool,
     pending_directory: Option<PathBuf>,
+    pending_select: Option<PathBuf>,
     output: String,
     output_scroll: u16,
     details_scroll: u16,
     details_only: bool,
     query_job: Option<ManagementJob>,
+    draft_job: Option<ManagementJob>,
+    pending_draft: Option<ConfigDraft>,
     operation_job: Option<ManagementJob>,
     auto_admin_job: Option<AutoAdminJob>,
     form: Option<ManagementEditor>,
@@ -97,6 +103,8 @@ pub(in crate::session) struct ManagementState {
     terminal_mode: bool,
     revision: u64,
     refreshed: Option<Instant>,
+    problem: Option<problem::OperationProblem>,
+    configuration_operation: bool,
 }
 
 pub(in crate::session) fn management_title(kind: ManagementKind) -> String {
@@ -106,6 +114,8 @@ pub(in crate::session) fn management_title(kind: ManagementKind) -> String {
         ManagementKind::Packages => i18n::tr!("management-packages"),
         ManagementKind::Network => i18n::tr!("management-network"),
         ManagementKind::Disks => i18n::tr!("management-disks"),
+        ManagementKind::Users => i18n::tr!("management-users"),
+        ManagementKind::SystemConfig => i18n::tr!("management-system-config"),
     }
 }
 fn management_label(id: &str, fallback: &str) -> String {
@@ -116,6 +126,14 @@ fn management_label(id: &str, fallback: &str) -> String {
     } else {
         result
     }
+}
+fn action_label(action: &ManagementAction) -> String {
+    if action.id == "set_view" {
+        if let Some(scope) = action.values.get("scope") {
+            return management_label(&format!("scope-{scope}"), &action.label);
+        }
+    }
+    management_label(&action.id, &action.label)
 }
 
 fn management_action_shortcut(
@@ -179,9 +197,18 @@ fn management_control_modifier(key: &KeyInput) -> bool {
         && !key.modifiers.meta
 }
 fn management_text(prefix: &str, id: &str, fallback: &str) -> String {
-    let id = id
-        .to_ascii_lowercase()
-        .replace([' ', '_', '(', ')', '%'], "-");
+    if id.len() > 200 {
+        return fallback.into();
+    }
+    let mut normalized = String::new();
+    for character in id.chars() {
+        if character.is_ascii_alphanumeric() {
+            normalized.push(character.to_ascii_lowercase());
+        } else if !normalized.ends_with('-') {
+            normalized.push('-');
+        }
+    }
+    let id = normalized;
     let key = format!("management-{prefix}-{}", id.trim_matches('-'));
     let text = i18n::tr!(key.clone());
     if text.contains(&key) {
@@ -228,6 +255,7 @@ impl ShellSession {
             ManagementJob(Arc::new(ManagementJobShared {
                 cancelled: Arc::new(AtomicBool::new(false)),
                 snapshot: Mutex::new(None),
+                draft: Mutex::new(None),
                 events: Mutex::new(VecDeque::new()),
                 responses: tx,
                 worker: Mutex::new(None),
@@ -267,7 +295,10 @@ impl ShellSession {
                 self.management_state.query_job = Some(job);
                 self.management_state.status = i18n::tr!("management-loading");
             }
-            Err(e) => self.management_state.status = e.to_string(),
+            Err(e) => {
+                self.management_state.status = i18n::tr!("management-worker-unavailable");
+                self.management_state.output = e.to_string();
+            }
         }
     }
 
@@ -289,6 +320,34 @@ impl ShellSession {
         }
     }
     fn poll_management_page(&mut self, visible: bool) {
+        let draft_result = self
+            .management_state
+            .draft_job
+            .as_ref()
+            .and_then(|job| job.0.draft.lock().ok()?.take());
+        if let Some(result) = draft_result {
+            self.management_state.draft_job = None;
+            match result {
+                Ok(draft) => self.management_state.pending_draft = Some(draft),
+                Err(error) => {
+                    let p = problem::OperationProblem::from_error(&error);
+                    self.management_state.status = i18n::tr!(p.summary_key.clone());
+                    self.management_state.output = p.detail.clone();
+                    self.management_state.problem = Some(p);
+                }
+            }
+        }
+        if visible {
+            if let Some(draft) = self.management_state.pending_draft.take() {
+                self.begin_config_editor(
+                    draft.path.clone(),
+                    Some(draft),
+                    None,
+                    None,
+                    "system".into(),
+                );
+            }
+        }
         if !visible {
             self.cancel_management_pointer_gesture();
         }
@@ -352,7 +411,12 @@ impl ShellSession {
                         });
                     self.management_state.snapshot = snapshot;
                 }
-                Err(e) => self.management_state.status = e.to_string(),
+                Err(e) => {
+                    let problem = problem::OperationProblem::from_error(&e);
+                    self.management_state.status = i18n::tr!(problem.summary_key.clone());
+                    self.management_state.output = problem.detail.clone();
+                    self.management_state.problem = Some(problem);
+                }
             }
             self.management_state.refreshed = Some(Instant::now());
         }
@@ -372,12 +436,31 @@ impl ShellSession {
         for event in events {
             self.management_state.revision = self.management_state.revision.wrapping_add(1);
             match event {
+                OperationEvent::ConfigDocument { document } => {
+                    self.editor_config.received = Some(document)
+                }
+                OperationEvent::Connected { .. } => {}
+                OperationEvent::Problem { problem } => {
+                    if self
+                        .management_state
+                        .problem
+                        .as_ref()
+                        .is_some_and(|p| p.native_exit_code.is_some())
+                    {
+                        continue;
+                    }
+                    self.management_state.status = i18n::tr!(problem.summary_key.clone());
+                    self.management_state.output.push_str(&problem.detail);
+                    self.management_state.problem = Some(problem);
+                }
                 OperationEvent::Started {
                     kind,
                     action,
                     target,
                 } => {
-                    if self.management_state.kind != Some(kind) {
+                    if kind != ManagementKind::SystemConfig
+                        && self.management_state.kind != Some(kind)
+                    {
                         self.management_state.kind = Some(kind);
                         self.management_state.query = Some(ManagementQuery::new(kind));
                         self.management_state.snapshot = ManagementSnapshot::default();
@@ -389,6 +472,12 @@ impl ShellSession {
                     );
                 }
                 OperationEvent::Snapshot { snapshot } => {
+                    if self.management_state.configuration_operation
+                        && self.editor_config.pending_action.as_deref() == Some("history")
+                    {
+                        self.editor_config.history = snapshot;
+                        continue;
+                    }
                     self.management_state.query_job = None;
                     self.management_state.snapshot = snapshot;
                     self.management_state.received_snapshot = true;
@@ -478,14 +567,19 @@ impl ShellSession {
                     });
                 }
                 OperationEvent::Completed { message } | OperationEvent::Failed { message } => {
-                    self.management_state.status = message.clone();
-                    self.management_state.outcome = Some(message);
+                    self.management_state.status = self
+                        .management_state
+                        .problem
+                        .as_ref()
+                        .map_or_else(|| message.clone(), |p| i18n::tr!(p.summary_key.clone()));
+                    self.management_state.outcome = Some(self.management_state.status.clone());
                     self.management_state.form = None;
                     self.reset_management_form_view();
                     completed = true;
                 }
                 OperationEvent::Disconnected { message } => {
-                    let status = i18n::tr!("management-connection-lost", reason = message);
+                    let status = i18n::tr!("management-connection-lost");
+                    self.management_state.output.push_str(&message);
                     self.management_state.status = status.clone();
                     self.management_state.outcome = Some(status);
                     self.management_state.form = None;
@@ -507,7 +601,12 @@ impl ShellSession {
                     ));
                 }
             }
-            if !self.management_state.received_snapshot {
+            let config_operation = self.management_state.configuration_operation;
+            self.management_state.configuration_operation = false;
+            if config_operation {
+                self.finish_config_operation();
+            }
+            if !config_operation && !self.management_state.received_snapshot {
                 self.refresh_management();
             }
         }
@@ -524,9 +623,31 @@ impl ShellSession {
             self.refresh_management();
         }
         self.clamp_management_scroll();
+        if visible
+            && matches!(
+                self.management_state.kind,
+                Some(ManagementKind::Services | ManagementKind::Processes | ManagementKind::Users)
+            )
+            && self.management_state.query_job.is_none()
+            && self.management_state.operation_job.is_none()
+            && self.management_state.form.is_none()
+        {
+            let selected = self
+                .management_state
+                .snapshot
+                .rows
+                .get(self.management_state.selected)
+                .map(|r| r.id.clone());
+            if let Some(query) = &mut self.management_state.query {
+                if selected.is_some() && query.target != selected {
+                    query.target = selected;
+                    self.refresh_management();
+                }
+            }
+        }
     }
 
-    fn management_actions(&self) -> Vec<(ManagementAction, Option<ManagementRow>)> {
+    fn all_management_actions(&self) -> Vec<(ManagementAction, Option<ManagementRow>)> {
         let mut actions = Vec::new();
         if let Some(row) = self
             .management_state
@@ -559,16 +680,113 @@ impl ShellSession {
         }
         actions
     }
+    fn management_actions(&self) -> Vec<(ManagementAction, Option<ManagementRow>)> {
+        let all = self.all_management_actions();
+        let mut primary = all
+            .iter()
+            .filter(|(a, _)| a.primary)
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>();
+        if primary.is_empty() {
+            primary.extend(
+                all.iter()
+                    .filter(|(a, _)| {
+                        a.disabled_reason.is_none()
+                            && matches!(
+                                a.id.as_str(),
+                                "start"
+                                    | "stop"
+                                    | "view_logs"
+                                    | "terminate"
+                                    | "install"
+                                    | "upgrade"
+                                    | "wifi-connect"
+                                    | "mount"
+                                    | "open_path"
+                                    | "open_directory"
+                            )
+                    })
+                    .take(2)
+                    .cloned(),
+            );
+        }
+        if !all.is_empty() {
+            primary.push((
+                ManagementAction {
+                    id: "more_actions".into(),
+                    label: i18n::tr!("management-more-actions"),
+                    ..Default::default()
+                },
+                None,
+            ));
+        }
+        if self.management_state.auto_admin_job.is_some() {
+            primary.push((
+                ManagementAction {
+                    id: "current_task".into(),
+                    label: i18n::tr!("management-current-task"),
+                    ..Default::default()
+                },
+                None,
+            ));
+        }
+        primary
+    }
     fn activate_management_action(&mut self, index: usize) {
         self.reset_management_form_view();
         let Some((action, row)) = self.management_actions().get(index).cloned() else {
             return;
         };
-        if let Some(reason) = &action.disabled_reason {
-            self.management_state.status = reason.clone();
+        self.activate_management_item(action, row);
+    }
+    fn activate_management_item(&mut self, action: ManagementAction, row: Option<ManagementRow>) {
+        if action.id == "current_task" {
+            self.management_touch_control(ui::ManagementControl::Terminal);
             return;
         }
-        if self.management_state.operation_job.is_some() && action.id != "cancel_operation" {
+        if action.id == "more_actions" {
+            let mut items = self.all_management_actions();
+            items.sort_by(|(a, _), (b, _)| a.group.cmp(&b.group));
+            let choices = items
+                .iter()
+                .map(|(a, _)| {
+                    let label = action_label(a);
+                    let group = if a.group.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} · ", management_text("group", &a.group, &a.group))
+                    };
+                    let shortcut = management_action_shortcut(self.management_state.kind, &a.id)
+                        .map(|(key, _)| format!("    {key}"))
+                        .unwrap_or_default();
+                    format!("{group}{label}{shortcut}")
+                })
+                .collect::<Vec<_>>();
+            self.management_state.form = Some(ManagementEditor {
+                title: i18n::tr!("management-more-actions"),
+                message: String::new(),
+                message_scroll: 0,
+                fields: vec![ManagementField {
+                    id: "action".into(),
+                    choices,
+                    ..Default::default()
+                }],
+                selected: 0,
+                purpose: FormPurpose::Menu(items),
+            });
+            self.open_management_choice_field(0);
+            return;
+        }
+        if let Some(reason) = &action.disabled_reason {
+            self.management_state.status = i18n::tr!("management-problem-unavailable");
+            self.management_state.output = reason.clone();
+            return;
+        }
+        if (self.management_state.operation_job.is_some()
+            || self.management_state.draft_job.is_some())
+            && action.id != "cancel_operation"
+        {
             self.management_state.status = i18n::tr!("management-operation-running");
             return;
         }
@@ -590,11 +808,139 @@ impl ShellSession {
         }
     }
     fn perform_management_action(&mut self, action: ManagementAction, row: Option<ManagementRow>) {
-        let values = action
-            .fields
-            .iter()
-            .map(|f| (f.id.clone(), f.value.clone()))
-            .collect::<BTreeMap<_, _>>();
+        let mut values = action.values.clone();
+        values.extend(
+            action
+                .fields
+                .iter()
+                .map(|f| (f.id.clone(), f.value.clone())),
+        );
+        if action.id == "open_path" {
+            if let Some(path) = values
+                .get("path")
+                .or_else(|| row.as_ref().and_then(|r| r.identity.get("path")))
+            {
+                let path = PathBuf::from(path);
+                if !path.exists() {
+                    self.management_state.status = i18n::tr!("management-path-missing");
+                    return;
+                }
+                #[cfg(target_os = "linux")]
+                if let Some(identity) = row.as_ref().map(|r| &r.identity) {
+                    use std::os::unix::fs::MetadataExt;
+                    if let (Some(device), Some(inode)) =
+                        (identity.get("device"), identity.get("inode"))
+                    {
+                        let valid = std::fs::symlink_metadata(&path).is_ok_and(|m| {
+                            !m.file_type().is_symlink()
+                                && device.parse::<u64>().ok() == Some(m.dev())
+                                && inode.parse::<u64>().ok() == Some(m.ino())
+                        });
+                        if !valid {
+                            self.management_state.status = i18n::tr!("management-path-missing");
+                            return;
+                        }
+                    }
+                }
+                if path.is_dir() {
+                    self.management_state.pending_directory = Some(path);
+                } else {
+                    self.management_state.pending_directory = path.parent().map(PathBuf::from);
+                    self.management_state.pending_select = Some(path);
+                }
+            }
+            return;
+        }
+        if action.id == "open_service" {
+            if let Some(unit) = values.get("unit").cloned() {
+                self.open_management(ManagementKind::Services);
+                if let Some(query) = &mut self.management_state.query {
+                    query.target = Some(unit);
+                    query.scope = values
+                        .get("scope")
+                        .cloned()
+                        .unwrap_or_else(|| "system".into());
+                }
+                self.refresh_management();
+            }
+            return;
+        }
+        if action.id == "show_dependencies" {
+            if let Some(query) = &mut self.management_state.query {
+                query.target = row.as_ref().map(|r| r.id.clone());
+            }
+            self.refresh_management();
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if action.id == "sort_scan" {
+            if let Some(sort) = values.get("sort") {
+                if let Err(error) = platform::management::disks::sort_scan_results(
+                    &mut self.management_state.snapshot,
+                    sort,
+                ) {
+                    self.management_state.status =
+                        i18n::tr!(problem::OperationProblem::from_error(&error).summary_key);
+                    self.management_state.output = error.to_string();
+                }
+            }
+            return;
+        }
+        if action.id == "edit_system_config" {
+            if let Some(path) = values.get("path") {
+                let path = PathBuf::from(path);
+                let draft = values.get("content").map(|content| ConfigDraft {
+                    path: path.clone(),
+                    content: content.clone(),
+                    validator: values
+                        .get("validator")
+                        .cloned()
+                        .unwrap_or_else(|| "auto".into()),
+                    service: values.get("service").cloned(),
+                    scope: values
+                        .get("scope")
+                        .cloned()
+                        .unwrap_or_else(|| "system".into()),
+                    expected_content: values.get("expected_content").cloned(),
+                });
+                self.begin_config_editor(
+                    path,
+                    draft,
+                    values.get("validator").cloned(),
+                    values.get("service").cloned(),
+                    values
+                        .get("scope")
+                        .cloned()
+                        .unwrap_or_else(|| "system".into()),
+                );
+                self.editor_config.compare_path = values.get("compare_path").cloned();
+            }
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if matches!(
+            action.id.as_str(),
+            "create_service"
+                | "create_instance"
+                | "source_add"
+                | "source_enable"
+                | "source_disable"
+                | "source_remove"
+                | "auto_mount"
+        ) {
+            let command = ManagementCommand {
+                kind: self
+                    .management_state
+                    .kind
+                    .unwrap_or(ManagementKind::SystemConfig),
+                action: action.id.clone(),
+                target: row.as_ref().map(|r| r.id.clone()),
+                values,
+                identity: row.as_ref().map(|r| r.identity.clone()).unwrap_or_default(),
+            };
+            self.prepare_management_draft(command);
+            return;
+        }
         if action.id == "open_directory" {
             self.management_state.pending_directory =
                 values.get("directory").map(PathBuf::from).or_else(|| {
@@ -621,12 +967,18 @@ impl ShellSession {
         }
         if action.id == "view_logs" {
             if let Some(row) = row {
-                self.open_service_logs(
-                    &row.id,
-                    row.identity
-                        .get("scope")
-                        .map(String::as_str)
-                        .unwrap_or("system"),
+                let unit = values.get("unit").unwrap_or(&row.id);
+                let scope = values
+                    .get("scope")
+                    .or(row.identity.get("scope"))
+                    .map(String::as_str)
+                    .unwrap_or("system");
+                self.open_related_logs(
+                    unit,
+                    scope,
+                    values.get("boot_id").map(String::as_str),
+                    values.get("invocation_id").map(String::as_str),
+                    values.get("since_usec").and_then(|s| s.parse().ok()),
                 );
             }
             return;
@@ -671,6 +1023,52 @@ impl ShellSession {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn prepare_management_draft(&mut self, command: ManagementCommand) {
+        let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
+            self.management_state.status = i18n::tr!("management-worker-unavailable");
+            return;
+        };
+        let (job, _) = self.management_job();
+        let output = Arc::downgrade(&job.0);
+        let cancelled = job.0.cancelled.clone();
+        self.management_state.revision = self.management_state.revision.wrapping_add(1);
+        let id = TaskId::new(format!(
+            "management-draft-{}",
+            self.management_state.revision % 64
+        ))
+        .expect("bounded draft task name");
+        match group.spawn_thread(TaskSpec::one_shot(id), move || {
+            let result = match command.kind {
+                ManagementKind::Services => {
+                    platform::management::services::prepare_config_draft(&command, &cancelled)
+                }
+                ManagementKind::Packages => {
+                    platform::management::packages::prepare_config_draft(&command, &cancelled)
+                }
+                ManagementKind::Disks => {
+                    platform::management::disks::automatic_mount_draft(&command, &cancelled)
+                }
+                _ => Err(ManagementError::InvalidInput(
+                    "No configuration draft for this application".into(),
+                )),
+            };
+            if let Some(output) = output.upgrade() {
+                *output.draft.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+            }
+        }) {
+            Ok(worker) => {
+                *job.0.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
+                self.management_state.draft_job = Some(job);
+                self.management_state.status = i18n::tr!("management-working");
+            }
+            Err(e) => {
+                self.management_state.status = i18n::tr!("management-worker-unavailable");
+                self.management_state.output = e.to_string();
+            }
+        }
+    }
+
     fn start_management_operation(
         &mut self,
         command: Option<ManagementCommand>,
@@ -678,6 +1076,9 @@ impl ShellSession {
         socket: Option<PathBuf>,
         description: Option<String>,
     ) {
+        let configuration_operation = command
+            .as_ref()
+            .is_some_and(|c| c.kind == ManagementKind::SystemConfig);
         #[cfg(target_os = "linux")]
         let privileged = privileged
             || socket
@@ -688,7 +1089,12 @@ impl ShellSession {
         };
         let (job, rx) = self.management_job();
         let description = description.unwrap_or_else(|| i18n::tr!("aa-reconnect"));
-        let Some(aa) = self.begin_auto_admin(description, privileged, job.0.responses.clone())
+        let requires_approval = privileged
+            || command
+                .as_ref()
+                .is_some_and(|c| c.kind == ManagementKind::SystemConfig && c.action == "reload");
+        let Some(aa) =
+            self.begin_auto_admin(description, requires_approval, job.0.responses.clone())
         else {
             return;
         };
@@ -742,13 +1148,30 @@ impl ShellSession {
                     )
                 });
                 if let Err(error) = result {
-                    emit(OperationEvent::Disconnected {
-                        message: error.to_string(),
-                    });
+                    if matches!(
+                        &error,
+                        ManagementError::Cancelled
+                            | ManagementError::PermissionDenied(_)
+                            | ManagementError::InvalidInput(_)
+                            | ManagementError::Unavailable(_)
+                    ) {
+                        emit(OperationEvent::Problem {
+                            problem: problem::OperationProblem::from_error(&error),
+                        });
+                        emit(OperationEvent::Failed {
+                            message: error.to_string(),
+                        });
+                    } else {
+                        emit(OperationEvent::Disconnected {
+                            message: error.to_string(),
+                        });
+                    }
                 }
             },
         ) {
             Ok(worker) => {
+                self.management_state.configuration_operation = configuration_operation;
+                self.management_state.problem = None;
                 *job.0.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
                 self.management_state.operation_job = Some(job);
                 self.management_state.outcome = None;
@@ -759,12 +1182,19 @@ impl ShellSession {
                 self.resize_management_terminal();
             }
             Err(error) => {
-                self.management_state.status = error.to_string();
+                self.management_state.status = i18n::tr!("management-worker-unavailable");
+                self.management_state.output = error.to_string();
             }
         }
     }
 
     fn submit_management_form(&mut self) {
+        if self.management_state.form.as_ref().is_some_and(|form| {
+            matches!(&form.purpose, FormPurpose::Configuration(action) if action == "check")
+                && self.config_save_disabled(&form.fields)
+        }) {
+            return;
+        }
         let Some(mut form) = self.management_state.form.take() else {
             return;
         };
@@ -778,6 +1208,14 @@ impl ShellSession {
             return;
         }
         match form.purpose {
+            FormPurpose::Configuration(action) => self.submit_config_form(&action, form.fields),
+            FormPurpose::Menu(items) => {
+                let selected = self.management_state.choice_selected;
+                self.reset_management_form_view();
+                if let Some((action, row)) = items.get(selected).cloned() {
+                    self.activate_management_item(action, row);
+                }
+            }
             FormPurpose::Action(mut action, row) => {
                 action.fields = form.fields;
                 self.perform_management_action(action, row);
@@ -1117,12 +1555,16 @@ impl ShellSession {
             InputKey::Char(c) => InputKey::Char(c.to_ascii_lowercase()),
             _ => key.key.clone(),
         };
-        if let Some(index) = self.management_actions().iter().position(|(action, _)| {
-            management_action_shortcut(self.management_state.kind, &action.id)
-                .is_some_and(|(_, shortcut)| shortcut == action_key)
-        }) {
+        if let Some((action, row)) =
+            self.all_management_actions()
+                .into_iter()
+                .find(|(action, _)| {
+                    management_action_shortcut(self.management_state.kind, &action.id)
+                        .is_some_and(|(_, shortcut)| shortcut == action_key)
+                })
+        {
             if key.phase == InputPhase::Press {
-                self.activate_management_action(index);
+                self.activate_management_item(action, row);
                 self.management_state.shortcut_repeat_guard = Some(key.key.clone());
             }
             return;
@@ -1251,6 +1693,19 @@ impl ShellSession {
                 self.open_explorer_at(platform, &storage, path, ExplorerPurpose::Browse);
             }
         }
+        if let Some(path) = self.management_state.pending_select.clone() {
+            if let Some(state) = self.app.explorer_state() {
+                if let Some(index) = state.entries.iter().position(|e| e.path == path) {
+                    let mut state = state.clone();
+                    state.select_index(index, app::explorer::ExplorerSelectionMode::Replace);
+                    self.app.dispatch_at(
+                        app::AppCommand::SetExplorerState(Some(state)),
+                        Instant::now(),
+                    );
+                    self.management_state.pending_select = None;
+                }
+            }
+        }
     }
     pub(in crate::session) fn to_management_view_model(&self) -> ui::ManagementViewModel {
         let s = &self.management_state;
@@ -1275,7 +1730,9 @@ impl ShellSession {
                 .iter()
                 .map(|c| management_text("column", c, c))
                 .collect(),
-            rows: s.snapshot.rows.iter().map(|r| r.cells.clone()).collect(),
+            rows: s.snapshot.rows.iter().map(|r| r.cells.iter().enumerate().map(|(i,v)| {
+                if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()}
+            }).collect()).collect(),
             selected: s.selected,
             scroll: s.scroll,
             table_scroll: s.table_scroll,
@@ -1287,22 +1744,18 @@ impl ShellSession {
                 .map(|r| {
                     r.detail
                         .iter()
-                        .map(|(k, v)| format!("{k}: {v}"))
+                        .map(|(k, v)| format!("{}: {v}", management_text("detail", k, k)))
                         .collect::<Vec<_>>()
                         .join("\n")
                 })
                 .unwrap_or_else(|| s.snapshot.notices.join("\n")),
             actions: actions
                 .iter()
-                .enumerate()
-                .map(|(index, (a, _))| {
-                    let shortcut = management_action_shortcut(s.kind, &a.id).filter(|(_, key)| {
-                        !actions[..index].iter().any(|(previous, _)| management_action_shortcut(s.kind, &previous.id).is_some_and(|(_, previous_key)| previous_key == *key))
-                    });
-                    let label = management_label(&a.id, &a.label);
+                .map(|(a, _)| {
+                    let label = action_label(a);
                     (
-                        shortcut.map_or(label.clone(), |(key, _)| format!("[{key}] {label}")),
-                        a.disabled_reason.is_none() && (s.operation_job.is_none() || a.id == "cancel_operation"),
+                        label,
+                        a.disabled_reason.is_none() && (s.operation_job.is_none() || matches!(a.id.as_str(),"cancel_operation"|"more_actions"|"current_task")),
                     )
                 })
                 .collect(),
@@ -1327,7 +1780,7 @@ impl ShellSession {
             filter: s.filter_input.clone(),
             filtering: s.filtering,
             status: s.status.clone(),
-            loading: s.query_job.is_some(),
+            loading: s.query_job.is_some() || s.draft_job.is_some(),
             running: s.operation_job.is_some(),
             output: s.output.clone(),
             output_scroll: s.output_scroll,
@@ -1352,6 +1805,14 @@ impl ShellSession {
                 .as_ref()
                 .filter(|_| !s.terminal_mode)
                 .map(|f| ui::ManagementForm {
+                    submit_label: Some(match &f.purpose {
+                        FormPurpose::Action(action,_)=>action_label(action),
+                        FormPurpose::Configuration(action)=>i18n::tr!(format!("config-editor-{}", match action.as_str() {
+                            "preview"=>"check", "check"=>"apply", "history"=>"restore", "conflict"=>"rebase", "properties"=>"preview", "result"=>"continue", other=>other,
+                        })),
+                        _=>i18n::tr!("management-form-submit"),
+                    }),
+                    submit_disabled: matches!(&f.purpose,FormPurpose::Configuration(action) if action=="check" && self.config_save_disabled(&f.fields)),
                     identity: match &f.purpose {
                         FormPurpose::Action(action, row) => format!(
                             "{}.{:?}",
@@ -1359,11 +1820,14 @@ impl ShellSession {
                             row.as_ref().map(|row| (&row.id, &row.identity))
                         ),
                         FormPurpose::Answer(id) => id.clone(),
+                        FormPurpose::Menu(_) => "more-actions".into(),
+                        FormPurpose::Configuration(action) => format!("config-{action}"),
                     },
                     field_scroll: s.form_field_scroll,
                     cancel_disabled: matches!(&f.purpose, FormPurpose::Answer(id) if id.starts_with("package-config-")),
                     choice: s.choice_field.and_then(|index| {
                         f.fields.get(index).map(|field| ui::ManagementChoices {
+                            disabled: match &f.purpose { FormPurpose::Menu(items)=>items.iter().map(|(a,_)|a.disabled_reason.is_some() || (s.operation_job.is_some() && a.id!="cancel_operation")).collect(),_=>vec![] },
                             field: index,
                             values: field.choices.clone(),
                             selected: s.choice_selected,
@@ -1401,3 +1865,7 @@ mod tests;
 
 #[path = "management_touch.rs"]
 mod touch;
+
+#[path = "editor_system_config.rs"]
+mod config_editor;
+pub(in crate::session) use config_editor::ConfigEditorState;

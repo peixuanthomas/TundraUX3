@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 use zeroize::{Zeroize, Zeroizing};
 
-const MAX_REQUEST: usize = 128 * 1024;
+const MAX_REQUEST: usize = 2 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 pub enum AccountOperation {

@@ -13,7 +13,7 @@ use watchdog::{
     AppCriticality, AppDescriptor, AppId, TaskId, TaskSpec, WatchdogConfig, WatchdogRuntime,
 };
 
-const MAX_PACKET: usize = 128 * 1024;
+const MAX_PACKET: usize = 2 * 1024 * 1024;
 const MAX_REPLAY: usize = 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -294,7 +294,12 @@ fn needs_stable_recovery_binary(command: &ManagementCommand) -> bool {
     command.kind == ManagementKind::Network
         && matches!(
             command.action.as_str(),
-            "configure" | "wifi-connect" | "wifi-disconnect" | "wifi-forget"
+            "configure"
+                | "wifi-connect"
+                | "wifi-connect-password"
+                | "wifi-hidden"
+                | "wifi-disconnect"
+                | "wifi-forget"
         )
 }
 
@@ -470,6 +475,11 @@ fn serve(
                     return;
                 };
                 let result = execute(&command, &context, &mut io, &worker_cancelled);
+                if let Err(error) = &result {
+                    io.emit(OperationEvent::Problem {
+                        problem: super::problem::OperationProblem::from_error(error),
+                    });
+                }
                 io.emit(match result {
                     Ok(message) => OperationEvent::Completed { message },
                     Err(error) => OperationEvent::Failed {

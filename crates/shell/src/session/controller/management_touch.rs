@@ -1,5 +1,10 @@
 use super::*;
 
+fn management_form_is_menu(form: &ManagementEditor) -> bool {
+    matches!(&form.purpose, FormPurpose::Menu(_))
+        || matches!(&form.purpose, FormPurpose::Configuration(action) if action == "menu")
+}
+
 impl ShellSession {
     pub(super) fn handle_management_choice_key(&mut self, key: &KeyInput) -> bool {
         let Some(index) = self.management_state.choice_field else {
@@ -15,8 +20,60 @@ impl ShellSession {
             .as_ref()
             .and_then(|form| form.fields.get(index))
             .map_or(0, |field| field.choices.len());
+        let shortcut_key = match key.key {
+            InputKey::Char(c) => InputKey::Char(c.to_ascii_lowercase()),
+            _ => key.key.clone(),
+        };
+        let shortcut = self.management_state.form.as_ref().and_then(|form| {
+            let FormPurpose::Menu(items) = &form.purpose else {
+                return None;
+            };
+            items.iter().position(|(action, _)| {
+                management_action_shortcut(self.management_state.kind, &action.id)
+                    .is_some_and(|(_, shortcut)| shortcut == shortcut_key)
+            })
+        });
+        if let Some(selected) = shortcut {
+            if key.phase != InputPhase::Press {
+                return true;
+            }
+            let disabled = self
+                .to_management_view_model()
+                .form
+                .as_ref()
+                .and_then(|form| form.choice.as_ref())
+                .and_then(|choice| choice.disabled.get(selected))
+                .copied()
+                .unwrap_or(false);
+            if disabled {
+                return true;
+            }
+            if let Some(field) = self
+                .management_state
+                .form
+                .as_mut()
+                .and_then(|form| form.fields.get_mut(index))
+            {
+                field.value = field.choices[selected].clone();
+            }
+            self.management_state.choice_selected = selected;
+            self.management_state.choice_field = None;
+            self.submit_management_form();
+            self.management_state.shortcut_repeat_guard = Some(key.key.clone());
+            return true;
+        }
         match key.key {
-            InputKey::Escape => self.management_state.choice_field = None,
+            InputKey::Escape => {
+                if self
+                    .management_state
+                    .form
+                    .as_ref()
+                    .is_some_and(management_form_is_menu)
+                {
+                    self.management_state.form = None;
+                }
+                self.management_state.choice_field = None;
+            }
             InputKey::Up => {
                 self.management_state.choice_selected =
                     self.management_state.choice_selected.saturating_sub(1)
@@ -35,7 +92,18 @@ impl ShellSession {
             }
             InputKey::Home => self.management_state.choice_selected = 0,
             InputKey::End => self.management_state.choice_selected = count.saturating_sub(1),
-            InputKey::Enter if key.phase != InputPhase::Repeat => {
+            InputKey::Enter | InputKey::Space if key.phase != InputPhase::Repeat => {
+                if self
+                    .to_management_view_model()
+                    .form
+                    .as_ref()
+                    .and_then(|form| form.choice.as_ref())
+                    .and_then(|choice| choice.disabled.get(selected))
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return true;
+                }
                 if let Some(form) = &mut self.management_state.form {
                     if let Some(field) = form.fields.get_mut(index) {
                         if let Some(value) = field.choices.get(selected) {
@@ -44,6 +112,14 @@ impl ShellSession {
                     }
                 }
                 self.management_state.choice_field = None;
+                if self
+                    .management_state
+                    .form
+                    .as_ref()
+                    .is_some_and(management_form_is_menu)
+                {
+                    self.submit_management_form();
+                }
             }
             _ => {}
         }
@@ -77,7 +153,7 @@ impl ShellSession {
         self.management_state.scrollbar_grab = None;
     }
     pub(in crate::session) fn management_pointer_drag_active(&self) -> bool {
-        self.active_screen() == ShellScreen::Management
+        (self.active_screen() == ShellScreen::Management || self.config_editor_form_visible())
             && self.management_state.scrollbar_grab.is_some()
     }
     pub(super) fn reset_management_form_view(&mut self) {
@@ -97,7 +173,7 @@ impl ShellSession {
         {
             return None;
         }
-        if self.active_screen() != ShellScreen::Management {
+        if self.active_screen() != ShellScreen::Management && !self.config_editor_form_visible() {
             return None;
         }
         ui::management_button_regions(self.management_main(), &self.to_management_view_model())
@@ -387,6 +463,14 @@ impl ShellSession {
         }
         if self.management_state.choice_field.is_some() {
             if layout.choice_cancel.contains(position) {
+                if self
+                    .management_state
+                    .form
+                    .as_ref()
+                    .is_some_and(management_form_is_menu)
+                {
+                    self.management_state.form = None;
+                }
                 self.management_state.choice_field = None;
                 return;
             }
@@ -395,6 +479,16 @@ impl ShellSession {
                 .iter()
                 .find(|(_, area)| area.contains(position))
             {
+                if model
+                    .form
+                    .as_ref()
+                    .and_then(|form| form.choice.as_ref())
+                    .and_then(|choice| choice.disabled.get(*index))
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 let field_index = self.management_state.choice_field;
                 if let Some(form) = &mut self.management_state.form {
                     if let Some(field) = field_index.and_then(|field| form.fields.get_mut(field)) {
@@ -402,11 +496,23 @@ impl ShellSession {
                     }
                 }
                 self.management_state.choice_field = None;
+                self.management_state.choice_selected = *index;
+                if self
+                    .management_state
+                    .form
+                    .as_ref()
+                    .is_some_and(management_form_is_menu)
+                {
+                    self.submit_management_form();
+                }
             }
             return;
         }
         if self.management_state.form.is_some() && !self.management_state.terminal_mode {
             if layout.submit.contains(position) {
+                if model.form.as_ref().is_some_and(|form| form.submit_disabled) {
+                    return;
+                }
                 self.submit_management_form();
                 self.reset_management_form_view();
             } else if layout.cancel.contains(position) {
@@ -467,7 +573,6 @@ impl ShellSession {
             .position(|area| area.contains(position))
         {
             self.activate_management_action(layout.action_start + index);
-            self.reset_management_form_view();
         } else if layout.list_rows.contains(position) {
             self.management_state.selected = (self.management_state.scroll
                 + usize::from(point.1 - layout.list_rows.y))

@@ -194,24 +194,35 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
                 ..Default::default()
             };
             model.diagnostics.can_view_details = true;
-            let layout = logs_layout(main, &model);
-            let keys = [
-                "ui-logs-r-refresh",
-                "ui-logs-o-open",
-                "ui-logs-l-level",
-                "ui-logs-m-module",
-                "ui-logs-t-time",
-            ];
-            for (control, key) in layout.controls.iter().zip(keys) {
-                assert_eq!(usize::from(control.area.width), i18n::tr!(key).width() + 2);
-                if control.target != ui::LogsHitTarget::Open {
+            for following in [false, true] {
+                model.following = following;
+                model.new_events = 12;
+                let layout = logs_layout(main, &model);
+                let controls = [
+                    (ui::LogsHitTarget::Refresh, i18n::tr!("ui-logs-refresh")),
+                    (ui::LogsHitTarget::Open, i18n::tr!("ui-logs-open")),
+                    (
+                        ui::LogsHitTarget::Follow,
+                        if following {
+                            i18n::tr!("ui-logs-pause-scroll")
+                        } else {
+                            i18n::tr!("ui-logs-back-latest", count = model.new_events)
+                        },
+                    ),
+                    (ui::LogsHitTarget::More, i18n::tr!("ui-logs-more")),
+                ];
+                assert_eq!(layout.controls.len(), controls.len());
+                for (control, (target, label)) in layout.controls.iter().zip(controls) {
+                    assert_eq!(control.target, target);
+                    assert_eq!(usize::from(control.area.width), label.width() + 2);
+                    let expected = ui::logs_control_enabled(&model, target).then_some(target);
                     assert_eq!(
                         logs_hit_test(main, &model, (control.area.x, control.area.y)),
-                        Some(control.target)
+                        expected
                     );
                     assert_eq!(
                         logs_hit_test(main, &model, (control.area.right() - 1, control.area.y)),
-                        Some(control.target)
+                        expected
                     );
                 }
             }

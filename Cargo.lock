@@ -606,6 +606,7 @@ dependencies = [
  "ascii-assets",
  "chrono",
  "i18n",
+ "libc",
  "platform",
  "portable-pty",
  "ratatui",
@@ -620,6 +621,7 @@ dependencies = [
  "vt100",
  "watchdog",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]
@@ -2959,6 +2961,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "signal-hook",
  "starship-battery",
  "sysinfo",

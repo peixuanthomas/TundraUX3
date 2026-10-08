@@ -10,6 +10,7 @@ fn shortcut_action_state(kind: ManagementKind, id: &str) -> ShellSession {
         actions: vec![ManagementAction {
             id: id.into(),
             label: id.into(),
+            primary: true,
             confirm: true,
             privileged: true,
             fields: vec![ManagementField {
@@ -223,12 +224,11 @@ fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
         for id in ids {
             let mut keyed = shortcut_action_state(kind, id);
             let mut clicked = shortcut_action_state(kind, id);
-            let (hint, key) = management_action_shortcut(Some(kind), id)
+            let (_, key) = management_action_shortcut(Some(kind), id)
                 .expect("each current action has a shortcut");
-            assert!(
-                keyed.to_management_view_model().actions[0]
-                    .0
-                    .starts_with(&format!("[{hint}]"))
+            assert_eq!(
+                keyed.to_management_view_model().actions[0].0,
+                action_label(&keyed.management_state.snapshot.rows[0].actions[0])
             );
             keyed.handle_management_key(&KeyInput::new(key));
             let layout = ui::management_layout(
@@ -297,13 +297,27 @@ fn management_toolbar_shortcuts_match_clicks() {
             clicked.management_main(),
             &clicked.to_management_view_model(),
         );
-        let area = layout
-            .controls
-            .iter()
-            .find(|(id, _)| *id == control)
-            .unwrap()
-            .1;
-        click_management_point(&mut clicked, (area.x, area.y));
+        match control {
+            ui::ManagementControl::Search => {
+                click_management_point(&mut clicked, (layout.filter.x, layout.filter.y))
+            }
+            ui::ManagementControl::Refresh | ui::ManagementControl::ClearSearch => {
+                let area = layout
+                    .controls
+                    .iter()
+                    .find(|(id, _)| *id == control)
+                    .unwrap()
+                    .1;
+                click_management_point(&mut clicked, (area.x, area.y));
+            }
+            ui::ManagementControl::ApplySearch => {
+                click_management_point(&mut clicked, (layout.filter.x, layout.filter.y));
+                clicked.handle_management_key(&KeyInput::new(InputKey::Enter));
+            }
+            // Retain the existing keyboard commands even though these controls
+            // now live in menus or the current-task entry.
+            _ => clicked.management_touch_control(control),
+        }
         assert_eq!(
             keyed.management_state.query, clicked.management_state.query,
             "{control:?}"
@@ -335,7 +349,11 @@ fn management_shortcuts_cannot_bypass_disabled_actions_or_unrelated_modifiers() 
     for key in [InputKey::Char('k'), InputKey::Char('1')] {
         session.handle_management_key(&KeyInput::new(key));
         assert!(session.management_state.form.is_none());
-        assert_eq!(session.management_state.status, "Protected process");
+        assert_eq!(
+            session.management_state.status,
+            i18n::tr!("management-problem-unavailable")
+        );
+        assert_eq!(session.management_state.output, "Protected process");
     }
     session.management_state.snapshot.rows[0].actions[0].disabled_reason = None;
     for modifiers in [
@@ -484,7 +502,7 @@ fn management_choice_enter_and_form_control_enter_preserve_input_and_required_ch
 }
 
 #[test]
-fn duplicate_action_mnemonics_use_first_target_and_keep_number_access() {
+fn duplicate_action_mnemonics_use_first_target_and_menu_keeps_each_target() {
     let mut session = shortcut_action_state(ManagementKind::Disks, "scan");
     session
         .management_state
@@ -496,15 +514,30 @@ fn duplicate_action_mnemonics_use_first_target_and_keep_number_access() {
             ..Default::default()
         });
     let model = session.to_management_view_model();
-    assert!(model.actions[0].0.starts_with("[A]"));
-    assert!(!model.actions[1].0.starts_with("[A]"));
+    assert_eq!(
+        model.actions[0].0,
+        action_label(&session.management_state.snapshot.rows[0].actions[0])
+    );
+    assert!(
+        !model
+            .actions
+            .iter()
+            .any(|(label, _)| label.starts_with("[A]"))
+    );
     session.handle_management_key(&KeyInput::new(InputKey::Char('a')));
     assert!(matches!(
         session.management_state.form.as_ref().unwrap().purpose,
         FormPurpose::Action(_, Some(_))
     ));
     session.handle_management_key(&KeyInput::new(InputKey::Escape));
-    session.handle_management_key(&KeyInput::new(InputKey::Char('2')));
+    let more = session
+        .management_actions()
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    session.activate_management_action(more);
+    session.handle_management_choice_key(&KeyInput::new(InputKey::End));
+    session.handle_management_choice_key(&KeyInput::new(InputKey::Enter));
     assert!(matches!(
         session.management_state.form.as_ref().unwrap().purpose,
         FormPurpose::Action(_, None)
@@ -512,12 +545,13 @@ fn duplicate_action_mnemonics_use_first_target_and_keep_number_access() {
 }
 
 #[test]
-fn management_paging_keys_follow_buttons_without_activating_actions() {
+fn management_menu_paging_keys_keep_secondary_actions_reachable() {
     let mut session = shortcut_action_state(ManagementKind::Services, "start");
     session.terminal_size = (60, 18);
     session.management_state.snapshot.rows[0].actions = (0..8)
         .map(|index| ManagementAction {
             id: format!("mock-{index}"),
+            label: format!("Mock {index}"),
             confirm: true,
             ..Default::default()
         })
@@ -526,26 +560,30 @@ fn management_paging_keys_follow_buttons_without_activating_actions() {
         session.management_main(),
         &session.to_management_view_model(),
     );
-    assert!(!layout.action_next.is_empty());
-    let mut clicked = shortcut_action_state(ManagementKind::Services, "start");
-    clicked.terminal_size = session.terminal_size;
-    clicked.management_state.snapshot = session.management_state.snapshot.clone();
-    click_management_point(&mut clicked, (layout.action_next.x, layout.action_next.y));
-    session.handle_management_key(&KeyInput::with_modifiers(
-        InputKey::Right,
-        ui::KeyModifiers::ALT,
-    ));
     assert_eq!(
-        session.management_state.action_scroll,
-        clicked.management_state.action_scroll
+        layout.actions.len(),
+        1,
+        "only the more-actions entry stays on the page"
     );
-    assert_eq!(session.management_state.action_scroll, Some(1));
-    assert!(session.management_state.form.is_none());
-    session.handle_management_key(&KeyInput::with_modifiers(
-        InputKey::Left,
-        ui::KeyModifiers::ALT,
+    click_management_point(&mut session, (layout.actions[0].x, layout.actions[0].y));
+    session.handle_management_key(&KeyInput::new(InputKey::PageDown));
+    assert_eq!(session.management_state.choice_selected, 7);
+    assert!(matches!(
+        &session.management_state.form.as_ref().unwrap().purpose,
+        FormPurpose::Menu(_)
     ));
-    assert_eq!(session.management_state.action_scroll, Some(0));
+    let layout = ui::management_layout(
+        session.management_main(),
+        &session.to_management_view_model(),
+    );
+    assert!(layout.choice_rows.iter().any(|(index, _)| *index == 7));
+    session.handle_management_key(&KeyInput::new(InputKey::Home));
+    assert_eq!(session.management_state.choice_selected, 0);
+    session.handle_management_key(&KeyInput::new(InputKey::End));
+    session.handle_management_key(&KeyInput::new(InputKey::Enter));
+    assert!(
+        matches!(&session.management_state.form.as_ref().unwrap().purpose, FormPurpose::Action(action,_) if action.id=="mock-7")
+    );
 }
 
 #[test]
@@ -642,6 +680,7 @@ fn changed_process_identity_invalidates_pressed_action() {
         actions: vec![ManagementAction {
             id: "kill".into(),
             label: "Kill".into(),
+            primary: true,
             confirm: true,
             ..Default::default()
         }],
@@ -1060,7 +1099,7 @@ fn terminal_events_close_the_choice_list_and_release_form_drag() {
 }
 
 #[test]
-fn compact_action_paging_makes_each_middle_action_touch_reachable() {
+fn compact_more_actions_makes_every_secondary_action_touch_reachable() {
     let mut state = state();
     state.terminal_size = (60, 18);
     state.management_state.snapshot.actions = (0..6)
@@ -1080,21 +1119,142 @@ fn compact_action_paging_makes_each_middle_action_touch_reachable() {
         let layout =
             ui::management_layout(state.management_main(), &state.to_management_view_model());
         assert_eq!(layout.actions.len(), 1);
-        assert_eq!(layout.action_start, index);
-        assert!(layout.action_next.width > 0 && layout.action_next.height > 0);
-        if index < 5 {
-            state.handle_management_pointer(tap(layout.action_next));
-        }
-    }
-    for _ in 0..3 {
-        let layout =
+        assert!(layout.action_next.is_empty());
+        state.handle_management_pointer(tap(layout.actions[0]));
+        let mut layout =
             ui::management_layout(state.management_main(), &state.to_management_view_model());
-        state.handle_management_pointer(tap(layout.action_previous));
+        if !layout.choice_rows.iter().any(|(i, _)| *i == index) {
+            let bar = *layout
+                .scrollbars
+                .iter()
+                .find(|bar| bar.target == ui::ManagementScrollTarget::Choices)
+                .unwrap();
+            state.handle_management_pointer(MouseInput {
+                position: ui::Point::new(bar.thumb.x, bar.thumb.y),
+                kind: ui::MouseEventKind::Down(PointerButton::Left),
+                modifiers: ui::KeyModifiers::NONE,
+            });
+            let end = ui::Point::new(bar.track.x, bar.track.bottom());
+            state.handle_management_pointer(MouseInput {
+                position: end,
+                kind: ui::MouseEventKind::Drag(PointerButton::Left),
+                modifiers: ui::KeyModifiers::NONE,
+            });
+            state.handle_management_pointer(MouseInput {
+                position: end,
+                kind: ui::MouseEventKind::Up(PointerButton::Left),
+                modifiers: ui::KeyModifiers::NONE,
+            });
+            layout =
+                ui::management_layout(state.management_main(), &state.to_management_view_model());
+        }
+        let row = layout
+            .choice_rows
+            .iter()
+            .find(|(i, _)| *i == index)
+            .unwrap()
+            .1;
+        state.handle_management_pointer(tap(row));
+        assert!(
+            matches!(&state.management_state.form.as_ref().unwrap().purpose,FormPurpose::Action(action,_) if action.id==format!("action-{index}"))
+        );
+        state.cancel_management_form();
     }
-    let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
-    assert_eq!(layout.action_start, 2);
-    state.handle_management_pointer(tap(layout.actions[0]));
+}
+
+#[test]
+fn more_menu_keyboard_and_touch_cannot_execute_a_disabled_item() {
+    for by_touch in [false, true] {
+        let mut state = state();
+        state.management_state.snapshot.actions = vec![ManagementAction {
+            id: "remove".into(),
+            label: "Remove".into(),
+            confirm: true,
+            disabled_reason: Some("Protected object".into()),
+            ..Default::default()
+        }];
+        state.activate_management_action(0);
+        assert!(matches!(
+            &state.management_state.form.as_ref().unwrap().purpose,
+            FormPurpose::Menu(_)
+        ));
+        if by_touch {
+            let layout =
+                ui::management_layout(state.management_main(), &state.to_management_view_model());
+            let region = layout.choice_rows[0].1;
+            state.handle_management_pointer(MouseInput {
+                position: ui::Point::new(region.x, region.y),
+                kind: ui::MouseEventKind::Click(PointerButton::Left),
+                modifiers: ui::KeyModifiers::NONE,
+            });
+        } else {
+            state.handle_management_key(&KeyInput::new(InputKey::Space));
+        }
+        assert!(matches!(
+            &state.management_state.form.as_ref().unwrap().purpose,
+            FormPurpose::Menu(_)
+        ));
+        assert!(state.management_state.operation_job.is_none());
+        assert_eq!(state.management_state.choice_field, Some(0));
+        state.handle_management_key(&KeyInput::new(InputKey::Escape));
+        assert!(state.management_state.form.is_none());
+        assert_eq!(state.active_screen(), ShellScreen::Management);
+    }
+}
+
+#[test]
+fn main_actions_are_limited_to_two_and_tab_enter_reaches_the_more_menu() {
+    let mut state = state();
+    state.management_state.snapshot.actions = (0..5)
+        .map(|index| ManagementAction {
+            id: format!("action-{index}"),
+            label: format!("Action {index}"),
+            primary: true,
+            confirm: true,
+            ..Default::default()
+        })
+        .collect();
+    let actions = state.management_actions();
+    assert_eq!(actions.len(), 3);
+    assert_eq!(actions[2].0.id, "more_actions");
+    state.handle_management_key(&KeyInput::new(InputKey::Tab));
+    state.handle_management_key(&KeyInput::new(InputKey::End));
+    assert_eq!(state.management_state.selected_action, 2);
+    state.handle_management_key(&KeyInput::new(InputKey::Enter));
     assert!(
-        matches!(&state.management_state.form.as_ref().unwrap().purpose,FormPurpose::Action(action,_) if action.id=="action-2")
+        matches!(&state.management_state.form.as_ref().unwrap().purpose,FormPurpose::Menu(items) if items.len()==5)
     );
+    state.handle_management_key(&KeyInput::new(InputKey::End));
+    state.handle_management_key(&KeyInput::new(InputKey::Space));
+    assert!(
+        matches!(&state.management_state.form.as_ref().unwrap().purpose,FormPurpose::Action(action,_) if action.id=="action-4")
+    );
+}
+
+#[test]
+fn more_menu_shortcuts_open_the_named_action_and_held_keys_do_not_type_into_its_form() {
+    let mut state = shortcut_action_state(ManagementKind::Disks, "scan");
+    state.management_state.snapshot.rows[0].actions[0].primary = false;
+    state.activate_management_action(0);
+    assert!(
+        state
+            .to_management_view_model()
+            .form
+            .unwrap()
+            .choice
+            .unwrap()
+            .values[0]
+            .ends_with("    A")
+    );
+    state.handle_management_key(&KeyInput::new(InputKey::Char('a')));
+    assert!(
+        matches!(&state.management_state.form.as_ref().unwrap().purpose,FormPurpose::Action(action,_) if action.id=="scan")
+    );
+    state.handle_management_key(&KeyInput::new(InputKey::Char('a')).repeated());
+    assert!(
+        state.management_state.form.as_ref().unwrap().fields[0]
+            .value
+            .is_empty()
+    );
+    assert!(state.management_state.operation_job.is_none());
 }

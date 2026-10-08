@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
+mod configuration;
+pub use configuration::{ConfigCheck, ConfigDocument};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -12,6 +14,8 @@ pub enum ManagementKind {
     Packages,
     Network,
     Disks,
+    Users,
+    SystemConfig,
 }
 
 impl ManagementKind {
@@ -22,6 +26,8 @@ impl ManagementKind {
             Self::Packages => "packages",
             Self::Network => "network",
             Self::Disks => "disks",
+            Self::Users => "users",
+            Self::SystemConfig => "system-config",
         }
     }
 }
@@ -68,6 +74,25 @@ pub struct ManagementAction {
     pub confirm: bool,
     pub privileged: bool,
     pub disabled_reason: Option<String>,
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default)]
+    pub primary: bool,
+}
+
+/// A proposed configuration, never an instruction to write it without review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigDraft {
+    /// Source used to build a draft. The editor compares this before applying it.
+    #[serde(default)]
+    pub expected_content: Option<String>,
+    pub path: PathBuf,
+    pub content: String,
+    pub validator: String,
+    pub service: Option<String>,
+    pub scope: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +134,15 @@ pub struct ExecutionContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum OperationEvent {
+    ConfigDocument {
+        document: ConfigDocument,
+    },
+    Connected {
+        operation_id: String,
+    },
+    Problem {
+        problem: problem::OperationProblem,
+    },
     Disconnected {
         message: String,
     },
@@ -211,6 +245,9 @@ impl std::fmt::Display for ManagementError {
 impl std::error::Error for ManagementError {}
 
 #[cfg(target_os = "linux")]
+pub mod authorization;
+pub mod client;
+#[cfg(target_os = "linux")]
 pub mod disks;
 #[cfg(target_os = "linux")]
 pub mod helper;
@@ -218,10 +255,15 @@ pub mod helper;
 pub mod network;
 #[cfg(target_os = "linux")]
 pub mod packages;
+pub mod problem;
 #[cfg(target_os = "linux")]
 pub mod processes;
 #[cfg(target_os = "linux")]
 pub mod services;
+#[cfg(target_os = "linux")]
+pub mod system_config;
+#[cfg(target_os = "linux")]
+pub mod users;
 
 pub fn query(
     query: &ManagementQuery,
@@ -234,6 +276,8 @@ pub fn query(
         ManagementKind::Packages => packages::query(query, cancelled),
         ManagementKind::Network => network::query(query, cancelled),
         ManagementKind::Disks => disks::query(query, cancelled),
+        ManagementKind::Users => users::query(query, cancelled),
+        ManagementKind::SystemConfig => system_config::query(query, cancelled),
     };
     #[cfg(not(target_os = "linux"))]
     {
@@ -257,6 +301,10 @@ pub fn execute(
         ManagementKind::Packages => packages::execute(command, context, interaction, cancelled),
         ManagementKind::Network => network::execute(command, context, interaction, cancelled),
         ManagementKind::Disks => disks::execute(command, context, interaction, cancelled),
+        ManagementKind::Users => users::execute(command, context, interaction, cancelled),
+        ManagementKind::SystemConfig => {
+            system_config::execute(command, context, interaction, cancelled)
+        }
     };
     #[cfg(not(target_os = "linux"))]
     {
