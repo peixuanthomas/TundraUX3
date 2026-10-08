@@ -97,7 +97,7 @@ fn login_and_user_form_shortcuts_do_not_steal_text_or_repeat_actions() {
     state.apply_input(InputEvent::from_key_label("Tab"));
     state.apply_input(account_modified_key(InputKey::Enter, InputModifiers::CTRL));
     assert_eq!(state.active_screen(), ShellScreen::Home);
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
     for phase in [InputPhase::Repeat, InputPhase::Release] {
         state.apply_input(InputEvent::Key(KeyInput::with_phase(
             InputKey::Char('n'),
@@ -1049,7 +1049,7 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut admin_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut admin_state, "AdminUser", "StrongPass123");
-    admin_state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut admin_state);
     assert_eq!(admin_state.active_screen(), ShellScreen::UserManagement);
 
     admin_state.apply_input(InputEvent::from_key_label("n"));
@@ -1088,7 +1088,7 @@ fn admin_can_manage_users_and_user_can_only_open_own_profile() {
     assert_eq!(user_state.active_screen(), ShellScreen::Home);
     assert_eq!(user_state.home_mode(), ShellHomeMode::User);
 
-    user_state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut user_state);
     assert_eq!(user_state.active_screen(), ShellScreen::UserManagement);
     let profile = user_state.to_user_management_view_model();
     assert!(!profile.can_manage_all);
@@ -1107,7 +1107,7 @@ fn user_management_refresh_failure_is_visible_preserves_users_and_resolves_after
     let users_path = manager.layout().users_path.clone();
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
     assert_eq!(state.active_screen(), ShellScreen::UserManagement);
 
     let users_before_failure = state.to_user_management_view_model().users;
@@ -1154,7 +1154,7 @@ fn login_mouse_click_selects_user_and_focuses_password() {
     let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut admin_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut admin_state, "AdminUser", "StrongPass123");
-    admin_state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut admin_state);
     admin_state.apply_input(InputEvent::from_key_label("n"));
     type_text(&mut admin_state, "user2");
     admin_state.apply_input(InputEvent::from_key_label("Tab"));
@@ -1232,7 +1232,7 @@ fn user_management_forms_and_aa_operations_edit_and_delete_accounts() {
     let manager = startup.storage_manager.clone().expect("storage manager");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
 
     state.apply_input(InputEvent::from_key_label("n"));
     type_text(&mut state, "deleteme");
@@ -1367,7 +1367,7 @@ fn compact_user_management_supports_touch_forms_and_the_shared_escape() {
     let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
     let before = state.to_user_management_view_model();
 
     state.apply_input(InputEvent::Resize {
@@ -1437,7 +1437,7 @@ fn user_management_create_role_and_action_focus_use_one_keyboard_flow() {
     let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
 
     state.apply_input(InputEvent::from_key_label("n"));
     assert_eq!(
@@ -1531,7 +1531,7 @@ fn user_management_mouse_uses_shared_rows_actions_forms_and_scroll_geometry() {
     let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
     for username in ["mouse1", "mouse2", "mouse3", "mouse4"] {
         create_managed_user(&mut state, username, false);
     }
@@ -1621,7 +1621,7 @@ fn user_management_clock_button_opens_clock_and_returns_to_user_management() {
     let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
     assert_eq!(state.active_screen(), ShellScreen::UserManagement);
 
     let clock_coordinates = component_center(&state, ShellComponent::ClockButton);
@@ -1656,7 +1656,7 @@ fn last_admin_actions_are_skipped_and_self_delete_can_be_cancelled() {
     let startup = prepare_shell_startup(&platform).expect("admin startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
-    state.apply_input(InputEvent::from_key_label("u"));
+    open_users_from_launcher(&mut state);
 
     let model = state.to_user_management_view_model();
     for protected in [
@@ -2000,6 +2000,22 @@ fn create_managed_user(state: &mut ShellSession, username: &str, admin: bool) {
             .iter()
             .any(|user| user.username == username)
     );
+}
+
+fn open_users_from_launcher(state: &mut ShellSession) {
+    state.apply_input(InputEvent::from_key_label("a"));
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    let index = state
+        .to_launcher_view_model()
+        .items
+        .iter()
+        .position(|item| item.id == "builtin.users")
+        .expect("Users in launcher");
+    state.apply_input(InputEvent::from_key_label("Home"));
+    for _ in 0..index {
+        state.apply_input(InputEvent::from_key_label("Right"));
+    }
+    state.apply_input(InputEvent::from_key_label("Enter"));
 }
 
 fn finish_user_management_aa(state: &mut ShellSession, approve: bool) {

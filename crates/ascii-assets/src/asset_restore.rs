@@ -133,6 +133,7 @@ pub fn restore_default_theme_file(
             file_key,
             file.contents,
             &[
+                "builtin.users",
                 "builtin.logs",
                 "builtin.services",
                 "builtin.processes",

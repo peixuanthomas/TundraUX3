@@ -417,6 +417,7 @@ impl ShellSession {
                 id if id == app::COMMAND_LINE_APPLICATION.id => self.open_command_line(),
                 id if id == app::EDITOR_APPLICATION.id => self.open_editor(),
                 "builtin.logs" => self.open_logs(),
+                "builtin.users" => self.open_user_management(),
                 "builtin.services" => {
                     self.open_management(platform::management::ManagementKind::Services)
                 }

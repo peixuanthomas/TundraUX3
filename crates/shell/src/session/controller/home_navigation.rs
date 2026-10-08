@@ -192,30 +192,16 @@ impl ShellSession {
         entries.retain(|entry| {
             !matches!(
                 entry.icon_identity(),
-                "logs" | "services" | "processes" | "packages" | "network" | "disks"
+                "logs"
+                    | "services"
+                    | "processes"
+                    | "packages"
+                    | "network"
+                    | "disks"
+                    | "user_management"
+                    | "user_profile"
             )
         });
-        if self.can_manage_all_users() {
-            entries.push(
-                ui::ShellEntry::new(
-                    i18n::tr!("shell-user-management"),
-                    i18n::tr!("shell-manage-local-tundraux-users"),
-                )
-                .with_icon_key("user_management"),
-            );
-        } else if self
-            .app
-            .auth_session()
-            .is_some_and(|session| session.role == UserRole::User)
-        {
-            entries.push(
-                ui::ShellEntry::new(
-                    i18n::tr!("shell-user-profile"),
-                    i18n::tr!("shell-manage-your-local-tundraux-account"),
-                )
-                .with_icon_key("user_profile"),
-            );
-        }
         entries
     }
 

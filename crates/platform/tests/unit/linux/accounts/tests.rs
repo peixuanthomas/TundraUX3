@@ -27,7 +27,7 @@ fn admins_manage_others_but_cannot_remove_their_own_access() {
     assert!(authorize(&actor, &account(0, true), true, true).is_err());
     let mut system = account(10, false);
     system.system = true;
-    assert!(authorize(&actor, &system, true, false).is_err());
+    assert!(authorize(&actor, &system, true, false).is_ok());
     let mut remote = account(1002, false);
     remote.local = false;
     assert!(authorize(&actor, &remote, true, false).is_err());

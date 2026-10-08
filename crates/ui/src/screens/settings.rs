@@ -27,14 +27,10 @@ pub enum SettingsCategory {
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 6] = [
         Self::Appearance,
         Self::RegionTime,
         Self::System,
-        Self::Sound,
-        Self::Display,
-        Self::Wifi,
-        Self::Bluetooth,
         Self::FileExplorer,
         Self::Editor,
         Self::Update,

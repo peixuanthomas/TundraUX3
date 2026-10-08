@@ -89,6 +89,7 @@ impl BuiltInApplicationDescriptor {
             "builtin.packages" => msg!("app-catalog-packages-name").into(),
             "builtin.network" => msg!("app-catalog-network-name").into(),
             "builtin.disks" => msg!("app-catalog-disks-name").into(),
+            "builtin.users" => msg!("app-catalog-users-name").into(),
             _ => LocalizedText::Raw(self.name.to_string()),
         }
     }
@@ -102,6 +103,7 @@ impl BuiltInApplicationDescriptor {
             "builtin.packages" => msg!("app-catalog-packages-description").into(),
             "builtin.network" => msg!("app-catalog-network-description").into(),
             "builtin.disks" => msg!("app-catalog-disks-description").into(),
+            "builtin.users" => msg!("app-catalog-users-description").into(),
             _ => LocalizedText::Raw(self.description.to_string()),
         }
     }
@@ -153,6 +155,15 @@ const fn management_application(
 pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
     COMMAND_LINE_APPLICATION,
     EDITOR_APPLICATION,
+    BuiltInApplicationDescriptor {
+        id: "builtin.users",
+        name: "Users",
+        description: "Manage accounts, groups and login settings",
+        type_label: "Built-in application",
+        admin_only: false,
+        fixed_in_launcher: true,
+        linux_only: false,
+    },
     BuiltInApplicationDescriptor {
         id: "builtin.logs",
         name: "Logs",

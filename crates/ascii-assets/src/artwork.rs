@@ -257,6 +257,7 @@ pub(crate) fn load_launcher_icons(
     }
     if theme_id == crate::DEFAULT_THEME_ID {
         for required in [
+            "builtin.users",
             "builtin.logs",
             "builtin.services",
             "builtin.processes",

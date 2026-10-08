@@ -1204,6 +1204,12 @@ impl ShellSession {
             return;
         };
 
+        #[cfg(target_os = "linux")]
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            self.open_management(platform::management::ManagementKind::Users);
+            return;
+        }
+
         if self.refresh_user_management() {
             self.screen_stack.push(ShellScreen::UserManagement);
             self.focused_component = ShellComponent::UserManagement;

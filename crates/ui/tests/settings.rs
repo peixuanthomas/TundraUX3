@@ -20,6 +20,18 @@ use ui::{
 };
 
 #[test]
+fn settings_catalog_does_not_offer_unavailable_device_pages() {
+    for category in [
+        SettingsCategory::Sound,
+        SettingsCategory::Display,
+        SettingsCategory::Wifi,
+        SettingsCategory::Bluetooth,
+    ] {
+        assert!(!SettingsCategory::ALL.contains(&category));
+    }
+}
+
+#[test]
 fn settings_editor_actions_are_hittable_without_a_duplicate_page_back() {
     let mut model = sample_model();
     let area = Rect::new(0, 0, 40, 10);

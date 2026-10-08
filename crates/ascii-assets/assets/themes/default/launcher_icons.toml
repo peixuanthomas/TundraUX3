@@ -1,6 +1,11 @@
 schema_version = 1
 name = "default-launcher-icons"
 
+[items."builtin.users"]
+label = "Users"
+image = "home_icons/user_management.png"
+lines = ['  o o  ', ' /| |\ ', ' / \ \ ', ' users ']
+
 [items."builtin.command-line"]
 label = "Command Line"
 image = "launcher_icons/command_line.png"

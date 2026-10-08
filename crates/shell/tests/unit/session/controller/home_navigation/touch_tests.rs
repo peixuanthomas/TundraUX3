@@ -77,8 +77,18 @@ fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
     let layout = ui::home_layout(main_area(&state), &model);
     assert_eq!(layout.items.len(), model.entries().len());
     assert!(layout.scrollbar.is_none());
+    assert!(model.entries().iter().all(|entry| !matches!(
+        entry.icon_key.as_deref(),
+        Some("user_management" | "user_profile")
+    )));
+    // Keep the three-row geometry check independent of the application count:
+    // Users now lives in Launcher, so the normal Home needs fewer rows.
+    let three_rows = ui::home_entry_tile_areas(main_area(&state), layout.columns * 3);
     assert_eq!(
-        layout.items.last().expect("last Home card").area.bottom(),
+        three_rows
+            .last()
+            .expect("last card in a full three-row grid")
+            .bottom(),
         main_area(&state).bottom() - 1,
         "the last card uses the space formerly reserved for Exit"
     );
@@ -108,7 +118,6 @@ fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
         ("A", ShellCommand::OpenLauncher),
         ("S", ShellCommand::OpenSettings),
         ("M", ShellCommand::OpenSystemStatus),
-        ("U", ShellCommand::OpenUserManagement),
     ] {
         assert_eq!(
             state.route_key_input(&KeyInput::from_label(label)).1,
@@ -132,6 +141,13 @@ fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
         let mut repeated = KeyInput::from_label(label);
         repeated.phase = InputPhase::Repeat;
         assert_ne!(state.route_key_input(&repeated).1, command);
+    }
+    for label in ["U", "u"] {
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label(label)).1,
+            ShellCommand::RecordInput,
+            "Users is opened from Launcher"
+        );
     }
     state.screen_stack.push(ShellScreen::Launcher);
     for (label, command) in [

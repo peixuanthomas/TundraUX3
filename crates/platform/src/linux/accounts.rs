@@ -1,4 +1,4 @@
-//! Real Linux login accounts. AccountsService owns all privileged writes.
+//! Real Linux login accounts exposed by AccountsService.
 use super::{authorization, dbus, identity::LinuxUserContext};
 use crate::service::ServiceError;
 use std::sync::Arc;
@@ -120,20 +120,32 @@ impl Accounts {
         Ok(account)
     }
 
-    /// Ordinary users never enumerate other accounts, even when polkit would allow it.
+    /// NSS enumerates root and service accounts that ListCachedUsers omits.
+    /// Individual writes still use the real system authorization path.
     pub fn visible(&self) -> Result<Vec<Account>, ServiceError> {
         let actor = self.actor()?;
         if !actor.admin {
             return Ok(vec![actor]);
         }
-        let paths: Vec<OwnedObjectPath> = self
+        let mut paths: Vec<OwnedObjectPath> = self
             .manager()?
             .call("ListCachedUsers", &())
             .map_err(map_error)?;
+        if let Ok(accounts) = crate::management::users::accounts(None) {
+            for account in accounts {
+                if let Ok(path) = self
+                    .manager()?
+                    .call::<_, _, OwnedObjectPath>("FindUserByName", &(account.username.as_str(),))
+                    && !paths.contains(&path)
+                {
+                    paths.push(path);
+                }
+            }
+        }
         let mut accounts = vec![actor.clone()];
         for path in paths {
             let account = self.read(path)?;
-            if account.uid != actor.uid && account.uid != 0 && !account.system && account.local {
+            if account.uid != actor.uid {
                 accounts.push(account);
             }
         }
@@ -310,8 +322,7 @@ fn authorize(
     destructive: bool,
 ) -> Result<(), ServiceError> {
     if !target.local
-        || target.system
-        || target.uid == 0
+        || (target.uid == 0 && destructive)
         || ((!actor.admin) && (admin_only || actor.uid != target.uid))
         || (destructive && actor.uid == target.uid)
     {
@@ -332,6 +343,10 @@ fn map_error(error: zbus::Error) -> ServiceError {
 #[path = "accounts_password.rs"]
 mod password;
 use password::password_hash;
+
+pub(crate) fn management_password_hash(password: &str) -> Result<String, ServiceError> {
+    password_hash(password)
+}
 
 #[cfg(test)]
 #[path = "../../tests/unit/linux/accounts_dbus_tests.rs"]
