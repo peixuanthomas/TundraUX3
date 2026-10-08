@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::TundraTheme;
@@ -90,7 +90,6 @@ pub struct Button {
     pub bracketed_label: bool,
     pub latched: bool,
     pub centered_label: bool,
-    pub alternate_label: Option<(String, bool)>,
 }
 
 impl Button {
@@ -111,7 +110,6 @@ impl Button {
             bracketed_label: true,
             latched: false,
             centered_label: false,
-            alternate_label: None,
         }
     }
 
@@ -129,13 +127,6 @@ impl Button {
 
     pub fn with_centered_label(mut self, centered: bool) -> Self {
         self.centered_label = centered;
-        self
-    }
-
-    /// Shows an alternate above the ordinary label, muting the inactive value.
-    /// Small buttons show only the active value.
-    pub fn with_alternate_label(mut self, label: impl Into<String>, active: bool) -> Self {
-        self.alternate_label = Some((label.into(), active));
         self
     }
 
@@ -271,7 +262,7 @@ impl Button {
     fn bordered_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let state = self.render_state(area, theme);
         let style = Self::style_for_state(state, theme);
-        Paragraph::new(self.label_text(area.height.saturating_sub(2), style, theme))
+        Paragraph::new(self.label_text(area.height.saturating_sub(2)))
             .alignment(HorizontalAlignment::Center)
             .style(style)
             .block(
@@ -285,35 +276,13 @@ impl Button {
 
     fn borderless_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let style = Self::style_for_state(self.render_state(area, theme), theme);
-        Paragraph::new(self.label_text(area.height, style, theme))
+        Paragraph::new(self.label_text(area.height))
             .alignment(HorizontalAlignment::Center)
             .style(style)
     }
 
-    fn label_text<'a>(&'a self, height: u16, style: Style, theme: &TundraTheme) -> Text<'a> {
-        let mut lines = if let Some((alternate, active)) = &self.alternate_label {
-            let ordinary = self.display_label();
-            if height >= 2 {
-                let muted = style
-                    .fg(theme.tokens().muted)
-                    .remove_modifier(Modifier::BOLD);
-                vec![
-                    Line::from(Span::styled(
-                        alternate.as_str(),
-                        if *active { style } else { muted },
-                    )),
-                    Line::from(Span::styled(ordinary, if *active { muted } else { style })),
-                ]
-            } else {
-                vec![Line::from(if *active {
-                    Cow::Borrowed(alternate.as_str())
-                } else {
-                    ordinary
-                })]
-            }
-        } else {
-            Text::from(self.display_label()).lines
-        };
+    fn label_text(&self, height: u16) -> Text<'_> {
+        let mut lines = Text::from(self.display_label()).lines;
         if self.centered_label {
             let padding = usize::from(height).saturating_sub(lines.len()) / 2;
             lines.splice(0..0, std::iter::repeat_n(Line::default(), padding));

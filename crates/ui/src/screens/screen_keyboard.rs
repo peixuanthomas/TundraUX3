@@ -125,8 +125,7 @@ impl ScreenKeyboardAction {
 
     fn label(self, modifiers: ScreenKeyboardModifiers, collapsed: bool) -> String {
         match self {
-            Self::Letter(letter) => return letter.to_ascii_uppercase().to_string(),
-            Self::Character(_) => {
+            Self::Letter(_) | Self::Character(_) => {
                 return self.character(modifiers).unwrap().to_string();
             }
             Self::Function(number) => return format!("F{number}"),
@@ -346,12 +345,12 @@ pub fn screen_keyboard_layout_with_visibility(
     let button_height = (keys_height / 6).clamp(1, 5);
     let bordered_buttons = bounds.width >= 104 && button_height >= 3;
     let mut row_heights = [button_height; 6];
-    let dual_label_height = if bordered_buttons { 4 } else { 2 };
-    // Prioritize the four character rows so ordinary 24-line terminals can
-    // show both glyphs without requiring taller function/modifier rows.
-    if button_height < dual_label_height && keys_height >= button_height * 2 + dual_label_height * 4
+    let preferred_character_height = if bordered_buttons { 4 } else { 2 };
+    // Give character rows more height when there is room for comfortable keys.
+    if button_height < preferred_character_height
+        && keys_height >= button_height * 2 + preferred_character_height * 4
     {
-        row_heights[1..5].fill(dual_label_height);
+        row_heights[1..5].fill(preferred_character_height);
     }
     let mut layout = ScreenKeyboardLayout {
         title: Rect::new(
@@ -560,34 +559,6 @@ pub fn render_screen_keyboard(
         .with_bracketed_label(false)
         .with_centered_label(true)
         .with_latched(target.action.is_latched(model.modifiers));
-        if matches!(
-            target.action,
-            ScreenKeyboardAction::Letter(_) | ScreenKeyboardAction::Character(_)
-        ) {
-            let ordinary = target
-                .action
-                .character(ScreenKeyboardModifiers::default())
-                .unwrap();
-            let shifted = target
-                .action
-                .character(ScreenKeyboardModifiers {
-                    shift: true,
-                    ..Default::default()
-                })
-                .unwrap();
-            let bordered = layout.bordered_buttons && !target.action.is_toolbar();
-            let content_height = target
-                .area
-                .height
-                .saturating_sub(if bordered { 2 } else { 0 });
-            if content_height >= 2 && ordinary != shifted {
-                button.label = ordinary.to_string();
-                button = button.with_alternate_label(
-                    shifted.to_string(),
-                    target.action.character(model.modifiers) == Some(shifted),
-                );
-            }
-        }
         button.set_focused(target.action == model.focus);
         if layout.bordered_buttons && !target.action.is_toolbar() {
             button.render_frame(frame, target.area, &theme);

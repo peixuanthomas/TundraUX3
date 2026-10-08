@@ -379,12 +379,12 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     });
 
     terminal.resize(36, 80);
-    terminal.wait_for("taller keys show both digit values", |screen| {
+    terminal.wait_for("taller keys show only the current digit", |screen| {
         let area = button_area(screen, false, ScreenKeyboardAction::Character('1'));
         let labels = text_in(screen, area);
         area.height >= 2
-            && labels.iter().any(|label| label.trim() == "!")
             && labels.iter().any(|label| label.trim() == "1")
+            && !labels.iter().any(|label| label.contains('!'))
             && text_in(
                 screen,
                 button_area(screen, false, ScreenKeyboardAction::Shift),
@@ -404,14 +404,16 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         "Shift swaps the active glyph",
         |screen| {
             let area = button_area(screen, false, ScreenKeyboardAction::Character('1'));
-            let shifted = (area.x..area.right())
-                .find(|&column| screen.cell(area.y, column).unwrap().contents() == "!")
-                .unwrap();
-            let ordinary = (area.x..area.right())
-                .find(|&column| screen.cell(area.y + 1, column).unwrap().contents() == "1")
-                .unwrap();
-            color_at(screen, (area.y, shifted)) == TEXT
-                && color_at(screen, (area.y + 1, ordinary)) != TEXT
+            let labels: Vec<_> = text_in(screen, area)
+                .into_iter()
+                .map(|label| label.trim().to_owned())
+                .filter(|label| !label.is_empty())
+                .collect();
+            labels == ["!"]
+                && color_at(
+                    screen,
+                    button_position(screen, false, ScreenKeyboardAction::Character('1')),
+                ) == TEXT
         },
     );
     terminal.click(
@@ -467,7 +469,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
                 button_area(screen, false, ScreenKeyboardAction::Letter('q')),
             )
             .concat()
-            .contains('Q')
+            .contains('q')
             && typed_lines(screen, false).concat() == wrapped.replace('\n', "")
     });
     let resized_q = button_position(

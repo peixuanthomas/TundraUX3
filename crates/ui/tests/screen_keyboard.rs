@@ -333,7 +333,7 @@ fn keycaps_are_literal_and_latches_stay_bright_without_pointer_or_keyboard_focus
         context.buttons = Some(interactions);
         let (layout, buffer) = draw(bounds, false, &model, &context);
         for (action, expected) in [
-            (Letter('q'), if bounds.width >= 104 { "Q" } else { "q" }),
+            (Letter('q'), "q"),
             (Character('1'), "!"),
             (Character('['), "{"),
             (Character(']'), "}"),
@@ -382,10 +382,12 @@ fn keycaps_are_literal_and_latches_stay_bright_without_pointer_or_keyboard_focus
 }
 
 #[test]
-fn tall_keys_show_both_values_and_swap_muted_labels_with_shift_and_caps_lock() {
+fn keys_show_only_the_current_character_with_shift_and_caps_lock() {
     use ScreenKeyboardAction::*;
     for (bounds, bordered) in [
+        (Rect::new(0, 0, 60, 14), false),
         (Rect::new(0, 0, 80, 24), false),
+        (Rect::new(0, 0, 104, 42), true),
         (Rect::new(0, 0, 80, 32), false),
         (Rect::new(0, 0, 104, 56), true),
     ] {
@@ -404,9 +406,10 @@ fn tall_keys_show_both_values_and_swap_muted_labels_with_shift_and_caps_lock() {
                 model.modifiers.caps_lock = caps_lock;
                 let (layout, buffer) = draw(bounds, false, &model, &context);
                 assert_eq!(layout.bordered_buttons, bordered);
-                for (action, ordinary, alternate, upper_active) in [
-                    (Character('1'), "1", "!", shift),
-                    (Letter('q'), "q", "Q", shift ^ caps_lock),
+                for (action, expected) in [
+                    (Character('1'), if shift { "!" } else { "1" }),
+                    (Character('['), if shift { "{" } else { "[" }),
+                    (Letter('q'), if shift ^ caps_lock { "Q" } else { "q" }),
                 ] {
                     let area = key_area(&layout, action);
                     let inner = if bordered {
@@ -414,29 +417,19 @@ fn tall_keys_show_both_values_and_swap_muted_labels_with_shift_and_caps_lock() {
                     } else {
                         area
                     };
-                    assert!(inner.height >= 2);
-                    let top = inner.y + (inner.height - 2) / 2;
-                    assert_eq!(row_text(&buffer, inner, top).trim(), alternate);
-                    assert_eq!(row_text(&buffer, inner, top + 1).trim(), ordinary);
-                    for (row, active) in [(top, upper_active), (top + 1, !upper_active)] {
-                        let cell = (inner.x..inner.right())
-                            .find_map(|x| {
-                                (!buffer[(x, row)].symbol().trim().is_empty())
-                                    .then_some(&buffer[(x, row)])
-                            })
-                            .unwrap();
-                        assert_eq!(
-                            cell.fg,
-                            if active {
-                                context.theme.text
-                            } else {
-                                context.theme.muted
-                            }
-                        );
+                    let labels: Vec<_> = (inner.y..inner.bottom())
+                        .map(|y| row_text(&buffer, inner, y).trim().to_owned())
+                        .filter(|label| !label.is_empty())
+                        .collect();
+                    assert_eq!(labels, [expected], "{bounds:?}, {action:?}");
+                    let center_y = inner.y + inner.height.saturating_sub(1) / 2;
+                    assert_eq!(row_text(&buffer, inner, center_y).trim(), expected);
+                    for x in inner.x..inner.right() {
+                        assert_eq!(buffer[(x, center_y)].fg, context.theme.text);
                     }
                     assert_eq!(
                         action.character(model.modifiers).unwrap().to_string(),
-                        if upper_active { alternate } else { ordinary }
+                        expected
                     );
                 }
             }
