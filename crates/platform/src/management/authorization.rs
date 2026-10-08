@@ -117,7 +117,6 @@ impl PrivilegeSession {
                 "tundra-cli must be beside tundra-shell".into(),
             ));
         }
-        let (channel, broker) = UnixStream::pair().map_err(failure)?;
         let mut launch = if actor == 0 {
             Command::new(&executable)
         } else {
@@ -132,9 +131,18 @@ impl PrivilegeSession {
             launch.args(["-p", "", "--"]).arg(&executable);
             launch
         };
+        launch.arg("__privilege-session").arg(actor.to_string());
+        self.start_command(launch, password)
+    }
+
+    fn start_command(
+        &self,
+        mut launch: Command,
+        password: Option<&str>,
+    ) -> Result<Authorized, ManagementError> {
+        let failure = |error: std::io::Error| ManagementError::Failed(error.to_string());
+        let (channel, broker) = UnixStream::pair().map_err(failure)?;
         launch
-            .arg("__privilege-session")
-            .arg(actor.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::from(OwnedFd::from(broker)))
             .stderr(Stdio::null());
@@ -146,6 +154,10 @@ impl PrivilegeSession {
             *revoker = Some(channel.try_clone().map_err(failure)?);
         }
         let mut child = launch.spawn().map_err(failure)?;
+        // Command retains its configured stdout socket after spawn. Close our
+        // copy before reading: if sudo exits without authorizing, the reader
+        // must see EOF immediately so ensure() can request a password.
+        drop(launch);
         let result = (|| {
             if let Some(mut stdin) = child.stdin.take() {
                 if let Some(password) = password {

@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn failed_authorization_returns_promptly_without_waiting_for_the_ready_timeout() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // Simulate both sudo's no-password probe and a rejected password. The
+    // launcher consumes stdin and exits without sending the broker's ready frame.
+    for password in [None, Some("fixture-password")] {
+        let authority = PrivilegeSession::default();
+        let worker_authority = authority.clone();
+        let (send, receive) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "cat >/dev/null; exit 1"]);
+            send.send(matches!(
+                worker_authority.start_command(command, password),
+                Err(ManagementError::PermissionDenied(_))
+            ))
+            .unwrap();
+        });
+        let result = receive.recv_timeout(Duration::from_secs(2));
+        // Unblock a broken implementation before asserting, so this regression
+        // test never leaves a thread waiting for the production 60-second limit.
+        authority.revoke();
+        worker.join().unwrap();
+        assert_eq!(
+            result,
+            Ok(true),
+            "failed authorization must promptly request a password or report rejection"
+        );
+    }
+}
+
+#[test]
 fn approved_session_reuses_authority_and_revoke_blocks_cloned_owners() {
     let authority = PrivilegeSession::default();
     let (channel, mut broker) = UnixStream::pair().unwrap();
