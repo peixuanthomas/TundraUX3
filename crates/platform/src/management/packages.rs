@@ -5,6 +5,10 @@ mod pacman;
 mod parsing;
 mod query;
 mod runner;
+mod sources;
+mod status;
+pub use sources::{prepare_config_draft, validate_source_config};
+pub use status::{PackageFailure, classify_failure};
 
 use super::{
     ExecutionContext, ManagementCommand, ManagementError, ManagementQuery, ManagementSnapshot,
@@ -166,6 +170,7 @@ impl PackageRecord {
 pub(crate) struct PackageCommand {
     pub program: PathBuf,
     pub args: Vec<String>,
+    pub non_interactive: bool,
 }
 
 /// Only repository package names are accepted. Paths, globs, option names and
@@ -202,13 +207,34 @@ fn build_command(
     command: &ManagementCommand,
     backend: PackageBackend,
 ) -> Result<PackageCommand, ManagementError> {
-    if !command.values.is_empty() {
-        return Err(ManagementError::InvalidInput(
-            "Package operations do not accept additional command options".into(),
-        ));
-    }
+    let (non_interactive, policy) = script_options(command, backend)?;
     if backend == PackageBackend::Pacman {
         return build_pacman_command(command);
+    }
+    if command.action == "repair_configure" && backend == PackageBackend::Apt {
+        if command.target.is_some() {
+            return Err(ManagementError::InvalidInput(
+                "Configure pending packages does not take a target".into(),
+            ));
+        }
+        let mut args = vec![
+            if policy == "replace" {
+                "--force-confnew"
+            } else {
+                "--force-confold"
+            }
+            .into(),
+            "--configure".into(),
+            "--pending".into(),
+        ];
+        if !non_interactive {
+            args.remove(0);
+        }
+        return Ok(PackageCommand {
+            program: "/usr/bin/dpkg".into(),
+            args,
+            non_interactive,
+        });
     }
     let mut args: Vec<String> = match backend {
         PackageBackend::Apt => [
@@ -229,7 +255,34 @@ fn build_command(
         PackageBackend::Dnf4 | PackageBackend::Dnf5 => vec!["--color=never".into()],
         PackageBackend::Pacman => unreachable!("pacman commands are built separately"),
     };
+    if non_interactive {
+        args.push(
+            if backend == PackageBackend::Apt {
+                "--assume-yes"
+            } else {
+                "--assumeyes"
+            }
+            .into(),
+        );
+        if backend == PackageBackend::Apt {
+            args.extend([
+                "-o".into(),
+                format!(
+                    "Dpkg::Options::=--force-conf{}",
+                    if policy == "replace" { "new" } else { "old" }
+                ),
+            ]);
+        }
+    }
     match command.action.as_str() {
+        "repair_dependencies" if backend == PackageBackend::Apt => {
+            if command.target.is_some() {
+                return Err(ManagementError::InvalidInput(
+                    "Repair dependencies does not take a target".into(),
+                ));
+            }
+            args.extend(["--fix-broken".into(), "install".into()]);
+        }
         "refresh" | "upgrade_all" => {
             if command
                 .target
@@ -284,11 +337,67 @@ fn build_command(
     Ok(PackageCommand {
         program: backend.program().into(),
         args,
+        non_interactive,
     })
 }
 
+fn script_options(
+    command: &ManagementCommand,
+    backend: PackageBackend,
+) -> Result<(bool, &str), ManagementError> {
+    if command
+        .values
+        .keys()
+        .any(|key| !matches!(key.as_str(), "non_interactive" | "yes" | "config_policy"))
+    {
+        return Err(ManagementError::InvalidInput(
+            "Package operations accept only non_interactive, yes and config_policy".into(),
+        ));
+    }
+    let boolean = |key: &str| -> Result<bool, ManagementError> {
+        match command.values.get(key).map(String::as_str) {
+            None | Some("false") => Ok(false),
+            Some("true") => Ok(true),
+            _ => Err(ManagementError::InvalidInput(format!(
+                "{key} must be true or false"
+            ))),
+        }
+    };
+    let non_interactive = boolean("non_interactive")?;
+    let yes = boolean("yes")?;
+    if non_interactive && !yes {
+        return Err(ManagementError::InvalidInput(
+            "Script package changes need --yes; review the operation before retrying".into(),
+        ));
+    }
+    let policy = command
+        .values
+        .get("config_policy")
+        .map(String::as_str)
+        .unwrap_or("keep");
+    if !matches!(policy, "keep" | "replace")
+        || (policy == "replace" && backend != PackageBackend::Apt)
+    {
+        return Err(ManagementError::InvalidInput(
+            "Configuration policy must be keep, or replace for APT".into(),
+        ));
+    }
+    if command.values.contains_key("config_policy") && !non_interactive {
+        return Err(ManagementError::InvalidInput(
+            "Configuration policy requires non-interactive mode".into(),
+        ));
+    }
+    // Interactive operations retain the package manager's actual confirmation.
+    // --yes alone cannot erase native conffile and maintainer-script questions.
+    Ok((non_interactive, policy))
+}
+
 fn build_pacman_command(command: &ManagementCommand) -> Result<PackageCommand, ManagementError> {
+    let (non_interactive, _) = script_options(command, PackageBackend::Pacman)?;
     let mut args = vec!["--color=never".into()];
+    if non_interactive {
+        args.push("--noconfirm".into());
+    }
     match command.action.as_str() {
         "pacman_upgrade_all" => {
             if command
@@ -328,6 +437,7 @@ fn build_pacman_command(command: &ManagementCommand) -> Result<PackageCommand, M
     Ok(PackageCommand {
         program: PackageBackend::Pacman.program().into(),
         args,
+        non_interactive,
     })
 }
 
@@ -335,7 +445,21 @@ pub fn query(
     request: &ManagementQuery,
     cancelled: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
-    query::query(request, cancelled)
+    let backend = detect_backend(cancelled)?;
+    if request.scope == "sources" {
+        return sources::query(request, backend, cancelled);
+    }
+    if matches!(request.scope.as_str(), "conflicts" | "status") {
+        return status::query(request, backend, cancelled);
+    }
+    let mut result = query::query(request, cancelled)?;
+    result.actions.extend(status::view_actions());
+    if let Ok(busy) = status::busy_status(backend) {
+        if busy.busy {
+            result.notices.push(busy.message);
+        }
+    }
+    Ok(result)
 }
 
 pub fn execute(
@@ -350,6 +474,9 @@ pub fn execute(
         ));
     }
     let backend = detect_backend(cancelled)?;
+    if command.action == "check_database" {
+        return status::check_database(backend, interaction, cancelled);
+    }
     if unsafe { libc::geteuid() } != 0 {
         return Err(ManagementError::PermissionDenied(
             "Package changes must be run by the authorized system helper".into(),
@@ -373,6 +500,16 @@ pub fn execute(
         )?;
     }
     let _ = context;
+    let busy = status::busy_status(backend)?;
+    if busy.busy {
+        interaction.emit(super::OperationEvent::Output {
+            text: busy.message.clone(),
+        });
+        return Err(ManagementError::Conflict(format!(
+            "{} Wait, then check again",
+            busy.message
+        )));
+    }
     runner::execute(spec, backend, interaction, cancelled)
 }
 
@@ -554,5 +691,76 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn script_mode_requires_confirmation_and_preserves_native_configuration_policy() {
+        for backend in [
+            PackageBackend::Apt,
+            PackageBackend::Dnf4,
+            PackageBackend::Dnf5,
+            PackageBackend::Pacman,
+        ] {
+            let action = if backend == PackageBackend::Pacman {
+                "pacman_install"
+            } else {
+                "install"
+            };
+            let mut request = command(action, Some("bash"));
+            request
+                .values
+                .insert("non_interactive".into(), "true".into());
+            assert!(build_command(&request, backend).is_err());
+            request.values.insert("yes".into(), "true".into());
+            let spec = build_command(&request, backend).unwrap();
+            assert!(spec.non_interactive);
+            assert!(
+                spec.args.iter().any(|arg| matches!(
+                    arg.as_str(),
+                    "--assume-yes" | "--assumeyes" | "--noconfirm"
+                ))
+            );
+            if backend == PackageBackend::Apt {
+                assert!(
+                    spec.args
+                        .contains(&"Dpkg::Options::=--force-confold".into())
+                );
+            }
+            if backend == PackageBackend::Pacman {
+                assert!(spec.args.contains(&"-Syu".into()));
+            }
+            request
+                .values
+                .insert("config_policy".into(), "replace".into());
+            if backend == PackageBackend::Apt {
+                assert!(
+                    build_command(&request, backend)
+                        .unwrap()
+                        .args
+                        .contains(&"Dpkg::Options::=--force-confnew".into())
+                );
+            } else {
+                assert!(build_command(&request, backend).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn apt_repairs_are_separate_fixed_commands_and_reject_targets() {
+        let configure =
+            build_command(&command("repair_configure", None), PackageBackend::Apt).unwrap();
+        assert_eq!(configure.program, Path::new("/usr/bin/dpkg"));
+        assert_eq!(configure.args, ["--configure", "--pending"]);
+        let repair =
+            build_command(&command("repair_dependencies", None), PackageBackend::Apt).unwrap();
+        assert_eq!(
+            &repair.args[repair.args.len() - 2..],
+            ["--fix-broken", "install"]
+        );
+        for action in ["repair_configure", "repair_dependencies"] {
+            assert!(build_command(&command(action, Some("bash")), PackageBackend::Apt).is_err());
+            assert!(build_command(&command(action, None), PackageBackend::Dnf5).is_err());
+            assert!(build_command(&command(action, None), PackageBackend::Pacman).is_err());
+        }
     }
 }

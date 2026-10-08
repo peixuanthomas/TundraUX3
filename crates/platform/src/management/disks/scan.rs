@@ -90,22 +90,38 @@ fn mount_id(file: &File) -> Result<u64, ManagementError> {
     Ok(result.stx_mnt_id)
 }
 
+#[cfg(test)]
 pub(super) fn scan(
     path: &Path,
     interaction: &mut dyn OperationInteraction,
     cancelled: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
+    scan_sorted(path, "allocated", interaction, cancelled)
+}
+
+pub(super) fn scan_sorted(
+    path: &Path,
+    sort: &str,
+    interaction: &mut dyn OperationInteraction,
+    cancelled: &AtomicBool,
+) -> Result<ManagementSnapshot, ManagementError> {
+    if !matches!(sort, "allocated" | "logical" | "files") {
+        return Err(ManagementError::InvalidInput(
+            "Choose size or file count for sorting.".into(),
+        ));
+    }
     check_cancelled(cancelled)?;
     let root = open_directory(path)?;
     let root_metadata = root.metadata().map_err(io_error)?;
     let root_mount = mount_id(&root)?;
     let mut queue = vec![(root, path.to_path_buf(), None::<String>)];
     let mut directories = BTreeMap::<String, Totals>::new();
+    let mut top_entries = BTreeMap::<String, (u64, u64, bool)>::new();
     let mut total = Totals::default();
     let mut hardlinks = HashSet::new();
     let mut directory_ids = HashSet::new();
     directory_ids.insert((root_metadata.dev(), root_metadata.ino()));
-    let mut largest = BinaryHeap::<Reverse<(u64, u64, String)>>::new();
+    let mut largest = BinaryHeap::<Reverse<(u64, u64, String, u64, u64)>>::new();
     let mut errors = Vec::new();
     let mut unavailable = 0_u64;
     let mut skipped_links = 0_u64;
@@ -175,6 +191,12 @@ pub(super) fn scan(
             let top_level = category
                 .clone()
                 .unwrap_or_else(|| name.to_string_lossy().into_owned());
+            if category.is_none() {
+                top_entries.insert(
+                    top_level.clone(),
+                    (metadata.dev(), metadata.ino(), metadata.is_dir()),
+                );
+            }
             if metadata.is_dir() {
                 if !directory_ids.insert((metadata.dev(), metadata.ino())) {
                     continue;
@@ -227,6 +249,8 @@ pub(super) fn scan(
                     allocated,
                     logical,
                     child_path.display().to_string(),
+                    metadata.dev(),
+                    metadata.ino(),
                 )));
                 if largest.len() > 100 {
                     largest.pop();
@@ -250,39 +274,126 @@ pub(super) fn scan(
         ..Default::default()
     };
     let mut categories = directories.into_iter().collect::<Vec<_>>();
-    categories.sort_by(|a, b| b.1.allocated.cmp(&a.1.allocated));
+    categories.sort_by(|a, b| {
+        match sort {
+            "files" => b.1.files.cmp(&a.1.files),
+            "logical" => b.1.logical.cmp(&a.1.logical),
+            _ => b.1.allocated.cmp(&a.1.allocated),
+        }
+        .then(a.0.cmp(&b.0))
+    });
     for (name, total) in categories.into_iter().take(1000) {
+        let entry_path = path.join(&name);
+        let (device, inode, directory) = top_entries.get(&name).copied().unwrap_or((0, 0, true));
         snapshot.rows.push(ManagementRow {
-            id: path.join(&name).display().to_string(),
+            id: entry_path.display().to_string(),
             cells: vec![
                 path.join(&name).display().to_string(),
-                "Directory/entry total".into(),
+                if directory {
+                    "Directory total"
+                } else {
+                    "File total"
+                }
+                .into(),
                 total.logical.to_string(),
                 total.allocated.to_string(),
                 total.files.to_string(),
             ],
+            identity: BTreeMap::from([
+                (
+                    "kind".into(),
+                    if directory { "directory" } else { "file" }.into(),
+                ),
+                ("device".into(), device.to_string()),
+                ("inode".into(), inode.to_string()),
+            ]),
+            actions: vec![open_result(&entry_path, directory)],
             ..Default::default()
         });
     }
     let mut largest = largest.into_iter().map(|r| r.0).collect::<Vec<_>>();
     largest.sort_by(|a, b| b.0.cmp(&a.0));
-    for (allocated, logical, path) in largest {
+    for (allocated, logical, path, device, inode) in largest {
         snapshot.rows.push(ManagementRow {
             id: format!("file:{path}"),
             cells: vec![
-                path,
+                path.clone(),
                 "Large file".into(),
                 logical.to_string(),
                 allocated.to_string(),
                 "1".into(),
             ],
+            identity: BTreeMap::from([
+                ("kind".into(), "file".into()),
+                ("device".into(), device.to_string()),
+                ("inode".into(), inode.to_string()),
+            ]),
+            actions: vec![open_result(Path::new(&path), false)],
             ..Default::default()
         });
     }
     snapshot.notices.push(format!("Scan {}: {} unique files; {} logical bytes; {} on-disk bytes. Hard links are counted once. Directory metadata and filesystem shared extents are not charged; on-disk bytes use each file's reported allocated blocks.", path.display(), total.files, total.logical, total.allocated));
     snapshot.notices.push(format!("Skipped {skipped_links} symbolic links and {skipped_mounts} other mounts. {unavailable} entries could not be read or changed during scanning; totals are incomplete when this count is nonzero."));
     snapshot.notices.extend(errors);
+    sort_scan_results(&mut snapshot, sort)?;
+    snapshot.actions.push(ManagementAction {
+        id: "sort_scan".into(),
+        label: "Sort results".into(),
+        fields: vec![mount_field(
+            "sort",
+            "Sort by",
+            sort,
+            vec!["allocated".into(), "logical".into(), "files".into()],
+        )],
+        ..Default::default()
+    });
     Ok(snapshot)
+}
+
+fn open_result(path: &Path, directory: bool) -> ManagementAction {
+    ManagementAction {
+        id: "open_path".into(),
+        label: if directory {
+            "Open directory"
+        } else {
+            "Show file"
+        }
+        .into(),
+        primary: true,
+        values: BTreeMap::from([("path".into(), path.display().to_string())]),
+        ..Default::default()
+    }
+}
+
+pub fn sort_scan_results(
+    snapshot: &mut ManagementSnapshot,
+    by: &str,
+) -> Result<(), ManagementError> {
+    let column = match by {
+        "logical" => 2,
+        "allocated" => 3,
+        "files" => 4,
+        _ => {
+            return Err(ManagementError::InvalidInput(
+                "Choose size or file count for sorting.".into(),
+            ));
+        }
+    };
+    if snapshot.backend != "Linux descriptor-based filesystem scan" {
+        return Err(ManagementError::InvalidInput(
+            "Only scan results can be sorted this way.".into(),
+        ));
+    }
+    snapshot.rows.sort_by(|a, b| {
+        let value = |row: &ManagementRow| {
+            row.cells
+                .get(column)
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0)
+        };
+        value(b).cmp(&value(a)).then(a.id.cmp(&b.id))
+    });
+    Ok(())
 }
 
 #[cfg(test)]
@@ -351,5 +462,28 @@ mod tests {
             scan(&fixture.0, &mut Interaction, &AtomicBool::new(true)),
             Err(ManagementError::Cancelled)
         );
+    }
+    #[test]
+    fn count_sort_and_file_actions_preserve_scan_identity() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.0.join("many")).unwrap();
+        for name in ["a", "b", "c"] {
+            fs::write(fixture.0.join("many").join(name), b"x").unwrap();
+        }
+        fs::write(fixture.0.join("large"), [0_u8; 8192]).unwrap();
+        let mut snapshot = scan_sorted(
+            &fixture.0,
+            "files",
+            &mut Interaction,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(snapshot.rows[0].cells[4], "3");
+        assert_eq!(snapshot.rows[0].identity["kind"], "directory");
+        assert_eq!(snapshot.rows[0].actions[0].id, "open_path");
+        assert!(snapshot.rows.iter().all(|row| row.identity["inode"] != "0"));
+        sort_scan_results(&mut snapshot, "logical").unwrap();
+        assert_eq!(snapshot.rows[0].cells[2], "8192");
+        assert_eq!(snapshot.rows[0].identity["kind"], "file");
     }
 }

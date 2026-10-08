@@ -285,6 +285,13 @@ fn action(id: &str, label: &str, privileged: bool) -> ManagementAction {
         label: label.into(),
         confirm: privileged,
         privileged,
+        primary: matches!(id, "install" | "remove" | "refresh" | "pacman_install"),
+        group: if matches!(id, "scope_search" | "scope_installed" | "scope_updates") {
+            "view"
+        } else {
+            "package"
+        }
+        .into(),
         ..Default::default()
     }
 }

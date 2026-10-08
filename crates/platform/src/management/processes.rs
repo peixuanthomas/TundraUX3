@@ -9,6 +9,9 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+#[path = "process_inspect.rs"]
+mod inspect;
+
 #[derive(Clone, Debug)]
 struct ProcessRecord {
     pid: u32,
@@ -165,6 +168,22 @@ pub fn query(
 ) -> Result<ManagementSnapshot, ManagementError> {
     let sample_started = Instant::now();
     let (previous, _) = read_all(Path::new("/proc"), cancelled)?;
+    let io_before = query
+        .target
+        .as_deref()
+        .and_then(|target| {
+            previous
+                .iter()
+                .find(|process| process.pid.to_string() == target)
+        })
+        .map(|process| {
+            (
+                process.pid,
+                process.started,
+                inspect::read_io(Path::new("/proc"), process.pid),
+                Instant::now(),
+            )
+        });
     // A short second sample measures current usage rather than lifetime CPU or
     // fabricated zeroes. This runs in the management worker, never the UI loop.
     while sample_started.elapsed() < Duration::from_millis(150) {
@@ -195,7 +214,42 @@ pub fn query(
     let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id").map_err(|e| {
         ManagementError::Unavailable(format!("Cannot read Linux boot identity: {e}"))
     })?;
-    snapshot(processes, query, boot_id.trim(), denied)
+    let selected = query
+        .target
+        .as_deref()
+        .and_then(|target| {
+            processes
+                .iter()
+                .find(|process| process.pid.to_string() == target)
+        })
+        .cloned();
+    let mut result = snapshot(processes, query, boot_id.trim(), denied)?;
+    if let Some(selected) = selected {
+        if let Some(row) = result
+            .rows
+            .iter_mut()
+            .find(|row| row.id == selected.pid.to_string())
+        {
+            let io_elapsed = io_before
+                .as_ref()
+                .map(|(_, _, _, at)| at.elapsed().as_secs_f64())
+                .unwrap_or(elapsed);
+            let previous_io = io_before.and_then(|(pid, started, io, _)| {
+                (pid == selected.pid && started == selected.started)
+                    .then_some(io)
+                    .and_then(Result::ok)
+            });
+            inspect::append_details(
+                Path::new("/proc"),
+                &selected,
+                row,
+                previous_io,
+                io_elapsed,
+                cancelled,
+            )?;
+        }
+    }
+    Ok(result)
 }
 
 fn snapshot(
@@ -392,6 +446,9 @@ fn row(process: &ProcessRecord, boot_id: &str, depth: usize) -> ManagementRow {
         } else {
             Vec::new()
         },
+        primary: matches!(id, "term" | "cont"),
+        group: "process".into(),
+        ..Default::default()
     })
     .collect();
     ManagementRow {

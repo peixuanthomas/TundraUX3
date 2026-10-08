@@ -52,6 +52,10 @@ pub(super) fn execute(
     ] {
         command.env(key, value);
     }
+    if spec.non_interactive {
+        command.env("DEBIAN_FRONTEND", "noninteractive");
+        command.env("DEBIAN_PRIORITY", "critical");
+    }
     command.cwd("/");
     let mut child = pair.slave.spawn_command(command).map_err(pty_error)?;
     drop(pair.slave);
@@ -166,9 +170,41 @@ pub(super) fn execute(
     let status = exit_status.ok_or_else(|| ManagementError::Failed("Package manager exit status is unavailable; check the system package database before retrying".into()))?;
     if !status.success() {
         let output = runtime_log::sanitize_text(&String::from_utf8_lossy(&tail));
+        let failure = super::classify_failure(backend, &output);
+        interaction.emit(OperationEvent::Problem {
+            problem: crate::management::problem::OperationProblem {
+                code: failure.code.into(),
+                summary_key: failure.code.replace('_', "-").replacen(
+                    "package-",
+                    "management-package-",
+                    1,
+                ),
+                next_action: failure
+                    .repair_actions
+                    .first()
+                    .copied()
+                    .unwrap_or("check_database")
+                    .into(),
+                detail: output.clone(),
+                exit_code: if failure.code == "package_busy" { 5 } else { 1 },
+                native_exit_code: Some(status.exit_code() as i32),
+                service: None,
+                boot_id: None,
+            },
+        });
+        interaction.emit(OperationEvent::Output {
+            text: format!(
+                "{}\n{}\nNative exit code: {}\n{output}",
+                failure.summary,
+                failure.next_step,
+                status.exit_code()
+            ),
+        });
         return Err(ManagementError::Failed(format!(
-            "{} failed with exit code {}. Changes may be partially applied; review the package output and database before retrying.\n{output}",
-            backend.id(),
+            "{} {} ({}; exit code {}). Changes may be partially applied; review the task output before retrying.\n{output}",
+            failure.summary,
+            failure.next_step,
+            failure.code,
             status.exit_code()
         )));
     }

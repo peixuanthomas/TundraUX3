@@ -44,6 +44,7 @@ fn fixture(script: &str) -> PackageCommand {
     PackageCommand {
         program: PathBuf::from("/usr/bin/timeout"),
         args: vec!["8".into(), "/bin/sh".into(), "-c".into(), script.into()],
+        non_interactive: false,
     }
 }
 

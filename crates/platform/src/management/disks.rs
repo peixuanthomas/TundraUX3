@@ -1,5 +1,10 @@
 //! Read-only block inventory, fixed mount operations and scans under the actor's UID.
+mod automount;
+mod health;
 mod scan;
+pub use automount::automatic_mount_draft;
+pub use health::{DiskHealth, query_health};
+pub use scan::sort_scan_results;
 
 use super::network::{check_cancelled, io_error, program, run};
 use super::*;
@@ -115,7 +120,7 @@ fn inventory(cancelled: &AtomicBool) -> Result<Vec<Json>, ManagementError> {
             "--bytes",
             "--paths",
             "--output",
-            "NAME,KNAME,PKNAME,TYPE,SIZE,FSTYPE,UUID,MAJ:MIN,MODEL,RO,RM",
+            "NAME,KNAME,PKNAME,TYPE,SIZE,FSTYPE,UUID,LABEL,MAJ:MIN,MODEL,RO,RM",
         ],
         cancelled,
     )?)
@@ -239,6 +244,8 @@ pub fn query(
             "Mounted at".into(),
             "Available bytes".into(),
             "Available inodes".into(),
+            "Total inodes".into(),
+            "Inode usage".into(),
         ],
         backend: if udisks {
             "UDisks2".into()
@@ -250,12 +257,15 @@ pub fn query(
     snapshot.actions.push(ManagementAction {
         id: "scan".into(),
         label: "Scan directory usage and large files".into(),
-        fields: vec![mount_field(
-            "directory",
-            "Absolute directory",
-            "/",
-            Vec::new(),
-        )],
+        fields: vec![
+            mount_field("directory", "Absolute directory", "/", Vec::new()),
+            mount_field(
+                "sort",
+                "Sort by",
+                "allocated",
+                vec!["allocated".into(), "logical".into(), "files".into()],
+            ),
+        ],
         ..Default::default()
     });
     for device in devices {
@@ -287,6 +297,8 @@ pub fn query(
                 mountpoints.join(", "),
                 String::new(),
                 String::new(),
+                String::new(),
+                String::new(),
             ],
             identity: identity(&device, &mounted),
             detail: vec![
@@ -314,6 +326,18 @@ pub fn query(
                     if row.cells[5].is_empty() {
                         row.cells[5] = s.1.to_string();
                         row.cells[6] = s.3.to_string();
+                        row.cells[7] = if s.2 == 0 {
+                            "Unknown".into()
+                        } else {
+                            s.2.to_string()
+                        };
+                        row.cells[8] = inode_usage(s.2, s.3);
+                        if s.2 == 0 || s.3 > s.2 {
+                            row.cells[6] = "Unknown".into();
+                        }
+                        if s.2 > 0 && s.3 == 0 {
+                            row.detail.push(("File slots exhausted".into(), "No file slots remain. Scan by file count and remove unneeded files.".into()));
+                        }
                     }
                 }
                 Err(e) => row.detail.push((
@@ -325,14 +349,10 @@ pub fn query(
         if let Some(mountpoint) = mountpoints.first() {
             row.identity.insert("directory".into(), mountpoint.clone());
             row.actions.push(ManagementAction {
-                id: "open_directory".into(),
-                label: "Open mountpoint in Explorer".into(),
-                fields: vec![mount_field(
-                    "directory",
-                    "Directory",
-                    mountpoint,
-                    mountpoints.clone(),
-                )],
+                id: "open_path".into(),
+                label: "Open files".into(),
+                values: BTreeMap::from([("path".into(), mountpoint.clone())]),
+                primary: true,
                 ..Default::default()
             });
         }
@@ -351,6 +371,7 @@ pub fn query(
                     )],
                     disabled_reason: (!udisks && program("mount").is_err())
                         .then(|| "Neither UDisks2 nor mount is available".into()),
+                    ..Default::default()
                 });
             } else {
                 let reason = if device_mounts.iter().any(|m| protected_mount(&m.path)) {
@@ -371,23 +392,94 @@ pub fn query(
                 row.actions.push(ManagementAction {
                     id: "scan".into(),
                     label: "Scan directory usage and large files".into(),
-                    fields: vec![mount_field(
-                        "directory",
-                        "Absolute directory",
-                        &mountpoints[0],
-                        Vec::new(),
-                    )],
+                    fields: vec![
+                        mount_field(
+                            "directory",
+                            "Absolute directory",
+                            &mountpoints[0],
+                            Vec::new(),
+                        ),
+                        mount_field(
+                            "sort",
+                            "Sort by",
+                            "allocated",
+                            vec!["allocated".into(), "logical".into(), "files".into()],
+                        ),
+                    ],
                     ..Default::default()
                 });
             }
         } else if !fs_type.is_empty() {
             row.detail.push(("Mount availability".into(), "Unsupported filesystem or encrypted/swap/member device; formatting and unlocking are outside this app".into()));
         }
+        if allowed_filesystem(&fs_type) && !text(&device, "uuid").is_empty() {
+            let existing = fs::read_to_string("/etc/fstab").unwrap_or_default();
+            let defaults = automount::defaults_for_device(&existing, &device);
+            row.actions.push(ManagementAction {
+                id: "auto_mount".into(),
+                label: "Mount at startup".into(),
+                fields: vec![
+                    mount_field(
+                        "mountpoint",
+                        "Mountpoint",
+                        defaults.as_ref().map(|d| d.0.as_str()).unwrap_or_else(|| {
+                            mountpoints
+                                .first()
+                                .map(String::as_str)
+                                .unwrap_or("/mnt/data")
+                        }),
+                        Vec::new(),
+                    ),
+                    mount_field(
+                        "options",
+                        "Mount options",
+                        defaults
+                            .as_ref()
+                            .map(|d| d.1.as_str())
+                            .unwrap_or("defaults,nofail"),
+                        Vec::new(),
+                    ),
+                    mount_field(
+                        "enabled",
+                        "Mount at startup",
+                        if defaults.as_ref().is_some_and(|d| d.2) {
+                            "true"
+                        } else {
+                            "false"
+                        },
+                        vec!["true".into(), "false".into()],
+                    ),
+                ],
+                ..Default::default()
+            });
+            row.detail.push((
+                "Mount at startup".into(),
+                defaults
+                    .map(|d| d.2.to_string())
+                    .unwrap_or_else(|| "false".into()),
+            ));
+        }
+        if text(&device, "type") == "disk" {
+            row.actions.push(ManagementAction {
+                id: "health".into(),
+                label: "Check disk health".into(),
+                privileged: !udisks,
+                ..Default::default()
+            });
+            row.detail
+                .push(("Disk health".into(), "Not checked".into()));
+        }
         snapshot.rows.push(row);
     }
-    snapshot.notices.push("Mounting uses UDisks2 when available. The fallback chooses its own directory under /run and accepts no custom mount flags. No formatting, partition changes, or fstab edits are offered.".into());
-    snapshot.notices.push("Directory scans keep the original user's permissions, skip symbolic links and other mounts, and count each hard-linked file once. Unreadable entries are reported.".into());
     Ok(snapshot)
+}
+
+fn inode_usage(total: u64, available: u64) -> String {
+    if total == 0 || available > total {
+        "Unknown".into()
+    } else {
+        format!("{:.1}%", (total - available) as f64 * 100.0 / total as f64)
+    }
 }
 
 fn space(path: &Path) -> Result<(u64, u64, u64, u64), ManagementError> {
@@ -422,8 +514,42 @@ pub fn execute(
             .values
             .get("directory")
             .ok_or_else(|| ManagementError::InvalidInput("Choose an absolute directory".into()))?;
-        let snapshot = scan::scan(Path::new(directory), interaction, cancelled)?;
+        let snapshot = scan::scan_sorted(
+            Path::new(directory),
+            command
+                .values
+                .get("sort")
+                .map(String::as_str)
+                .unwrap_or("allocated"),
+            interaction,
+            cancelled,
+        )?;
         let summary = snapshot.notices.join("\n");
+        interaction.emit(OperationEvent::Snapshot { snapshot });
+        return Ok(summary);
+    }
+    if matches!(command.action.as_str(), "health" | "health-authorized") {
+        let target = command
+            .target
+            .as_deref()
+            .ok_or_else(|| ManagementError::InvalidInput("Select a disk.".into()))?;
+        let health = query_health(Path::new(target), &command.identity, cancelled)?;
+        let mut snapshot = health.snapshot(target);
+        if let Some(row) = snapshot.rows.first_mut() {
+            row.identity = command.identity.clone();
+            if health.state == "Unknown"
+                && unsafe { libc::geteuid() } != 0
+                && program("smartctl").is_ok()
+            {
+                row.actions.push(ManagementAction {
+                    id: "health-authorized".into(),
+                    label: "Authorize disk health inspection".into(),
+                    privileged: true,
+                    ..Default::default()
+                });
+            }
+        }
+        let summary = health.summary.clone();
         interaction.emit(OperationEvent::Snapshot { snapshot });
         return Ok(summary);
     }
@@ -747,6 +873,37 @@ mod tests {
         assert!(allowed_filesystem("ext4"));
         assert!(protected_mount(Path::new("/")));
         assert!(!protected_mount(Path::new("/mnt/data")));
+    }
+    #[test]
+    fn inode_availability_does_not_invent_success_or_zero_usage() {
+        assert_eq!(inode_usage(100, 0), "100.0%");
+        assert_eq!(inode_usage(100, 25), "75.0%");
+        assert_eq!(inode_usage(0, 0), "Unknown");
+        assert_eq!(inode_usage(10, 11), "Unknown");
+    }
+    #[test]
+    #[ignore = "read-only live Linux block inventory check"]
+    fn live_disk_inventory_reports_capacity_without_modifying_mounts() {
+        let before_mounts = fs::read_to_string("/proc/self/mountinfo").unwrap();
+        let before_fstab = fs::read("/etc/fstab").unwrap_or_default();
+        let snapshot = query(
+            &ManagementQuery::new(ManagementKind::Disks),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(!snapshot.rows.is_empty());
+        assert!(
+            snapshot
+                .rows
+                .iter()
+                .all(|row| row.cells.len() == snapshot.columns.len()
+                    && row.identity.contains_key("device"))
+        );
+        assert_eq!(fs::read("/etc/fstab").unwrap_or_default(), before_fstab);
+        assert_eq!(
+            fs::read_to_string("/proc/self/mountinfo").unwrap(),
+            before_mounts
+        );
     }
     #[test]
     fn btrfs_anonymous_devices_are_associated_with_all_members() {
