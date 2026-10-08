@@ -33,6 +33,8 @@ pub(crate) fn text_render_capabilities() -> ui::RenderCapabilities {
 pub struct TerminalGuard<W: Write> {
     terminal: Terminal<CrosstermBackend<W>>,
     restored: bool,
+    #[cfg(unix)]
+    keyboard_reporting: bool,
 }
 
 impl<W: Write> TerminalGuard<W> {
@@ -66,6 +68,8 @@ impl<W: Write> TerminalGuard<W> {
         Ok(Self {
             terminal,
             restored: false,
+            #[cfg(unix)]
+            keyboard_reporting: false,
         })
     }
 
@@ -73,11 +77,52 @@ impl<W: Write> TerminalGuard<W> {
         &mut self.terminal
     }
 
+    /// Opt in only for the keyboard demo; ordinary Shell input is unchanged.
+    pub(crate) fn enable_keyboard_reporting(&mut self) -> io::Result<bool> {
+        #[cfg(unix)]
+        {
+            use crossterm::event::{
+                KeyboardEnhancementFlags as Flags, PushKeyboardEnhancementFlags,
+            };
+            if !self.keyboard_reporting
+                && crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
+            {
+                // Set this before writing so Drop also restores a partial write.
+                self.keyboard_reporting = true;
+                execute!(
+                    self.terminal.backend_mut(),
+                    PushKeyboardEnhancementFlags(
+                        Flags::DISAMBIGUATE_ESCAPE_CODES
+                            | Flags::REPORT_EVENT_TYPES
+                            | Flags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                    )
+                )?;
+            }
+            Ok(self.keyboard_reporting)
+        }
+        #[cfg(not(unix))]
+        {
+            // The Windows console already supplies key-up records.
+            Ok(cfg!(windows))
+        }
+    }
+
     pub fn restore(&mut self) -> io::Result<()> {
         if self.restored {
             return Ok(());
         }
 
+        #[cfg(unix)]
+        let keyboard_result = if std::mem::take(&mut self.keyboard_reporting) {
+            execute!(
+                self.terminal.backend_mut(),
+                crossterm::event::PopKeyboardEnhancementFlags
+            )
+        } else {
+            Ok(())
+        };
+        #[cfg(not(unix))]
+        let keyboard_result = Ok(());
         let terminal_result = execute!(
             self.terminal.backend_mut(),
             Show,
@@ -89,7 +134,7 @@ impl<W: Write> TerminalGuard<W> {
         let raw_mode_result = disable_raw_mode();
         self.restored = true;
 
-        terminal_result.and(raw_mode_result)
+        keyboard_result.and(terminal_result).and(raw_mode_result)
     }
 
     /// Re-enters the full-screen terminal after a temporary restore, such as

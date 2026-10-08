@@ -116,6 +116,17 @@ pub(super) fn render_auto_admin_frame(
     let main = match crate::compute_shell_layout(bounds) {
         crate::ShellLayout::Full { main, .. } | crate::ShellLayout::Compact(main) => main,
     };
+    render_auto_admin_frame_in_area(frame, main, layout, warning, style, title_override);
+}
+
+pub(super) fn render_auto_admin_frame_in_area(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    layout: &AutoAdminLayout,
+    warning: Rect,
+    style: AutoAdminPreviewStyle,
+    title_override: Option<&str>,
+) {
     // Keep the page recognizable while making it clearly inactive. Explicit
     // foreground/background values also work when a terminal ignores DIM.
     for y in main.y..main.bottom() {
@@ -203,7 +214,7 @@ pub(super) fn render_auto_admin_frame(
                 .borders(Borders::LEFT)
                 .border_style(Style::default().fg(Color::Yellow)),
         );
-        if layout.dialog.width >= 70 {
+        if layout.dialog.width >= 70 && !warning.is_empty() {
             let badge = Rect::new(
                 layout.dialog.x + 2,
                 layout.dialog.y + 1,

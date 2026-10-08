@@ -111,14 +111,22 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         false,
         ScreenKeyboardAction::Letter('d'),
     );
-    terminal.wait_for("physical key selects its button", |screen| {
-        color_at(screen, d) == ACCENT
+    terminal.wait_for("physical key flashes its button", |screen| {
+        color_at(screen, d) == PRESSED
     });
-    terminal.mouse(35, outside, false);
-    // ConPTY may merge consecutive motion reports. Wait for the move out to
-    // clear keyboard focus before sending the move back into the letter.
-    terminal.wait_for("move out clears keyboard focus", |screen| {
+    terminal.wait_for("physical key feedback clears", |screen| {
         color_at(screen, d) == TEXT
+    });
+    let e = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Letter('e'),
+    );
+    terminal.mouse(35, e, false);
+    // Observe the intermediate move before sending another one: ConPTY can
+    // merge motion reports, and physical typing no longer leaves a focus color.
+    terminal.wait_for("pointer moves to another key", |screen| {
+        color_at(screen, e) == ACCENT
     });
     terminal.mouse(35, q, false);
     terminal.wait_for("hover after actual pointer movement", |screen| {
@@ -527,6 +535,245 @@ fn fixture_platform(root: &Path) -> MockPlatform {
     MockPlatform::new(dirs, paths)
 }
 
+#[test]
+fn screen_keyboard_aa_popup_moves_above_keyboard_and_survives_resize() {
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        let platform = fixture_platform(Path::new(&root));
+        let code = cli::run_with_platform(
+            ["debug", "screen-keyboard"],
+            &platform,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        );
+        println!("{RESTORED_MARKER}");
+        std::io::stdout().flush().unwrap();
+        std::process::exit(code);
+    }
+    let fixture = Fixture::new();
+    let mut terminal = PtySession::start_with(
+        &fixture.0,
+        "screen_keyboard_aa_popup_moves_above_keyboard_and_survives_resize",
+        false,
+    );
+    terminal.wait_for("keyboard demo", |screen| {
+        screen.contents().contains("Test AA")
+    });
+    terminal.click(
+        ScreenKeyboardAction::TestAutoAdmin,
+        false,
+        "AA popup opened",
+        |screen| {
+            screen.contents().contains("AutoAdmin (AA)")
+                && screen.contents().contains("Show keyboard")
+                && !screen.contents().contains("F12")
+        },
+    );
+    let closed_dialog = layout(terminal.parser.screen(), true).aa_dialog;
+    terminal.click(
+        ScreenKeyboardAction::ToggleKeyboard,
+        true,
+        "AA keyboard expanded",
+        |screen| {
+            let layout = layout(screen, false);
+            text_in(screen, layout.aa_dialog)
+                .concat()
+                .contains("Hide keyboard")
+                && text_in(screen, layout.keyboard).concat().contains("F12")
+                && text_in(
+                    screen,
+                    Rect {
+                        height: 1,
+                        ..layout.aa_dialog
+                    },
+                )
+                .concat()
+                .contains("AutoAdmin (AA)")
+                && text_in(
+                    screen,
+                    Rect {
+                        height: 1,
+                        ..button_area(screen, false, ScreenKeyboardAction::Letter('q'))
+                    },
+                )
+                .concat()
+                .trim()
+                    == "q"
+        },
+    );
+    let expanded = layout(terminal.parser.screen(), false);
+    assert!(expanded.aa_dialog.y < closed_dialog.y);
+    assert!(expanded.aa_dialog.bottom() <= expanded.keyboard.y);
+    terminal.click(
+        ScreenKeyboardAction::Letter('q'),
+        false,
+        "AA virtual input",
+        |screen| typed_text(screen, false) == "q",
+    );
+    terminal.send(b"w");
+    terminal.wait_for("AA physical input and highlight", |screen| {
+        typed_text(screen, false) == "qw"
+            && color_at(
+                screen,
+                button_position(screen, false, ScreenKeyboardAction::Letter('w')),
+            ) == PRESSED
+    });
+    terminal.resize(17, 60);
+    terminal.wait_for("small terminal keeps AA visible", |screen| {
+        screen.contents().contains("AutoAdmin (AA)")
+            && screen.contents().contains("Enlarge")
+            && !screen.contents().contains("F12")
+            && typed_text(screen, false) == "qw"
+    });
+    terminal.resize(ROWS, COLS);
+    terminal.wait_for("keyboard returns after enlarging", |screen| {
+        screen.contents().contains("F12")
+            && typed_text(screen, false) == "qw"
+            && text_in(
+                screen,
+                button_area(screen, false, ScreenKeyboardAction::ToggleKeyboard),
+            )
+            .concat()
+            .contains("Hide keyboard")
+            && text_in(
+                screen,
+                Rect {
+                    height: 1,
+                    ..button_area(screen, false, ScreenKeyboardAction::Letter('q'))
+                },
+            )
+            .concat()
+            .trim()
+                == "q"
+    });
+    terminal.click(
+        ScreenKeyboardAction::ToggleKeyboard,
+        false,
+        "AA keyboard hidden",
+        |screen| {
+            !screen.contents().contains("F12")
+                && text_in(screen, layout(screen, true).aa_dialog)
+                    .concat()
+                    .contains("Show keyboard")
+                && text_in(
+                    screen,
+                    Rect {
+                        height: 1,
+                        ..layout(screen, true).aa_dialog
+                    },
+                )
+                .concat()
+                .contains("AutoAdmin (AA)")
+        },
+    );
+    terminal.click(
+        ScreenKeyboardAction::TestAutoAdmin,
+        true,
+        "back to keyboard demo",
+        |screen| {
+            screen.contents().contains("Test AA") && !screen.contents().contains("AutoAdmin (AA)")
+        },
+    );
+    terminal.send(b"\x1b");
+    terminal.wait_for("AA demo terminal restored", |screen| {
+        !screen.alternate_screen() && screen.contents().contains(RESTORED_MARKER)
+    });
+    terminal.finish();
+}
+
+#[cfg(unix)]
+#[test]
+fn screen_keyboard_tracks_enhanced_physical_presses_and_restores_reporting() {
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        let platform = fixture_platform(Path::new(&root));
+        let code = cli::run_with_platform(
+            ["debug", "screen-keyboard"],
+            &platform,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        );
+        println!("{RESTORED_MARKER}");
+        std::io::stdout().flush().unwrap();
+        std::process::exit(code);
+    }
+    let fixture = Fixture::new();
+    let mut terminal = PtySession::start_with(
+        &fixture.0,
+        "screen_keyboard_tracks_enhanced_physical_presses_and_restores_reporting",
+        true,
+    );
+    terminal.wait_for("enhanced keyboard", |screen| {
+        screen.contents().contains("F12")
+    });
+    let a = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Letter('a'),
+    );
+    terminal.send(b"\x1b[97;1:1u");
+    terminal.wait_for("held physical A", |screen| {
+        color_at(screen, a) == PRESSED && typed_text(screen, false) == "a"
+    });
+    terminal.assert_stays("key stays lit while held", |screen| {
+        color_at(screen, a) == PRESSED
+    });
+    terminal.send(b"\x1b[97;1:2u");
+    terminal.wait_for("repeat types again", |screen| {
+        typed_text(screen, false) == "aa"
+    });
+    terminal.send(b"\x1b[97;1:3u");
+    terminal.wait_for("release extinguishes A", |screen| {
+        color_at(screen, a) == TEXT && typed_text(screen, false) == "aa"
+    });
+    let shift = button_position(terminal.parser.screen(), false, ScreenKeyboardAction::Shift);
+    let one = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::Character('1'),
+    );
+    terminal.send(b"\x1b[57441;2:1u");
+    terminal.wait_for("standalone physical Shift", |screen| {
+        color_at(screen, shift) == PRESSED
+    });
+    terminal.send(b"\x1b[49;2:1u");
+    terminal.wait_for("Shift and digit light together", |screen| {
+        color_at(screen, shift) == PRESSED
+            && color_at(screen, one) == PRESSED
+            && typed_text(screen, false) == "aa!"
+    });
+    terminal.send(b"\x1b[49;2:3u\x1b[57441;1:3u");
+    terminal.wait_for("both keys released", |screen| {
+        color_at(screen, shift) == TEXT && color_at(screen, one) == TEXT
+    });
+    let right_ctrl = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::RightCtrl,
+    );
+    let left_ctrl = button_position(
+        terminal.parser.screen(),
+        false,
+        ScreenKeyboardAction::LeftCtrl,
+    );
+    terminal.send(b"\x1b[57448;5:1u\x1b[97;5:1u");
+    terminal.wait_for("right Ctrl identity and combination", |screen| {
+        color_at(screen, right_ctrl) == PRESSED
+            && color_at(screen, left_ctrl) == TEXT
+            && color_at(screen, a) == PRESSED
+            && typed_text(screen, false) == "aa!"
+    });
+    terminal.send(b"\x1b[O");
+    terminal.wait_for("focus loss clears physical keys", |screen| {
+        color_at(screen, right_ctrl) == TEXT && color_at(screen, a) == TEXT
+    });
+    terminal.send(b"\x1b[I\x1b[27u");
+    terminal.wait_for("restored enhanced terminal", |screen| {
+        !screen.alternate_screen() && screen.contents().contains(RESTORED_MARKER)
+    });
+    assert!(terminal.raw.windows(6).any(|bytes| bytes == b"\x1b[>11u"));
+    assert!(terminal.raw.windows(5).any(|bytes| bytes == b"\x1b[<1u"));
+    terminal.finish();
+}
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -569,10 +816,15 @@ struct PtySession {
     parser: vt100::Parser,
     raw: Vec<u8>,
     query: Vec<u8>,
+    enhanced_keyboard: bool,
 }
 
 impl PtySession {
     fn start(root: &Path) -> Self {
+        Self::start_with(root, TEST_NAME, false)
+    }
+
+    fn start_with(root: &Path, test_name: &str, enhanced_keyboard: bool) -> Self {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: ROWS,
@@ -582,7 +834,7 @@ impl PtySession {
             })
             .unwrap();
         let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
-        command.args(["--exact", TEST_NAME, "--nocapture"]);
+        command.args(["--exact", test_name, "--nocapture"]);
         command.env(CHILD_ROOT, root);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
@@ -610,6 +862,7 @@ impl PtySession {
             parser: vt100::Parser::new(ROWS, COLS, 0),
             raw: Vec::new(),
             query: Vec::new(),
+            enhanced_keyboard,
         }
     }
 
@@ -685,6 +938,12 @@ impl PtySession {
                 if self.query == b"\x1b[6n" {
                     let (row, column) = self.parser.screen().cursor_position();
                     self.send(format!("\x1b[{};{}R", row + 1, column + 1).as_bytes());
+                }
+                if self.query == b"\x1b[?u" && self.enhanced_keyboard {
+                    self.send(b"\x1b[?0u");
+                }
+                if self.query.ends_with(b"\x1b[c") {
+                    self.send(b"\x1b[?1;2c");
                 }
             }
         }
@@ -764,7 +1023,16 @@ impl Drop for PtySession {
 
 fn layout(screen: &vt100::Screen, collapsed: bool) -> ui::ScreenKeyboardLayout {
     let (rows, cols) = screen.size();
-    ui::screen_keyboard_layout(Rect::new(0, 0, cols, rows), collapsed)
+    if screen.contents().contains("AutoAdmin (AA)") {
+        ui::screen_keyboard_aa_layout(
+            Rect::new(0, 0, cols, rows),
+            collapsed,
+            if collapsed { 0 } else { 1_000 },
+            &ui::RenderContext::default(),
+        )
+    } else {
+        ui::screen_keyboard_layout(Rect::new(0, 0, cols, rows), collapsed)
+    }
 }
 
 fn button_position(

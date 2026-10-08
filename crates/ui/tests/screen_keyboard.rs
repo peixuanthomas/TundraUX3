@@ -14,9 +14,151 @@ fn view(text: &str) -> ScreenKeyboardViewModel<'_> {
         text,
         focus: ScreenKeyboardAction::Letter('q'),
         modifiers: ScreenKeyboardModifiers::default(),
+        physical_pressed: &[],
         last_key: "",
         message: "",
     }
+}
+
+#[test]
+fn aa_dialog_stays_inside_screen_and_above_every_animation_frame() {
+    let context = RenderContext::default();
+    for width in [0, 1, 12, 40, 59, 60, 80, 120, 160] {
+        for height in [0, 1, 4, 12, 17, 18, 24, 42, 60] {
+            let bounds = Rect::new(3, 4, width, height);
+            let hidden = ui::screen_keyboard_aa_layout(bounds, true, 0, &context);
+            for visibility in [0, 1, 100, 500, 999, 1_000] {
+                for collapsed in [false, true] {
+                    let layout =
+                        ui::screen_keyboard_aa_layout(bounds, collapsed, visibility, &context);
+                    if !layout.aa_dialog.is_empty() {
+                        assert_eq!(layout.aa_dialog.intersection(bounds), layout.aa_dialog);
+                    }
+                    assert!(layout.aa_dialog.intersection(layout.keyboard).is_empty());
+                    if visibility == 1_000 && layout.usable {
+                        assert!(layout.aa_dialog.y <= hidden.aa_dialog.y);
+                        assert_eq!(layout.keyboard.bottom(), bounds.bottom());
+                        assert!(
+                            layout
+                                .buttons
+                                .iter()
+                                .any(|key| key.action == ScreenKeyboardAction::Letter('a'))
+                        );
+                    }
+                    let mut ids = HashSet::new();
+                    for button in &layout.buttons {
+                        assert!(ids.insert(button.action.button_id()));
+                        assert_eq!(button.area.intersection(bounds), button.area);
+                        assert!(
+                            button.area.intersection(layout.keyboard) == button.area
+                                || button.area.intersection(layout.aa_dialog) == button.area
+                        );
+                    }
+                    let mut terminal =
+                        Terminal::new(TestBackend::new(bounds.right(), bounds.bottom())).unwrap();
+                    terminal
+                        .draw(|frame| {
+                            ui::render_screen_keyboard_aa_test(
+                                frame,
+                                &layout,
+                                &view("AA input"),
+                                &context,
+                            );
+                            let before = frame.buffer_mut().clone();
+                            ui::render_screen_keyboard_panel(
+                                frame,
+                                &layout,
+                                &view("AA input"),
+                                &context,
+                            );
+                            for y in layout.aa_dialog.y..layout.aa_dialog.bottom() {
+                                for x in layout.aa_dialog.x..layout.aa_dialog.right() {
+                                    assert_eq!(
+                                        before[(x, y)],
+                                        frame.buffer_mut()[(x, y)],
+                                        "keyboard painted over AA"
+                                    );
+                                }
+                            }
+                        })
+                        .unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn physical_presses_and_virtual_latches_share_themed_keycap_colors() {
+    use ScreenKeyboardAction::*;
+    for bounds in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 120, 48)] {
+        for capabilities in [
+            ui::RenderCapabilities::default(),
+            ui::RenderCapabilities::ansi(),
+        ] {
+            let theme = TundraTheme::default_dark().with_accent_color(Color::Rgb(32, 64, 96));
+            let mut context = RenderContext::from_theme(&theme, Default::default(), capabilities);
+            let mut buttons = ButtonFrame::new(None, None, &context.compatibility_theme());
+            buttons.keyboard_focus_visible = false;
+            context.buttons = Some(buttons);
+            let physical = [
+                Letter('a'),
+                Character('1'),
+                RightCtrl,
+                Tab,
+                Enter,
+                Space,
+                Backspace,
+                Function(12),
+            ];
+            let mut model = view("");
+            model.physical_pressed = &physical;
+            model.modifiers.shift = true;
+            let (layout, buffer) = draw(bounds, false, &model, &context);
+            let expected = context.compatibility_theme().button_pressed_color();
+            for action in physical.into_iter().chain([Shift]) {
+                let area = key_area(&layout, action);
+                assert_eq!(buffer[(area.x, area.y)].fg, expected, "{action:?}");
+                for y in area.y..area.bottom() {
+                    for x in area.x..area.right() {
+                        if !buffer[(x, y)].symbol().trim().is_empty() {
+                            assert_eq!(buffer[(x, y)].fg, expected, "{action:?}");
+                        }
+                    }
+                }
+            }
+            model.physical_pressed = &[];
+            let (_, released) = draw(bounds, false, &model, &context);
+            let shift = key_area(&layout, Shift);
+            assert_eq!(released[(shift.x, shift.y)].fg, expected);
+            let a = key_area(&layout, Letter('a'));
+            assert_ne!(released[(a.x, a.y)].fg, expected);
+        }
+    }
+}
+
+#[test]
+fn keyboard_panel_clears_page_and_chrome_text_between_keycaps() {
+    let bounds = Rect::new(0, 0, 80, 24);
+    let context = RenderContext::default();
+    let layout = ui::screen_keyboard_aa_layout(bounds, false, 1_000, &context);
+    let render = |underlying_text: bool| {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                if underlying_text {
+                    for y in layout.keyboard.y..layout.keyboard.bottom() {
+                        for x in layout.keyboard.x..layout.keyboard.right() {
+                            frame.buffer_mut()[(x, y)].set_symbol("X");
+                        }
+                    }
+                }
+                ui::render_screen_keyboard_panel(frame, &layout, &view(""), &context);
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    };
+    assert_eq!(render(true), render(false));
 }
 
 fn draw(
@@ -65,7 +207,7 @@ fn keyboard_uses_seven_full_width_rows_in_the_bottom_half() {
         let layout = screen_keyboard_layout(bounds, false);
         assert!(layout.usable);
         assert!(!layout.collapsed);
-        assert_eq!(layout.buttons.len(), 74);
+        assert_eq!(layout.buttons.len(), 75);
         assert_eq!(layout.keyboard.y, bounds.y + bounds.height / 2);
         assert_eq!(layout.text.bottom(), layout.status.y);
         assert_eq!(layout.hint.bottom(), layout.keyboard.y);
@@ -245,7 +387,7 @@ fn collapsed_keyboard_keeps_toolbar_and_gives_text_more_room() {
     let expanded = screen_keyboard_layout(bounds, false);
     let (collapsed, buffer) = draw(bounds, true, &view("kept text"), &RenderContext::default());
     assert!(collapsed.collapsed);
-    assert_eq!(collapsed.buttons.len(), 5);
+    assert_eq!(collapsed.buttons.len(), 6);
     assert!(collapsed.text.height > expanded.text.height);
     assert!(
         collapsed
@@ -462,7 +604,7 @@ fn sliding_keyboard_keeps_toolbar_fixed_and_matches_visible_hit_regions() {
                 }
             }
             if visibility == 0 {
-                assert_eq!(layout.buttons.len(), 5);
+                assert_eq!(layout.buttons.len(), 6);
             }
         }
     }

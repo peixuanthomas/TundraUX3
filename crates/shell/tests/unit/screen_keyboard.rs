@@ -444,6 +444,7 @@ fn key_colors(
                     text: &state.text,
                     focus: state.focus,
                     modifiers: state.modifiers,
+                    physical_pressed: &state.physical.pressed_actions(),
                     last_key: &state.last_key,
                     message: &state.message,
                 },
@@ -522,4 +523,270 @@ fn screen_keyboard_actual_colors_follow_input_and_theme_in_rgb_and_ansi() {
         );
         assert_eq!(key_colors(&state, &layout, context, 'w').0, normal);
     }
+}
+
+#[test]
+fn physical_keys_map_shifted_symbols_and_modifiers_without_changing_latches() {
+    use ScreenKeyboardAction as Action;
+    use crossterm::event::{
+        KeyCode as Code, KeyEvent as Event, KeyModifiers as Mods, ModifierKeyCode as Mod,
+    };
+    let now = Instant::now();
+    let layout = layout();
+    for (code, expected) in [
+        (Code::Char('A'), Action::Letter('a')),
+        (Code::Char('!'), Action::Character('1')),
+        (Code::Char('?'), Action::Character('/')),
+        (Code::Char(' '), Action::Space),
+        (Code::Backspace, Action::Backspace),
+        (Code::Enter, Action::Enter),
+        (Code::BackTab, Action::Tab),
+        (Code::F(12), Action::Function(12)),
+        (Code::CapsLock, Action::CapsLock),
+        (Code::Modifier(Mod::RightControl), Action::RightCtrl),
+        (Code::Modifier(Mod::LeftControl), Action::LeftCtrl),
+        (Code::Modifier(Mod::LeftShift), Action::Shift),
+        (Code::Modifier(Mod::RightAlt), Action::Alt),
+    ] {
+        let mut state = ScreenKeyboardState::default();
+        state.handle_terminal_event(
+            event::Event::Key(Event::new(code, Mods::NONE)),
+            &layout,
+            now,
+        );
+        assert!(
+            state.physical.pressed_actions().contains(&expected),
+            "{code:?}"
+        );
+        assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
+    }
+    let mut state = ScreenKeyboardState::default();
+    state.handle_terminal_event(
+        event::Event::Key(Event::new(
+            Code::Char('c'),
+            Mods::CONTROL | Mods::ALT | Mods::SHIFT,
+        )),
+        &layout,
+        now,
+    );
+    for action in [
+        Action::Letter('c'),
+        Action::LeftCtrl,
+        Action::Alt,
+        Action::Shift,
+    ] {
+        assert!(state.physical.pressed_actions().contains(&action));
+    }
+    assert!(state.text.is_empty());
+    assert_eq!(state.pending_clipboard, None);
+}
+
+#[test]
+fn physical_keys_hold_release_repeat_and_expire_in_legacy_terminals() {
+    use crossterm::event::{
+        KeyCode as Code, KeyEvent as Event, KeyEventKind as Kind, KeyModifiers as Mods,
+    };
+    let now = Instant::now();
+    let mut physical = PhysicalKeyboard::default();
+    for reports_release in [false, true] {
+        physical.clear();
+        physical.reports_release = reports_release;
+        physical.observe(Event::new(Code::Char('!'), Mods::SHIFT), now);
+        physical.observe(Event::new(Code::Char('a'), Mods::NONE), now);
+        physical.expire(now + Duration::from_millis(250));
+        assert_eq!(
+            physical.pressed_actions().len(),
+            if reports_release { 2 } else { 0 }
+        );
+        physical.observe(
+            Event::new_with_kind(Code::Char('1'), Mods::NONE, Kind::Release),
+            now + Duration::from_millis(300),
+        );
+        physical.expire(now + Duration::from_millis(300));
+        assert!(
+            !physical
+                .pressed_actions()
+                .contains(&ScreenKeyboardAction::Character('1'))
+        );
+        if reports_release {
+            assert_eq!(
+                physical.pressed_actions(),
+                vec![ScreenKeyboardAction::Letter('a')]
+            );
+        }
+    }
+    physical.clear();
+    physical.reports_release = false;
+    physical.observe(Event::new(Code::Char('b'), Mods::NONE), now);
+    physical.observe(
+        Event::new_with_kind(Code::Char('b'), Mods::NONE, Kind::Repeat),
+        now + Duration::from_millis(150),
+    );
+    physical.expire(now + Duration::from_millis(250));
+    assert_eq!(
+        physical.pressed_actions(),
+        vec![ScreenKeyboardAction::Letter('b')]
+    );
+    assert!(physical.expire(now + Duration::from_millis(400)));
+    // A press and immediate release still produce a visible short flash.
+    physical.observe(Event::new(Code::Char('x'), Mods::NONE), now);
+    physical.observe(
+        Event::new_with_kind(Code::Char('x'), Mods::NONE, Kind::Release),
+        now,
+    );
+    assert!(!physical.expire(now + Duration::from_millis(50)));
+    assert!(physical.expire(now + Duration::from_millis(101)));
+}
+
+#[test]
+fn physical_feedback_clears_when_hidden_resized_or_unfocused_and_ignores_paste() {
+    let layout = layout();
+    let now = Instant::now();
+    for event in [event::Event::FocusLost, event::Event::Resize(90, 30)] {
+        let mut state = ScreenKeyboardState::default();
+        state.physical.reports_release = true;
+        state.handle_terminal_event(
+            event::Event::Key(event::KeyEvent::new(
+                event::KeyCode::Char('q'),
+                event::KeyModifiers::NONE,
+            )),
+            &layout,
+            now,
+        );
+        assert!(!state.physical.pressed_actions().is_empty());
+        state.handle_terminal_event(event, &layout, now);
+        assert!(state.physical.pressed_actions().is_empty());
+    }
+    let mut state = ScreenKeyboardState::default();
+    let input = event::Event::Key(event::KeyEvent::new(
+        event::KeyCode::Char('q'),
+        event::KeyModifiers::NONE,
+    ));
+    state.handle_terminal_event(input.clone(), &layout, now);
+    state.activate(ScreenKeyboardAction::ToggleKeyboard);
+    assert!(state.physical.pressed_actions().is_empty());
+    state.handle_terminal_event(input, &layout, now);
+    state.activate(ScreenKeyboardAction::ToggleKeyboard);
+    state.handle_terminal_event(event::Event::Paste("abc".to_owned()), &layout, now);
+    assert!(state.physical.pressed_actions().is_empty());
+    assert_eq!(state.text, "qqabc");
+}
+
+#[test]
+fn physical_feedback_uses_pressed_colors_then_returns_to_normal() {
+    let layout = layout();
+    let now = Instant::now();
+    for (capabilities, accent) in [
+        (RenderCapabilities::default(), Color::Rgb(32, 64, 96)),
+        (RenderCapabilities::ansi(), Color::Cyan),
+    ] {
+        let context = RenderContext::from_theme(
+            &TundraTheme::default_dark().with_accent_color(accent),
+            Default::default(),
+            capabilities,
+        );
+        let mut state = ScreenKeyboardState::default();
+        state.handle_terminal_event(
+            event::Event::Key(event::KeyEvent::new(
+                event::KeyCode::Char('a'),
+                event::KeyModifiers::NONE,
+            )),
+            &layout,
+            now,
+        );
+        assert_eq!(
+            key_colors(&state, &layout, context.clone(), 'a').0,
+            context.compatibility_theme().button_pressed_color()
+        );
+        state.physical.expire(now + Duration::from_millis(250));
+        assert_eq!(
+            key_colors(&state, &layout, context.clone(), 'a').0,
+            context.compatibility_theme().foreground
+        );
+    }
+}
+
+#[test]
+fn aa_test_compositor_keeps_popup_text_and_controls_above_keyboard() {
+    let mut state = ScreenKeyboardState::default();
+    let now = Instant::now();
+    state.activate(ScreenKeyboardAction::TestAutoAdmin);
+    assert!(state.aa_test && state.collapsed);
+    state.handle_input(key(Key::Char('a')), &layout(), now);
+    let context = RenderContext::default();
+    let bounds = Rect::new(0, 0, 80, 24);
+    for visibility in [0, 100, 500, 1_000] {
+        let layout =
+            ScreenCompositor::keyboard_demo_layout(bounds, false, visibility, true, &context);
+        assert!(layout.aa_dialog.intersection(layout.keyboard).is_empty());
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                ScreenCompositor::render_keyboard_demo(
+                    frame,
+                    &layout,
+                    &ScreenKeyboardViewModel {
+                        text: &state.text,
+                        focus: state.focus,
+                        modifiers: state.modifiers,
+                        physical_pressed: &[],
+                        last_key: &state.last_key,
+                        message: &state.message,
+                    },
+                    true,
+                    &context,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut dialog_text = String::new();
+        for y in layout.aa_dialog.y..layout.aa_dialog.bottom() {
+            for x in layout.aa_dialog.x..layout.aa_dialog.right() {
+                dialog_text.push_str(buffer[(x, y)].symbol());
+            }
+        }
+        assert!(dialog_text.contains("AutoAdmin (AA)"));
+        assert!(dialog_text.contains("Back to demo"));
+        assert!(dialog_text.contains("Hide keyboard"));
+        assert!(dialog_text.contains('a'));
+    }
+    state.handle_input(key(Key::Escape), &layout(), now);
+    assert!(!state.aa_test && !state.collapsed);
+    assert_eq!(state.text, "a");
+}
+
+#[cfg(unix)]
+#[test]
+fn enhanced_keyboard_preserves_shift_and_caps_lock_text() {
+    let layout = layout();
+    let now = Instant::now();
+    let mut state = ScreenKeyboardState::default();
+    state.physical.reports_release = true;
+    for (character, modifiers, key_state) in [
+        ('1', event::KeyModifiers::SHIFT, event::KeyEventState::NONE),
+        ('a', event::KeyModifiers::SHIFT, event::KeyEventState::NONE),
+        (
+            'b',
+            event::KeyModifiers::NONE,
+            event::KeyEventState::CAPS_LOCK,
+        ),
+        (
+            'c',
+            event::KeyModifiers::SHIFT,
+            event::KeyEventState::CAPS_LOCK,
+        ),
+    ] {
+        state.handle_terminal_event(
+            event::Event::Key(event::KeyEvent::new_with_kind_and_state(
+                event::KeyCode::Char(character),
+                modifiers,
+                event::KeyEventKind::Press,
+                key_state,
+            )),
+            &layout,
+            now,
+        );
+    }
+    assert_eq!(state.text, "!ABc");
+    assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
 }

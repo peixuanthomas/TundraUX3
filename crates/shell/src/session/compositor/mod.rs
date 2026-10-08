@@ -3,6 +3,8 @@ use super::spring_progress::SpringProgress;
 use super::*;
 use ratatui::Frame;
 
+mod screen_keyboard;
+
 pub(super) enum ScreenViewModel {
     Home(Box<ui::HomeViewModel>),
     Setup(Box<ui::SetupViewModel>),
@@ -96,7 +98,7 @@ pub(super) struct PreparedFrame {
 }
 
 #[derive(Default)]
-pub(super) struct ScreenCompositor {
+pub(crate) struct ScreenCompositor {
     motion: ShellMotionEffects,
     progress: SpringProgress,
     toast: Option<ui::components::Toast>,

@@ -14,7 +14,11 @@ use ui::{
     components::{ButtonFrame, ButtonRegion},
 };
 
+use crate::session::ScreenCompositor;
 use crate::{ShellAppConfig, TerminalGuard, crossterm_event_to_input};
+
+mod physical;
+use physical::PhysicalKeyboard;
 
 const BUTTON_MAX_PRESS: Duration = Duration::from_millis(500);
 const ANIMATION_FRAME: Duration = Duration::from_millis(16);
@@ -81,6 +85,7 @@ pub fn run_screen_keyboard(
         .with_accent_color(config.accent_color);
     let mut terminal = TerminalGuard::enter(output)?;
     let mut model = ScreenKeyboardState::default();
+    model.physical.reports_release = terminal.enable_keyboard_reporting()?;
     let mut bounds = Rect::default();
     let mut layout = ui::screen_keyboard_layout(bounds, model.collapsed);
     let mut dirty = true;
@@ -88,41 +93,50 @@ pub fn run_screen_keyboard(
     let mut motion = KeyboardMotion::default();
     let mut next_frame = origin;
     let mut finishing_animation = false;
+    let mut clock_tick = origin;
     loop {
         let now = Instant::now();
         let motion_frame = keyboard_motion_frame(appearance, now.duration_since(origin));
         dirty |= model.expire_press(now);
+        dirty |= model.physical.expire(now);
+        if model.aa_test && now.duration_since(clock_tick) >= Duration::from_secs(1) {
+            dirty = true;
+            clock_tick = now;
+        }
         let animating = motion.transition.requests_redraw(motion_frame);
         if dirty || ((animating || finishing_animation) && now >= next_frame) {
             terminal.terminal_mut().draw(|frame| {
                 bounds = frame.area();
-                let next_layout = ui::screen_keyboard_layout_with_visibility(
+                let mut context = RenderContext::from_theme(
+                    &theme,
+                    motion_frame,
+                    crate::terminal_session::text_render_capabilities(),
+                );
+                let next_layout = ScreenCompositor::keyboard_demo_layout(
                     bounds,
                     model.collapsed,
                     motion.visibility(motion_frame),
+                    model.aa_test,
+                    &context,
                 );
                 if layout != next_layout {
                     layout = next_layout;
                     model.sync_pointer_layout(&layout);
                     model.ensure_visible_focus(&layout);
                 }
-                let mut context = RenderContext::from_theme(
-                    &theme,
-                    motion_frame,
-                    crate::terminal_session::text_render_capabilities(),
-                );
                 context.buttons = Some(model.button_frame(&context));
-                ui::render_screen_keyboard(
+                ScreenCompositor::render_keyboard_demo(
                     frame,
-                    bounds,
                     &layout,
                     &ScreenKeyboardViewModel {
                         text: &model.text,
                         focus: model.focus,
                         modifiers: model.modifiers,
+                        physical_pressed: &model.physical.pressed_actions(),
                         last_key: &model.last_key,
                         message: &model.message,
                     },
+                    model.aa_test,
                     &context,
                 );
             })?;
@@ -136,12 +150,20 @@ pub fn run_screen_keyboard(
             Duration::from_millis(100)
         };
         if event::poll(timeout)? {
-            let input = crossterm_event_to_input(event::read()?);
+            let input = event::read()?;
             let was_collapsed = model.collapsed;
-            if model.handle_input(input, &layout, Instant::now()) {
+            let was_aa_test = model.aa_test;
+            if model.handle_terminal_event(input, &layout, Instant::now()) {
                 break;
             }
-            if was_collapsed != model.collapsed {
+            if was_aa_test != model.aa_test {
+                let visibility = if model.collapsed { 0 } else { 1_000 };
+                motion = KeyboardMotion {
+                    start: visibility,
+                    target: visibility,
+                    ..Default::default()
+                };
+            } else if was_collapsed != model.collapsed {
                 motion.retarget(
                     model.collapsed,
                     keyboard_motion_frame(appearance, origin.elapsed()),
@@ -167,12 +189,14 @@ struct ScreenKeyboardState {
     modifiers: ScreenKeyboardModifiers,
     pending_clipboard: Option<ScreenKeyboardAction>,
     collapsed: bool,
+    aa_test: bool,
     navigating_buttons: bool,
     focus: ScreenKeyboardAction,
     keyboard_focus_visible: bool,
     mouse_coordinates: Option<(u16, u16)>,
     hovered: Option<ButtonRegion>,
     pressed: Option<PointerPress>,
+    physical: PhysicalKeyboard,
 }
 
 impl Default for ScreenKeyboardState {
@@ -184,12 +208,14 @@ impl Default for ScreenKeyboardState {
             modifiers: ScreenKeyboardModifiers::default(),
             pending_clipboard: None,
             collapsed: false,
+            aa_test: false,
             navigating_buttons: true,
             focus: ScreenKeyboardAction::Letter('q'),
             keyboard_focus_visible: true,
             mouse_coordinates: None,
             hovered: None,
             pressed: None,
+            physical: PhysicalKeyboard::default(),
         }
     }
 }
@@ -201,7 +227,7 @@ impl ScreenKeyboardState {
             self.pressed.as_ref().map(|pressed| pressed.region.clone()),
             &context.compatibility_theme(),
         );
-        frame.keyboard_focus_visible = self.keyboard_focus_visible;
+        frame.keyboard_focus_visible = self.keyboard_focus_visible && self.navigating_buttons;
         frame
     }
 
@@ -260,9 +286,27 @@ impl ScreenKeyboardState {
     fn activate(&mut self, action: ScreenKeyboardAction) -> bool {
         self.message.clear();
         match action {
-            ScreenKeyboardAction::Exit | ScreenKeyboardAction::Escape => return true,
+            ScreenKeyboardAction::Exit => return true,
+            ScreenKeyboardAction::Escape => {
+                return if self.aa_test {
+                    self.activate(ScreenKeyboardAction::TestAutoAdmin)
+                } else {
+                    true
+                };
+            }
+            ScreenKeyboardAction::TestAutoAdmin => {
+                self.aa_test = !self.aa_test;
+                self.collapsed = self.aa_test;
+                self.cancel_pointer();
+                self.physical.clear();
+                self.release_modifiers();
+                self.navigating_buttons = true;
+                self.keyboard_focus_visible = true;
+                self.focus = ScreenKeyboardAction::ToggleKeyboard;
+            }
             ScreenKeyboardAction::ToggleKeyboard => {
                 self.collapsed = !self.collapsed;
+                self.physical.clear();
                 self.cancel_pointer();
                 self.release_modifiers();
                 self.focus = ScreenKeyboardAction::ToggleKeyboard;
@@ -410,6 +454,40 @@ impl ScreenKeyboardState {
         }
     }
 
+    fn handle_terminal_event(
+        &mut self,
+        mut event: event::Event,
+        layout: &ScreenKeyboardLayout,
+        now: Instant,
+    ) -> bool {
+        if let event::Event::Key(key) = &event
+            && !self.collapsed
+            && layout.usable
+        {
+            self.physical.observe(*key, now);
+        }
+        // With all-key reporting, Kitty sends the unshifted key code. Preserve
+        // normal typing while using that base code to identify the keycap.
+        // Windows console events already contain the resulting character.
+        if cfg!(unix)
+            && self.physical.reports_release
+            && let event::Event::Key(key) = &mut event
+            && let event::KeyCode::Char(character) = key.code
+            && character.is_ascii_graphic()
+        {
+            key.code = event::KeyCode::Char(
+                character_action(character)
+                    .character(ScreenKeyboardModifiers {
+                        shift: key.modifiers.contains(event::KeyModifiers::SHIFT),
+                        caps_lock: key.state.contains(event::KeyEventState::CAPS_LOCK),
+                        ..Default::default()
+                    })
+                    .unwrap_or(character),
+            );
+        }
+        self.handle_input(crossterm_event_to_input(event), layout, now)
+    }
+
     fn handle_input(
         &mut self,
         input: InputEvent,
@@ -420,6 +498,9 @@ impl ScreenKeyboardState {
             InputEvent::Key(key) if key.is_press_like() => {
                 self.pressed = None;
                 if key.key == Key::Escape {
+                    if self.aa_test {
+                        return self.activate(ScreenKeyboardAction::TestAutoAdmin);
+                    }
                     return true;
                 }
                 if key.modifiers.super_key || key.modifiers.hyper || key.modifiers.meta {
@@ -570,12 +651,16 @@ impl ScreenKeyboardState {
                 }
             }
             InputEvent::FocusLost => {
+                self.physical.clear();
                 self.cancel_pointer();
                 self.release_modifiers();
                 self.mouse_coordinates = None;
                 self.keyboard_focus_visible = false;
             }
-            InputEvent::Resize { .. } => self.cancel_pointer(),
+            InputEvent::Resize { .. } => {
+                self.cancel_pointer();
+                self.physical.clear();
+            }
             InputEvent::Paste(text) => {
                 self.use_keyboard();
                 self.append_paste(&text);
@@ -619,6 +704,7 @@ fn key_name(action: ScreenKeyboardAction, character: Option<char>) -> String {
         RightCtrl => "RCtrl",
         Alt => "Alt",
         ToggleKeyboard => "Keyboard",
+        TestAutoAdmin => "Test AA",
         Copy => "Copy",
         Paste => "Paste",
     }

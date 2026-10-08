@@ -47,6 +47,12 @@ same byte. A continuation delayed past the Escape deadline is inherently
 ambiguous; this patch does not claim to identify the user's intent in that case.
 Windows continues to use its native console event decoder.
 
+The Windows decoder also preserves standalone Shift, Ctrl, Alt and CapsLock
+press/release records for the screen keyboard's physical-key feedback. Scan
+codes distinguish left/right Shift; the enhanced-key bit distinguishes right
+Ctrl/Alt, including on release. Alt-code character completion is unchanged.
+These regressions are in `src/event/sys/windows/parse.rs` and require Windows.
+
 ## Verification
 
 The added parser regressions are in `tests/escape_input.rs`; the original

@@ -1,19 +1,20 @@
 use crossterm_winapi::{ControlKeyState, EventFlags, KeyEventRecord, ScreenBuffer};
 use winapi::um::{
     wincon::{
-        CAPSLOCK_ON, LEFT_ALT_PRESSED, LEFT_CTRL_PRESSED, RIGHT_ALT_PRESSED, RIGHT_CTRL_PRESSED,
-        SHIFT_PRESSED,
+        CAPSLOCK_ON, ENHANCED_KEY, LEFT_ALT_PRESSED, LEFT_CTRL_PRESSED, RIGHT_ALT_PRESSED,
+        RIGHT_CTRL_PRESSED, SHIFT_PRESSED,
     },
     winuser::{
         GetForegroundWindow, GetKeyboardLayout, GetWindowThreadProcessId, ToUnicodeEx, VK_BACK,
-        VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT,
-        VK_LEFT, VK_MENU, VK_NEXT, VK_NUMPAD0, VK_NUMPAD9, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT,
-        VK_TAB, VK_UP,
+        VK_CAPITAL, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F24, VK_HOME,
+        VK_INSERT, VK_LEFT, VK_MENU, VK_NEXT, VK_NUMPAD0, VK_NUMPAD9, VK_PRIOR, VK_RETURN,
+        VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
     },
 };
 
 use crate::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 
 #[derive(Default)]
@@ -205,8 +206,8 @@ fn parse_key_event_record(key_event: &KeyEventRecord) -> Option<WindowsKeyEvent>
     let modifiers = KeyModifiers::from(&key_event.control_key_state);
     let virtual_key_code = key_event.virtual_key_code as i32;
 
-    // We normally ignore all key release events, but we will make an exception for an Alt key
-    // release if it carries a u_char value, as this indicates an Alt code.
+    // An Alt release carrying a character completes an Alt code, rather than
+    // reporting the modifier itself.
     let is_alt_code = virtual_key_code == VK_MENU && !key_event.key_down && key_event.u_char != 0;
     if is_alt_code {
         let utf16 = key_event.u_char;
@@ -240,7 +241,26 @@ fn parse_key_event_record(key_event: &KeyEventRecord) -> Option<WindowsKeyEvent>
     }
 
     let parse_result = match virtual_key_code {
-        VK_SHIFT | VK_CONTROL | VK_MENU => None,
+        VK_SHIFT => Some(KeyCode::Modifier(if key_event.virtual_scan_code == 0x36 {
+            ModifierKeyCode::RightShift
+        } else {
+            ModifierKeyCode::LeftShift
+        })),
+        VK_CONTROL => Some(KeyCode::Modifier(
+            if key_event.control_key_state.has_state(ENHANCED_KEY) {
+                ModifierKeyCode::RightControl
+            } else {
+                ModifierKeyCode::LeftControl
+            },
+        )),
+        VK_MENU => Some(KeyCode::Modifier(
+            if key_event.control_key_state.has_state(ENHANCED_KEY) {
+                ModifierKeyCode::RightAlt
+            } else {
+                ModifierKeyCode::LeftAlt
+            },
+        )),
+        VK_CAPITAL => Some(KeyCode::CapsLock),
         VK_BACK => Some(KeyCode::Backspace),
         VK_ESCAPE => Some(KeyCode::Esc),
         VK_RETURN => Some(KeyCode::Enter),
@@ -300,6 +320,103 @@ fn parse_key_event_record(key_event: &KeyEventRecord) -> Option<WindowsKeyEvent>
 pub fn parse_relative_y(y: i16) -> std::io::Result<i16> {
     let window_size = ScreenBuffer::current()?.info()?.terminal_window();
     Ok(y - window_size.top)
+}
+
+#[cfg(test)]
+mod physical_modifier_tests {
+    use super::*;
+    use crossterm_winapi::InputRecord;
+    use winapi::um::wincon::{INPUT_RECORD, KEY_EVENT};
+
+    fn record(vk: i32, scan: u16, flags: u32, down: bool, character: u16) -> KeyEventRecord {
+        // INPUT_RECORD is a C record of integer fields and an integer union.
+        let mut raw: INPUT_RECORD = unsafe { std::mem::zeroed() };
+        raw.EventType = KEY_EVENT;
+        let key = unsafe { raw.Event.KeyEvent_mut() };
+        key.bKeyDown = i32::from(down);
+        key.wRepeatCount = 1;
+        key.wVirtualKeyCode = vk as u16;
+        key.wVirtualScanCode = scan;
+        key.dwControlKeyState = flags;
+        unsafe {
+            *key.uChar.UnicodeChar_mut() = character;
+        }
+        match InputRecord::from(raw) {
+            InputRecord::KeyEvent(key) => key,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn standalone_modifiers_keep_side_and_press_release() {
+        for (vk, scan, flags, code) in [
+            (
+                VK_SHIFT,
+                0x2a,
+                0,
+                KeyCode::Modifier(ModifierKeyCode::LeftShift),
+            ),
+            (
+                VK_SHIFT,
+                0x36,
+                0,
+                KeyCode::Modifier(ModifierKeyCode::RightShift),
+            ),
+            (
+                VK_CONTROL,
+                0x1d,
+                0,
+                KeyCode::Modifier(ModifierKeyCode::LeftControl),
+            ),
+            (
+                VK_CONTROL,
+                0x1d,
+                ENHANCED_KEY,
+                KeyCode::Modifier(ModifierKeyCode::RightControl),
+            ),
+            (
+                VK_MENU,
+                0x38,
+                0,
+                KeyCode::Modifier(ModifierKeyCode::LeftAlt),
+            ),
+            (
+                VK_MENU,
+                0x38,
+                ENHANCED_KEY,
+                KeyCode::Modifier(ModifierKeyCode::RightAlt),
+            ),
+            (VK_CAPITAL, 0x3a, CAPSLOCK_ON, KeyCode::CapsLock),
+        ] {
+            for down in [true, false] {
+                let event = handle_key_event(record(vk, scan, flags, down, 0), &mut None);
+                assert_eq!(
+                    event,
+                    Some(Event::Key(KeyEvent::new_with_kind(
+                        code,
+                        KeyModifiers::NONE,
+                        if down {
+                            KeyEventKind::Press
+                        } else {
+                            KeyEventKind::Release
+                        }
+                    )))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn alt_code_release_still_delivers_the_character() {
+        assert_eq!(
+            handle_key_event(record(VK_MENU, 0x38, 0, false, 'é' as u16), &mut None),
+            Some(Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Char('é'),
+                KeyModifiers::NONE,
+                KeyEventKind::Release
+            )))
+        );
+    }
 }
 
 fn parse_mouse_event_record(
