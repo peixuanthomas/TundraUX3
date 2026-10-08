@@ -610,7 +610,7 @@ tundra-cli <config|launcher|debug|logs|cls|new|repl|help>
 | `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入交给固定系统命令解释器并显示退出码，`/<command>` 执行 UX 命令。外部 CLI 调用不加 `/`。 |
 | `debug test-frost` / `debug test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
 | `debug view-ui-style [1\|2\|3]` | 不带数字时列出样式；带数字时进入交互 UI / 动画对比预览，不保存设置。 |
-| `debug screen-keyboard` | 打开独立的英文 QWERTY 屏幕键盘演示：键盘位于终端下半屏，键宽随终端宽度调整，无中括号装饰；包含数字、符号、F1–F12、Shift、Tab、CapsLock、Ctrl、Alt 和右 Ctrl。Shift/Ctrl/Alt 点击后作用于下一次按键，CapsLock 保持开关状态；功能键及组合显示在最近按键栏。退格删除末尾字符，屏幕 Enter/Tab 插入换行／制表符；复制或 Ctrl+C 复制全文，粘贴或 Ctrl+V 追加剪贴板文本。提供收起／展开、清空和退出，Esc 也可退出。实体键盘 Tab/方向键选按钮，随后 Enter/空格执行所选按钮；直接输入文字后 Enter/空格输入换行／空格。遵循当前主题设置，尚未接入应用表单；本命令只用于外部终端，不在内嵌 Command Line 中运行。 |
+| `debug screen-keyboard` | 打开独立的英文 QWERTY 屏幕键盘演示：键盘位于终端下半屏，键宽随终端宽度调整，无中括号装饰；包含数字、符号、F1–F12、Shift、Tab、CapsLock、Ctrl、Alt 和右 Ctrl。Shift/Ctrl/右 Ctrl/Alt/CapsLock 点击后保持亮起，再次点击释放；可同时锁定多个修饰键，连续按其他键形成组合，功能键及组合显示在最近按键栏。收起或终端失去焦点时释放 Shift/Ctrl/Alt，CapsLock 保持开关状态。终端高度足够时增高按键，同时显示普通字符和 Shift 字符：当前可输入字符正常显示，另一字符以主题灰色显示，Shift/CapsLock 切换时互换。退格删除末尾字符，屏幕 Enter/Tab 插入换行／制表符；复制或 Ctrl+C 复制全文，粘贴或 Ctrl+V 追加剪贴板文本。提供收起／展开、清空和退出，Esc 也可退出。收起／展开使用滑动动画，工具栏保持固定；启动时读取当前用户已保存的全局动画速度和减少动态效果配置，减少动态效果时立即切换。实体键盘 Tab/方向键选按钮，随后 Enter/空格执行所选按钮；直接输入文字后 Enter/空格输入换行／空格。遵循当前主题设置，尚未接入应用表单；本命令只用于外部终端，不在内嵌 Command Line 中运行。 |
 | `debug test-aa-style1` / `debug test-aa-style2` / `debug test-aa-style3` | AA 弹窗样式演示：三种方案都会压暗背景，分别使用居中双线警戒框、宽幅警戒条、带 AA 标识的分栏授权面板；按 B 对比背景遮罩前后。C/R/F 查看确认、执行中、结束状态；Tab/方向键与鼠标选择按钮，Enter 使用，Esc 退出。仅模拟，不执行命令、不保存样式；正式 AA 已采用 style3 的视觉效果，并保留真实操作提示和随内容收缩的布局。 |
 | `debug` / `debug help` | 查看所有调试命令。 |
 | `debug test-watchdog-error` | 主动生成普通错误报告。 |

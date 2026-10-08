@@ -4,6 +4,7 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
 use crate::TundraTheme;
@@ -87,6 +88,9 @@ pub struct Button {
     pub label: String,
     pub state: ComponentState,
     pub bracketed_label: bool,
+    pub latched: bool,
+    pub centered_label: bool,
+    pub alternate_label: Option<(String, bool)>,
 }
 
 impl Button {
@@ -105,12 +109,33 @@ impl Button {
             label: label.into(),
             state: ComponentState::default(),
             bracketed_label: true,
+            latched: false,
+            centered_label: false,
+            alternate_label: None,
         }
     }
 
     /// Keeps the shared button's interaction styles while allowing literal keycaps.
     pub fn with_bracketed_label(mut self, bracketed: bool) -> Self {
         self.bracketed_label = bracketed;
+        self
+    }
+
+    /// Persistent pressed feedback, independent of pointer or keyboard focus.
+    pub fn with_latched(mut self, latched: bool) -> Self {
+        self.latched = latched;
+        self
+    }
+
+    pub fn with_centered_label(mut self, centered: bool) -> Self {
+        self.centered_label = centered;
+        self
+    }
+
+    /// Shows an alternate above the ordinary label, muting the inactive value.
+    /// Small buttons show only the active value.
+    pub fn with_alternate_label(mut self, label: impl Into<String>, active: bool) -> Self {
+        self.alternate_label = Some((label.into(), active));
         self
     }
 
@@ -246,7 +271,7 @@ impl Button {
     fn bordered_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let state = self.render_state(area, theme);
         let style = Self::style_for_state(state, theme);
-        Paragraph::new(self.display_label())
+        Paragraph::new(self.label_text(area.height.saturating_sub(2), style, theme))
             .alignment(HorizontalAlignment::Center)
             .style(style)
             .block(
@@ -259,9 +284,41 @@ impl Button {
     }
 
     fn borderless_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
-        Paragraph::new(self.display_label())
+        let style = Self::style_for_state(self.render_state(area, theme), theme);
+        Paragraph::new(self.label_text(area.height, style, theme))
             .alignment(HorizontalAlignment::Center)
-            .style(Self::style_for_state(self.render_state(area, theme), theme))
+            .style(style)
+    }
+
+    fn label_text<'a>(&'a self, height: u16, style: Style, theme: &TundraTheme) -> Text<'a> {
+        let mut lines = if let Some((alternate, active)) = &self.alternate_label {
+            let ordinary = self.display_label();
+            if height >= 2 {
+                let muted = style
+                    .fg(theme.tokens().muted)
+                    .remove_modifier(Modifier::BOLD);
+                vec![
+                    Line::from(Span::styled(
+                        alternate.as_str(),
+                        if *active { style } else { muted },
+                    )),
+                    Line::from(Span::styled(ordinary, if *active { muted } else { style })),
+                ]
+            } else {
+                vec![Line::from(if *active {
+                    Cow::Borrowed(alternate.as_str())
+                } else {
+                    ordinary
+                })]
+            }
+        } else {
+            Text::from(self.display_label()).lines
+        };
+        if self.centered_label {
+            let padding = usize::from(height).saturating_sub(lines.len()) / 2;
+            lines.splice(0..0, std::iter::repeat_n(Line::default(), padding));
+        }
+        Text::from(lines)
     }
 
     fn display_label(&self) -> Cow<'_, str> {
@@ -330,6 +387,7 @@ impl Button {
             state.hovered = frame.hovered.as_ref() == Some(&region);
             state.active = state.hovered && frame.pressed.as_ref() == Some(&region);
         }
+        state.active |= self.latched && !state.disabled;
         state
     }
 

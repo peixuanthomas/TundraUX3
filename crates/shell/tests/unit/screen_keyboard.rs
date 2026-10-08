@@ -96,28 +96,151 @@ fn screen_keyboard_modifiers_symbols_tabs_and_function_keys() {
     ] {
         assert!(!state.activate(action));
     }
-    assert_eq!(state.text, "!aBc\t \n");
+    assert_eq!(state.text, "!AbC\t \n");
     assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
     for (modifier, expected) in [(LeftCtrl, "Ctrl+A"), (RightCtrl, "RCtrl+A"), (Alt, "Alt+A")] {
         state.activate(modifier);
         state.activate(Letter('a'));
         assert_eq!(state.last_key, expected);
         assert_eq!(
-            state.text, "!aBc\t \n",
+            state.text, "!AbC\t \n",
             "combinations must not type letters"
         );
+        assert!(modifier.is_latched(state.modifiers));
+        state.activate(Letter('b'));
+        assert_eq!(
+            state.last_key,
+            format!("{}B", expected.trim_end_matches('A'))
+        );
+        state.activate(modifier);
         assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
     }
     state.activate(Alt);
     state.activate(Function(12));
     assert_eq!(state.last_key, "Alt+F12");
     state.handle_input(key(Key::F(2)), &layout(), Instant::now());
-    assert_eq!(state.last_key, "F2");
+    assert_eq!(state.last_key, "Alt+F2");
+    state.activate(Alt);
     state.activate(Shift);
     state.activate(Alt);
     state.activate(LeftCtrl);
     state.handle_input(InputEvent::FocusLost, &layout(), Instant::now());
     assert_eq!(state.modifiers, ScreenKeyboardModifiers::default());
+}
+
+#[test]
+fn screen_keyboard_latches_compose_and_survive_text_and_clipboard_actions() {
+    use ScreenKeyboardAction::*;
+    let mut state = ScreenKeyboardState::default();
+    for action in [LeftCtrl, RightCtrl, Alt, Shift, Function(4), Function(5)] {
+        state.activate(action);
+    }
+    assert_eq!(state.last_key, "Ctrl+RCtrl+Alt+Shift+F5");
+    assert!(state.text.is_empty());
+    for action in [Copy, Paste, Clear] {
+        state.activate(action);
+        assert!(
+            state.modifiers.shift
+                && state.modifiers.left_ctrl
+                && state.modifiers.right_ctrl
+                && state.modifiers.alt
+        );
+    }
+    for action in [LeftCtrl, RightCtrl, Alt] {
+        state.activate(action);
+    }
+    state.handle_input(key(Key::Char('a')), &layout(), Instant::now());
+    state.handle_input(key(Key::Char('b')), &layout(), Instant::now());
+    assert_eq!(state.text, "AB");
+    state.activate(Shift);
+    state.activate(Letter('c'));
+    assert_eq!(state.text, "ABc");
+}
+
+#[test]
+fn screen_keyboard_animation_reads_saved_speed_and_reduced_motion() {
+    for speed in [50, 125, 200] {
+        let appearance = storage::AppearanceConfig {
+            animation_speed_percent: speed,
+            ..Default::default()
+        };
+        let frame = keyboard_motion_frame(&appearance, Duration::ZERO);
+        assert_eq!(frame.animation_speed_percent, speed);
+        let mut motion = KeyboardMotion::default();
+        motion.retarget(true, frame);
+        let duration = MotionTimings::PAGE.mul_f64(100.0 / f64::from(speed));
+        let halfway = keyboard_motion_frame(&appearance, duration / 2);
+        assert!(motion.transition.requests_redraw(halfway));
+        assert!(motion.visibility(halfway) > 0 && motion.visibility(halfway) < 1_000);
+        let finished = keyboard_motion_frame(&appearance, duration);
+        assert_eq!(motion.visibility(finished), 0);
+        assert!(!motion.transition.requests_redraw(finished));
+        motion.retarget(false, finished);
+        assert_eq!(
+            motion.visibility(keyboard_motion_frame(&appearance, duration * 2)),
+            1_000
+        );
+    }
+    let appearance = storage::AppearanceConfig {
+        motion_preference: storage::MotionPreference::Reduced,
+        animation_speed_percent: 50,
+        ..Default::default()
+    };
+    let frame = keyboard_motion_frame(&appearance, Duration::ZERO);
+    let mut motion = KeyboardMotion::default();
+    motion.retarget(true, frame);
+    assert_eq!(motion.visibility(frame), 0);
+    assert!(!motion.transition.requests_redraw(frame));
+    motion.retarget(false, frame);
+    assert_eq!(motion.visibility(frame), 1_000);
+}
+
+#[test]
+fn screen_keyboard_animation_reverses_without_jumping_and_keeps_toolbar_capture() {
+    let frame = MotionFrame::default();
+    let mut motion = KeyboardMotion::default();
+    motion.retarget(true, frame);
+    let halfway = MotionFrame {
+        now: MotionTimings::PAGE / 2,
+        ..frame
+    };
+    let visibility = motion.visibility(halfway);
+    motion.retarget(false, halfway);
+    assert_eq!(motion.visibility(halfway), visibility);
+    assert_eq!(
+        motion.visibility(MotionFrame {
+            now: MotionTimings::PAGE * 2,
+            ..frame
+        }),
+        1_000
+    );
+
+    let expanded = layout();
+    let moving = ui::screen_keyboard_layout_with_visibility(Rect::new(0, 0, 80, 24), true, 500);
+    let mut state = ScreenKeyboardState::default();
+    state.handle_input(
+        mouse(&expanded, 'q', MouseEventKind::Down(MouseButton::Left)),
+        &expanded,
+        Instant::now(),
+    );
+    state.sync_pointer_layout(&moving);
+    assert!(state.pressed.is_none());
+    let toggle = expanded
+        .buttons
+        .iter()
+        .find(|key| key.action == ScreenKeyboardAction::ToggleKeyboard)
+        .unwrap();
+    state.handle_input(
+        InputEvent::Mouse(MouseEvent::new(
+            toggle.area.x,
+            toggle.area.y,
+            MouseEventKind::Down(MouseButton::Left),
+        )),
+        &expanded,
+        Instant::now(),
+    );
+    state.sync_pointer_layout(&moving);
+    assert!(state.pressed.is_some());
 }
 
 #[test]
@@ -332,8 +455,12 @@ fn key_colors(
     let label_color = (area.y..area.bottom())
         .find_map(|y| {
             (area.x..area.right()).find_map(|x| {
-                (buffer[(x, y)].symbol() == letter.to_ascii_uppercase().to_string())
-                    .then_some(buffer[(x, y)].fg)
+                (buffer[(x, y)].symbol()
+                    == ScreenKeyboardAction::Letter(letter)
+                        .character(state.modifiers)
+                        .unwrap()
+                        .to_string())
+                .then_some(buffer[(x, y)].fg)
             })
         })
         .unwrap();

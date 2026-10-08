@@ -8,14 +8,61 @@ use std::{
 use crossterm::event;
 use ratatui::layout::Rect;
 use ui::{
-    InputEvent, Key, MouseButton, MouseEventKind, RenderContext, ScreenKeyboardAction,
-    ScreenKeyboardLayout, ScreenKeyboardModifiers, ScreenKeyboardViewModel, TundraTheme,
+    FrostMotion, InputEvent, Key, MotionFrame, MotionTimings, MouseButton, MouseEventKind,
+    RenderContext, ScreenKeyboardAction, ScreenKeyboardLayout, ScreenKeyboardModifiers,
+    ScreenKeyboardViewModel, TundraTheme,
     components::{ButtonFrame, ButtonRegion},
 };
 
 use crate::{ShellAppConfig, TerminalGuard, crossterm_event_to_input};
 
 const BUTTON_MAX_PRESS: Duration = Duration::from_millis(500);
+const ANIMATION_FRAME: Duration = Duration::from_millis(16);
+
+fn keyboard_motion_frame(appearance: &storage::AppearanceConfig, now: Duration) -> MotionFrame {
+    MotionFrame {
+        now,
+        reduced_motion: matches!(
+            appearance.motion_preference,
+            storage::MotionPreference::Reduced
+        ),
+        animation_speed_percent: appearance.normalized_animation_speed_percent(),
+        ..Default::default()
+    }
+}
+
+struct KeyboardMotion {
+    transition: FrostMotion,
+    start: u16,
+    target: u16,
+}
+
+impl Default for KeyboardMotion {
+    fn default() -> Self {
+        Self {
+            transition: FrostMotion::default(),
+            start: 1_000,
+            target: 1_000,
+        }
+    }
+}
+
+impl KeyboardMotion {
+    fn visibility(&self, frame: MotionFrame) -> u16 {
+        if frame.reduced_motion {
+            return self.target;
+        }
+        let progress = i32::from(self.transition.progress(frame, true));
+        (i32::from(self.start)
+            + (i32::from(self.target) - i32::from(self.start)) * progress / 1_000) as u16
+    }
+
+    fn retarget(&mut self, collapsed: bool, frame: MotionFrame) {
+        self.start = self.visibility(frame);
+        self.target = if collapsed { 0 } else { 1_000 };
+        self.transition.begin(frame, MotionTimings::PAGE);
+    }
+}
 
 pub fn run_screen_keyboard(
     output: &mut impl Write,
@@ -38,24 +85,30 @@ pub fn run_screen_keyboard(
     let mut layout = ui::screen_keyboard_layout(bounds, model.collapsed);
     let mut dirty = true;
     let origin = Instant::now();
+    let mut motion = KeyboardMotion::default();
+    let mut next_frame = origin;
+    let mut finishing_animation = false;
     loop {
         let now = Instant::now();
+        let motion_frame = keyboard_motion_frame(appearance, now.duration_since(origin));
         dirty |= model.expire_press(now);
-        if dirty {
+        let animating = motion.transition.requests_redraw(motion_frame);
+        if dirty || ((animating || finishing_animation) && now >= next_frame) {
             terminal.terminal_mut().draw(|frame| {
-                if bounds != frame.area() || layout.collapsed != model.collapsed {
-                    bounds = frame.area();
-                    layout = ui::screen_keyboard_layout(bounds, model.collapsed);
-                    model.cancel_pointer();
+                bounds = frame.area();
+                let next_layout = ui::screen_keyboard_layout_with_visibility(
+                    bounds,
+                    model.collapsed,
+                    motion.visibility(motion_frame),
+                );
+                if layout != next_layout {
+                    layout = next_layout;
+                    model.sync_pointer_layout(&layout);
                     model.ensure_visible_focus(&layout);
                 }
-                let mut context = RenderContext::from_theme_with_motion_preference(
+                let mut context = RenderContext::from_theme(
                     &theme,
-                    origin.elapsed(),
-                    matches!(
-                        appearance.motion_preference,
-                        storage::MotionPreference::Reduced
-                    ),
+                    motion_frame,
                     crate::terminal_session::text_render_capabilities(),
                 );
                 context.buttons = Some(model.button_frame(&context));
@@ -74,11 +127,25 @@ pub fn run_screen_keyboard(
                 );
             })?;
             dirty = false;
+            finishing_animation = animating;
+            next_frame = now + ANIMATION_FRAME;
         }
-        if event::poll(Duration::from_millis(100))? {
+        let timeout = if animating || finishing_animation {
+            next_frame.saturating_duration_since(Instant::now())
+        } else {
+            Duration::from_millis(100)
+        };
+        if event::poll(timeout)? {
             let input = crossterm_event_to_input(event::read()?);
+            let was_collapsed = model.collapsed;
             if model.handle_input(input, &layout, Instant::now()) {
                 break;
+            }
+            if was_collapsed != model.collapsed {
+                motion.retarget(
+                    model.collapsed,
+                    keyboard_motion_frame(appearance, origin.elapsed()),
+                );
             }
             model.apply_clipboard(platform);
             dirty = true;
@@ -143,6 +210,25 @@ impl ScreenKeyboardState {
         self.hovered = None;
     }
 
+    fn sync_pointer_layout(&mut self, layout: &ScreenKeyboardLayout) {
+        let visible = |region: &ButtonRegion| {
+            layout
+                .buttons
+                .iter()
+                .any(|button| button.region() == *region)
+        };
+        if self
+            .pressed
+            .as_ref()
+            .is_some_and(|press| !visible(&press.region))
+        {
+            self.pressed = None;
+        }
+        if self.hovered.as_ref().is_some_and(|region| !visible(region)) {
+            self.hovered = None;
+        }
+    }
+
     fn expire_press(&mut self, now: Instant) -> bool {
         if self
             .pressed
@@ -178,16 +264,14 @@ impl ScreenKeyboardState {
             ScreenKeyboardAction::ToggleKeyboard => {
                 self.collapsed = !self.collapsed;
                 self.cancel_pointer();
-                self.clear_one_shot_modifiers();
+                self.release_modifiers();
                 self.focus = ScreenKeyboardAction::ToggleKeyboard;
             }
             ScreenKeyboardAction::Clear => {
                 self.text.clear();
-                self.clear_one_shot_modifiers();
             }
             ScreenKeyboardAction::Copy | ScreenKeyboardAction::Paste => {
                 self.pending_clipboard = Some(action);
-                self.clear_one_shot_modifiers();
             }
             ScreenKeyboardAction::Shift => self.modifiers.shift = !self.modifiers.shift,
             ScreenKeyboardAction::CapsLock => {
@@ -207,7 +291,7 @@ impl ScreenKeyboardState {
         false
     }
 
-    fn clear_one_shot_modifiers(&mut self) {
+    fn release_modifiers(&mut self) {
         self.modifiers = ScreenKeyboardModifiers {
             caps_lock: self.modifiers.caps_lock,
             ..Default::default()
@@ -250,7 +334,6 @@ impl ScreenKeyboardState {
                 self.text.push(character);
             }
         }
-        self.clear_one_shot_modifiers();
     }
 
     fn append_paste(&mut self, text: &str) {
@@ -262,7 +345,6 @@ impl ScreenKeyboardState {
                 .chars()
                 .filter(|c| !c.is_control() || matches!(c, '\n' | '\t')),
         );
-        self.clear_one_shot_modifiers();
         self.navigating_buttons = false;
     }
 
@@ -489,7 +571,7 @@ impl ScreenKeyboardState {
             }
             InputEvent::FocusLost => {
                 self.cancel_pointer();
-                self.clear_one_shot_modifiers();
+                self.release_modifiers();
                 self.mouse_coordinates = None;
                 self.keyboard_focus_visible = false;
             }
