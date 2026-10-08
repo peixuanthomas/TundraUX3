@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 /// Runs inside the independent privileged helper. No process killer or
 /// kill-on-drop guard is installed. Client cancellation/disconnection must not
-/// interrupt a package database write or a maintainer script.
+/// interrupt a package database write or a maintainer script. Explicit AA
+/// termination/kill requests are handled by the helper's independent control loop.
 pub(super) fn execute(
     spec: PackageCommand,
     backend: PackageBackend,
@@ -66,7 +67,7 @@ pub(super) fn execute(
         ),
         percent: None,
     });
-    interaction.emit(OperationEvent::Output { text: "Package operations continue in the system helper when this page closes. Cancellation is available at the package manager's confirmation; active package writes are not forcibly stopped.".into() });
+    interaction.emit(OperationEvent::Output { text: "Package operations survive a disconnected client. Answer n at the package manager's confirmation to cancel; AA can explicitly request termination, but interrupting writes may damage the system.".into() });
     let mut parser = PromptParser::default();
     let mut tail = Vec::<u8>::new();
     let mut cancel_noticed = false;
@@ -142,7 +143,7 @@ pub(super) fn execute(
             }
         }
         if cancelled.load(Ordering::Acquire) && !cancel_noticed {
-            interaction.emit(OperationEvent::Progress { message: "The package task is still running. Open it again to answer pending questions; active package writes cannot be forcibly cancelled.".into(), percent: None });
+            interaction.emit(OperationEvent::Progress { message: "The package task is still running. Reopen it to answer pending questions or use AA's explicit termination controls.".into(), percent: None });
             cancel_noticed = true;
         }
         if exit_status.is_none() {

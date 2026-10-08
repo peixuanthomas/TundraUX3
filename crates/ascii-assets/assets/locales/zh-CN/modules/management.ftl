@@ -164,6 +164,17 @@ aa-confirm-hint = Tab / Shift+Tab / ← →：选择 · Enter / 空格：确认 
 aa-terminal-hint = F6：按钮 · 直接输入 · Enter：发送 · Shift+PgUp/PgDn：滚动 · 任务结束后才能关闭
 aa-buttons-hint = F6 / Esc：终端 · Tab / Shift+Tab / ← →：选择 · Enter / 空格：执行
 aa-buttons-hint-compact = F6:终端 · Tab:选择 · Enter:执行
+aa-stop = 终止任务
+aa-stop-pending = 已请求终止，等待任务退出；10 秒未返回将显示警告。
+aa-stop-timeout = 进程可能卡死
+aa-stop-warning = 强杀可能损坏系统！
+    请求终止后已等待 10 秒，任务仍未返回，进程可能卡死。立即杀死进程可能中断正在进行的写入，造成系统损坏、软件包或账户数据不完整。确定要强制结束吗？
+aa-stop-warning-hint = Tab / ← →：选择 · Enter：确认 · Esc：等待 · PgUp/PgDn：滚动警告
+aa-stop-wait = 继续等待
+aa-stop-kill = 立即杀死进程
+aa-stop-killing = 已请求强制结束，等待结果。系统无响应时，杀死请求也可能暂时无法完成。
+aa-stop-no-process = 此任务没有可单独杀死的本地进程；不能通过杀死 Shell 或系统服务来结束它。
+aa-stop-send-failed = 终止信号发送失败
 aa-finished-hint = Enter / 空格 / Esc：关闭 · Shift+PgUp/PgDn：查看输出
 aa-input-required = 请在 AutoAdmin 中输入；任务结束后才能关闭。
 aa-choose-number = 请输入所显示选项的编号，然后按 Enter。

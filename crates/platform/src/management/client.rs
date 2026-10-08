@@ -50,7 +50,9 @@ pub fn run(
                     Ok(OperationInput::Answer { id, value }) if id == "sudo-password" => {
                         return Ok(Zeroizing::new(value));
                     }
-                    Ok(OperationInput::Cancel) => return Err(ManagementError::Cancelled),
+                    Ok(
+                        OperationInput::Cancel | OperationInput::Terminate | OperationInput::Kill,
+                    ) => return Err(ManagementError::Cancelled),
                     Ok(OperationInput::Resize { columns, rows }) => {
                         terminal_size = Some((columns, rows))
                     }

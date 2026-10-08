@@ -1254,6 +1254,8 @@ impl ShellSession {
             return;
         };
         self.management_state.auto_admin_job = Some(aa.clone());
+        #[cfg(target_os = "linux")]
+        aa.enable_helper_control();
         let worker_aa = aa.clone();
         #[cfg(target_os = "linux")]
         let authority = self.privilege_session.clone();

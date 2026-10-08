@@ -128,6 +128,9 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
             status: "Running".into(),
             confirming: false,
             finished: false,
+            stop: Default::default(),
+            can_stop: false,
+            can_kill: false,
             approve_selected: false,
             button_focus: None,
             scroll: 0,
@@ -152,6 +155,9 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
                 .unwrap();
             let buffer = terminal.backend().buffer();
             for (other, area) in layout.buttons.iter().enumerate() {
+                if area.is_empty() {
+                    continue;
+                }
                 let changed = (area.x..area.right())
                     .any(|x| buffer[(x, area.y)].style() != unfocused[(x, area.y)].style());
                 assert_eq!(
@@ -179,6 +185,86 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
                 );
             }
             assert!(!hint.contains('•'));
+        }
+    }
+}
+
+#[test]
+fn stop_controls_fit_and_the_warning_explains_damage_in_both_languages() {
+    use ui::AutoAdminStopState;
+    use unicode_width::UnicodeWidthStr;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        for (width, height) in [(120, 40), (80, 24), (40, 12), (20, 8)] {
+            let bounds = Rect::new(0, 0, width, height);
+            let mut model = model(false, false);
+            model.can_stop = true;
+            model.can_kill = true;
+            model.button_focus = Some(3);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    ui::render_auto_admin(frame, bounds, &model, &RenderContext::default())
+                })
+                .unwrap();
+            let layout = ui::auto_admin_layout(bounds, &model);
+            assert!(layout.buttons[3].width >= 8);
+            let theme = TundraTheme::default();
+            assert_eq!(
+                terminal.backend().buffer()[(layout.buttons[3].x, layout.buttons[3].y)].fg,
+                theme.accent_color
+            );
+            model.stop = AutoAdminStopState::Warning;
+            model.button_focus = Some(0);
+            let layout = ui::auto_admin_layout(bounds, &model);
+            assert!(!layout.buttons[0].is_empty() && !layout.buttons[1].is_empty());
+            assert!(layout.buttons[0].intersection(layout.buttons[1]).is_empty());
+            for area in [layout.description, layout.buttons[0], layout.buttons[1]] {
+                assert_eq!(area.intersection(layout.dialog), area);
+            }
+            // Scroll each text row, as a user can on a short terminal; none of
+            // the damage warning may be permanently clipped by the action row.
+            let mut displayed = String::new();
+            for scroll in 0..=ui::auto_admin_max_scroll(bounds, &model) {
+                model.scroll = scroll;
+                terminal
+                    .draw(|frame| {
+                        ui::render_auto_admin(frame, bounds, &model, &RenderContext::default())
+                    })
+                    .unwrap();
+                for y in layout.description.y..layout.description.bottom() {
+                    let mut x = layout.description.x;
+                    while x < layout.description.right() {
+                        let cell = &terminal.backend().buffer()[(x, y)];
+                        displayed.push_str(cell.symbol());
+                        // The test backend can retain an old symbol in the
+                        // second cell physically covered by a wide CJK glyph.
+                        x += cell.symbol().width().max(1) as u16;
+                    }
+                }
+            }
+            let displayed = displayed.split_whitespace().collect::<String>();
+            assert!(
+                displayed.contains(if language == "zh-CN" {
+                    "系统损坏"
+                } else {
+                    "damagethesystem"
+                }),
+                "{width}x{height}: {displayed}"
+            );
+            let buffer = terminal.backend().buffer();
+            assert_eq!(
+                buffer[(layout.buttons[0].x, layout.buttons[0].y)].fg,
+                theme.accent_color
+            );
+            assert_eq!(
+                buffer[(layout.buttons[1].x, layout.buttons[1].y)].fg,
+                theme.foreground
+            );
         }
     }
 }
@@ -253,6 +339,9 @@ fn model(confirming: bool, finished: bool) -> AutoAdminViewModel {
         status: "Waiting".into(),
         confirming,
         finished,
+        stop: Default::default(),
+        can_stop: false,
+        can_kill: false,
         approve_selected: true,
         button_focus: None,
         scroll: 0,

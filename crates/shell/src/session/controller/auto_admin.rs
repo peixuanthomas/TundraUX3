@@ -10,6 +10,8 @@ use zeroize::Zeroizing;
 #[cfg(target_os = "linux")]
 #[path = "auto_admin_linux.rs"]
 mod linux;
+#[path = "auto_admin_stop.rs"]
+mod stop;
 #[path = "auto_admin_tasks.rs"]
 mod tasks;
 #[cfg(target_os = "linux")]
@@ -46,6 +48,7 @@ struct Display {
     question: Option<Question>,
     revision: u64,
     terminal_stream: bool,
+    stop: Option<stop::StopRequest>,
 }
 
 struct Shared {
@@ -56,6 +59,12 @@ struct Shared {
     responses: mpsc::Sender<OperationInput>,
     power_succeeded: std::sync::atomic::AtomicBool,
     worker: Mutex<Option<ManagedThreadHandle<()>>>,
+    stop_requested: std::sync::atomic::AtomicBool,
+    force_requested: std::sync::atomic::AtomicBool,
+    helper_control: std::sync::atomic::AtomicBool,
+    helper_connected: std::sync::atomic::AtomicBool,
+    #[cfg(target_os = "linux")]
+    process: Mutex<Option<platform::management::termination::ProcessTree>>,
     #[cfg(target_os = "linux")]
     terminal: Mutex<Option<linux::AuthTerminal>>,
 }
@@ -143,11 +152,18 @@ impl AutoAdminJob {
                 question: None,
                 revision: 0,
                 terminal_stream: false,
+                stop: None,
             }),
             approved: Condvar::new(),
             responses,
             power_succeeded: std::sync::atomic::AtomicBool::new(false),
             worker: Mutex::new(None),
+            stop_requested: std::sync::atomic::AtomicBool::new(false),
+            force_requested: std::sync::atomic::AtomicBool::new(false),
+            helper_control: std::sync::atomic::AtomicBool::new(false),
+            helper_connected: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(target_os = "linux")]
+            process: Mutex::new(None),
             #[cfg(target_os = "linux")]
             terminal: Mutex::new(None),
         }))
@@ -173,7 +189,7 @@ impl AutoAdminJob {
                 display.revision += 1;
             }
         }
-        if self.phase() == RUNNING {
+        if self.accepts_input() {
             Ok(())
         } else {
             Err(ManagementError::Cancelled)
@@ -195,6 +211,9 @@ impl AutoAdminJob {
         let mut d = self.0.display.lock().unwrap_or_else(|e| e.into_inner());
         d.revision = d.revision.wrapping_add(1);
         match event {
+            OperationEvent::Connected { .. } => {
+                self.0.helper_connected.store(true, Ordering::Release);
+            }
             OperationEvent::TerminalOutput { bytes } => {
                 d.terminal_stream = true;
                 d.parser.process(bytes);
@@ -212,6 +231,9 @@ impl AutoAdminJob {
                 choices,
                 secret,
             } => {
+                if self.0.stop_requested.load(Ordering::Acquire) {
+                    return;
+                }
                 if id == "sudo-password" {
                     print_line(&mut d.parser, &i18n::tr!("management-system-authorization"));
                 } else {
@@ -238,6 +260,7 @@ impl AutoAdminJob {
                     print_line(&mut d.parser, message);
                 }
                 d.question = None;
+                d.stop = None;
             }
             OperationEvent::Started {
                 kind,
@@ -269,7 +292,7 @@ impl AutoAdminJob {
         id: &str,
         prompt: String,
     ) -> Result<Zeroizing<String>, ManagementError> {
-        if self.phase() != RUNNING {
+        if !self.accepts_input() {
             return Err(ManagementError::Cancelled);
         }
         self.emit(&OperationEvent::Question {
@@ -279,7 +302,7 @@ impl AutoAdminJob {
             secret: true,
         });
         let deadline = Instant::now() + Duration::from_secs(300);
-        while self.phase() == RUNNING && Instant::now() < deadline {
+        while self.accepts_input() && Instant::now() < deadline {
             match inputs.recv_timeout(Duration::from_millis(100)) {
                 Ok(OperationInput::Answer {
                     id: answer_id,
@@ -290,7 +313,8 @@ impl AutoAdminJob {
                         return Ok(value);
                     }
                 }
-                Ok(OperationInput::Cancel) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Ok(OperationInput::Cancel | OperationInput::Terminate | OperationInput::Kill)
+                | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(ManagementError::Cancelled);
                 }
                 Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -299,7 +323,7 @@ impl AutoAdminJob {
         Err(ManagementError::Cancelled)
     }
     fn send_bytes(&self, bytes: Vec<u8>) {
-        if self.phase() != RUNNING {
+        if !self.accepts_input() {
             return;
         }
         #[cfg(target_os = "linux")]
@@ -318,7 +342,7 @@ impl AutoAdminJob {
     // True means Enter handled a structured question and must not carry over
     // into the terminal or the next password prompt.
     fn key(&self, key: &KeyInput) -> bool {
-        if !key.phase.is_press_like() || self.phase() != RUNNING {
+        if !key.phase.is_press_like() || !self.accepts_input() {
             return false;
         }
         let mut d = self.0.display.lock().unwrap_or_else(|e| e.into_inner());
@@ -384,7 +408,7 @@ impl AutoAdminJob {
         false
     }
     fn paste(&self, text: &str) {
-        if self.phase() != RUNNING {
+        if !self.accepts_input() {
             return;
         }
         let mut d = self.0.display.lock().unwrap_or_else(|e| e.into_inner());
@@ -610,6 +634,7 @@ impl ShellSession {
             // confirmation/result is visible, preserving output and scrollback.
             model.confirming = false;
             model.finished = false;
+            model.stop = ui::AutoAdminStopState::None;
             job.resize(
                 ui::auto_admin_layout(
                     Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
@@ -620,6 +645,7 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn poll_auto_admin(&mut self) -> bool {
+        self.poll_auto_admin_stop(Instant::now());
         let Some(job) = &self.auto_admin.job else {
             return false;
         };
@@ -682,7 +708,7 @@ impl ShellSession {
         &self,
     ) -> Option<ui::components::ButtonRegion> {
         let (index, phase, _) = self.auto_admin.pointer?;
-        if self.auto_admin.job.as_ref()?.phase() != phase {
+        if self.auto_admin.job.as_ref()?.interaction_phase() != phase {
             return None;
         }
         self.button_regions
@@ -714,7 +740,7 @@ impl ShellSession {
         }
         Some(ui::AutoAdminViewModel {
             description: job.0.description.clone(),
-            status: d.status.clone(),
+            status: stop::status(&d),
             confirming: job.phase() == WAITING,
             finished,
             approve_selected: self.auto_admin.approve_selected,
@@ -722,6 +748,12 @@ impl ShellSession {
             scroll: self.auto_admin.scroll,
             input,
             terminal: Arc::new(terminal),
+            stop: d
+                .stop
+                .as_ref()
+                .map_or(ui::AutoAdminStopState::None, |s| s.state),
+            can_kill: job.can_kill(),
+            can_stop: cfg!(target_os = "linux"),
         })
     }
     #[cfg(test)]
@@ -778,6 +810,40 @@ impl ShellSession {
             InputEvent::Resize { .. } => {
                 self.auto_admin.pointer = None;
                 return false;
+            }
+            InputEvent::Key(key) if job.stop_warning() => {
+                if key.phase == InputPhase::Press {
+                    match key.key {
+                        InputKey::Tab
+                        | InputKey::BackTab
+                        | InputKey::Left
+                        | InputKey::Right
+                        | InputKey::Up
+                        | InputKey::Down => {
+                            let index = self.auto_admin.button_focus.unwrap_or(0);
+                            self.auto_admin.button_focus =
+                                Some(if job.can_kill() { 1 - index.min(1) } else { 0 });
+                        }
+                        InputKey::Enter | InputKey::Space => {
+                            self.activate_auto_admin_button(
+                                &job,
+                                self.auto_admin.button_focus.unwrap_or(0),
+                            );
+                            self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                        }
+                        InputKey::Escape => {
+                            self.activate_auto_admin_button(&job, 0);
+                            self.auto_admin.action_key = Some((key.key.clone(), received_at));
+                        }
+                        InputKey::PageDown => {
+                            self.auto_admin.scroll = self.auto_admin.scroll.saturating_add(3)
+                        }
+                        InputKey::PageUp => {
+                            self.auto_admin.scroll = self.auto_admin.scroll.saturating_sub(3)
+                        }
+                        _ => {}
+                    }
+                }
             }
             InputEvent::Key(key) if key.key == InputKey::F(12) => {
                 if key.phase == InputPhase::Press {
@@ -838,16 +904,17 @@ impl ShellSession {
                 if job.phase() == RUNNING && self.auto_admin.button_focus.is_some() =>
             {
                 let index = self.auto_admin.button_focus.unwrap();
+                let count = if cfg!(target_os = "linux") { 4 } else { 3 };
                 if key.phase.is_press_like() {
                     match key.key {
                         InputKey::BackTab | InputKey::Left | InputKey::Up => {
-                            self.auto_admin.button_focus = Some((index + 2) % 3);
+                            self.auto_admin.button_focus = Some((index + count - 1) % count);
                         }
                         InputKey::Tab if key.modifiers.shift => {
-                            self.auto_admin.button_focus = Some((index + 2) % 3);
+                            self.auto_admin.button_focus = Some((index + count - 1) % count);
                         }
                         InputKey::Tab | InputKey::Right | InputKey::Down => {
-                            self.auto_admin.button_focus = Some((index + 1) % 3);
+                            self.auto_admin.button_focus = Some((index + 1) % count);
                         }
                         InputKey::Escape => {
                             self.auto_admin.button_focus = None;
@@ -904,7 +971,7 @@ impl ShellSession {
                             self.auto_admin.approve_selected = index == 0;
                         }
                         self.auto_admin.pointer =
-                            hit.map(|index| (index, job.phase(), received_at));
+                            hit.map(|index| (index, job.interaction_phase(), received_at));
                         None
                     }
                     ui::MouseEventKind::Up(ui::MouseButton::Left) => {
@@ -912,7 +979,7 @@ impl ShellSession {
                         hit.filter(|h| {
                             previous.is_some_and(|(index, phase, at)| {
                                 index == *h
-                                    && phase == job.phase()
+                                    && phase == job.interaction_phase()
                                     && received_at.saturating_duration_since(at)
                                         <= Duration::from_millis(500)
                             })
@@ -925,7 +992,7 @@ impl ShellSession {
                     }
                     ui::MouseEventKind::Scroll(direction) => {
                         let up = direction == ScrollDirection::Up;
-                        if job.phase() == WAITING {
+                        if job.phase() == WAITING || job.stop_warning() {
                             self.auto_admin.scroll = if up {
                                 self.auto_admin.scroll.saturating_sub(3)
                             } else {
@@ -952,23 +1019,28 @@ impl ShellSession {
             InputEvent::FocusLost => self.auto_admin.pointer = None,
             InputEvent::FocusGained => {}
         }
-        if job.phase() == WAITING {
+        if job.phase() == WAITING || job.stop_warning() {
             let model = self.auto_admin_model().unwrap();
-            let layout = ui::auto_admin_layout(
+            let max_scroll = ui::auto_admin_max_scroll(
                 Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
                 &model,
             );
-            let lines =
-                ui::management_wrapped_lines(&model.description, layout.description.width).len();
-            self.auto_admin.scroll = self.auto_admin.scroll.min(
-                lines
-                    .saturating_sub(usize::from(layout.description.height))
-                    .min(u16::MAX as usize) as u16,
-            );
+            self.auto_admin.scroll = self.auto_admin.scroll.min(max_scroll);
         }
         true
     }
     fn activate_auto_admin_button(&mut self, job: &AutoAdminJob, index: usize) {
+        if job.stop_warning() {
+            if index == 0 {
+                job.continue_waiting();
+                self.auto_admin.button_focus = None;
+            } else if index == 1 && job.can_kill() {
+                job.request_stop(true);
+                self.auto_admin.button_focus = None;
+            }
+            self.auto_admin.pointer = None;
+            return;
+        }
         match job.phase() {
             WAITING if index == 0 => job.decide(true),
             WAITING if index == 1 => self.close_auto_admin(),
@@ -978,6 +1050,11 @@ impl ShellSession {
                 1 => job.paste("n"),
                 2 => {
                     job.key(&KeyInput::new(InputKey::Enter));
+                }
+                3 if cfg!(target_os = "linux") => {
+                    job.request_stop(false);
+                    self.auto_admin.button_focus = None;
+                    self.auto_admin.pointer = None;
                 }
                 _ => {}
             },

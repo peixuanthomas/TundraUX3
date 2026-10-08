@@ -201,10 +201,22 @@ pub trait OperationInteraction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "request", rename_all = "snake_case")]
 pub enum OperationInput {
-    Answer { id: String, value: String },
-    Terminal { bytes: Vec<u8> },
-    Resize { columns: u16, rows: u16 },
+    Answer {
+        id: String,
+        value: String,
+    },
+    Terminal {
+        bytes: Vec<u8>,
+    },
+    Resize {
+        columns: u16,
+        rows: u16,
+    },
     Cancel,
+    /// Explicit user request, unlike closing/disconnecting from an operation.
+    Terminate,
+    /// Sent only after a termination timeout and an explicit damage warning.
+    Kill,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +274,8 @@ pub mod processes;
 pub mod services;
 #[cfg(target_os = "linux")]
 pub mod system_config;
+#[cfg(target_os = "linux")]
+pub mod termination;
 #[cfg(target_os = "linux")]
 pub mod users;
 

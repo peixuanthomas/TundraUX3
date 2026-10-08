@@ -188,7 +188,7 @@ impl Interaction for AutoAdminAuthorization {
         true
     }
     fn begin(&self) -> Result<(), ServiceError> {
-        if self.job.phase() == RUNNING {
+        if self.job.accepts_input() {
             Ok(())
         } else {
             Err(ServiceError::AuthorizationCancelled)
@@ -214,7 +214,7 @@ impl Interaction for AutoAdminAuthorization {
         self.job.close_terminal();
     }
     fn cancelled(&self) -> bool {
-        !self.job.running()
+        !self.job.accepts_input()
     }
     fn change_own_password(&self) -> Result<(), ServiceError> {
         self.begin()?;
@@ -243,17 +243,58 @@ impl Interaction for AutoAdminAuthorization {
             let mut child = command
                 .spawn()
                 .map_err(|_| ServiceError::ServiceUnavailable)?;
+            *self.job.0.process.lock().unwrap_or_else(|e| e.into_inner()) =
+                platform::management::termination::ProcessTree::child(child.id()).ok();
+            if self.job.0.stop_requested.load(Ordering::Acquire)
+                && let Some(process) = self
+                    .job
+                    .0
+                    .process
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .as_mut()
+            {
+                let _ = process.signal(false);
+            }
             let deadline = Instant::now() + Duration::from_secs(300);
             loop {
+                let stopping = self.job.0.stop_requested.load(Ordering::Acquire);
+                if stopping
+                    && let Some(process) = self
+                        .job
+                        .0
+                        .process
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .as_mut()
+                {
+                    let _ = process.signal(self.job.0.force_requested.load(Ordering::Acquire));
+                }
                 match child.try_wait() {
                     Ok(Some(status)) => {
+                        if stopping
+                            && self
+                                .job
+                                .0
+                                .process
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .as_ref()
+                                .is_some_and(|process| process.has_live_children())
+                        {
+                            std::thread::sleep(Duration::from_millis(25));
+                            continue;
+                        }
+                        if stopping {
+                            return Err(ServiceError::AuthorizationCancelled);
+                        }
                         return if status.success() {
                             Ok(())
                         } else {
                             Err(ServiceError::PermissionDenied)
                         };
                     }
-                    Ok(None) if Instant::now() < deadline && self.job.running() => {
+                    Ok(None) if (stopping || Instant::now() < deadline) && self.job.running() => {
                         std::thread::sleep(Duration::from_millis(25))
                     }
                     _ => {
@@ -264,6 +305,12 @@ impl Interaction for AutoAdminAuthorization {
                 }
             }
         })();
+        self.job
+            .0
+            .process
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         self.job.close_terminal();
         result
     }

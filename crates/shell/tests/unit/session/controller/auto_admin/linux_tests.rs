@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (100, 35),
+        ShellHomeMode::User,
+    );
+    let (tx, _rx) = mpsc::channel();
+    let job = AutoAdminJob::new(
+        "Stubborn PTY test".into(),
+        storage::AutoAdminPolicy::Automatic,
+        tx,
+    );
+    let tty = job.open_terminal().unwrap();
+    let mut command = Command::new("/bin/sh");
+    command
+        .args(["-c", "trap '' TERM; printf 'STOP-READY\\n'; exec sleep 30"])
+        .stdin(tty.try_clone().unwrap())
+        .stdout(tty.try_clone().unwrap())
+        .stderr(tty);
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY, 0) < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    *job.0.process.lock().unwrap() =
+        Some(platform::management::termination::ProcessTree::child(child.id()).unwrap());
+    state.auto_admin = AutoAdminState {
+        job: Some(job.clone()),
+        visible: true,
+        ..Default::default()
+    };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        job.poll_terminal();
+        if job
+            .0
+            .display
+            .lock()
+            .unwrap()
+            .parser
+            .screen()
+            .contents()
+            .contains("STOP-READY")
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("PTY startup timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    state.activate_auto_admin_button(&job, 3);
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "SIGTERM is deliberately ignored"
+    );
+    state.poll_auto_admin_stop(Instant::now() + Duration::from_secs(11));
+    assert!(job.stop_warning());
+    state.handle_auto_admin_input(&InputEvent::key(InputKey::Right));
+    state.handle_auto_admin_input(&InputEvent::key(InputKey::Enter));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("AA did not kill the PTY process");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    use std::os::unix::process::ExitStatusExt;
+    assert_eq!(status.signal(), Some(libc::SIGKILL));
+    job.finish(Err("Killed".into()));
+    assert!(state.auto_admin_view().unwrap().finished);
+    job.close_terminal();
+}
+
+#[test]
 fn default_enter_approval_reaches_the_linux_authorization_adapter() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

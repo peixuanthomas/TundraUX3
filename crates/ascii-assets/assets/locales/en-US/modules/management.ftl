@@ -164,6 +164,17 @@ aa-confirm-hint = Tab / Shift+Tab / ← →: choose · Enter / Space: confirm ·
 aa-terminal-hint = F6: buttons · Type directly · Enter: send · Shift+PgUp/PgDn: scroll · Close after the task ends
 aa-buttons-hint = F6 / Esc: terminal · Tab / Shift+Tab / ← →: choose · Enter / Space: activate
 aa-buttons-hint-compact = F6: back · Tab: choose · Enter: use
+aa-stop = Stop task
+aa-stop-pending = Termination requested. Waiting for the task to exit; a warning appears after 10 seconds.
+aa-stop-timeout = The process may be stuck
+aa-stop-warning = May damage system!
+    The task has not returned within 10 seconds of the termination request and may be stuck. Killing it now can interrupt writes, damage the system, or leave packages and accounts incomplete. Force the process to stop?
+aa-stop-warning-hint = Tab / arrows: choose · Enter: confirm · Esc: wait · PgUp/PgDn: scroll warning
+aa-stop-wait = Keep waiting
+aa-stop-kill = Kill process now
+aa-stop-killing = Force-stop requested. Waiting for a result; an unresponsive system may delay even a kill request.
+aa-stop-no-process = This task has no separate local process to kill. Shell and system services cannot be killed to end it.
+aa-stop-send-failed = Could not send termination signal
 aa-finished-hint = Enter / Space / Esc: close · Shift+PgUp/PgDn: review output
 aa-input-required = Input required in AutoAdmin. Close it after the task ends.
 aa-choose-number = Enter a displayed choice number, then press Enter.

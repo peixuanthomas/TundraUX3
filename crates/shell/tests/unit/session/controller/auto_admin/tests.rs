@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "stop_tests.rs"]
+mod stop_tests;
+
 fn job(policy: storage::AutoAdminPolicy) -> (AutoAdminJob, mpsc::Receiver<OperationInput>) {
     let (tx, rx) = mpsc::channel();
     (
@@ -348,10 +351,15 @@ fn running_buttons_are_keyboard_accessible_without_stealing_terminal_tab() {
     assert_eq!(state.auto_admin.button_focus, None);
     state.apply_input(InputEvent::key(InputKey::F(6)));
     state.apply_input(InputEvent::key(InputKey::Left));
-    assert_eq!(state.auto_admin.button_focus, Some(2));
+    let last = if cfg!(target_os = "linux") { 3 } else { 2 };
+    assert_eq!(state.auto_admin.button_focus, Some(last));
     state.apply_input(InputEvent::key(InputKey::Right));
     assert_eq!(state.auto_admin.button_focus, Some(0));
     state.apply_input(InputEvent::key(InputKey::BackTab));
+    assert_eq!(state.auto_admin.button_focus, Some(last));
+    if cfg!(target_os = "linux") {
+        state.apply_input(InputEvent::key(InputKey::Left));
+    }
     assert_eq!(state.auto_admin.button_focus, Some(2));
     state.apply_input(InputEvent::key(InputKey::Enter));
     assert!(state.auto_admin_visible());
@@ -428,8 +436,8 @@ fn running_task_cannot_be_closed_or_hidden_before_it_finishes() {
 
     state.close_auto_admin();
     assert!(state.auto_admin_visible());
-    // An obsolete fourth-button action cannot send an active task to the background.
-    state.activate_auto_admin_button(&job, 3);
+    // An unknown button action cannot send an active task to the background.
+    state.activate_auto_admin_button(&job, 4);
     assert!(state.auto_admin_visible());
     state.apply_input(InputEvent::key(InputKey::F(12)));
     state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(12)).repeated()));

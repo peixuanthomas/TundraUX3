@@ -428,14 +428,30 @@ fn serve(
     context: ExecutionContext,
     private: &std::path::Path,
 ) -> Result<(), ManagementError> {
-    let started_record = encode_record(
-        1,
+    serve_operation(
+        listener,
         OperationEvent::Started {
             kind: command.kind,
             action: command.action.clone(),
             target: command.target.clone(),
         },
-    )?;
+        private,
+        move |io, cancelled| execute(&command, &context, io, cancelled),
+    )
+}
+
+fn serve_operation(
+    listener: UnixListener,
+    started: OperationEvent,
+    private: &std::path::Path,
+    operation: impl FnOnce(
+        &mut dyn OperationInteraction,
+        &AtomicBool,
+    ) -> Result<String, ManagementError>
+    + Send
+    + 'static,
+) -> Result<(), ManagementError> {
+    let started_record = encode_record(1, started)?;
     let config = WatchdogConfig::new(
         private.join("crashes"),
         private.join("fallback"),
@@ -464,6 +480,7 @@ fn serve(
         terminal: VecDeque::new(),
         size: None,
     });
+    let mut operation = Some(operation);
     let worker = app
         .task_group("operation")
         .spawn_thread(
@@ -474,7 +491,8 @@ fn serve(
                 let Some(mut io) = worker_io.take() else {
                     return;
                 };
-                let result = execute(&command, &context, &mut io, &worker_cancelled);
+                let result =
+                    operation.take().expect("operation executes once")(&mut io, &worker_cancelled);
                 if let Err(error) = &result {
                     io.emit(OperationEvent::Problem {
                         problem: super::problem::OperationProblem::from_error(error),
@@ -495,7 +513,47 @@ fn serve(
     let mut pending_question: Option<PendingQuestion> = None;
     let mut sequence = 1;
     let mut finished: Option<Instant> = None;
+    let mut termination = None;
+    let mut pending_result = None;
+    let mut force_requested = false;
+    let mut last_signal_error = None;
     loop {
+        if let Some(tree) = termination.as_mut() {
+            // Also catch children created while the original request was in flight.
+            match super::termination::ProcessTree::signal(tree, force_requested) {
+                Ok(()) if !tree.has_live_children() => {
+                    cancelled.store(true, Ordering::Release);
+                    let _ = input_tx.try_send(OperationInput::Cancel);
+                    if force_requested {
+                        // Never kill Shell or its retained authorization broker.
+                        // Wait for the signalled children before ending this
+                        // dedicated helper, including children stuck in kernel I/O.
+                        unsafe {
+                            libc::kill(libc::getpid(), libc::SIGKILL);
+                        }
+                    }
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    if last_signal_error.as_ref() != Some(&message) {
+                        let bytes = record_event(
+                            OperationEvent::Output {
+                                text: format!("Could not signal task: {message}"),
+                            },
+                            &mut sequence,
+                            &mut replay,
+                            &mut replay_bytes,
+                            &mut pending_question,
+                        )?;
+                        if let Some(p) = &mut peer {
+                            p.outgoing.push_back(bytes);
+                        }
+                        last_signal_error = Some(message);
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Ok((stream, _)) = listener.accept() {
             if peer_uid(&stream).is_ok_and(|uid| uid == controller_uid) {
                 stream.set_nonblocking(true).map_err(failure)?;
@@ -513,13 +571,24 @@ fn serve(
                 });
             }
         }
-        loop {
+        // A chatty child must not starve control requests by keeping this
+        // channel permanently nonempty.
+        for _ in 0..64 {
             match event_rx.try_recv() {
-                Ok(event) => {
+                Ok(mut event) => {
                     let terminal = matches!(
                         event,
                         OperationEvent::Completed { .. } | OperationEvent::Failed { .. }
                     );
+                    if terminal && let Some(tree) = &termination {
+                        event = OperationEvent::Failed {
+                            message: "Task termination requested. Changes may be incomplete; check system state before retrying.".into(),
+                        };
+                        if tree.has_live_children() {
+                            pending_result = Some(event);
+                            break;
+                        }
+                    }
                     let bytes = record_event(
                         event,
                         &mut sequence,
@@ -540,17 +609,48 @@ fn serve(
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    if finished.is_none() {
-                        let bytes = record_event(OperationEvent::Failed { message: "Operation worker ended without a verified result; refresh system state before retrying".into() }, &mut sequence, &mut replay, &mut replay_bytes, &mut pending_question)?;
-                        if let Some(p) = &mut peer {
-                            p.outgoing.push_back(bytes);
+                    if finished.is_none() && pending_result.is_none() {
+                        let event = OperationEvent::Failed { message: "Operation worker ended without a verified result; refresh system state before retrying".into() };
+                        if termination
+                            .as_ref()
+                            .is_some_and(|tree| tree.has_live_children())
+                        {
+                            pending_result = Some(event);
+                        } else {
+                            let bytes = record_event(
+                                event,
+                                &mut sequence,
+                                &mut replay,
+                                &mut replay_bytes,
+                                &mut pending_question,
+                            )?;
+                            if let Some(p) = &mut peer {
+                                p.outgoing.push_back(bytes);
+                            }
+                            finished = Some(Instant::now());
                         }
-                        finished = Some(Instant::now());
                         pending_question = None;
                     }
                     break;
                 }
             }
+        }
+        if termination
+            .as_ref()
+            .is_some_and(|tree| !tree.has_live_children())
+            && let Some(event) = pending_result.take()
+        {
+            let bytes = record_event(
+                event,
+                &mut sequence,
+                &mut replay,
+                &mut replay_bytes,
+                &mut pending_question,
+            )?;
+            if let Some(p) = &mut peer {
+                p.outgoing.push_back(bytes);
+            }
+            finished = Some(Instant::now());
         }
         let mut disconnected = false;
         if let Some(p) = &mut peer {
@@ -563,6 +663,40 @@ fn serve(
             }
             if p.incoming.len() > MAX_PACKET {
                 disconnected = true;
+            }
+            // Stop requests must not sit behind a full terminal-input channel.
+            while let Some(force) = take_stop_request(&mut p.incoming) {
+                if finished.is_some() {
+                    continue;
+                }
+                if force && termination.is_none() {
+                    continue;
+                }
+                let result: std::io::Result<()> = (|| {
+                    if termination.is_none() {
+                        termination = Some(super::termination::ProcessTree::helper_children()?);
+                    }
+                    let tree = termination.as_mut().unwrap();
+                    tree.signal(force)?;
+                    if force {
+                        force_requested = true;
+                        cancelled.store(true, Ordering::Release);
+                    }
+                    if !tree.has_live_children() {
+                        cancelled.store(true, Ordering::Release);
+                        let _ = input_tx.try_send(OperationInput::Cancel);
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    p.outgoing.push_back(encode_record(
+                        sequence + 1,
+                        OperationEvent::Output {
+                            text: format!("Could not signal task: {error}"),
+                        },
+                    )?);
+                    sequence += 1;
+                }
             }
             while let Some(end) = p.incoming.iter().position(|b| *b == b'\n') {
                 match serde_json::from_slice::<OperationInput>(&p.incoming[..=end]) {
@@ -604,6 +738,26 @@ fn serve(
     drop(worker);
     let _ = runtime.shutdown();
     Ok(())
+}
+
+fn take_stop_request(incoming: &mut Vec<u8>) -> Option<bool> {
+    let mut start = 0;
+    for (end, byte) in incoming.iter().enumerate() {
+        if *byte != b'\n' {
+            continue;
+        }
+        let force = match serde_json::from_slice::<OperationInput>(&incoming[start..=end]) {
+            Ok(OperationInput::Terminate) => Some(false),
+            Ok(OperationInput::Kill) => Some(true),
+            _ => None,
+        };
+        if let Some(force) = force {
+            incoming.drain(start..=end);
+            return Some(force);
+        }
+        start = end + 1;
+    }
+    None
 }
 
 /// Enumerate only sockets under the two fixed current-user roots. Connecting verifies peers.
