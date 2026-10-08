@@ -8,6 +8,7 @@ fn chrome() -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (49, 11),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec!["Compact".into()],
         status: StatusViewModel {
             status: "Compact status".into(),
@@ -92,7 +93,7 @@ fn compact_chrome_shows_toasts_and_preserves_page_header_without_notifications()
             }),
             "{line}"
         );
-        assert!(line.contains("[◀]"));
+        assert!(line.contains("[◀ Esc]"));
         let content: String = (0..49)
             .map(|x| terminal.backend().buffer()[(x, 1)].symbol())
             .collect();

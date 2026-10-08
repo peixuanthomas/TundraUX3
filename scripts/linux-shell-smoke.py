@@ -24,6 +24,7 @@ import sys
 import tempfile
 import termios
 import time
+import unicodedata
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -203,6 +204,51 @@ def check_status_details(master: int, output: bytearray, child: subprocess.Popen
         read_available(master, output, 0.05)
 
 
+def painted_label_position(data: bytes, label: str, columns: int, rows: int) -> tuple[int, int]:
+    """Locate an ASCII label in a complete Ratatui repaint; return SGR coordinates."""
+    screen = [[" "] * columns for _ in range(rows)]
+    x = y = 0
+    for token in re.findall(r"\x1b\[[0-?]*[ -/]*[@-~]|[\s\S]", data.decode(errors="replace")):
+        if token.startswith("\x1b["):
+            command, raw = token[-1], token[2:-1]
+            if not re.fullmatch(r"[0-9;]*", raw):
+                continue
+            values = [int(value or "0") for value in raw.split(";")]
+            amount = values[0] or 1
+            if command in "Hf":
+                y = amount - 1
+                x = ((values[1] if len(values) > 1 else 1) or 1) - 1
+            elif command == "G":
+                x = amount - 1
+            elif command == "d":
+                y = amount - 1
+            elif command in "ABCD":
+                x += amount * ((command == "C") - (command == "D"))
+                y += amount * ((command == "B") - (command == "A"))
+            elif command == "J" and values[0] in (2, 3):
+                screen = [[" "] * columns for _ in range(rows)]
+            elif command == "K" and 0 <= y < rows:
+                start, end = (0, columns) if values[0] == 2 else ((0, x + 1) if values[0] == 1 else (x, columns))
+                for column in range(max(0, start), min(columns, end)):
+                    screen[y][column] = " "
+        elif token == "\r":
+            x = 0
+        elif token == "\n":
+            y += 1
+        elif token.isprintable() and not unicodedata.combining(token):
+            width = 2 if unicodedata.east_asian_width(token) in "WF" else 1
+            if 0 <= y < rows and 0 <= x < columns:
+                screen[y][x] = token if width == 1 else " "
+                if width == 2 and x + 1 < columns:
+                    screen[y][x + 1] = " "
+            x += width
+    for row, cells in enumerate(screen):
+        column = "".join(cells).find(label)
+        if column >= 0:
+            return column + 1, row + 1
+    raise SystemExit(f"Button {label!r} was not painted:\n" + "\n".join("".join(row) for row in screen))
+
+
 def check_management_menu(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
     """Exercise the real Network UI without submitting any system operation."""
     interfaces = json.loads(subprocess.check_output(["ip", "-j", "address", "show"]))
@@ -221,25 +267,28 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("Network query did not settle")
 
-    # The bundled assets require at least 108x20. At this size there is no
-    # page inset: More begins on row 6 in SGR's one-based coordinates.
+    # Read the button from the resized frame: common actions can move it.
+    repaint_offset = len(output)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 108, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
     deadline = time.monotonic() + 0.5
     while time.monotonic() < deadline:
         read_available(master, output, 0.05)
+    more_x, more_y = painted_label_position(bytes(output[repaint_offset:]), "More actions", 108, 20)
+    press_more = f"\x1b[<0;{more_x};{more_y}M".encode()
+    release_more = f"\x1b[<0;{more_x};{more_y}m".encode()
     offset = len(output)
-    os.write(master, b"\x1b[<35;3;6M\x1b[<0;3;6M")
+    os.write(master, f"\x1b[<35;{more_x};{more_y}M".encode() + press_more)
     read_available(master, output, 0.2)
-    if b"Network diagnostics" in output[offset:]:
+    if b"Esc Close" in output[offset:]:
         raise SystemExit("More actions opened on mouse-down")
     os.write(master, b"\x1b[<32;108;3M\x1b[<0;108;3m")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("management drag-out did not settle:\n" + output_diagnostic(output[offset:]))
-    if b"Network diagnostics" in output[offset:]:
+    if b"Esc Close" in output[offset:]:
         raise SystemExit("dragging out of More actions executed it")
-    os.write(master, b"\x1b[<0;3;6M\x1b[<0;3;6m")
-    if not wait_for_output(master, output, b"Network diagnostics", child, 5.0, offset):
+    os.write(master, press_more + release_more)
+    if not wait_for_output(master, output, b"Esc Close", child, 5.0, offset, ignore_spaces=True):
         raise SystemExit("More actions did not open after release:\n" + output_diagnostic(output[offset:]))
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("management menu did not settle")
@@ -327,21 +376,23 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     # View actions are the final six menu items, in the same order on every
     # package page. Only navigation is submitted here; no system write runs.
     for upward, title in ((2, b"Software sources"), (1, b"Configuration conflicts"), (0, b"Package status")):
-        step(b"\t\x1b[F\r", b"Close", "Package More actions did not open")
+        step(b"3", b"Close", "Package More actions did not open")
         step(b"\x1b[F" + b"\x1b[A" * upward + b"\r", title,
              "Package auxiliary view did not open", timeout=45.0)
         step(b"\x1b[18~", b"Installed packages", "Auxiliary view could not return to packages")
     step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Packages did not return to Launcher")
     step(b"\x1b[H" + b"\x1b[B" * 3 + b"\r", b"UX log", "Logs did not open")
-    step(b"\x1b[21~", b"Service, boot or file", "Log More actions did not open")
+    step(b"f", b"Service scope", "Visible log filter shortcut did not open its form")
+    step(b"\x1b", b"UX events", "Log filter cancellation did not restore its page")
+    step(b"\x1b[21~", b"L Level", "Log More actions did not open")
     # End selects the explicit close action, and Space activates it.
     step(b"\x1b[F ", b"UX events", "Log menu close did not restore its page")
-    step(b"\x1b[21~", b"Service, boot or file", "Log menu did not reopen")
+    step(b"\x1b[21~", b"L Level", "Log menu did not reopen")
     # Clicking outside the centered menu closes it without opening a covered
     # category or toolbar control. The layout tests check exact bounds/colors.
     step(b"\x1b[<0;3;6M\x1b[<0;3;6m", b"UX log", "Log menu outside click did not close it")
     step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Logs did not return to Launcher")
-    print("PASS: all six package views, detail return, and log menu keyboard/outside-click dismissal")
+    print("PASS: all six package views, detail return, visible log filters, and log menu keyboard/outside-click dismissal")
 
 
 def main() -> int:

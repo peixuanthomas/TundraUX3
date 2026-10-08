@@ -57,6 +57,135 @@ fn shortcut_action_state(kind: ManagementKind, id: &str) -> ShellSession {
     session
 }
 
+#[test]
+fn package_buttons_stay_in_place_and_disabled_actions_do_not_execute() {
+    for id in [
+        "remove",
+        "install",
+        "upgrade",
+        "pacman_install",
+        "pacman_upgrade",
+    ] {
+        let mut session = shortcut_action_state(ManagementKind::Packages, id);
+        let actions = session.management_actions();
+        assert_eq!(
+            actions
+                .iter()
+                .take(3)
+                .map(|(action, _)| action.id.as_str())
+                .collect::<Vec<_>>(),
+            ["refresh", "scope_installed", "more_actions"]
+        );
+        assert_eq!(actions.len(), 7);
+        let model = session.to_management_view_model();
+        assert_eq!(model.detail_action_start, Some(3));
+        for (index, expected) in ["remove", "install", "upgrade", "scope_search"]
+            .into_iter()
+            .enumerate()
+        {
+            let action = &actions[index + 3].0;
+            assert!(action.id == expected || action.id == format!("pacman_{expected}"));
+            assert_eq!(
+                model.actions[index + 3].1,
+                action.id == id || expected == "scope_search"
+            );
+            if !model.actions[index + 3].1 {
+                session.activate_management_action(index + 3);
+                assert!(session.management_state.form.is_none());
+                assert!(session.management_state.draft_job.is_none());
+                assert!(session.management_state.operation_job.is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn package_detail_buttons_use_the_same_target_for_pointer_and_keyboard() {
+    for by_touch in [false, true] {
+        let mut session = shortcut_action_state(ManagementKind::Packages, "install");
+        session.terminal_size = (120, 30);
+        let model = session.to_management_view_model();
+        let layout = ui::management_layout(session.management_main(), &model);
+        let install = layout.actions[4];
+        assert_eq!(install.intersection(layout.detail_actions_panel), install);
+        if by_touch {
+            click_management_point(&mut session, (install.x, install.y));
+        } else {
+            session.handle_management_key(&KeyInput::new(InputKey::Char('5')));
+        }
+        assert!(
+            matches!(session.management_state.form.as_ref().map(|form| &form.purpose), Some(FormPurpose::Action(action, Some(row))) if action.id == "install" && row.id == "mock-selected-item")
+        );
+    }
+}
+
+#[test]
+fn common_account_actions_are_visible_and_dangerous_changes_stay_in_more() {
+    let mut session = shortcut_action_state(ManagementKind::Users, "user_info");
+    session.management_state.snapshot.rows[0].actions.extend(
+        [
+            "user_password",
+            "user_groups",
+            "user_delete",
+            "user_lock",
+            "user_expiry",
+        ]
+        .map(|id| ManagementAction {
+            id: id.into(),
+            ..Default::default()
+        }),
+    );
+    session
+        .management_state
+        .snapshot
+        .actions
+        .extend(["user_create", "set_view"].map(|id| ManagementAction {
+            id: id.into(),
+            ..Default::default()
+        }));
+    let actions = session.management_actions();
+    assert_eq!(
+        actions
+            .iter()
+            .map(|(action, _)| action.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "user_create",
+            "set_view",
+            "more_actions",
+            "user_info",
+            "user_password",
+            "user_groups"
+        ]
+    );
+    assert_eq!(
+        session.to_management_view_model().detail_action_start,
+        Some(3)
+    );
+    session.activate_management_action(2);
+    assert!(
+        matches!(&session.management_state.form.as_ref().unwrap().purpose, FormPurpose::Menu(items) if items.iter().any(|(action, _)| action.id == "user_delete"))
+    );
+}
+
+#[test]
+fn services_expose_restart_and_logs_but_keep_startup_changes_in_more() {
+    let mut session = shortcut_action_state(ManagementKind::Services, "start");
+    session.management_state.snapshot.rows[0].actions.extend(
+        ["stop", "restart", "view_logs", "enable", "disable"].map(|id| ManagementAction {
+            id: id.into(),
+            ..Default::default()
+        }),
+    );
+    let model = session.to_management_view_model();
+    assert_eq!(model.actions.len(), 5);
+    let layout = ui::management_layout(Rect::new(0, 0, 100, 24), &model);
+    assert_eq!(layout.actions.len(), 5);
+    assert!(layout.action_next.is_empty());
+    assert!(model.actions[2].0.starts_with("[T]"));
+    assert!(model.actions[3].0.starts_with("[L]"));
+}
+
 fn click_management_point(session: &mut ShellSession, point: (u16, u16)) {
     let now = Instant::now();
     assert!(
@@ -256,18 +385,51 @@ fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
         for id in ids {
             let mut keyed = shortcut_action_state(kind, id);
             let mut clicked = shortcut_action_state(kind, id);
-            let (_, key) = management_action_shortcut(Some(kind), id)
+            let (shortcut, key) = management_action_shortcut(Some(kind), id)
                 .expect("each current action has a shortcut");
-            assert_eq!(
-                keyed.to_management_view_model().actions[0].0,
-                action_label(&keyed.management_state.snapshot.rows[0].actions[0])
-            );
             keyed.handle_management_key(&KeyInput::new(key));
-            let layout = ui::management_layout(
-                clicked.management_main(),
-                &clicked.to_management_view_model(),
-            );
-            click_management_point(&mut clicked, (layout.actions[0].x, layout.actions[0].y));
+            let visible = clicked
+                .management_actions()
+                .iter()
+                .position(|(action, _)| action.id == id && action.disabled_reason.is_none());
+            let area = if let Some(index) = visible {
+                let model = clicked.to_management_view_model();
+                assert_eq!(
+                    model.actions[index].0,
+                    format!(
+                        "[{shortcut}] {}",
+                        action_label(&clicked.management_state.snapshot.rows[0].actions[0])
+                    )
+                );
+                ui::management_layout(clicked.management_main(), &model).actions[index]
+            } else {
+                let more = clicked
+                    .management_actions()
+                    .iter()
+                    .position(|(action, _)| action.id == "more_actions")
+                    .unwrap();
+                clicked.activate_management_action(more);
+                let FormPurpose::Menu(items) =
+                    &clicked.management_state.form.as_ref().unwrap().purpose
+                else {
+                    panic!("more menu");
+                };
+                let index = items
+                    .iter()
+                    .position(|(action, _)| action.id == id)
+                    .unwrap();
+                clicked.management_state.choice_scroll = index;
+                ui::management_layout(
+                    clicked.management_main(),
+                    &clicked.to_management_view_model(),
+                )
+                .choice_rows
+                .into_iter()
+                .find(|(item, _)| *item == index)
+                .unwrap()
+                .1
+            };
+            click_management_point(&mut clicked, (area.x, area.y));
             assert_eq!(
                 keyed.management_state.form, clicked.management_state.form,
                 "{kind:?}/{id}"
@@ -548,14 +710,12 @@ fn duplicate_action_mnemonics_use_first_target_and_menu_keeps_each_target() {
     let model = session.to_management_view_model();
     assert_eq!(
         model.actions[0].0,
-        action_label(&session.management_state.snapshot.rows[0].actions[0])
+        format!(
+            "[A] {}",
+            action_label(&session.management_state.snapshot.rows[0].actions[0])
+        )
     );
-    assert!(
-        !model
-            .actions
-            .iter()
-            .any(|(label, _)| label.starts_with("[A]"))
-    );
+    assert!(model.actions[0].0.starts_with("[A]"));
     session.handle_management_key(&KeyInput::new(InputKey::Char('a')));
     assert!(matches!(
         session.management_state.form.as_ref().unwrap().purpose,
@@ -1280,7 +1440,12 @@ fn main_actions_are_limited_to_two_and_tab_enter_reaches_the_more_menu() {
 fn more_menu_shortcuts_open_the_named_action_and_held_keys_do_not_type_into_its_form() {
     let mut state = shortcut_action_state(ManagementKind::Disks, "scan");
     state.management_state.snapshot.rows[0].actions[0].primary = false;
-    state.activate_management_action(0);
+    let more = state
+        .management_actions()
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    state.activate_management_action(more);
     assert!(
         state
             .to_management_view_model()

@@ -97,12 +97,12 @@ pub(super) fn controls(model: &LogsViewModel) -> Vec<(LogsHitTarget, String)> {
                 i18n::tr!("ui-logs-back-latest", count = model.new_events)
             },
         ),
+        (LogsHitTarget::Filters, i18n::tr!("ui-logs-source-filters")),
         (LogsHitTarget::More, i18n::tr!("ui-logs-more")),
     ]
 }
 pub fn logs_more_controls() -> Vec<(LogsHitTarget, String)> {
     vec![
-        (LogsHitTarget::Filters, i18n::tr!("ui-logs-source-filters")),
         (LogsHitTarget::FilterLevel, i18n::tr!("ui-logs-l-level")),
         (LogsHitTarget::FilterModule, i18n::tr!("ui-logs-m-module")),
         (LogsHitTarget::FilterTime, i18n::tr!("ui-logs-t-time")),

@@ -656,7 +656,7 @@ fn update_confirmation_draws_complete_buttons_and_blocks_underlying_hits() {
                 .unwrap();
             for (button, label) in [
                 (confirm, format!("[{confirm_label}]")),
-                (cancel, "[Cancel]".into()),
+                (cancel, "[Esc Cancel]".into()),
             ] {
                 let rendered: String = (button.x..button.right())
                     .map(|x| terminal.backend().buffer()[(x, button.y)].symbol())
@@ -748,6 +748,7 @@ fn chrome() -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::User,
         terminal_size: (120, 32),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec!["Settings".to_string()],
         status: StatusViewModel {
             status: "Ready".to_string(),

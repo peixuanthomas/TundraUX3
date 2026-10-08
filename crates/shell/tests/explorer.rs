@@ -23,6 +23,70 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn context_menu_shortcut_labels_activate_the_named_actions() {
+    let fixture = FixtureRoot::new("context-shortcut-labels");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    for (key, id) in [
+        ("N", "new-folder"),
+        ("T", "new-text"),
+        ("F5", "refresh"),
+        ("F6", "sort"),
+        ("O", "options"),
+    ] {
+        state.apply_input_with_platform(
+            InputEvent::Key(KeyInput::with_modifiers(
+                InputKey::F(10),
+                InputModifiers::SHIFT,
+            )),
+            &platform,
+        );
+        let Some(ui::ExplorerOverlayViewModel::ContextMenu(menu)) =
+            state.to_explorer_view_model().overlay
+        else {
+            panic!(
+                "context menu missing before {key}: screen={:?}, overlay={:?}, notification={:?}",
+                state.active_screen(),
+                state.to_explorer_view_model().overlay,
+                state.to_notification_view_model()
+            );
+        };
+        assert_eq!(
+            menu.items
+                .iter()
+                .find(|item| item.id == id)
+                .unwrap()
+                .shortcut
+                .as_deref(),
+            Some(key)
+        );
+        state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+        let overlay = state.to_explorer_view_model().overlay;
+        match key {
+            "N" | "T" => assert!(matches!(
+                overlay,
+                Some(ui::ExplorerOverlayViewModel::Name(_))
+            )),
+            "F5" => assert!(overlay.is_none()),
+            "F6" => assert!(matches!(
+                overlay,
+                Some(ui::ExplorerOverlayViewModel::ContextMenu(_))
+            )),
+            "O" => assert!(matches!(
+                overlay,
+                Some(ui::ExplorerOverlayViewModel::Options(_))
+            )),
+            _ => unreachable!(),
+        }
+        if overlay.is_some() {
+            state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+        }
+    }
+}
+
+#[test]
 fn explorer_options_mark_non_defaults_and_restore_them_without_losing_focus() {
     let fixture = FixtureRoot::new("option-default-markers");
     let platform = mock_platform(fixture.path());

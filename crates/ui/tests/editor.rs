@@ -1,6 +1,42 @@
 mod support;
 
 #[test]
+fn toolbar_and_menu_shortcuts_fit_their_clickable_buttons() {
+    for locale in ["en-US", "zh-CN"] {
+        let assets =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+        let snapshot = i18n::LanguageSnapshot::load(&assets, locale, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        let mut model = sample_model();
+        let layout = editor_layout(Rect::new(0, 0, 108, 24), &model);
+        let terminal = render(&model, 108, 24);
+        for (action, key) in [
+            (EditorToolbarAction::New, "Ctrl+N"),
+            (EditorToolbarAction::Open, "Ctrl+O"),
+            (EditorToolbarAction::Save, "Ctrl+S"),
+            (EditorToolbarAction::Undo, "Ctrl+Z"),
+            (EditorToolbarAction::Redo, "Ctrl+Y"),
+            (EditorToolbarAction::Find, "Ctrl+F"),
+        ] {
+            let item = toolbar_item(&layout, action);
+            let text: String = (item.area.x..item.area.right())
+                .map(|x| terminal.backend().buffer()[(x, item.area.y)].symbol())
+                .collect();
+            assert!(text.contains(key) && text.contains(']'), "{text}");
+            assert_eq!(
+                layout.hit_test(item.area.x, item.area.y),
+                item.enabled.then_some(EditorHitTarget::Toolbar(action))
+            );
+        }
+        model.open_menu = Some(EditorMenu::File);
+        let output = terminal_output(&render(&model, 108, 24));
+        assert!(output.contains("Ctrl+S"));
+    }
+}
+
+#[test]
 fn source_gutter_colors_changes_and_stays_fixed_while_text_scrolls() {
     use app::editor::line_changes::{LineChange, LineMarker};
     let mut model = EditorViewModel::source("note.txt", "abcdefghijklmnop\nsecond\nthird");
@@ -214,7 +250,7 @@ fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available()
     assert_eq!(layout.toolbar, Rect::new(0, 1, 50, 1));
     assert_eq!(layout.status_bar, Rect::new(0, 11, 50, 1));
     assert!(layout.canvas.height >= 7);
-    assert!(!layout.toolbar_overflow);
+    assert!(layout.toolbar_overflow);
 
     let save = toolbar_item(&layout, EditorToolbarAction::Save);
     assert_eq!(
@@ -226,7 +262,7 @@ fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available()
         layout
             .toolbar_items
             .iter()
-            .all(|item| item.action != EditorToolbarAction::More)
+            .any(|item| item.action == EditorToolbarAction::More)
     );
 }
 

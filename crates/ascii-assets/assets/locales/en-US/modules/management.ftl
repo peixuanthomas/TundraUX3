@@ -158,8 +158,8 @@ aa-blocked = AutoAdmin is set to deny, or its settings could not be read. No ope
 aa-rejected = Operation rejected. No system change was started.
 aa-expired = Approval expired. No operation was started.
 aa-approve = Approve
-aa-deny = Deny
-aa-close = Close
+aa-deny = Esc Deny
+aa-close = Esc Close
 aa-confirm-hint = Tab / Shift+Tab / ← →: choose · Enter / Space: confirm · Esc: deny · ↑ ↓: scroll
 aa-terminal-hint = F6: buttons · Type directly · Enter: send · Shift+PgUp/PgDn: scroll · Close after the task ends
 aa-buttons-hint = F6 / Esc: terminal · Tab / Shift+Tab / ← →: choose · Enter / Space: activate
@@ -170,7 +170,7 @@ aa-stop-timeout = The process may be stuck
 aa-stop-warning = May damage system!
     The task has not returned within 10 seconds of the termination request and may be stuck. Killing it now can interrupt writes, damage the system, or leave packages and accounts incomplete. Force the process to stop?
 aa-stop-warning-hint = Tab / arrows: choose · Enter: confirm · Esc: wait · PgUp/PgDn: scroll warning
-aa-stop-wait = Keep waiting
+aa-stop-wait = Esc Keep waiting
 aa-stop-kill = Kill process now
 aa-stop-killing = Force-stop requested. Waiting for a result; an unresponsive system may delay even a kill request.
 aa-stop-no-process = This task has no separate local process to kill. Shell and system services cannot be killed to end it.
@@ -199,3 +199,5 @@ aa-local-user-rename = Change the display name of Tundra account { $user } to { 
 aa-local-user-delete = Delete Tundra account { $user }. This cannot be undone.
 aa-new-password = Enter the new password, then press Enter. Ctrl+C cancels.
 aa-confirm-password = Enter the new password again, then press Enter. Ctrl+C cancels.
+
+management-action-not-available = This action is unavailable for the selected item or backend.

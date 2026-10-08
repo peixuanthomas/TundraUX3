@@ -209,6 +209,10 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
                             i18n::tr!("ui-logs-back-latest", count = model.new_events)
                         },
                     ),
+                    (
+                        ui::LogsHitTarget::Filters,
+                        i18n::tr!("ui-logs-source-filters"),
+                    ),
                     (ui::LogsHitTarget::More, i18n::tr!("ui-logs-more")),
                 ];
                 assert_eq!(layout.controls.len(), controls.len());

@@ -105,7 +105,7 @@ fn more_dialog_is_centered_and_keeps_space_around_centered_labels() {
 fn compact_more_dialog_scrolls_options_and_keeps_close_visible() {
     let mut model = model();
     let main = Rect::new(0, 1, 49, 10);
-    for selected in [0, 4, 6, 7] {
+    for selected in [0, 3, 5, 6] {
         model.more_selected = Some(selected);
         let layout = logs_layout(main, &model);
         let selected_target = ui::logs_more_controls()[selected].0;
@@ -226,6 +226,7 @@ fn render(
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (width, height),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec!["Logs".into()],
         status: StatusViewModel {
             status: "Ready".into(),
@@ -484,7 +485,7 @@ fn narrow_log_toolbar_keeps_all_controls_inside_the_page() {
     for size in [(40, 20), (60, 20), (80, 24)] {
         let area = Rect::new(0, 0, size.0, size.1);
         let layout = logs_layout(area, &model);
-        assert_eq!(layout.controls.len(), 4);
+        assert_eq!(layout.controls.len(), 5);
         assert!(layout.controls.iter().all(|control| control.area.width > 0
             && control.area.height > 0
             && control.area.right() <= area.right()

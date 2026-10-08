@@ -179,7 +179,14 @@ pub fn render_shell_chrome_with_status_focus(
             line,
         );
         if let Some(area) = layout.back_button {
-            let mut button = Button::new("shell.back", crate::assets::BACK_ICON.trim());
+            let mut button = Button::new(
+                "shell.back",
+                format!(
+                    "{} {}",
+                    crate::assets::BACK_ICON.trim(),
+                    chrome.back_shortcut
+                ),
+            );
             button.state.hovered = chrome.back_button_hovered;
             button.render_borderless_frame(frame, area, &theme);
         }
@@ -201,7 +208,14 @@ pub fn render_shell_chrome_with_status_focus(
     );
     render_top(frame, title_area, chrome, context);
     if let Some(area) = layout.back_button {
-        let mut button = Button::new("shell.back", crate::assets::BACK_ICON.trim());
+        let mut button = Button::new(
+            "shell.back",
+            format!(
+                "{} {}",
+                crate::assets::BACK_ICON.trim(),
+                chrome.back_shortcut
+            ),
+        );
         button.state.hovered = chrome.back_button_hovered;
         button.render_frame(frame, area, &context.compatibility_theme());
     }

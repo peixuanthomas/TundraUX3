@@ -571,7 +571,10 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
                 Constraint::Fill(1),
                 Constraint::Length(confirm_width),
                 Constraint::Length(2),
-                Constraint::Length(8), // [Cancel]
+                Constraint::Length(
+                    u16::try_from(terminal_width(&i18n::tr!("ui-settings-cancel-button")))
+                        .unwrap_or(u16::MAX),
+                ),
                 Constraint::Fill(1),
             ])
             .areas(Rect::new(

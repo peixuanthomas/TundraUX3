@@ -45,6 +45,7 @@ pub struct ShellChromeViewModel {
     pub terminal_size: (u16, u16),
     pub screen_stack: Vec<String>,
     pub back_button_hovered: bool,
+    pub back_shortcut: &'static str,
     pub status: StatusViewModel,
 }
 

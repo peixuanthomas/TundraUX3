@@ -704,6 +704,7 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::User,
         terminal_size: (110, 32),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec![screen.to_string()],
         status: StatusViewModel {
             status: "Ready".to_string(),
@@ -785,6 +786,13 @@ fn conflict_focus_highlights_exactly_one_control_even_when_apply_is_enabled() {
             .chain(std::iter::once(ExplorerOverlayControl::ApplyToRemaining));
         for (index, control) in controls.enumerate() {
             let area = overlay_control_area(&model, &control);
+            let painted = (area.x..area.right())
+                .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
+                .collect::<String>();
+            assert!(
+                painted
+                    .contains(["K Keep both", "R Replace", "S Skip", "Esc/N Cancel", "A "][index])
+            );
             let cell = (area.x..area.right())
                 .map(|x| &terminal.backend().buffer()[(x, area.y)])
                 .find(|cell| !cell.symbol().trim().is_empty())

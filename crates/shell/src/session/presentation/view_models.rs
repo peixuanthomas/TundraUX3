@@ -2139,6 +2139,7 @@ impl ShellSession {
         };
         ui::ShellChromeViewModel {
             back_button_hovered: self.hovered_component == Some(ShellComponent::BackButton),
+            back_shortcut: self.shell_back_shortcut(),
             app_name: "TundraUX 3".to_string(),
             build_mode: build_mode_label().to_string(),
             display_mode: self.home_display_mode(),

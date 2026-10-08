@@ -133,7 +133,8 @@ impl ScreenCompositor {
             Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1),
             chrome.status.time_button_label.as_deref(),
             &context,
-        );
+        )
+        .with_back_shortcut(chrome.back_shortcut);
         if state.graphical_icons_enabled()
             && !layout.is_compact()
             && let Some(icons) = icons
@@ -191,7 +192,8 @@ impl ScreenCompositor {
         let mut chrome = prepared.chrome.clone();
         chrome.terminal_size = (bounds.width, bounds.height);
         let layout =
-            ui::ShellFrameLayout::new(bounds, chrome.status.time_button_label.as_deref(), context);
+            ui::ShellFrameLayout::new(bounds, chrome.status.time_button_label.as_deref(), context)
+                .with_back_shortcut(chrome.back_shortcut);
         // Use the actual frame bounds, including a resize arriving just before draw.
         state.terminal_size = (bounds.width, bounds.height);
         state.refresh_hit_map_with_frame_layout(context.transitions, layout);
@@ -321,7 +323,8 @@ impl ScreenCompositor {
             Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1),
             chrome.status.time_button_label.as_deref(),
             &context,
-        );
+        )
+        .with_back_shortcut(chrome.back_shortcut);
         self.motion
             .update_layout(state, &layout, context.theme, context.motion.reduced_motion);
     }

@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use super::model::*;
-use crate::components::Scrollbar;
+use crate::components::{Scrollbar, terminal_width};
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const EXPLORER_SIDEBAR_MIN_WIDTH: u16 = 96;
@@ -258,7 +258,8 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         path_bar.width.saturating_sub(search_width),
         path_bar.height,
     );
-    let address_button_width = 6.min(address_area.width);
+    let address_button_width =
+        usize_to_u16(terminal_width(&i18n::tr!("ui-explorer-edit-button"))).min(address_area.width);
     let address_gap = u16::from(address_area.width > address_button_width);
     let address_button = Rect::new(
         address_area.x,

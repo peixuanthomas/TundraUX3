@@ -1,6 +1,15 @@
 use super::super::*;
 use crate::session::queries::ShellOverlayCategory;
 impl ShellSession {
+    pub(in crate::session) fn shell_back_shortcut(&self) -> &'static str {
+        if self.active_screen() == ShellScreen::CommandLine && !self.notification_has_active_modal()
+        {
+            "Ctrl+Shift+X"
+        } else {
+            "Esc"
+        }
+    }
+
     pub(in crate::session) fn refresh_hit_map(&mut self) {
         let _language = i18n::enter_snapshot(self.language.clone());
         self.refresh_hit_map_with_motion(ui::MotionTransitions::default());
@@ -16,7 +25,8 @@ impl ShellSession {
         };
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let layout =
-            ui::ShellFrameLayout::new(bounds, self.status_time_button_label().as_deref(), &context);
+            ui::ShellFrameLayout::new(bounds, self.status_time_button_label().as_deref(), &context)
+                .with_back_shortcut(self.shell_back_shortcut());
         self.refresh_hit_map_with_frame_layout(motion, layout);
     }
 
@@ -29,6 +39,7 @@ impl ShellSession {
                     self.status_time_button_label().as_deref(),
                     &ui::RenderContext::default(),
                 )
+                .with_back_shortcut(self.shell_back_shortcut())
             })
             .shell
     }

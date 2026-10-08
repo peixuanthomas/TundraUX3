@@ -243,6 +243,7 @@ fn debug_status_returns_after_a_notification_clears() {
         display_mode: HomeDisplayMode::Debug,
         terminal_size: (120, 30),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec!["Home".to_string()],
         status: StatusViewModel {
             status: "Last Key: x | Mouse position: 12,7 | Size: 120x30 | Scroll: Down | Drag: none"
@@ -782,6 +783,7 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (80, 24),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec![screen.to_string()],
         status: StatusViewModel {
             status: "Ready".to_string(),

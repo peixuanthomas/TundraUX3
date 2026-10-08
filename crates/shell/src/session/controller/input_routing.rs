@@ -2180,7 +2180,19 @@ impl ShellSession {
                 InputKey::Char('v' | 'V') => Some("paste"),
                 InputKey::Char('d' | 'D') if !key.has_non_shift_modifier() => Some("delete"),
                 InputKey::F(2) if key.is_unmodified_action_key() => Some("rename"),
-                InputKey::Delete if key.is_unmodified_action_key() => Some("delete"),
+                InputKey::F(5) if key.is_unmodified_action_key() => Some("refresh"),
+                InputKey::F(6) if key.is_unmodified_action_key() => Some("sort"),
+                InputKey::Char('n' | 'N') if !key.has_non_shift_modifier() => Some("new-folder"),
+                InputKey::Char('t' | 'T') if !key.has_non_shift_modifier() => Some("new-text"),
+                InputKey::Char('o' | 'O') if !key.has_non_shift_modifier() => Some("options"),
+                InputKey::Char('r' | 'R') if !key.has_non_shift_modifier() => Some("restore"),
+                InputKey::Delete if key.is_unmodified_action_key() => {
+                    Some(if menu.items.iter().any(|item| item.id == "dump-trash") {
+                        "dump-trash"
+                    } else {
+                        "delete"
+                    })
+                }
                 _ => None,
             };
             if let Some(index) = id.and_then(|id| {

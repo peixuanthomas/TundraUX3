@@ -4,9 +4,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::{
-    ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerLayout, ExplorerOverlayControl,
-    ExplorerOverlayLayout, ExplorerOverlayViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
-    ExplorerViewModel, explorer_layout,
+    ExplorerConflictChoice, ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerLayout,
+    ExplorerOverlayControl, ExplorerOverlayLayout, ExplorerOverlayViewModel,
+    ExplorerSearchViewModel, ExplorerSortColumn, ExplorerViewModel, explorer_layout,
 };
 use crate::components::{
     Button, ComponentTone, DataTable, List, ListItem, Panel, Scrollbar, Surface, TextInput,
@@ -613,7 +613,7 @@ pub fn render_explorer_overlay(
                         frame,
                         control.area,
                         "explorer.options.close",
-                        format!("[{}]", options.close_label),
+                        format!("[Esc {}]", options.close_label),
                         model.overlay_selection == options.options.len(),
                         control.enabled,
                         theme,
@@ -658,7 +658,7 @@ pub fn render_explorer_overlay(
                     frame,
                     control.area,
                     "explorer.properties.close",
-                    format!("[{}]", properties.close_label),
+                    format!("[Esc {}]", properties.close_label),
                     true,
                     control.enabled,
                     theme,
@@ -720,7 +720,7 @@ fn render_explorer_name_dialog(
                 frame,
                 control.area,
                 "explorer.name.confirm",
-                format!("[{}]", dialog.confirm_label),
+                format!("[Enter {}]", dialog.confirm_label),
                 selection == 1,
                 control.enabled,
                 theme,
@@ -729,7 +729,7 @@ fn render_explorer_name_dialog(
                 frame,
                 control.area,
                 "explorer.name.cancel",
-                format!("[{}]", dialog.cancel_label),
+                format!("[Esc {}]", dialog.cancel_label),
                 selection == 2,
                 control.enabled,
                 theme,
@@ -787,7 +787,16 @@ fn render_explorer_conflict_dialog(
                     frame,
                     control.area,
                     format!("explorer.conflict.{choice:?}"),
-                    choice.label(),
+                    format!(
+                        "{} {}",
+                        match choice {
+                            ExplorerConflictChoice::KeepBoth => "K",
+                            ExplorerConflictChoice::Replace => "R",
+                            ExplorerConflictChoice::Skip => "S",
+                            ExplorerConflictChoice::Cancel => "Esc/N",
+                        },
+                        choice.label()
+                    ),
                     selected,
                     control.enabled,
                     theme,
@@ -795,13 +804,16 @@ fn render_explorer_conflict_dialog(
             }
             ExplorerOverlayControl::ApplyToRemaining => {
                 let label = fit_cell(
-                    &i18n::tr!(
-                        "ui-explorer-apply-remaining",
-                        state = if conflict.apply_to_remaining {
-                            i18n::tr!("ui-explorer-on")
-                        } else {
-                            i18n::tr!("ui-explorer-off")
-                        }
+                    &format!(
+                        "A {}",
+                        i18n::tr!(
+                            "ui-explorer-apply-remaining",
+                            state = if conflict.apply_to_remaining {
+                                i18n::tr!("ui-explorer-on")
+                            } else {
+                                i18n::tr!("ui-explorer-off")
+                            }
+                        )
                     ),
                     usize::from(control.area.width),
                 );
@@ -831,8 +843,8 @@ fn render_legacy_explorer_dialog(
     );
     for control in &layout.controls {
         let label = match control.control {
-            ExplorerOverlayControl::Confirm => Some(dialog.confirm_label.as_str()),
-            ExplorerOverlayControl::Cancel => Some(dialog.cancel_label.as_str()),
+            ExplorerOverlayControl::Confirm => Some(format!("Y {}", dialog.confirm_label)),
+            ExplorerOverlayControl::Cancel => Some(format!("Esc/N {}", dialog.cancel_label)),
             _ => None,
         };
         if let Some(label) = label {

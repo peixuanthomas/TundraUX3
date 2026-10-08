@@ -8,6 +8,7 @@ fn chrome(width: u16, height: u16) -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (width, height),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec!["中文页面路径很长需要正确截断".repeat(8)],
         status: StatusViewModel {
             status: "系统状态消息很长但不应覆盖时钟".repeat(8),
@@ -24,6 +25,24 @@ fn row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .map(|x| terminal.backend().buffer()[(x, y)].symbol())
         .collect()
 }
+
+#[test]
+fn back_button_shows_and_fits_the_actual_page_shortcut() {
+    for size in [(50, 12), (108, 30), (40, 10)] {
+        for shortcut in ["Esc", "Ctrl+Shift+X"] {
+            let mut model = chrome(size.0, size.1);
+            model.back_shortcut = shortcut;
+            let (terminal, layout) = render(&model, &RenderContext::default());
+            let back = layout.back_button.unwrap();
+            let y = back.y + u16::from(back.height > 1);
+            let label: String = (back.x..back.right())
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect();
+            assert!(label.contains(&format!("[◀ {shortcut}]")), "{label}");
+            assert!(back.intersection(layout.main).is_empty());
+        }
+    }
+}
 fn render(
     model: &ShellChromeViewModel,
     context: &RenderContext,
@@ -33,7 +52,8 @@ fn render(
         Rect::new(0, 0, width, height),
         model.status.time_button_label.as_deref(),
         context,
-    );
+    )
+    .with_back_shortcut(model.back_shortcut);
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| {
@@ -68,11 +88,10 @@ fn chrome_title_and_information_share_one_row_without_spilling_into_content() {
         let back = layout.back_button.unwrap();
         assert_eq!(back.right(), top.right());
         assert_eq!(back.height, top.height);
-        assert!(text.contains("[◀]"));
-        assert_eq!(
-            terminal.backend().buffer()[(back.x + 3, back.y + 1)].symbol(),
-            "◀"
-        );
+        let label = (back.x..back.right())
+            .map(|x| terminal.backend().buffer()[(x, back.y + 1)].symbol())
+            .collect::<String>();
+        assert!(label.contains("[◀ Esc]"));
     }
 }
 #[test]
@@ -82,7 +101,7 @@ fn long_chinese_title_is_clipped_to_top_inner_row() {
     let (terminal, layout) = render(&model, &RenderContext::default());
     assert!(row(&terminal, 1).replace(' ', "").contains("终端交互环境"));
     assert!(row(&terminal, 1).contains("..."));
-    assert!(row(&terminal, 1).contains("[◀]"));
+    assert!(row(&terminal, 1).contains("[◀ Esc]"));
     assert!(!row(&terminal, 2).contains('终'));
     assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
 }
@@ -103,7 +122,7 @@ fn compact_threshold_keeps_escape_above_the_content() {
             assert_eq!(layout.main.y, 1);
             assert_eq!(layout.main.height, height - 1);
             assert!(row(&terminal, 0).contains("TundraUX"));
-            assert!(row(&terminal, 0).contains("[◀]"));
+            assert!(row(&terminal, 0).contains("[◀ Esc]"));
             assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
             assert_eq!(
                 layout.back_button.unwrap().intersection(layout.main).area(),
@@ -166,7 +185,7 @@ fn back_button_uses_the_active_theme_and_hover_accent() {
                 context.compatibility_theme().button_hover_color()
             );
             let offset = ShellFrameLayout::new(Rect::new(5, 8, 80, 24), None, &context);
-            assert_eq!(offset.back_button.unwrap(), Rect::new(78, 8, 7, 3));
+            assert_eq!(offset.back_button.unwrap(), Rect::new(76, 8, 9, 3));
         }
     }
 }

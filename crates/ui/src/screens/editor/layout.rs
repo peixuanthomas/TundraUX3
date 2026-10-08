@@ -1198,7 +1198,7 @@ pub(super) fn toolbar_spec(action: EditorToolbarAction) -> (EditorToolbarAction,
 }
 
 pub(super) fn toolbar_label(action: EditorToolbarAction) -> String {
-    match action {
+    let label = match action {
         EditorToolbarAction::New => i18n::tr!("ui-editor-new-padded"),
         EditorToolbarAction::Open => i18n::tr!("ui-editor-open-padded"),
         EditorToolbarAction::Save => i18n::tr!("ui-editor-save-padded"),
@@ -1217,6 +1217,22 @@ pub(super) fn toolbar_label(action: EditorToolbarAction) -> String {
         EditorToolbarAction::Table => i18n::tr!("ui-editor-table-padded"),
         EditorToolbarAction::Find => i18n::tr!("ui-editor-find-padded"),
         EditorToolbarAction::More => i18n::tr!("ui-editor-more-padded"),
+    };
+    match toolbar_shortcut(action) {
+        Some(shortcut) => format!(" {shortcut} {} ", label.trim()),
+        None => label,
+    }
+}
+
+fn toolbar_shortcut(action: EditorToolbarAction) -> Option<&'static str> {
+    match action {
+        EditorToolbarAction::New => Some("Ctrl+N"),
+        EditorToolbarAction::Open => Some("Ctrl+O"),
+        EditorToolbarAction::Save => Some("Ctrl+S"),
+        EditorToolbarAction::Undo => Some("Ctrl+Z"),
+        EditorToolbarAction::Redo => Some("Ctrl+Y"),
+        EditorToolbarAction::Find => Some("Ctrl+F"),
+        _ => None,
     }
 }
 
@@ -1232,7 +1248,7 @@ pub(super) fn menu_label(menu: EditorMenu) -> String {
 }
 
 pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
-    match action {
+    let label = match action {
         EditorMenuAction::Config(action) => i18n::tr!(format!(
             "config-editor-{}",
             match action {
@@ -1276,7 +1292,15 @@ pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
         EditorMenuAction::Toolbar(EditorToolbarAction::More) => i18n::tr!("ui-editor-more"),
         EditorMenuAction::Mode(EditorMode::Rich) => i18n::tr!("ui-editor-rich-view"),
         EditorMenuAction::Mode(EditorMode::Source) => i18n::tr!("ui-editor-source-view"),
-    }
+    };
+    let shortcut = match action {
+        EditorMenuAction::Toolbar(action) => toolbar_shortcut(action),
+        EditorMenuAction::Config(EditorConfigAction::Menu) if cfg!(target_os = "linux") => {
+            Some("F10")
+        }
+        _ => None,
+    };
+    shortcut.map_or_else(|| label.clone(), |shortcut| format!("{shortcut} {label}"))
 }
 
 pub(super) fn mode_label(mode: EditorMode) -> String {

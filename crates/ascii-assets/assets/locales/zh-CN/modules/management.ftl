@@ -158,8 +158,8 @@ aa-blocked = AutoAdmin 已设为一律禁止，或无法读取设置；操作未
 aa-rejected = 已拒绝操作；未开始修改系统。
 aa-expired = 等待批准超时；操作未启动。
 aa-approve = 同意
-aa-deny = 拒绝
-aa-close = 关闭
+aa-deny = Esc 拒绝
+aa-close = Esc 关闭
 aa-confirm-hint = Tab / Shift+Tab / ← →：选择 · Enter / 空格：确认 · Esc：拒绝 · ↑ ↓：滚动
 aa-terminal-hint = F6：按钮 · 直接输入 · Enter：发送 · Shift+PgUp/PgDn：滚动 · 任务结束后才能关闭
 aa-buttons-hint = F6 / Esc：终端 · Tab / Shift+Tab / ← →：选择 · Enter / 空格：执行
@@ -170,7 +170,7 @@ aa-stop-timeout = 进程可能卡死
 aa-stop-warning = 强杀可能损坏系统！
     请求终止后已等待 10 秒，任务仍未返回，进程可能卡死。立即杀死进程可能中断正在进行的写入，造成系统损坏、软件包或账户数据不完整。确定要强制结束吗？
 aa-stop-warning-hint = Tab / ← →：选择 · Enter：确认 · Esc：等待 · PgUp/PgDn：滚动警告
-aa-stop-wait = 继续等待
+aa-stop-wait = Esc 继续等待
 aa-stop-kill = 立即杀死进程
 aa-stop-killing = 已请求强制结束，等待结果。系统无响应时，杀死请求也可能暂时无法完成。
 aa-stop-no-process = 此任务没有可单独杀死的本地进程；不能通过杀死 Shell 或系统服务来结束它。
@@ -199,3 +199,5 @@ aa-local-user-rename = 将 Tundra 账户 { $user } 的显示名称改为 { $name
 aa-local-user-delete = 删除 Tundra 账户 { $user }，此操作无法撤销。
 aa-new-password = 输入新密码后按 Enter。Ctrl+C 取消。
 aa-confirm-password = 再次输入新密码后按 Enter。Ctrl+C 取消。
+
+management-action-not-available = 当前所选项目或后端不支持此操作。

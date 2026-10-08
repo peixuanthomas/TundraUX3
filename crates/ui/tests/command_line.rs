@@ -16,6 +16,7 @@ fn chrome(size: (u16, u16)) -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::User,
         terminal_size: size,
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec!["Home".into(), "Launcher".into(), "Command Line".into()],
         status: StatusViewModel {
             status: "Ready".into(),

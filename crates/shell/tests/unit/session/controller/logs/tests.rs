@@ -59,13 +59,11 @@ fn paused_live_capture_keeps_the_view_and_counts_new_records() {
 }
 
 #[test]
-fn more_menu_opens_filters_and_applies_service_boot_and_file_choices() {
+fn visible_filters_button_applies_service_boot_and_file_choices() {
     let mut state = state(UserRole::Admin);
     state.open_logs();
     state.logs_state.job = None;
-    key(&mut state, "F10");
-    assert_eq!(state.logs_state.more_selected, Some(0));
-    key(&mut state, "Enter");
+    press_log_control(&mut state, ui::LogsHitTarget::Filters);
     assert!(state.logs_state.filter_form.is_some());
     let form = state.logs_state.filter_form.as_mut().unwrap();
     form.fields
@@ -109,18 +107,18 @@ fn more_dialog_navigation_skips_disabled_actions_and_space_closes() {
     state.open_logs();
     state.logs_state.job = None;
     key(&mut state, "F10");
-    state.logs_state.more_selected = Some(4);
+    state.logs_state.more_selected = Some(3);
     key(&mut state, "Down");
-    assert_eq!(state.logs_state.more_selected, Some(7));
+    assert_eq!(state.logs_state.more_selected, Some(6));
     key(&mut state, "Home");
     assert_eq!(state.logs_state.more_selected, Some(0));
     key(&mut state, "End");
-    assert_eq!(state.logs_state.more_selected, Some(7));
+    assert_eq!(state.logs_state.more_selected, Some(6));
     key(&mut state, "Tab");
     assert_eq!(state.logs_state.more_selected, Some(0));
-    state.logs_state.more_selected = Some(5);
+    state.logs_state.more_selected = Some(4);
     key(&mut state, "Enter");
-    assert_eq!(state.logs_state.more_selected, Some(5));
+    assert_eq!(state.logs_state.more_selected, Some(4));
     assert_eq!(state.logs_state.section, ui::LogsSection::Events);
     key(&mut state, "End");
     state.handle_logs_key(&KeyInput::new(InputKey::Space));
@@ -155,8 +153,7 @@ fn more_dialog_blocks_stale_background_buttons_before_its_first_redraw() {
         state.logs_state.job.is_none(),
         "outside dismissal must not refresh the covered page"
     );
-    key(&mut state, "F10");
-    key(&mut state, "Enter");
+    key(&mut state, "F");
     assert!(state.logs_state.filter_form.is_some());
     assert!(state.button_at((region.area.x, region.area.y)).is_none());
 }
@@ -317,6 +314,7 @@ fn press_log_control(state: &mut ShellSession, target: ui::LogsHitTarget) {
         ui::LogsHitTarget::Refresh
             | ui::LogsHitTarget::Open
             | ui::LogsHitTarget::Follow
+            | ui::LogsHitTarget::Filters
             | ui::LogsHitTarget::More
     ) {
         state.logs_state.more_selected = Some(0);

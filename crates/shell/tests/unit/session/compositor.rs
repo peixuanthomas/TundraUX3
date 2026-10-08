@@ -311,6 +311,30 @@ fn pointer_back_button_does_not_restore_keyboard_focus() {
 }
 
 #[test]
+fn command_line_back_hint_matches_the_host_exit_key_and_button_width() {
+    let mut state = session();
+    assert_eq!(state.to_shell_chrome_view_model().back_shortcut, "Esc");
+    state.screen_stack.push(ShellScreen::CommandLine);
+    state.refresh_hit_map();
+    assert_eq!(
+        state.to_shell_chrome_view_model().back_shortcut,
+        "Ctrl+Shift+X"
+    );
+    let back = state.frame_layout.unwrap().back_button.unwrap();
+    assert_eq!(back.width, 18);
+    assert_eq!(
+        state.normalize_shell_navigation_input(InputEvent::mouse_down(
+            PointerButton::Left,
+            (back.x, back.y)
+        )),
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::Char('x'),
+            InputModifiers::CTRL_SHIFT
+        ))
+    );
+}
+
+#[test]
 fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
     for (width, height) in [(49, 11), (30, 8)] {
         let mut state = session();
@@ -325,7 +349,7 @@ fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
         ));
         draw(&mut compositor, &mut terminal, &mut state, &prepared);
         let back = state.frame_layout.unwrap().back_button.unwrap();
-        assert!(text(terminal.backend().buffer(), back).contains("[◀]"));
+        assert!(text(terminal.backend().buffer(), back).contains("[◀ Esc]"));
         assert_eq!(
             back.intersection(state.frame_layout.unwrap().main).area(),
             0
@@ -353,7 +377,7 @@ fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
         let mut prepared = home_frame(&state, 0, true);
         prepared.notification = state.to_notification_view_model();
         draw(&mut compositor, &mut terminal, &mut state, &prepared);
-        assert!(text(terminal.backend().buffer(), back).contains("[◀]"));
+        assert!(text(terminal.backend().buffer(), back).contains("[◀ Esc]"));
         assert_eq!(
             state.hit_map().target_at(point),
             Some(ShellComponent::BackButton)

@@ -18,6 +18,30 @@ use ui::{
 };
 
 #[test]
+fn wide_user_page_keeps_account_details_above_visible_action_buttons() {
+    let model = model_with_users(30);
+    let (terminal, main) = render(120, 28, &model);
+    let layout = user_management_layout(main, &model);
+    assert!(!layout.details.is_empty());
+    assert!(layout.details.x >= layout.rows_area.right());
+    assert!(layout.details.bottom() <= layout.actions_panel.y);
+    assert!(layout.scrollbar.is_some());
+    assert_eq!(layout.actions.len(), model.actions.len());
+    for action in &layout.actions {
+        assert!(!action.area.is_empty());
+        assert_eq!(action.area.intersection(layout.actions_area), action.area);
+        assert_eq!(
+            layout.action_at(action.area.x, action.area.y),
+            Some(action.action)
+        );
+    }
+    let output = terminal_output(&terminal);
+    assert!(output.contains("Username: user0"));
+    assert!(output.contains("R Set password"));
+    assert!(output.contains("N New user"));
+}
+
+#[test]
 fn narrow_user_actions_wrap_and_short_forms_expose_the_remaining_fields() {
     let mut model = model_with_users(20);
     let area = Rect::new(0, 0, 40, 12);
@@ -197,7 +221,7 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
     assert!(output.contains("Display name: Alice Chen"));
     assert!(output.contains("Role: User"));
     assert!(output.contains("Password: ************"));
-    assert!(output.contains("[ Create ]"));
+    assert!(output.contains("[ Ctrl+Enter Create ]"));
     assert!(output.contains("[ Esc Cancel ]"));
     assert!(output.contains("Ctrl+Enter: Create"));
     assert!(region_has_fg(
@@ -347,6 +371,7 @@ fn render(
         display_mode: HomeDisplayMode::Auth,
         terminal_size: (width, height),
         back_button_hovered: false,
+        back_shortcut: "Esc",
         screen_stack: vec!["UserManagement".to_string()],
         status: StatusViewModel {
             status: "Ready".to_string(),

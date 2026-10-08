@@ -93,9 +93,9 @@ impl ShellFrameLayout {
         let shell = compute_shell_layout(bounds);
         let back_button = match shell {
             ShellLayout::Full { top, .. } => Some(Rect::new(
-                top.right().saturating_sub(7),
+                top.right().saturating_sub(9),
                 top.y,
-                7,
+                9,
                 top.height,
             )),
             ShellLayout::Compact(_) => (!bounds.is_empty()).then(|| {
@@ -133,6 +133,21 @@ impl ShellFrameLayout {
 
     pub fn is_compact(self) -> bool {
         matches!(self.shell, ShellLayout::Compact(_))
+    }
+
+    /// Size the button from the same shortcut that the compositor paints.
+    pub fn with_back_shortcut(mut self, shortcut: &str) -> Self {
+        let compact = self.is_compact();
+        if let Some(button) = self.back_button.as_mut() {
+            let width = crate::components::terminal_width(shortcut).saturating_add(if compact {
+                4
+            } else {
+                6
+            });
+            button.width = usize_to_u16(width).min(self.bounds.width);
+            button.x = self.bounds.right().saturating_sub(button.width);
+        }
+        self
     }
 
     /// Keep the compact Escape button available even while a shell dialog is open.

@@ -798,13 +798,57 @@ impl ShellSession {
     }
     fn management_actions(&self) -> Vec<(ManagementAction, Option<ManagementRow>)> {
         let all = self.all_management_actions();
-        let mut primary = all
+        let kind = self.management_state.kind;
+        let preferred: &[&str] = match kind {
+            Some(ManagementKind::Packages) => &["refresh", "scope_installed"],
+            Some(ManagementKind::Users) => &["user_create", "group_create", "set_view"],
+            Some(ManagementKind::Services) => &["start", "stop", "restart", "view_logs"],
+            Some(ManagementKind::Processes) => &["term", "cont"],
+            Some(ManagementKind::Network) => &[
+                "wifi-connect",
+                "configure",
+                "check",
+                "wifi-scan",
+                "check-again",
+                "network-list",
+            ],
+            Some(ManagementKind::Disks) => {
+                &["open_path", "open_directory", "mount", "unmount", "scan"]
+            }
+            _ => &[],
+        };
+        let mut primary = preferred
             .iter()
-            .filter(|(a, _)| a.primary)
-            .take(2)
-            .cloned()
+            .filter_map(|id| all.iter().find(|(action, _)| action.id == *id).cloned())
             .collect::<Vec<_>>();
-        if primary.is_empty() {
+        if kind == Some(ManagementKind::Packages)
+            && !primary.iter().any(|(action, _)| action.id == "refresh")
+        {
+            primary.insert(
+                0,
+                (
+                    ManagementAction {
+                        id: "refresh".into(),
+                        disabled_reason: Some(i18n::tr!("management-action-not-available")),
+                        ..Default::default()
+                    },
+                    None,
+                ),
+            );
+        }
+        if primary.is_empty()
+            && !matches!(kind, Some(ManagementKind::Packages | ManagementKind::Users))
+        {
+            primary = all
+                .iter()
+                .filter(|(a, _)| a.primary)
+                .take(2)
+                .cloned()
+                .collect::<Vec<_>>();
+        }
+        if primary.is_empty()
+            && !matches!(kind, Some(ManagementKind::Packages | ManagementKind::Users))
+        {
             primary.extend(
                 all.iter()
                     .filter(|(a, _)| {
@@ -846,6 +890,42 @@ impl ShellSession {
                 },
                 None,
             ));
+        }
+        let detail_actions: &[&[&str]] = match kind {
+            Some(ManagementKind::Packages) => &[
+                &["remove"],
+                &["install", "pacman_install"],
+                &["upgrade", "pacman_upgrade"],
+                &["scope_search"],
+            ],
+            Some(ManagementKind::Users)
+                if self
+                    .management_state
+                    .query
+                    .as_ref()
+                    .is_some_and(|query| query.scope == "groups") =>
+            {
+                &[&["group_members"], &["group_rename"]]
+            }
+            Some(ManagementKind::Users) => &[&["user_info"], &["user_password"], &["user_groups"]],
+            _ => &[],
+        };
+        for ids in detail_actions {
+            primary.push(
+                all.iter()
+                    .find(|(action, _)| ids.contains(&action.id.as_str()))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        (
+                            ManagementAction {
+                                id: ids[0].into(),
+                                disabled_reason: Some(i18n::tr!("management-action-not-available")),
+                                ..Default::default()
+                            },
+                            None,
+                        )
+                    }),
+            );
         }
         primary
     }
@@ -1941,6 +2021,13 @@ impl ShellSession {
         let actions = self.management_actions();
         ui::ManagementViewModel {
             scope_id: format!("{:?}", s.kind),
+            detail_action_start: match s.kind {
+                Some(ManagementKind::Packages) => Some(actions.len().saturating_sub(4)),
+                Some(ManagementKind::Users) => Some(actions.len().saturating_sub(
+                    if s.query.as_ref().is_some_and(|query| query.scope == "groups") { 2 } else { 3 }
+                )),
+                _ => None,
+            },
             column_width_limits: if s.kind == Some(ManagementKind::Packages) {
                 match s.query.as_ref().map(|query| query.scope.as_str()) {
                     Some("sources") => vec![28, 10, 42],
@@ -2004,10 +2091,18 @@ impl ShellSession {
                 .unwrap_or_else(|| s.snapshot.notices.join("\n")),
             actions: actions
                 .iter()
-                .map(|(a, _)| {
+                .enumerate()
+                .map(|(index, (a, _))| {
                     let label = action_label(a);
+                    let shortcut = if a.id == "current_task" {
+                        "Ctrl+T".to_string()
+                    } else if let Some((shortcut, _)) = management_action_shortcut(s.kind, &a.id) {
+                        shortcut.to_string()
+                    } else {
+                        ((index + 1) % 10).to_string()
+                    };
                     (
-                        label,
+                        format!("[{shortcut}] {label}"),
                         a.disabled_reason.is_none() && (s.operation_job.is_none() || management_view_action(a) || matches!(a.id.as_str(),"cancel_operation"|"more_actions"|"current_task")),
                     )
                 })

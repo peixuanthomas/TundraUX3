@@ -10,7 +10,13 @@ fn notification_back_waits_for_matching_release_and_cancels_on_drag() {
         .find(|region| region.component == ShellComponent::BackButton)
         .unwrap()
         .area;
-    let point = (back.x, back.y);
+    // A tall notification may cover the button's left border. Click its
+    // exposed edge, just as the hit map requires for any covered control.
+    let point = (back.right() - 1, back.y);
+    assert_eq!(
+        session.hit_map.target_at(point),
+        Some(ShellComponent::BackButton)
+    );
     session.button_regions.push(ui::components::ButtonRegion {
         id: "shell.back".into(),
         area: back,

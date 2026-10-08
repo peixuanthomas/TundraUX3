@@ -26,6 +26,7 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
         terminal_size: (80, 24),
         screen_stack: vec![],
         back_button_hovered: false,
+        back_shortcut: "Esc",
         status: StatusViewModel {
             status: "Complete status message".into(),
             toast: None,

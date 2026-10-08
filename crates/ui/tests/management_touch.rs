@@ -2,6 +2,149 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn package_actions_remain_visible_in_real_shell_content_areas() {
+    let theme = TundraTheme::default_dark();
+    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    for labels in [
+        [
+            "Refresh repositories",
+            "Installed packages",
+            "More actions",
+            "Current task",
+            "Remove",
+            "Install",
+            "Upgrade selected package",
+            "Search packages",
+        ],
+        [
+            "刷新软件源",
+            "已安装的软件包",
+            "更多操作",
+            "当前任务",
+            "卸载",
+            "安装",
+            "更新所选软件包",
+            "搜索软件包",
+        ],
+    ] {
+        let shortcuts = [
+            "[E]", "[F7]", "[3]", "[Ctrl+T]", "[X]", "[I]", "[U]", "[F6]",
+        ];
+        let model = ManagementViewModel {
+            title: "Packages".into(),
+            detail_action_start: Some(4),
+            columns: vec!["Package".into()],
+            rows: vec![vec!["example".into()]],
+            details: "Selected package details".into(),
+            actions: labels
+                .into_iter()
+                .zip(shortcuts)
+                .enumerate()
+                .map(|(index, (label, shortcut))| (format!("{shortcut} {label}"), index != 5))
+                .collect(),
+            ..Default::default()
+        };
+        for (width, height) in [(50, 12), (108, 20), (140, 40)] {
+            let bounds = Rect::new(0, 0, width, height);
+            let main = ShellFrameLayout::new(bounds, None, &context).main;
+            let layout = management_layout(main, &model);
+            assert_eq!(layout.actions.len(), 8);
+            assert_eq!(layout.compact_actions, width == 50);
+            if width != 50 {
+                assert!(!layout.details_text.is_empty() && !layout.list_rows.is_empty());
+            }
+            let regions = management_button_regions(main, &model);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| render_management_content(frame, main, &model, &context))
+                .unwrap();
+            for (index, area) in layout.actions.iter().enumerate() {
+                assert!(!area.is_empty(), "{width}x{height} action {index}");
+                assert_eq!(area.intersection(main), *area);
+                assert!(
+                    regions
+                        .iter()
+                        .any(|region| region.area == *area && region.disabled == (index == 5))
+                );
+                let painted = (area.x..area.right())
+                    .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
+                    .collect::<String>();
+                assert!(
+                    painted.contains(shortcuts[index]),
+                    "{width}x{height} action {index}: {painted}"
+                );
+                for other in layout.actions.iter().skip(index + 1) {
+                    assert!(area.intersection(*other).is_empty());
+                }
+                assert!(area.intersection(layout.filter).is_empty());
+                for (_, control) in &layout.controls {
+                    assert!(area.intersection(*control).is_empty());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn package_details_keep_all_four_actions_separate_from_text_and_toolbar() {
+    for (width, height) in [(120, 30), (90, 20), (64, 18), (40, 18)] {
+        let model = ManagementViewModel {
+            detail_action_start: Some(3),
+            actions: vec![
+                ("Refresh sources [E]".into(), true),
+                ("Installed packages [F7]".into(), true),
+                ("More actions [3]".into(), true),
+                ("Remove [X]".into(), true),
+                ("Install [I]".into(), false),
+                ("Upgrade package [U]".into(), true),
+                ("Search packages [F6]".into(), true),
+            ],
+            details: "Long detail\n".repeat(60),
+            columns: vec!["Package".into()],
+            rows: vec![vec!["example".into()]],
+            ..Default::default()
+        };
+        let area = Rect::new(3, 4, width, height);
+        let layout = management_layout(area, &model);
+        assert_eq!(layout.actions.len(), 7);
+        assert!(layout.action_previous.is_empty() && layout.action_next.is_empty());
+        assert!(!layout.details_text.is_empty(), "{width}x{height}");
+        let regions = management_button_regions(area, &model);
+        for (index, rect) in layout.actions.iter().enumerate() {
+            assert!(!rect.is_empty(), "{width}x{height}: action {index}");
+            let panel = if index < 3 {
+                layout.actions_panel
+            } else {
+                layout.detail_actions_panel
+            };
+            assert_eq!(rect.intersection(panel), *rect);
+            assert!(rect.intersection(layout.details_text).is_empty());
+            let region = regions.iter().find(|region| region.area == *rect).unwrap();
+            assert_eq!(region.disabled, index == 4);
+            for other in layout.actions.iter().skip(index + 1) {
+                assert!(rect.intersection(*other).is_empty());
+            }
+        }
+        assert!(layout.details.bottom() <= layout.detail_actions_panel.y);
+        let mut terminal = Terminal::new(TestBackend::new(width + 6, height + 8)).unwrap();
+        let theme = TundraTheme::default_dark();
+        let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        terminal
+            .draw(|frame| render_management_content(frame, area, &model, &context))
+            .unwrap();
+        for (index, rect) in layout.actions.iter().enumerate() {
+            let painted = (rect.x..rect.right())
+                .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
+                .collect::<String>();
+            assert!(
+                painted.contains(&model.actions[index].0),
+                "{width}x{height}: {painted}"
+            );
+        }
+    }
+}
+
+#[test]
 fn package_table_long_values_keep_both_version_columns_visible_and_full_details() {
     let name = "超长软件包名称".repeat(10);
     let version = "2026.10.08-very-long-distribution-revision";
@@ -149,6 +292,11 @@ fn management_action_labels_fit_touch_regions_in_small_windows() {
                 .map(|x| terminal.backend().buffer()[(x, rect.y)].symbol())
                 .collect::<String>();
             assert!(painted.contains(hint), "{width}x{height}: {hint}");
+            assert!(painted.contains(if rect == form_layout.submit {
+                "Ctrl+Enter"
+            } else {
+                "Esc"
+            }));
         }
         assert!(
             form_layout
@@ -220,14 +368,14 @@ fn overflowing_lists_text_and_actions_have_matching_drag_geometry() {
         );
     }
     assert!(!layout.action_previous.is_empty() && !layout.action_next.is_empty());
-    assert_eq!(layout.actions.len(), 4);
+    assert_eq!(layout.actions.len(), 6);
     let last = ManagementViewModel {
-        action_scroll: Some(36),
+        action_scroll: Some(34),
         ..model
     };
     assert_eq!(
         management_layout(Rect::new(0, 0, 120, 30), &last).action_start,
-        36
+        34
     );
 }
 

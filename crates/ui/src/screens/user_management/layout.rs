@@ -55,6 +55,8 @@ pub struct UserManagementLayout {
     pub header: Rect,
     pub rows_area: Rect,
     pub rows: Vec<UserManagementRowLayout>,
+    pub details: Rect,
+    pub actions_panel: Rect,
     pub actions_area: Rect,
     pub actions: Vec<UserManagementActionLayout>,
     pub feedback: Rect,
@@ -94,6 +96,72 @@ impl UserManagementLayout {
 /// The returned window start is clamped so the selected user is visible. Input
 /// routing should use `visible_start` rather than duplicating this calculation.
 pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> UserManagementLayout {
+    if main.width >= 100 && main.height >= 14 {
+        let left_width = main.width / 2;
+        let mut table_model = model.clone();
+        if table_model.message.is_none() {
+            if let UserManagementFocus::Action(focused) = model.focus {
+                table_model.message = model
+                    .actions
+                    .iter()
+                    .find(|action| action.action == focused && !action.enabled)
+                    .and_then(|action| action.disabled_reason.clone());
+            }
+        }
+        table_model.actions.clear();
+        let mut layout = user_management_compact_layout(
+            Rect::new(main.x, main.y, left_width, main.height),
+            &table_model,
+        );
+        layout.panel = main;
+        layout.summary.width = main.width.saturating_sub(2);
+        layout.help.width = main.width.saturating_sub(2);
+        layout.feedback.width = if layout.feedback.height > 0 {
+            main.width.saturating_sub(2)
+        } else {
+            0
+        };
+        let bottom = if layout.feedback.height > 0 {
+            layout.feedback.y
+        } else {
+            layout.help.y
+        };
+        let right = Rect::new(
+            main.x + left_width,
+            layout.header.y,
+            main.width.saturating_sub(left_width + 1),
+            bottom.saturating_sub(layout.header.y),
+        );
+        let columns = usize::from(right.width.saturating_sub(2) / 22).clamp(1, 2);
+        let button_rows = model.actions.len().div_ceil(columns) as u16;
+        let action_height = button_rows.saturating_add(2).min(right.height);
+        layout.details = Rect::new(
+            right.x,
+            right.y,
+            right.width,
+            right.height.saturating_sub(action_height),
+        );
+        layout.actions_panel =
+            Rect::new(right.x, layout.details.bottom(), right.width, action_height);
+        layout.actions_area = inset_rect(layout.actions_panel, 1);
+        layout.actions = user_management_action_layouts_with_columns(
+            layout.actions_area,
+            &model.actions,
+            columns,
+        );
+        layout.form = model
+            .form
+            .as_ref()
+            .map(|form| user_management_form_layout(main, form));
+        return layout;
+    }
+    user_management_compact_layout(main, model)
+}
+
+fn user_management_compact_layout(
+    main: Rect,
+    model: &UserManagementViewModel,
+) -> UserManagementLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
     let summary = line_in_rect(inner, inner.y);
@@ -175,6 +243,8 @@ pub fn user_management_layout(main: Rect, model: &UserManagementViewModel) -> Us
         header,
         rows_area,
         rows,
+        details: Rect::default(),
+        actions_panel: Rect::default(),
         actions_area,
         actions,
         feedback,
@@ -240,6 +310,14 @@ fn user_management_action_layouts(
     } else {
         usize::from(area.width / 14).max(1).min(actions.len())
     };
+    user_management_action_layouts_with_columns(area, actions, columns)
+}
+
+fn user_management_action_layouts_with_columns(
+    area: Rect,
+    actions: &[UserManagementActionViewModel],
+    columns: usize,
+) -> Vec<UserManagementActionLayout> {
     let count = u16::try_from(columns).unwrap_or(u16::MAX);
     let gap = u16::from(area.width >= count.saturating_mul(2).saturating_sub(1));
     let gaps_width = count.saturating_sub(1).saturating_mul(gap);

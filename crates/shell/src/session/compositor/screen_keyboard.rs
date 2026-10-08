@@ -37,6 +37,7 @@ impl ScreenCompositor {
             terminal_size: (bounds.width, bounds.height),
             screen_stack: vec![i18n::tr!("screen-keyboard-test-aa")],
             back_button_hovered: false,
+            back_shortcut: "Esc",
             status: ui::StatusViewModel {
                 status: i18n::tr!("screen-keyboard-aa-safe"),
                 toast: None,

@@ -46,6 +46,8 @@ pub struct ManagementForm {
 pub struct ManagementViewModel {
     pub scope_id: String,
     pub action_ids: Vec<String>,
+    /// Actions before this index belong to the toolbar; the rest sit below details.
+    pub detail_action_start: Option<usize>,
     pub title: String,
     pub columns: Vec<String>,
     pub column_width_limits: Vec<usize>,
@@ -316,6 +318,7 @@ pub fn management_toolbar(
 }
 #[derive(Debug, Clone)]
 pub struct ManagementLayout {
+    pub compact_actions: bool,
     pub filter: Rect,
     pub controls: Vec<(ManagementControl, Rect)>,
     pub list: Rect,
@@ -324,6 +327,7 @@ pub struct ManagementLayout {
     pub column_widths: Vec<usize>,
     pub details: Rect,
     pub details_text: Rect,
+    pub detail_actions_panel: Rect,
     pub actions_panel: Rect,
     pub actions: Vec<Rect>,
     pub action_start: usize,
@@ -364,21 +368,56 @@ fn add_text_bar(
         bars.push(bar);
     }
 }
+fn management_action_rects(area: Rect, actions: &[(String, bool)], compact: bool) -> Vec<Rect> {
+    let mut x = area.x;
+    let mut y = area.y;
+    actions
+        .iter()
+        .map(|(label, _)| {
+            let width = (label.width().min(usize::from(u16::MAX)) as u16)
+                .saturating_add(2)
+                .min(if compact && area.width >= 32 {
+                    area.width.saturating_sub(1) / 2
+                } else {
+                    area.width
+                });
+            if x != area.x && x.saturating_add(width) > area.right() {
+                x = area.x;
+                y = y.saturating_add(1);
+            }
+            let rect = Rect::new(
+                x,
+                y.min(area.bottom()),
+                width,
+                u16::from(y < area.bottom() && width > 0),
+            );
+            x = x.saturating_add(width).saturating_add(1);
+            rect
+        })
+        .collect()
+}
 pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementLayout {
-    let header_y = main.y.saturating_add(1).min(main.bottom());
-    let refresh_width =
-        (i18n::tr!("management-control-refresh").width() as u16 + 2).min(main.width);
+    // Very short shell content areas keep actionable controls before repeated
+    // titles, status text, borders, and the list/detail preview.
+    let compact_actions =
+        model.detail_action_start.is_some() && main.height < 10 && !model.terminal;
+    let header_y = main
+        .y
+        .saturating_add(u16::from(!compact_actions))
+        .min(main.bottom());
+    let refresh_width = (management_controls()[0].1.width() as u16 + 2).min(main.width);
     let refresh = Rect::new(
         main.x,
         header_y,
         refresh_width,
         u16::from(header_y < main.bottom()),
     );
-    let clear_width = if model.filter.is_empty() {
-        0
-    } else {
-        3.min(main.width.saturating_sub(refresh_width + 1))
-    };
+    let clear_width =
+        if model.filter.is_empty() || main.width.saturating_sub(refresh_width + 1) < 20 {
+            0
+        } else {
+            12
+        };
     let clear = Rect::new(
         main.right().saturating_sub(clear_width),
         header_y,
@@ -399,25 +438,35 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     let header_end = header_y.saturating_add(refresh.height).min(main.bottom());
     let status = Rect::new(
         main.x,
-        main.bottom().saturating_sub(1).max(main.y),
+        main.bottom()
+            .saturating_sub(u16::from(!compact_actions))
+            .max(main.y),
         main.width,
-        u16::from(main.height > 0),
+        u16::from(main.height > 0 && !compact_actions),
     );
+    let detail_start = model
+        .detail_action_start
+        .map(|start| start.min(model.actions.len()));
     let action_capacity = if model.terminal {
         0
     } else {
-        4.min(model.actions.len())
+        detail_start.unwrap_or_else(|| 6.min(model.actions.len()))
     };
-    let action_start = model
-        .action_scroll
-        .unwrap_or_else(|| {
-            model
-                .selected_action
-                .saturating_sub(action_capacity.saturating_sub(1))
-        })
-        .min(model.actions.len().saturating_sub(action_capacity));
-    let paging = model.actions.len() > action_capacity && action_capacity > 0;
-    let paging_width = if paging { 6.min(main.width) } else { 0 };
+    let action_start = if detail_start.is_some() {
+        0
+    } else {
+        model
+            .action_scroll
+            .unwrap_or_else(|| {
+                model
+                    .selected_action
+                    .saturating_sub(action_capacity.saturating_sub(1))
+            })
+            .min(model.actions.len().saturating_sub(action_capacity))
+    };
+    let paging =
+        detail_start.is_none() && model.actions.len() > action_capacity && action_capacity > 0;
+    let paging_width = if paging { 14.min(main.width) } else { 0 };
     let action_available = main.width.saturating_sub(paging_width);
     let mut actions = Vec::new();
     let mut action_x = main.x;
@@ -425,7 +474,11 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     for index in action_start..action_start + action_capacity {
         let width = (model.actions[index].0.width() as u16)
             .saturating_add(2)
-            .min(action_available);
+            .min(if compact_actions && action_available >= 32 {
+                action_available.saturating_sub(1) / 2
+            } else {
+                action_available
+            });
         if action_x != main.x
             && action_x.saturating_add(width) > main.x.saturating_add(action_available)
         {
@@ -463,7 +516,25 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         main.width,
         status.y.saturating_sub(actions_panel.bottom()),
     );
-    let (list, details) = if model.details_only {
+    let detail_button_rows = |width: u16| {
+        detail_start.map_or(0, |start| {
+            management_action_rects(
+                Rect::new(
+                    0,
+                    0,
+                    width.saturating_sub(if compact_actions { 0 } else { 2 }),
+                    u16::MAX,
+                ),
+                &model.actions[start..],
+                compact_actions,
+            )
+            .iter()
+            .map(|area| area.bottom())
+            .max()
+            .unwrap_or(0)
+        })
+    };
+    let (list, mut details) = if model.details_only || compact_actions {
         (Rect::default(), content)
     } else if main.width >= 90 {
         let left = content.width * 58 / 100;
@@ -477,7 +548,13 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
             ),
         )
     } else {
-        let list_height = (content.height * 3 / 4).min(content.height.saturating_sub(2));
+        let minimum_details = if detail_start.is_some() {
+            detail_button_rows(content.width).saturating_add(5)
+        } else {
+            2
+        };
+        let list_height =
+            (content.height * 3 / 4).min(content.height.saturating_sub(minimum_details));
         (
             Rect::new(content.x, content.y, content.width, list_height),
             Rect::new(
@@ -488,6 +565,29 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
             ),
         )
     };
+    let mut detail_actions_panel = Rect::default();
+    if let Some(start) = detail_start.filter(|_| !model.terminal) {
+        let height = detail_button_rows(details.width)
+            .saturating_add(if compact_actions { 0 } else { 2 })
+            .min(details.height);
+        detail_actions_panel = Rect::new(
+            details.x,
+            details.bottom().saturating_sub(height),
+            details.width,
+            height,
+        );
+        details.height = details.height.saturating_sub(height);
+        actions.resize(start, Rect::default());
+        actions.extend(management_action_rects(
+            if compact_actions {
+                detail_actions_panel
+            } else {
+                inner(detail_actions_panel)
+            },
+            &model.actions[start..],
+            compact_actions,
+        ));
+    }
     let mut column_widths = model
         .columns
         .iter()
@@ -773,6 +873,7 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         }
     }
     ManagementLayout {
+        compact_actions,
         filter,
         controls,
         list,
@@ -781,6 +882,7 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         column_widths,
         details,
         details_text,
+        detail_actions_panel,
         actions_panel,
         actions,
         action_start,
@@ -967,14 +1069,16 @@ pub fn render_management_content(
     let selected = theme
         .title_style()
         .add_modifier(Modifier::BOLD | Modifier::REVERSED);
-    frame.render_widget(
-        Paragraph::new(model.title.clone()).style(theme.title_style()),
-        Rect::new(main.x, main.y, main.width, u16::from(main.height > 0)),
-    );
+    if !layout.compact_actions {
+        frame.render_widget(
+            Paragraph::new(model.title.clone()).style(theme.title_style()),
+            Rect::new(main.x, main.y, main.width, u16::from(main.height > 0)),
+        );
+    }
     for (control, area) in &layout.controls {
         let label = match control {
-            ManagementControl::ClearSearch => "×".into(),
-            _ => i18n::tr!("management-control-refresh"),
+            ManagementControl::ClearSearch => "× [Ctrl+U]".into(),
+            _ => management_controls()[0].1.clone(),
         };
         let mut button = Button::new(management_control_id(model, *control), label);
         button.set_disabled(*control == ManagementControl::Details && model.rows.is_empty());
@@ -1017,11 +1121,11 @@ pub fn render_management_content(
             .bordered(true)
             .titled(i18n::tr!("management-touch-details"))
             .render_frame(frame, layout.details, context);
-        if layout.actions_panel.height >= 4 {
+        if !layout.detail_actions_panel.is_empty() && !layout.compact_actions {
             Surface::new()
                 .bordered(true)
                 .titled(i18n::tr!("management-touch-actions"))
-                .render_frame(frame, layout.actions_panel, context);
+                .render_frame(frame, layout.detail_actions_panel, context);
         }
         let table_line = |cells: &[String]| {
             cells
@@ -1102,24 +1206,18 @@ pub fn render_management_content(
                 button.render_borderless_frame(frame, *area, &theme);
             }
         }
-        for (area, next, _key, disabled) in [
-            (
-                layout.action_previous,
-                false,
-                "management-touch-previous-action",
-                layout.action_start == 0,
-            ),
+        for (area, next, disabled) in [
+            (layout.action_previous, false, layout.action_start == 0),
             (
                 layout.action_next,
                 true,
-                "management-touch-next-action",
                 layout.action_start + layout.actions.len() >= model.actions.len(),
             ),
         ] {
             if area.height > 0 {
                 let mut button = Button::new(
                     management_action_page_id(model, layout.action_start, next),
-                    if next { "›" } else { "‹" },
+                    if next { "Alt+→" } else { "Alt+←" },
                 );
                 button.set_disabled(disabled);
                 button.render_borderless_frame(frame, area, &theme);
@@ -1245,16 +1343,19 @@ pub fn render_management_overlay(
     }
     let mut submit = Button::new(
         management_form_control_id(form, "confirm"),
-        form.submit_label
-            .clone()
-            .unwrap_or_else(|| i18n::tr!("management-form-submit")),
+        format!(
+            "Ctrl+Enter {}",
+            form.submit_label
+                .clone()
+                .unwrap_or_else(|| i18n::tr!("management-form-submit"))
+        ),
     );
     submit.set_disabled(form.submit_disabled);
     submit.state.selected = form.selected >= form.fields.len() && form.choice.is_none();
     submit.render_borderless_frame(frame, layout.submit, &theme);
     let mut cancel = Button::new(
         management_form_control_id(form, "cancel"),
-        i18n::tr!("management-form-cancel"),
+        format!("Esc {}", i18n::tr!("management-form-cancel")),
     );
     cancel.set_disabled(form.cancel_disabled);
     cancel.render_borderless_frame(frame, layout.cancel, &theme);

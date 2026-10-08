@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::Clear;
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use super::layout::{
     UserManagementColumnMode, UserManagementFormLayout, UserManagementLayout,
@@ -40,6 +40,48 @@ pub fn render_user_management_content(
         HorizontalAlignment::Left,
     );
     render_user_management_table(frame, &layout, model, context);
+    if !layout.details.is_empty() {
+        Surface::new()
+            .bordered(true)
+            .titled(i18n::tr!("management-touch-details"))
+            .render_frame(frame, layout.details, context);
+        let details = model
+            .selected_user()
+            .map(|user| {
+                [
+                    (
+                        i18n::tr!("ui-user-management-username"),
+                        user.username.clone(),
+                    ),
+                    (
+                        i18n::tr!("ui-user-management-display-name"),
+                        user.display_name.clone(),
+                    ),
+                    (i18n::tr!("ui-user-management-role"), user.role.clone()),
+                    (
+                        i18n::tr!("ui-user-management-status"),
+                        user_management_status(user),
+                    ),
+                ]
+                .into_iter()
+                .map(|(label, value)| format!("{label}: {value}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+            })
+            .unwrap_or_else(|| i18n::tr!("ui-user-management-no-user-selected"));
+        frame.render_widget(
+            Paragraph::new(details)
+                .wrap(Wrap { trim: false })
+                .style(theme.body_style()),
+            crate::screens::shell::inset_rect(layout.details, 1),
+        );
+    }
+    if !layout.actions_panel.is_empty() {
+        Surface::new()
+            .bordered(true)
+            .titled(i18n::tr!("management-touch-actions"))
+            .render_frame(frame, layout.actions_panel, context);
+    }
     if let Some(track) = layout.scrollbar {
         Scrollbar::new(
             model.users.len(),
@@ -279,7 +321,7 @@ fn render_user_management_form(
         frame,
         layout.submit,
         "user-management.form.submit",
-        format!("[ {} ]", form.submit_label()),
+        format!("[ Ctrl+Enter {} ]", form.submit_label()),
         form.focused_field == UserManagementField::Submit,
         theme,
     );
