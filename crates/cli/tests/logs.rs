@@ -8,6 +8,106 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 static ID: AtomicU64 = AtomicU64::new(1);
+
+#[test]
+fn parses_journal_follow_filters_and_selected_log_files() {
+    let command = parse_args(&[
+        "logs",
+        "follow",
+        "--unit",
+        "sshd.service",
+        "--scope",
+        "system",
+        "--boot",
+        "-1",
+        "--invocation",
+        "1234567890abcdef1234567890abcdef",
+        "--json",
+    ])
+    .unwrap();
+    let CliCommand::Logs(LogsAction::Run {
+        verb,
+        query,
+        format,
+        ..
+    }) = command
+    else {
+        panic!("logs command");
+    };
+    assert_eq!(verb, LogsVerb::Follow);
+    assert_eq!(format, LogsFormat::Jsonl);
+    assert_eq!(query.systemd_unit.as_deref(), Some("sshd.service"));
+    assert_eq!(query.systemd_boot.as_deref(), Some("-1"));
+    assert!(parse_args(&["logs", "query", "--boot", "--all"]).is_err());
+    assert!(parse_args(&["logs", "query", "--file", "relative.log"]).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn real_cli_follow_observes_append_rotation_truncation_and_sigint() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    let fixture = Fixture::new();
+    let path = fixture.base.join("follow.log");
+    fs::write(&path, "initial-line\n").unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
+        .args(["logs", "follow", "--file", path.to_str().unwrap(), "--json"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(1300));
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"appended-line\n")
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(1300));
+    fs::rename(&path, fixture.base.join("follow.log.1")).unwrap();
+    fs::write(&path, "rotated-line\n").unwrap();
+    std::thread::sleep(Duration::from_millis(1300));
+    fs::write(&path, "short\n").unwrap();
+    std::thread::sleep(Duration::from_millis(1300));
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &child.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if child.try_wait().unwrap().is_none() {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(130),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let events: Vec<RuntimeLogEvent> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    for message in ["initial-line", "appended-line", "rotated-line", "short"] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.message == message)
+                .count(),
+            1,
+            "{message}"
+        );
+    }
+    assert!(String::from_utf8_lossy(&output.stderr).contains("rotated or was truncated"));
+}
 struct Fixture {
     base: PathBuf,
     root: PathBuf,
@@ -202,11 +302,11 @@ fn logs_truncation_and_unsupported_source_are_nonzero() {
     fixture.events();
     let (code, stdout, stderr) =
         fixture.run(&["logs", "query", "--limit", "1", "--format", "jsonl"]);
-    assert_eq!(code, 3);
+    assert_eq!(code, 1);
     assert_eq!(stdout.lines().count(), 1);
     assert!(stderr.contains("truncated"));
     let (code, _, stderr) = fixture.run(&["logs", "query", "--source", "linux"]);
-    assert_eq!(code, 1);
+    assert_eq!(code, 4);
     assert!(stderr.contains("Unsupported"));
 }
 #[test]
@@ -216,7 +316,7 @@ fn logs_export_refuses_existing_target_and_records_partial() {
     fs::write(fixture.root.join("runtime/runtime-bad.jsonl"), "bad\n").unwrap();
     let output = fixture.base.join("package");
     let (code, _, stderr) = fixture.run(&["logs", "export", "--output", output.to_str().unwrap()]);
-    assert_eq!(code, 3, "{stderr}");
+    assert_eq!(code, 1, "{stderr}");
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest["source_state"], "partial");

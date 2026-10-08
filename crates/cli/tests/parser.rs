@@ -1248,7 +1248,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("<config|launcher|debug|logs|cls|new|repl|help>"));
+    assert!(stderr.contains("<config|launcher|services|processes|packages|network|disks|users|system-config|operations|logs|debug|cls|new|repl|help>"));
 }
 
 fn assert_path_labels(output: &str) {

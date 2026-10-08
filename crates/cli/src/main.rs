@@ -40,8 +40,26 @@ fn main() {
         }
         return;
     }
+    // Reject malformed operation requests before any startup prompt or runtime.
+    // They cannot execute and must retain the public argument-error exit code.
+    if matches!(
+        cli::parse_args(&args),
+        Err(cli::CliError::InvalidManagementArgument(_) | cli::CliError::InvalidLogsArgument(_))
+    ) {
+        std::process::exit(cli::run(
+            &args,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        ));
+    }
     #[cfg(target_os = "linux")]
-    match shell::confirm_linux_startup() {
+    match if confirmed_management_script(&args) {
+        // The operation parser supplies the explicit startup confirmation.
+        // Real authorization and each backend's forbidden actions still apply.
+        platform::linux::identity::LinuxUserContext::current()
+    } else {
+        shell::confirm_linux_startup()
+    } {
         Ok(user) => {
             // SAFETY: no threads or runtime have been started at executable entry.
             unsafe {
@@ -125,6 +143,20 @@ fn main() {
 
     let _ = watchdog_runtime.shutdown();
     std::process::exit(exit_code);
+}
+
+#[cfg(target_os = "linux")]
+fn confirmed_management_script(args: &[String]) -> bool {
+    match cli::parse_args(args) {
+        Ok(cli::CliCommand::Management(cli::ManagementCli::Run(request))) => {
+            request.yes && request.non_interactive
+        }
+        Ok(cli::CliCommand::Logs(cli::LogsAction::Run { .. })) => {
+            args.iter().any(|arg| arg == "--yes")
+                && args.iter().any(|arg| arg == "--non-interactive")
+        }
+        _ => false,
+    }
 }
 
 fn is_parent_managed_command_line(args: &[String]) -> bool {

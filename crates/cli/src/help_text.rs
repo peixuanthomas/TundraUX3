@@ -4,7 +4,7 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
     writeln!(
         output,
-        "Usage: tundra-cli <config|launcher|debug|logs|cls|new|repl|help>"
+        "Usage: tundra-cli <config|launcher|services|processes|packages|network|disks|users|system-config|operations|logs|debug|cls|new|repl|help>"
     )?;
     writeln!(
         output,
@@ -235,13 +235,25 @@ pub(crate) fn write_asset_help(output: &mut impl Write) -> std::io::Result<()> {
 pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, crate::CliError> {
     use crate::{AssetAction, ClearLogsAction, CliCommand, LogsAction};
     let topic = args.join(" ");
+    if args.first().is_some_and(|group| {
+        crate::management_command::kind(group).is_some() || group == "operations"
+    }) {
+        if args.len() == 1
+            || (args.len() == 2
+                && crate::management_command::verbs(&args[0]).contains(&args[1].as_str()))
+        {
+            return Ok(CliCommand::Management(crate::ManagementCli::Help(
+                args[0].clone(),
+            )));
+        }
+    }
     Ok(match topic.as_str() {
         "" => CliCommand::Help,
         "debug" => CliCommand::DebugHelp,
         "debug asset" => CliCommand::Asset(AssetAction::Help),
         "debug view-ui-style" => CliCommand::UiStyleHelp,
         "debug clear-logs" => CliCommand::ClearLogs(ClearLogsAction::Help),
-        "logs" | "logs query" | "logs incidents" | "logs export" => {
+        "logs" | "logs query" | "logs incidents" | "logs export" | "logs follow" => {
             CliCommand::Logs(LogsAction::Help)
         }
         "config"
@@ -382,6 +394,11 @@ pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io:
 
 pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std::io::Result<()> {
     match args.first().map(String::as_str) {
+        Some(group)
+            if crate::management_command::kind(group).is_some() || group == "operations" =>
+        {
+            crate::management_command::help(output, group)
+        }
         Some("config") => write_config_help(output),
         Some("launcher") => write_topic_help(output, "launcher"),
         Some("debug") => match args.get(1).map(String::as_str) {

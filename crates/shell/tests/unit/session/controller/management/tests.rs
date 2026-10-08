@@ -1,5 +1,37 @@
 use super::*;
 
+#[test]
+fn account_state_translations_preserve_names_and_native_output() {
+    let users = Some(ManagementKind::Users);
+    assert_eq!(
+        management_detail_value(users, "Source", "remote"),
+        i18n::tr!("management-account-source-remote")
+    );
+    assert_eq!(
+        management_detail_value(users, "Password locked", "true"),
+        i18n::tr!("management-value-true")
+    );
+    assert_eq!(
+        management_detail_value(
+            users,
+            "Groups",
+            "unknown (select the account to query full membership)"
+        ),
+        i18n::tr!("management-value-unknown-select-the-account-to-query-full-membership")
+    );
+    for (key, value) in [
+        ("Groups", "remote"),
+        ("Home", "/home/local"),
+        ("Account expiry", "2030-01-01"),
+    ] {
+        assert_eq!(management_detail_value(users, key, value), value);
+    }
+    assert_eq!(
+        management_detail_value(Some(ManagementKind::Services), "Source", "remote"),
+        "remote"
+    );
+}
+
 fn shortcut_action_state(kind: ManagementKind, id: &str) -> ShellSession {
     let mut session = state();
     session.management_state.kind = Some(kind);

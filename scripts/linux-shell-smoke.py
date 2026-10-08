@@ -203,6 +203,79 @@ def check_status_details(master: int, output: bytearray, child: subprocess.Popen
         read_available(master, output, 0.05)
 
 
+def check_management_menu(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
+    """Exercise the real Network UI without submitting any system operation."""
+    interfaces = json.loads(subprocess.check_output(["ip", "-j", "address", "show"]))
+    first_interface = next(
+        (entry["ifname"] for entry in interfaces if entry.get("ifname") not in (None, "lo")),
+        None,
+    )
+    if first_interface is None:
+        raise SystemExit("management PTY requires a visible network interface")
+    offset = len(output)
+    # The fixed catalog orders Network eighth; Home removes any previous
+    # Command Line selection. This isolated profile has no external entries.
+    os.write(master, b"\x1b[H" + b"\x1b[B" * 7 + b"\r")
+    if not wait_for_output(master, output, b"More actions", child, 10.0, offset):
+        raise SystemExit("Network did not load its operation menu:\n" + output_diagnostic(output[offset:]))
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Network query did not settle")
+
+    # The bundled assets require at least 108x20. At this size there is no
+    # page inset: More begins on row 6 in SGR's one-based coordinates.
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 108, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    offset = len(output)
+    os.write(master, b"\x1b[<35;3;6M\x1b[<0;3;6M")
+    read_available(master, output, 0.2)
+    if b"Network diagnostics" in output[offset:]:
+        raise SystemExit("More actions opened on mouse-down")
+    os.write(master, b"\x1b[<32;108;3M\x1b[<0;108;3m")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("management drag-out did not settle:\n" + output_diagnostic(output[offset:]))
+    if b"Network diagnostics" in output[offset:]:
+        raise SystemExit("dragging out of More actions executed it")
+    os.write(master, b"\x1b[<0;3;6M\x1b[<0;3;6m")
+    if not wait_for_output(master, output, b"Network diagnostics", child, 5.0, offset):
+        raise SystemExit("More actions did not open after release:\n" + output_diagnostic(output[offset:]))
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("management menu did not settle")
+    offset = len(output)
+    os.write(master, b"n")
+    if not wait_for_output(master, output, b"TCP port", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("keyboard menu selection did not open diagnosis fields:\n" + output_diagnostic(output[offset:]))
+    # Closing a text form can keep emitting cursor control sequences. Verify
+    # the Search control restored from underneath it instead of requiring
+    # terminal silence or unchanged toolbar text to be redrawn in full.
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Search:", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("diagnosis form did not return to the operation page")
+    visible = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output[offset:]))
+    if b"TCPport" in visible.replace(b" ", b""):
+        raise SystemExit("diagnosis fields remained visible after Escape")
+    # Search and clear through the combined input. The query remains read-only.
+    offset = len(output)
+    os.write(master, b"sunmatched-network-for-pty\r")
+    if not wait_for_output(master, output, b"unmatched-network-for-pty", child, 5.0, offset):
+        raise SystemExit("management search did not accept keyboard input")
+    if not wait_for_output(master, output, b"No matching items", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("management search did not filter network rows")
+    offset = len(output)
+    os.write(master, b"\x15")
+    if not wait_for_output(master, output, first_interface.encode(), child, 10.0, offset, ignore_spaces=True):
+        raise SystemExit("clearing the combined search did not restore network rows")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Launcher", child, 5.0, offset):
+        raise SystemExit("Network did not return to Launcher")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Launcher did not settle after management verification")
+
+
 def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) == 2 else "target/debug/tundra-shell")
     if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -420,6 +493,7 @@ def main() -> int:
             raise SystemExit("embedded CLI did not return to Launcher:\n" + output_diagnostic(output[launcher_offset:]))
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Launcher did not settle after CLI exit:\n" + output_diagnostic(output[launcher_offset:]))
+        check_management_menu(master, slave, output, child)
         home_offset = len(output)
         os.write(master, b"\x1b")
         if not wait_for_output(master, output, b"Explorer", child, 5.0, home_offset):
@@ -628,7 +702,7 @@ def main() -> int:
         shutil.rmtree(isolated, ignore_errors=True)
 
     print(
-        "Linux PTY status details, Explorer terminal cwd/return, CLI paths/status markers, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
+        "Linux PTY management menu/search, status details, Explorer terminal cwd/return, CLI paths/status markers, Escape/mouse, input filtering/logging, button release and keyboard priority smoke passed "
         f"({MOUSE_FLOOD_EVENT_COUNT} queued mouse events before the keyboard sentinel; "
         f"input accepted in {flood_duration:.3f}s; "
         f"sentinel visible in {sentinel_latency:.3f}s)"

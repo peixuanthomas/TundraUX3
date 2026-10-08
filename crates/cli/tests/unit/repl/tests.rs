@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn ux_completion_covers_formal_operations_and_keeps_system_commands_intact() {
+    assert_eq!(ux_completions("/serv", 5), (0, vec!["/services".into()]));
+    let (start, values) = ux_completions("/services sta", 13);
+    assert_eq!(start, 10);
+    assert_eq!(values, ["start"]);
+    assert!(ux_completions("/logs f", 7).1.contains(&"follow".into()));
+    assert_eq!(ux_completions("/packages sources e", 19).1, ["enable"]);
+    assert!(ux_completions("services sta", 12).1.is_empty());
+    assert!(ux_completions("/usr/bin/ls", 11).1.is_empty());
+    let line = "/users primary-group demo --pri";
+    assert!(
+        ux_completions(line, line.len())
+            .1
+            .contains(&"--primary-group".into())
+    );
+}
+
+#[test]
 fn status_metadata_is_added_only_to_the_rendered_primary_prompt() {
     let display = PromptDisplay {
         accent: "\x1b[95m".to_string(),

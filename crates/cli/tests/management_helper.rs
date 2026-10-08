@@ -505,12 +505,15 @@ fn ordinary_user_helper_reports_failure_and_replays_it_after_reconnect() {
     fixture.identify_helper(&stream, &ready, actor);
     let first = read_until_finished(stream);
     fixture.completed = true;
-    assert_eq!(first.len(), 2);
+    assert_eq!(first.len(), 3);
     assert!(
         matches!(&first[0].event, OperationEvent::Started { kind: ManagementKind::Services, action, target } if action == "invalid-test-action" && target.as_deref() == Some("tundra-helper-test.service"))
     );
     assert!(
-        matches!(&first[1].event, OperationEvent::Failed { message } if message.contains("Unknown service operation"))
+        matches!(&first[1].event, OperationEvent::Problem { problem } if problem.exit_code == 2)
+    );
+    assert!(
+        matches!(&first[2].event, OperationEvent::Failed { message } if message.contains("Unknown service operation"))
     );
     assert!(
         !serde_json::to_string(&first)
@@ -526,6 +529,51 @@ fn ordinary_user_helper_reports_failure_and_replays_it_after_reconnect() {
     assert_eq!(
         helper::operation_kind(&ready.socket),
         Some(ManagementKind::Services)
+    );
+    // Public CLI reconnect returns the recorded result, not a new execution.
+    let detached = Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
+        .args([
+            "operations",
+            "attach",
+            ready.socket.to_str().unwrap(),
+            "--wait",
+            "0",
+            "--json",
+            "--yes",
+            "--non-interactive",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(detached.status.code(), Some(7));
+    let detached: serde_json::Value = serde_json::from_slice(&detached.stdout).unwrap();
+    assert_eq!(
+        detached["operation_id"],
+        ready.socket.to_string_lossy().as_ref()
+    );
+    let attached = Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
+        .args([
+            "operations",
+            "attach",
+            ready.socket.to_str().unwrap(),
+            "--json",
+            "--yes",
+            "--non-interactive",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        attached.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&attached.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&attached.stdout).unwrap();
+    assert_eq!(result["status"], "failed");
+    assert_eq!(result["problem"]["code"], "invalid-input");
+    assert!(
+        !serde_json::to_string(&result)
+            .unwrap()
+            .contains("test-value-never-recorded")
     );
     eprintln!(
         "ordinary UID {actor}, verified helper PID {}, Started -> Failed, disconnected -> identical replay, metadata kind=services; completed helper cleanup follows",

@@ -22,7 +22,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 ## What you can do
 
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
-- **Work with files:** browse directories, perform file operations, and edit plain text, including Markdown source.
+- **Work with files:** browse directories, perform file operations, and edit plain text. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
 - **Open tools:** use the application launcher and built-in command line when a task calls for commands.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
 - **Make the interface your own:** choose English or Simplified Chinese, adjust appearance, and use the clock and weather applications.
@@ -92,7 +92,7 @@ Build both packages: the shell uses the companion CLI for the built-in command l
 
 - The terminal interface is the focus. Features that launch graphical applications or use desktop services still require those applications or services; they may be unavailable in a terminal-only session.
 - Linux management features have specific requirements, such as systemd for service control and supported distribution tools for package management. Missing components are reported in the interface.
-- The **Sound**, **Display**, **Wi-Fi**, and **Bluetooth** sections in Settings are currently unavailable. Supported Linux network operations are provided separately through the Network application.
+- Network operations are in Launcher → Network. The unavailable Sound, Display, Wi-Fi and Bluetooth settings pages have been removed; account management is in Launcher → Users.
 - Input coverage and real-device behavior are still being refined. The project does not claim complete support for every terminal, touchscreen, or Linux distribution.
 
 ## Documentation
@@ -102,6 +102,8 @@ Most detailed documentation is currently in Chinese.
 - [简体中文 README](docs/README.zh-CN.md)
 - [Technical documentation](docs/README-TECHNICAL.md) — architecture, building, testing, and packaging.
 - [Linux system management](docs/linux-management.md) — services, processes, packages, networks, and disks.
+- [Operations CLI](docs/operations-cli.md) — reusable commands, authorization, task IDs and exit codes.
+- [System configuration editor](docs/system-config.md) and [user management](docs/user-management.md).
 - [Linux runtime notes](docs/packaging/linux/README-LINUX.txt) — runtime dependencies, permissions, and portable updates (English).
 - [Logs and diagnostics](docs/LOGS.md)
 - [Localization and resource recovery](docs/LOCALIZATION.md)

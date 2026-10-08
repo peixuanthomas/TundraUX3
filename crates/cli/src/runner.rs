@@ -149,6 +149,7 @@ where
         .map(|arg| arg.as_ref().to_string())
         .collect::<Vec<_>>();
     match parse_args(&args) {
+        Ok(CliCommand::Management(action)) => crate::management_client::run(action, stdout, stderr),
         Ok(CliCommand::TopicHelp(topic)) => {
             let _ = crate::help_text::write_topic_help(stdout, &topic);
             0

@@ -39,9 +39,27 @@ fn validated_foreground(value: &str) -> Option<String> {
 
 impl Completer for PromptDisplay {
     type Candidate = String;
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _context: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        Ok(ux_completions(line, pos))
+    }
 }
 impl Hinter for PromptDisplay {
     type Hint = String;
+    fn hint(&self, line: &str, pos: usize, _context: &rustyline::Context<'_>) -> Option<String> {
+        let (start, choices) = ux_completions(line, pos);
+        if choices.len() != 1 {
+            return None;
+        }
+        choices[0]
+            .strip_prefix(line.get(start..pos)?)
+            .filter(|suffix| !suffix.is_empty())
+            .map(String::from)
+    }
 }
 impl Validator for PromptDisplay {}
 impl Helper for PromptDisplay {}
@@ -111,9 +129,7 @@ where
                 return 1;
             }
         };
-    if embedded {
-        editor.set_helper(Some(PromptDisplay::new()));
-    }
+    editor.set_helper(Some(PromptDisplay::new()));
     let mut system_session = None;
     println!("System commands run by default. Use /help for UX commands; exit to leave.");
     let mut separate_next_prompt = false;
@@ -259,6 +275,112 @@ fn ux_command_input(line: &str) -> Option<&str> {
     // An absolute executable path such as /usr/bin/ls is ordinary system
     // input. A single leading slash such as /help selects a UX command.
     (!name.contains('/')).then_some(command)
+}
+
+fn ux_completions(line: &str, pos: usize) -> (usize, Vec<String>) {
+    let Some(prefix) = line.get(..pos) else {
+        return (pos, Vec::new());
+    };
+    if !prefix.starts_with('/')
+        || prefix[1..]
+            .split_whitespace()
+            .next()
+            .is_some_and(|name| name.contains('/'))
+    {
+        return (pos, Vec::new());
+    }
+    let start = prefix
+        .rfind(char::is_whitespace)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let partial = &prefix[start..];
+    let words = prefix[..start].split_whitespace().collect::<Vec<_>>();
+    let candidates = if words.is_empty() {
+        [
+            "help",
+            "config",
+            "launcher",
+            "services",
+            "processes",
+            "packages",
+            "network",
+            "disks",
+            "users",
+            "system-config",
+            "operations",
+            "logs",
+            "debug",
+            "cls",
+            "new",
+        ]
+        .into_iter()
+        .map(|name| format!("/{name}"))
+        .collect::<Vec<_>>()
+    } else if words.len() == 1 {
+        let group = words[0].trim_start_matches('/');
+        if group == "logs" {
+            ["query", "follow", "incidents", "export", "help"]
+                .map(String::from)
+                .to_vec()
+        } else if group == "config" {
+            ["get", "set", "reset", "options", "help"]
+                .map(String::from)
+                .to_vec()
+        } else if group == "launcher" {
+            ["list", "pin", "unpin", "help"].map(String::from).to_vec()
+        } else {
+            crate::management_command::verbs(group)
+                .iter()
+                .map(|verb| verb.to_string())
+                .collect()
+        }
+    } else if words == ["/packages", "sources"] {
+        ["add", "enable", "disable", "remove"]
+            .map(String::from)
+            .to_vec()
+    } else if partial.starts_with('-') {
+        let mut options = [
+            "--json",
+            "--yes",
+            "--non-interactive",
+            "--wait",
+            "--password-fd",
+            "--authorization-fd",
+            "--scope",
+            "--filter",
+            "--input",
+            "--expected-version",
+            "--validator",
+            "--apply",
+            "--allow-unvalidated",
+            "--reload-service",
+        ]
+        .map(String::from)
+        .to_vec();
+        let group = words[0].trim_start_matches('/');
+        let verb = if group == "packages" && words.get(1) == Some(&"sources") && words.len() >= 3 {
+            format!("source-{}", words[2])
+        } else {
+            words.get(1).copied().unwrap_or("").into()
+        };
+        options.extend(
+            crate::management_command::allowed_values(group, &verb)
+                .into_iter()
+                .map(|value| format!("--{}", value.replace('_', "-"))),
+        );
+        options.sort();
+        options.dedup();
+        options
+    } else {
+        Vec::new()
+    };
+    (
+        start,
+        candidates
+            .into_iter()
+            .filter(|candidate| candidate.starts_with(partial))
+            .collect(),
+    )
 }
 
 fn is_likely_ux_command(line: &str) -> bool {

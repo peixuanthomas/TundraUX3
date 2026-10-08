@@ -218,6 +218,21 @@ fn management_text(prefix: &str, id: &str, fallback: &str) -> String {
     }
 }
 
+fn management_detail_value(kind: Option<ManagementKind>, key: &str, value: &str) -> String {
+    if kind == Some(ManagementKind::Users) && key == "Source" {
+        return management_text("account-source", value, value);
+    }
+    let account_state = kind == Some(ManagementKind::Users)
+        && (matches!(key, "Password locked" | "Account expiry")
+            || (key == "Groups"
+                && value == "unknown (select the account to query full membership)"));
+    if account_state {
+        management_text("value", value, value)
+    } else {
+        value.to_owned()
+    }
+}
+
 impl ShellSession {
     pub(in crate::session) fn open_management(&mut self, kind: ManagementKind) {
         if !cfg!(target_os = "linux") || self.app.auth_session().is_none() || self.is_strict_guest()
@@ -1731,7 +1746,7 @@ impl ShellSession {
                 .map(|c| management_text("column", c, c))
                 .collect(),
             rows: s.snapshot.rows.iter().map(|r| r.cells.iter().enumerate().map(|(i,v)| {
-                if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()}
+                if s.kind == Some(ManagementKind::Users) && s.snapshot.columns.get(i).is_some_and(|c| c == "Source") {management_detail_value(s.kind,"Source",v)} else if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()}
             }).collect()).collect(),
             selected: s.selected,
             scroll: s.scroll,
@@ -1744,7 +1759,13 @@ impl ShellSession {
                 .map(|r| {
                     r.detail
                         .iter()
-                        .map(|(k, v)| format!("{}: {v}", management_text("detail", k, k)))
+                        .map(|(k, v)| {
+                            format!(
+                                "{}: {}",
+                                management_text("detail", k, k),
+                                management_detail_value(s.kind, k, v)
+                            )
+                        })
                         .collect::<Vec<_>>()
                         .join("\n")
                 })

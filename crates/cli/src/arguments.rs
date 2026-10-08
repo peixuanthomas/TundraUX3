@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    Management(crate::ManagementCli),
     ClearLogs(crate::ClearLogsAction),
     Logs(crate::logs_command::LogsAction),
     Asset(AssetAction),
@@ -93,6 +94,7 @@ pub enum ConfigUpdate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliError {
+    InvalidManagementArgument(String),
     InvalidLogsArgument(String),
     ForbiddenConfigField(String),
     MissingArgument(&'static str),
@@ -111,6 +113,7 @@ pub enum CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidManagementArgument(message) => write!(formatter, "{message}"),
             Self::InvalidLauncherArgument(message) => {
                 write!(formatter, "{message}; run launcher help")
             }
@@ -185,6 +188,10 @@ where
     }
 
     match command.as_str() {
+        "services" | "processes" | "packages" | "network" | "disks" | "users" | "system-config"
+        | "operations" => {
+            crate::management_command::parse_management(&command, &args).map(CliCommand::Management)
+        }
         "launcher" => crate::launcher_command::parse_launcher(&args).map(CliCommand::Launcher),
         "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
         "debug" => parse_debug_args(&args),

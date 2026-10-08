@@ -93,7 +93,7 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 
 - 项目重点是终端界面。启动图形应用或调用桌面服务的功能，仍需要对应的应用或服务；在只有终端的会话中，这些功能可能不可用。
 - Linux 管理功能各有运行条件，例如服务管理需要 systemd，软件包管理需要受支持的发行版工具。缺少组件时，界面会说明原因。
-- 设置中的**声音、显示、Wi-Fi 和蓝牙**目前不可用。已支持的 Linux 网络操作由独立的“网络”应用提供。
+- 网络操作位于“启动器 → 网络”。设置中不可用的声音、显示、Wi-Fi 和蓝牙页面已移除；用户管理移至“启动器 → 用户管理”。
 - 各种输入方式的操作覆盖和真实设备上的表现仍在完善，项目尚不承诺支持所有终端、触摸屏或 Linux 发行版。
 
 ## 文档
@@ -103,6 +103,8 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 - [English README](../README.md)
 - [技术文档](README-TECHNICAL.md)：架构、构建、测试和打包。
 - [Linux 系统管理](linux-management.md)：服务、进程、软件包、网络和磁盘。
+- [正式运维 CLI](operations-cli.md)：脚本命令、授权、任务编号和退出码。
+- [系统配置编辑器](system-config.md)与[用户管理](user-management.md)。
 - [Linux 运行说明](packaging/linux/README-LINUX.txt)：运行依赖、权限和便携更新，英文编写。
 - [日志与诊断](LOGS.md)
 - [语言资源与恢复](LOCALIZATION.md)

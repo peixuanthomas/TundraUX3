@@ -6,6 +6,7 @@ use std::{io::Write, path::PathBuf, sync::atomic::AtomicBool};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogsVerb {
     Query,
+    Follow,
     Incidents,
     Export,
 }
@@ -34,11 +35,12 @@ pub(crate) fn parse_logs(args: &[String]) -> Result<LogsAction, CliError> {
     }
     let verb = match verb.as_str() {
         "query" => LogsVerb::Query,
+        "follow" => LogsVerb::Follow,
         "incidents" => LogsVerb::Incidents,
         "export" => LogsVerb::Export,
         _ => {
             return Err(CliError::InvalidLogsArgument(
-                "expected query, incidents, or export".into(),
+                "expected query, follow, incidents, or export".into(),
             ));
         }
     };
@@ -46,12 +48,20 @@ pub(crate) fn parse_logs(args: &[String]) -> Result<LogsAction, CliError> {
     let mut format = LogsFormat::Text;
     let mut output = None;
     let mut seen = std::collections::HashSet::new();
+    let mut explicit_source = None;
     let mut options = args.iter();
     while let Some(flag) = options.next() {
         if !seen.insert(flag.as_str()) {
             return Err(CliError::InvalidLogsArgument(format!(
                 "duplicate option {flag}"
             )));
+        }
+        if flag == "--json" {
+            format = LogsFormat::Jsonl;
+            continue;
+        }
+        if matches!(flag.as_str(), "--yes" | "--non-interactive") {
+            continue;
         }
         let value = options
             .next()
@@ -63,7 +73,8 @@ pub(crate) fn parse_logs(args: &[String]) -> Result<LogsAction, CliError> {
                     "ux" => LogSource::Ux,
                     "linux" => LogSource::Linux,
                     _ => return Err(bad()),
-                }
+                };
+                explicit_source = Some(query.source);
             }
             "--since" => {
                 query.since = Some(
@@ -91,6 +102,52 @@ pub(crate) fn parse_logs(args: &[String]) -> Result<LogsAction, CliError> {
                 })
             }
             "--module" => query.module = Some(identifier(value)?),
+            "--unit" => {
+                let unit = identifier(value)?;
+                if !unit.ends_with(".service")
+                    || unit.starts_with('-')
+                    || unit.bytes().any(|byte| {
+                        !(byte.is_ascii_alphanumeric()
+                            || matches!(byte, b':' | b'_' | b'.' | b'@' | b'-' | b'\\'))
+                    })
+                {
+                    return Err(bad());
+                }
+                query.systemd_unit = Some(unit);
+                query.source = LogSource::Linux;
+            }
+            "--scope" => {
+                if !matches!(value.as_str(), "system" | "user") {
+                    return Err(bad());
+                }
+                query.systemd_scope = Some(value.into());
+                query.source = LogSource::Linux;
+            }
+            "--boot" => {
+                if !(value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                    && !value.parse::<i32>().is_ok_and(|number| {
+                        (-10_000..=0).contains(&number) && number.to_string() == *value
+                    })
+                {
+                    return Err(bad());
+                }
+                query.systemd_boot = Some(value.into());
+                query.source = LogSource::Linux;
+            }
+            "--invocation" => {
+                if value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(bad());
+                }
+                query.systemd_invocation = Some(value.into());
+                query.source = LogSource::Linux;
+            }
+            "--file" => {
+                let path = PathBuf::from(value);
+                if !path.is_absolute() {
+                    return Err(bad());
+                }
+                query.file_path = Some(path);
+            }
             "--run-id" => query.run_id = Some(identifier(value)?),
             "--operation-id" => query.operation_id = Some(identifier(value)?),
             "--task-id" => query.task_id = Some(identifier(value)?),
@@ -115,6 +172,30 @@ pub(crate) fn parse_logs(args: &[String]) -> Result<LogsAction, CliError> {
                 )));
             }
         }
+    }
+    if explicit_source == Some(LogSource::Ux)
+        && (query.systemd_unit.is_some()
+            || query.systemd_scope.is_some()
+            || query.systemd_boot.is_some()
+            || query.systemd_invocation.is_some())
+    {
+        return Err(CliError::InvalidLogsArgument(
+            "Journal filters require --source linux".into(),
+        ));
+    }
+    if query.file_path.is_some()
+        && (query.systemd_unit.is_some()
+            || query.systemd_boot.is_some()
+            || query.systemd_scope.is_some()
+            || query.systemd_invocation.is_some()
+            || query.run_id.is_some()
+            || query.operation_id.is_some()
+            || query.task_id.is_some()
+            || query.incident_id.is_some())
+    {
+        return Err(CliError::InvalidLogsArgument(
+            "--file cannot be combined with journal or UX correlation filters".into(),
+        ));
     }
     if verb == LogsVerb::Incidents && query.source != LogSource::Ux {
         return Err(CliError::InvalidLogsArgument(
@@ -177,6 +258,9 @@ pub(crate) fn run_logs(
         }
     };
     let cancelled = AtomicBool::new(false);
+    if verb == LogsVerb::Follow {
+        return follow_logs(&root, &query, format, platform, stdout, stderr);
+    }
     if verb == LogsVerb::Export {
         match export_diagnostics(
             &root,
@@ -253,6 +337,105 @@ pub(crate) fn run_logs(
     }
     report_status(&snapshot.result, stderr)
 }
+
+fn follow_logs(
+    root: &std::path::Path,
+    query: &LogQuery,
+    format: LogsFormat,
+    platform: &dyn platform::Platform,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> i32 {
+    let control = platform::TerminalControlHandler::install();
+    let cancelled = control.shutdown_flag();
+    let mut seen = std::collections::HashSet::new();
+    let mut recent = std::collections::VecDeque::new();
+    let mut last_status = None;
+    let mut previous_file: Option<runtime_log::LogFileStatus> = None;
+    let mut available = false;
+    while !control.shutdown_requested() {
+        let snapshot = query_snapshot(root, query, &LogAccess::OsUser, platform, &cancelled);
+        if let Some(file) = &snapshot.result.file_status {
+            if previous_file
+                .as_ref()
+                .is_some_and(|old| old.identity != file.identity || old.length > file.length)
+            {
+                let _ = writeln!(
+                    stderr,
+                    "The log file rotated or was truncated. Following the current file."
+                );
+                seen.clear();
+                recent.clear();
+            }
+            previous_file = Some(file.clone());
+        }
+        let status = (
+            snapshot.result.state,
+            snapshot.result.notices.clone(),
+            snapshot.result.truncated,
+        );
+        if last_status.as_ref() != Some(&status) {
+            report_status(&snapshot.result, stderr);
+            last_status = Some(status);
+        }
+        if matches!(
+            snapshot.result.state,
+            LogSourceState::Ready | LogSourceState::Partial
+        ) {
+            available = true;
+        }
+        if !available
+            && !matches!(
+                snapshot.result.state,
+                LogSourceState::Ready | LogSourceState::Partial | LogSourceState::Cancelled
+            )
+        {
+            return logs_exit_code(&snapshot.result);
+        }
+        for event in snapshot.result.events.iter().rev() {
+            if !seen.insert(event.event_id.clone()) {
+                continue;
+            }
+            recent.push_back(event.event_id.clone());
+            if recent.len() > 20_000
+                && let Some(old) = recent.pop_front()
+            {
+                seen.remove(&old);
+            }
+            let written = if format == LogsFormat::Jsonl {
+                serde_json::to_writer(&mut *stdout, event)
+                    .and_then(|_| writeln!(stdout).map_err(serde_json::Error::io))
+                    .map_err(std::io::Error::other)
+            } else {
+                writeln!(
+                    stdout,
+                    "{} {:?} {} {}",
+                    event.timestamp.to_rfc3339(),
+                    event.level,
+                    event.context.module,
+                    event.message
+                )
+            };
+            if let Err(error) = written {
+                return if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    0
+                } else {
+                    1
+                };
+            }
+        }
+        if stdout.flush().is_err() {
+            return 1;
+        }
+        for _ in 0..10 {
+            if control.shutdown_requested() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+    130
+}
 fn report_status(result: &runtime_log::LogQueryResult, stderr: &mut impl Write) -> i32 {
     for notice in &result.notices {
         let _ = writeln!(stderr, "{}", runtime_log::sanitize_text(notice));
@@ -266,18 +449,22 @@ fn report_status(result: &runtime_log::LogQueryResult, stderr: &mut impl Write) 
     if result.state != LogSourceState::Ready {
         let _ = writeln!(stderr, "Log source status: {:?}", result.state);
     }
+    logs_exit_code(result)
+}
+fn logs_exit_code(result: &runtime_log::LogQueryResult) -> i32 {
     match result.state {
         LogSourceState::Cancelled => 130,
-        LogSourceState::Partial => 3,
-        LogSourceState::Ready if result.truncated || result.damaged_records > 0 => 3,
+        LogSourceState::PermissionDenied => 3,
+        LogSourceState::Unsupported => 4,
+        LogSourceState::Partial | LogSourceState::Unavailable => 1,
+        LogSourceState::Ready if result.truncated || result.damaged_records > 0 => 1,
         LogSourceState::Ready => 0,
-        _ => 1,
     }
 }
 pub(crate) fn write_logs_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
-        "Usage: tundra-cli logs <query|incidents|export> [options]"
+        "Usage: tundra-cli logs <query|follow|incidents|export> [options]"
     )?;
     writeln!(
         output,
@@ -290,6 +477,18 @@ pub(crate) fn write_logs_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(
         output,
         "  --module NAME --run-id ID --operation-id ID --task-id ID --incident-id ID"
+    )?;
+    writeln!(
+        output,
+        "  --unit SERVICE --scope system|user --boot 0|-1|BOOT_ID --invocation ID"
+    )?;
+    writeln!(
+        output,
+        "  --file ABSOLUTE_PATH        Read/follow a selected text file, including rotation"
+    )?;
+    writeln!(
+        output,
+        "  follow --json              Stream JSONL; Ctrl+C stops following"
     )?;
     writeln!(
         output,
@@ -309,6 +508,44 @@ pub(crate) fn write_logs_help(output: &mut impl Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "Exit codes: 0 complete, 1 unavailable/access/output failure, 2 invalid arguments, 3 partial/truncated, 130 cancelled."
+        "Exit codes: 0 complete, 1 failed/partial/truncated, 2 invalid arguments, 3 permission denied, 4 unsupported, 130 cancelled."
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_and_follow_share_operation_exit_codes() {
+        for (state, expected) in [
+            (LogSourceState::Ready, 0),
+            (LogSourceState::Partial, 1),
+            (LogSourceState::Unavailable, 1),
+            (LogSourceState::PermissionDenied, 3),
+            (LogSourceState::Unsupported, 4),
+            (LogSourceState::Cancelled, 130),
+        ] {
+            let result = runtime_log::LogQueryResult {
+                state,
+                ..Default::default()
+            };
+            assert_eq!(logs_exit_code(&result), expected);
+            assert_eq!(report_status(&result, &mut Vec::new()), expected);
+        }
+        assert_eq!(
+            logs_exit_code(&runtime_log::LogQueryResult {
+                truncated: true,
+                ..Default::default()
+            }),
+            1
+        );
+        assert_eq!(
+            logs_exit_code(&runtime_log::LogQueryResult {
+                damaged_records: 1,
+                ..Default::default()
+            }),
+            1
+        );
+    }
 }
