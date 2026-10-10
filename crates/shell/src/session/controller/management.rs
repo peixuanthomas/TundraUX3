@@ -72,6 +72,8 @@ pub(in crate::session) struct ManagementState {
     scroll: usize,
     list_scroll_explicit: bool,
     table_scroll: usize,
+    sort: Option<ui::TableSort>,
+    sort_columns: Vec<String>,
     action_scroll: Option<usize>,
     form_field_scroll: Option<usize>,
     choice_field: Option<usize>,
@@ -105,6 +107,23 @@ pub(in crate::session) struct ManagementState {
     refreshed: Option<Instant>,
     problem: Option<problem::OperationProblem>,
     configuration_operation: bool,
+}
+
+impl ManagementState {
+    fn sort_snapshot(&mut self, snapshot: &mut ManagementSnapshot) {
+        if self.sort_columns != snapshot.columns {
+            self.sort = None;
+            self.sort_columns = snapshot.columns.clone();
+        }
+        if let Some(sort) = self.sort {
+            snapshot.rows.sort_by(|a, b| {
+                sort.compare(
+                    a.cells.get(sort.column).map_or("", String::as_str),
+                    b.cells.get(sort.column).map_or("", String::as_str),
+                )
+            });
+        }
+    }
 }
 
 pub(in crate::session) fn management_title(kind: ManagementKind) -> String {
@@ -430,7 +449,6 @@ impl ShellSession {
             self.management_state.query_job = None;
             match result {
                 Ok(snapshot) => {
-                    #[cfg(target_os = "linux")]
                     let mut snapshot = snapshot;
                     #[cfg(target_os = "linux")]
                     {
@@ -461,6 +479,7 @@ impl ShellSession {
                             });
                         }
                     }
+                    self.management_state.sort_snapshot(&mut snapshot);
                     let selected = self
                         .management_state
                         .snapshot
@@ -550,6 +569,18 @@ impl ShellSession {
                         continue;
                     }
                     self.management_state.query_job = None;
+                    let mut snapshot = snapshot;
+                    self.management_state.sort_snapshot(&mut snapshot);
+                    let selected = self
+                        .management_state
+                        .snapshot
+                        .rows
+                        .get(self.management_state.selected)
+                        .map(|row| row.id.clone());
+                    self.management_state.selected = selected
+                        .and_then(|id| snapshot.rows.iter().position(|row| row.id == id))
+                        .unwrap_or(self.management_state.selected)
+                        .min(snapshot.rows.len().saturating_sub(1));
                     self.management_state.snapshot = snapshot;
                     self.management_state.received_snapshot = true;
                 }
@@ -1759,6 +1790,28 @@ impl ShellSession {
             });
             return;
         }
+        if key.modifiers.is_control()
+            && !key.modifiers.alt
+            && !key.modifiers.super_key
+            && !key.modifiers.hyper
+            && !key.modifiers.meta
+            && key.key == InputKey::F(6)
+        {
+            if key.phase == InputPhase::Press {
+                let count = self.management_state.snapshot.columns.len();
+                if count > 0 {
+                    let column = if key.modifiers.shift {
+                        self.management_state.sort.map_or(0, |sort| sort.column)
+                    } else {
+                        self.management_state
+                            .sort
+                            .map_or(0, |sort| (sort.column + 1) % count)
+                    };
+                    self.sort_management(column);
+                }
+            }
+            return;
+        }
         if management_control_modifier(key) {
             if key.phase == InputPhase::Press {
                 match key.key {
@@ -1961,6 +2014,34 @@ impl ShellSession {
         }
         self.refresh_management();
     }
+    fn sort_management(&mut self, column: usize) {
+        let state = &mut self.management_state;
+        if column >= state.snapshot.columns.len() {
+            return;
+        }
+        let selected = state
+            .snapshot
+            .rows
+            .get(state.selected)
+            .map(|row| row.id.clone());
+        state.sort = Some(ui::TableSort::toggle(state.sort, column));
+        state.sort_columns = state.snapshot.columns.clone();
+        let sort = state.sort.unwrap();
+        state.snapshot.rows.sort_by(|a, b| {
+            sort.compare(
+                a.cells.get(column).map_or("", String::as_str),
+                b.cells.get(column).map_or("", String::as_str),
+            )
+        });
+        state.selected = selected
+            .and_then(|id| state.snapshot.rows.iter().position(|row| row.id == id))
+            .unwrap_or(0);
+        state.list_scroll_explicit = false;
+        state.actions_focused = false;
+        state.revision = state.revision.wrapping_add(1);
+        self.clamp_management_scroll();
+    }
+
     fn management_main(&self) -> Rect {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         match self.shell_layout_for(bounds) {
@@ -2021,13 +2102,8 @@ impl ShellSession {
         let actions = self.management_actions();
         ui::ManagementViewModel {
             scope_id: format!("{:?}", s.kind),
-            detail_action_start: match s.kind {
-                Some(ManagementKind::Packages) => Some(actions.len().saturating_sub(4)),
-                Some(ManagementKind::Users) => Some(actions.len().saturating_sub(
-                    if s.query.as_ref().is_some_and(|query| query.scope == "groups") { 2 } else { 3 }
-                )),
-                _ => None,
-            },
+            detail_action_start: Some(0),
+            sort: s.sort,
             column_width_limits: if s.kind == Some(ManagementKind::Packages) {
                 match s.query.as_ref().map(|query| query.scope.as_str()) {
                     Some("sources") => vec![28, 10, 42],

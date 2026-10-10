@@ -108,6 +108,16 @@ impl ShellSession {
         &mut self,
         snapshot: app::AppSystemStatusSnapshot,
     ) {
+        let selected_key = if self.active_screen() == ShellScreen::SystemStatus {
+            self.to_system_status_view_model().and_then(|m| {
+                m.table_data()
+                    .1
+                    .get(self.system_status_selected_row)
+                    .and_then(|row| row.first().cloned())
+            })
+        } else {
+            None
+        };
         if self
             .system_status_refresh_requested_revision
             .is_some_and(|revision| snapshot.revision > revision)
@@ -119,6 +129,17 @@ impl ShellSession {
             app::AppCommand::SetSystemStatusSnapshot(Some(snapshot.clone())),
             Instant::now(),
         );
+        if let Some(key) = selected_key {
+            self.system_status_selected_row = self
+                .to_system_status_view_model()
+                .and_then(|m| {
+                    m.table_data()
+                        .1
+                        .iter()
+                        .position(|row| row.first() == Some(&key))
+                })
+                .unwrap_or(0);
+        }
         self.evaluate_system_status_alerts(&snapshot);
     }
 

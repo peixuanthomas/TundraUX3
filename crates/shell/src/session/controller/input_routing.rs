@@ -59,6 +59,7 @@ impl ShellSession {
         }
         self.management_button_at(point)
             .or_else(|| self.logs_button_at(point))
+            .or_else(|| self.table_sort_button_at(point))
             .or_else(|| {
                 self.button_regions
                     .iter()
@@ -459,6 +460,18 @@ impl ShellSession {
 
         if self.active_popup.is_some() {
             return self.route_popup_key(key);
+        }
+
+        if key.phase == InputPhase::Press
+            && key.key == InputKey::F(6)
+            && key.modifiers.is_control()
+            && !key.modifiers.alt
+            && !key.modifiers.super_key
+            && !key.modifiers.hyper
+            && !key.modifiers.meta
+            && let Some(column) = self.next_table_sort_column(key.modifiers.shift)
+        {
+            return (RoutedTarget::Global, ShellCommand::SortTable(column));
         }
 
         if self.active_screen() == ShellScreen::Clock {
@@ -2283,6 +2296,11 @@ impl ShellSession {
             && !self.time_sync_dialog_visible
             && self.active_popup.is_none()
         {
+            if matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
+                && let Some(column) = self.table_sort_header_at(coordinates)
+            {
+                return (target_route(hit_target), ShellCommand::SortTable(column));
+            }
             if let Some(command) = self.route_touch_pages_pointer(mouse) {
                 return (target_route(hit_target), command);
             }

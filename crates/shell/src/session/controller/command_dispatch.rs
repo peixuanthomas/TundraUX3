@@ -1563,13 +1563,15 @@ impl ShellSession {
                     .unwrap_or(0);
                 ShellAction::Redraw
             }
+            ShellCommand::SortTable(column) => {
+                self.sort_active_table(column);
+                ShellAction::Redraw
+            }
             ShellCommand::SystemStatusSortProcesses(column) => {
                 if self.system_status_route
                     == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Processes)
                 {
-                    self.system_status_process_sort.toggle(column);
-                    self.system_status_selected_row = 0;
-                    self.system_status_scroll_offset = 0;
+                    self.sort_system_status_processes(column);
                 }
                 ShellAction::Redraw
             }

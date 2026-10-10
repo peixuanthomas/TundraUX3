@@ -50,6 +50,7 @@ pub struct ManagementViewModel {
     pub detail_action_start: Option<usize>,
     pub title: String,
     pub columns: Vec<String>,
+    pub sort: Option<crate::TableSort>,
     pub column_width_limits: Vec<usize>,
     pub rows: Vec<Vec<String>>,
     pub selected: usize,
@@ -324,6 +325,7 @@ pub struct ManagementLayout {
     pub list: Rect,
     pub list_rows: Rect,
     pub list_capacity: usize,
+    pub headers: Vec<(usize, Rect)>,
     pub column_widths: Vec<usize>,
     pub details: Rect,
     pub details_text: Rect,
@@ -369,32 +371,19 @@ fn add_text_bar(
     }
 }
 fn management_action_rects(area: Rect, actions: &[(String, bool)], compact: bool) -> Vec<Rect> {
-    let mut x = area.x;
-    let mut y = area.y;
-    actions
+    let widths = actions
         .iter()
         .map(|(label, _)| {
-            let width = (label.width().min(usize::from(u16::MAX)) as u16)
+            (label.width().min(usize::from(u16::MAX)) as u16)
                 .saturating_add(2)
                 .min(if compact && area.width >= 32 {
                     area.width.saturating_sub(1) / 2
                 } else {
                     area.width
-                });
-            if x != area.x && x.saturating_add(width) > area.right() {
-                x = area.x;
-                y = y.saturating_add(1);
-            }
-            let rect = Rect::new(
-                x,
-                y.min(area.bottom()),
-                width,
-                u16::from(y < area.bottom() && width > 0),
-            );
-            x = x.saturating_add(width).saturating_add(1);
-            rect
+                })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    crate::right_aligned_actions(area, &widths)
 }
 pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementLayout {
     // Very short shell content areas keep actionable controls before repeated
@@ -600,12 +589,14 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
                 .map(|value| value.width())
                 .max()
                 .unwrap_or(0)
-                .max(label.width())
+                .max(label.width() + 2)
                 .max(4);
             model
                 .column_width_limits
                 .get(index)
-                .map_or(natural, |limit| natural.min((*limit).max(label.width())))
+                .map_or(natural, |limit| {
+                    natural.min((*limit).max(label.width() + 2))
+                })
                 + 2
         })
         .collect::<Vec<_>>();
@@ -621,6 +612,29 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         list_inner.width.saturating_sub(1),
         list_inner.height.saturating_sub(1 + u16::from(horizontal)),
     );
+    let mut offset = 0;
+    let mut headers = Vec::new();
+    for (index, width) in column_widths
+        .iter()
+        .copied()
+        .enumerate()
+        .take(model.columns.len())
+    {
+        let start = offset.max(model.table_scroll);
+        let end = (offset + width).min(model.table_scroll + usize::from(list_rows.width));
+        if start < end && list_inner.height > 0 {
+            headers.push((
+                index,
+                Rect::new(
+                    list_rows.x + (start - model.table_scroll) as u16,
+                    list_inner.y,
+                    (end - start) as u16,
+                    1,
+                ),
+            ));
+        }
+        offset += width;
+    }
     let list_capacity = usize::from(list_rows.height);
     let details_text = text_area(inner(details));
     let output_text = text_area(content);
@@ -879,6 +893,7 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         list,
         list_rows,
         list_capacity,
+        headers,
         column_widths,
         details,
         details_text,
@@ -908,6 +923,12 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
 
 pub fn management_control_id(model: &ManagementViewModel, control: ManagementControl) -> String {
     format!("management.control.{}.{control:?}", model.scope_id)
+}
+pub fn management_header_id(model: &ManagementViewModel, index: usize) -> String {
+    format!(
+        "management.sort.{}.{}.{:?}",
+        model.scope_id, index, model.columns
+    )
 }
 pub fn management_action_id(model: &ManagementViewModel, index: usize) -> String {
     model
@@ -1006,6 +1027,9 @@ pub fn management_button_regions(
         false,
     );
     if !model.terminal {
+        for (index, area) in &layout.headers {
+            push(management_header_id(model, *index), *area, false);
+        }
         for (offset, area) in layout.actions.iter().enumerate() {
             let index = layout.action_start + offset;
             push(
@@ -1189,6 +1213,30 @@ pub fn render_management_content(
             Paragraph::new(lines).scroll((0, model.table_scroll.min(u16::MAX as usize) as u16)),
             area.intersection(main),
         );
+        for (index, area) in &layout.headers {
+            let label = model.sort.map_or_else(
+                || model.columns[*index].clone(),
+                |sort| sort.label(*index, &model.columns[*index]),
+            );
+            let hidden = model
+                .table_scroll
+                .saturating_sub(layout.column_widths[..*index].iter().sum());
+            let mut cells = 0;
+            let label = label
+                .chars()
+                .filter(|c| {
+                    let visible = cells >= hidden;
+                    cells += c.width().unwrap_or(0);
+                    visible
+                })
+                .collect::<String>();
+            Button::new(
+                management_header_id(model, *index),
+                crate::table_sort::table_header_text(&label, area.width),
+            )
+            .with_bracketed_label(false)
+            .render_borderless_frame(frame, *area, &theme);
+        }
         render_text(
             frame,
             layout.details_text,

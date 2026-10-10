@@ -76,16 +76,23 @@ pub(super) fn render_processes(
         }
     };
     let headers = [
-        i18n::tr!("ui-system-status-pid"),
+        sort_header(
+            i18n::tr!("ui-system-status-pid"),
+            SystemStatusProcessSortColumn::Pid,
+        ),
         sort_header("CPU%".into(), SystemStatusProcessSortColumn::Cpu),
         sort_header(
             i18n::tr!("ui-system-status-memory"),
             SystemStatusProcessSortColumn::Memory,
         ),
-        i18n::tr!("ui-system-status-process"),
+        sort_header(
+            i18n::tr!("ui-system-status-process"),
+            SystemStatusProcessSortColumn::Name,
+        ),
     ];
     let header = Row::new(
         headers
+            .clone()
             .into_iter()
             .enumerate()
             .map(|(index, text)| process_cell(text, index, context.theme.text)),
@@ -141,6 +148,20 @@ pub(super) fn render_processes(
             .header(header),
         area,
     );
+    for (column, rect) in &layout.process_sort_headers {
+        let index = match column {
+            SystemStatusProcessSortColumn::Pid => 0,
+            SystemStatusProcessSortColumn::Cpu => 1,
+            SystemStatusProcessSortColumn::Memory => 2,
+            SystemStatusProcessSortColumn::Name => 3,
+        };
+        crate::components::Button::new(
+            format!("system-status.process.sort.{index}"),
+            crate::table_sort::table_header_text(&headers[index], rect.width),
+        )
+        .with_bracketed_label(false)
+        .render_borderless_frame(frame, *rect, &context.compatibility_theme());
+    }
 }
 
 fn process_cell(text: String, column: usize, color: Color) -> Cell<'static> {

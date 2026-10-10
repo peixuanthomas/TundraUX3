@@ -60,3 +60,14 @@ config-editor-content = Content
 config-editor-applied = Saved
 config-editor-unchanged = Unchanged
 config-editor-compare = Compare candidate file
+
+table-column-name = Name
+table-column-category = Category
+table-column-status = Status
+table-column-time = Time
+table-column-size = Size
+table-column-app = Application
+table-column-level = Level
+table-column-module = Module
+table-column-operation = Operation
+table-column-message = Message

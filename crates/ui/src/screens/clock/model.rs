@@ -100,6 +100,8 @@ pub struct ClockViewModel {
     pub minute: u8,
     pub second: u8,
     pub alarms: Vec<ClockEntryViewModel>,
+    pub alarm_sort: Option<crate::TableSort>,
+    pub countdown_sort: Option<crate::TableSort>,
     pub countdowns: Vec<ClockEntryViewModel>,
     pub selected_entry_id: Option<u64>,
     /// Offset into the flattened `alarms` then `countdowns` display order.
@@ -117,6 +119,8 @@ impl PartialEq for ClockViewModel {
             && self.hour == other.hour
             && self.minute == other.minute
             && self.second == other.second
+            && self.alarm_sort == other.alarm_sort
+            && self.countdown_sort == other.countdown_sort
             && self.alarms == other.alarms
             && self.countdowns == other.countdowns
             && self.selected_entry_id == other.selected_entry_id
@@ -171,6 +175,8 @@ impl ClockViewModel {
             minute,
             second,
             alarms: Vec::new(),
+            alarm_sort: None,
+            countdown_sort: None,
             countdowns: Vec::new(),
             selected_entry_id: None,
             entry_window_start: 0,

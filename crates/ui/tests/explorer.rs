@@ -424,7 +424,11 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
                 .iter()
                 .map(|button| button.action)
                 .collect::<Vec<_>>(),
-            ExplorerToolbarAction::REGULAR,
+            ExplorerToolbarAction::REGULAR
+                .into_iter()
+                .filter(|action| *action != ExplorerToolbarAction::Refresh)
+                .chain([ExplorerToolbarAction::Refresh])
+                .collect::<Vec<_>>(),
             "toolbar actions at width {width}"
         );
         assert!(
@@ -433,12 +437,13 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
                 .iter()
                 .all(|button| button.show_label)
         );
-        assert!(
-            layout
-                .toolbar_buttons
-                .iter()
-                .all(|button| button.area.bottom() <= layout.path_bar.y)
-        );
+        assert!(layout.toolbar_buttons.iter().all(|button| {
+            if button.action == ExplorerToolbarAction::Refresh {
+                button.area.y == layout.search.y && button.area.right() < layout.search.x
+            } else {
+                button.area.y >= layout.path_bar.bottom() && button.area.bottom() <= layout.footer.y
+            }
+        }));
     }
 }
 

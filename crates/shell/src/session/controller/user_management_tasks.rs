@@ -466,6 +466,7 @@ impl ShellSession {
                 let selected = outcome.select.or_else(|| self.selected_managed_username());
                 self.app
                     .dispatch_at(app::AppCommand::SetManagedUsers(users), Instant::now());
+                self.apply_user_table_sort();
                 self.sync_current_session_role();
                 if let Some(selected) = selected {
                     self.select_managed_username(&selected);

@@ -105,28 +105,35 @@ fn render_clock_panel(
         theme.muted_style(),
         HorizontalAlignment::Left,
     );
-    render_clock_line(
-        frame,
-        layout.alarms_heading,
-        if model.alarms.is_empty() {
-            i18n::tr!("ui-clock-alarms-none")
-        } else {
-            i18n::tr!("ui-clock-alarms")
-        },
-        theme.title_style(),
-        HorizontalAlignment::Left,
-    );
-    render_clock_line(
-        frame,
-        layout.countdowns_heading,
-        if model.countdowns.is_empty() {
-            i18n::tr!("ui-clock-countdowns-none")
-        } else {
-            i18n::tr!("ui-clock-countdowns")
-        },
-        theme.title_style(),
-        HorizontalAlignment::Left,
-    );
+    for (id, area, label, sort) in [
+        (
+            "alarm",
+            layout.alarms_heading,
+            if model.alarms.is_empty() {
+                i18n::tr!("ui-clock-alarms-none")
+            } else {
+                i18n::tr!("ui-clock-alarms")
+            },
+            model.alarm_sort,
+        ),
+        (
+            "countdown",
+            layout.countdowns_heading,
+            if model.countdowns.is_empty() {
+                i18n::tr!("ui-clock-countdowns-none")
+            } else {
+                i18n::tr!("ui-clock-countdowns")
+            },
+            model.countdown_sort,
+        ),
+    ] {
+        Button::new(
+            format!("clock.sort.{id}"),
+            sort.map_or_else(|| label.clone(), |s| s.label(0, &label)),
+        )
+        .with_bracketed_label(false)
+        .render_borderless_frame(frame, area, theme);
+    }
 
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, context);
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Countdown, context);

@@ -584,6 +584,14 @@ impl ShellSession {
         if self.management_state.terminal_mode {
             return;
         }
+        if let Some((column, _)) = layout
+            .headers
+            .iter()
+            .find(|(_, area)| area.contains(position))
+        {
+            self.sort_management(*column);
+            return;
+        }
         if layout.action_previous.contains(position) || layout.action_next.contains(position) {
             self.page_management_actions(layout.action_next.contains(position));
             return;

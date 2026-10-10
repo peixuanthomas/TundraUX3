@@ -263,6 +263,7 @@ fn join_row(cells: &[String], width: u16, explicit_widths: Option<&[u16]>) -> St
                 .copied()
                 .map(usize::from)
                 .unwrap_or(fallback);
+            let cell = super::truncate_to_terminal_width(cell, cell_width);
             let padding = cell_width.saturating_sub(usize::from(cell.cell_width()));
             format!("{cell}{}", " ".repeat(padding))
         })

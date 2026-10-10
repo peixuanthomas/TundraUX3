@@ -126,7 +126,7 @@ fn render_user_management_table(
             }
         })
         .collect();
-    let mut table = DataTable::new("user-management.users", headers, rows)
+    let mut table = DataTable::new("user-management.users", headers.clone(), rows)
         .with_column_widths(widths)
         .with_viewport_start(layout.visible_start)
         .with_row_tones(tones)
@@ -140,6 +140,21 @@ fn render_user_management_table(
         layout.header.height.saturating_add(layout.rows_area.height),
     );
     table.render_frame(frame, table_area, context);
+    let columns = user_management_sort_headers(layout);
+    let labels = vec![
+        i18n::tr!("ui-user-management-header-username"),
+        i18n::tr!("ui-user-management-header-display-name"),
+        i18n::tr!("ui-user-management-role"),
+        i18n::tr!("ui-user-management-status"),
+    ];
+    crate::render_table_headers(
+        frame,
+        &columns,
+        &labels,
+        model.sort,
+        "user-management",
+        context,
+    );
 
     if layout.rows.is_empty() && model.users.is_empty() {
         let empty = Rect::new(
@@ -514,4 +529,21 @@ pub fn render_user_management_overlay(
     if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {
         render_user_management_form(frame, form_layout, form, theme, context);
     }
+}
+
+pub fn user_management_sort_headers(layout: &UserManagementLayout) -> Vec<(usize, Rect)> {
+    let widths = user_management_column_widths(layout.header.width, layout.column_mode);
+    crate::table_header_areas(layout.header, &widths)
+        .into_iter()
+        .map(|(index, area)| {
+            (
+                if layout.column_mode == UserManagementColumnMode::Account && index > 0 {
+                    index + 1
+                } else {
+                    index
+                },
+                area,
+            )
+        })
+        .collect()
 }

@@ -699,6 +699,16 @@ impl ShellSession {
         &mut self,
         snapshot: app::diagnostics::DiagnosticsSnapshot,
     ) {
+        let selected_check_id = self
+            .app
+            .diagnostics_snapshot()
+            .and_then(|s| s.checks.get(self.diagnostics_selected_check))
+            .map(|c| c.id.clone());
+        let selected_incident_id = self
+            .app
+            .diagnostics_snapshot()
+            .and_then(|s| s.incidents.get(self.diagnostics_selected_incident))
+            .map(|c| c.incident_id.clone());
         let selected_log_path = self
             .app
             .diagnostics_snapshot()
@@ -718,6 +728,25 @@ impl ShellSession {
         {
             self.diagnostics_selected_log = index;
         }
+        let (check_index, incident_index) = self
+            .app
+            .diagnostics_snapshot()
+            .map(|snapshot| {
+                (
+                    selected_check_id
+                        .and_then(|id| snapshot.checks.iter().position(|c| c.id == id)),
+                    selected_incident_id
+                        .and_then(|id| snapshot.incidents.iter().position(|c| c.incident_id == id)),
+                )
+            })
+            .unwrap_or_default();
+        if let Some(index) = check_index {
+            self.diagnostics_selected_check = index;
+        }
+        if let Some(index) = incident_index {
+            self.diagnostics_selected_incident = index;
+        }
+        self.apply_diagnostics_table_sorts();
         self.clamp_diagnostics_selection();
     }
 

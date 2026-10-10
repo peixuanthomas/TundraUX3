@@ -5,18 +5,18 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::session) struct LogsUiState {
-    category: ui::LogsCategory,
-    section: ui::LogsSection,
+    pub(super) category: ui::LogsCategory,
+    pub(super) section: ui::LogsSection,
     query: LogQuery,
-    snapshot: LogsSnapshot,
-    selected: usize,
-    scroll: usize,
-    explicit_scroll: bool,
+    pub(super) snapshot: LogsSnapshot,
+    pub(super) selected: usize,
+    pub(super) scroll: usize,
+    pub(super) explicit_scroll: bool,
     detail_scroll: usize,
     detail_scrollbar_grab: Option<u16>,
     feedback: Option<i18n::LocalizedText>,
     job: Option<LogsJob>,
-    revision: u64,
+    pub(super) revision: u64,
     time_filter: u8,
     known_modules: Vec<String>,
     pub(super) scrollbar_grab: Option<u16>,
@@ -24,7 +24,7 @@ pub(in crate::session) struct LogsUiState {
     editor_snapshot: Option<PathBuf>,
     refreshing_editor: bool,
     return_component: Option<ShellComponent>,
-    paused: bool,
+    pub(super) paused: bool,
     new_events: usize,
     last_refresh: Option<Instant>,
     background_refresh: bool,
@@ -304,6 +304,7 @@ impl ShellSession {
                 }
                 self.logs_state.known_modules.sort();
                 self.logs_state.snapshot = snapshot;
+                self.apply_logs_sort();
                 if background && !self.logs_state.paused {
                     self.logs_state.selected = 0;
                     self.logs_state.scroll = 0;
@@ -483,6 +484,7 @@ impl ShellSession {
     }
     fn logs_set_section(&mut self, section: ui::LogsSection) {
         self.logs_state.section = section;
+        self.apply_logs_sort();
         self.logs_state.selected = 0;
         self.logs_state.scroll = 0;
         self.logs_state.explicit_scroll = false;
@@ -530,9 +532,23 @@ impl ShellSession {
             self.logs_state.background_refresh = false;
         }
     }
+    fn logs_restore_event_order(&mut self) {
+        if self.logs_state.category == ui::LogsCategory::Linux
+            || self.logs_state.section == ui::LogsSection::Events
+        {
+            let sort_key = self.logs_sort_key();
+            self.table_sorts.remove(&sort_key);
+            self.logs_state
+                .snapshot
+                .result
+                .events
+                .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        }
+    }
     fn logs_follow_control(&mut self) {
         self.logs_state.paused = !self.logs_state.paused;
         if !self.logs_state.paused {
+            self.logs_restore_event_order();
             self.logs_state.selected = 0;
             self.logs_state.scroll = 0;
             self.logs_state.explicit_scroll = false;
@@ -869,6 +885,7 @@ impl ShellSession {
             InputKey::PageUp => self.logs_move(-10),
             InputKey::PageDown => self.logs_move(10),
             InputKey::Home => {
+                self.logs_restore_event_order();
                 self.logs_state.selected = 0;
                 self.logs_state.explicit_scroll = false;
                 self.logs_state.paused = false;
@@ -1009,6 +1026,7 @@ impl ShellSession {
             };
         ui::LogsViewModel {
             category: state.category,
+            sort: self.table_sorts.get(&self.logs_sort_key()).copied(),
             section: state.section,
             diagnostics,
             events: state
@@ -1165,6 +1183,9 @@ fn merge_live_events(new: &mut LogsSnapshot, old: &LogsSnapshot) -> usize {
             new.result.events.push(event.clone());
         }
     }
+    new.result
+        .events
+        .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     if new.result.events.len() > BUFFER {
         new.result.events.truncate(BUFFER);
         new.result.truncated = true;

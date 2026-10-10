@@ -40,8 +40,8 @@ fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
             .all(|button| button.action.shortcut() != "Esc")
     );
     assert_eq!(
-        layout.toolbar.height, 4,
-        "four actions use two rows of buttons"
+        layout.toolbar.height, 2,
+        "three bottom actions wrap to two rows; refresh stays above the list"
     );
     assert!(
         model
@@ -50,6 +50,11 @@ fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
             .all(|button| !button.description.is_empty())
     );
     for button in &layout.toolbar_buttons {
+        if button.action == LauncherToolbarAction::Refresh {
+            assert!(button.area.bottom() <= layout.content.y);
+        } else {
+            assert!(button.area.y >= layout.content.bottom());
+        }
         assert!(button.area.right() <= main.right() && button.area.bottom() <= main.bottom());
         assert_eq!(
             layout.hit_test(button.area.x, button.area.y),

@@ -349,6 +349,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
         diagnostics: DiagnosticsViewModel::default(),
         route: SystemStatusRoute::Dashboard,
         dashboard: SystemStatusDashboardViewModel::default(),
+        table_sort: None,
         process_sort: SystemStatusProcessSort::default(),
         selected_row: 0,
         scroll_offset: 0,

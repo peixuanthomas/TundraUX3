@@ -136,7 +136,7 @@ fn processes_show_colored_aligned_values_and_keep_selection_and_scrolling() {
 }
 
 #[test]
-fn process_headers_show_sort_direction_and_only_metric_headers_are_clickable() {
+fn process_headers_show_sort_direction_and_all_headers_are_clickable() {
     let mut m = model();
     m.route = SystemStatusRoute::Detail(SystemStatusDetail::Processes);
     m.dashboard.wide_widgets.push(widget(
@@ -147,7 +147,7 @@ fn process_headers_show_sort_direction_and_only_metric_headers_are_clickable() {
     ));
     for (width, height) in [(50, 12), (100, 24), (208, 55)] {
         let layout = system_status_layout(full_main(width, height), &m);
-        assert_eq!(layout.process_sort_headers.len(), 2);
+        assert_eq!(layout.process_sort_headers.len(), 4);
         for (column, area) in &layout.process_sort_headers {
             for x in area.x..area.right() {
                 assert_eq!(
@@ -158,7 +158,9 @@ fn process_headers_show_sort_direction_and_only_metric_headers_are_clickable() {
         }
         assert_eq!(
             system_status_hit_test(&layout, (layout.rows_area.x, layout.rows_area.y)),
-            None
+            Some(SystemStatusHitTarget::ProcessSort(
+                SystemStatusProcessSortColumn::Pid
+            ))
         );
         let text = render(width, height, &m);
         assert!(text.contains("CPU% ↓"), "{text}");
@@ -615,6 +617,7 @@ fn model() -> SystemStatusViewModel {
             updated: "now".into(),
             ..Default::default()
         },
+        table_sort: None,
         process_sort: SystemStatusProcessSort::default(),
         selected_row: 0,
         scroll_offset: 0,
@@ -624,6 +627,9 @@ fn model() -> SystemStatusViewModel {
 }
 fn diagnostics() -> DiagnosticsViewModel {
     DiagnosticsViewModel {
+        sort: None,
+        table_columns: vec![],
+        table_rows: vec![],
         tab: DiagnosticsTab::Health,
         checks: vec![],
         incidents: vec![],

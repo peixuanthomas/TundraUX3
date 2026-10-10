@@ -11,7 +11,7 @@ use super::model::{
     DiagnosticsCheckViewModel, DiagnosticsIncidentViewModel, DiagnosticsRepairDialogViewModel,
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
-use crate::components::{Button, ComponentTone, List, ListItem, Scrollbar, Surface, TabItem, Tabs};
+use crate::components::{Button, ComponentTone, List, ListItem, Scrollbar, Surface};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
 use crate::{RenderContext, TundraTheme};
@@ -151,6 +151,14 @@ pub(crate) fn render_diagnostics_content_titled(
         .titled(i18n::tr!("ui-diagnostics-details"))
         .bordered(true)
         .render_frame(frame, layout.detail_panel, context);
+    crate::render_table_headers(
+        frame,
+        &layout.headers,
+        &model.table_data().0,
+        model.sort,
+        "diagnostics.table",
+        context,
+    );
     if model.item_count() == 0 {
         if let Some((list_message, detail_message)) = empty_content {
             frame.render_widget(
@@ -178,19 +186,10 @@ fn render_diagnostics_tabs(
     _model: &DiagnosticsViewModel,
     context: &RenderContext,
 ) {
-    let items = [DiagnosticsTab::Health]
-        .into_iter()
-        .map(|tab| {
-            TabItem::new(
-                format!("diagnostics.tab.{tab:?}"),
-                format!("[{}]", tab.label()),
-            )
-        })
-        .collect();
-    let mut tabs = Tabs::new("diagnostics.tabs", items);
-    tabs.set_selected(Some(0));
-
-    tabs.render_borderless_frame(frame, layout.tabs_area, &context.compatibility_theme());
+    for tab in &layout.tabs {
+        Button::new(format!("diagnostics.tab.{:?}", tab.tab), tab.tab.label())
+            .render_borderless_frame(frame, tab.area, &context.compatibility_theme());
+    }
 }
 
 fn render_diagnostics_rows(
@@ -233,62 +232,26 @@ fn render_diagnostics_rows(
         return;
     }
 
-    let items = (0..model.item_count())
-        .filter_map(|index| {
-            let (text, status) = match model.tab {
-                DiagnosticsTab::Health => {
-                    let check = model.checks.get(index)?;
-                    (
-                        format!(
-                            " {} [{}] {}",
-                            check.status.marker(),
-                            check.category,
-                            check.label,
-                        ),
-                        check.status,
-                    )
-                }
-                DiagnosticsTab::Incidents => {
-                    let incident = model.incidents.get(index)?;
-                    (
-                        format!(
-                            " {} {} — {}",
-                            incident.severity.marker(),
-                            incident.occurred_at,
-                            incident.app,
-                        ),
-                        incident.severity,
-                    )
-                }
-                DiagnosticsTab::Logs => {
-                    let log = model.logs.get(index)?;
-                    (
-                        i18n::tr!(
-                            "ui-diagnostics-log-row",
-                            name = log.relative_path.clone(),
-                            modified = log.modified_at.clone(),
-                            size = log.size_bytes.clone()
-                        ),
-                        DiagnosticsStatus::Pass,
-                    )
-                }
-            };
-            Some(
-                ListItem::new(
-                    format!("diagnostics.row.{index}"),
-                    fit_cell(
-                        &text,
-                        usize::from(layout.list_rows_area.width.saturating_sub(1)),
-                    ),
-                )
-                .tone(diagnostics_status_tone(status)),
-            )
+    let (headers, rows) = model.table_data();
+    let widths = crate::equal_table_widths(layout.list_rows_area.width, headers.len());
+    let tones = (0..model.item_count())
+        .map(|index| {
+            diagnostics_status_tone(match model.tab {
+                DiagnosticsTab::Health => model.checks[index].status,
+                DiagnosticsTab::Incidents => model.incidents[index].severity,
+                DiagnosticsTab::Logs => DiagnosticsStatus::Pass,
+            })
         })
-        .collect::<Vec<_>>();
-    let mut list = List::new("diagnostics.rows", items).with_viewport_start(layout.visible_start);
-    list.set_selected(Some(model.selected_index()));
-    list.set_focused(true);
-    list.render_borderless_frame(frame, layout.list_rows_area, theme);
+        .collect();
+    let mut table = crate::components::DataTable::new("diagnostics.rows", headers.clone(), rows)
+        .with_column_widths(widths)
+        .with_viewport_start(layout.visible_start)
+        .with_row_tones(tones)
+        .bordered(false)
+        .show_header(false);
+    table.selected = Some(model.selected_index());
+    table.state.focused = true;
+    table.render_frame(frame, layout.list_rows_area, context);
 
     render_diagnostics_scrollbar(frame, layout, model, context);
 }
@@ -651,23 +614,14 @@ pub fn diagnostics_toolbar_buttons(
     if !model.restart_required {
         actions.push(('x', i18n::tr!("ui-diagnostics-x-restart")));
     }
-    let mut x = area.x;
-    let mut y = area.y;
+    let widths = actions
+        .iter()
+        .map(|(_, label)| label.width().saturating_add(2).min(u16::MAX as usize) as u16)
+        .collect::<Vec<_>>();
     actions
         .into_iter()
-        .filter_map(|(key, label)| {
-            let width = (label.width().saturating_add(2) as u16).min(area.width);
-            if x > area.x && x.saturating_add(width) > area.right() {
-                x = area.x;
-                y = y.saturating_add(1);
-            }
-            if width == 0 || y >= area.bottom() {
-                return None;
-            }
-            let rect = Rect::new(x, y, width, 1);
-            x = x.saturating_add(width).saturating_add(1);
-            Some((key, label, rect))
-        })
+        .zip(crate::right_aligned_actions(area, &widths))
+        .filter_map(|((key, label), rect)| (!rect.is_empty()).then_some((key, label, rect)))
         .collect()
 }
 pub(crate) fn render_diagnostics_repair_dialog(

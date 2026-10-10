@@ -13,6 +13,10 @@ impl ShellSession {
             && let Some(tab) = detail.diagnostics_tab()
         {
             diagnostics.tab = tab;
+            diagnostics.sort = self
+                .table_sorts
+                .get(&format!("diagnostics.{tab:?}"))
+                .copied();
         }
         let snapshot = self.app.system_status_snapshot();
         let (storage_state, storage) = match snapshot.map(|s| &s.storage) {
@@ -174,7 +178,7 @@ impl ShellSession {
                     .collect()
             })
             .unwrap_or_default();
-        Some(ui::SystemStatusViewModel {
+        let mut model = ui::SystemStatusViewModel {
             content: ui::SystemStatusContentViewModel::Admin(ui::AdminSystemStatusViewModel {
                 overview: ui::SystemStatusOverviewViewModel {
                     storage_status: pressure_label(pressure).into(),
@@ -197,11 +201,17 @@ impl ShellSession {
             route: self.system_status_route,
             dashboard,
             process_sort: self.system_status_process_sort,
+            table_sort: self
+                .table_sorts
+                .get(&format!("system-status.{:?}", self.system_status_route))
+                .copied(),
             selected_row: self.system_status_selected_row,
             scroll_offset: self.system_status_scroll_offset,
             refreshing: self.system_status_refresh_requested_revision.is_some(),
             feedback: None,
-        })
+        };
+        self.sort_system_status_view_model(&mut model);
+        Some(model)
     }
 
     fn to_system_status_dashboard_view_model(
@@ -972,6 +982,10 @@ impl ShellSession {
                     let sort = self.system_status_process_sort;
                     rows.sort_by(|a, b| {
                         let order = match sort.column {
+                            ui::SystemStatusProcessSortColumn::Pid => a.pid.cmp(&b.pid),
+                            ui::SystemStatusProcessSortColumn::Name => {
+                                a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                            }
                             ui::SystemStatusProcessSortColumn::Cpu => {
                                 a.cpu_percent.total_cmp(&b.cpu_percent)
                             }
@@ -1286,6 +1300,12 @@ impl ShellSession {
 
         ui::DiagnosticsViewModel {
             tab: self.diagnostics_tab,
+            sort: self
+                .table_sorts
+                .get(&format!("diagnostics.{:?}", self.diagnostics_tab))
+                .copied(),
+            table_columns: Vec::new(),
+            table_rows: Vec::new(),
             checks,
             logs,
             incidents,
@@ -1363,6 +1383,14 @@ impl ShellSession {
         )
         .with_ascii_assets(self.ascii_assets.clone())
         .with_read_only(self.is_strict_guest());
+        model.alarm_sort = self.table_sorts.get("clock.0").copied();
+        model.countdown_sort = self.table_sorts.get("clock.1").copied();
+        if let Some(sort) = model.alarm_sort {
+            alarms.sort_by(|a, b| sort.compare(&a.label, &b.label));
+        }
+        if let Some(sort) = model.countdown_sort {
+            countdowns.sort_by(|a, b| sort.compare(&a.label, &b.label));
+        }
         model.alarms = alarms;
         model.countdowns = countdowns;
         model.selected_entry_id = (self.focused_component == ShellComponent::ClockEntryList)
@@ -1554,6 +1582,7 @@ impl ShellSession {
             self.can_manage_all_users(),
             self.user_management_form_view_model(),
         );
+        model.sort = self.table_sorts.get("users").copied();
         model.user_window_start = self.user_management_window_start;
         model.focus = match self.user_management_focus {
             UserManagementPageFocus::UserList => ui::UserManagementFocus::UserList,

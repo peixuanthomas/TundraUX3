@@ -190,6 +190,7 @@ impl ShellSession {
             setup_custom_color_error: None,
             bootstrap_username: String::new(),
             bootstrap_password: String::new(),
+            table_sorts: Default::default(),
             user_management_selected: 0,
             user_management_window_start: 0,
             user_management_focus: UserManagementPageFocus::UserList,

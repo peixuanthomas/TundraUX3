@@ -168,9 +168,15 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         .then(|| {
             Rect::new(
                 panel_inner.right() - 1,
-                panel_inner.y + u16::from(!model.is_read_only()),
+                panel_inner.y,
                 1,
-                panel_inner.height - u16::from(!model.is_read_only()),
+                panel_inner.height.saturating_sub(if model.is_read_only() {
+                    0
+                } else if panel_inner.height < 7 {
+                    1
+                } else {
+                    2
+                }),
             )
         });
     panel_inner.width = panel_inner
@@ -179,7 +185,12 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     let new_button = if model.is_read_only() {
         Rect::new(panel_inner.x, panel_inner.y, 0, 0)
     } else {
-        Rect::new(panel_inner.x, panel_inner.y, panel_inner.width / 2, 1)
+        Rect::new(
+            panel_inner.x,
+            panel_inner.bottom().saturating_sub(1),
+            panel_inner.width / 2,
+            u16::from(panel_inner.height > 0),
+        )
     };
     let condensed_panel = panel_inner.height < 7;
     let reserved_lines = if model.is_read_only() {
@@ -201,7 +212,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     };
     let entry_capacity = usize::from(panel_inner.height.saturating_sub(reserved_lines));
     let help = if !condensed_panel && !model.is_read_only() {
-        line_in_rect(panel_inner, panel_inner.y + 1)
+        line_in_rect(panel_inner, panel_inner.bottom().saturating_sub(2))
     } else {
         Rect::default()
     };
@@ -219,16 +230,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         .filter(|(kind, _)| *kind == ClockEntryKind::Alarm)
         .count();
 
-    let alarms_heading = line_in_rect(
-        panel_inner,
-        panel_inner.y.saturating_add(if model.is_read_only() {
-            0
-        } else if condensed_panel {
-            1
-        } else {
-            2
-        }),
-    );
+    let alarms_heading = line_in_rect(panel_inner, panel_inner.y);
     let alarm_rows_y = alarms_heading.y.saturating_add(alarms_heading.height);
     let countdowns_heading = line_in_rect(
         panel_inner,

@@ -60,3 +60,14 @@ config-editor-content = 文件内容
 config-editor-applied = 已保存
 config-editor-unchanged = 未改变
 config-editor-compare = 比较候选文件
+
+table-column-name = 名称
+table-column-category = 分类
+table-column-status = 状态
+table-column-time = 时间
+table-column-size = 大小
+table-column-app = 应用
+table-column-level = 级别
+table-column-module = 模块
+table-column-operation = 操作
+table-column-message = 消息

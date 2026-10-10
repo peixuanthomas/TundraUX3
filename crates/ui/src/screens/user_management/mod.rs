@@ -14,3 +14,5 @@ pub use model::{
     UserManagementUserViewModel, UserManagementViewModel,
 };
 pub use render::{render_user_management_content, render_user_management_overlay};
+
+pub use render::user_management_sort_headers;

@@ -358,9 +358,16 @@ fn files_and_incidents_reuse_diagnostics_content_without_health_navigation() {
         layout.content.detail_panel.right() - layout.content.list_panel.x,
         layout.content.list_panel.height,
     );
-    assert_eq!(
-        layout.content,
-        diagnostics_content_layout(area, &diagnostics)
+    let mut expected = diagnostics_content_layout(area, &diagnostics);
+    assert!(layout.content.detail_panel.height < expected.detail_panel.height);
+    expected.detail_panel.height = layout.content.detail_panel.height;
+    assert_eq!(layout.content, expected);
+    assert!(
+        layout
+            .controls
+            .iter()
+            .filter(|button| button.target != LogsHitTarget::Refresh)
+            .all(|button| button.area.y >= layout.content.detail_panel.bottom())
     );
     let row = layout.content.rows[0].area;
     assert_eq!(

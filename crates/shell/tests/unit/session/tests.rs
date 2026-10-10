@@ -804,6 +804,7 @@ fn system_status_process_sort_handles_clicks_keys_duplicates_units_and_refresh()
         (Memory, vec![3, 2, 4, 1], false),
     ] {
         state.system_status_selected_row = 2;
+        let selected_pid = pids(&state)[2];
         state.system_status_scroll_offset = 2;
         let layout = ui::system_status_layout(main, &state.to_system_status_view_model().unwrap());
         let area = layout
@@ -823,7 +824,7 @@ fn system_status_process_sort_handles_clicks_keys_duplicates_units_and_refresh()
         );
         assert_eq!(pids(&state), expected);
         assert_eq!(state.system_status_process_sort.descending, descending);
-        assert_eq!(state.system_status_selected_row, 0);
+        assert_eq!(pids(&state)[state.system_status_selected_row], selected_pid);
         assert_eq!(state.system_status_scroll_offset, 0);
     }
     snapshot.revision += 1;
@@ -6160,4 +6161,52 @@ fn linux_personal_apps_use_process_permissions_without_admin_role() {
     assert!(state.can_execute_command_line());
     assert!(state.can_change_global_settings());
     assert!(!state.can_manage_all_users());
+}
+
+#[test]
+fn launcher_sort_preserves_builtin_identity_and_keyboard_order() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    set_test_auth_role(&mut state, UserRole::Admin);
+    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Launcher];
+    state.focused_component = ShellComponent::Launcher;
+    state.launcher_view_mode = ui::LauncherViewMode::Details;
+    state.launcher_selected_index = 2;
+    let original_id = state.to_launcher_view_model().items[2].id.clone();
+    state.sort_active_table(0);
+    let model = state.to_launcher_view_model();
+    assert_eq!(model.items[model.selected_index.unwrap()].id, original_id);
+    assert!(
+        model
+            .items
+            .windows(2)
+            .all(|pair| ui::compare_table_cells(&pair[0].name, &pair[1].name)
+                != std::cmp::Ordering::Greater)
+    );
+    state.select_launcher_last();
+    assert_eq!(
+        state.selected_built_in_launcher_application().unwrap().id,
+        model.items.last().unwrap().id
+    );
+    state.select_launcher_delta(-1);
+    assert_eq!(
+        state.selected_built_in_launcher_application().unwrap().id,
+        model.items[model.items.len() - 2].id
+    );
+    let ui::ShellLayout::Full { main, .. } = state.shell_layout_for(Rect::new(0, 0, 120, 40))
+    else {
+        panic!()
+    };
+    let layout = ui::launcher_layout(main, &state.to_launcher_view_model());
+    let header = ui::launcher_sort_headers(&layout, &state.to_launcher_view_model())[0].1;
+    let at = Instant::now();
+    state.apply_input_at(
+        InputEvent::mouse_down(PointerButton::Left, (header.x, header.y)),
+        at,
+    );
+    assert!(!state.table_sorts["launcher"].descending);
+    state.apply_input_at(
+        InputEvent::mouse_up(PointerButton::Left, (header.x, header.y)),
+        at + Duration::from_millis(20),
+    );
+    assert!(state.table_sorts["launcher"].descending);
 }

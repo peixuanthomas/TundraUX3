@@ -389,14 +389,19 @@ fn render_formatted_detail(
             vm.compact_rows.clone(),
         )
         .bordered(false)
+        .with_column_widths(crate::equal_table_widths(
+            layout.rows_area.width,
+            detail_headers(vm.kind).len(),
+        ))
         .with_viewport_start(layout.visible_start);
         table.selected = model.selected_index();
         table.state.focused = true;
         table.render_frame(frame, layout.rows_area, context);
+        render_sort_headers(frame, layout, model, context);
         detail_scroll(frame, layout, model, context)
     }
 }
-fn detail_headers(kind: SystemStatusWidgetKind) -> Vec<String> {
+pub(super) fn detail_headers(kind: SystemStatusWidgetKind) -> Vec<String> {
     match kind {
         SystemStatusWidgetKind::SystemOverview => vec![
             i18n::tr!("ui-system-status-subsystem"),
@@ -505,11 +510,13 @@ fn render_storage(
         }),
     )
     .bordered(false)
+    .with_column_widths(crate::equal_table_widths(l.rows_area.width, 7))
     .with_viewport_start(l.visible_start)
     .with_row_tones(a.storage_rows.iter().map(|r| r.tone).collect());
     t.selected = model.selected_index();
     t.state.focused = true;
     t.render_frame(frame, l.rows_area, context);
+    render_sort_headers(frame, l, model, context);
     detail_scroll(frame, l, model, context)
 }
 fn render_network(
@@ -560,11 +567,13 @@ fn render_network(
         }),
     )
     .bordered(false)
+    .with_column_widths(crate::equal_table_widths(l.rows_area.width, 7))
     .with_viewport_start(l.visible_start)
     .with_row_tones(a.network_rows.iter().map(|r| r.tone).collect());
     t.selected = model.selected_index();
     t.state.focused = true;
     t.render_frame(frame, l.rows_area, context);
+    render_sort_headers(frame, l, model, context);
     detail_scroll(frame, l, model, context)
 }
 fn state_placeholder(
@@ -628,4 +637,20 @@ pub fn render_system_status_overlay(
             context,
         );
     }
+}
+
+fn render_sort_headers(
+    frame: &mut Frame<'_>,
+    layout: &SystemStatusLayout,
+    model: &SystemStatusViewModel,
+    context: &RenderContext,
+) {
+    crate::render_table_headers(
+        frame,
+        &layout.table_headers,
+        &model.table_data().0,
+        model.table_sort,
+        &format!("system-status.{:?}", model.route),
+        context,
+    );
 }

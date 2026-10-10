@@ -195,6 +195,20 @@ impl ShellSession {
         }
     }
 
+    fn canonical_launcher_index(&self, id: &str) -> Option<usize> {
+        self.built_in_launcher_applications()
+            .iter()
+            .position(|app| app.id == id)
+            .or_else(|| {
+                self.app
+                    .launcher_state()?
+                    .items
+                    .iter()
+                    .position(|item| item.record.id == id)
+                    .map(|index| index + self.built_in_launcher_count())
+            })
+    }
+
     pub(in crate::session) fn selected_launcher_id(&self) -> Option<String> {
         let external_index = self.selected_external_launcher_index()?;
         self.app
@@ -220,7 +234,13 @@ impl ShellSession {
 
     pub(in crate::session) fn select_launcher_index(&mut self, index: usize) {
         let len = self.launcher_item_count();
-        self.launcher_selected_index = index.min(len.saturating_sub(1));
+        let model = self.to_launcher_view_model();
+        self.launcher_selected_index = model
+            .items
+            .get(index)
+            .and_then(|item| self.canonical_launcher_index(&item.id))
+            .unwrap_or(index)
+            .min(len.saturating_sub(1));
         self.sync_launcher_viewport();
     }
 
@@ -229,10 +249,13 @@ impl ShellSession {
         if len == 0 {
             return;
         }
-        self.launcher_selected_index = self
-            .launcher_selected_index
+        let index = self
+            .to_launcher_view_model()
+            .selected_index
+            .unwrap_or(0)
             .saturating_add_signed(delta)
             .min(len - 1);
+        self.select_launcher_index(index);
         self.sync_launcher_viewport();
     }
 
@@ -548,6 +571,7 @@ impl ShellSession {
                 }
                 if self.launcher_view_mode == app::launcher::LauncherViewMode::LargeIcons
                     && self.can_manage_launcher()
+                    && !self.table_sorts.contains_key("launcher")
                     && let Some(item_id) = self.selected_launcher_id()
                 {
                     self.launcher_drag = Some(LauncherDragState {
@@ -673,14 +697,19 @@ impl ShellSession {
                 .saturating_add(layout.visible_capacity)
                 .saturating_sub(1)
                 .min(count - 1);
-            self.launcher_selected_index = self
-                .launcher_selected_index
+            let index = self
+                .to_launcher_view_model()
+                .selected_index
+                .unwrap_or(0)
                 .clamp(self.launcher_viewport_offset.min(last), last);
+            self.select_launcher_index(index);
         }
     }
 
     pub(in crate::session) fn update_launcher_drag(&mut self, coordinates: CellPosition) {
-        if self.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons {
+        if self.table_sorts.contains_key("launcher")
+            || self.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
+        {
             self.launcher_drag = None;
             return;
         }
@@ -708,7 +737,9 @@ impl ShellSession {
         if drag.target.is_none() {
             return;
         }
-        if self.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons {
+        if self.table_sorts.contains_key("launcher")
+            || self.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
+        {
             return;
         }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
@@ -795,10 +826,22 @@ impl ShellSession {
                     .collect::<Vec<_>>(),
             );
         }
-        let selected = items
-            .len()
-            .checked_sub(1)
-            .map(|last_index| self.launcher_selected_index.min(last_index));
+        let sort = self.table_sorts.get("launcher").copied();
+        if let Some(sort) = sort {
+            items.sort_by(|a, b| {
+                let field = |i: &ui::LauncherItemViewModel| match sort.column {
+                    0 => i.name.clone(),
+                    1 => i.type_label.clone(),
+                    2 => format!("{:?}", i.status),
+                    _ => i.path.clone(),
+                };
+                sort.compare(&field(a), &field(b))
+            });
+            for item in &mut items {
+                item.capabilities.reorderable = false;
+            }
+        }
+        let selected = items.iter().position(|item| item.selected);
         let mut model = ui::LauncherViewModel::with_ascii_assets(
             items,
             selected,
@@ -806,6 +849,7 @@ impl ShellSession {
             self.can_manage_launcher(),
             self.ascii_assets.clone(),
         );
+        model.sort = sort;
         model.viewport_offset = self.launcher_viewport_offset;
         model.drop_target = self.launcher_drag.as_ref().and_then(|drag| drag.target);
         if let Some(state) = self.app.launcher_state() {

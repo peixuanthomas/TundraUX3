@@ -78,6 +78,7 @@ pub struct SystemStatusLayout {
     pub detail_summary_area: Rect,
     pub detail_trend_area: Rect,
     pub rows_area: Rect,
+    pub table_headers: Vec<(usize, Rect)>,
     pub process_sort_headers: Vec<(SystemStatusProcessSortColumn, Rect)>,
     pub rows: Vec<SystemStatusRowLayout>,
     pub visible_start: usize,
@@ -383,6 +384,8 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
                 .flex(Flex::Start)
                 .split(Rect::new(rows_area.x, rows_area.y, rows_area.width, 1));
             vec![
+                (SystemStatusProcessSortColumn::Pid, columns[0]),
+                (SystemStatusProcessSortColumn::Name, columns[3]),
                 (SystemStatusProcessSortColumn::Cpu, columns[1]),
                 (SystemStatusProcessSortColumn::Memory, columns[2]),
             ]
@@ -545,6 +548,10 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         detail_summary_area,
         detail_trend_area,
         rows_area,
+        table_headers: crate::table_header_areas(
+            rows_area,
+            &crate::equal_table_widths(rows_area.width, model.table_data().0.len()),
+        ),
         process_sort_headers,
         rows,
         visible_start,

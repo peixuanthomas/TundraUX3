@@ -11,7 +11,6 @@ use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
 
 const GRID_TILE_MIN_WIDTH: u16 = 20;
 const GRID_TILE_HEIGHT: u16 = 9;
-const TOOLBAR_BUTTON_MIN_WIDTH: u16 = 12;
 fn empty_message() -> String {
     i18n::tr!(
         "ui-launcher-no-launcher-items-go-to-explorer-select-a-file-then-right-click-and-choose-add-to-launcher"
@@ -203,6 +202,7 @@ impl LauncherDropTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherViewModel {
     pub items: Vec<LauncherItemViewModel>,
+    pub sort: Option<crate::TableSort>,
     pub selected_index: Option<usize>,
     pub view_mode: LauncherViewMode,
     pub viewport_offset: usize,
@@ -285,6 +285,7 @@ impl LauncherViewModel {
             selected_index,
             view_mode,
             viewport_offset: 0,
+            sort: None,
             toolbar,
             message: None,
             error: None,
@@ -460,19 +461,14 @@ impl LauncherLayout {
 pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout {
     let panel = main;
     let inner = inset(panel, 1);
-    let toolbar_columns = launcher_toolbar_columns(inner.width, model.toolbar.len());
-    let toolbar_rows = model.toolbar.len().div_ceil(toolbar_columns);
     let desired_footer_height = if inner.height >= 7 { 2 } else { 1 };
-    let toolbar_height = u16::try_from(toolbar_rows)
-        .unwrap_or(u16::MAX)
-        .saturating_mul(2)
-        .min(
-            inner
-                .height
-                .saturating_sub(desired_footer_height)
-                .saturating_sub(1),
-        );
-    let toolbar = Rect::new(inner.x, inner.y, inner.width, toolbar_height);
+    let toolbar_height = launcher_toolbar_layout(Rect::new(0, 0, inner.width, u16::MAX), model)
+        .iter()
+        .map(|b| b.area.bottom())
+        .max()
+        .unwrap_or(0)
+        .min(inner.height.saturating_sub(desired_footer_height + 1));
+    let mut toolbar = Rect::new(inner.x, inner.y, inner.width, toolbar_height);
     let footer_height = desired_footer_height.min(inner.height.saturating_sub(toolbar.height));
     let footer = Rect::new(
         inner.x,
@@ -482,14 +478,35 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         inner.width,
         footer_height,
     );
-    let content_y = toolbar.y.saturating_add(toolbar.height);
+    toolbar.y = footer.y.saturating_sub(toolbar.height).max(inner.y);
+    let content_y = inner.y.saturating_add(u16::from(inner.height > 0));
     let content = Rect::new(
         inner.x,
         content_y,
         inner.width,
-        footer.y.saturating_sub(content_y),
+        toolbar.y.saturating_sub(content_y),
     );
-    let toolbar_buttons = launcher_toolbar_layout(toolbar, model);
+    let mut toolbar_buttons = launcher_toolbar_layout(toolbar, model);
+    if let Some(refresh) = model
+        .toolbar
+        .iter()
+        .find(|b| b.action == LauncherToolbarAction::Refresh)
+    {
+        toolbar_buttons.push(LauncherToolbarButtonLayout {
+            action: refresh.action,
+            area: Rect::new(
+                inner.x,
+                inner.y,
+                (terminal_width(&format!(
+                    "[{} {}]",
+                    refresh.action.shortcut(),
+                    refresh.label
+                )) as u16)
+                    .min(inner.width),
+                u16::from(inner.height > 0),
+            ),
+        });
+    }
     let (items, visible_start, visible_capacity, scrollbar) = match model.view_mode {
         LauncherViewMode::LargeIcons => launcher_grid_layout(content, model),
         LauncherViewMode::Details => launcher_details_layout(content, model),
@@ -548,32 +565,23 @@ fn launcher_toolbar_layout(
     area: Rect,
     model: &LauncherViewModel,
 ) -> Vec<LauncherToolbarButtonLayout> {
-    let columns = launcher_toolbar_columns(area.width, model.toolbar.len());
-    let rows = model.toolbar.len().div_ceil(columns).max(1);
-    let height = (area.height / u16::try_from(rows).unwrap_or(u16::MAX)).min(2);
-    let width = area.width.saturating_sub((columns - 1) as u16) / columns as u16;
-    let mut result = Vec::new();
-    for (index, button) in model.toolbar.iter().enumerate() {
-        if width == 0 || height == 0 {
-            break;
-        }
-        result.push(LauncherToolbarButtonLayout {
+    let buttons = model
+        .toolbar
+        .iter()
+        .filter(|b| b.action != LauncherToolbarAction::Refresh)
+        .collect::<Vec<_>>();
+    let widths = buttons
+        .iter()
+        .map(|b| (terminal_width(&format!("[{} {}]", b.action.shortcut(), b.label)) + 2) as u16)
+        .collect::<Vec<_>>();
+    buttons
+        .into_iter()
+        .zip(crate::right_aligned_actions(area, &widths))
+        .map(|(button, area)| LauncherToolbarButtonLayout {
             action: button.action,
-            area: Rect::new(
-                area.x
-                    .saturating_add((index % columns) as u16 * width.saturating_add(1)),
-                area.y.saturating_add((index / columns) as u16 * height),
-                width,
-                height,
-            ),
-        });
-    }
-    result
-}
-
-fn launcher_toolbar_columns(width: u16, button_count: usize) -> usize {
-    usize::from((width.saturating_add(1) / TOOLBAR_BUTTON_MIN_WIDTH.saturating_add(1)).max(1))
-        .min(button_count.max(1))
+            area,
+        })
+        .collect()
 }
 
 fn launcher_grid_layout(
@@ -1026,7 +1034,7 @@ fn render_launcher_details(
             _ => ComponentTone::Warning,
         })
         .collect();
-    let mut table = DataTable::new("launcher.details", header, rows)
+    let mut table = DataTable::new("launcher.details", header.clone(), rows)
         .with_column_widths(widths.to_vec())
         .with_viewport_start(layout.visible_start)
         .with_row_tones(tones)
@@ -1051,6 +1059,19 @@ fn render_launcher_details(
             layout.content.height,
         ),
         &table_context,
+    );
+    crate::render_table_headers(
+        frame,
+        &launcher_sort_headers(layout, model),
+        &vec![
+            i18n::tr!("ui-launcher-name"),
+            i18n::tr!("ui-launcher-type"),
+            i18n::tr!("ui-launcher-integrity"),
+            i18n::tr!("ui-launcher-path"),
+        ],
+        model.sort,
+        "launcher",
+        context,
     );
 }
 
@@ -1222,4 +1243,26 @@ pub fn render_launcher_overlay(
     if let (Some(dialog), Some(dialog_layout)) = (&model.confirmation, layout.confirmation) {
         render_launcher_confirmation(frame, dialog_layout, dialog, context);
     }
+}
+
+pub fn launcher_sort_headers(
+    layout: &LauncherLayout,
+    model: &LauncherViewModel,
+) -> Vec<(usize, Rect)> {
+    if model.view_mode != LauncherViewMode::Details || model.confirmation.is_some() {
+        return vec![];
+    }
+    let width = layout
+        .content
+        .width
+        .saturating_sub(u16::from(layout.scrollbar.is_some()));
+    crate::table_header_areas(
+        Rect::new(
+            layout.content.x,
+            layout.content.y,
+            width,
+            layout.content.height,
+        ),
+        &detail_widths(width),
+    )
 }

@@ -44,3 +44,5 @@ mod management_client;
 #[cfg(target_os = "linux")]
 pub(in crate::session) mod privilege_session;
 pub(super) use management::*;
+
+mod table_sort;

@@ -125,19 +125,54 @@ pub fn logs_more_controls() -> Vec<(LogsHitTarget, String)> {
 /// Geometry is derived from the same Tabs and diagnostics composition used to render.
 pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     let inner = inset_rect(main, 1);
-    let category_tabs_area = line_in_rect(inner, inner.y);
-    let section_tabs_area = if model.category == LogsCategory::Ux {
-        line_in_rect(inner, category_tabs_area.bottom())
-    } else {
-        Rect::new(inner.x, category_tabs_area.bottom(), inner.width, 0)
-    };
-    let toolbar = Rect::new(
-        inner.x,
-        section_tabs_area.bottom(),
-        inner.width,
-        inner.bottom().saturating_sub(section_tabs_area.bottom()),
-    );
     let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
+    let refresh_label = i18n::tr!("ui-logs-refresh");
+    let refresh_width =
+        (crate::components::terminal_width(&refresh_label) as u16 + 2).min(inner.width);
+    let refresh = Rect::new(inner.x, inner.y, refresh_width, u16::from(inner.height > 0));
+    let filter_summary = Rect::new(
+        refresh.right().min(inner.right()),
+        inner.y,
+        inner.width.saturating_sub(refresh.width),
+        refresh.height,
+    );
+    let content_area = Rect::new(
+        inner.x,
+        refresh.bottom(),
+        inner.width,
+        footer.y.saturating_sub(refresh.bottom()),
+    );
+    let mut content =
+        diagnostics_content_layout(content_area, &super::render::logs_content_model(model));
+    let action_labels = controls(model)
+        .into_iter()
+        .filter(|(target, _)| *target != LogsHitTarget::Refresh)
+        .collect::<Vec<_>>();
+    let widths = action_labels
+        .iter()
+        .map(|(_, label)| (crate::components::terminal_width(label) as u16).saturating_add(2))
+        .collect::<Vec<_>>();
+    let right = content.detail_panel;
+    let rows = crate::right_aligned_actions(Rect::new(0, 0, right.width, u16::MAX), &widths)
+        .iter()
+        .map(|r| r.bottom())
+        .max()
+        .unwrap_or(0);
+    let tabs_height = 1 + u16::from(model.category == LogsCategory::Ux);
+    let action_height = rows.saturating_add(tabs_height).min(right.height);
+    let actions = Rect::new(
+        right.x,
+        right.bottom().saturating_sub(action_height),
+        right.width,
+        action_height,
+    );
+    content.detail_panel.height = content.detail_panel.height.saturating_sub(action_height);
+    let category_tabs_area = line_in_rect(actions, actions.y);
+    let section_tabs_area = if model.category == LogsCategory::Ux {
+        line_in_rect(actions, category_tabs_area.bottom())
+    } else {
+        Rect::new(actions.x, category_tabs_area.bottom(), actions.width, 0)
+    };
     let category_tabs = category_tabs()
         .borderless_item_areas(category_tabs_area)
         .into_iter()
@@ -158,40 +193,22 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     } else {
         Vec::new()
     };
-    let mut x = toolbar.x;
-    let mut y = toolbar.y;
-    let controls = controls(model)
-        .into_iter()
-        .map(|(target, label)| {
-            let width = (unicode_width::UnicodeWidthStr::width(label.as_str()) as u16 + 2)
-                .min(toolbar.width);
-            if x != toolbar.x && x.saturating_add(width) > toolbar.right() {
-                x = toolbar.x;
-                y = y.saturating_add(1);
-            }
-            let area = Rect::new(
-                x,
-                y.min(toolbar.bottom()),
-                width,
-                u16::from(y < toolbar.bottom()),
-            );
-            x = x.saturating_add(width).saturating_add(1);
-            LogsControlLayout { target, area }
-        })
-        .collect::<Vec<_>>();
-    let summary_y = controls
-        .iter()
-        .map(|control| control.area.bottom())
-        .max()
-        .unwrap_or(toolbar.y);
-    let filter_summary = line_in_rect(inner, summary_y);
-    let content_area = Rect::new(
-        inner.x,
-        filter_summary.bottom(),
-        inner.width,
-        footer.y.saturating_sub(filter_summary.bottom()),
+    let buttons_area = Rect::new(
+        actions.x,
+        section_tabs_area.bottom(),
+        actions.width,
+        actions.bottom().saturating_sub(section_tabs_area.bottom()),
     );
-    let content = diagnostics_content_layout(content_area, &super::render::content_model(model));
+    let mut controls = vec![LogsControlLayout {
+        target: LogsHitTarget::Refresh,
+        area: refresh,
+    }];
+    controls.extend(
+        action_labels
+            .into_iter()
+            .zip(crate::right_aligned_actions(buttons_area, &widths))
+            .map(|((target, _), area)| LogsControlLayout { target, area }),
+    );
     let detail_inner = crate::components::Surface::new()
         .bordered(true)
         .inner(content.detail_panel);

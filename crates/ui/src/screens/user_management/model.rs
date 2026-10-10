@@ -143,6 +143,7 @@ pub enum UserManagementFeedbackTone {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserManagementViewModel {
+    pub sort: Option<crate::TableSort>,
     pub current_user: String,
     pub users: Vec<UserManagementUserViewModel>,
     pub selected_index: usize,
@@ -165,6 +166,7 @@ impl UserManagementViewModel {
         form: Option<UserManagementFormViewModel>,
     ) -> Self {
         let mut model = Self {
+            sort: None,
             current_user: current_user.into(),
             users,
             selected_index,

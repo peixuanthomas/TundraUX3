@@ -54,7 +54,7 @@ pub fn logs_control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> boo
         return false;
     }
     match target {
-        LogsHitTarget::Open => content_model(model).item_count() > 0,
+        LogsHitTarget::Open => logs_content_model(model).item_count() > 0,
         LogsHitTarget::RelatedIncident => {
             model.category == LogsCategory::Ux
                 && model.section == LogsSection::Events
@@ -181,11 +181,32 @@ pub fn logs_detail_text(model: &LogsViewModel) -> String {
 }
 
 /// Adapts event data to the existing list/details presentation, without I/O or new widgets.
-pub(super) fn content_model(model: &LogsViewModel) -> DiagnosticsViewModel {
+pub fn logs_content_model(model: &LogsViewModel) -> DiagnosticsViewModel {
     let mut content = model.diagnostics.clone();
+    content.sort = model.sort;
     content.repair_dialog = None;
     content.can_repair = false;
     if model.category == LogsCategory::Linux || model.section == LogsSection::Events {
+        content.table_columns = vec![
+            i18n::tr!("table-column-time"),
+            i18n::tr!("table-column-level"),
+            i18n::tr!("table-column-module"),
+            i18n::tr!("table-column-operation"),
+            i18n::tr!("table-column-message"),
+        ];
+        content.table_rows = model
+            .events
+            .iter()
+            .map(|r| {
+                vec![
+                    r.timestamp.clone(),
+                    r.level.clone(),
+                    r.module.clone(),
+                    r.operation.clone(),
+                    r.summary.clone(),
+                ]
+            })
+            .collect();
         content.tab = DiagnosticsTab::Health;
         content.selected_check = model.selected_event;
         content.list_window_start = model.scroll_offset;
@@ -276,7 +297,7 @@ pub fn render_logs_content(
         }
     }
     let unavailable = unavailable_reason(model);
-    let content = content_model(model);
+    let content = logs_content_model(model);
     for (control, (target, label)) in layout.controls.iter().zip(controls(model)) {
         let mut button = Button::new(logs_control_id(model, target), label);
         button.set_disabled(!logs_control_enabled(model, target));

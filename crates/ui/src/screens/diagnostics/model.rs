@@ -110,6 +110,9 @@ pub struct DiagnosticsRepairDialogViewModel {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiagnosticsViewModel {
     pub tab: DiagnosticsTab,
+    pub sort: Option<crate::TableSort>,
+    pub table_columns: Vec<String>,
+    pub table_rows: Vec<Vec<String>>,
     pub checks: Vec<DiagnosticsCheckViewModel>,
     pub incidents: Vec<DiagnosticsIncidentViewModel>,
     pub logs: Vec<DiagnosticsLogViewModel>,
@@ -130,6 +133,53 @@ pub struct DiagnosticsViewModel {
 }
 
 impl DiagnosticsViewModel {
+    pub fn table_data(&self) -> (Vec<String>, Vec<Vec<String>>) {
+        if !self.table_columns.is_empty() {
+            return (self.table_columns.clone(), self.table_rows.clone());
+        }
+        match self.tab {
+            DiagnosticsTab::Health => (
+                vec![
+                    i18n::tr!("table-column-name"),
+                    i18n::tr!("table-column-category"),
+                    i18n::tr!("table-column-status"),
+                ],
+                self.checks
+                    .iter()
+                    .map(|r| vec![r.label.clone(), r.category.clone(), r.status.label()])
+                    .collect(),
+            ),
+            DiagnosticsTab::Logs => (
+                vec![
+                    i18n::tr!("table-column-name"),
+                    i18n::tr!("table-column-time"),
+                    i18n::tr!("table-column-size"),
+                ],
+                self.logs
+                    .iter()
+                    .map(|r| {
+                        vec![
+                            r.relative_path.clone(),
+                            r.modified_at.clone(),
+                            r.size_bytes.to_string(),
+                        ]
+                    })
+                    .collect(),
+            ),
+            DiagnosticsTab::Incidents => (
+                vec![
+                    i18n::tr!("table-column-time"),
+                    i18n::tr!("table-column-app"),
+                    i18n::tr!("table-column-status"),
+                ],
+                self.incidents
+                    .iter()
+                    .map(|r| vec![r.occurred_at.clone(), r.app.clone(), r.severity.label()])
+                    .collect(),
+            ),
+        }
+    }
+
     pub fn selected_check(&self) -> Option<&DiagnosticsCheckViewModel> {
         self.checks.get(self.selected_check)
     }

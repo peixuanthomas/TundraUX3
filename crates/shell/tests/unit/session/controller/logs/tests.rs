@@ -622,3 +622,71 @@ fn compact_logs_uses_the_reserved_shell_content_area() {
     assert_eq!(state.logs_main_area(), Some(Rect::new(0, 1, 49, 10)));
     assert!(state.logs_button_at((48, 0)).is_none());
 }
+
+#[test]
+fn sorting_log_headers_waits_for_release_and_refresh_preserves_selected_event() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.logs_state.job = None;
+    let event = |message: &str| {
+        runtime_log::RuntimeLogEvent::new(
+            runtime_log::LogContext::default(),
+            LogLevel::Info,
+            runtime_log::LogPhase::Observed,
+            message,
+        )
+    };
+    let zulu = event("Zulu");
+    let selected_id = zulu.event_id.clone();
+    let alpha = event("alpha");
+    state.logs_state.snapshot.result.events = vec![zulu.clone(), alpha.clone()];
+    let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+    let header = layout
+        .content
+        .headers
+        .iter()
+        .find(|(col, _)| *col == 4)
+        .unwrap()
+        .1;
+    let now = Instant::now();
+    state.apply_input_at(
+        InputEvent::mouse_down(PointerButton::Left, (header.x, header.y)),
+        now,
+    );
+    assert_eq!(state.logs_state.snapshot.result.events[0].message, "Zulu");
+    state.apply_input_at(
+        InputEvent::mouse_up(PointerButton::Left, (header.x, header.y)),
+        now + Duration::from_millis(20),
+    );
+    assert_eq!(state.logs_state.snapshot.result.events[0].message, "alpha");
+    assert_eq!(
+        state.logs_state.snapshot.result.events[state.logs_state.selected].event_id,
+        selected_id
+    );
+    let mut snapshot = LogsSnapshot::default();
+    snapshot.result.events = vec![event("Beta"), zulu, alpha];
+    state.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+        cancelled: Arc::new(AtomicBool::new(false)),
+        result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
+        worker: Mutex::new(None),
+        background: true,
+    })));
+    state.poll_logs_tasks();
+    assert_eq!(
+        state
+            .logs_state
+            .snapshot
+            .result
+            .events
+            .iter()
+            .map(|e| e.message.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "Beta", "Zulu"]
+    );
+    assert_eq!(
+        state.logs_state.snapshot.result.events[state.logs_state.selected].event_id,
+        selected_id
+    );
+    state.logs_follow_control();
+    assert!(!state.table_sorts.contains_key(&state.logs_sort_key()));
+}

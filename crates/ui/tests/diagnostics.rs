@@ -96,7 +96,9 @@ fn diagnostic_toolbar_keeps_operations_without_a_page_escape_button() {
     model.can_repair = false;
     assert_eq!(ui::diagnostics_toolbar_height(38, &model), 1);
     let layout = diagnostics_layout(Rect::new(0, 0, 40, 20), &model);
-    assert_eq!(layout.footer.height, 1);
+    assert_eq!(layout.footer.height, 3);
+    assert!(layout.footer.y >= layout.detail_panel.bottom());
+    assert!(layout.footer.x >= layout.list_panel.right());
 }
 
 #[test]
@@ -113,8 +115,8 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
 
     assert!(layout.list_panel.width >= 28);
     assert!(layout.detail_panel.width > layout.list_panel.width);
-    assert_eq!(layout.visible_capacity, 7);
-    assert_eq!(layout.visible_start, 4);
+    assert_eq!(layout.visible_capacity, 8);
+    assert_eq!(layout.visible_start, 3);
     assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
     let health_tab = layout
         .tabs
@@ -146,10 +148,10 @@ fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
         .list_scrollbar
         .expect("an overflowing checks list should expose a scrollbar");
 
-    assert_eq!(layout.visible_capacity, 7);
-    assert_eq!(layout.visible_start, 4);
-    assert_eq!(scrollbar.track.height, 7);
-    assert_eq!(scrollbar.thumb.height, 5);
+    assert_eq!(layout.visible_capacity, 8);
+    assert_eq!(layout.visible_start, 3);
+    assert_eq!(scrollbar.track.height, 8);
+    assert_eq!(scrollbar.thumb.height, 6);
     assert_eq!(scrollbar.thumb.y, scrollbar.track.y.saturating_add(1));
     assert_eq!(
         diagnostics_hit_test(&layout, (scrollbar.thumb.x, scrollbar.thumb.y)),
@@ -192,7 +194,7 @@ fn checks_that_fit_do_not_reserve_a_scrollbar_column() {
     let layout = diagnostics_layout(full_main(108, 20), &model);
 
     assert!(layout.list_scrollbar.is_none());
-    assert_eq!(layout.list_rows_area, Rect::new(2, 7, 40, 7));
+    assert_eq!(layout.list_rows_area, Rect::new(2, 7, 40, 8));
 }
 
 #[test]
@@ -304,6 +306,9 @@ fn repair_preview_renders_items_and_modal_hit_geometry() {
 
 fn health_model() -> DiagnosticsViewModel {
     DiagnosticsViewModel {
+        sort: None,
+        table_columns: vec![],
+        table_rows: vec![],
         tab: DiagnosticsTab::Health,
         checks: vec![check(0, DiagnosticsStatus::Warning)],
         incidents: Vec::new(),

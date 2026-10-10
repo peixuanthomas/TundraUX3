@@ -397,6 +397,8 @@ pub enum SystemStatusContentViewModel {
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SystemStatusProcessSortColumn {
+    Pid,
+    Name,
     #[default]
     Cpu,
     Memory,
@@ -419,7 +421,14 @@ impl Default for SystemStatusProcessSort {
 
 impl SystemStatusProcessSort {
     pub fn toggle(&mut self, column: SystemStatusProcessSortColumn) {
-        self.descending = self.column != column || !self.descending;
+        self.descending = if self.column == column {
+            !self.descending
+        } else {
+            matches!(
+                column,
+                SystemStatusProcessSortColumn::Cpu | SystemStatusProcessSortColumn::Memory
+            )
+        };
         self.column = column;
     }
 }
@@ -431,12 +440,86 @@ pub struct SystemStatusViewModel {
     pub route: SystemStatusRoute,
     pub dashboard: SystemStatusDashboardViewModel,
     pub process_sort: SystemStatusProcessSort,
+    pub table_sort: Option<crate::TableSort>,
     pub selected_row: usize,
     pub scroll_offset: usize,
     pub refreshing: bool,
     pub feedback: Option<String>,
 }
 impl SystemStatusViewModel {
+    pub fn table_data(&self) -> (Vec<String>, Vec<Vec<String>>) {
+        let SystemStatusRoute::Detail(detail) = self.route else {
+            return (vec![], vec![]);
+        };
+        if detail.diagnostics_tab().is_some() {
+            return self.diagnostics.table_data();
+        }
+        if let SystemStatusContentViewModel::Admin(a) = &self.content {
+            if detail == SystemStatusDetail::Storage {
+                return (
+                    vec![
+                        i18n::tr!("ui-system-status-volume"),
+                        i18n::tr!("ui-system-status-kind"),
+                        i18n::tr!("ui-system-status-system"),
+                        i18n::tr!("ui-system-status-access"),
+                        i18n::tr!("ui-system-status-usage"),
+                        i18n::tr!("ui-system-status-used"),
+                        i18n::tr!("ui-system-status-pressure"),
+                    ],
+                    a.storage_rows
+                        .iter()
+                        .map(|r| {
+                            vec![
+                                r.volume.clone(),
+                                r.kind.clone(),
+                                r.system_volume.clone(),
+                                r.access.clone(),
+                                r.usage.clone(),
+                                r.used_percentage.clone(),
+                                r.pressure.clone(),
+                            ]
+                        })
+                        .collect(),
+                );
+            }
+            if detail == SystemStatusDetail::Network {
+                return (
+                    vec![
+                        i18n::tr!("ui-system-status-name"),
+                        i18n::tr!("ui-system-status-display-name"),
+                        i18n::tr!("ui-system-status-kind"),
+                        i18n::tr!("ui-system-status-link"),
+                        i18n::tr!("ui-system-status-down"),
+                        i18n::tr!("ui-system-status-up"),
+                        i18n::tr!("ui-system-status-addresses"),
+                    ],
+                    a.network_rows
+                        .iter()
+                        .map(|r| {
+                            vec![
+                                r.name.clone(),
+                                r.display_name.clone(),
+                                r.kind.clone(),
+                                r.link_state.clone(),
+                                r.received_rate.clone(),
+                                r.transmitted_rate.clone(),
+                                r.addresses.clone(),
+                            ]
+                        })
+                        .collect(),
+                );
+            }
+        }
+        self.detail_widget(detail)
+            .map(|w| {
+                (
+                    super::render::detail_headers(w.kind),
+                    w.compact_rows.clone(),
+                )
+            })
+            .unwrap_or_default()
+    }
+
     pub fn detail_widget(&self, d: SystemStatusDetail) -> Option<&SystemStatusWidgetViewModel> {
         self.dashboard
             .wide_widgets

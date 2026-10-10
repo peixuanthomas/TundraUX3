@@ -497,18 +497,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn ordered_clock_entry_ids_at(&self, now: Instant) -> Vec<u64> {
-        let Some(scheduler) = &self.clock_scheduler else {
-            return Vec::new();
-        };
-        let entries = scheduler.entries(now);
-        entries
+        let model = self.to_clock_view_model_at(&self.app.snapshot().clock, now);
+        model
+            .alarms
             .iter()
-            .filter(|entry| entry.kind == ScheduledClockEntryKind::DailyAlarm)
-            .chain(
-                entries
-                    .iter()
-                    .filter(|entry| entry.kind == ScheduledClockEntryKind::Countdown),
-            )
+            .chain(&model.countdowns)
             .map(|entry| entry.id)
             .collect()
     }

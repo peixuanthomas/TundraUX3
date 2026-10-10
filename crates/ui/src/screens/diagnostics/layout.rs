@@ -45,6 +45,7 @@ pub struct DiagnosticsContentLayout {
     pub active_tab: DiagnosticsTab,
     pub list_panel: Rect,
     pub list_rows_area: Rect,
+    pub headers: Vec<(usize, Rect)>,
     pub list_scrollbar: Option<DiagnosticsScrollbarLayout>,
     pub rows: Vec<DiagnosticsRowLayout>,
     pub detail_panel: Rect,
@@ -81,6 +82,7 @@ pub struct DiagnosticsLayout {
     pub tabs: Vec<DiagnosticsTabLayout>,
     pub list_panel: Rect,
     pub list_rows_area: Rect,
+    pub headers: Vec<(usize, Rect)>,
     pub list_scrollbar: Option<DiagnosticsScrollbarLayout>,
     pub rows: Vec<DiagnosticsRowLayout>,
     pub detail_panel: Rect,
@@ -96,6 +98,7 @@ impl DiagnosticsLayout {
             active_tab: self.active_tab,
             list_panel: self.list_panel,
             list_rows_area: self.list_rows_area,
+            headers: self.headers.clone(),
             list_scrollbar: self.list_scrollbar,
             rows: self.rows.clone(),
             detail_panel: self.detail_panel,
@@ -164,22 +167,39 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
     let inner = inset_rect(panel, 1);
     let inner_bottom = inner.y.saturating_add(inner.height);
     let header = line_in_rect(inner, inner.y);
-    let tabs_area = line_in_rect(inner, inner.y.saturating_add(header.height));
-    let footer_height = super::render::diagnostics_toolbar_height(inner.width, model)
-        .min(inner.height.saturating_sub(3));
+    let content_y = header.bottom();
+    let mut content_layout = diagnostics_content_layout(
+        Rect::new(
+            inner.x,
+            content_y,
+            inner.width,
+            inner_bottom.saturating_sub(content_y),
+        ),
+        model,
+    );
+    let right = content_layout.detail_panel;
+    let footer_height = super::render::diagnostics_toolbar_height(right.width, model)
+        .min(right.height.saturating_sub(1));
     let footer = Rect::new(
-        inner.x,
-        inner_bottom.saturating_sub(footer_height),
-        inner.width,
+        right.x,
+        right.bottom().saturating_sub(footer_height),
+        right.width,
         footer_height,
     );
-    let content_y = tabs_area.y.saturating_add(tabs_area.height);
-    let content_height = footer.y.saturating_sub(content_y);
-    let content = Rect::new(inner.x, content_y, inner.width, content_height);
+    let tabs_area = Rect::new(
+        right.x,
+        footer.y.saturating_sub(1).max(right.y),
+        right.width,
+        u16::from(right.height > footer_height),
+    );
+    content_layout.detail_panel.height = tabs_area.y.saturating_sub(right.y);
 
-    let content_layout = diagnostics_content_layout(content, model);
-
-    let mut tab_x = tabs_area.x;
+    let tab_width = usize_to_u16(unicode_width::UnicodeWidthStr::width(
+        DiagnosticsTab::Health.label().as_str(),
+    ))
+    .saturating_add(4)
+    .min(tabs_area.width);
+    let mut tab_x = tabs_area.right().saturating_sub(tab_width);
     let tabs = [DiagnosticsTab::Health]
         .into_iter()
         .map(|tab| {
@@ -199,6 +219,7 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
         tabs,
         list_panel: content_layout.list_panel,
         list_rows_area: content_layout.list_rows_area,
+        headers: content_layout.headers,
         list_scrollbar: content_layout.list_scrollbar,
         rows: content_layout.rows,
         detail_panel: content_layout.detail_panel,
@@ -219,7 +240,9 @@ pub fn diagnostics_content_layout(
 ) -> DiagnosticsContentLayout {
     let column_gap = u16::from(content.width >= 3);
     let available_width = content.width.saturating_sub(column_gap);
-    let list_width = if available_width >= DIAGNOSTICS_LIST_MIN_WIDTH.saturating_mul(2) {
+    let list_width = if model.table_data().0.len() > 3 && available_width >= 80 {
+        (available_width * 3 / 5).min(available_width.saturating_sub(36))
+    } else if available_width >= DIAGNOSTICS_LIST_MIN_WIDTH.saturating_mul(2) {
         (available_width.saturating_mul(2) / 5)
             .clamp(DIAGNOSTICS_LIST_MIN_WIDTH, DIAGNOSTICS_LIST_MAX_WIDTH)
     } else {
@@ -237,6 +260,13 @@ pub fn diagnostics_content_layout(
         content.height,
     );
     let list_inner = inset_rect(list_panel, 1);
+    let header_area = line_in_rect(list_inner, list_inner.y);
+    let list_inner = Rect::new(
+        list_inner.x,
+        header_area.bottom(),
+        list_inner.width,
+        list_inner.height.saturating_sub(header_area.height),
+    );
     let visible_capacity = usize::from(list_inner.height);
     let visible_start = diagnostics_visible_start(
         model.item_count(),
@@ -261,6 +291,8 @@ pub fn diagnostics_content_layout(
     } else {
         list_inner
     };
+    let widths = crate::equal_table_widths(list_rows_area.width, model.table_data().0.len());
+    let headers = crate::table_header_areas(header_area, &widths);
     let rows = (visible_start..model.item_count())
         .take(visible_capacity)
         .enumerate()
@@ -279,6 +311,7 @@ pub fn diagnostics_content_layout(
         active_tab: model.tab,
         list_panel,
         list_rows_area,
+        headers,
         list_scrollbar,
         rows,
         detail_panel,

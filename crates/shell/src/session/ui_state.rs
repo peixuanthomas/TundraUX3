@@ -536,6 +536,7 @@ pub(super) struct ButtonPointerCapture {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiSessionState {
+    pub(super) table_sorts: std::collections::BTreeMap<String, ui::TableSort>,
     pub(super) language: Arc<i18n::LanguageSnapshot>,
     pub(super) language_catalog: i18n::LanguageCatalog,
     pub(super) repaired_resource_paths: Vec<String>,

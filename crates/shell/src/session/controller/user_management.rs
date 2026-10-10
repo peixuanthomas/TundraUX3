@@ -31,6 +31,7 @@ impl ShellSession {
         let selected_username = self.selected_managed_username();
         self.app
             .dispatch_at(app::AppCommand::SetManagedUsers(users), Instant::now());
+        self.apply_user_table_sort();
         if self.app.managed_users().is_empty() {
             self.user_management_selected = 0;
             self.user_management_window_start = 0;

@@ -78,7 +78,7 @@ fn package_buttons_stay_in_place_and_disabled_actions_do_not_execute() {
         );
         assert_eq!(actions.len(), 7);
         let model = session.to_management_view_model();
-        assert_eq!(model.detail_action_start, Some(3));
+        assert_eq!(model.detail_action_start, Some(0));
         for (index, expected) in ["remove", "install", "upgrade", "scope_search"]
             .into_iter()
             .enumerate()
@@ -160,7 +160,7 @@ fn common_account_actions_are_visible_and_dangerous_changes_stay_in_more() {
     );
     assert_eq!(
         session.to_management_view_model().detail_action_start,
-        Some(3)
+        Some(0)
     );
     session.activate_management_action(2);
     assert!(
@@ -1799,5 +1799,66 @@ fn configuration_snapshots_and_completion_preserve_the_package_page() {
             assert!(session.management_state.form.is_none());
         }
         assert_eq!(session.active_screen(), ShellScreen::Management);
+    }
+}
+
+#[test]
+fn all_management_modules_sort_headers_and_keep_action_target_after_refresh() {
+    for kind in [
+        ManagementKind::Services,
+        ManagementKind::Processes,
+        ManagementKind::Packages,
+        ManagementKind::Network,
+        ManagementKind::Disks,
+        ManagementKind::Users,
+        ManagementKind::SystemConfig,
+    ] {
+        let mut session = shortcut_action_state(kind, "inspect");
+        session.terminal_size = (120, 32);
+        let mut row = session.management_state.snapshot.rows[0].clone();
+        row.cells = vec!["Zulu".into(), "2".into()];
+        let mut other = row.clone();
+        other.id = "other".into();
+        other.cells = vec!["alpha".into(), "10".into()];
+        other.identity.insert("identity".into(), "other".into());
+        session.management_state.snapshot.columns = vec!["Name".into(), "Count".into()];
+        session.management_state.snapshot.rows = vec![row, other];
+        let original = session.management_state.snapshot.clone();
+        let layout = ui::management_layout(
+            session.management_main(),
+            &session.to_management_view_model(),
+        );
+        assert!(layout.actions_panel.is_empty());
+        for area in layout.actions.iter().filter(|area| !area.is_empty()) {
+            assert_eq!(area.intersection(layout.detail_actions_panel), *area);
+        }
+        let header = layout.headers[0].1;
+        click_management_point(&mut session, (header.x, header.y));
+        assert_eq!(session.management_state.snapshot.rows[0].id, "other");
+        assert_eq!(
+            session.management_state.snapshot.rows[session.management_state.selected].id,
+            "mock-selected-item"
+        );
+        click_management_point(&mut session, (header.x, header.y));
+        assert_eq!(
+            session.management_state.snapshot.rows[0].id,
+            "mock-selected-item"
+        );
+        session.sort_management(1);
+        assert_eq!(session.management_state.snapshot.rows[0].cells[1], "2");
+        session.sort_management(1);
+        let (job, _) = session.management_job();
+        job.0
+            .events
+            .lock()
+            .unwrap()
+            .push_back(OperationEvent::Snapshot { snapshot: original });
+        session.management_state.operation_job = Some(job);
+        session.poll_management();
+        assert_eq!(session.management_state.snapshot.rows[0].cells[1], "10");
+        assert_eq!(
+            session.management_state.snapshot.rows[session.management_state.selected].identity["identity"],
+            "mock"
+        );
     }
 }
