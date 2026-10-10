@@ -1,4 +1,4 @@
-use super::queries::{ResolvedExplorerOverlay, ShellOverlayCategory};
+use super::overlays::{ResolvedExplorerOverlay, ShellOverlayCategory};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -3385,6 +3385,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         (120, 40),
         ShellHomeMode::User,
     );
+    state.enter_screen(ShellScreen::Settings);
     state.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,

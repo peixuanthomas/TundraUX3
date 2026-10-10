@@ -318,14 +318,13 @@ impl ShellSession {
             }
             return;
         }
+        self.capture_modal_focus_context();
         self.clock_create_state = Some(ClockCreateState::default());
-        self.focused_component = ShellComponent::ClockCreateInput;
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_clock_create_dialog(&mut self) {
         self.clock_create_state = None;
-        self.focused_component = ShellComponent::ClockNewButton;
         self.refresh_hit_map();
     }
 
@@ -473,6 +472,7 @@ impl ShellSession {
         }
 
         self.clock_create_state = None;
+        self.synchronize_overlay_focus();
         self.clock_selected_entry_id = Some(id);
         self.focused_component = ShellComponent::ClockEntryList;
         self.sync_clock_window_at(now);

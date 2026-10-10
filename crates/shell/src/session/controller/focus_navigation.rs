@@ -1,5 +1,5 @@
 use super::super::*;
-use crate::session::queries::ShellOverlayCategory;
+use crate::session::overlays::ShellOverlayCategory;
 impl ShellSession {
     pub(in crate::session) fn shell_back_shortcut(&self) -> &'static str {
         if self.active_screen() == ShellScreen::CommandLine && !self.notification_has_active_modal()
@@ -49,6 +49,7 @@ impl ShellSession {
         motion: ui::MotionTransitions,
         layout: ui::ShellFrameLayout,
     ) {
+        self.synchronize_overlay_focus();
         self.frame_layout = Some(layout);
         let _language = i18n::enter_snapshot(self.language.clone());
         let motion_ready = ui::RenderContext {
@@ -145,20 +146,10 @@ impl ShellSession {
     pub(in crate::session) fn focus_order(&self) -> Vec<ShellComponent> {
         let overlay = self.active_overlay_descriptor();
         if self.overlay_interaction_ready
-            && overlay.as_ref().and_then(|overlay| overlay.component())
-                == Some(ShellComponent::Explorer)
-        {
-            return vec![ShellComponent::Explorer];
-        }
-        if self.overlay_interaction_ready
             && let Some(overlay) = overlay.as_ref()
-            && matches!(
-                overlay.category,
-                ShellOverlayCategory::ShellModal | ShellOverlayCategory::ContextPopup
-            )
-            && let Some(component) = overlay.component()
+            && overlay.target.is_some()
         {
-            return vec![component];
+            return overlay.focus_order();
         }
         if self.active_screen() == ShellScreen::SystemStatus {
             if self.overlay_interaction_ready && !self.diagnostics_repair_preview.is_empty() {

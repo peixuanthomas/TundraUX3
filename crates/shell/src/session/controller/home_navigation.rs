@@ -76,8 +76,7 @@ impl ShellSession {
             app::AppCommand::Notification(app::NotificationCommand::Reset(status.into())),
             now,
         );
-        self.modal_focus_context = None;
-        self.modal_focus_prepared_for_follow_up = false;
+        self.overlay_manager = ShellOverlayManager::default();
         self.notification_pointer_capture = None;
         self.pending_notification_commands.clear();
         self.app

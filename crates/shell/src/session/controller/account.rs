@@ -700,13 +700,14 @@ impl ShellSession {
         &mut self,
         target: ui::SetupCustomColorTarget,
     ) {
+        self.capture_modal_focus_context();
         self.setup_custom_color_target = Some(target);
         self.setup_custom_color_input = match target {
             ui::SetupCustomColorTarget::Theme => self.setup_theme_color.to_string(),
             ui::SetupCustomColorTarget::Accent => self.setup_accent_color.to_string(),
         };
         self.setup_custom_color_error = None;
-        self.focused_component = ShellComponent::SetupCustomColorDialog;
+        self.synchronize_overlay_focus();
     }
 
     pub(in crate::session) fn append_setup_custom_color_char(&mut self, character: char) {

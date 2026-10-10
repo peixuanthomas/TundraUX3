@@ -1,4 +1,4 @@
-use super::super::queries::ResolvedExplorerOverlay;
+use super::super::overlays::ResolvedExplorerOverlay;
 use super::super::*;
 impl ShellSession {
     pub(in crate::session) fn handle_explorer_locations_pointer(

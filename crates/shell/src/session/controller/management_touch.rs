@@ -193,6 +193,15 @@ impl ShellSession {
             && !self.management_state.terminal_mode
             && rect_contains(self.management_main(), point)
     }
+    pub(in crate::session) fn management_overlay_id(&self) -> Option<&'static str> {
+        if self.management_state.terminal_mode || self.management_state.form.is_none() {
+            None
+        } else if self.management_state.choice_field.is_some() {
+            Some("management-choice")
+        } else {
+            Some("management-form")
+        }
+    }
     pub(super) fn reset_management_form_view(&mut self) {
         self.management_state.form_field_scroll = None;
         self.management_state.choice_field = None;

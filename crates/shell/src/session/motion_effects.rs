@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::queries::ShellOverlayCategory;
+use crate::session::overlays::ShellOverlayCategory;
 use ratatui::{
     buffer::{Buffer, Cell, CellDiffOption},
     layout::{Margin, Position, Rect},

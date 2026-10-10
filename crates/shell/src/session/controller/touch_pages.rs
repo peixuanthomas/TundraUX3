@@ -433,6 +433,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn handle_touch_pages_pointer(&mut self, mouse: MouseInput) {
+        self.synchronize_overlay_focus();
         let point = mouse.coordinates();
         match mouse.kind {
             ui::MouseEventKind::Up(PointerButton::Left) => {

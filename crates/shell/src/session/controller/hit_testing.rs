@@ -1,5 +1,5 @@
 use super::super::*;
-use crate::session::queries::{ShellOverlayCategory, ShellOverlayDescriptor};
+use crate::session::overlays::{ShellOverlayCategory, ShellOverlayDescriptor};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(in crate::session) enum DragDirection {
     Up,

@@ -64,6 +64,10 @@ mod localization;
 mod motion_effects;
 mod navigation;
 use navigation::{NavigationCheckpoint, ShellNavigation};
+mod overlay_focus;
+mod overlay_input;
+mod overlays;
+use overlay_focus::ShellOverlayManager;
 #[cfg(test)]
 #[path = "../../tests/unit/session/personalization.rs"]
 mod personalization_tests;

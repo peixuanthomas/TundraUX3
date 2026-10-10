@@ -1,11 +1,5 @@
 use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ModalFocusContext {
-    pub(super) screen: ShellScreen,
-    pub(super) component: ShellComponent,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct NotificationPointerCapture {
     pub(super) notification_id: u64,
     pub(super) action_index: usize,
@@ -712,8 +706,7 @@ pub struct UiSessionState {
     pub(super) overlay_interaction_ready: bool,
     pub(super) tick_count: u64,
     pub(super) notification_bindings: NotificationBindings,
-    pub(super) modal_focus_context: Option<ModalFocusContext>,
-    pub(super) modal_focus_prepared_for_follow_up: bool,
+    pub(super) overlay_manager: ShellOverlayManager,
     pub(super) notification_pointer_capture: Option<NotificationPointerCapture>,
     pub(super) notification_message_scroll: usize,
     pub(super) pending_notification_commands: VecDeque<ShellCommand>,

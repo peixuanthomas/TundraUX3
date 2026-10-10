@@ -1,8 +1,17 @@
 use super::*;
 
 impl ShellSession {
+    pub(in crate::session) fn logs_overlay_id(&self) -> Option<&'static str> {
+        if self.logs_state.filter_form.is_some() {
+            Some("logs-filter")
+        } else if self.logs_state.more_selected.is_some() {
+            Some("logs-more")
+        } else {
+            None
+        }
+    }
     pub(in crate::session) fn logs_has_active_overlay(&self) -> bool {
-        self.logs_state.more_selected.is_some() || self.logs_state.filter_form.is_some()
+        self.logs_overlay_id().is_some()
     }
     pub(in crate::session) fn cancel_logs_pointer_gesture(&mut self) {
         self.logs_state.scrollbar_grab = None;

@@ -1,5 +1,5 @@
 use super::super::*;
-use crate::session::queries::ResolvedExplorerOverlay;
+use crate::session::overlays::ResolvedExplorerOverlay;
 
 const BUTTON_MAX_PRESS: Duration = Duration::from_millis(500);
 
@@ -123,6 +123,7 @@ impl ShellSession {
         input: InputEvent,
         received_at: Instant,
     ) -> Option<InputEvent> {
+        self.synchronize_overlay_focus();
         // Holding the key that opens Search must not type into the newly focused input.
         match &input {
             InputEvent::Key(key)
@@ -151,23 +152,7 @@ impl ShellSession {
                     | InputEvent::Key(_)
                     | InputEvent::Paste(_)
             ) {
-                self.button_pointer_capture = None;
-                self.notification_pointer_capture = None;
-                self.notification_scrollbar_drag = None;
-                self.diagnostics_detail_drag = None;
-                self.cancel_touch_pages_pointer();
-                self.cancel_management_pointer_gesture();
-                self.cancel_logs_pointer_gesture();
-                if matches!(
-                    self.scrollbar_drag,
-                    Some(
-                        ScrollbarDragState::Home { .. }
-                            | ScrollbarDragState::Launcher { .. }
-                            | ScrollbarDragState::ExplorerLocations { .. }
-                    )
-                ) {
-                    self.scrollbar_drag = None;
-                }
+                self.cancel_pointer_gestures_for_modal();
             }
             if matches!(input, InputEvent::FocusLost) {
                 self.mouse_coordinates = None;
@@ -184,9 +169,7 @@ impl ShellSession {
             self.button_pointer_capture = None;
             return None;
         }
-        if !self.notification_has_active_modal()
-            && !self.time_sync_dialog_visible
-            && self.active_popup.is_none()
+        if self.interactive_overlays().is_empty()
             && (self.handle_home_pointer_scrollbar(&mouse)
                 || self.handle_launcher_pointer_scrollbar(&mouse)
                 || self.handle_diagnostics_detail_pointer(mouse)
@@ -337,22 +320,8 @@ impl ShellSession {
         if key.key == InputKey::Escape {
             return self.route_back_key(key);
         }
-        if self.notification_has_active_modal()
-            && (self.active_screen() == ShellScreen::CommandLine || self.status_details_visible())
-        {
-            if !key.phase.is_press_like() {
-                return (RoutedTarget::Global, ShellCommand::Noop);
-            }
-            if !self.overlay_interaction_ready && key.key != InputKey::Escape {
-                return (
-                    RoutedTarget::Modal(
-                        self.notification_active_modal_component()
-                            .unwrap_or(ShellComponent::NotificationDialog),
-                    ),
-                    ShellCommand::CaptureOverlayInput,
-                );
-            }
-            return self.route_notification_key(key);
+        if let Some(routed) = self.route_overlay_key(key) {
+            return routed;
         }
         if self.active_screen() == ShellScreen::CommandLine {
             return (
@@ -395,35 +364,6 @@ impl ShellSession {
 
         if key.is_ctrl_c() && self.active_screen() != ShellScreen::Explorer {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
-        }
-
-        if !self.overlay_interaction_ready
-            && !matches!(key.key, InputKey::Escape)
-            && let Some(target) = self
-                .active_overlay_descriptor()
-                .and_then(|overlay| overlay.target)
-        {
-            return (target, ShellCommand::Noop);
-        }
-
-        if self.notification_has_active_modal() {
-            return self.route_notification_key(key);
-        }
-
-        if self.time_sync_dialog_visible {
-            return self.route_time_sync_dialog_key(key);
-        }
-
-        if self.active_screen() == ShellScreen::ExitConfirm {
-            return self.route_exit_confirm_key(key);
-        }
-
-        if self.resolved_overlay_owner() == Some(ShellComponent::Explorer) {
-            return self.route_explorer_key(key);
-        }
-
-        if self.active_popup.is_some() {
-            return self.route_popup_key(key);
         }
 
         if key.phase == InputPhase::Press
@@ -2214,46 +2154,18 @@ impl ShellSession {
         let hit_target = self.hit_map.target_at(coordinates);
         let hit_layer = self.hit_map.layer_at(coordinates);
 
-        if !self.overlay_interaction_ready
-            && let Some(target) = self
-                .active_overlay_descriptor()
-                .and_then(|overlay| overlay.target)
+        if self.notification_has_active_modal()
+            && self.notification_scrollbar_drag.is_some()
+            && let Some(routed) = self.route_overlay_mouse(mouse, hit_target, received_at)
         {
-            return (target, ShellCommand::CaptureOverlayInput);
+            return routed;
         }
-
-        if self.notification_has_active_modal() && self.notification_scrollbar_drag.is_some() {
-            return self.route_notification_mouse(mouse, hit_target);
-        }
-        if hit_layer == Some(ShellHitLayer::ShellModal) {
-            if self.notification_has_active_modal() {
-                return self.route_notification_mouse(mouse, hit_target);
-            }
-
-            if self.time_sync_dialog_visible {
-                return self.route_time_sync_dialog_mouse(mouse, hit_target);
-            }
-
-            if self.active_screen() == ShellScreen::ExitConfirm {
-                return (
-                    RoutedTarget::Modal(ShellComponent::ExitDialog),
-                    ShellCommand::CaptureOverlayInput,
-                );
-            }
-        }
-
-        if matches!(
-            self.active_screen(),
-            ShellScreen::Diagnostics | ShellScreen::SystemStatus
-        ) && !self.diagnostics_repair_preview.is_empty()
-            && !self.notification_has_active_modal()
-            && !self.time_sync_dialog_visible
+        if hit_layer == Some(ShellHitLayer::ShellChrome) && !self.interactive_overlays().is_empty()
         {
-            return if self.active_screen() == ShellScreen::SystemStatus {
-                self.route_system_status_mouse(mouse, hit_target, received_at)
-            } else {
-                self.route_diagnostics_mouse(mouse, hit_target)
-            };
+            return self.route_shell_chrome_mouse(mouse, hit_target);
+        }
+        if let Some(routed) = self.route_overlay_mouse(mouse, hit_target, received_at) {
+            return routed;
         }
 
         if !self.notification_has_active_modal()
@@ -2388,35 +2300,12 @@ impl ShellSession {
             return self.route_shell_chrome_mouse(mouse, hit_target);
         }
 
-        if self.notification_has_active_modal() {
-            return self.route_notification_mouse(mouse, hit_target);
-        }
-
-        if self.time_sync_dialog_visible {
-            return self.route_time_sync_dialog_mouse(mouse, hit_target);
-        }
-
-        if self.active_screen() == ShellScreen::ExitConfirm {
-            return (
-                RoutedTarget::Modal(ShellComponent::ExitDialog),
-                ShellCommand::CaptureOverlayInput,
-            );
-        }
-
         if self.active_screen() == ShellScreen::FirstRunSetup {
             return self.route_setup_mouse(mouse, hit_target);
         }
 
         if self.active_screen() == ShellScreen::Login {
             return self.route_login_mouse(mouse, hit_target);
-        }
-
-        if self.resolved_overlay_owner() == Some(ShellComponent::Explorer) {
-            return self.route_explorer_mouse(mouse, hit_target, received_at);
-        }
-
-        if self.active_popup.is_some() {
-            return self.route_popup_mouse(mouse, hit_target, received_at);
         }
 
         if self.active_screen() == ShellScreen::Clock {

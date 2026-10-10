@@ -584,6 +584,7 @@ impl ShellSession {
         privileged: bool,
         responses: mpsc::Sender<OperationInput>,
     ) -> Option<AutoAdminJob> {
+        self.synchronize_overlay_focus();
         if self
             .auto_admin
             .job
@@ -591,6 +592,7 @@ impl ShellSession {
             .is_some_and(AutoAdminJob::running)
         {
             self.auto_admin.visible = true;
+            self.synchronize_overlay_focus();
             self.notify_status(i18n::msg!("aa-busy"));
             return None;
         }
@@ -615,10 +617,14 @@ impl ShellSession {
         self.last_key_event = None;
         self.button_pointer_capture = None;
         self.resize_auto_admin();
+        self.synchronize_overlay_focus();
         Some(job)
     }
     pub(in crate::session) fn auto_admin_visible(&self) -> bool {
         self.auto_admin.visible && self.auto_admin.job.is_some()
+    }
+    pub(in crate::session) fn cancel_auto_admin_pointer(&mut self) {
+        self.auto_admin.pointer = None;
     }
     pub(in crate::session) fn auto_admin_running(&self) -> bool {
         self.auto_admin
@@ -662,6 +668,7 @@ impl ShellSession {
         changed
     }
     pub(in crate::session) fn close_auto_admin(&mut self) {
+        self.synchronize_overlay_focus();
         if let Some(job) = &self.auto_admin.job {
             // Keep execution and all of its questions in the foreground until
             // the worker reports completion, failure or disconnection.
@@ -672,8 +679,10 @@ impl ShellSession {
         }
         self.auto_admin.visible = false;
         self.auto_admin.pointer = None;
+        self.synchronize_overlay_focus();
     }
     pub(in crate::session) fn show_auto_admin_job(&mut self, job: AutoAdminJob) {
+        self.synchronize_overlay_focus();
         if self
             .auto_admin
             .job
@@ -681,6 +690,7 @@ impl ShellSession {
             .is_some_and(|active| active.running() && active != &job)
         {
             self.auto_admin.visible = true;
+            self.synchronize_overlay_focus();
             self.notify_status(i18n::msg!("aa-busy"));
             return;
         }
@@ -697,6 +707,7 @@ impl ShellSession {
         self.last_key_event = None;
         self.button_pointer_capture = None;
         self.resize_auto_admin();
+        self.synchronize_overlay_focus();
     }
     pub(in crate::session) fn auto_admin_view(&self) -> Option<ui::AutoAdminViewModel> {
         if !self.auto_admin_visible() {
@@ -765,6 +776,13 @@ impl ShellSession {
         input: &InputEvent,
         received_at: Instant,
     ) -> bool {
+        self.synchronize_overlay_focus();
+        let consumed = self.handle_auto_admin_input_inner(input, received_at);
+        self.synchronize_overlay_focus();
+        consumed
+    }
+
+    fn handle_auto_admin_input_inner(&mut self, input: &InputEvent, received_at: Instant) -> bool {
         // AA consumes input before ordinary page routing. Its Back button still
         // uses the shared release capture and exactly the same policy as Esc.
         let normalized;

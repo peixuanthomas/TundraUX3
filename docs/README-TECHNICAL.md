@@ -268,6 +268,14 @@ Esc 统一进入 `route_back_key`；返回按钮经过共享的按下、松开�
 
 `ScreenCompositor` 只根据最终状态绘制页面、标题栏和弹层。它不决定返回目标，也不在绘制时修改导航。详情页的内部选择、表单内容和清理工作仍属于各页面；页面之间的路径与焦点恢复属于导航管理器。
 
+### 弹窗与输入焦点
+
+`session/overlays.rs` 汇总当前页面的弹窗和菜单，再叠加通知、退出确认及 AA，提供统一的前后顺序。输入路由、鼠标命中、焦点和动画都读取这份描述；未显示页面中保留的表单不会接收当前页面的输入。Toast 只显示消息，不接管焦点。
+
+`session/overlay_focus.rs` 中的 `ShellOverlayManager` 记录每层弹窗打开前的焦点。打开时把焦点放入弹窗，关闭时恢复下面一层；替换通知时保留原来的恢复位置。弹窗变化会清除之前页面的按下、拖动和点击记录，防止松开鼠标时误触背景按钮。页内的 Tab 顺序继续使用 UI 的 `FocusManager`，表单字段和按钮选择仍由各页面保存。
+
+`session/overlay_input.rs` 把按键、内容区鼠标和粘贴交给最上层弹窗，动画未达到可交互阶段时先拦住输入。菜单和通知会吞掉粘贴，支持粘贴的管理表单与编辑器配置表单则继续接收文字。Esc 仍走上面的导航返回规则，AA 的授权、密码和运行中交互仍由 AA 处理。后台任务继续使用 watchdog 的受管理任务，不增加第二套任务管理器。
+
 ### ViewModel、布局与渲染
 
 Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装屏幕 ViewModel。`shell::session::compositor::ScreenCompositor` 负责普通 Shell 每帧的统一合成；runtime 保留终端生命周期和事件循环。UI 通过借用 ViewModel 的 `ScreenContent` 枚举提供页面内容与页面弹层两个独立绘制阶段，不读取整个 `ShellSession`，也不在 render 中驱动领域状态转换。

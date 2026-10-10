@@ -90,9 +90,6 @@ impl ShellSession {
         }
 
         self.finish_modal_focus_transition();
-        if self.modal_focus_context.is_none() {
-            self.refresh_hit_map();
-        }
     }
 
     pub(in crate::session) fn show_time_sync_failure_dialog(

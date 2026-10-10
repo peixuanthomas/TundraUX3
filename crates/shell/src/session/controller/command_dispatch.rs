@@ -26,6 +26,7 @@ impl ShellSession {
         received_at: Instant,
     ) -> ShellAction {
         let _language = i18n::enter_snapshot(self.language.clone());
+        self.synchronize_overlay_focus();
         if self.handle_auto_admin_input_at(&input, received_at) {
             return ShellAction::Redraw;
         }
@@ -88,6 +89,7 @@ impl ShellSession {
 
     pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {
         let _language = i18n::enter_snapshot(self.language.clone());
+        self.synchronize_overlay_focus();
         let input = self.normalize_shell_navigation_input(input);
         let (target, command) = match &input {
             InputEvent::Shutdown => (RoutedTarget::Global, ShellCommand::Shutdown),
@@ -107,10 +109,9 @@ impl ShellSession {
                 let (target, command) = self.route_mouse_input(*mouse, received_at);
                 (target, command)
             }
-            InputEvent::Paste(_) if self.notification_has_active_modal() => (
-                RoutedTarget::Modal(ShellComponent::NotificationDialog),
-                ShellCommand::CaptureOverlayInput,
-            ),
+            InputEvent::Paste(value) if self.interactive_overlays().last().is_some() => self
+                .route_overlay_paste(value)
+                .expect("active overlay owns paste"),
             InputEvent::Paste(value) if self.active_screen() == ShellScreen::Management => (
                 RoutedTarget::Component(ShellComponent::Management),
                 ShellCommand::ManagementPaste(value.clone()),
@@ -152,6 +153,7 @@ impl ShellSession {
         received_at: Instant,
     ) -> ShellAction {
         let _language = i18n::enter_snapshot(self.language.clone());
+        self.synchronize_overlay_focus();
         self.pending_notification_commands.clear();
         let follow_up_input = routed.input.clone();
         let follow_up_target = routed.target;
