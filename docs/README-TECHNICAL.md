@@ -266,6 +266,8 @@ Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装�
 
 点击底部 `status_message` 区域会打开“状态详情”，显示点击时正在绘制的完整消息，包括临时提示或错误；之后状态更新不会替换弹窗里的文本。长文本自动换行，可用滚轮、滚动条、方向键、PageUp/PageDown 和 Home/End 阅读，关闭按钮或 Esc 返回。时钟仍独立操作，已有模态弹窗不会被状态详情替换。Command Line 中打开状态详情时，键盘和粘贴交给弹窗，返回按钮先关闭弹窗。
 
+Windows Terminal 下的 WSL 会在普通终端编码中把 Ctrl+Enter 与 Ctrl+J 都发送为 LF。Shell 在识别到 `WT_SESSION` 或 `TERM_PROGRAM=Windows_Terminal`，且没有 tmux/screen 时，启用 [ConPTY win32-input-mode](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md)（`CSI ? 9001 h`），读取原始键码和 Ctrl/Shift 状态。其他 Linux 终端优先使用 Kitty 按键报告，未支持时请求 xterm modifyOtherKeys。退出、临时交还终端和异常恢复会关闭本程序开启的模式；重新进入时再启用。不能把收到的所有 Ctrl+J 或 Ctrl+X 猜成另一组组合键。`third_party/crossterm/tests/escape_input.rs` 检查报告拆包、Unicode、粘贴和鼠标；`crates/shell/tests/unit/terminal_keyboard_pty.rs` 检查真实 PTY 中的模式开关和按键区分。
+
 全部界面遵循 [UI requirements](UI-requirements.md)。共享 Button 的鼠标悬停使用当前强调色，按住时使用向白色混合 35% 的更淡强调色，在同一按钮内松开后才执行动作；完成后恢复普通颜色，下次实际鼠标移动再显示悬停。有限 ANSI 调色板使用对应亮色；禁用按钮不响应，拖出按钮、窗口失焦、调整尺寸或切换页面会取消待执行动作。键盘焦点使用强调色显示，有边框按钮同时强调边框。列表选择、文本选择和滚动条继续沿用各自交互。
 
 键盘选择初始可见；实际鼠标移动、点按（含触屏）、拖动或滚动时隐藏，窗口失焦时也隐藏。隐藏只改变显示，不清除当前选择；重新按下页面支持的操作键时恢复强调并继续操作原来的位置。键盘操作期间不显示停留在原位置的鼠标悬停效果，重复上报相同坐标不会抢走键盘强调。AA 等独立输入弹窗同样使用这套输入方式和按钮状态。

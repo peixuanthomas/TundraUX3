@@ -309,3 +309,117 @@ fn unix_reader_preserves_nonblocking_poll_and_expires_incomplete_reports() {
         Some(key(KeyCode::Esc))
     );
 }
+
+#[test]
+fn win32_distinguishes_modified_enter_j_and_emergency_exit_across_read_boundaries() {
+    use crate::event::KeyEventKind;
+    let input =
+        b"\x1b[13;28;10;1;8;1_\x1b[13;28;10;0;8;1_\x1b[74;36;10;1;8;1_\x1b[88;45;24;1;24;1_";
+    let expected = vec![
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::CONTROL, KeyEventKind::Release),
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+        KeyEvent::new(
+            KeyCode::Char('X'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+    ]
+    .into_iter()
+    .map(Event::Key)
+    .map(InternalEvent::Event)
+    .collect::<Vec<_>>();
+    for split in 0..=input.len() {
+        let mut parser = Parser::default();
+        parser.advance(&input[..split], true);
+        parser.advance(&input[split..], false);
+        assert_eq!(parser.collect::<Vec<_>>(), expected, "split {split}");
+    }
+    let mut parser = Parser::default();
+    parser.advance(b"\x18", false);
+    assert_eq!(
+        parser.collect::<Vec<_>>(),
+        vec![InternalEvent::Event(Event::Key(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::CONTROL
+        ))),]
+    );
+}
+
+#[test]
+fn win32_preserves_unicode_repeat_and_altgr_text() {
+    use crate::event::KeyEventKind;
+    let mut parser = Parser::default();
+    parser.advance(b"\x1b[65;30;97;1;0;2_\x1b[65;30;97;0;0;1_\x1b[81;16;64;1;9;1_\x1b[231;0;55357;1;0;1_\x1b[231;0;56832;1;0;1_", false);
+    let keys = [
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+        KeyEvent::new_with_kind(KeyCode::Char('a'), KeyModifiers::NONE, KeyEventKind::Repeat),
+        KeyEvent::new_with_kind(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ),
+        KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('😀'), KeyModifiers::NONE),
+    ];
+    assert_eq!(
+        parser.collect::<Vec<_>>(),
+        keys.into_iter()
+            .map(Event::Key)
+            .map(InternalEvent::Event)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[cfg(feature = "bracketed-paste")]
+#[test]
+fn win32_wrapped_vt_preserves_paste_mouse_and_escape_timeout() {
+    let now = Instant::now();
+    let mut parser = Parser::default();
+    for ch in "\x1b[200~hello\n世界\x1b[201~\x1b[<0;45;12M\x1b".encode_utf16() {
+        parser.advance_at(format!("\x1b[0;0;{ch};1;0;1_").as_bytes(), false, now);
+    }
+    assert!(parser.poll_timeout(None).is_some());
+    parser.expire_at(now + ESCAPE_TIMEOUT);
+    assert_eq!(
+        parser.collect::<Vec<_>>(),
+        vec![
+            InternalEvent::Event(Event::Paste("hello\n世界".into())),
+            mouse(MouseEventKind::Down(MouseButton::Left)),
+            key(KeyCode::Esc)
+        ]
+    );
+}
+
+#[test]
+fn extended_key_protocols_retain_control_shift_and_enter() {
+    for report in [b"\x1b[27;5;13~".as_slice(), b"\x1b[13;5u"] {
+        let mut parser = Parser::default();
+        parser.advance(report, false);
+        assert_eq!(
+            parser.next(),
+            Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::CONTROL
+            ))))
+        );
+    }
+    let mut parser = Parser::default();
+    parser.advance(b"\x1b[120:88;6u", false);
+    assert_eq!(
+        parser.next(),
+        Some(InternalEvent::Event(Event::Key(KeyEvent::new(
+            KeyCode::Char('X'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        ))))
+    );
+}
+
+#[test]
+fn win32_dead_keys_do_not_insert_fallback_punctuation() {
+    let mut parser = Parser::default();
+    parser.advance(
+        b"\x1b[221;0;0;1;0;1_\x1b[221;0;0;0;0;1_\x1b[65;30;226;1;0;1_",
+        false,
+    );
+    assert_eq!(parser.collect::<Vec<_>>(), vec![key(KeyCode::Char('â'))]);
+}

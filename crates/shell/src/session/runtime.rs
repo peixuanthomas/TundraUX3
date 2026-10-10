@@ -895,6 +895,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let terminal_size_requirement = ShellTerminalSizeRequirement::from_assets(&ascii_assets);
     let initial_size = checked_current_terminal_size(terminal_size_requirement)?;
     let mut guard = TerminalGuard::enter(output)?;
+    guard.enable_keyboard_reporting()?;
     if let Some(diagnostics) = diagnostics_task_runtime.as_ref() {
         diagnostics.set_terminal_graphics_probe(terminal_graphics_probe.status().clone());
     }

@@ -8,6 +8,8 @@ use crate::event::{
     input_error, sys::unix::parse::parse_event, Event, InputError, InputErrorKind, InternalEvent,
     KeyCode,
 };
+#[path = "win32.rs"]
+mod win32;
 
 const REPORT_TIMEOUT: Duration = Duration::from_millis(250);
 const ESCAPE_TIMEOUT: Duration = Duration::from_millis(50);
@@ -157,6 +159,9 @@ pub(super) struct Parser {
     internal_events: VecDeque<InternalEvent>,
     last_byte_at: Option<Instant>,
     discard: Option<Discard>,
+    win32: win32::Decoder,
+    win32_text: Option<Box<Parser>>,
+    inside_win32_text: bool,
 }
 
 impl Parser {
@@ -199,6 +204,31 @@ impl Parser {
                 continue;
             }
             if !frame.complete(&self.buffer) {
+                continue;
+            }
+            if !self.inside_win32_text
+                && self.buffer.starts_with(b"\x1b[")
+                && self.buffer.ends_with(b"_")
+            {
+                match self.win32.decode(&self.buffer) {
+                    Ok(win32::Decoded::Keys(keys)) => {
+                        self.internal_events
+                            .extend(keys.into_iter().map(Event::Key).map(InternalEvent::Event));
+                    }
+                    Ok(win32::Decoded::Bytes(bytes)) => {
+                        let parser = self.win32_text.get_or_insert_with(|| {
+                            Box::new(Parser {
+                                inside_win32_text: true,
+                                ..Default::default()
+                            })
+                        });
+                        parser.advance_at(&bytes, false, now);
+                        self.internal_events
+                            .extend(parser.internal_events.drain(..));
+                    }
+                    Err(_) => self.report(InputErrorKind::Malformed),
+                }
+                self.clear();
                 continue;
             }
             // Control strings are framed and dropped whole; interpreting their
@@ -256,6 +286,11 @@ impl Parser {
     }
 
     fn expire_at(&mut self, now: Instant) {
+        if let Some(parser) = &mut self.win32_text {
+            parser.expire_at(now);
+            self.internal_events
+                .extend(parser.internal_events.drain(..));
+        }
         if self.deadline().is_some_and(|deadline| now >= deadline) {
             if self.buffer == b"\x1b" {
                 self.internal_events
@@ -268,6 +303,10 @@ impl Parser {
     }
 
     pub(super) fn poll_timeout(&self, requested: Option<Duration>) -> Option<Duration> {
+        let requested = self
+            .win32_text
+            .as_ref()
+            .map_or(requested, |parser| parser.poll_timeout(requested));
         match (requested, self.deadline()) {
             (Some(timeout), Some(deadline)) => {
                 Some(timeout.min(deadline.saturating_duration_since(Instant::now())))

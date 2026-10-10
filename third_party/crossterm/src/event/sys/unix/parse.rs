@@ -609,7 +609,8 @@ pub(crate) fn parse_csi_u_encoded_key_code(buffer: &[u8]) -> io::Result<Option<I
             .and_then(char::from_u32)
         {
             keycode = KeyCode::Char(shifted_c);
-            modifiers.set(KeyModifiers::SHIFT, false);
+            // Retain Shift for shortcuts such as Ctrl+Shift+X. The alternate
+            // character only changes the text, not the physical modifier.
         }
     }
 
@@ -646,6 +647,22 @@ pub(crate) fn parse_csi_special_key_code(buffer: &[u8]) -> io::Result<Option<Int
         };
 
     let keycode = match first {
+        // xterm modifyOtherKeys: CSI 27 ; modifiers ; codepoint ~.
+        27 => {
+            let codepoint = next_parsed::<u32>(&mut split)?;
+            if split.next().is_some() {
+                return Err(could_not_parse_event_error());
+            }
+            match codepoint {
+                13 => KeyCode::Enter,
+                9 => KeyCode::Tab,
+                27 => KeyCode::Esc,
+                127 => KeyCode::Backspace,
+                value => {
+                    KeyCode::Char(char::from_u32(value).ok_or_else(could_not_parse_event_error)?)
+                }
+            }
+        }
         1 | 7 => KeyCode::Home,
         2 => KeyCode::Insert,
         3 => KeyCode::Delete,
@@ -1482,7 +1499,7 @@ mod tests {
             parse_event(b"\x1B[57:40;4u", false).unwrap(),
             Some(InternalEvent::Event(Event::Key(KeyEvent::new(
                 KeyCode::Char('('),
-                KeyModifiers::ALT,
+                KeyModifiers::ALT | KeyModifiers::SHIFT,
             )))),
         );
         assert_eq!(
@@ -1490,7 +1507,7 @@ mod tests {
             parse_event(b"\x1B[45:95;4u", false).unwrap(),
             Some(InternalEvent::Event(Event::Key(KeyEvent::new(
                 KeyCode::Char('_'),
-                KeyModifiers::ALT,
+                KeyModifiers::ALT | KeyModifiers::SHIFT,
             )))),
         );
     }

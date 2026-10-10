@@ -2,7 +2,11 @@ use super::super::*;
 impl ShellSession {
     pub(in crate::session) fn record_input_diagnostics(&mut self, routed: &RoutedEvent) {
         match &routed.input {
-            InputEvent::Key(key) => self.last_key_event = Some(key.label()),
+            // Releasing Ctrl after a chord must not replace the chord's debug label.
+            InputEvent::Key(key) if key.phase != InputPhase::Release => {
+                self.last_key_event = Some(key.label());
+            }
+            InputEvent::Key(_) => {}
             InputEvent::Mouse(mouse) => {
                 let mut summary = self.record_mouse_drag_diagnostics(*mouse);
                 if matches!(
@@ -84,6 +88,42 @@ impl ShellSession {
                 self.drag_tracker = None;
                 self.mouse_drag_direction = None;
                 mouse.summary()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, ModifierKeyCode};
+
+    #[test]
+    fn modified_enter_and_j_keep_distinct_debug_labels_after_key_release() {
+        let mut session = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        for (code, label) in [
+            (KeyCode::Enter, "Ctrl+Enter"),
+            (KeyCode::Char('j'), "Ctrl+J"),
+        ] {
+            for key in [
+                KeyEvent::new(code, KeyModifiers::CONTROL),
+                KeyEvent::new_with_kind(code, KeyModifiers::CONTROL, KeyEventKind::Release),
+                KeyEvent::new_with_kind(
+                    KeyCode::Modifier(ModifierKeyCode::LeftControl),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release,
+                ),
+            ] {
+                session.record_input_diagnostics(&RoutedEvent {
+                    input: crate::terminal_events::crossterm_event_to_input(Event::Key(key)),
+                    target: RoutedTarget::Global,
+                    command: ShellCommand::Noop,
+                });
+                assert_eq!(session.last_key_event.as_deref(), Some(label));
             }
         }
     }
