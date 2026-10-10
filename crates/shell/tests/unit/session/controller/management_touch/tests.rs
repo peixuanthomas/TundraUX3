@@ -14,7 +14,7 @@ fn session(size: (u16, u16)) -> ShellSession {
         })),
         Instant::now(),
     );
-    session.screen_stack.push(ShellScreen::Management);
+    session.enter_screen(ShellScreen::Management);
     session.management_state.kind = Some(ManagementKind::Services);
     while session.notification_dismiss_active_modal_without_response() {}
     session
@@ -98,7 +98,7 @@ fn management_forms_block_buttons_from_the_previous_frame_registry() {
         for choice in [false, true] {
             let mut session = session((120, 40));
             if configuration {
-                session.screen_stack.push(ShellScreen::Editor);
+                session.enter_screen(ShellScreen::Editor);
             }
             let main = session.management_main();
             let background =

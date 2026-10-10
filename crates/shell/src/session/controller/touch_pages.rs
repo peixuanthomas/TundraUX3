@@ -25,7 +25,7 @@ mod tests {
             (30, 10),
             ShellHomeMode::User,
         );
-        state.screen_stack = vec![screen];
+        state.set_navigation_path(vec![screen]);
         state
     }
 

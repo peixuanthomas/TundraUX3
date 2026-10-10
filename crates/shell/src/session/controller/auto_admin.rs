@@ -765,6 +765,25 @@ impl ShellSession {
         input: &InputEvent,
         received_at: Instant,
     ) -> bool {
+        // AA consumes input before ordinary page routing. Its Back button still
+        // uses the shared release capture and exactly the same policy as Esc.
+        let normalized;
+        let input = if self.auto_admin_visible()
+            && (matches!(input, InputEvent::Mouse(mouse)
+                if self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton))
+                || self
+                    .button_pointer_capture
+                    .as_ref()
+                    .is_some_and(|capture| capture.region.id.as_str() == "shell.back"))
+        {
+            let Some(prepared) = self.prepare_button_input(input.clone(), received_at) else {
+                return true;
+            };
+            normalized = self.normalize_shell_navigation_input(prepared);
+            &normalized
+        } else {
+            input
+        };
         // A key used to hide the modal must not activate the page behind it.
         if let InputEvent::Key(key) = input
             && self.auto_admin.consume_action_repeat(key, received_at)

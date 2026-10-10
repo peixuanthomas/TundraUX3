@@ -291,7 +291,7 @@ fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     let mut draft = state.system_status_dashboard_draft.take().unwrap();
@@ -372,7 +372,7 @@ fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     let index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
@@ -415,7 +415,7 @@ fn system_status_short_add_picker_click_uses_visible_absolute_index() {
             ShellHomeMode::User,
         );
         set_test_auth_role(&mut state, UserRole::Admin);
-        state.screen_stack.push(ShellScreen::SystemStatus);
+        state.enter_screen(ShellScreen::SystemStatus);
         state.focused_component = ShellComponent::SystemStatus;
         state.begin_system_status_dashboard_edit();
         state.open_system_status_add_picker();
@@ -457,7 +457,7 @@ fn system_status_disabled_add_and_picker_rows_are_inert() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     for kind in super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS {
@@ -532,7 +532,7 @@ fn system_status_clean_save_is_inert_for_shortcut_mouse_and_direct_call() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     let draft = state.system_status_dashboard_draft.clone();
@@ -576,7 +576,7 @@ fn system_status_pending_refresh_is_inert_for_keyboard_mouse_and_direct_call() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.system_status_refresh_requested_revision = Some(41);
     state.system_status_dashboard_feedback = Some("keep feedback".into());
@@ -726,7 +726,7 @@ fn diagnostics_is_integrated_into_system_status_tabs() {
         assert_eq!(state.active_screen(), ShellScreen::Home);
         assert_eq!(state.status(), "Open Diagnostics from System Status");
 
-        state.screen_stack.push(ShellScreen::SystemStatus);
+        state.enter_screen(ShellScreen::SystemStatus);
         state.focused_component = ShellComponent::SystemStatus;
         state.open_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
@@ -761,7 +761,7 @@ fn system_status_process_sort_handles_clicks_keys_duplicates_units_and_refresh()
         )),
         Instant::now(),
     );
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.open_system_status_detail(storage::SystemStatusWidgetKind::TopProcesses);
     let process = |pid, cpu_percent, memory_bytes| system_services::ProcessMetricSnapshot {
@@ -844,7 +844,7 @@ fn system_status_widget_double_click_from_terminal_events_opens_detail() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::User);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     let model = state.to_system_status_view_model().unwrap();
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
@@ -892,7 +892,7 @@ fn system_status_keyboard_navigates_dashboard_and_routes_detail_actions() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut user, UserRole::User);
-    user.screen_stack.push(ShellScreen::SystemStatus);
+    user.enter_screen(ShellScreen::SystemStatus);
     user.focused_component = ShellComponent::SystemStatus;
     assert_eq!(
         user.route_key_input(&KeyInput::from_label("Tab")).1,
@@ -933,7 +933,7 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
 
     let (_, layout) = state.system_status_layout().unwrap();
@@ -1050,7 +1050,7 @@ fn system_status_modules_open_directly_from_dashboard_by_keyboard() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     for key in ['l', 'i'] {
         state.apply_input(InputEvent::key(InputKey::Char(key)));
@@ -1073,7 +1073,7 @@ fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.ensure_system_status_widget_selection();
     state.restore_system_status_widget_focus();
@@ -1135,7 +1135,7 @@ fn system_status_dashboard_focus_restores_and_tabs_offscreen() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.ensure_system_status_widget_selection();
     let kind = state.system_status_selected_widget.expect("default widget");
@@ -1181,7 +1181,7 @@ fn system_status_size_shortcut_cycles_and_picker_applies_active_profile_only() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
@@ -1255,7 +1255,7 @@ fn system_status_size_picker_click_applies_exact_size_and_transitions_clear_it()
             ShellHomeMode::User,
         );
         set_test_auth_role(&mut state, UserRole::Admin);
-        state.screen_stack.push(ShellScreen::SystemStatus);
+        state.enter_screen(ShellScreen::SystemStatus);
         state.focused_component = ShellComponent::SystemStatus;
         state.begin_system_status_dashboard_edit();
         state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
@@ -1297,7 +1297,7 @@ fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     let baseline = state.system_status_dashboard_config();
     state.begin_system_status_dashboard_edit();
@@ -1437,7 +1437,7 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::User);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
@@ -1533,7 +1533,7 @@ fn system_status_clipped_widget_click_release_preserves_drag_origin() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     state.system_status_dashboard_scroll_row = 1;
@@ -1621,7 +1621,7 @@ fn system_status_save_persists_dashboard_to_user_record() {
         .active_system_status_dashboard()
         .cloned()
         .expect("login loads dashboard");
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     let index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
@@ -1655,7 +1655,7 @@ fn diagnostics_rejects_guest_even_with_system_status_parent() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Guest);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
 
     state.open_diagnostics();
@@ -1991,7 +1991,7 @@ fn system_status_focus_clock_roundtrip_and_close_restore_home() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.refresh_hit_map();
     assert_eq!(state.focus_order(), vec![ShellComponent::SystemStatus]);
@@ -2030,7 +2030,7 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
         })
         .collect();
     state.apply_system_status_snapshot(snapshot);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.set_system_status_tab(ui::SystemStatusTab::Storage);
     state.refresh_hit_map();
@@ -2099,7 +2099,7 @@ fn system_status_modal_focus_traps_and_restores_page_focus() {
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.notify_modal(
         "Confirm",
@@ -2262,7 +2262,7 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         },
     );
     state.complete_login(admin_session);
-    state.screen_stack = vec![ShellScreen::Home];
+    state.set_navigation_path(vec![ShellScreen::Home]);
     state.focused_component = ShellComponent::Home;
     let index = state
         .user_home_entries()
@@ -2391,7 +2391,7 @@ fn critical_modal_preempts_and_then_restores_the_previous_modal() {
 #[test]
 fn exit_confirmation_keeps_login_as_the_content_screen() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    state.screen_stack = vec![ShellScreen::Login];
+    state.set_navigation_path(vec![ShellScreen::Login]);
     state.focused_component = ShellComponent::LoginUserList;
     state.refresh_hit_map();
 
@@ -2600,7 +2600,7 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![ShellScreen::Clock];
+    state.set_navigation_path(vec![ShellScreen::Clock]);
     state.clock_create_state = Some(ClockCreateState::default());
     assert_eq!(
         state
@@ -2655,7 +2655,7 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
 
     state.active_popup = None;
     state.explorer_overlay_mode = None;
-    state.screen_stack = vec![ShellScreen::Home];
+    state.set_navigation_path(vec![ShellScreen::Home]);
     state.notify_toast("Saved");
     let toast = state.active_overlay_descriptor().expect("toast descriptor");
     assert_eq!(toast.category, ShellOverlayCategory::Toast);
@@ -2697,7 +2697,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         panic!("expected full layout");
     };
 
-    state.screen_stack = vec![ShellScreen::FirstRunSetup];
+    state.set_navigation_path(vec![ShellScreen::FirstRunSetup]);
     state.setup_custom_color_target = Some(ui::SetupCustomColorTarget::Theme);
     let setup_area = ui::setup_custom_color_dialog_area(main);
     for motion in [ui::MotionTransitions::default(), gated] {
@@ -2709,7 +2709,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
     }
 
     state.setup_custom_color_target = None;
-    state.screen_stack = vec![ShellScreen::Clock];
+    state.set_navigation_path(vec![ShellScreen::Clock]);
     state.clock_create_state = Some(ClockCreateState::default());
     let clock_model = state.to_clock_view_model();
     let clock_layout = ui::clock_page_layout(main, &clock_model)
@@ -2741,7 +2741,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
     );
 
     state.clock_create_state = None;
-    state.screen_stack = vec![ShellScreen::Diagnostics];
+    state.set_navigation_path(vec![ShellScreen::Diagnostics]);
     state.diagnostics_repair_preview =
         vec![app::diagnostics::DiagnosticsRepairAction::CreateDirectory {
             label: "Data".into(),
@@ -2760,7 +2760,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         );
     }
 
-    state.screen_stack = vec![ShellScreen::SystemStatus];
+    state.set_navigation_path(vec![ShellScreen::SystemStatus]);
     let system_dialog = state
         .to_diagnostics_view_model()
         .repair_dialog
@@ -2782,7 +2782,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         (120, 40),
         ShellHomeMode::User,
     );
-    launcher.screen_stack = vec![ShellScreen::Launcher];
+    launcher.set_navigation_path(vec![ShellScreen::Launcher]);
     launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
         id: "app-1".into(),
         path: "/first/display/path".into(),
@@ -2860,7 +2860,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         (120, 40),
         ShellHomeMode::User,
     );
-    editor.screen_stack = vec![ShellScreen::Editor];
+    editor.set_navigation_path(vec![ShellScreen::Editor]);
     let mut menu_ids = Vec::new();
     for menu in [
         ui::EditorMenu::File,
@@ -2900,7 +2900,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         (120, 40),
         ShellHomeMode::User,
     );
-    users.screen_stack = vec![ShellScreen::UserManagement];
+    users.set_navigation_path(vec![ShellScreen::UserManagement]);
     users.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
         username: "first".into(),
         display_name: "First".into(),
@@ -2949,7 +2949,7 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         (120, 40),
         ShellHomeMode::User,
     );
-    launcher.screen_stack = vec![ShellScreen::Launcher];
+    launcher.set_navigation_path(vec![ShellScreen::Launcher]);
     launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
         id: "app-1".into(),
         path: "/app".into(),
@@ -2961,7 +2961,7 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         (120, 40),
         ShellHomeMode::User,
     );
-    editor.screen_stack = vec![ShellScreen::Editor];
+    editor.set_navigation_path(vec![ShellScreen::Editor]);
     editor.editor_open_menu = Some(ui::EditorMenu::File);
 
     let mut users = ShellSession::new_for_home_mode(
@@ -2969,7 +2969,7 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         (120, 40),
         ShellHomeMode::User,
     );
-    users.screen_stack = vec![ShellScreen::UserManagement];
+    users.set_navigation_path(vec![ShellScreen::UserManagement]);
     users.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
         username: "user".into(),
         display_name: String::new(),
@@ -3071,7 +3071,7 @@ fn rendered_editor_menu_hit_surface_matches_editor_layout() {
         ))),
         Instant::now(),
     );
-    state.screen_stack = vec![ShellScreen::Editor];
+    state.set_navigation_path(vec![ShellScreen::Editor]);
     state.editor_open_menu = Some(ui::EditorMenu::File);
     state.refresh_hit_map();
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
@@ -4046,7 +4046,7 @@ fn explicit_theme_refresh_reloads_assets_from_disk() {
 fn command_line_open_requires_size_and_routes_ctrl_c_to_the_child() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Launcher];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Launcher]);
     state.open_command_line();
 
     assert_eq!(state.active_screen(), ShellScreen::CommandLine);
@@ -4068,7 +4068,7 @@ fn command_line_open_requires_size_and_routes_ctrl_c_to_the_child() {
 fn command_line_keeps_the_shell_clock_button_visible_and_clickable() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Launcher];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Launcher]);
     state.open_command_line();
 
     assert!(
@@ -4119,7 +4119,7 @@ fn back_button_routes_escape_except_for_command_line_force_exit() {
             ShellScreen::ExitConfirm,
             ShellScreen::CommandLine,
         ] {
-            state.screen_stack = vec![ShellScreen::Home, screen];
+            state.set_navigation_path(vec![ShellScreen::Home, screen]);
             state.refresh_hit_map();
             let back = hit_region_center(&state, ShellComponent::BackButton);
             let expected = if screen == ShellScreen::CommandLine {
@@ -4144,11 +4144,13 @@ fn back_button_routes_escape_except_for_command_line_force_exit() {
 fn back_button_cancels_the_overlay_before_leaving_the_page_and_only_activates_once() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     while state.notification_dismiss_active_modal_without_response() {}
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Clock];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Clock]);
     state.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
     let back = hit_region_center(&state, ShellComponent::BackButton);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, back));
+    assert!(state.clock_create_state.is_some());
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, back));
     assert!(state.clock_create_state.is_none());
     assert_eq!(state.active_screen(), ShellScreen::Clock);
     for input in [
@@ -4161,6 +4163,8 @@ fn back_button_cancels_the_overlay_before_leaving_the_page_and_only_activates_on
     }
     assert!(state.to_shell_chrome_view_model().back_button_hovered);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, back));
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, back));
     assert_eq!(state.active_screen(), ShellScreen::Home);
     assert_ne!(state.focused_component(), ShellComponent::BackButton);
 
@@ -4359,7 +4363,7 @@ fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
         (100, 30),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![ShellScreen::Clock];
+    state.set_navigation_path(vec![ShellScreen::Clock]);
     state.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
     for key in ["2", "3", "5", "9", "5", "9"] {
@@ -4416,7 +4420,7 @@ fn clock_create_arrows_are_clickable_once_and_fields_accept_replacement_digits()
             size,
             ShellHomeMode::User,
         );
-        state.screen_stack = vec![ShellScreen::Clock];
+        state.set_navigation_path(vec![ShellScreen::Clock]);
         state.clock_create_state = Some(ClockCreateState::default());
         state.refresh_hit_map();
         let ui::ShellLayout::Full { main, .. } =
@@ -4455,7 +4459,7 @@ fn clock_create_arrows_are_clickable_once_and_fields_accept_replacement_digits()
 #[test]
 fn compact_clock_keeps_visible_controls_and_keyboard_access() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (49, 11));
-    state.screen_stack = vec![ShellScreen::Clock];
+    state.set_navigation_path(vec![ShellScreen::Clock]);
     set_test_auth_role(&mut state, UserRole::User);
 
     assert_eq!(
@@ -4478,7 +4482,7 @@ fn focus_navigation_cycles_the_dynamic_home_order_in_both_directions() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![ShellScreen::Home];
+    state.set_navigation_path(vec![ShellScreen::Home]);
     state.focused_component = ShellComponent::Home;
     state.refresh_hit_map();
 
@@ -4507,7 +4511,7 @@ fn refresh_hit_map_normalizes_an_illegal_focus_to_the_order_start() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![ShellScreen::Login];
+    state.set_navigation_path(vec![ShellScreen::Login]);
     state.focused_component = ShellComponent::TopBar;
 
     state.refresh_hit_map();
@@ -4682,7 +4686,7 @@ fn cached_time_sync_replays_into_recreated_shell_state() {
 fn auth_poll_timeout_wakes_at_password_reveal_deadline() {
     let now = Instant::now();
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
-    state.screen_stack = vec![ShellScreen::Login];
+    state.set_navigation_path(vec![ShellScreen::Login]);
     state.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
     state.login_password_visible_until = Some(now + Duration::from_millis(10));
 
@@ -4797,7 +4801,7 @@ fn clock_button_routes_before_explorer_popup_and_app_forms() {
         (120, 40),
         ShellHomeMode::User,
     );
-    user_management.screen_stack = vec![ShellScreen::UserManagement];
+    user_management.set_navigation_path(vec![ShellScreen::UserManagement]);
     user_management.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
         username: String::new(),
         display_name: String::new(),
@@ -4853,14 +4857,11 @@ fn editor_load_blocks_clock_navigation_and_restores_its_origin() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![
-        ShellScreen::Home,
-        ShellScreen::Explorer,
-        ShellScreen::Editor,
-    ];
-    state.focused_component = ShellComponent::Editor;
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Explorer]);
+    let rollback = state.begin_editor_navigation(false);
     let operation = EditorLoadOperation::Open {
         navigation: EditorLoadNavigation::Explorer,
+        rollback,
         reload: None,
         replacing_dirty: false,
     };
@@ -4879,7 +4880,7 @@ fn editor_load_blocks_clock_navigation_and_restores_its_origin() {
 
     assert_eq!(state.active_screen(), ShellScreen::Editor);
     assert_eq!(
-        state.screen_stack,
+        state.screen_stack(),
         vec![
             ShellScreen::Home,
             ShellScreen::Explorer,
@@ -5186,7 +5187,7 @@ fn previous_unclean_exit_does_not_interrupt_the_login_screen() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![ShellScreen::Login];
+    state.set_navigation_path(vec![ShellScreen::Login]);
     state.focused_component = ShellComponent::LoginUserList;
     let report_path = std::path::PathBuf::from("/reports/previous-run.txt");
 
@@ -5312,7 +5313,7 @@ fn explorer_routing_test_state() -> ShellSession {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![ShellScreen::Explorer];
+    state.set_navigation_path(vec![ShellScreen::Explorer]);
     state.focused_component = ShellComponent::Explorer;
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
     state.refresh_hit_map();
@@ -5372,7 +5373,7 @@ fn explorer_terminal_test_fixture() -> (
     explorer.select_all();
     let mut state = explorer_routing_test_state();
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Explorer];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Explorer]);
     state.replace_explorer_state(Some(explorer));
     state.refresh_hit_map();
     let dirs = platform::UserDirs::new(
@@ -5513,7 +5514,7 @@ fn explorer_blank_context_opens_terminal_at_directory_and_returns_without_reusin
         assert!(state.command_line_start_directory.is_none());
         assert_eq!(state.app.explorer_state(), Some(&explorer));
 
-        state.screen_stack.push(ShellScreen::Launcher);
+        state.enter_screen(ShellScreen::Launcher);
         state.focused_component = ShellComponent::Launcher;
         state.launcher_selected_index = state
             .built_in_launcher_applications()
@@ -5762,7 +5763,7 @@ fn system_status_picker_wheel_moves_selection_without_editing_or_scrolling_dashb
         ShellHomeMode::User,
     );
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     state.open_system_status_add_picker();
@@ -5991,7 +5992,7 @@ fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
     ] {
         for key in ["Right", "Left", "Up", "Down", "Tab", "Shift+Tab"] {
             let mut state = explorer_routing_test_state();
-            state.screen_stack = vec![ShellScreen::Launcher];
+            state.set_navigation_path(vec![ShellScreen::Launcher]);
             state.focused_component = ShellComponent::Launcher;
             state.launcher_pending_confirmation = Some(pending.clone());
             state.refresh_hit_map();
@@ -6167,7 +6168,7 @@ fn linux_personal_apps_use_process_permissions_without_admin_role() {
 fn launcher_sort_preserves_builtin_identity_and_keyboard_order() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut state, UserRole::Admin);
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::Launcher];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Launcher]);
     state.focused_component = ShellComponent::Launcher;
     state.launcher_view_mode = ui::LauncherViewMode::Details;
     state.launcher_selected_index = 2;

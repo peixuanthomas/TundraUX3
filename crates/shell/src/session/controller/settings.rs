@@ -128,30 +128,15 @@ impl ShellSession {
             time_sync_server_editor: None,
             time_sync_validation_request_id: None,
         });
-        if self.active_screen() != ShellScreen::Settings {
-            self.screen_stack.push(ShellScreen::Settings);
-        }
-        self.focused_component = ShellComponent::Settings;
+        self.enter_screen(ShellScreen::Settings);
         self.error_message = None;
         self.notify_status(i18n::msg!("settings-title"));
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_settings(&mut self) {
-        if self.active_screen() == ShellScreen::Settings {
-            self.screen_stack.pop();
-        }
-        if self.screen_stack.is_empty() {
-            self.screen_stack.push(ShellScreen::Home);
-        }
         self.settings_state = None;
-        self.focused_component = if self.active_screen() == ShellScreen::Home {
-            ShellComponent::Home
-        } else {
-            ShellComponent::Settings
-        };
-        self.notify_status(i18n::msg!("settings-ready"));
-        self.refresh_hit_map();
+        self.return_from_screen(ShellScreen::Settings);
     }
 
     pub(in crate::session) fn can_change_global_settings(&self) -> bool {

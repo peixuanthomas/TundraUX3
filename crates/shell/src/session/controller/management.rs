@@ -313,9 +313,7 @@ impl ShellSession {
         {
             return;
         }
-        if self.active_screen() != ShellScreen::Management {
-            self.screen_stack.push(ShellScreen::Management);
-        }
+        self.enter_screen(ShellScreen::Management);
         if self.management_state.kind != Some(kind) {
             let next =
                 self.management_background
@@ -1883,12 +1881,7 @@ impl ShellSession {
                 self.toggle_management_details();
             }
             InputKey::Escape => {
-                self.screen_stack.pop();
-                self.focused_component = if self.active_screen() == ShellScreen::Launcher {
-                    ShellComponent::Launcher
-                } else {
-                    ShellComponent::Home
-                };
+                self.return_from_screen(ShellScreen::Management);
             }
             InputKey::Char('/' | 's' | 'S') => {
                 self.management_touch_control(ui::ManagementControl::Search)

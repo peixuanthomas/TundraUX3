@@ -96,10 +96,7 @@ impl ShellSession {
         self.launcher_selected_index = self
             .launcher_selected_index
             .min(self.launcher_item_count().saturating_sub(1));
-        if self.active_screen() != ShellScreen::Launcher {
-            self.screen_stack.push(ShellScreen::Launcher);
-        }
-        self.focused_component = ShellComponent::Launcher;
+        self.enter_screen(ShellScreen::Launcher);
         self.launcher_pending_confirmation = None;
         self.launcher_drag = None;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
@@ -115,20 +112,7 @@ impl ShellSession {
         ) {
             self.scrollbar_drag = None;
         }
-        if self.active_screen() == ShellScreen::Launcher {
-            self.screen_stack.pop();
-        }
-        match self.active_screen() {
-            ShellScreen::Explorer => {
-                self.focused_component = ShellComponent::Explorer;
-                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
-            }
-            _ => {
-                self.pop_to_home();
-                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
-            }
-        }
-        self.refresh_hit_map();
+        self.return_from_screen(ShellScreen::Launcher);
     }
 
     pub(in crate::session) fn launcher_preference_key(&self) -> Option<String> {

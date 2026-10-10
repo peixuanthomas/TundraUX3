@@ -149,7 +149,7 @@ fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
             "Users is opened from Launcher"
         );
     }
-    state.screen_stack.push(ShellScreen::Launcher);
+    state.enter_screen(ShellScreen::Launcher);
     for (label, command) in [
         ("R", ShellCommand::LauncherRefresh),
         ("F5", ShellCommand::LauncherRefresh),
@@ -235,7 +235,7 @@ fn launcher_scrollbars_reach_tail_in_both_views_without_launch_or_reorder() {
             })),
             Instant::now(),
         );
-        state.screen_stack.push(ShellScreen::Launcher);
+        state.enter_screen(ShellScreen::Launcher);
         state.launcher_view_mode = mode;
         state.refresh_hit_map();
         let original = state.app.launcher_state().unwrap().items.clone();
@@ -268,7 +268,7 @@ fn launcher_scrollbars_reach_tail_in_both_views_without_launch_or_reorder() {
 #[test]
 fn launcher_open_button_waits_for_release_and_drag_cancels_activation() {
     let mut state = state((72, 20));
-    state.screen_stack.push(ShellScreen::Launcher);
+    state.enter_screen(ShellScreen::Launcher);
     state.launcher_selected_index = state
         .built_in_launcher_applications()
         .iter()

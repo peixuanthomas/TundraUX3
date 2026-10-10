@@ -149,7 +149,7 @@ impl ShellSession {
             fallback_resource_paths: Vec::new(),
             home_mode,
             ascii_assets,
-            screen_stack: vec![initial_screen],
+            navigation: ShellNavigation::new(initial_screen),
             storage_manager: startup.storage_manager.clone(),
             last_time_sync_utc: None,
             clock_scheduler: None,

@@ -23,7 +23,6 @@ pub(in crate::session) struct LogsUiState {
     last_document: Option<LogDocumentSelection>,
     editor_snapshot: Option<PathBuf>,
     refreshing_editor: bool,
-    return_component: Option<ShellComponent>,
     pub(super) paused: bool,
     new_events: usize,
     last_refresh: Option<Instant>,
@@ -74,11 +73,7 @@ impl ShellSession {
         {
             return;
         }
-        if self.active_screen() != ShellScreen::Logs {
-            self.logs_state.return_component = Some(self.focused_component);
-            self.screen_stack.push(ShellScreen::Logs);
-        }
-        self.focused_component = ShellComponent::Logs;
+        self.enter_screen(ShellScreen::Logs);
         self.request_logs_job(None);
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
         self.refresh_hit_map();
@@ -856,17 +851,7 @@ impl ShellSession {
             InputKey::Escape => {
                 self.logs_state.job = None;
                 self.logs_state.scrollbar_grab = None;
-                if self.active_screen() == ShellScreen::Logs {
-                    self.screen_stack.pop();
-                }
-                self.focused_component = if self.active_screen() == ShellScreen::SystemStatus {
-                    ShellComponent::SystemStatus
-                } else {
-                    self.logs_state
-                        .return_component
-                        .take()
-                        .unwrap_or(ShellComponent::Home)
-                };
+                self.return_from_screen(ShellScreen::Logs);
             }
             InputKey::Left | InputKey::Right => {
                 self.logs_set_category(if self.logs_state.category == ui::LogsCategory::Ux {

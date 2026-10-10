@@ -46,6 +46,46 @@ fn a_new_confirmation_focuses_approve_and_keyboard_denial_still_cancels() {
 }
 
 #[test]
+fn shared_back_cancels_aa_confirmation_on_release_without_leaving_page() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    state.enter_screen(ShellScreen::Launcher);
+    state.enter_screen(ShellScreen::UserManagement);
+    let (tx, rx) = mpsc::channel();
+    let job = state
+        .begin_auto_admin("Enable demo".into(), true, tx)
+        .unwrap();
+    state.refresh_hit_map();
+    let area = state.frame_layout.unwrap().back_button.unwrap();
+    let point = (area.x, area.y);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(state.auto_admin_visible());
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, (0, 10)));
+    assert!(state.auto_admin_visible());
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert_eq!(job.phase(), WAITING);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(!state.auto_admin_visible());
+    assert_eq!(job.phase(), DENIED);
+    assert!(job.wait_for_approval().is_err());
+    assert!(
+        rx.try_iter()
+            .all(|input| matches!(input, OperationInput::Resize { .. }))
+    );
+    assert_eq!(
+        state.screen_stack(),
+        &[
+            ShellScreen::Home,
+            ShellScreen::Launcher,
+            ShellScreen::UserManagement
+        ]
+    );
+}
+
+#[test]
 fn deny_click_closes_confirmation_without_running_the_operation() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

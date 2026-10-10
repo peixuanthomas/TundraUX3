@@ -285,7 +285,7 @@ fn command_line_uses_a_low_latency_refresh_without_advancing_state_ticks() {
 #[test]
 fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::CommandLine];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::CommandLine]);
     state.refresh_hit_map();
 
     let back_area = state
@@ -338,7 +338,7 @@ fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
 #[test]
 fn command_line_runtime_keeps_notification_keys_and_mouse_out_of_the_child() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::CommandLine];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::CommandLine]);
     state.refresh_hit_map();
     state.open_status_details();
     for input in [

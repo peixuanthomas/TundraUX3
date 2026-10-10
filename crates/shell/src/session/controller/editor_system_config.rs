@@ -586,10 +586,7 @@ impl ShellSession {
         self.editor_focus = ui::EditorFocus::Canvas;
         self.editor_settings_dialog = None;
         self.rebuild_editor_rich_render_cache();
-        if self.active_screen() != ShellScreen::Editor {
-            self.screen_stack.push(ShellScreen::Editor);
-        }
-        self.focused_component = ShellComponent::Editor;
+        self.enter_screen(ShellScreen::Editor);
         self.refresh_hit_map();
     }
 
@@ -838,7 +835,7 @@ mod tests {
             ShellHomeMode::User,
         );
         session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
-        session.screen_stack.push(ShellScreen::Management);
+        session.enter_screen(ShellScreen::Management);
         session.management_state.kind = Some(ManagementKind::Services);
         session.management_state.query = Some(ManagementQuery::new(ManagementKind::Services));
         session

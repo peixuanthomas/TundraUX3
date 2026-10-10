@@ -126,10 +126,7 @@ impl ShellSession {
         )));
         self.restore_editor_recovery_if_present();
         self.rebuild_editor_rich_render_cache();
-        if self.active_screen() != ShellScreen::Editor {
-            self.screen_stack.push(ShellScreen::Editor);
-        }
-        self.focused_component = ShellComponent::Editor;
+        self.enter_screen(ShellScreen::Editor);
         self.active_popup = None;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-editor")));
         self.refresh_hit_map();
@@ -2260,14 +2257,8 @@ impl ShellSession {
             self.app.auth_session().map(|s| s.user_id.clone()),
         )?;
 
-        if navigation == EditorLoadNavigation::EditorPicker
-            && self.active_screen() == ShellScreen::Explorer
-        {
-            self.screen_stack.pop();
-        }
-        if self.active_screen() != ShellScreen::Editor {
-            self.screen_stack.push(ShellScreen::Editor);
-        }
+        let rollback =
+            self.begin_editor_navigation(navigation == EditorLoadNavigation::EditorPicker);
         self.editor_load_state = Some(EditorLoadState {
             id,
             path: path.clone(),
@@ -2276,6 +2267,7 @@ impl ShellSession {
             total_bytes: None,
             operation: EditorLoadOperation::Open {
                 navigation,
+                rollback,
                 reload,
                 replacing_dirty,
             },
@@ -2378,70 +2370,6 @@ impl ShellSession {
             "shell-loading-cancelled"
         )));
         self.refresh_hit_map();
-    }
-
-    pub(in crate::session) fn restore_editor_load_navigation(
-        &mut self,
-        operation: &EditorLoadOperation,
-    ) {
-        let EditorLoadOperation::Open { navigation, .. } = operation else {
-            if self.active_screen() == ShellScreen::Editor {
-                self.focused_component = ShellComponent::Editor;
-            }
-            return;
-        };
-        match navigation {
-            EditorLoadNavigation::EditorPicker => {
-                if self.active_screen() == ShellScreen::Editor {
-                    self.screen_stack.push(ShellScreen::Explorer);
-                } else if let Some(editor_index) = self
-                    .screen_stack
-                    .iter()
-                    .rposition(|screen| *screen == ShellScreen::Editor)
-                {
-                    let explorer_index = editor_index.saturating_add(1);
-                    if self.screen_stack.get(explorer_index) != Some(&ShellScreen::Explorer) {
-                        self.screen_stack
-                            .insert(explorer_index, ShellScreen::Explorer);
-                    }
-                }
-                if self.active_screen() == ShellScreen::Explorer {
-                    self.focused_component = ShellComponent::Explorer;
-                }
-            }
-            EditorLoadNavigation::Explorer => {
-                if let Some(editor_index) = (1..self.screen_stack.len()).rev().find(|index| {
-                    self.screen_stack[*index] == ShellScreen::Editor
-                        && self.screen_stack[index.saturating_sub(1)] == ShellScreen::Explorer
-                }) {
-                    self.screen_stack.remove(editor_index);
-                }
-                if self.active_screen() == ShellScreen::Explorer {
-                    self.focused_component = ShellComponent::Explorer;
-                }
-            }
-            EditorLoadNavigation::Diagnostics => {
-                if let Some(editor_index) = (1..self.screen_stack.len()).rev().find(|index| {
-                    self.screen_stack[*index] == ShellScreen::Editor
-                        && matches!(
-                            self.screen_stack[index.saturating_sub(1)],
-                            ShellScreen::Diagnostics | ShellScreen::SystemStatus
-                        )
-                }) {
-                    self.screen_stack.remove(editor_index);
-                }
-                if self.active_screen() == ShellScreen::Diagnostics {
-                    self.focused_component = ShellComponent::Diagnostics;
-                } else if self.active_screen() == ShellScreen::SystemStatus {
-                    self.focused_component = ShellComponent::SystemStatus;
-                }
-            }
-            EditorLoadNavigation::Editor => {
-                if self.active_screen() == ShellScreen::Editor {
-                    self.focused_component = ShellComponent::Editor;
-                }
-            }
-        }
     }
 
     pub(in crate::session) fn poll_editor_background_tasks(&mut self, platform: &dyn Platform) {
@@ -2594,6 +2522,7 @@ impl ShellSession {
                 navigation,
                 reload,
                 replacing_dirty,
+                ..
             } => {
                 let open_at_bottom = reload
                     .as_ref()
@@ -2874,20 +2803,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn return_from_editor_picker(&mut self) {
-        if self.active_screen() == ShellScreen::Explorer {
-            self.screen_stack.pop();
-        }
-        if self.app.editor_state().is_some() && self.active_screen() != ShellScreen::Editor {
-            self.screen_stack.push(ShellScreen::Editor);
-        }
+        self.return_from_screen(ShellScreen::Explorer);
         self.explorer_purpose = ExplorerPurpose::Browse;
         self.replace_explorer_state(None);
         self.explorer_input_mode = ExplorerInputMode::Browse;
         self.explorer_input.clear();
         self.explorer_input_replace_all = false;
         self.editor_discard_for_open = false;
-        self.focused_component = ShellComponent::Editor;
-        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-editor")));
         self.refresh_hit_map();
     }
 
@@ -3202,38 +3124,7 @@ impl ShellSession {
         self.editor_read_session = None;
         self.editor_config = Default::default();
         self.management_state_clear_config_form();
-        if self.active_screen() == ShellScreen::Editor {
-            self.screen_stack.pop();
-        }
-        if self.active_screen() == ShellScreen::Explorer && self.app.explorer_state().is_some() {
-            self.focused_component = ShellComponent::Explorer;
-            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
-            self.refresh_hit_map();
-        } else if self.active_screen() == ShellScreen::Launcher
-            && self.app.launcher_state().is_some()
-        {
-            self.focused_component = ShellComponent::Launcher;
-            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
-            self.refresh_hit_map();
-        } else if self.active_screen() == ShellScreen::Management {
-            self.focused_component = ShellComponent::Management;
-            self.refresh_hit_map();
-        } else if self.active_screen() == ShellScreen::Logs {
-            self.focused_component = ShellComponent::Logs;
-            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
-            self.refresh_hit_map();
-        } else if self.active_screen() == ShellScreen::Diagnostics {
-            self.focused_component = ShellComponent::Diagnostics;
-            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-diagnostics")));
-            self.refresh_hit_map();
-        } else if self.active_screen() == ShellScreen::SystemStatus {
-            self.focused_component = ShellComponent::SystemStatus;
-            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-system-status")));
-            self.refresh_hit_map();
-        } else {
-            self.pop_to_home();
-            self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
-        }
+        self.return_from_screen(ShellScreen::Editor);
     }
 
     pub(in crate::session) fn report_editor_error(

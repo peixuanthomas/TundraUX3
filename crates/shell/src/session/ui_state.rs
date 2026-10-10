@@ -362,6 +362,7 @@ pub(super) enum EditorLoadNavigation {
 pub(super) enum EditorLoadOperation {
     Open {
         navigation: EditorLoadNavigation,
+        rollback: NavigationCheckpoint,
         reload: Option<EditorReloadPolicy>,
         replacing_dirty: bool,
     },
@@ -543,7 +544,7 @@ pub struct UiSessionState {
     pub(super) fallback_resource_paths: Vec<String>,
     pub(super) home_mode: ShellHomeMode,
     pub(super) ascii_assets: ui::RuntimeAsciiAssets,
-    pub(super) screen_stack: Vec<ShellScreen>,
+    pub(super) navigation: ShellNavigation,
     pub(super) storage_manager: Option<StorageManager>,
     pub(super) last_time_sync_utc: Option<DateTime<Utc>>,
     pub(super) clock_scheduler: Option<ClockScheduler>,

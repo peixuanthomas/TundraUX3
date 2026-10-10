@@ -178,7 +178,7 @@ impl ShellSession {
         self.return_to_lockscreen_requested = false;
         self.reset_login_idle_deadline_at(now);
         let _ = self.refresh_login_users_from_storage();
-        self.screen_stack = vec![ShellScreen::Login];
+        self.reset_navigation(ShellScreen::Login);
         self.focused_component = ShellComponent::LoginUserList;
         self.refresh_hit_map();
     }

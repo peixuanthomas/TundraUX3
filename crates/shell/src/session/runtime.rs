@@ -1070,7 +1070,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         command_line_host.resize_to_area(terminal_area);
                     }
                 }
-                CommandLineHostEvent::ExitToLauncher => state.close_command_line(),
+                CommandLineHostEvent::ExitToCaller => state.close_command_line(),
                 CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),
                 CommandLineHostEvent::ResetRequested => {
                     reset_requested = true;
@@ -1248,7 +1248,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     match command_line_host.handle_input(&input, terminal_area) {
                         CommandLineHostEvent::None => {}
                         CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),
-                        CommandLineHostEvent::ExitToLauncher => {
+                        CommandLineHostEvent::ExitToCaller => {
                             command_line_host.terminate();
                             state.close_command_line();
                         }

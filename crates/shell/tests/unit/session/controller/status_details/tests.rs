@@ -7,7 +7,7 @@ fn session() -> ShellSession {
         ShellHomeMode::User,
     );
     while state.notification_dismiss_active_modal_without_response() {}
-    state.screen_stack = vec![ShellScreen::Home];
+    state.set_navigation_path(vec![ShellScreen::Home]);
     state.refresh_hit_map();
     state
 }
@@ -136,7 +136,7 @@ fn status_details_do_not_bypass_existing_or_new_critical_modals() {
         state.to_notification_view_model().unwrap().tone,
         ui::NotificationTone::Critical
     );
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::CommandLine];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::CommandLine]);
     state.refresh_hit_map();
     assert!(matches!(
         state.route_key_input(&KeyInput::new(InputKey::Enter)).1,
@@ -147,7 +147,7 @@ fn status_details_do_not_bypass_existing_or_new_critical_modals() {
 #[test]
 fn status_details_capture_command_line_keys_paste_and_the_back_button() {
     let mut state = session();
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::CommandLine];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::CommandLine]);
     state.refresh_hit_map();
     state.notify_status("Child command output status");
     click_status(&mut state);

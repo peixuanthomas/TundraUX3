@@ -917,7 +917,7 @@ fn state() -> ShellSession {
         })),
         Instant::now(),
     );
-    state.screen_stack.push(ShellScreen::Management);
+    state.enter_screen(ShellScreen::Management);
     state.management_state.kind = Some(ManagementKind::Services);
     state.management_state.query = Some(ManagementQuery::new(ManagementKind::Services));
     state
@@ -1090,7 +1090,7 @@ fn launcher_management_entries_are_linux_only_and_guest_is_blocked() {
         })),
         Instant::now(),
     );
-    state.screen_stack = vec![ShellScreen::Home];
+    state.set_navigation_path(vec![ShellScreen::Home]);
     state.open_management(ManagementKind::Packages);
     assert_eq!(state.active_screen(), ShellScreen::Home);
 }
@@ -1180,11 +1180,11 @@ fn touch_choice_list_selects_without_cycling_or_submitting() {
 #[test]
 fn escape_returns_management_to_launcher_without_cancelling_task() {
     let mut state = state();
-    state.screen_stack = vec![
+    state.set_navigation_path(vec![
         ShellScreen::Home,
         ShellScreen::Launcher,
         ShellScreen::Management,
-    ];
+    ]);
     let (job, _) = state.management_job();
     state.management_state.operation_job = Some(job);
     state.handle_management_key(&KeyInput::new(InputKey::Escape));

@@ -345,9 +345,7 @@ impl ShellSession {
             }
             ShellCommand::RequestExit => {
                 self.capture_modal_focus_context();
-                if self.active_screen() != ShellScreen::ExitConfirm {
-                    self.screen_stack.push(ShellScreen::ExitConfirm);
-                }
+                self.enter_screen(ShellScreen::ExitConfirm);
                 self.active_popup = None;
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-confirm-exit")));
                 self.show_exit_confirmation_modal(platform);

@@ -126,14 +126,14 @@ impl ShellSession {
     }
 
     pub fn active_screen(&self) -> ShellScreen {
-        self.screen_stack
+        self.screen_stack()
             .last()
             .copied()
             .unwrap_or(ShellScreen::Home)
     }
 
     pub(in crate::session) fn content_screen(&self) -> ShellScreen {
-        self.screen_stack
+        self.screen_stack()
             .iter()
             .rev()
             .copied()
@@ -146,7 +146,7 @@ impl ShellSession {
     }
 
     pub fn screen_stack(&self) -> &[ShellScreen] {
-        &self.screen_stack
+        self.navigation.path()
     }
 
     pub fn terminal_size(&self) -> (u16, u16) {

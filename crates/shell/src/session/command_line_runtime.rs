@@ -825,7 +825,7 @@ impl OscFilter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandLineHostEvent {
     None,
-    ExitToLauncher,
+    ExitToCaller,
     ResetRequested,
     PanicRequested,
 }
@@ -970,7 +970,7 @@ impl CommandLineHost {
         }
         if status.success {
             self.install_blank_snapshot();
-            return CommandLineHostEvent::ExitToLauncher;
+            return CommandLineHostEvent::ExitToCaller;
         }
 
         self.state = CommandLineHostState::Exited {
@@ -989,7 +989,7 @@ impl CommandLineHost {
             && is_emergency_termination(key)
         {
             self.terminate();
-            return CommandLineHostEvent::ExitToLauncher;
+            return CommandLineHostEvent::ExitToCaller;
         }
 
         match &self.state {
@@ -1002,7 +1002,7 @@ impl CommandLineHost {
                             self.install_blank_snapshot();
                             self.state = CommandLineHostState::Inactive;
                         }
-                        InputKey::Escape => return CommandLineHostEvent::ExitToLauncher,
+                        InputKey::Escape => return CommandLineHostEvent::ExitToCaller,
                         _ => {}
                     }
                 }

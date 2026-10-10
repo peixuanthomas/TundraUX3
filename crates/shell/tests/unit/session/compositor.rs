@@ -8,7 +8,7 @@ fn session() -> ShellSession {
         ShellHomeMode::User,
     );
     while state.notification_dismiss_active_modal_without_response() {}
-    state.screen_stack = vec![ShellScreen::Home];
+    state.set_navigation_path(vec![ShellScreen::Home]);
     state.refresh_hit_map();
     state
 }
@@ -205,7 +205,7 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
         let launcher = mode != 0;
         let mut state = session();
         if launcher {
-            state.screen_stack.push(ShellScreen::Launcher);
+            state.enter_screen(ShellScreen::Launcher);
             if mode == 2 {
                 state.launcher_view_mode = ui::LauncherViewMode::Details;
             }
@@ -314,7 +314,7 @@ fn pointer_back_button_does_not_restore_keyboard_focus() {
 fn command_line_back_hint_matches_the_host_exit_key_and_button_width() {
     let mut state = session();
     assert_eq!(state.to_shell_chrome_view_model().back_shortcut, "Esc");
-    state.screen_stack.push(ShellScreen::CommandLine);
+    state.enter_screen(ShellScreen::CommandLine);
     state.refresh_hit_map();
     assert_eq!(
         state.to_shell_chrome_view_model().back_shortcut,
@@ -339,7 +339,7 @@ fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
     for (width, height) in [(49, 11), (30, 8)] {
         let mut state = session();
         state.apply_input(InputEvent::Resize { width, height });
-        state.screen_stack.push(ShellScreen::Clock);
+        state.enter_screen(ShellScreen::Clock);
         state.refresh_hit_map();
         let mut compositor = ScreenCompositor::default();
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -588,7 +588,7 @@ fn button_capture_cancels_outside_on_focus_loss_resize_and_page_change() {
                 });
             }
             3 => {
-                state.screen_stack.push(ShellScreen::Clock);
+                state.enter_screen(ShellScreen::Clock);
             }
             _ => {
                 state.apply_input(InputEvent::mouse_drag(PointerButton::Left, point));
@@ -606,7 +606,7 @@ fn button_click_allows_short_presses_but_rejects_holds_over_500_ms() {
         for millis in [0, 1, 499, 500, 501, 2_000] {
             let mut state = session();
             if kind == 1 || kind == 2 {
-                state.screen_stack.push(ShellScreen::Launcher);
+                state.enter_screen(ShellScreen::Launcher);
                 if kind == 2 {
                     state.launcher_view_mode = ui::LauncherViewMode::Details;
                 }
@@ -688,7 +688,7 @@ fn button_click_allows_short_presses_but_rejects_holds_over_500_ms() {
 #[test]
 fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_dialog() {
     let mut state = session();
-    state.screen_stack.push(ShellScreen::Clock);
+    state.enter_screen(ShellScreen::Clock);
     state.restore_clock_profile(Default::default());
     state.refresh_hit_map();
     let mut compositor = ScreenCompositor::default();
@@ -727,7 +727,7 @@ fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_di
 #[test]
 fn launcher_card_single_click_waits_for_release() {
     let mut state = session();
-    state.screen_stack.push(ShellScreen::Launcher);
+    state.enter_screen(ShellScreen::Launcher);
     state.refresh_hit_map();
     let mut compositor = ScreenCompositor::default();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -760,7 +760,7 @@ fn launcher_click_launches_only_after_matching_release_in_both_views() {
     ] {
         for cancel in 0..5 {
             let mut state = session();
-            state.screen_stack.push(ShellScreen::Launcher);
+            state.enter_screen(ShellScreen::Launcher);
             state.launcher_view_mode = view;
             state.refresh_hit_map();
             let mut compositor = ScreenCompositor::default();
@@ -1068,13 +1068,16 @@ fn aa_keyboard_focus_hover_and_press_render_the_requested_accent_colors() {
     assert!(state.auto_admin_pressed_button().is_none());
     assert_eq!(terminal.backend().buffer()[approve].fg, theme.foreground);
     assert_eq!(terminal.backend().buffer()[deny].fg, theme.accent_color);
-    let background = state
+    let back = state
         .button_regions
         .iter()
         .find(|r| r.id.as_str() == "shell.back")
         .unwrap()
         .area;
-    assert!(state.button_at((background.x, background.y)).is_none());
+    assert_eq!(
+        state.button_at((back.x, back.y)).unwrap().id.as_str(),
+        "shell.back"
+    );
     state.apply_input(InputEvent::FocusLost);
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
     assert_eq!(terminal.backend().buffer()[deny].fg, theme.foreground);

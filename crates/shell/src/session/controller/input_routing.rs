@@ -8,6 +8,15 @@ impl ShellSession {
         &self,
         point: CellPosition,
     ) -> Option<ui::components::ButtonRegion> {
+        if self.hit_map.target_at(point) == Some(ShellComponent::BackButton)
+            && let Some(area) = self.frame_layout.and_then(|layout| layout.back_button)
+        {
+            return Some(ui::components::ButtonRegion {
+                id: "shell.back".into(),
+                area,
+                disabled: false,
+            });
+        }
         if self.auto_admin_visible() {
             return self
                 .button_regions
@@ -321,58 +330,13 @@ impl ShellSession {
         }
     }
 
-    /// The chrome shortcut acts like Escape except in Command Line, where it
-    /// uses the host's emergency termination shortcut to stop the child PTY.
-    /// The shared pointer capture delivers this press only after release
-    /// and leaves keyboard focus with the page being returned to.
-    pub(in crate::session) fn normalize_shell_navigation_input(
-        &self,
-        input: InputEvent,
-    ) -> InputEvent {
-        if self.auto_admin_visible() {
-            return input;
-        }
-        if let InputEvent::Mouse(mouse) = &input
-            && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
-            && !self.notification_has_active_modal()
-            && !self.time_sync_dialog_visible
-            && self.active_popup.is_none()
-            && self.diagnostics_repair_preview.is_empty()
-            && matches!(
-                self.active_screen(),
-                ShellScreen::Diagnostics | ShellScreen::SystemStatus
-            )
-            && let Some(button) = self.button_at(mouse.coordinates())
-            && let Some(code) = button
-                .id
-                .as_str()
-                .strip_prefix("diagnostics.toolbar.")
-                .and_then(|value| value.parse::<u32>().ok())
-                .and_then(char::from_u32)
-        {
-            return InputEvent::Key(KeyInput::new(InputKey::Char(code)));
-        }
-        if let InputEvent::Mouse(mouse) = &input
-            && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
-            && self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton)
-        {
-            if self.active_screen() == ShellScreen::CommandLine
-                && !self.notification_has_active_modal()
-            {
-                return InputEvent::Key(KeyInput::with_modifiers(
-                    InputKey::Char('x'),
-                    InputModifiers::CTRL_SHIFT,
-                ));
-            }
-            return InputEvent::Key(KeyInput::new(InputKey::Escape));
-        }
-        input
-    }
-
     pub(in crate::session) fn route_key_input(
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
+        if key.key == InputKey::Escape {
+            return self.route_back_key(key);
+        }
         if self.notification_has_active_modal()
             && (self.active_screen() == ShellScreen::CommandLine || self.status_details_visible())
         {

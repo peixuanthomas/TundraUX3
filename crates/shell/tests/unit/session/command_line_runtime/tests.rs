@@ -396,7 +396,10 @@ fn pty_process_runs_inside_platform_containment() {
     ));
     assert!(matches!(host.state, CommandLineHostState::Running(_)));
     let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
-    state.screen_stack = vec![crate::ShellScreen::Home, crate::ShellScreen::CommandLine];
+    state.set_navigation_path(vec![
+        crate::ShellScreen::Home,
+        crate::ShellScreen::CommandLine,
+    ]);
     state.refresh_hit_map();
     let back = state
         .hit_map()
@@ -420,7 +423,7 @@ fn pty_process_runs_inside_platform_containment() {
     let input = state.normalize_shell_navigation_input(click);
     assert!(matches!(
         host.handle_input(&input, None),
-        CommandLineHostEvent::ExitToLauncher
+        CommandLineHostEvent::ExitToCaller
     ));
     assert!(matches!(host.state, CommandLineHostState::Inactive));
     let release = state

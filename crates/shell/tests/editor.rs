@@ -1098,6 +1098,54 @@ fn non_log_text_document_remains_editable() {
 }
 
 #[test]
+fn nested_file_picker_returns_to_the_original_directory_and_selection() {
+    for select_file in [false, true] {
+        let fixture = FixtureRoot::new("nested-picker-navigation");
+        let platform = mock_platform(fixture.path());
+        bootstrap_with_shell(&platform);
+        fs::write(
+            fixture.path().join("Documents").join("original.txt"),
+            "original contents",
+        )
+        .expect("seed document");
+        let mut state = logged_in_state(&platform);
+        state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+        let original = state.to_explorer_view_model();
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        wait_for_editor_background_tasks(&mut state, &platform);
+        assert_eq!(state.active_screen(), ShellScreen::Editor);
+        state.apply_input_with_platform(ctrl('o'), &platform);
+        assert_eq!(
+            state.screen_stack(),
+            &[
+                ShellScreen::Home,
+                ShellScreen::Explorer,
+                ShellScreen::Editor,
+                ShellScreen::Explorer
+            ]
+        );
+        state.apply_input_with_platform(
+            InputEvent::from_key_label(if select_file { "Enter" } else { "Esc" }),
+            &platform,
+        );
+        wait_for_editor_background_tasks(&mut state, &platform);
+        assert_eq!(state.active_screen(), ShellScreen::Editor);
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+        assert_eq!(
+            state.screen_stack(),
+            &[ShellScreen::Home, ShellScreen::Explorer]
+        );
+        let restored = state.to_explorer_view_model();
+        assert_eq!(restored.current_path, original.current_path);
+        assert_eq!(restored.entries, original.entries);
+        assert_eq!(restored.selected_index, original.selected_index);
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        wait_for_editor_background_tasks(&mut state, &platform);
+        assert_eq!(state.active_screen(), ShellScreen::Editor);
+    }
+}
+
+#[test]
 fn escape_cancels_an_in_flight_large_file_open() {
     let fixture = FixtureRoot::new("cancel-large-open");
     let platform = mock_platform(fixture.path());

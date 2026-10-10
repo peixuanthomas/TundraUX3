@@ -2174,7 +2174,7 @@ impl ShellSession {
             display_mode: self.home_display_mode(),
             terminal_size: self.terminal_size,
             screen_stack: self
-                .screen_stack
+                .screen_stack()
                 .iter()
                 .map(|screen| format!("{screen:?}"))
                 .collect(),

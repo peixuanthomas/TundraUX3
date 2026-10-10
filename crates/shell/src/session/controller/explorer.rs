@@ -168,7 +168,6 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_explorer(&mut self, platform: &dyn Platform) {
-        self.explorer_purpose = ExplorerPurpose::Browse;
         if self.is_strict_guest() {
             self.error_message = None;
             self.notify_status(i18n::LocalizedText::from(i18n::msg!(
@@ -219,6 +218,7 @@ impl ShellSession {
         start_path: std::path::PathBuf,
         purpose: ExplorerPurpose,
     ) {
+        self.enter_screen(ShellScreen::Explorer);
         let explorer_config = self.app.storage_config().explorer.clone();
         self.replace_explorer_state(Some(ExplorerState::with_config(
             start_path,
@@ -230,7 +230,6 @@ impl ShellSession {
         self.explorer_input.clear();
         self.explorer_input_replace_all = false;
         self.explorer_overlay_mode = None;
-        self.screen_stack.push(ShellScreen::Explorer);
         self.focused_component = ShellComponent::Explorer;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
         self.apply_explorer_command(ExplorerCommand::Refresh, platform);
@@ -246,20 +245,7 @@ impl ShellSession {
         if matches!(self.explorer_purpose, ExplorerPurpose::DiagnosticsLogs) {
             self.explorer_purpose = ExplorerPurpose::Browse;
             self.replace_explorer_state(None);
-            if self.active_screen() == ShellScreen::Explorer {
-                self.screen_stack.pop();
-            }
-            if self.active_screen() == ShellScreen::Diagnostics {
-                self.focused_component = ShellComponent::Diagnostics;
-                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-diagnostics")));
-            } else if self.active_screen() == ShellScreen::SystemStatus {
-                self.focused_component = ShellComponent::SystemStatus;
-                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-system-status")));
-            } else {
-                self.pop_to_home();
-                self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
-            }
-            self.refresh_hit_map();
+            self.return_from_screen(ShellScreen::Explorer);
             return;
         }
         if !matches!(self.explorer_purpose, ExplorerPurpose::Browse)
@@ -273,14 +259,7 @@ impl ShellSession {
             return;
         }
         self.explorer_purpose = ExplorerPurpose::Browse;
-        if self.screen_stack.iter().rev().nth(1) == Some(&ShellScreen::Management) {
-            self.screen_stack.pop();
-            self.focused_component = ShellComponent::Management;
-            self.refresh_hit_map();
-            return;
-        }
-        self.pop_to_home();
-        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
+        self.return_from_screen(ShellScreen::Explorer);
     }
 
     pub(in crate::session) fn refresh_explorer_quick_locations(&mut self, platform: &dyn Platform) {

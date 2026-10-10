@@ -32,7 +32,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.screen_stack = vec![ShellScreen::Clock];
+    state.set_navigation_path(vec![ShellScreen::Clock]);
     state.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
     let full = Rect::new(0, 0, 120, 40);
@@ -74,13 +74,13 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         let theme = ui::ThemeTokens::glacier_night();
         let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
         while state.notification_dismiss_active_modal_without_response() {}
-        state.screen_stack = vec![ShellScreen::Login];
+        state.set_navigation_path(vec![ShellScreen::Login]);
         state.refresh_hit_map();
         let mut motion = ShellMotionEffects::default();
         motion.update(&state, full, full, None, theme, false);
         let mut buffer = Buffer::filled(full, Cell::new("N"));
         motion.test_frame(Duration::ZERO, &mut buffer, &state);
-        state.screen_stack.push(ShellScreen::ExitConfirm);
+        state.enter_screen(ShellScreen::ExitConfirm);
         state.refresh_hit_map();
         motion.update(&state, full, full, None, theme, false);
         buffer = Buffer::filled(full, Cell::new("A"));
@@ -380,7 +380,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
         ShellHomeMode::User,
     );
     while state.notification_dismiss_active_modal_without_response() {}
-    state.screen_stack = vec![ShellScreen::Settings];
+    state.set_navigation_path(vec![ShellScreen::Settings]);
     state.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
@@ -871,7 +871,7 @@ fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
     motion.update(&state, full, full, None, theme, false);
     assert!(!motion.manager.is_running());
 
-    state.screen_stack = vec![ShellScreen::Explorer];
+    state.set_navigation_path(vec![ShellScreen::Explorer]);
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
     state.explorer_overlay_mode = Some(ExplorerOverlayMode::Options);
     state.active_popup = Some(ShellPopup {
@@ -1127,7 +1127,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
         ShellHomeMode::User,
     );
     while state.notification_dismiss_active_modal_without_response() {}
-    state.screen_stack = vec![ShellScreen::Settings];
+    state.set_navigation_path(vec![ShellScreen::Settings]);
     state.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
@@ -1345,7 +1345,7 @@ fn shared_layout_main_is_used_without_a_second_chrome_inset() {
     while state.notification_dismiss_active_modal_without_response() {}
     let mut motion = ShellMotionEffects::default();
     motion.update_layout(&state, &layout, theme, false);
-    state.screen_stack = vec![ShellScreen::Editor];
+    state.set_navigation_path(vec![ShellScreen::Editor]);
     state.refresh_hit_map();
     motion.focus = None;
     motion.update_layout(&state, &layout, theme, false);
@@ -1402,7 +1402,7 @@ fn page_overlay_covered_by_shell_modal(
         ShellHomeMode::User,
     );
     while state.notification_dismiss_active_modal_without_response() {}
-    state.screen_stack = vec![screen];
+    state.set_navigation_path(vec![screen]);
     if screen == ShellScreen::Clock {
         state.clock_create_state = Some(ClockCreateState::default());
     } else {
@@ -1511,7 +1511,7 @@ fn changing_pages_cancels_old_outgoing_cells_but_keeps_new_page_entry() {
     motion.process(Duration::ZERO, &mut old, &state);
     assert!(motion.active_visual_outgoing.is_some());
     state.clock_create_state = None;
-    state.screen_stack = vec![ShellScreen::Editor];
+    state.set_navigation_path(vec![ShellScreen::Editor]);
     state.refresh_hit_map();
     motion.focus = None;
     motion.update_layout(&state, &layout, theme, false);

@@ -32,10 +32,7 @@ impl ShellSession {
             )));
             return;
         }
-        if self.active_screen() != ShellScreen::SystemStatus {
-            self.screen_stack.push(ShellScreen::SystemStatus);
-        }
-        self.focused_component = ShellComponent::SystemStatus;
+        self.enter_screen(ShellScreen::SystemStatus);
         self.system_status_route = ui::SystemStatusRoute::Dashboard;
         self.system_status_tab = ui::SystemStatusTab::Overview;
         self.system_status_dashboard_scroll_row = 0;
@@ -77,13 +74,7 @@ impl ShellSession {
         self.system_status_discard_dialog = false;
         self.system_status_discard_confirm_selected = true;
         self.system_status_widget_drag = None;
-        if self.active_screen() == ShellScreen::SystemStatus {
-            self.screen_stack.pop();
-        }
-        if self.screen_stack.is_empty() {
-            self.screen_stack.push(ShellScreen::Home);
-        }
-        self.focused_component = ShellComponent::Home;
+        self.return_from_screen(ShellScreen::SystemStatus);
     }
 
     pub(in crate::session) fn refresh_system_status(&mut self) {

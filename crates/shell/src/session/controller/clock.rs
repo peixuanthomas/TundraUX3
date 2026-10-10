@@ -1,9 +1,7 @@
 use super::super::*;
 impl ShellSession {
     pub(in crate::session) fn open_clock(&mut self) {
-        if self.active_screen() != ShellScreen::Clock {
-            self.screen_stack.push(ShellScreen::Clock);
-        }
+        self.enter_screen(ShellScreen::Clock);
         self.active_popup = None;
         self.clock_create_state = None;
         self.focused_component = if self.is_strict_guest() {
@@ -17,15 +15,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn close_clock(&mut self) {
-        if self.active_screen() == ShellScreen::Clock {
-            self.screen_stack.pop();
-        }
-        if self.screen_stack.is_empty() {
-            self.screen_stack.push(ShellScreen::Home);
-        }
         self.clock_create_state = None;
-        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
-        self.refresh_hit_map();
+        self.return_from_screen(ShellScreen::Clock);
     }
 
     pub(in crate::session) fn load_clock_for_session(&mut self, session: &AuthSession) {

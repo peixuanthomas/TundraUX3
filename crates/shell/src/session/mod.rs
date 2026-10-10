@@ -62,6 +62,8 @@ mod construction;
 mod controller;
 mod localization;
 mod motion_effects;
+mod navigation;
+use navigation::{NavigationCheckpoint, ShellNavigation};
 #[cfg(test)]
 #[path = "../../tests/unit/session/personalization.rs"]
 mod personalization_tests;

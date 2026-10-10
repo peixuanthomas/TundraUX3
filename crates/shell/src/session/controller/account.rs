@@ -16,7 +16,7 @@ impl ShellSession {
 
     pub(in crate::session) fn login_idle_tracking_active(&self) -> bool {
         self.identity_backend != identity::IdentityBackend::Linux
-            && self.screen_stack.contains(&ShellScreen::Login)
+            && self.screen_stack().contains(&ShellScreen::Login)
             && self.app.auth_session().is_none()
     }
 
@@ -1068,7 +1068,7 @@ impl ShellSession {
         self.setup_step = ui::SetupStep::Language;
         self.page_touch.setup_scroll = 0;
         self.setup_focused_field = ui::SetupField::LanguageList;
-        self.screen_stack = vec![ShellScreen::FirstRunSetup];
+        self.reset_navigation(ShellScreen::FirstRunSetup);
         self.focused_component = ShellComponent::SetupLanguage;
         self.active_popup = None;
         self.error_message = None;
@@ -1184,7 +1184,7 @@ impl ShellSession {
         }
 
         self.pending_personalization_session = None;
-        self.screen_stack = vec![ShellScreen::Home];
+        self.reset_navigation(ShellScreen::Home);
         self.focused_component = ShellComponent::Home;
         self.active_popup = None;
         if session.role != UserRole::Guest {
@@ -1211,8 +1211,7 @@ impl ShellSession {
         }
 
         if self.refresh_user_management() {
-            self.screen_stack.push(ShellScreen::UserManagement);
-            self.focused_component = ShellComponent::UserManagement;
+            self.enter_screen(ShellScreen::UserManagement);
             self.user_management_mode = UserManagementMode::Browse;
             self.user_management_focus = UserManagementPageFocus::UserList;
             self.ensure_user_management_selection_visible();

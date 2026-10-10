@@ -543,20 +543,7 @@ impl ShellSession {
     pub(in crate::session) fn close_user_management(&mut self) {
         self.user_management_mode = UserManagementMode::Browse;
         self.resolve_user_management_refresh_alert();
-        if self.active_screen() == ShellScreen::UserManagement {
-            self.screen_stack.pop();
-        }
-        if self.screen_stack.is_empty() {
-            self.screen_stack.push(ShellScreen::Home);
-        }
-        if self.active_screen() == ShellScreen::Launcher {
-            self.focused_component = ShellComponent::Launcher;
-            self.notify_status(i18n::msg!("shell-launcher"));
-        } else {
-            self.focused_component = ShellComponent::Home;
-            self.notify_status(i18n::msg!("shell-ready"));
-        }
-        self.refresh_hit_map();
+        self.return_from_screen(ShellScreen::UserManagement);
     }
 
     pub(in crate::session) fn selected_managed_username(&self) -> Option<String> {

@@ -109,7 +109,7 @@ fn state(role: UserRole) -> ShellSession {
         app::AppCommand::SetDiagnosticsSnapshot(Some(snapshot())),
         Instant::now(),
     );
-    state.screen_stack = vec![ShellScreen::Home, ShellScreen::SystemStatus];
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::SystemStatus]);
     state.focused_component = ShellComponent::SystemStatus;
     state
 }
@@ -133,7 +133,7 @@ fn diagnostics_toolbar_shortcuts_match_in_both_hosts_and_keep_disabled_actions_i
         state.diagnostics_tab = ui::DiagnosticsTab::Logs;
         state.system_status_route = ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Logs);
         if standalone {
-            state.screen_stack.push(ShellScreen::Diagnostics);
+            state.enter_screen(ShellScreen::Diagnostics);
         }
         let route = |state: &ShellSession, key: &KeyInput| {
             if standalone {
@@ -1076,15 +1076,15 @@ fn diagnostics_navigation_and_repair_preview_are_modal() {
 }
 
 #[test]
-fn diagnostics_close_without_system_status_parent_falls_back_to_home() {
+fn diagnostics_close_returns_to_its_actual_parent() {
     let mut state = state(UserRole::Admin);
-    state.screen_stack = vec![ShellScreen::Settings, ShellScreen::Diagnostics];
+    state.set_navigation_path(vec![ShellScreen::Settings, ShellScreen::Diagnostics]);
     state.focused_component = ShellComponent::Diagnostics;
 
     state.close_diagnostics();
 
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(state.focused_component, ShellComponent::Home);
+    assert_eq!(state.active_screen(), ShellScreen::Settings);
+    assert_eq!(state.focused_component, ShellComponent::Settings);
 }
 
 #[test]

@@ -321,7 +321,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn apply_restored_session(&mut self, session: &ShellRestoredSession) {
-        self.screen_stack = vec![ShellScreen::Home];
+        self.reset_navigation(ShellScreen::Home);
         self.active_popup = None;
 
         let (focus_manager, focus_order) = self.focus_manager(Some(session.focused_component));
@@ -331,22 +331,7 @@ impl ShellSession {
         self.refresh_hit_map();
     }
 
-    pub(in crate::session) fn pop_to_home(&mut self) {
-        self.screen_stack.truncate(1);
-        if self.screen_stack.is_empty() {
-            self.screen_stack.push(ShellScreen::Home);
-        }
-        self.focused_component = ShellComponent::Home;
-        self.refresh_hit_map();
-    }
-
     pub(in crate::session) fn cancel_exit_confirmation(&mut self) {
-        if self.active_screen() == ShellScreen::ExitConfirm {
-            self.screen_stack.pop();
-        }
-        if self.screen_stack.is_empty() {
-            self.screen_stack.push(ShellScreen::Home);
-        }
-        self.refresh_hit_map();
+        self.return_from_screen(ShellScreen::ExitConfirm);
     }
 }

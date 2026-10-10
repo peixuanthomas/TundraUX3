@@ -402,21 +402,13 @@ impl ShellSession {
             self.refresh_hit_map();
             return;
         }
-        if self.active_screen() == ShellScreen::Diagnostics {
-            self.screen_stack.pop();
-        }
         self.diagnostics_repair_preview.clear();
         self.diagnostics_repair_selected = 0;
         self.diagnostics_repair_scroll_offset = 0;
         self.diagnostics_repair_confirm_selected = true;
-        if self.active_screen() == ShellScreen::SystemStatus {
-            self.focused_component = ShellComponent::SystemStatus;
-            self.refresh_hit_map();
-        } else {
+        self.return_from_screen(ShellScreen::Diagnostics);
+        if self.active_screen() != ShellScreen::SystemStatus {
             let _ = self.settings_task_runtime.set_system_status_active(false);
-            self.screen_stack = vec![ShellScreen::Home];
-            self.focused_component = ShellComponent::Home;
-            self.refresh_hit_map();
         }
     }
 

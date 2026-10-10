@@ -465,7 +465,7 @@ fn logs_navigation_retains_filters_and_selection_across_close() {
 #[test]
 fn legacy_status_navigation_redirects_to_logs_app() {
     let mut state = state(UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.set_system_status_tab(ui::SystemStatusTab::Incidents);
     assert_eq!(state.active_screen(), ShellScreen::Logs);
     assert_eq!(state.logs_state.section, ui::LogsSection::Incidents);
@@ -506,7 +506,7 @@ fn refresh_preserves_selected_event_and_scroll() {
 #[test]
 fn service_logs_open_exact_linux_filter_and_return_to_the_previous_screen() {
     let mut state = state(UserRole::Admin);
-    state.screen_stack.push(ShellScreen::SystemStatus);
+    state.enter_screen(ShellScreen::SystemStatus);
     state.focused_component = ShellComponent::SystemStatus;
     state.logs_state.query.min_level = Some(LogLevel::Error);
     state.open_service_logs("example.service", "user");
@@ -588,7 +588,7 @@ fn logs_detail_drag_and_cancel_do_not_move_the_event_selection() {
 #[test]
 fn escape_returns_logs_to_launcher_and_global_overlays_hide_background_buttons() {
     let mut state = state(UserRole::User);
-    state.screen_stack.push(ShellScreen::Launcher);
+    state.enter_screen(ShellScreen::Launcher);
     state.focused_component = ShellComponent::Launcher;
     state.open_logs();
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());

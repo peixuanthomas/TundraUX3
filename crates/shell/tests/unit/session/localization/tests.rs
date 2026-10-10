@@ -377,7 +377,8 @@ fn discovered_language_rows_share_setup_render_and_mouse_geometry() {
     )
     .unwrap();
     f.state.save_region_picker_value(Some("en-US".into()), None);
-    f.state.screen_stack = vec![ShellScreen::FirstRunSetup];
+    f.state
+        .set_navigation_path(vec![ShellScreen::FirstRunSetup]);
     f.state.setup_step = ui::SetupStep::Language;
     f.state.focused_component = ShellComponent::SetupLanguage;
     f.state.refresh_hit_map();
