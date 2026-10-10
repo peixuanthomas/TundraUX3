@@ -258,6 +258,14 @@ AppState::snapshot() -> AppSnapshot<'_>
 
 `ShellSession { app, ui }` 统一持有两类状态：它接收 `InputEvent`、完成 Shell 路由和工作流编排，并将领域变更交给 `AppState`。
 
+### 页面返回与合成器的分工
+
+当前页面顺序保存在 `UiSessionState.screen_stack: Vec<ShellScreen>` 中，最后一项是当前页面。它记录实际打开路径，例如 `Home → Launcher → UserManagement`，不是一棵固定的菜单树。同一个页面可能从不同入口打开，例如日志可以从启动器或系统状态进入，所以返回时需要保留实际来路。
+
+按键先由 `controller/input_routing.rs` 分发，页面对应的控制函数再执行关闭、弹出页面栈和恢复焦点。用户管理退出时只移除当前页面，回到原来的启动器并保留选中项；若有创建或编辑表单，第一次 Esc 先取消表单。右上角返回按钮经统一入口转换成 Esc，沿用相同规则。命令行的返回按钮与物理 Esc 有不同用途，详见下文。
+
+目前状态存放位置已经统一，但页面进入、退出和焦点恢复仍分散在各控制函数中，尚未由一个统一的导航管理器接管。后续收拢时，应让 Shell 导航管理器负责打开页面、返回上一页、恢复焦点，并先处理当前弹窗、未保存内容和正在运行的子终端。页面只报告是否可以关闭及需要执行的清理工作。`ScreenCompositor` 根据最终状态绘制页面、标题栏和弹层；绘制顺序不应反过来决定导航，也不应在绘制时修改页面栈。
+
 ### ViewModel、布局与渲染
 
 Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装屏幕 ViewModel。`shell::session::compositor::ScreenCompositor` 负责普通 Shell 每帧的统一合成；runtime 保留终端生命周期和事件循环。UI 通过借用 ViewModel 的 `ScreenContent` 枚举提供页面内容与页面弹层两个独立绘制阶段，不读取整个 `ShellSession`，也不在 render 中驱动领域状态转换。

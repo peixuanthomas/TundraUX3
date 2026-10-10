@@ -1359,6 +1359,41 @@ fn user_management_forms_and_aa_operations_edit_and_delete_accounts() {
 }
 
 #[test]
+fn user_management_escape_returns_to_launcher_and_preserves_selection() {
+    let fixture = FixtureRoot::new("user-management-return-to-launcher");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+
+    let startup = prepare_shell_startup(&platform).expect("admin startup");
+    let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    open_users_from_launcher(&mut state);
+    assert_eq!(
+        state.screen_stack(),
+        &[
+            ShellScreen::Home,
+            ShellScreen::Launcher,
+            ShellScreen::UserManagement,
+        ]
+    );
+
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(
+        state.screen_stack(),
+        &[ShellScreen::Home, ShellScreen::Launcher]
+    );
+    assert_eq!(state.focused_component(), ShellComponent::Launcher);
+
+    // Returning must retain the selected launcher item, so Enter reopens Users.
+    state.apply_input(InputEvent::from_key_label("Enter"));
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    state.apply_input(InputEvent::from_key_label("Esc"));
+    assert_eq!(state.screen_stack(), &[ShellScreen::Home]);
+}
+
+#[test]
 fn compact_user_management_supports_touch_forms_and_the_shared_escape() {
     let fixture = FixtureRoot::new("user-management-compact");
     let platform = mock_platform(fixture.path());
@@ -1425,7 +1460,11 @@ fn compact_user_management_supports_touch_forms_and_the_shared_escape() {
     let back_point = component_center(&state, ShellComponent::BackButton);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, back_point));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, back_point));
-    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(
+        state.screen_stack(),
+        &[ShellScreen::Home, ShellScreen::Launcher]
+    );
+    assert_eq!(state.focused_component(), ShellComponent::Launcher);
 }
 
 #[test]
