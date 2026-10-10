@@ -1,7 +1,9 @@
-mod auto_admin_preview;
-mod clock_scheduler;
-mod screen_keyboard;
+mod input;
+mod previews;
+pub(crate) use app::clock as clock_scheduler;
 pub use auto_admin_preview::run_auto_admin_style_preview;
+pub(crate) use previews::auto_admin as auto_admin_preview;
+pub(crate) use previews::screen_keyboard;
 pub use screen_keyboard::run_screen_keyboard;
 pub use ui::AutoAdminPreviewStyle;
 
@@ -22,21 +24,22 @@ const BANNER_ASSET_KEY: &str = "tundraux3";
 
 // Public models and low-coupling services live in regular modules. Re-exports
 // preserve the crate-root API used by the binary and integration tests.
-mod banner;
-mod first_run_banner;
-mod input_events;
-mod launch_args;
+pub(crate) use input::input_events;
+pub(crate) use startup::banner;
+pub(crate) use startup::first_run_banner;
+pub(crate) use startup::launch_args;
+pub(crate) use terminal_runtime::ansi_foreground;
 mod notification_center;
-mod shell_commands;
-mod shell_components;
-mod shortcuts;
+pub(crate) use input::shell_commands;
+pub(crate) use input::shell_components;
+pub(crate) use input::shortcuts;
 mod spring_style;
 mod startup;
-mod startup_banner;
-mod style_preview;
-mod terminal_events;
-mod terminal_session;
-mod terminal_size;
+pub(crate) use input::terminal_events;
+pub(crate) use previews::style as style_preview;
+pub(crate) use startup::startup_banner;
+pub(crate) use startup::terminal_size;
+pub(crate) use terminal_runtime::session as terminal_session;
 
 pub use style_preview::run_ui_style_preview;
 pub use ui::style_preview::UiStyleVersion;
@@ -70,6 +73,6 @@ mod session;
 pub use session::*;
 
 #[cfg(target_os = "linux")]
-mod linux_startup;
-#[cfg(target_os = "linux")]
 pub use linux_startup::confirm_linux_startup;
+#[cfg(target_os = "linux")]
+pub(crate) use startup::linux_startup;

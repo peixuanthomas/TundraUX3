@@ -28,7 +28,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 - **了解系统运行情况：**查看系统状态、资源使用、日志、通知和诊断信息。
 - **调整使用体验：**选择英文或简体中文、调整外观，以及使用时钟和天气应用。
 
-具体支持的操作和所需条件见 [Linux 系统管理](linux-management.md)。
+具体支持的操作和所需条件见 [Linux 系统管理](../crates/platform/docs/linux-management.md)。
 
 ## 键盘、鼠标或触摸屏
 
@@ -40,7 +40,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 | **仅用鼠标** | 通过可见的按钮、菜单、选择框和滚动条操作，不依赖键盘快捷键。 |
 | **仅用触摸屏** | 通过点按控件和拖动滚动条操作，无需实体键盘或鼠标。 |
 
-各页面的支持仍在完善。鼠标和触摸操作需要终端能够传递相应的指针事件。应用表单中的文字输入仍需要输入工具，例如实体键盘，或终端、系统提供的屏幕键盘。现在可以在外部终端通过 `tundra-cli debug screen-keyboard` 打开英文 QWERTY 屏幕键盘演示。键盘放在终端下半屏，按键宽度随终端宽度调整，包含数字、符号、F1–F12、Shift、Tab、CapsLock、Ctrl、Alt 和右 Ctrl。键盘显示时，实体按键会点亮相应键位。同一命令内的“测试 AA”按钮可打开 AA 输入测试弹窗，再从弹窗中展开屏幕键盘。最终页面合成器负责把键盘从底部绘制在最上方，并将弹窗上移到剩余空间内；键盘可以覆盖状态栏和时间栏，但不会遮挡弹窗或把弹窗移出屏幕。窗口过小时优先保留弹窗，并提示扩大窗口。测试不执行命令或申请授权。界面显示输入的文本和按键组合，并提供收起／展开、复制、粘贴、清空和退出按钮；复制会复制全部文本，粘贴会追加剪贴板内容。它尚未接入应用表单和内嵌 Command Line。因此，包含文字输入的完整纯鼠标或纯触屏操作，仍取决于所用环境。
+各页面的支持仍在完善。鼠标和触摸操作需要终端转发相应事件；应用表单仍需要实体键盘或终端、系统提供的输入工具。外部终端可运行 `tundra-cli debug screen-keyboard` 体验英文 QWERTY 键盘和 AA 输入演示，但它尚未接入应用表单和内嵌 Command Line。详细操作见[调试预览](../crates/shell/docs/previews.md)。
 
 点击底部状态栏的消息区域，可在弹窗中阅读完整文本。长消息会换行，并支持滚动；时钟仍保留独立的点击操作。
 
@@ -98,17 +98,17 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 
 ## 文档
 
-详细文档目前以中文为主。
+详细文档目前以中文为主。从[文档索引](README.md)查找功能说明；实现细节放在各自 crate 内。
 
 - [English README](../README.md)
 - [技术文档](README-TECHNICAL.md)：架构、构建、测试和打包。
-- [Linux 系统管理](linux-management.md)：服务、进程、软件包、网络和磁盘。
-- [正式运维 CLI](operations-cli.md)：脚本命令、授权、任务编号和退出码。
-- [系统配置编辑器](system-config.md)与[用户管理](user-management.md)。
+- [Linux 系统管理](../crates/platform/docs/linux-management.md)：服务、进程、软件包、网络和磁盘。
+- [正式运维 CLI](../crates/cli/docs/operations.md)：脚本命令、授权、任务编号和退出码。
+- [系统配置编辑器](../crates/platform/docs/system-config.md)与[用户管理](../crates/platform/docs/user-management.md)。
 - [Linux 运行说明](packaging/linux/README-LINUX.txt)：运行依赖、权限和便携更新，英文编写。
-- [日志与诊断](LOGS.md)
-- [语言资源与恢复](LOCALIZATION.md)
-- [Linux 更新测试](scripts/tests/README.md)
+- [日志与诊断](../crates/runtime-log/docs/logs.md)
+- [语言资源与恢复](../crates/i18n/docs/localization.md)
+- [Linux 更新测试](../crates/app/docs/update-tests.md)
 
 ## 许可证
 

@@ -1,0 +1,25 @@
+[package]
+name = "auto-admin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+i18n = { path = "../i18n" }
+platform = { path = "../platform" }
+storage = { path = "../storage" }
+terminal-runtime = { path = "../terminal-runtime" }
+ui = { path = "../ui" }
+watchdog = { path = "../watchdog" }
+ratatui.workspace = true
+vt100 = "0.15.2"
+zeroize = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+watchdog = { path = "../watchdog", features = ["test-support"] }

@@ -1,22 +1,23 @@
-mod clear_logs_command;
+mod commands;
 pub use clear_logs_command::ClearLogsAction;
-mod logs_command;
+pub(crate) use commands::clear_logs as clear_logs_command;
+pub(crate) use commands::logs as logs_command;
 pub use logs_command::{LogsAction, LogsFormat, LogsVerb};
 mod arguments;
 mod management_client;
-mod management_command;
-pub use management_command::{ManagementCli, ManagementRequest};
-mod asset_command;
-mod config_command;
-mod launcher_command;
+pub(crate) use commands::asset as asset_command;
+pub(crate) use commands::config as config_command;
+pub(crate) use commands::debug as debug_command;
+pub(crate) use commands::doctor;
+pub(crate) use commands::launcher as launcher_command;
+pub(crate) use commands::management as management_command;
 pub use launcher_command::LauncherAction;
-mod debug_command;
-mod doctor;
+pub use management_command::{ManagementCli, ManagementRequest};
 mod help_text;
-mod path_report;
+pub(crate) use commands::path_report;
 mod repl;
 mod runner;
-mod storage_reset;
+pub(crate) use commands::storage_reset;
 
 pub use arguments::{
     AssetAction, AssetOutput, CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate,

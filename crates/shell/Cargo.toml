@@ -12,6 +12,8 @@ name = "tundra-shell"
 path = "src/main.rs"
 
 [dependencies]
+auto-admin = { path = "../auto-admin" }
+terminal-runtime = { path = "../terminal-runtime" }
 serde_json = "1"
 zeroize = "1"
 ascii-assets = { path = "../ascii-assets" }
@@ -22,7 +24,6 @@ chrono-tz = "0.10"
 crossterm.workspace = true
 ratatui.workspace = true
 tachyonfx.workspace = true
-portable-pty = "0.9"
 vt100 = "0.15.2"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 platform = { path = "../platform" }
@@ -38,10 +39,8 @@ time = { version = "1.3.1", path = "../time" }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
-
 [dev-dependencies]
+auto-admin = { path = "../auto-admin", features = ["test-support"] }
 watchdog = { path = "../watchdog", features = ["test-support", "tokio"] }
 
 [build-dependencies]

@@ -1,0 +1,24 @@
+[package]
+name = "terminal-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+crossterm.workspace = true
+ratatui.workspace = true
+portable-pty = "0.9"
+vt100 = "0.15.2"
+runtime-log = { path = "../runtime-log" }
+platform = { path = "../platform" }
+ui = { path = "../ui" }
+watchdog = { path = "../watchdog" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[dev-dependencies]
+watchdog = { path = "../watchdog", features = ["test-support"] }

@@ -112,8 +112,9 @@ fn timeout_cancels_mouse_capture_and_a_completed_job_cannot_be_killed() {
 
 #[test]
 fn no_owned_process_means_no_force_kill() {
-    let (mut state, job, rx) = session();
-    job.0.helper_control.store(false, Ordering::Release);
+    let (mut state, _, _) = session();
+    let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+    state.auto_admin.job = Some(job.clone());
     job.request_stop(false);
     assert!(matches!(rx.try_recv().unwrap(), OperationInput::Cancel));
     state.poll_auto_admin_stop(Instant::now() + Duration::from_secs(11));

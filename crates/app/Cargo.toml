@@ -12,6 +12,7 @@ path = "src/lib.rs"
 i18n = { path = "../i18n" }
 runtime-log = { path = "../runtime-log" }
 chrono = "0.4"
+chrono-tz = "0.10"
 comrak = { version = "0.54", default-features = false }
 ropey = { version = "1.6", default-features = false, features = ["cr_lines", "simd"] }
 serde = { version = "1", features = ["derive"] }

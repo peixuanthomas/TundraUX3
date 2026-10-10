@@ -1,893 +1,144 @@
 # TundraUX3 技术文档
 
-TundraUX3 是一个以 Rust 编写的终端桌面环境实验项目。它在一个全屏 TUI 会话中串联首次配置、主页、时钟、文件管理、应用启动器、纯文本编辑器、设置、诊断与通知中心。Linux 附着当前系统用户；本地账户登录与 Weathr 锁屏保留在 Windows/macOS。本文面向开发、构建、打包和排障；用户入口二进制仍为 `tundra-shell` 与 `tundra-cli`。
+本文说明整体分工、构建、测试和打包。使用入口见 [中文 README](README.zh-CN.md)；各 crate 的行为、接口和限制放在其目录内，完整导航见[文档索引](README.md)。
 
-## 目录
+## 构建和运行
 
-- [项目定位、平台与环境](#项目定位平台与环境)
-- [快速构建与运行](#快速构建与运行)
-- [启动与事件流](#启动与事件流)
-- [架构与 crate 分工](#架构与-crate-分工)
-- [状态、会话与渲染](#状态会话与渲染)
-- [内置应用](#内置应用)
-- [平台适配](#平台适配)
-- [持久化与身份安全](#持久化与身份安全)
-- [Watchdog 与故障恢复](#watchdog-与故障恢复)
-- [CLI 与交互](#cli-与交互)
-- [测试与 CI](#测试与-ci)
-- [Linux 打包](#linux-打包)
-- [third_party](#third_party)
-- [故障排查](#故障排查)
-- [架构约束](#架构约束)
-- [许可证](#许可证)
+使用稳定版 Rust 和 Cargo，具体 edition、最低版本声明、功能与依赖以根目录及各 crate 的 `Cargo.toml` 为准。
 
-## 项目定位、平台与环境
-
-项目以 `crossterm` 适配终端输入输出，以 Ratatui 处理布局和绘制；应用状态、UI 基础设施、平台能力、持久化、身份认证及进程监督被拆分为独立 crate。它不是图形桌面环境或窗口管理器，而是运行于真实终端中的统一 Shell 体验。
-
-| 项目元数据 | 值 |
-| --- | --- |
-| workspace 版本 | `0.1.1` |
-| Rust edition | `2024` |
-| Cargo resolver | `3` |
-| release panic 策略 | `unwind` |
-| 主要终端 UI | Ratatui + crossterm |
-
-支持 Windows 11、macOS 与 Linux。Linux 首发目标为 x86_64 上的 systemd/Freedesktop 普通桌面会话，包括 Ubuntu LTS、Fedora、GNOME/KDE 与 Wayland/X11；无需 root。Windows 平台要求 Windows 11 build 22000 或更高。
-
-运行时应使用兼容 crossterm 的真实终端，例如 Windows Terminal、iTerm2 或其他兼容实现。默认资源集至少需要 **108 × 20** 个终端单元格；内建 Command Line 在 Tundra 顶栏和状态栏之外需要 108 × 22。程序会综合实际加载的 ASCII 资源、Shell 布局与 Weathr 资源计算下限，因此自定义较大资源会相应提高要求。
-
-Linux 还需要 `xdg-utils` 与 `libglib2.0-bin`；推荐有 session D-Bus、xdg-desktop-portal、polkit 和 XWayland。Wayland data-control 不可用时，XWayland 可作为剪贴板兼容层。
-
-## 快速构建与运行
-
-需要安装支持 Rust 2024 edition 的稳定版 Rust 与 Cargo。在仓库根目录执行：
-
-~~~console
-cargo build -p shell -p cli
-~~~
-
-发布构建：
-
-~~~console
-cargo build --release -p shell -p cli
-~~~
-
-调试构建的入口如下；发布构建位于对应的 `target/release/` 目录：
-
-- `target/debug/tundra-shell`（Windows 为 `tundra-shell.exe`）
-- `target/debug/tundra-cli`（Windows 为 `tundra-cli.exe`）
-
-启动完整 Shell（更新源码后也先构建 CLI，避免 Command Line 使用旧程序）：
-
-~~~console
-cargo build --locked -p cli
+```sh
+cargo build --locked -p shell -p cli
 cargo run --locked -p shell --bin tundra-shell
-~~~
+cargo run --locked -p cli --bin tundra-cli -- debug doctor
+```
 
-Linux 在验证普通进程身份后附着当前 NSS 用户，首次依次完成语言、时区和外观设置后进入 Home（跳过创建用户），后续直接进入 Home。Windows/macOS 首次创建本地管理员账户，后续保留 Weathr 锁屏与本地登录流程。
+更新源码后仍需一起构建 Shell 和 CLI。`cargo run -p shell` 不会重建它使用的 CLI 可执行文件；发布模式为上述构建命令添加 `--release`。
 
-常用 CLI 探查命令：
+默认主题需要至少 **108 × 20** 个终端单元格；内建 Command Line 还需要额外垂直空间。实际下限由资源和布局共同计算，自定义大图案可能提高要求。鼠标和触摸输入取决于终端能否转发事件。
 
-~~~console
-cargo run -p cli --bin tundra-cli -- --help
-cargo run -p cli --bin tundra-cli -- debug asset
-cargo run -p cli --bin tundra-cli -- debug asset banner
-cargo run -p cli --bin tundra-cli -- debug asset home_icons --launcher
-cargo run -p cli --bin tundra-cli -- debug asset launcher_icons --builtin.command-line
-cargo run -p cli --bin tundra-cli -- cls
-cargo run -p cli --bin tundra-cli -- debug doctor
-cargo run -p cli --bin tundra-cli -- debug paths
-cargo run -p cli --bin tundra-cli -- repl
-~~~
+Linux 是系统管理的主要目标。使用当前系统用户启动；缺少图形桌面、D-Bus 或某个助手只影响依赖它的功能。Windows/macOS 用于体验界面，保留本地账户和天气锁屏，不承诺同等系统控制功能。运行条件见 [Linux 说明](packaging/linux/README-LINUX.txt)。
 
-其中第一个 `--` 用于结束 Cargo 自己的参数；其后才是传递给 `tundra-cli` 的参数。
-
-## 启动与事件流
-
-### 启动生命周期
-
-`tundra-shell` 的正常启动分为以下阶段：
-
-0. Linux `main` 先验证 UID/EUID 相等、GID/EGID 相等；root 必须在交互终端确认警告后才能继续。随后解析当前 UID 的 NSS 记录并规范化身份环境；失败时直接退出。
-1. `main` 创建进程级 `WatchdogRuntime`，安装 `ProcessWatchdog`、终端紧急恢复函数，并检查上次未正常关闭的运行标记。
-2. 加载 `ascii-assets` 默认主题，计算共同最小终端尺寸；尺寸不够时在进入全屏前给出可操作错误。
-3. `prepare_shell_startup` 收集平台权限、存储状态和迁移/恢复结果；`storage` 创建目录、校验 schema、迁移旧用户文件，并恢复可重建的损坏文档。
-4. 播放启动 banner，并可在受监督任务中预取天气。
-5. Linux 附着当前用户并按该 UID 的完成标记进入 Appearance 或 Home。Windows/macOS 在本地用户列表为空时创建账户，否则显示锁屏与登录。
-6. 构造同时持有 `AppState` 与 `UiSessionState` 的 `ShellSession`，并建立首屏、焦点和命中表。
-7. 进入事件循环：采集终端、时间与后台任务事件，分发命令，构造 ViewModel，再布局并绘制一帧。
-8. 主运行结果明确区分退出、重启和重置：退出恢复终端后结束；Unix 重启通过 `exec` 保持前台终端组；Windows 重启后由原进程等待新进程退出并传回退出码，避免 PowerShell 提前恢复读取键盘、与新界面争用终端；重置由 Shell 收尾后重新创建初始存储，再按相同方式重启。Windows/macOS 的应用内注销销毁本次 Shell UI 会话并返回锁屏；Linux 不提供注销系统会话的入口。支持电脑重启或关机的平台会先保存编辑器恢复数据、恢复终端，再调用对应的系统接口；请求失败时返回退出菜单并显示错误。
+## 程序如何工作
 
 ```mermaid
 flowchart TD
-    A["tundra-shell"] --> V["Linux: 普通 UID/GID 与 NSS 校验"]
-    V --> B["Watchdog、资源与存储初始化"]
-    B --> P{"身份来源"}
-    P -- "LinuxCurrentProcess" --> F{"Appearance 已完成？"}
-    F -- "否" --> G["Appearance"]
-    F -- "是" --> I["Home"]
-    G --> I
-    P -- "LocalAccount: Windows/macOS" --> L["本地账户设置 / 锁屏 / 登录"]
-    L --> I
-    I --> J["事件循环、状态转换、ViewModel、Ratatui 帧"]
-    J --> K["退出或显式重启：保存恢复数据并恢复终端"]
+    Start[启动入口] --> Check[检查身份、资源、存储和上次运行]
+    Check --> Session[建立 Shell 会话]
+    Session --> Input[读取终端输入和后台结果]
+    Input --> App[处理命令并更新 app 状态]
+    App --> View[Shell 组装界面数据]
+    View --> Render[ui 布局绘制，Shell 合成整帧]
+    Render --> Input
+    Input --> Exit[保存恢复数据、收尾任务、恢复终端后退出]
 ```
 
-### 输入、路由与绘制
+Linux 使用当前进程的 NSS 系统用户，首次完成语言、时区和外观设置，之后进入主页。Windows/macOS 使用本地账户设置、登录和锁屏。Shell 的实际启动、焦点和返回规则见[会话说明](../crates/shell/docs/session.md)。
 
-Shell 会把 crossterm 事件规范化为 `ui::InputEvent`。键盘保留完整阶段 `Press`、`Repeat`、`Release`，以及 Shift、Control、Alt、Super、Hyper、Meta 修饰键；鼠标保留移动、按下、释放、点击、双击、拖拽与四向滚动，同时还处理 resize、paste 与 focus 事件。
+## Crate 分工
 
-```mermaid
-flowchart LR
-    A["Crossterm Event"] --> B["ui::InputEvent"]
-    B --> C["route_input_at<br/>焦点、模态与命中测试"]
-    C --> D["ShellCommand"]
-    D --> E["apply_routed_event"]
-    E --> F["AppCommand / AppState::dispatch_at"]
-    F --> G["AppAction"]
-    F --> H["AppSnapshot"]
-    H --> I["Shell presentation"]
-    I --> J["屏幕 ViewModel"]
-    J --> K["Ratatui layout / render"]
-    K --> L["终端帧"]
-```
+下表链接是每个 crate 的文档入口。新增细节写入所属 crate，根文档只维护共有约定。
 
-键盘优先交给活跃模态界面和当前焦点组件。鼠标从命中表中选取目标，层级由低至高严格为 `AppContent < AppOverlay < ShellChrome < ShellModal`；重叠同层目标先比较 `z_index`，仍相同时后注册者优先。这避免退出确认、通知模态等输入泄漏到下层应用。
+| Crate | 负责的内容 |
+| --- | --- |
+| [shell](../crates/shell/README.md) | 页面、焦点、输入路由、弹窗、事件循环和完整帧合成 |
+| [cli](../crates/cli/README.md) | 外部命令、REPL、诊断以及内部助手入口 |
+| [app](../crates/app/README.md) | 应用状态、命令、文件工作流、时钟调度和更新 |
+| [ui](../crates/ui/README.md) | 界面数据模型、布局、绘制和通用控件 |
+| [terminal-runtime](../crates/terminal-runtime/README.md) | 宿主终端模式、子终端、输入编码和终端快照 |
+| [auto-admin](../crates/auto-admin/README.md) | 操作批准、密码和选项输入、任务收尾及授权连接 |
+| [platform](../crates/platform/README.md) | 操作系统路径、文件、进程和系统管理接口 |
+| [storage](../crates/storage/README.md) | 应用文档、格式校验、原子保存、迁移和损坏恢复 |
+| [identity](../crates/identity/README.md) | Linux 当前用户及 Windows/macOS 本地账户 |
+| [system-services](../crates/system-services/README.md) | 共享系统/天气快照及可选后台服务 |
+| [time](../crates/time/README.md) | HTTP 时间同步、时间推进和时区转换 |
+| [weathr](../crates/weathr/README.md) | 天气场景和锁屏画面 |
+| [ascii-assets](../crates/ascii-assets/README.md) | 主题、图案、图标和字体的分发、校验与修复 |
+| [i18n](../crates/i18n/README.md) | 语言目录、消息校验、回退和不可变语言快照 |
+| [runtime-log](../crates/runtime-log/README.md) | 运行事件、脱敏、日志查询、容量和清理 |
+| [watchdog](../crates/watchdog/README.md) | 进程和任务监督、事故报告与操作恢复记录 |
 
-`UiIntent` 是 UI 层的类型化意图契约，可表达 `UiIntent::App(AppCommand)`、焦点、overlay、命中、布局和 redraw 等意图。生产 Shell 的主路径目前仍以 `RoutedEvent`、控制器自身命令与 `ShellCommand` 完成路由和多步工作流；不应把 `UiIntent` 误解为已经取代这条路径的唯一分发机制。
-
-主循环以 250 ms 为 tick 周期运行；每批最多处理 4,096 个就绪事件，并合并连续的 mouse-move 和 resize 事件，既保持其他事件顺序，也避免移动风暴淹没 UI。watchdog 管理的后台任务通过 `mpsc` 发送结果，Shell 在 Tick 中轮询；Launcher 完整性刷新最多 2 个并发任务。后台线程不持有 Ratatui frame，也不得直接更改焦点、命中表或最终绘制。
-
-Unix 终端输入先在 crossterm 本地补丁中完成报文组装与校验，再转换为 `ui::InputEvent`。单独的 ESC 最多等待 50 ms，以兼容转义前缀跨读取边界到达；普通报文使用 250 ms 空闲超时和 4,096 字节上限，括号粘贴使用 5 s 空闲超时和 1 MiB 上限。非法、超时残缺和超长报文会被丢弃，迟到尾部不会回放成快捷键；未完成的粘贴需等到结束标记才能恢复普通输入。警告写入 `ux.terminal.input`，错误码为 `UX_TERMINAL_INPUT_MALFORMED`、`UX_TERMINAL_INPUT_INCOMPLETE` 或 `UX_TERMINAL_INPUT_TOO_LONG`，只记录类型、原因与缓冲字节数，不记录原始输入。正常分段报文会继续拼接，独立 ESC 和有效快捷键仍可使用。
-
-这不等于所有副作用都已从领域层完全移走。`ExplorerFileService` 与 `LauncherController` 目前仍会在 `apply` 中执行一部分平台、文件系统或存储操作；文档应以该现状为准，不应承诺所有平台 I/O 都先被抽成异步领域结果。
-
-### 终端会话、休眠与恢复
-
-`TerminalGuard` 负责 raw mode、备用屏幕、鼠标捕获、focus 事件和 bracketed paste；其 `Drop` 路径和紧急恢复路径都会还原终端。进入休眠前，Shell 保存编辑器恢复数据并退出全屏；恢复后重新建立终端、刷新平台会话、时间与终端尺寸。
-
-Shell UI 或锁屏发生 panic 后，先恢复终端并保存事故报告，再直接显示独立的全屏 panic 页面，不重建登录界面或弹出 critical 提示框。Shell 收到后台任务的 panic 报告时也进入这个页面。页面采用黑底白字，使用代码中硬编码的叉眼、下弯嘴笔记本电脑 ASCII 图，不读取主题或资源文件；未登录、普通用户和管理员都能看到关键报错文本。页面不显示 incident 编号、恢复说明和报告路径，完整事故报告仍照常保存。按 `R` 重启程序，按 `Q`、`Esc` 或 `Ctrl-C` 退出；方向键、PageUp/PageDown、Home/End 和鼠标滚轮用于查看长报错，缩小窗口也不会触发 Shell 的最小尺寸检查。`prepare_shell_startup` 虽收集存储恢复信息，但 `restored_session_from_storage` 目前固定为 `None`；它不会恢复先前保存的页面或 Shell UI 会话。
-
-## 架构与 crate 分工
-
-### 依赖方向
+主要调用关系如下，省略日志、翻译等通用依赖；完整依赖以各 `Cargo.toml` 为准。
 
 ```mermaid
 flowchart TD
-    CLI["cli<br/>运维入口"] --> SHELL["shell<br/>组合与运行时"]
-    CLI --> STORAGE["storage"]
-    CLI --> PLATFORM["platform"]
-
-    SHELL --> UI["ui<br/>布局、渲染、输入基础设施"]
-    SHELL --> APP["app<br/>领域状态与工作流"]
-    SHELL --> IDENTITY["identity"]
-    SHELL --> STORAGE
-    SHELL --> PLATFORM
-    SHELL --> WEATHR["weathr"]
-    SHELL --> WATCHDOG["watchdog"]
-    SHELL --> SERVICES["system-services<br/>runtime 功能：后台服务"]
-    SERVICES --> PLATFORM
-    SERVICES --> TIME["time"]
-    SERVICES --> WATCHDOG
-
+    CLI[cli] --> SHELL[shell]
+    SHELL --> UI[ui]
+    SHELL --> APP[app]
+    SHELL --> TERMINAL[terminal-runtime]
+    SHELL --> AA[auto-admin]
+    SHELL --> SERVICE[system-services runtime]
+    SHELL --> WEATHER[weathr]
     UI --> APP
-    APP --> IDENTITY
-    APP --> STORAGE
-    APP --> PLATFORM
-    APP --> TIME
-    APP --> WATCHDOG
-    APP --> MODEL["system-services<br/>默认：共享数据类型"]
-
-    IDENTITY --> STORAGE
-    STORAGE --> PLATFORM
-    WEATHR --> MODEL
-    UI --> ASCII["ascii-assets"]
+    APP --> ID[identity]
+    APP --> STORE[storage]
+    APP --> PLATFORM[platform]
+    ID --> STORE
+    STORE --> PLATFORM
+    AA --> PLATFORM
+    SERVICE --> PLATFORM
+    SERVICE --> TIME[time]
+    WEATHER --> MODEL[system-services model]
+    APP --> MODEL
 ```
 
-关键边界是：`app` 不依赖 `ui`、Ratatui 或 crossterm。UI 可以读取应用领域类型，但应用命令不携带坐标、`Rect`、`UiId` 或终端按键。`shell` 是组合根，负责连接终端世界、领域状态、平台副作用与生命周期。
+## 共同约定
 
-### 14 个 workspace crate
-
-| Crate | 主要职责 |
+| 范围 | 必须保持的行为 |
 | --- | --- |
-| `app` | `AppState`、`AppCommand`、`AppAction`、只读快照，以及可选的 Editor、Explorer、Launcher、Diagnostics、通知、认证与配置领域模型。 |
-| `ascii-assets` | 主题清单、banner、图标、天气世界、时钟字体的加载、校验和尺寸统计。 |
-| `cli` | `tundra-cli` 参数解析、诊断、路径查看、公开配置读写、存储重置、资源/动画预览与 Weathr 启动；不依赖 UI。 |
-| `i18n` | Fluent 语言目录、资源校验、内置中英文修复、稳定消息与参数契约、不可变内存快照。 |
-| `runtime-log` | 固定语言事件日志、稳定事件代码、可选消息 ID 与结构化参数、历史日志兼容。 |
-| `identity` | Linux 当前进程用户附着及 UID 偏好；Windows/macOS 本地账户、角色、密码与锁定。记录由 storage 持久化。 |
-| `platform` | Windows/macOS/Linux 的系统路径、终端能力、文件系统、启动外部程序、Trash、电脑重启、关机与系统诊断边界。 |
-| `shell` | `ShellSession`、控制器、presentation、终端事件转换、全屏会话、锁屏与应用组合，以及 `tundra-shell` 入口。 |
-| `storage` | TOML/版本化 JSON、原子写入、schema 校验、迁移、恢复与存储健康。 |
-| `system-services` | 共享天气、时间、存储、网络和系统指标数据；开启 `runtime` 功能后提供天气请求、定位、缓存、时间同步、系统采样及后台刷新。 |
-| `time` | `NetworkClock`、`ClockDisplay`、`ClockSnapshot`、HTTP 时间同步与 `TIME_SYNC_INTERVAL`；供 APP、Shell 和后台服务使用。 |
-| `ui` | 输入、焦点、命中测试、通用组件、主题、屏幕 ViewModel、布局和渲染；不拥有终端生命周期。 |
-| `watchdog` | 进程 panic 边界、受管理任务、恢复策略、运行 journal 与事故报告。 |
-| `weathr` | 读取共享快照、绘制天气动画和 ASCII 锁屏场景；资源和显示输入由 Shell 提供。 |
+| 应用与界面 | `app` 不依赖 UI、Ratatui、crossterm；命令不携带坐标、组件 ID 或原始按键 |
+| 绘制 | Shell 组装 ViewModel；页面只绘制 `ShellFrameLayout.main`，全局栏和弹窗由最终合成器安排 |
+| 终端 | Shell 决定生命周期，由 `terminal-runtime` 进入和恢复终端；UI 不操作宿主终端模式 |
+| 系统和存储 | 系统接口通过 `platform`；应用文档格式与保存通过 `storage`；系统配置文件另走授权检查和备份流程 |
+| 后台工作 | 使用 watchdog 管理任务并声明能否安全重放；AA 批准不能替代任务监督或操作系统授权 |
+| 文本 | 编辑器按用户可见的完整字符移动，不能退化为 UTF-8 字节偏移 |
+| 资源 | 图片不可用时保留 ASCII 回退；语言和主题独立，完整规则见各 crate |
 
-源码按相同边界组织：
+所有界面以 [UI 要求](UI-requirements.md)为共同验收标准。安全、授权和恢复要求集中在负责实现的 crate，调用方引用同一份说明。
 
-```text
-crates/
-├── app/src/{application,editor,explorer,launcher,diagnostics}/
-├── ui/src/{foundation,screens,components,assets,theme}/
-├── shell/src/session/{compositor,controller,presentation,runtime.rs,ui_state.rs}
-├── i18n/
-├── runtime-log/
-├── identity/
-├── storage/
-├── platform/
-├── system-services/src/{model,runtime}/
-├── time/src/{clock.rs,network.rs,tests}/
-├── weathr/
-├── ascii-assets/
-├── watchdog/
-└── cli/
-```
+## 验证
 
-`application` 承载跨应用全局状态；APP 领域模块不包含终端渲染。UI screens 按屏幕拆分 model、layout 和 render；Shell controller 处理工作流编排，presentation 转换状态为 ViewModel，runtime 只掌管生命周期、事件循环和外部副作用。
+在仓库根目录运行：
 
-`system-services-model` 已合并到 `system-services`。`model/` 按天气、时间、存储、网络和系统指标组织数据类型；`runtime/` 按配置、天气提供方、定位、缓存、系统采样和时间同步组织服务代码，`runtime/mod.rs` 负责启动、命令处理和刷新循环。crate 根部统一导出调用方使用的类型，`lib.rs` 只保留模块声明和导出。
-
-`system-services` 默认不开启后台服务。APP 和 Weathr 使用 `default-features = false`，Shell 使用 `features = ["runtime"]`。Cargo 会在同一次构建中合并各调用方开启的功能，因此整个 workspace 构建会包含后台服务；单独构建 Weathr 时则不引入 `reqwest`、`platform`、`watchdog` 或 `time`。`scripts/check-weathr-dependency-boundary.sh` 检查这一点。`time` 保留为独立 crate，因为时钟本身也被 APP 和 Shell 使用；内部将时钟推进与 HTTP 请求分别放在 `clock.rs` 和 `network.rs`。
-
-## 状态、会话与渲染
-
-### `AppState`：可测试的领域状态
-
-`app::AppState` 是 UI 无关的状态聚合：它保存时钟与时区、退出状态、通知、认证会话与用户、配置与外观，以及可选的 Explorer、Launcher、Diagnostics、Editor 状态。
-
-```rust
-AppState::dispatch_at(AppCommand, Instant) -> AppAction
-AppState::snapshot() -> AppSnapshot<'_>
-```
-
-显式传入单调时钟 `Instant`，使通知超时、登录锁定等时间行为可确定地测试。`AppAction` **仅**表示 `Redraw`、`Exit`、`Reboot` 或 `PowerOff`；终端恢复、进程结束与操作系统重启、关机由 Shell 执行。`AppSnapshot` 以借用方式给出一致的只读视图，UI 不能经由快照修改 APP，所有更改都必须形成新的 `AppCommand`。
-
-通知系统包括 4 秒 toast、有键告警、FIFO 模态和可抢占的 critical 模态；响应队列有上限，避免异常输入或后台结果无限积压。
-
-### `UiSessionState`：一次终端会话的状态
-
-`UiSessionState` 保存不应写入领域快照的短暂 UI 数据，包括：
-
-- 屏幕栈、当前焦点、悬停目标、弹窗，以及模态关闭后的焦点恢复上下文；
-- 终端尺寸、命中表、拖拽/滚动捕获和最近输入；
-- 列表窗口、编辑器菜单、Settings picker 等显示层选择；
-- 文件与扫描任务句柄、加载/保存进度及其他运行时资源。
-
-`ShellSession { app, ui }` 统一持有两类状态：它接收 `InputEvent`、完成 Shell 路由和工作流编排，并将领域变更交给 `AppState`。
-
-### 页面返回与合成器的分工
-
-`session/navigation.rs` 中的 `ShellNavigation` 保存实际打开路径和各层离开前的焦点，例如 `Home → Launcher → UserManagement`。存储为私有字段，对外的 `ShellSession::screen_stack()` 只提供只读切片。页面调用 `enter_screen`、`return_from_screen`，不能直接增加、删除或清空页面栈；登录、登出、首次设置和会话恢复通过 `reset_navigation` 切换根页面。重复打开当前页面不会多压入一层，关闭请求与当前页面不匹配时不会误退其他页面。
-
-Esc 统一进入 `route_back_key`；返回按钮经过共享的按下、松开检查，再由 `normalize_shell_navigation_input` 转成相同的输入。Shell 弹窗优先接收取消操作，页面控制函数继续处理菜单关闭、表单取消、未保存内容确认、详情返回等本地操作。只有可以离开页面时才调用导航管理器，恢复实际调用页面及其焦点。AA 弹窗也使用共享返回按钮，再按自身当前状态处理 Esc；命令行保留物理 Esc 与强制退出按钮的区别。长按 Esc 的重复事件不会连续退出多层。
-
-编辑器开始打开文件时，导航管理器记录变更前的路径和页面访问编号。取消或失败时恢复原来的调用页面或文件选择器，并保留后来打开的上层页面；若原来的页面已经离开或重新打开，迟到结果不会改写新路径。打开文件成功则保留编辑器的实际来路。文件选择器再次使用文件管理页面时，导航条目保存先前目录、选中项和浏览状态，返回原来的文件管理页面时恢复，避免只恢复页面名称却丢失列表。
-
-`ScreenCompositor` 只根据最终状态绘制页面、标题栏和弹层。它不决定返回目标，也不在绘制时修改导航。详情页的内部选择、表单内容和清理工作仍属于各页面；页面之间的路径与焦点恢复属于导航管理器。
-
-### 弹窗与输入焦点
-
-`session/overlays.rs` 汇总当前页面的弹窗和菜单，再叠加通知、退出确认及 AA，提供统一的前后顺序。输入路由、鼠标命中、焦点和动画都读取这份描述；未显示页面中保留的表单不会接收当前页面的输入。Toast 只显示消息，不接管焦点。
-
-`session/overlay_focus.rs` 中的 `ShellOverlayManager` 记录每层弹窗打开前的焦点。打开时把焦点放入弹窗，关闭时恢复下面一层；替换通知时保留原来的恢复位置。弹窗变化会清除之前页面的按下、拖动和点击记录，防止松开鼠标时误触背景按钮。页内的 Tab 顺序继续使用 UI 的 `FocusManager`，表单字段和按钮选择仍由各页面保存。
-
-`session/overlay_input.rs` 把按键、内容区鼠标和粘贴交给最上层弹窗，动画未达到可交互阶段时先拦住输入。菜单和通知会吞掉粘贴，支持粘贴的管理表单与编辑器配置表单则继续接收文字。Esc 仍走上面的导航返回规则，AA 的授权、密码和运行中交互仍由 AA 处理。后台任务继续使用 watchdog 的受管理任务，不增加第二套任务管理器。
-
-### ViewModel、布局与渲染
-
-Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装屏幕 ViewModel。`shell::session::compositor::ScreenCompositor` 负责普通 Shell 每帧的统一合成；runtime 保留终端生命周期和事件循环。UI 通过借用 ViewModel 的 `ScreenContent` 枚举提供页面内容与页面弹层两个独立绘制阶段，不读取整个 `ShellSession`，也不在 render 中驱动领域状态转换。
-
-每帧以同一份 `ShellFrameLayout` 计算并共享布局：正常尺寸下顶栏与底部状态栏各占三行，中间为 `main`；顶栏最右侧为 `back_button`，底栏进一步划分 `status_message` 与 `time_button`。返回按钮使用 `crates/ui/assets/icons/back.txt` 中的实心左三角图标和共享 Button 组件，在按钮内按下并松开左键后等同于一次 Esc：先按当前页面规则取消弹层或返回，在首页沿用退出确认，在 Command Line 中则触发现有的 Ctrl+Shift+X 强制终止流程，清理子进程树并返回打开命令行的页面；物理 Esc 继续交给子终端，不触发主界面退出。页面内不再放置作用相同的返回或退出按钮；弹窗里的取消、关闭按钮继续保留，文件管理器的历史后退和设置向导的上一步也保留。内容布局、鼠标命中、PTY 可用区域和效果边界使用这套几何信息。页面投影只影响内容区域，顶栏、底栏与时钟保持固定；Toast 限制在状态消息区域，不覆盖时钟按钮。小于最小终端尺寸时，紧凑布局预留顶部一行显示消息和右上角左三角，页面内容及全局弹窗均从下一行开始；无法显示内容的页面继续提示放大窗口。
-
-点击底部 `status_message` 区域会打开“状态详情”，显示点击时正在绘制的完整消息，包括临时提示或错误；之后状态更新不会替换弹窗里的文本。长文本自动换行，可用滚轮、滚动条、方向键、PageUp/PageDown 和 Home/End 阅读，关闭按钮或 Esc 返回。时钟仍独立操作，已有模态弹窗不会被状态详情替换。Command Line 中打开状态详情时，键盘和粘贴交给弹窗，返回按钮先关闭弹窗。
-
-Windows Terminal 下的 WSL 会在普通终端编码中把 Ctrl+Enter 与 Ctrl+J 都发送为 LF。Shell 在识别到 `WT_SESSION` 或 `TERM_PROGRAM=Windows_Terminal`，且没有 tmux/screen 时，启用 [ConPTY win32-input-mode](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md)（`CSI ? 9001 h`），读取原始键码和 Ctrl/Shift 状态。其他 Linux 终端优先使用 Kitty 按键报告，未支持时请求 xterm modifyOtherKeys。退出、临时交还终端和异常恢复会关闭本程序开启的模式；重新进入时再启用。不能把收到的所有 Ctrl+J 或 Ctrl+X 猜成另一组组合键。`third_party/crossterm/tests/escape_input.rs` 检查报告拆包、Unicode、粘贴和鼠标；`crates/shell/tests/unit/terminal_keyboard_pty.rs` 检查真实 PTY 中的模式开关和按键区分。
-
-全部界面遵循 [UI requirements](UI-requirements.md)。共享 Button 的鼠标悬停使用当前强调色，按住时使用向白色混合 35% 的更淡强调色，在同一按钮内松开后才执行动作；完成后恢复普通颜色，下次实际鼠标移动再显示悬停。有限 ANSI 调色板使用对应亮色；禁用按钮不响应，拖出按钮、窗口失焦、调整尺寸或切换页面会取消待执行动作。键盘焦点使用强调色显示，有边框按钮同时强调边框。列表选择、文本选择和滚动条继续沿用各自交互。
-
-键盘选择初始可见；实际鼠标移动、点按（含触屏）、拖动或滚动时隐藏，窗口失焦时也隐藏。隐藏只改变显示，不清除当前选择；重新按下页面支持的操作键时恢复强调并继续操作原来的位置。键盘操作期间不显示停留在原位置的鼠标悬停效果，重复上报相同坐标不会抢走键盘强调。AA 等独立输入弹窗同样使用这套输入方式和按钮状态。
-
-合成顺序固定为：
-
-1. 页面内容；
-2. 页面自身的弹层；
-3. Shell 顶栏、状态栏与 Toast；
-4. Shell 级模态对话框；
-5. 当前帧动画与效果。
-
-合成器集中管理原有的效果生命周期、帧缓存、减少动态效果和跳过单元格的保护逻辑；编辑器、PTY 文本及终端图片仍遵循原有保护规则。锁屏、启动画面、panic 页面和独立样式预览不进入普通 Shell 合成路径。因此领域逻辑继续与终端尺寸解耦，页面布局和合成顺序可以用固定 ViewModel、`Rect` 与测试终端验证。
-
-Home 图标由 `home_icons.toml` 同时声明 ASCII 图案和 PNG；Launcher 使用同样的图形策略。检测到 Kitty、Sixel 或 iTerm2 图形协议时，可在 **Settings → Appearance → Theme → Default theme** 选择 ASCII 或图片图标；这一选择随当前用户 Appearance 持久化。普通文本终端会禁用图片选项。PNG 缺失、损坏或无法准备时，一律自动回退到原有 ASCII 图标，且保持既有四行图标区域和等比例居中布局。
-
-不可用操作统一使用 `TundraTheme::disabled_style()` 的中性灰色，按钮文字、边框与禁用菜单项不再使用主题弱化色、警告色或额外的 DIM 效果；禁用状态优先于悬停、按下、选中和焦点状态。Settings 保留不可用操作原有的按钮与步进器形态，并将禁用状态注册到共享按钮命中区域；Launcher 的不可用图标卡片使用灰色 ASCII 图标，避免彩色图片覆盖禁用样式。操作权限与执行条件仍由原有控制器检查。
-
-### System Status 数据流与权限边界
-
-System Status 的只读数据流为：`platform` 原生采集器 → `system-services` 中由 `Arc`/`watch` 发布的不可变 `SystemSnapshot` → APP 领域快照 → Shell 按角色过滤的 ViewModel 与通知 → UI。前台活动时每 5 秒采样，后台时每 30 秒采样；用户也可以请求即时刷新。存储压力告警只在达到压力条件时产生，各数据项可独立标记为 `Stale` 或 `Unavailable`，不会因单项失败而把整个快照伪装成最新或完全不可用。
-
-Linux 当前用户可查看其进程权限允许的明细，不以 UX 角色推导系统权限。Windows/macOS 本地账户中，管理员和普通用户都可查看完整明细，访客没有 System Status 入口；诊断修复等写操作仍只允许管理员执行。网络 link 仅表示本机网络接口的链路状态，不代表存在默认路由、互联网连接或任一服务可达；采集器不收集 MAC 地址、SSID，也不执行外部 probe。
-
-终端能力边界同样遵循分层：操作系统查询、环境变量和 stdio 访问位于 `platform`，Shell 将结果转换为展示模型，UI 只消费终端字节或 RGBA 图像数据。
-
-### ASCII 资源约束
-
-资源清单固定要求 25 项：20 个文本资源、4 个 TOML art set 和 1 个时钟字体。文本资源只能包含可打印 ASCII；TOML art set 使用 schema v1。图片路径不得是绝对路径或包含路径穿越，并且只允许 GIF、JPEG、PNG、WebP。
-
-资源根可由 `TUNDRA_ASCII_ASSETS_DIR` 指定，也会从二进制同目录查找；Linux 在前两者未命中时再回退至 `/usr/share/tundraux3/assets`。所有资源都会参与尺寸统计，因此资源更新可能改变启动时的最小终端要求。
-
-## 内置应用
-
-### Linux 运维应用
-
-启动器提供服务、进程、软件包、网络、磁盘和用户管理；用户管理已从首页移到启动器。具体操作和支持范围见 [Linux 系统管理](linux-management.md)。各页面保存查询、选中项和后台任务状态，切换页面不会停止安装。列表随选择更新详情，至多两个主操作常驻，其余进入“更多操作”，有任务时显示“当前任务”。
-
-`platform::management` 定义查询、固定操作和任务事件，Shell 通过后台线程读取，UI 负责显示和输入。Linux 首次内置提权通过 sudo 启动 `tundra-cli __privilege-session`；首次密码提示说明授权保留到当前 Shell 退出。密码只通过 stdin 送给 sudo，验证后清除，不写入文件或命令参数。后续系统管理、用户管理、关机重启和任务重连共用这一授权，每次操作仍须通过 AA。sudo 使用带命令的 `-k`，不借用或刷新其他程序可用的密码缓存。
-
-授权程序只持有创建时继承的私有双向连接，不创建可供其他程序连接的会话 socket，也不保存密码或令牌文件。Shell 禁止同用户进程通过 ptrace 或 `/proc` 复制授权，连接描述符带 close-on-exec 标记，不传给外部命令。退出、注销或通信失效时撤销连接，授权程序随后退出；不会因此杀死已启动的独立任务。后台任务的 `control.sock` 保持 root 所有且仅接受 root，授权程序核对固定 `/run/tundraux3-management/<actor>/<operation>/control.sock` 的归属与权限后，将已经连接的描述符交给当前 Shell。新启动的 Shell 需重新授权才能重连旧任务。
-
-网络更改先保存原配置，再通过 systemd 启动独立恢复助手 `__network-rollback`。普通地址配置等待 120 秒确认；Wi-Fi 验证所选网络和需要的地址后自动保留，失败恢复。进程信号使用 pidfd，并核对进程启动标识；明细只对选中进程采集。软件包交互模式保留原生 AA 终端；脚本模式采用明确的非交互参数与配置保留策略，客户端超时不会终止已开始修改的事务。磁盘扫描保持原用户权限，不跟随符号链接或越过挂载点。
-
-`platform::management::client` 和 `authorization` 保存 UI/CLI 共用的授权、助手连接、事件读取和重连代码。`OperationProblem` 提供稳定错误码、下一步和技术详情；`ManagementAction` 用 `primary`、`group` 和固定 `values` 描述操作，不按按钮位置决定行为。正式命令见 [运维 CLI](operations-cli.md)，`config` 继续管理 Tundra 自身配置。配置会话通过私有事件交给现有编辑器，预览、检查、保存、文件属性、恢复记录和按需加载见 [系统配置编辑器](system-config.md)；配置内容不进入普通编辑器恢复草稿。
-
-软件包后端 `PackageBackend::Pacman` 通过固定 `/usr/bin/pacman` 只读命令查询本地与缓存同步数据库，保留原生仓库优先级；仓库候选查询使用 pacman 自带的官方 `/usr/bin/pacman-conf` 解析规范化生效配置及 Include。依赖仓库的预览、搜索、更新列表、安装和目标升级要求每个配置仓库同时启用 `Search`、`Install`、`Upgrade`（默认 `Usage = All` 满足）；不同用途或完全禁用的仓库明确报告不支持，防止无目标查询与实际事务的仓库资格不同。同步查询的任何 stderr 诊断都会拒绝结果，即使退出为 0；本地 `-Qi` 可容忍同步缓存警告。`pacman-conf` 缺失、同步缓存不可用或仓库配置不受支持时，本地已安装列表/详情保留只卸载行操作，全局明确确认的完整系统升级仍可用。foreign 已安装包可查看和卸载，不提供 AUR 构建、安装、更新或助手集成。
-
-`pacman_install`、`pacman_upgrade` 和 `pacman_upgrade_all` 均使用 `pacman -Syu --needed`（指定目标时追加 `-- 软件包名`），刷新源并完整升级系统，避免部分升级；刷新源入口使用同一完整升级事务，不执行单独的 `-Sy`。普通卸载使用 `pacman -R -- 软件包名`，不递归、级联删除或清理配置。任务启动前拒绝已安装版本或缓存候选身份已变化的旧请求；缓存版本只是预览，刷新后的依赖、最终版本和整个系统事务仍由 pacman 原生提示在现有 AA/PTY 流程中确认。`.pacnew`/`.pacsave` 由用户按输出处理，未新增提权基础设施或密码保存。
-
-### AutoAdmin（AA）
-
-设置 → 系统 → AutoAdmin 保存 `config.toml` 的 `auto_admin`：`manual`（默认，手动批准）、`automatic`（自动批准）、`deny`（一律禁止）。手动模式先显示随内容收缩的确认弹窗，列出操作、目标和非密码参数，默认聚焦“同意”；独立按下 Enter/空格批准后才启动需要权限的操作，也可选择“拒绝”或按 Esc 取消，直接关闭弹窗，不再显示拒绝结果页。用于打开弹窗的按键连发不会继续触发批准。弹窗采用 `debug test-aa-style3` 的深蓝底、青色边框和 AA 分栏标识，压暗后方页面；窄窗口隐藏左侧标识。打开和关闭复用全局弹窗动画，遵循动画速度与减少动态效果设置。按钮按实际数量在内容区居中排列；任务完成后收起空白输出区域，保留已有输出和历史查看能力。禁止模式在启动系统命令之前拒绝。自动模式只省去 AA 确认，不代替 sudo/polkit 授权，也不替用户回答命令中的问题。无法读取配置时拒绝新请求。
-
-内置服务、进程、软件包、网络、磁盘操作中的提权步骤，以及用户管理中的写操作和电脑关机/重启，都从 AA 进入。创建用户和修改资料的参数仍在相应页面填写，确认和执行过程统一显示在 AA；修改密码直接进入 AA，不再使用单独密码表单。管理页面的终端按钮或 Ctrl+T 会重新打开该任务的 AA。普通查询不要求批准。AA 不修改系统授权策略，也不拦截用户自己在 Command Line 中输入的命令或外部程序的系统弹窗。
-
-用户管理、系统管理和电源操作共用 AA 后台任务入口：由 watchdog 创建一次性任务，再等待 AA 批准并执行各自的操作，不自动重放写操作。任务启动失败或执行中发生 panic 时，AA 显示失败并清除待回答的问题；panic 仍由 watchdog 记录。任务结束却未收到明确结果时，AA 显示结果未知，已有完成、失败或拒绝状态不被覆盖。
-
-同意后，弹窗显示实时输出，接收文字、回车、退格、方向键、功能键、组合键和粘贴。软件包任务使用真正的 PTY（让子程序像在独立终端中一样运行）；y/n、配置文件冲突和安装脚本的问题直接在里面回答。sudo 的密码和后端发出的选项问题也在 AA 中输入，密码用圆点隐藏，选项按显示的编号加回车回答。AA 输入不写入按键诊断或操作描述；自动批准不会保存密码。
-
-确认阶段 Tab/Shift+Tab/左右键切换同意与拒绝，Enter/空格确认，Esc 拒绝。运行时 F6 在终端和按钮之间切换；按钮焦点下用 Tab/Shift+Tab/方向键选择、Enter/空格执行、Esc 返回终端。终端焦点下普通 Tab、方向键和 Esc 属于子终端。Shift+PageUp/PageDown 和滚轮查看历史。
-
-AA 确认、按钮激活和后端问题提交会消耗当前按键；同一键的 Repeat 不进入下一个输入界面。没有松键事件的终端将连发报为 Press，此时一直拦截相邻间隔小于 750 ms 的同键连发；明确松键、按下其他键或停止连发后可继续输入。
-
-AA 执行期间始终显示在前台，不能收起弹窗或操作后面的页面，也没有“后台运行”按钮。此时 F12 不关闭弹窗，也不作为输入发给任务。执行前仍可拒绝或取消；任务完成、失败或连接断开后，保留输出，Enter/空格/Esc 或“关闭”退出，F12 可关闭或重新查看最近任务。运行时显示 y、n、Enter 三个输入按钮，Linux 另有独立一行的“终止任务”。实际执行仍由工作线程负责，界面可以继续接收密码、选项和终端输入；已准备好的程序更新也等待当前 AA 结束后重启。一次只接受一个尚未结束的 AA 请求，避免把输入送到其他任务。软件包写入不会因 Ctrl+C/Ctrl+D/Ctrl+Z 或连接断开而被强行中断；常规取消仍可在软件管理器自己的确认处回答 n。异常退出 Shell 后的助手任务仍可通过管理页面“重新连接”接回。
-
-点击“终止任务”后，AA 停止接受新的终端输入，向当前任务请求终止，并从点击时开始等待 10 秒。系统管理助手的独立控制循环向该任务的子进程发送 SIGTERM；自身密码修改的 passwd 进程也使用相同的进程控制。进程用 Linux pidfd 保存稳定引用，避免进程编号被重新使用后误杀其他程序；已发现的后代进程会保留到结束，退出的父进程不会使它们从终止列表消失。关闭页面、普通取消和断开连接不会触发这些信号。
-
-等待超时会显示“进程可能卡死”的警告，说明强制结束可能造成系统损坏、软件包或账户数据不完整，并提供“继续等待”和“立即杀死进程”。默认选中继续等待；Tab/方向键选择、Enter/空格确认，Esc 继续等待，PgUp/PgDn 或滚轮查看较长的警告。只有再次明确选择杀死才发送 SIGKILL；没有自动升级为强杀的计时器。助手先杀死并等待当前任务子进程退出，再结束本次助手，不结束 Shell 或整个授权会话。发送信号不等于任务已结束，AA 继续等待结果；内核 I/O 无响应时，SIGKILL 也可能不能立即完成。任务先返回则清除警告。通过 D-Bus 等方式等待共享系统服务、没有独立本地进程的任务只能请求取消，超时会明确说明并禁用杀死按钮；不能通过杀死 Shell、AccountsService 或 logind 来结束这类任务。强制中断不保证撤销已经提交给系统服务的修改，重新执行前应检查系统实际状态。
-
-### Weathr 锁屏
-
-`WeatherProvider` 支持 Open-Meteo 与 Met Office；但 APP 和启动预取目前固定使用 Open-Meteo，尚未依据 `Config.provider` 选择 Met Office。坐标可来自地址搜索、配置位置或时区对应城市。显式 refresh 会绕过缓存；APP 内存天气缓存 TTL 为 300 秒，天气磁盘缓存为 300 秒，位置、地址和地理编码缓存为 24 小时。Shell 可以在启动时预取天气。
-
-天气标准化结果、昼夜、季节和动画共同决定 ASCII 房屋、树木、云、雨雪和月相等场景。锁屏支持 12/24 小时制、终端 resize、任意按键或点击终端任意位置进入；资源尺寸会抬高共同最小终端要求。Shell 锁屏模式提示进入系统，由 Shell 负责创建 watchdog 与恢复终端。锁屏 UI 发生 panic 时直接进入全屏 panic 页面，等待用户重启或退出。
-
-### Explorer
-
-Explorer 维护过滤、排序、多选、历史、剪贴板、拖放、冲突处理与进度；领域层还描述目录条目和操作结果。平台层完成枚举、复制、移动、重命名、打开与移入系统回收站。`ExplorerTaskEngine` 为复制、移动和回收站操作提供单 worker、取消、暂存、journal/checkpoint 与崩溃恢复；它不是由 `AppState::dispatch_explorer_at` 直接接线。
-
-耗时文件操作会显示阶段进度，名称冲突、删除和清空回收站都先进入确认工作流。与此同时，`ExplorerFileService` 仍会在 apply 路径执行一部分平台、文件系统或存储操作，不能将其描述为所有副作用都已异步抽离。
-
-批量操作使用当前可见列表中的已选项：Ctrl/Cmd+点击或空格逐项勾选，Shift+点击/方向键连续选择，Ctrl/Cmd+Shift 扩大选择时保留原有勾选。Ctrl/Cmd+方向键只移动焦点；Home/End 和 PageUp/PageDown 跳到首尾或翻页，可配合 Shift 选择。Ctrl/Cmd+A 全选、Ctrl/Cmd+I 反选、Ctrl/Cmd+Shift+A 取消选择。C/X/V 复制、剪切和粘贴全部已选文件或文件夹，D 或 Delete 按删除确认设置将它们移入系统回收站。所有已选文件行持续显示选中底色，鼠标操作不会隐藏已选范围；普通点击恢复单选，Ctrl+点击已选文件会取消该项。右键或 Shift+F10 打开菜单，提供选择操作和粘贴入口；点击菜单外的页面空白处或按 Esc 关闭菜单，关闭点击不会同时操作下方文件；过滤掉的条目不参与批量操作。N/T 新建文件夹/文本文件、F2 重命名单个已选项、Alt+Up 返回上级目录；Ctrl/Cmd+C/X/V 保留为兼容快捷键。文件操作单键仅在浏览列表或菜单时生效；输入路径、搜索词、新文件名和重命名时，C/X/V/D 等字母用于正常输入。
-
-在普通目录的列表空白处右键，可选择“在此处打开终端”，以当前目录启动内建 Command Line；路径直接作为子进程工作目录传入，中文、空格和特殊字符无需拼成命令。此入口沿用 Command Line 权限检查，无权限时禁用，回收站和文件选中菜单不提供此项。退出终端后返回原文件管理器目录；从 Launcher 打开终端仍使用默认的用户文档目录。
-
-点击路径栏“编辑”或按 Ctrl/Cmd+L 后，光标位于现有路径末尾，直接输入会追加文字。左右键移动光标，Shift+左右键选择文字；Home/End 跳到首尾，也可配合 Shift 选择。Ctrl/Cmd+A 全选路径，输入或粘贴替换选中的部分；Backspace 删除前一个字符，Delete 删除后一个字符，有选中内容时都删除选中的部分。输入和粘贴的 `/`、`\` 自动转换为当前系统的路径分隔符；长路径编辑时随光标横向滚动。
-
-Windows、macOS 和 Linux 的 Trash 实现均封装在 `platform`，APP 不拼接系统回收站路径，也不直接调用平台命令。
-
-### Launcher 与内建应用
-
-页面按钮会显示对应快捷键；先用方向键或 Tab 选择项目，再按 Enter，也可执行当前按钮。主页的 E/A/S/M/U 分别打开文件管理器、启动器、设置、系统状态和用户资料；Launcher 使用 Enter 打开、V 切换视图、R/F5 刷新、Delete 移除可管理的外部项目。
-
-新增运维页面的常用按键如下。字母快捷键只在浏览时触发；搜索框、路径框、密码框和表单输入中的字母正常输入，不执行页面操作。任务执行、确认和权限限制与点击按钮一致。
-
-| 页面 | 常用快捷键 |
-| --- | --- |
-| 文件管理器 | S、Ctrl+F 或 `/` 搜索，F6 排序，F5 刷新；保留原有文件操作快捷键 |
-| Linux 服务、进程、软件包、网络、磁盘 | S 搜索，R/F5 刷新，F4 详情，Ctrl+Enter 应用搜索或提交表单，Ctrl+U 清除输入，Ctrl+T 输出；各操作按钮标出字母或功能键，也可用 1–9、0 选择前十项操作 |
-| 日志 | O/Enter 打开，R/F5 刷新，L/M/T 按级别/模块/时间筛选，C 清除筛选，I/E 查看相关事故/事件 |
-| 系统状态 | E 编辑，A 添加，F4 打开尺寸选择，S 循环尺寸，Delete 删除组件，Ctrl+S 保存布局 |
-| 设置 | Enter/空格打开，左右键调节，上下键选择，Tab/Shift+Tab 切换分类；输入弹窗 Enter 应用、Esc 取消 |
-| 时钟 | N 新建、M 管理；创建弹窗 F3 新建闹钟、F4 新建计时器、Esc 取消 |
-| 登录与账号表单 | 登录密码框按 Enter 登录，F2 显示/隐藏密码；账号表单按 Ctrl+Enter 提交，账号列表各操作按钮显示对应字母 |
-| 初始设置 | Ctrl+Enter 继续/提交/完成，时区页 Alt+Left 返回上一步 |
-| 编辑器设置弹窗 | T 开关，Tab 选择字段，左右键或 -/+ 调整，R 恢复默认，Ctrl+S 保存，Esc 取消 |
-
-弹窗保留确认和取消按钮及对应提示。页面右上角左三角与 Esc 保持相同作用。
-
-Launcher 存储平台可执行项目及固定顺序，支持图标/列表视图。持久化记录绝对的非链接目标、目标类型、批准者和批准时间；刷新列表和启动前仅检查目标是否仍位于记录的路径，不计算或比较内容指纹、大小、修改时间或类型变化。旧配置中的指纹字段兼容保留但不再使用。脚本、安装包和快捷方式还需要二次确认。扫描和启动由平台适配器与 `LauncherController` 协作，结果回流 APP；`LauncherController` 目前仍会在 apply 路径完成一部分平台、文件系统或存储操作。旧配置中的目录固定项仍可读，但只有可执行条目会被当作可启动项目。
-
-主页入口和 Launcher 应用均单击打开，无需双击。共用按钮要求在同一按钮内按下左键，并在 500 毫秒内松开才执行，不设最短按住时长；超过 500 毫秒的长按和拖动均不算单击。Launcher 的图标和列表视图都支持此操作；图标拖动排序时不会启动应用。
-
-Launcher 固定提供 **Editor**；Linux 当前用户及 Windows/macOS 本地管理员还会在第一项看到 **Command Line**。这些内建应用不写入 Launcher 配置，不能删除或拖动排序。图标由 `launcher_icons.toml` 中的 built-in application ID 定义。
-
-打开 Command Line 后，`CommandLineHost` 在隔离 PTY 中从自身二进制目录启动 `tundra-cli repl --embedded`，以 `xterm-256color` 运行，并使用有 2,000 行回滚的 vt100 内存屏幕解析子终端单元格，再在 Tundra chrome 中绘制。提示符和输入使用普通命令输出的文字颜色，不单独套用强调色。子进程输出不会直接写入宿主终端；所有 OSC 控制串（包括 OSC 52 剪贴板请求）都会被过滤。`Ctrl+C` 转发给子 CLI，`Ctrl+Shift+X` 紧急终止并清理子进程树（Windows Job Object、Unix 进程组）；输入 `exit` 正常返回打开终端前的 Launcher 或 Explorer。子 CLI 以退出码 `75` 请求重置时，Shell 统一完成重置并重启。
-
-`cargo run -p shell` 只构建主界面，不会重新构建 `tundra-cli` 可执行文件。若更新源码后 Command Line 仍显示旧提示符，先运行 `cargo build --locked -p cli` 再启动 Shell；发布模式需要对应使用 `--release`。两者必须放在同一构建目录，便携包也应一起更新两个程序。
-
-### 纯文本编辑器
-
-编辑器以 `Rope` 保存文本，并按 grapheme（用户看到的一个完整字符）移动光标，因此 CJK、emoji 和组合字符不会被截断。它只有纯文本编辑界面，没有 Source/Rich 切换、Markdown 格式按钮或预览。`.md`、`.markdown` 等文件与 `.txt` 一样直接读取和写回原文，Markdown 标记不会被解析成标题、列表或其他富文本内容。
-
-打开和保存由后台任务执行；保存使用精确 revision 的 `SaveSnapshot`，旧 revision 即使成功也不会清除较新 revision 的 dirty 标记。Shell 用文档 fingerprint 发现外部修改，面对未保存内容关闭、打开其他文件或退出时提供保存/丢弃/取消。恢复文件按节流策略写入，避免每次按键落盘。
-
-Settings 的 Editor 分类可配置 Explorer 交给内置编辑器打开的后缀；匹配不区分大小写，支持 `.d.ts` 等复合后缀。清空列表会把所有文件交回系统默认应用。
-
-默认列表包含 Markdown、`.txt`、`.log`、`.json`、`.jsonl`、`.toml`、`.yaml`、`.yml`、`.ini`、`.cfg`、`.conf`、`.xml`、`.csv`、`.tsv`、`.c` 和 `.h`。已有配置中保存的自定义列表继续生效，不会自动追加后缀。
-
-Editor 仅对 `.c`、`.h` 文件启用 C 语法高亮，区分关键字、字符串和字符常量、数字、注释及预处理指令。高亮只改变显示颜色，不改动文件内容；选区颜色优先。程序从完整文本计算并缓存标记的字节范围，滚动时复用，因此跨行注释和横向滚动中的字符串仍能正确着色；编辑、撤销和重做后重新计算。其他后缀保持普通文本显示。
-
-文本编辑器左侧固定显示行号，横向滚动只移动正文。程序与上次成功保存的文本逐行比较：新增行号为绿色，修改行号为黄色；删除行用行号与正文之间的红色上横线标出，文件末尾删除用红色下横线标出。无需 Git 仓库，也不执行 Git 命令。打开文件后没有标记，保存成功后以实际写入的快照重新比较；保存失败保留标记，撤销和重做同步更新。比较结果按当前版本和保存版本缓存；大段重复或完全重写的内容超过比较工作量上限时，整段保守地标为替换，避免阻塞输入。
-
-### 时钟、Settings 与 Diagnostics
-
-System Status 的进程详情使用彩色 CPU、内存用量条，以及右对齐的 PID、CPU%、内存列；名称使用剩余宽度。PID 为青色，内存为紫色，CPU 占用低于 40% 为绿色、40% 起为黄色、80% 起为红色。保留 CPU 和内存两份排行榜及其榜单标识，选中行以背景、加粗和下划线提示，数值颜色继续保留。过期和不可用数据仍明确显示对应状态。矮窗口省去内层边框，并优先保留表头和进程行。
-
-Settings 已移除不可用的 Sound、Display、Wi-Fi、Bluetooth 四个分类。网络操作从启动器进入网络应用；Windows/macOS 保留各自现有功能，缺少平台支持的操作明确显示不可用。
-
-后续系统集成接口位于 `app::system_settings`：`SystemSettingsBackend` 提供缓存 `snapshot`、非阻塞 `submit` 和 `poll`；`SystemSettingsSnapshot` 按类别携带可用性及可选状态，`SystemSettingsRequest` 使用稳定设备／网络标识表达操作，`OperationStatus` 区分不可用、执行中、完成和失败。`None` 表示未获取，`Some(Vec::new())` 才表示真实查询后的空列表。Shell 当前只持有 `UnavailableSystemSettingsBackend`，在 `settings_devices` 中将原因转换成界面提示并统一拦截操作。后续适配器应通过现有受监督后台任务执行 I/O，并补齐真实设备选择、凭据／配对确认和失败恢复流程；UI 不依赖平台 API，本次不扩展 `platform::Platform` 或存储 schema。
-
-`time` crate 每 5 分钟按顺序请求 Google、Cloudflare、Microsoft 的 HTTP `Date` 响应头；这不是 NTP。每次连接超时和总超时均为 5 秒。同步成功后，以 UTC 锚点加 `Instant` 推进当前时间，再通过 `chrono-tz` 投影到配置 IANA 时区，避免将 DST 写死为固定偏移。同步失败时保留可信的既有锚点；没有可信锚点才回退系统时间。时钟项目持久化于 `clock.v1.json`。
-
-Settings 的时间设置可使用平台时钟、默认 HTTP(S) 时间服务器或自定义地址。自定义地址仅在返回有效 `Date` 响应头并确认可同步后保存。全局选项写入 `StorageConfig` 并同步 AppState；外观选项写入当前用户账户并即时应用主题。System Status 的 Diagnostics、Logs、Incidents 分别显示健康检查、日志和事故报告，可用 H/L/I 进入，也可分别加入仪表板；右上角不再显示入口按钮。空白处右键先打开添加菜单，确认添加新组件后才进入编辑模式。选中组件通过强调色边框提示，编辑时其余组件边框每两秒切换一次明暗，并显示固定的编辑提示；减少动画时保持静态强调边框。System Overview 详情独立展示 CPU、内存、存储、电池用量条、网络和温度趋势，以及运行时间和主要进程，不受已添加组件影响。Diagnostics 不再通过 O 隐藏跳转到日志页面；Logs 和 Incidents 中的 O/Enter 打开选中的文件。`DiagnosticsTaskRuntime` 是由 watchdog 管理的单 worker，汇总平台能力、存储文档健康、watchdog 报告与日志，修复操作先给出预览再由用户确认。修复存储后会锁存“需要重启”的状态，必须重启才能继续使用已修复的存储。
-
-## 平台适配
-
-### 应用数据路径
-
-| 用途 | Windows | macOS | Linux |
-| --- | --- | --- | --- |
-| 配置 | `%APPDATA%\TundraUX3\config.toml` | `~/Library/Application Support/TundraUX3/config.toml` | `$XDG_CONFIG_HOME/TundraUX3/config.toml`，默认 `~/.config/TundraUX3/config.toml` |
-| 状态 | `%LOCALAPPDATA%\TundraUX3\state` | `~/Library/Application Support/TundraUX3/state` | `$XDG_DATA_HOME/TundraUX3/state`，默认 `~/.local/share/TundraUX3/state` |
-| 缓存 | `%LOCALAPPDATA%\TundraUX3\cache` | `~/Library/Caches/TundraUX3` | `$XDG_CACHE_HOME/TundraUX3`，默认 `~/.cache/TundraUX3` |
-| 日志 | `%LOCALAPPDATA%\TundraUX3\logs` | `~/Library/Logs/TundraUX3` | `$XDG_STATE_HOME/TundraUX3/logs`，默认 `~/.local/state/TundraUX3/logs` |
-| 临时文件 | `%TEMP%\TundraUX3` | 系统临时目录下的 `TundraUX3` | `$XDG_RUNTIME_DIR/TundraUX3`；缺失时为带 UID 的私有 `/tmp` 目录 |
-
-使用 `tundra-cli debug paths` 可同时查看路径模板和解析后的绝对路径。
-
-### Linux 系统用户与运行权限
-
-Linux 普通用户与 Fedora 更新前端的本阶段验证见 [2026-09-13 验证记录](packaging/linux/VALIDATION-2026-09-13.md)。
-
-用户先通过 Fedora 正常登录，再在该用户 Session 中启动 Tundra。Linux `main`
-在存储、更新恢复、watchdog 和全屏终端初始化之前拒绝 UID/EUID 不一致、
-GID/EGID 不一致的启动；不修复身份、不执行 sudo/su。Shell 和 CLI 共用启动检查，
-以 root 运行时警告文件操作和启动的程序将拥有 root 权限，可能修改或删除系统文件。
-只有在标准输入和标准错误均连接终端时按小写 `y` 才继续，无需回车；其他按键、
-取消或输入错误均退出，管道输入不能代替确认。确认临时复用 raw mode guard，
-读取按键后恢复原终端模式；每次启动重新确认，不保存豁免。
-`platform::linux::identity`
-以当前进程 UID 直接调用 NSS 当前用户查询，不依赖用户枚举、环境用户名、UID 范围或
-Tundra 保存的角色。统一上下文包含 UID/GID、附加组、用户名、HOME、shell 与 XDG 路径。
-NSS HOME 和身份环境也用于子进程与内嵌 Terminal；有效 XDG 环境按规范处理。
-
-`AuthSession::source` 区分 `LocalAccount` 与 `LinuxCurrentProcess`。Linux 附着入口不接收
-用户名或密码，旧密码登录入口返回 unsupported。应用 session ID 仅标识 Tundra 内部状态，
-不创建 logind session。Linux 页面、命令分派、快捷键和恢复入口不允许重新进入 Login、Lock、
-Unlock、Switch User 或 Logout。Exit 只终止本应用。Windows/macOS 仍使用本地账户流程。
-
-`linux-uid-<UID>` 档案只复用个人外观、仪表板、时钟等偏好。历史密码、Admin role、锁定状态
-不参与 Linux 身份或系统权限判定。首次 Appearance 必须连同完成标记成功保存才能进入 Home，
-失败或中途退出后继续设置；完成后直接进入 Home。天气保持独立应用。普通应用权限完全由进程的真实 Linux 权限决定。
-
-Linux 用户管理从系统账户查询接口列出可枚举账户，也支持按名称查询。列表包括 root、服务账户及远程目录账户；远程账户只读。本地账户提供用户组、Shell、SSH 公钥和有效期管理。AccountsService 支持的操作继续使用它；缺失或明确不支持时使用固定系统工具，拒绝授权或结果未知时不更换后端重试。每次写操作由实际系统授权决定，保存的 UX 角色不能授予系统权限。完整约束见 [用户管理](user-management.md)。
-
-Settings 中的个人外观和仪表板偏好只核对当前进程用户并读写本地配置，不查询 AccountsService。系统账户服务缺失或暂时不可用时，个人设置仍可打开和保存；系统账户管理单独报告错误。
-
-账户读写在后台执行。Linux 管理应用和正式 CLI 共用固定账户操作，写入经过系统授权，并按原操作者身份检查当前账户保护规则。AccountsService 支持的操作继续使用它，缺失或不支持时才使用固定本地账户工具；拒绝授权或结果未知时不重试另一后端。新密码在隐藏输入中填写，不能放入命令参数；与 sudo 授权密码分开处理。账户修改和 CLI 输入规则见 [用户管理](user-management.md) 与 [正式 CLI](operations-cli.md)。现有个人资料和其他调用方保留原来的授权路径。
-
-锁定操作仅锁定密码登录，不结束已有会话，也不禁止密钥登录。禁止删除 root，禁止删除、锁定、立即过期或移除当前账户的管理权限。删除其他账户始终保留主目录和文件。创建账户后若设置密码失败，显示部分完成并刷新列表，可继续设置密码，不自动删除新账户。缺少 AccountsService 时仍可用固定本地账户工具；系统授权不足仍明确失败，不修改 UX 本地账户作为替代。
-
-Windows/macOS 的用户管理继续操作 Tundra 本地账户，同样通过 AA 批准创建、修改资料、改密、停用、解锁、角色调整和删除。AA 批准不能代替 UserService 的角色检查。密码修改在 AA 内输入并确认；自动批准仍等待用户填写，一律禁止不会执行写操作。删除不再额外弹出旧通知确认；本地账户删除后的时钟资料清理、删除或停用当前账户后的退出登录仍保留。
-
-普通用户运行时不访问或迁移 `/root` 的旧 Tundra 数据；确认以 root 运行后使用 root 的
-NSS HOME 和有效 XDG 路径，个人档案键为 `linux-uid-0`。Explorer 和内嵌 Terminal 的个人目录由当前 NSS HOME
-及有效 `user-dirs.dirs` 解析；支持显式绝对路径、中文标准目录及 HOME 禁用约定，不执行配置中的
-shell 命令。缺少 XDG_RUNTIME_DIR、logind 或用户/系统 D-Bus 不阻止本地 TUI；依赖它们的功能
-单独显示不可用。
-
-### Linux 系统服务和更新
-
-`platform/linux/{dbus,power,diagnostics}` 提供本阶段的系统服务接口，UI 不解析原始
-D-Bus 错误字符串。统一错误包括权限拒绝、授权取消、服务不可用、忙碌、网络错误、连接中断、
-不支持及未知结果。常规 D-Bus 请求有超时，授权等待使用单独的有界等待。
-
-Linux 自更新只支持当前用户拥有且可写的便携目录，目录中必须有 `tundra-installation.json`、
-`tundra-shell` 和 `tundra-cli`。检查、准备、替换和恢复均校验目录与文件权限。
-Tundra 自更新不再使用 PackageKit、apt、pacman 或 RPM；系统目录中的旧安装不会被直接替换。Launcher 的系统软件包管理仍支持 APT/dpkg、DNF 和 pacman，使用独立的 AA 事务流程。
-
-Shell 的 AA 使用一次 sudo 授权覆盖全部内置提权操作；授权程序只接受固定的系统管理、账户和电源请求，不接受任意命令行。账户操作使用 AccountsService 或固定的本地账户工具，电源操作由 logind 执行。其他调用方的 polkit 交互适配器仍可注册绑定当前进程与启动时间的 `pkttyagent`，使用独立终端，不接管主终端。
-
-logind 仍选择基础、多会话或抑制器策略。系统已允许的电源操作以及普通用户的系统授权流程不新增 sudo 要求；管理员需要提权时复用 Shell 授权连接。普通用户修改本人资料和密码也保留原有 polkit 与 `passwd` 流程。授权连接的通信失败会撤销会话；已正常返回的服务错误或过期任务不会撤销会话。取消、超时和断线不会自动重放写操作。日志读取遵守普通用户权限，不执行 root 命令回退。
-
-便携包不安装系统账户、PAM 配置或 system service。诊断只观察身份、目录权限、总线、
-logind、polkit、pkttyagent 和便携安装条件，不自动提权。
-运行依赖与说明见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
-
-### Linux 桌面集成
-
-Linux 与 Windows 同级实现：使用 XDG Base Directory 与 `user-dirs.dirs`，应用自有配置、状态、恢复、日志和临时数据使用私有权限。Explorer 采用 Freedesktop Trash；卷入口显示本地固定盘和可移动盘上已挂载的文件系统，过滤网络及伪文件系统。Linux 从 mountinfo 读取挂载点与来源设备；Btrfs 的匿名设备号会回溯到实际块设备，因此根目录、home 和其他子卷都可作为独立入口访问，标签同时显示分区设备名与挂载路径。未挂载分区、交换空间和无文件系统的物理盘不会作为目录入口。
-
-Linux 回收站仅按当前进程用户的 Freedesktop Trash 权限工作，保留目录、元数据私有权限及禁止符号链接的检查，不保留 root 跨用户特例。文件操作失败时，Explorer 显示失败对象与原因，不自动提权。
-
-| 功能 | Windows | Linux x86_64 |
-| --- | --- | --- |
-| 默认应用、文件与 URI 打开 | 平台默认程序 | `xdg-open`，后台回收且不阻塞 UI |
-| Launcher | 原生应用/快捷方式 | ELF、AppImage、shebang 脚本和经过验证的 `.desktop` 入口 |
-| 系统剪贴板 | 原生后端 | Wayland data-control 或 X11/XWayland；失败时重连，Editor 仍可用 bracketed-paste |
-| 本地卷与 Trash | 原生后端 | mountinfo/statvfs/sysfs 与 Freedesktop Trash，不退化为永久删除 |
-| 关键错误 | 平台提示与日志 | 桌面通知、watchdog 文本报告和 stderr |
-| 电脑重启与关机 | Windows 原生 API 与系统权限 | systemd-logind + polkit；分别检查 CanReboot / CanPowerOff，允许系统要求授权 |
-
-`tundra-cli debug doctor` 检查 Linux 的 `/bin/sh`、`/usr/bin/env`、伪终端、`/proc`、`/sys`，以及服务、网络、磁盘管理用到的命令。D-Bus、polkit、logind 由平台检查各报告一次；没有图形显示时跳过桌面专用检查。缺少桌面助手只降级相应功能；不会改用 shell 字符串执行、`sudo` 或永久删除作为兜底。
-
-Linux 文件管理器不会只凭可执行权限把文件送入 Launcher。普通文本、图片等仍按文件打开配置处理，即使文件权限为 `0755` 或 `0777`；ELF 程序、带 `#!` 开头的脚本、带可执行权限的已知脚本类型，以及 AppImage、EXE 和 `.desktop` 文件仍由 Launcher 管理。
-
-首发范围不包括 aarch64、系统镜像、会话切换或 SteamOS 式产品化。
-
-### 程序自更新
-
-Linux 的“设置 → 更新 → 更新模式”保存到 `config.toml` 的 `linux_update_mode`，默认 `release`。
-
-- 正式版：读取 GitHub 最新已发布正式 Release，按版本号和提交判断是否需要更新。下载 Linux x86_64
-  便携包及对应校验文件，校验 SHA-256，仅提取 Shell 与 CLI，检查提交号和更新协议后替换。不需要 Rust。
-- 测试版（`beta`）：固定检查 `master` 最新提交，界面显示提交哈希作为小版本标识；下载该提交的源码，
-  使用本机已有 Rust 工具链编译后替换。保留 API 失败时的 Git 查询后备方式，不安装编译器或调用 sudo。
-- 切换模式会清除旧检查结果并重新检查；同版本号但提交不同的测试构建可以明确选择替换为正式版。
-  下载或编译过程中不可切换。所有下载与编译都写入用户缓存目录。
-
-Windows 继续使用已有的默认分支源码编译更新，不显示 Linux 模式开关。
-
-更新助手保存旧程序，等新 Shell 报告启动成功后才清理备份。替换失败、启动失败或启动超时会恢复旧版本；更新中断后，下次启动会按安装目录内的记录继续或恢复。更新阶段只校验两个程序及其提交和更新协议，不要求源码目录或安装目录下存在 assets；默认主题、自定义主题和用户数据均不参与复制、替换或回滚。启动时仍按原有方式加载本地资源。更新记录使用协议 v2，助手取自已校验的新 CLI，避免旧助手继续要求替换资源；旧协议记录会明确拒绝，保留原文件。Linux 使用无 `.exe` 后缀的程序名并保留执行权限；助手通过 exec 接替原进程，在新 Shell 退出前持续等待，使更新后的程序继续使用前台终端。
-
-Windows 更新时，原 Shell 先停止界面和后台任务，再等待更新助手；助手等待更新后的 Shell（或回滚恢复的 Shell）退出，两者都不读取终端输入，避免 PowerShell 提前恢复并与程序争用终端。原 Shell 仍在运行的备份可以被读取，但不能直接作为 `ReplaceFileW` 的替换源，因此回滚使用备份的副本。仍被运行中进程占用的备份保留到以后启动时清理；更新中断后的恢复也沿用同样的等待方式。
-
-主页的退出菜单将程序操作和电脑操作分别写明：Exit TundraUX、Restart TundraUX、Restart computer、Shut down computer，以及 Cancel。操作逐行等宽排列；窗口较矮时缩小行间空白。所有按钮在同一按钮内按下并于 500 毫秒内松开即执行，期间的定时刷新不会取消点击；拖动、移出后松开或失去窗口焦点仍会取消。macOS 暂不提供程序自更新或电脑电源操作；Linux 的固定电源操作由后台调用 logind 并呈现不可用或授权失败，不在绘制菜单时阻塞查询系统服务。
-
-### 从 Windows 迁移到 Linux
-
-配置格式兼容，但不会自动导入或重写 Windows 绝对路径。关闭两端 TundraUX3 后，在 Windows 运行 `tundra-cli debug paths` 并备份 `%APPDATA%\TundraUX3\config.toml` 和 `%LOCALAPPDATA%\TundraUX3\state`；在 Linux 再运行 `tundra-cli debug paths`，分别复制到显示的 config 与 state 路径。保留原备份，不要合并两个 state 目录。
-
-全局主题和设置可复用。Linux 仅附着当前进程 UID 的系统账号；旧 UX 账户不参与身份判定，按旧账户 ID 保存的外观和时钟不会自动绑定到系统 UID。Windows Launcher 和最近文件中的绝对路径在 Linux 会安全显示为 Missing，不会猜测性转换；请重新选择或固定对应文件和应用。
-
-## 持久化与身份安全
-
-### 文档、schema 与恢复
-
-`storage` 管理下列主要文档：
-
-| 文件 | 格式 | 内容 |
-| --- | --- | --- |
-| `config.toml` | TOML，schema 1 | 语言、时区、天气位置、快捷键、外观和各应用设置。 |
-| `users.v2.json` | 版本化 JSON，schema 2 | Windows/macOS 本地账户、角色、密码与锁定信息；Linux 仅使用当前 UID 的个人偏好。 |
-| `state.v1.json` | 版本化 JSON，schema 1 | 通用应用状态。 |
-| `recent-files.v1.json` | 版本化 JSON，schema 1 | 最近文件。 |
-| `sessions.v1.json` | 版本化 JSON，schema 1 | 可恢复会话数据。 |
-| `clock.v1.json` | 版本化 JSON，schema 1 | 时钟、闹钟和计时项目。 |
-| `trash/trash.v1.json` | 版本化 JSON，schema 1 | 应用回收站清单。 |
-
-平台文档读取默认限制为 1 GiB，并在读取前后检查长度、修改时间和路径身份；路径逐级拒绝符号链接、junction 与 reparse point。条件写入还会核对文档 fingerprint，将外部修改作为独立冲突返回。写入依次使用同目录临时文件、文件同步、原子替换与父目录同步，避免部分写入；Linux 存储路径进一步使用 `openat` 与 `O_NOFOLLOW` 防止祖先目录被符号链接重定向。
-
-Linux 应用目录为 `0700`；配置、用户、会话、恢复、日志和临时文件为 `0600`。Editor 打开的普通文档不被改变权限。
-
-启动会先校验 schema：**未来 schema 一律拒绝**，以防旧程序覆盖新格式。当前或旧格式无法解析时，原文件会在原位置重命名为 `<文件名>.corrupt.<时间戳>`，随后生成默认文档，并在 Shell 显示恢复提示。旧 `users.v1.json` 会迁移到 `users.v2.json`。
-
-### Identity 与账户保护
-
-以下本地账户规则用于 Windows、macOS 和测试后端。Linux 仅附着当前进程的 NSS 用户；系统账号、密码、锁定和过期策略由 Fedora 管理，个人操作遵循普通进程权限。
-
-密码不以明文持久化，而使用随机 salt 的 Argon2 哈希。密码长度必须为 **10–256** 个字符，不能全为空白，也不能等于规范化后的用户名。认证会话只保存在内存中；用户名匹配不区分大小写，未知用户与错误密码统一返回无效凭据。连续 **5 次**认证失败会锁定账户 **5 分钟**；锁定与失败信息持久化，避免重启绕过。
-
-UX 访问权限区分 Guest、User 与 Admin。文件读写和个人资料操作面向 User/Admin；用户管理、Command Line、Launcher 管理、诊断修复和设置管理仅允许 Admin。保存的 UX 角色不授予 Linux 系统权限；Linux 账户修改仍需实际系统授权并遵守当前账户保护规则。CLI 的 `config` 不读写身份字段；系统账户通过正式 `users` 命令管理，密码只允许隐藏输入或指定输入描述符。
-
-## Watchdog 与故障恢复
-
-每个进程只创建一个 `WatchdogRuntime`。它提供进程级 panic 边界、受管理任务/线程、恢复策略、运行 journal 和事故报告；`ManagedTaskGroup` 统一管理线程与 Tokio 任务。所有可能 panic 的生产后台工作都应进入 managed task group，并声明是否可安全重放。
-
-长期运行的线程通过 `spawn_thread_with_cancellation` 接收停止请求，并在等待期间检查 `ThreadCancellation`。Linux 的 logind 休眠和关机监听在连接、订阅、等待信号及断线重试时均可取消；正常退出会结束监听，不会因一直等不到系统信号而触发 watchdog 关闭超时。
-
-重启策略受重放安全性约束：只有 `Idempotent`，或具备恢复处理器的 `Checkpointed` 任务允许重启；`Never + RestartTask` 组合会被拒绝。
-
-`OperationGuard` 在下列目录以原子方式维护操作 journal：
-
-```text
-<data>/watchdog/operations/<app-id>/
-```
-
-操作 commit 时删除 journal，未提交的 `Drop` 标记为 `interrupted`。若无法安全恢复，会保留 journal 并阻止同类变更，不能悄然继续执行。
-
-活动运行标记位于 `<data>/watchdog/runs/`，让下次启动能记录本进程未及观察的异常退出。每起事故生成 JSON 和文本报告：主报告目录失败时依次尝试 fallback，再写入 stderr。报告会集中脱敏并限制大小：文本最多 4,096 bytes，数组最多 256 项；默认保留最近 30 起、30 天、总量不超过 50 MiB。调用方也不得将密码、token、剪贴板内容或原始用户输入写入事故上下文。
-
-正常退出和大多数 panic 都应恢复 raw mode、鼠标捕获、备用屏幕、颜色与光标。若进程被强制终止，先重置当前终端，再检查 crashes 报告；下一次启动会利用未关闭的运行标记生成“原因未知”的事故记录。
-
-## CLI 与交互
-
-### Shell 与 CLI 边界
-
-```console
-tundra-shell
-```
-
-`tundra-shell` 不接收任何命令行参数，包括 `--help`；传入任何参数都会以参数错误退出。它固定进入全屏 UI，应用选择与 Editor 文件打开只能从 UI 发起。
-
-`tundra-cli` 是独立的运维工具，可读取和修改公开配置，但不能向 Shell 传参或绕过 UI 打开 Editor：
-
-```console
-tundra-cli <config|launcher|debug|logs|cls|new|repl|help>
-```
-
-| 命令 | 作用 |
-| --- | --- |
-| `debug asset` / `debug asset <name>` | 显示资源帮助或渲染指定资源；TOML art set 会输出全部图案。 |
-| `debug asset <name> -a` | 原样输出完整资源文件，包括 TOML 元数据。 |
-| `debug asset <name> --<item>` | 只输出 TOML 资源中的项目，例如 `home_icons --launcher`。 |
-| `cls` | 清空终端历史和可见内容，并将光标移到左上角。 |
-| `config` | 查看全部公开配置。 |
-| `config get [field]` | 查看外观、动画、语言、时区、天气地点和 Linux 更新模式；省略字段列出全部公开设置。 |
-| `config set <field> <value>` | 设置 `border-shape`、`border-color`、`accent-color`、`icon-mode`、`motion`、`animation-speed`、`language`、`timezone`、`address`、`weather-location` 或 `update-mode`；`theme` 仅为只读摘要。 |
-| `config reset <field>` | 只恢复指定字段的默认值，保留其他配置。 |
-| `config options [field]` | 列出取值说明；`language` 列出已安装语言，`timezone` / `address` 列出支持的时区和城市。 |
-| `launcher [list]` | 列出固定应用的 ID、状态和文件路径。 |
-| `launcher pin <path>` | 检查并固定可执行文件，支持带引号的相对或绝对路径；不会启动应用，重复路径不重复添加。 |
-| `launcher unpin <id>` | 按 `launcher list` 中的 ID 移除固定项，保留应用文件。 |
-| `debug doctor` | 检查系统、终端、权限、应用路径、存储和资源；实际探测 Kitty、Sixel、iTerm2 图形协议。 |
-| `debug explain` / `debug paths` | 输出启动/边界说明，或输出路径模板和解析路径。 |
-| `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入交给固定系统命令解释器并显示退出码，`/<command>` 执行 UX 命令。外部 CLI 调用不加 `/`。 |
-| `debug test-frost` / `debug test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
-| `debug view-ui-style [1\|2\|3]` | 不带数字时列出样式；带数字时进入交互 UI / 动画对比预览，不保存设置。 |
-| `debug screen-keyboard` | 打开独立的英文 QWERTY 屏幕键盘演示：键盘位于终端下半屏，键宽随终端宽度调整，无中括号装饰；包含数字、符号、F1–F12、Shift、Tab、CapsLock、Ctrl、Alt 和右 Ctrl。Shift/Ctrl/右 Ctrl/Alt/CapsLock 点击后保持亮起，再次点击释放；可同时锁定多个修饰键，连续按其他键形成组合，功能键及组合显示在最近按键栏。收起或终端失去焦点时释放 Shift/Ctrl/Alt，CapsLock 保持开关状态。终端高度足够时增高按键；每个字符键只显示当前可输入的字符，Shift/CapsLock 切换时更新字符，不显示备用字符。退格删除末尾字符，屏幕 Enter/Tab 插入换行／制表符；复制或 Ctrl+C 复制全文，粘贴或 Ctrl+V 追加剪贴板文本。提供收起／展开、清空和退出，Esc 也可退出。收起／展开使用滑动动画，工具栏保持固定；启动时读取当前用户已保存的全局动画速度和减少动态效果配置，减少动态效果时立即切换。键盘显示时，实体字母、数字、符号、功能键及修饰键会点亮对应键帽，实体高亮与鼠标锁定状态分别保存。Windows 或支持增强按键报告的终端可按住亮起、松开熄灭；快速点按至少显示约 100ms，不报告松开的终端显示约 200ms 提示，连续按键会刷新提示。不报告独立修饰键的终端仅能在组合键事件中提示 Shift/Ctrl/Alt；无法区分左右 Ctrl 时提示 Ctrl。收起、失焦或调整窗口大小会清除实体高亮，粘贴文本不会模拟按键。工具栏的“测试 AA”在同一命令中打开安全的 AA 输入弹窗，初始收起键盘。弹窗内可展开／收起键盘、返回演示或退出；输入仅保留在本次演示。`ScreenCompositor` 统一绘制页面、标题／状态／时间、AA 弹窗，最后绘制键盘；先按可用高度为弹窗留出空间，再随动画上移弹窗，所有绘制和点击使用相同矩形。键盘可覆盖底部状态／时间栏，不能覆盖弹窗；小于 60 × 18 时保留弹窗并提示扩大窗口。实体键盘 Tab/方向键选按钮，随后 Enter/空格执行所选按钮；直接输入文字后 Enter/空格输入换行／空格。遵循当前主题设置，尚未接入应用表单；本命令只用于外部终端，不在内嵌 Command Line 中运行。 |
-| `debug test-aa-style1` / `debug test-aa-style2` / `debug test-aa-style3` | AA 弹窗样式演示：三种方案都会压暗背景，分别使用居中双线警戒框、宽幅警戒条、带 AA 标识的分栏授权面板；按 B 对比背景遮罩前后。C/R/F 查看确认、执行中、结束状态；Tab/方向键与鼠标选择按钮，Enter 使用，Esc 退出。仅模拟，不执行命令、不保存样式；正式 AA 已采用 style3 的视觉效果，并保留真实操作提示和随内容收缩的布局。 |
-| `debug` / `debug help` | 查看所有调试命令。 |
-| `debug test-watchdog-error` | 主动生成普通错误报告。 |
-| `debug test-watchdog-critical` | 主动生成严重错误报告。 |
-| `debug test-watchdog-panic` | 触发真实 panic，进入正常故障处理流程；当前命令行会话终止。 |
-| `help [command ...]` | 显示对应命令帮助，例如 `help config`、`help debug doctor`；也支持 `config --help`、`config set -h`、`launcher help`、`logs export --help`。 |
-| `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
-
-调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中输入 `/debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
-
-设置通过当前操作系统用户的配置文件保存，不修改系统时间或系统账号。`icon-mode` 接受 `ascii` / `image`，`motion` 接受 `full` / `reduced`，`animation-speed` 接受 50–200 的 25 倍数，默认 100。`address` 沿用旧行为，会改变 Tundra 时区；`weather-location` 单独保存最多 120 字符的英文地址，`auto` 或 `config reset weather-location` 恢复按时区选择天气地点。`update-mode` 仅在 Linux 接受 `release` / `beta`，只保存更新选择，不立即下载或安装。已运行的 UI 需要重启以加载 CLI 保存的设置和 Launcher 固定项。
-
-Launcher 的 CLI 和 UI 共用目标检查：拒绝缺失文件、不支持的目标、符号链接和重解析点；CLI 的添加记录标记为 `cli`，遵循当前操作系统用户对配置文件的写权限，不伪造 UI 登录状态。`/launcher pin` 的相对路径在 REPL 中跟随 `cd` 后的目录。
-
-Command Line 和独立 `repl` 默认执行系统命令，例如 `ls -la`、`dir`。UX 命令需要 `/` 前缀，例如 `/help`、`/config set motion reduced`；外部调用仍使用 `tundra-cli config set motion reduced`。普通输入即使与 UX 命令同名，也先按系统命令执行；失败后如果名称像 UX 命令，提示加 `/`，不自动执行 UX 命令。带 `/` 的未知 UX 命令如果像系统命令，提示去掉 `/`；识别常见解释器内置命令、Unix 变量赋值、当前会话 `PATH` 中的可执行文件和相对可执行路径，Windows 同时使用 `PATHEXT`，只检查名称和文件，不尝试执行猜测的命令。拼错的 UX 子命令继续显示对应帮助。Unix 绝对可执行路径可直接输入 `/usr/bin/ls`；开头的路径包含后续 `/` 时按系统命令执行，只有一个 `/` 的根目录可执行文件需用引号包住路径，如 `'/my-tool'`。
-
-doctor 不再逐条输出固定的平台能力声明、重复的 Linux 架构/授权检查和各系统路径模板；模板仍可通过 `debug paths` 查看。Linux 增加伪终端读写、进程/内存数据可读性，以及 `systemctl`、`journalctl`、`ip`、`nmcli`、`lsblk`、`findmnt`、`df`、`pkexec`、`gio` 检查。命令存在仅说明已安装，不保证对应服务运行或用户获准执行操作。可选功能缺失显示 `WARN`，不让整体失败；必需运行条件、目录或存储检查失败返回 1。目录检查会创建并移除探测文件，原有存储检查可能初始化或恢复文档；不会安装软件或修改服务。
-
-Command Line 和独立 `repl` 在当前会话内保留系统命令的**已导出环境变量和工作目录**。提示符使用 `user@绝对路径 >> command`；每次读取下一条输入前更新路径，执行 `cd` 后立即显示新目录，切换失败时保留实际目录。尚未执行系统命令时显示子 CLI 的启动工作目录；无法读取目录时以 `?` 标明未知。路径中的中文和空格原样显示，换行及终端控制字符转为可见的转义文字。Linux/macOS 例如先执行 `export PROJECT_MODE=dev`、`cd "/path/with spaces"`，后续 `echo "$PROJECT_MODE"`、`pwd` 和相对路径操作沿用修改后的状态；`unset PROJECT_MODE` 会移除变量。Windows 对应 `set PROJECT_MODE=dev`、`cd /d "C:\path with spaces"`、`echo %PROJECT_MODE%`，用 `set PROJECT_MODE=` 删除变量。中间执行 `/help` 等 UX 命令不会清空这些状态。
-
-嵌入式 Command Line 在每条提示符左侧显示命令状态：输入中或等待执行结果时为 `○`，退出码为 0 时为主题强调色 `●`，非零退出码、命令解析失败或取消输入时为主题错误色 `×`。标记随命令保留在终端滚动历史中；重绘和换行不会将结果移到下一条命令。普通命令文字及输出继续使用原有颜色，`/cls` 同时清除历史标记。独立 `repl` 不输出这套嵌入式状态协议。
-
-嵌入式 Command Line 的用户名和路径使用打开页面时的主题强调色，`>>` 和用户输入保持普通文字颜色，系统退出码使用灰色。每条命令完成或取消输入后，下一条提示符前增加一行空白；空输入不额外增加间距。Command Line 的启动说明、命令前缀提示及页面提示只显示英文，路径和系统命令输出仍保留原文。
-
-系统命令的环境和目录状态由 `platform::SystemCommandSession` 持有，只传递给本会话的下一条系统命令，不修改 Tundra 主进程的环境或目录，也不更改系统环境变量配置；离开 Command Line、退出 REPL 或重启应用后释放。Unix 首次执行仍读取 `/bin/sh` 的登录默认设置，后续执行不重新加载登录配置，避免覆盖用户修改的 `PATH`。Unix 用私有匿名文件采集 NUL 分隔的环境和独立目录数据；Windows 保留 cmd 命令提示符语法，通过临时脚本和 UTF-16 快照采集 `set`、`cd` 的结果，临时文件随调用结束清理。命令输出继续使用原有 PTY。
-
-Windows 输入在 cmd 命令组中执行，使条件命令的采集始终位于条件体之外；包含括号、`&` 等特殊字符的值应加引号，例如 `set "PATH=C:\my tools;%PATH%"`。`for` 仍使用命令提示符的 `%i` 写法。
-
-普通失败也会保留失败前已经完成的环境和目录修改；失败的 `cd` 保持原目录。若强制终止、Unix `exec`/覆盖 `EXIT` trap，或 Windows `exit` 等操作跳过采集，则显示警告，下一条命令使用上一次完整状态。该功能保存的是环境和目录，未导出的 shell 局部变量、函数、别名及 shell 选项不跨命令保存；独立子进程本来也不能改变父 shell 的环境，脚本如需修改当前命令环境应使用 Unix 的 `. script` 或 Windows 的 `call script.cmd`。
-
-UI 样式预览可在 Command Line 中运行 `/debug view-ui-style 2`，或在外部终端运行 `tundra-cli debug view-ui-style 2`。源码运行方式为 `cargo run -p cli --bin tundra-cli -- debug view-ui-style 2`。预览至少需要 60 × 24 个字符，建议使用 100 × 35 或更大的窗口。
-
-- `1` Glacier：现有带边框组件、直接更新的进度条、tachyonfx 扫入效果。
-- `2` Tea：无边框列表与表单、较集中的留白布局、450 ms cubic 缓动进度。借鉴 Bubble Tea 的 Model / Message / Update / View 方式，使用 Rust 和现有 Ratatui 组件实现，没有链接 Go 库。
-- `3` Spring：卡片布局、保留速度的阻尼弹簧进度、柔和进入效果。连续选择列表项时，动画从当前值和速度追随新目标。
-
-`F1`–`F3` 切换版本；`F4` 切换减少动态效果；`F5` 或 Replay 按钮重播；`Tab` / `Shift-Tab` 切换焦点；方向键、鼠标和滚轮操作列表；输入框支持文字与粘贴；Open dialog 展示弹窗。`Esc` 先关闭弹窗，再退出预览，`Ctrl-C` 直接退出。不同版本共用列表、输入框、按钮、Dialog 和原生 Gauge，渲染与命中使用同一份布局；低于最小尺寸时暂停组件交互并提示放大窗口。
-
-进度任务为本地模拟；进入时读取全局外观配置中的强调色、边框、动画速度与减少动态效果偏好，预览中的切换仅对本次会话生效。关闭预览会还原终端。实现入口为 `crates/shell/src/style_preview.rs`，页面组合为 `crates/ui/src/style_preview.rs`；常规页面和业务状态不依赖预览模块。
-
-正式 Shell 已采用第 `3` 种 Spring 风格。常规尺寸下主内容区留出一格外边距，主页和启动器卡片、设置分栏使用统一间距，列表、弹窗和卡片复用现有组件与主题的 raised 背景。页面保留各自的信息结构，移除多余外框；小窗口继续使用紧凑布局。绘制和鼠标命中共用布局计算。
-
-页面和对话框入场复用 `crates/shell/src/spring_style.rs` 的柔和扫入和淡入效果。更新下载、编译进度及系统状态用量条的填充复用 `ui::SpringValue` 阻尼弹簧，连续变化时保留当前速度；百分比文字和业务状态始终展示真实值。动画状态仅存在于 Shell 会话中，收敛或离开页面后停止请求重绘。动画速度和减少动态效果沿用外观设置；编辑器和内嵌终端保留不改变文字内容的颜色过渡。预览 `3` 与正式界面共享弹簧计算和入场实现。
-
-两个错误报告测试在 CLI 进程中生成报告，内容明确标注为主动测试，并输出 JSON 和文本报告路径；成功返回 0，写入失败或等待超时返回非零状态。`debug test-watchdog-panic` 不在命令内部捕获：独立 CLI 由最外层 watchdog 捕获、显示严重错误提示并退出；嵌入 Command Line 则以内部退出码 76 请求 Shell 主循环真正触发 panic，恢复终端后直接显示全屏 panic 页面，不经过天气锁屏或登录页面，也不弹出 critical 提示框。
-
-资源与配置示例：
-
-```console
-tundra-cli debug asset banner
-tundra-cli debug asset explorer_icons
-tundra-cli debug asset explorer_icons -a
-tundra-cli debug asset explorer_icons --folder
-tundra-cli debug asset home_icons --launcher
-tundra-cli debug asset launcher_icons --builtin.command-line
-tundra-cli debug asset house
-
-tundra-cli config
-tundra-cli config get timezone
-tundra-cli config set timezone Asia/Shanghai
-tundra-cli config set border-shape rounded
-tundra-cli config set border-color light-cyan
-tundra-cli config set accent-color "#38bdf8"
-tundra-cli config set motion reduced
-tundra-cli config set animation-speed 125
-tundra-cli config set weather-location "Shanghai, China"
-tundra-cli config reset weather-location
-tundra-cli config set update-mode release
-tundra-cli launcher pin "/home/user/My App/run.sh"
-tundra-cli launcher list
-tundra-cli help config
-```
-
-资源名可使用 `debug asset` 帮助列出的完整键，也可用唯一文件名，例如 `house`、`clock_font`。资源、文件或 TOML 条目不存在时会写入 stderr 并返回非零状态。
-
-`config` 不暴露身份字段，`theme` 为只读摘要。`new` 会删除用户配置和状态，执行前应先运行 `tundra-cli debug paths` 并备份。执行 `new` 必须精确输入 `RESET`；`repl --embedded` 是仅供 Command Line 使用的内部入口。嵌入 CLI 不会自行删除正在使用的数据，而是以退出码 `75` 通知 Shell；Shell 统一恢复终端、释放子进程与后台任务、关闭 watchdog、重置存储并重启，再回到首次设置。
-
-### 常用交互
-
-| 输入 | 行为 |
-| --- | --- |
-| Tab / Shift+Tab | 在当前焦点顺序中向前/向后移动。 |
-| Ctrl+C | 请求关闭终端会话；Editor 和 Explorer 用于复制，Command Line 则转发给子 CLI。 |
-| Ctrl+Shift+X（Command Line） | 紧急终止内嵌 CLI 并返回 Launcher。 |
-| q 或 Esc（主页） | 打开退出确认。 |
-| L（主页） | 注销并回到 Weathr 锁屏。 |
-| F2（登录） | 临时切换密码可见性。 |
-| y（退出菜单） | 退出 TundraUX，返回终端。 |
-| r（退出菜单） | 重启 TundraUX 程序。 |
-| b / p（退出菜单） | 重启电脑 / 关闭电脑；仅在系统支持且允许请求时显示。 |
-| 方向键 / Tab / Enter（退出菜单） | 选择 / 切换 / 执行当前操作。 |
-| n / Esc（退出确认） | 取消退出。 |
-
-Editor、Explorer、Settings 等屏幕还按其工具栏、列表、对话框和输入模式处理方向键、Home/End、PageUp/PageDown、Enter、Space、Backspace、鼠标双击、拖拽和滚动。
-
-## 测试与 CI
-
-本地推荐检查：
-
-```console
+```sh
 cargo fmt --check
-cargo check --workspace --locked
 cargo test --workspace --locked
-cargo build --locked -p shell -p cli -p weathr
-```
-
-本地回环 HTTP 测试应直接连接测试服务器。受系统代理影响时，可仅为测试进程设置 `NO_PROXY=127.0.0.1,localhost,::1` 和小写 `no_proxy`，无需修改系统代理。资源紧张或排查并发时可使用 `cargo test --workspace --locked -- --test-threads=1`；串行仍执行全部用例，交付时应注明运行方式及默认并发结果。
-
-定向测试：
-
-```console
-cargo test -p app
-cargo test -p ui
-cargo test -p shell
-cargo test -p storage
-cargo test -p identity
-cargo test -p platform
-cargo test --locked -p system-services --no-default-features
-cargo test --locked -p system-services --features runtime
+cargo build --locked -p shell -p cli
+python3 scripts/check-localization.py
 bash scripts/check-weathr-dependency-boundary.sh
 ```
 
-CI 覆盖如下：
+定向改动使用 `cargo test --locked -p <包名>`；跨包接口或影响范围不明确时运行完整 workspace 测试。Linux 检查在本机 WSL/Linux 执行。Windows 使用安装好的 MSVC 工具链，例如 `cargo +stable-x86_64-pc-windows-msvc test --workspace --locked`。
 
-| 执行环境 | 验证内容 |
-| --- | --- |
-| Windows | `cargo test --workspace --locked` |
-| macOS | `cargo test --workspace --locked --no-run` |
-| Ubuntu | `cargo build/test/clippy --workspace --locked`、PTY smoke、便携打包与更新回退验证 |
-| Fedora | 普通用户 `cargo build --workspace --locked`，身份、日志、平台与系统服务定向测试；发布工作流执行 workspace tests |
-| Arch | 普通用户软件包查询/参数夹具、显式只读 pacman smoke，以及本地软件包构建测试；应用测试不运行真实安装、卸载、仓库刷新或升级事务 |
+资源紧张时限制编译并发，如 `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0`。回环 HTTP 测试受代理影响时，只给测试进程设置 `NO_PROXY=127.0.0.1,localhost,::1` 和 `no_proxy`。串行测试可加 `-- --test-threads=1`，汇报时说明实际运行方式。
 
-软件包查询和固定操作测试包含在 Linux workspace 测试中。Arch CI 额外以普通用户执行 `cargo test --locked -p platform management::packages --lib` 和 `cargo test --locked -p platform management::packages::pacman::tests::live_pacman_installed_search_updates_and_details --lib -- --ignored`，后者只读取已有数据库。补充查询验证使用 Debian 官方 Pacman 7.0 与隔离的合成数据库，只执行只读查询并核对数据库 SHA 不变。缓存夹具与只读 smoke 不等于实际 Arch 写事务验收；安装、完整系统升级和卸载不得在开发主机进行破坏性测试。
-
-Linux 的自动测试不触碰用户真实 Trash。发布候选可在 GNOME/KDE 普通用户会话运行原生往返 smoke；它只创建临时项，并在成功后恢复和清理：
-
-```console
-cargo test -p platform --test native_trash_smoke -- --ignored --nocapture
-cargo build --locked -p shell -p cli
-python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
-```
-
-PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。它依次经过语言、时区页面（跳过创建用户），打开已有 Appearance 颜色输入框，默认注入 64 个 SGR 全移动鼠标事件（可通过 `TUNDRA_PTY_MOUSE_EVENT_COUNT` 调整），随后发送单字符哨兵，在 250 毫秒门限内验证鼠标洪峰后的普通字符输入响应；Ratatui 增量绘制不保证重发完整多字符字符串。测试再取消临时颜色、完成当前 Linux 用户的 Appearance 设置并进入 Home，从 Launcher 打开 Command Line，验证初始绝对路径以及切换到含空格和中文的目录后的提示符。最后发送 `SIGTERM`，检查终端属性、raw mode、鼠标捕获、备用屏幕和光标均得到恢复。
-
-root 启动确认在可丢弃的 Linux 测试环境验证；下列脚本使用临时 XDG 目录，不修改系统配置。
-第一项覆盖 Shell/CLI 的 `y` 确认、其他按键取消、终端模式恢复、管道拒绝、普通用户免确认和 set-ID 拒绝；
-第二项确认警告后继续执行上述完整界面 smoke。
-
-```console
-sudo python3 scripts/tests/linux-root-startup.py target/debug/tundra-shell target/debug/tundra-cli
-sudo python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
-```
-
-固定测试重点包括输入阶段/修饰键/paste/focus/双击/拖拽/滚动及高频鼠标事件合并、模态命中和焦点恢复、通知、Editor grapheme 与异步保存、Explorer/Launcher 后台操作、登录锁定与授权、时钟和 DST、storage schema/迁移/原子写入/损坏恢复，以及 watchdog 的 panic 边界、任务回收和事故报告。
-
-预览动画、可行性 POC、无断言在线探针、平凡 getter/cache，以及与上层工作流重复的逐字符或逐像素断言不进入固定 workspace 测试；只有对应明确用户可见回归时才应加入。
-
-业务实现与测试文件统一按以下目录分离：
-
-```text
-crates/<crate>/src/                 业务实现、测试模块声明和必要的测试钩子
-crates/<crate>/tests/unit/          私有实现的单元测试、夹具和测试辅助模块
-crates/<crate>/tests/*.rs           通过公开 API 验证的集成测试
-crates/<crate>/tests/support/       集成测试共享辅助代码（按需设置）
-scripts/tests/                     打包、授权 PTY 和系统服务测试夹具
-```
-
-单元测试由原业务模块通过 `#[cfg(test)]` 与 `#[path = ".../tests/unit/..."] mod tests;` 引入，仍位于原来的 Rust 模块作用域，可访问私有实现，无需为了测试扩大生产 API。`tests/unit/` 不设置独立的 `main.rs` 测试入口，避免 Cargo 重复发现和执行；`cargo test --workspace --locked` 同时运行这些单元测试及集成测试。二进制测试保留原来的平台条件，共享构建脚本仍放在原位置。不要在 `src/` 内重新添加测试函数或整段测试夹具。
-
-测试优先保留核心工作流、数据安全、授权边界、错误恢复及明确的用户可见回归。新增测试前先检查已有下层测试和上层工作流；相同操作的不同输入优先用表格循环检查。界面集成测试共用的输出读取函数放在 `crates/ui/tests/support`。
-
-本轮清理按源码中的 Rust 测试函数统计，从 1,486 个减到 1,317 个，删除 169 个（约 11.4%）。这一口径包含各平台及条件编译用例，不等于当前主机实际执行数，也不代表覆盖率。保留测试没有通过 `ignore`、feature 或修改 Cargo 默认目标来隐藏。
-
-| 删减内容 | 保留的验证重点 |
-| --- | --- |
-| 常量值、固定仓库名、枚举自身相等、字段原样转发 | 实际命令执行、输入校验和失败反馈 |
-| Mock 注入值和调用记录自身的重复断言 | 使用 Mock 驱动的业务流程与权限边界 |
-| 固定文案、占位文本、重复配色、括号和静态布局断言 | 键盘/鼠标命中一致、焦点/滚动、Unicode、最小可用布局、主题与对比度 |
-| 与下层或完整工作流重叠的状态、通知及资源检查 | 登录授权、文件冲突与恢复、异步任务、通知抢占和平台故障处理 |
-
-测试重构本身不替代真实平台验证。Linux 专用路径应在远程测试机可用时运行 workspace 检查及相关 Fedora/PTY 检查；非 Linux 主机通过不能视为 Linux 功能验证通过。
+测试目录、PTY、root 启动和 CI 说明见[测试指南](testing.md)。单元测试、模拟后端和只读查询通过，不等于真实桌面、触屏、系统授权或设备写操作已经验收。
 
 ## Linux 打包
 
-Linux 后续发行只提供 x86_64 便携包，不再生成 DEB 或 RPM：
-
-```console
+```sh
 bash scripts/package-linux.sh
-# --tar-only 仍可用于现有发布脚本，行为相同
 ```
 
-打包前可先执行：
+脚本仅在 Linux x86_64 运行，构建 `shell` 与 `cli` 的 release 版本，默认输出到 `dist/`。版本来自 workspace，可用 `TUNDRAUX3_VERSION` 覆盖；`--tar-only` 仍接受且行为相同。发行只提供便携包，不生成 DEB/RPM 安装包。
 
-```console
-cargo fmt --check
-cargo check --workspace --locked
-cargo test --workspace --locked
-cargo build --locked -p shell -p cli -p weathr
-```
+归档包含两个程序、完整 `assets/`、`tundra-installation.json`、许可证和运行说明，并写入 `SHA256SUMS`。标记须与两个程序一起保留。更新只替换程序，完整恢复规则见 [app 更新说明](../crates/app/docs/update.md)。系统软件包管理与程序自身更新是独立功能。
 
-`weathr` 是库 crate，最后一条构建命令确认其可独立构建；Linux 终端用户通过独立天气应用使用它，Windows/macOS 还保留天气锁屏；CLI 不再提供天气场景启动命令。
+## 第三方代码和许可证
 
-`scripts/package-linux.sh` 只允许在 Linux x86_64 主机运行，默认将产物写入 `dist/`；版本可由 `TUNDRAUX3_VERSION` 覆盖，否则读取 workspace 版本。脚本执行 `cargo build --release --locked -p shell -p cli`，并拒绝将 `/` 或仓库根目录作为输出目录。
+`[patch.crates-io]` 使用仓库内的 crossterm 和 vt100。修改时一并核对补丁说明、测试与许可：
 
-- 便携包 `tundraux3-<version>-linux-x86_64.tar.gz` 包含两个二进制、`assets/`（包含主题和语言包）、安装类型标记、根许可证、Weathr 许可证和 Linux 说明。标记与两个程序一起保留，用于验证便携更新目录。
-- 便携包在 `SHA256SUMS` 中记录校验和。运行依赖见 Linux 运行说明。
+- [crossterm 补丁](../third_party/crossterm/TUNDRA_PATCH.md)：报文边界、超时、输入限制和警告。
+- [vt100 补丁](../third_party/vt100/TUNDRA_PATCH.md)：终端滚动历史和 `CSI 3 J`。
 
-## third_party
-
-workspace 通过 `[patch.crates-io]` 使用本地 `crossterm 0.29.0`。补丁修复 ESC 紧邻鼠标报文时吞掉下一条报文前缀的问题，并为 Unix 读取后端增加共用的报文边界、超时、长度限制和警告回调；Windows 保留原生事件读取路径。来源、MIT 许可、兼容边界与专项测试命令见 [`third_party/crossterm/TUNDRA_PATCH.md`](../third_party/crossterm/TUNDRA_PATCH.md)。`scripts/linux-shell-smoke.py` 同时验证文件管理器退出时的 ESC/鼠标组合、残缺/非法报文过滤及警告日志落盘。
-
-workspace 通过 `[patch.crates-io]` 将 `vt100 0.15.2` 指向本地 `third_party/vt100`，使项目使用经过本地维护的解析器实现，而不是从 crates.io 解析该依赖。该补丁回移了 `Grid::visible_rows` 的 scrollback 修复，并额外支持 `CSI 3 J`；变更、上游信息和许可应与该目录内的 `README.md`、`TUNDRA_PATCH.md` 和 `LICENSE` 一并审阅。
+项目代码为 [GPL-3.0-only](../LICENSE)，Weathr 保留 [GPL-3.0-or-later](../crates/weathr/LICENSE.weathr)。资源和第三方代码的许可分别以其说明为准。
 
 ## 故障排查
 
-### `terminal is too small`
-
-按错误信息给出的尺寸扩大终端。默认要求为 108 × 20，但这不是写死常量：主题或 ASCII 资源变大后，实际最小尺寸也会变化。
-
-### 显示异常、终端未恢复或异常退出
-
-通常终端状态会自动恢复。若宿主被强制终止，先重置终端，再查看日志目录 `crashes` 中的报告；下次启动也会根据运行标记登记异常。不要忽略报告中的已脱敏运行上下文和后台任务信息。
-
-### 路径、权限或 Linux 桌面功能失败
-
-```console
-tundra-cli debug doctor
-tundra-cli debug paths
-```
-
-macOS 的 Explorer Trash 可能需要 Full Disk Access，启动/诊断会提示系统设置。Linux 请安装 `xdg-utils` 与 `gio` 所属包（Fedora 为 `glib2`，Debian/Ubuntu 为 `libglib2.0-bin`），确认图形会话具有 session D-Bus、portal 和 polkit；Wayland 剪贴板异常时检查 data-control，或启用 XWayland。关机授权被取消或拒绝时，应配置当前登录会话的 polkit，不能以 `sudo` 运行 TundraUX3 规避。
-
-### 配置或状态损坏
-
-不要立刻运行 `tundra-cli new`。先备份 `tundra-cli debug paths` 报告的配置和状态目录，再查看 Shell 恢复提示和日志。Storage 会尽可能保留损坏原件并重建默认文档；`new` 只适用于明确需要彻底重置时。
-
-## 多语言
-
-界面与启动恢复提示支持 English（`en-US`）和简体中文（`zh-CN`）。在区域与时间设置中确认语言会重新读取语言包，包括再次选择当前语言。语言包与主题独立，内置中英文及默认图形资源在启动时自动修复；写入失败时使用内置资源。恢复界面仅提供“自动修复并重启”和“退出”。详见[语言资源与恢复](LOCALIZATION.md)。
-
-## 架构约束
-
-- 不得从 `app` 引入 `ui`、Ratatui 或 crossterm。
-- `AppCommand` 使用领域语义，不能包含终端坐标、组件 ID、`Rect` 或原始按键。
-- 平台路径和 OS API 只经 `platform`；文档格式、schema 与写入只经 `storage`。
-- raw mode、备用屏幕、鼠标捕获及进程退出只由 Shell/Weathr runtime 管理。
-- ViewModel 由 Shell presentation 组装；UI 仅实现布局、绘制与通用交互基础设施。
-- Editor 位置必须保持 grapheme 语义，不能退化为 UTF-8 字节偏移。
-- 生产后台任务必须进入 watchdog managed task group，并声明可否安全重放。
-- 图像资源是可选增强；协议不支持或资源不可用时必须保持 ASCII 回退，而不是阻断 Shell。
-
-## 许可证
-
-项目自身代码按 [GNU GPL v3](../LICENSE)（仅第 3 版，`GPL-3.0-only`）授权。Weathr 组件保留 [GPL-3.0-or-later](../crates/weathr/LICENSE.weathr)；分发或再使用时，还应检查对应组件以及 `third_party` 和其他资源的许可要求。
+| 现象 | 先做什么 |
+| --- | --- |
+| 终端太小 | 按错误给出的尺寸放大窗口；自定义资源会改变下限 |
+| Command Line 像是旧版本 | 同时重新构建并放置 Shell、CLI，debug/release 目录保持一致 |
+| 路径、权限或某项系统功能失败 | 运行 `tundra-cli debug doctor` 和 `tundra-cli debug paths`，检查具体依赖和权限 |
+| 异常退出后终端显示不正常 | 重置当前终端，查看日志目录中的 `crashes` 报告和下次启动提示 |
+| 配置或状态损坏 | 先备份报告中的路径，查看恢复提示；不要直接执行会清空数据的 `tundra-cli new` |
+| Linux 图形打开或剪贴板不可用 | 检查 `xdg-utils`、gio、D-Bus/portal 及终端会话条件；只有依赖它的功能受影响 |

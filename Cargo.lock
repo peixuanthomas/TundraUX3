@@ -44,6 +44,7 @@ version = "1.3.3"
 dependencies = [
  "ascii-assets",
  "chrono",
+ "chrono-tz",
  "comrak",
  "flate2",
  "i18n",
@@ -302,6 +303,22 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
+
+[[package]]
+name = "auto-admin"
+version = "1.3.3"
+dependencies = [
+ "i18n",
+ "libc",
+ "platform",
+ "ratatui",
+ "storage",
+ "terminal-runtime",
+ "ui",
+ "vt100",
+ "watchdog",
+ "zeroize",
+]
 
 [[package]]
 name = "autocfg"
@@ -4024,6 +4041,7 @@ version = "1.3.3"
 dependencies = [
  "app",
  "ascii-assets",
+ "auto-admin",
  "chrono",
  "chrono-tz",
  "crossterm",
@@ -4031,20 +4049,19 @@ dependencies = [
  "identity",
  "libc",
  "platform",
- "portable-pty",
  "ratatui",
  "runtime-log",
  "serde_json",
  "storage",
  "system-services",
  "tachyonfx",
+ "terminal-runtime",
  "time 1.3.3",
  "tokio",
  "ui",
  "vt100",
  "watchdog",
  "weathr",
- "windows-sys 0.61.2",
  "zeroize",
 ]
 
@@ -4437,6 +4454,22 @@ dependencies = [
  "parking_lot",
  "rustix 1.1.4",
  "signal-hook",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "terminal-runtime"
+version = "1.3.3"
+dependencies = [
+ "crossterm",
+ "libc",
+ "platform",
+ "portable-pty",
+ "ratatui",
+ "runtime-log",
+ "ui",
+ "vt100",
+ "watchdog",
  "windows-sys 0.61.2",
 ]
 

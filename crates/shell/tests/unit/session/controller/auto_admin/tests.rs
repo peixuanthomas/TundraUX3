@@ -115,57 +115,6 @@ fn deny_click_closes_confirmation_without_running_the_operation() {
 }
 
 #[test]
-fn approval_is_required_before_worker_runs_and_denial_never_runs_it() {
-    let (manual, _) = job(storage::AutoAdminPolicy::Manual);
-    assert_eq!(manual.phase(), WAITING);
-    manual.key(&KeyInput::new(InputKey::Char('y')));
-    assert_eq!(manual.phase(), WAITING);
-    manual.decide(false);
-    assert!(manual.wait_for_approval().is_err());
-    manual.decide(true);
-    assert!(manual.wait_for_approval().is_err());
-    let (automatic, _) = job(storage::AutoAdminPolicy::Automatic);
-    assert!(automatic.wait_for_approval().is_ok());
-    let (denied, _) = job(storage::AutoAdminPolicy::Deny);
-    assert!(denied.wait_for_approval().is_err());
-}
-
-#[test]
-fn worker_waits_for_explicit_approval_and_runs_once() {
-    let (job, _inputs) = job(storage::AutoAdminPolicy::Manual);
-    let worker_job = job.clone();
-    let (done, result) = mpsc::channel();
-    let group = default_editor_watchdog()
-        .unwrap()
-        .task_group("auto-admin-approval-test");
-    let worker = spawn_task(
-        &group,
-        TaskId::from_static("approval"),
-        Arc::new(i18n::LanguageSnapshot::embedded(0)),
-        Some(&job),
-        move || {
-            let result = worker_job.run_approved(std::convert::identity, || {
-                done.send("executed").unwrap();
-                Ok(())
-            });
-            worker_job.finish_result(&result, |()| "Done".into());
-        },
-    )
-    .unwrap();
-    assert!(result.recv_timeout(Duration::from_millis(30)).is_err());
-    job.decide(true);
-    assert_eq!(
-        result.recv_timeout(Duration::from_secs(2)).unwrap(),
-        "executed"
-    );
-    job.decide(true);
-    worker.join().unwrap();
-    assert!(result.try_recv().is_err());
-    assert_eq!(job.phase(), FINISHED);
-    assert_eq!(job.0.display.lock().unwrap().status, "Done");
-}
-
-#[test]
 fn held_approval_enter_does_not_answer_the_childs_next_question() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -606,62 +555,6 @@ fn approval_click_requires_its_own_matching_release_and_resize_cancels_it() {
 }
 
 #[test]
-fn terminal_accepts_yes_no_navigation_paste_and_enter_without_answer_translation() {
-    let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
-    for key in [
-        InputKey::Char('y'),
-        InputKey::Enter,
-        InputKey::Up,
-        InputKey::Escape,
-    ] {
-        job.key(&KeyInput::new(key));
-    }
-    job.paste("中文");
-    let bytes = rx
-        .try_iter()
-        .flat_map(|input| match input {
-            OperationInput::Terminal { bytes } => bytes,
-            _ => panic!("unexpected input"),
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(bytes, b"y\r\x1b[A\x1b\xe4\xb8\xad\xe6\x96\x87");
-    job.key(&KeyInput::with_phase(
-        InputKey::Char('n'),
-        InputModifiers::NONE,
-        InputPhase::Release,
-    ));
-    assert!(rx.try_recv().is_err());
-}
-
-#[test]
-fn password_is_never_added_to_terminal_output_or_debug_text() {
-    let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
-    job.emit(&OperationEvent::Question {
-        id: "sudo-password".into(),
-        prompt: "Password:".into(),
-        choices: vec![],
-        secret: true,
-    });
-    job.paste("test-secret");
-    assert!(
-        !job.0
-            .display
-            .lock()
-            .unwrap()
-            .parser
-            .screen()
-            .contents()
-            .contains("test-secret")
-    );
-    assert!(!format!("{job:?}").contains("test-secret"));
-    job.key(&KeyInput::new(InputKey::Enter));
-    assert!(
-        matches!(rx.try_recv().unwrap(), OperationInput::Answer { id, value } if id == "sudo-password" && value == "test-secret")
-    );
-    assert!(job.0.display.lock().unwrap().question.is_none());
-}
-
-#[test]
 fn modal_captures_ctrl_c_escape_and_page_shortcuts_and_stays_visible_with_f12() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -729,15 +622,12 @@ fn finished_terminal_keeps_keyboard_scrollback_available() {
         InputKey::PageUp,
         InputModifiers::SHIFT,
     )));
-    assert!(job.0.display.lock().unwrap().parser.screen().scrollback() > 0);
+    assert!(job.view_model(false, None, 0).terminal.scrollback_offset > 0);
     state.apply_input(InputEvent::Key(KeyInput::with_modifiers(
         InputKey::PageDown,
         InputModifiers::SHIFT,
     )));
-    assert_eq!(
-        job.0.display.lock().unwrap().parser.screen().scrollback(),
-        0
-    );
+    assert_eq!(job.view_model(false, None, 0).terminal.scrollback_offset, 0);
     assert!(rx.try_recv().is_err());
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert!(!state.auto_admin_visible());

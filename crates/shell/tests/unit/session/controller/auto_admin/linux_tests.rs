@@ -1,4 +1,16 @@
 use super::*;
+use platform::linux::authorization::Interaction;
+use platform::service::ServiceError;
+use std::os::unix::process::CommandExt;
+use std::process::Command;
+fn terminal_text(job: &AutoAdminJob) -> String {
+    job.view_model(false, None, 0)
+        .terminal
+        .cells
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect()
+}
 
 #[test]
 fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
@@ -13,7 +25,7 @@ fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
         storage::AutoAdminPolicy::Automatic,
         tx,
     );
-    let tty = job.open_terminal().unwrap();
+    let tty = job.open_test_terminal().unwrap();
     let mut command = Command::new("/bin/sh");
     command
         .args(["-c", "trap '' TERM; printf 'STOP-READY\\n'; exec sleep 30"])
@@ -30,8 +42,7 @@ fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
         });
     }
     let mut child = command.spawn().unwrap();
-    *job.0.process.lock().unwrap() =
-        Some(platform::management::termination::ProcessTree::child(child.id()).unwrap());
+    job.track_test_child(child.id()).unwrap();
     state.auto_admin = AutoAdminState {
         job: Some(job.clone()),
         visible: true,
@@ -40,16 +51,7 @@ fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         job.poll_terminal();
-        if job
-            .0
-            .display
-            .lock()
-            .unwrap()
-            .parser
-            .screen()
-            .contents()
-            .contains("STOP-READY")
-        {
+        if terminal_text(&job).contains("STOP-READY") {
             break;
         }
         if Instant::now() >= deadline {
@@ -85,7 +87,7 @@ fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
     assert_eq!(status.signal(), Some(libc::SIGKILL));
     job.finish(Err("Killed".into()));
     assert!(state.auto_admin_view().unwrap().finished);
-    job.close_terminal();
+    job.close_test_terminal();
 }
 
 #[test]
@@ -123,7 +125,7 @@ fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion(
         storage::AutoAdminPolicy::Automatic,
         tx,
     );
-    let tty = job.open_terminal().unwrap();
+    let tty = job.open_test_terminal().unwrap();
     state.auto_admin = AutoAdminState {
         job: Some(job.clone()),
         visible: true,
@@ -147,7 +149,7 @@ fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion(
     let mut sent_yes = false;
     loop {
         job.poll_terminal();
-        let output = job.0.display.lock().unwrap().parser.screen().contents();
+        let output = terminal_text(&job);
         if output.contains("Password:") && !sent_password {
             state.apply_input(InputEvent::key(InputKey::F(12)));
             assert!(state.auto_admin_visible());
@@ -179,7 +181,7 @@ fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion(
         std::thread::sleep(Duration::from_millis(10));
     }
     job.poll_terminal();
-    let output = job.0.display.lock().unwrap().parser.screen().contents();
+    let output = terminal_text(&job);
     assert!(output.contains("DONE"), "{output}");
     assert!(output.contains("19 82"), "{output}");
     assert!(!output.contains("test-secret"));

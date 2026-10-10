@@ -1,0 +1,421 @@
+use crate::session::*;
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/session/controller/home_navigation/touch_tests.rs"]
+mod touch_tests;
+
+impl ShellSession {
+    pub(in crate::session) fn logout_at(&mut self, now: Instant) -> bool {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            return false;
+        }
+        if self.diagnostics_restart_is_required() {
+            self.notify_alert_with_tone(
+                i18n::LocalizedText::from(i18n::msg!("shell-restart-tundraux-before-signing-out")),
+                ui::NotificationTone::Warning,
+            );
+            return false;
+        }
+        if self.diagnostics_scanning
+            || self
+                .diagnostics_task_runtime
+                .as_ref()
+                .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
+        {
+            self.notify_alert_with_tone(
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-wait-for-the-diagnostics-task-to-finish-before-signing-out"
+                )),
+                ui::NotificationTone::Warning,
+            );
+            return false;
+        }
+        if !self.persist_editor_recovery_now(now) {
+            self.notify_alert_with_tone(
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-save-the-editor-recovery-sign-out-was-cancelled"
+                )),
+                ui::NotificationTone::Error,
+            );
+            return false;
+        }
+        self.return_to_login_at(
+            i18n::LocalizedText::from(i18n::msg!("shell-signed-out")),
+            now,
+        );
+        true
+    }
+
+    pub(in crate::session) fn logout_to_lockscreen_at(&mut self, now: Instant) -> bool {
+        if !self.logout_at(now) {
+            return false;
+        }
+        self.prepare_return_to_lockscreen();
+        true
+    }
+
+    pub(in crate::session) fn return_to_login(&mut self, status: impl Into<i18n::LocalizedText>) {
+        self.return_to_login_at(status, Instant::now());
+    }
+
+    pub(in crate::session) fn return_to_login_at(
+        &mut self,
+        status: impl Into<i18n::LocalizedText>,
+        now: Instant,
+    ) {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            return;
+        }
+        // Account disable/delete may force a return to login without passing
+        // through the ordinary Logout command. Preserve any dirty editor text
+        // before the authenticated recovery context is cleared.
+        let _ = self.persist_editor_recovery_now(now);
+        self.resolve_user_management_refresh_alert();
+        self.notification_bindings = NotificationBindings::default();
+        self.app.dispatch_at(
+            app::AppCommand::Notification(app::NotificationCommand::Reset(status.into())),
+            now,
+        );
+        self.overlay_manager = ShellOverlayManager::default();
+        self.notification_pointer_capture = None;
+        self.pending_notification_commands.clear();
+        self.app
+            .dispatch_at(app::AppCommand::SetAuthSession(None), now);
+        self.app
+            .dispatch_at(app::AppCommand::SetActiveAppearance(None), now);
+        self.app
+            .dispatch_at(app::AppCommand::SetActiveSystemStatusDashboard(None), now);
+        self.pending_personalization_session = None;
+        self.time_sync_dialog_visible = false;
+        self.time_sync_failure_message = None;
+        self.clock_scheduler = None;
+        self.clock_selected_entry_id = None;
+        self.clock_entry_window_start = 0;
+        self.clock_create_state = None;
+        self.clock_persist_pending = false;
+        self.clock_pending_due_summary = None;
+        self.clock_profile_pending_sync = None;
+        self.app
+            .dispatch_at(app::AppCommand::SetManagedUsers(Vec::new()), now);
+        self.user_management_selected = 0;
+        self.user_management_window_start = 0;
+        self.user_management_focus = UserManagementPageFocus::UserList;
+        self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
+        self.user_management_mode = UserManagementMode::Browse;
+        self.user_management_message = None;
+        self.selected_home_entry_index = 0;
+        self.home_viewport_offset = 0;
+        self.settings_state = None;
+        let _ = self.settings_task_runtime.set_system_status_active(false);
+        self.reset_system_status_trackers();
+        self.logs_state = LogsUiState::default();
+        self.management_state = ManagementState::default();
+        self.stop_auto_admin();
+        #[cfg(target_os = "linux")]
+        {
+            self.privilege_session = Default::default();
+        }
+        self.auto_admin = AutoAdminState::default();
+        self.management_background.clear();
+        self.launcher_drag = None;
+        self.command_line_start_directory = None;
+        self.replace_explorer_state(None);
+        self.explorer_input_mode = ExplorerInputMode::Browse;
+        self.explorer_input.clear();
+        self.explorer_input_replace_all = false;
+        self.explorer_overlay_mode = None;
+        self.explorer_purpose = ExplorerPurpose::Browse;
+        if let Some(load) = self.editor_load_state.take() {
+            self.editor_task_runtime.cancel(load.id);
+        }
+        self.editor_save_state = None;
+        self.editor_read_session = None;
+        self.advance_editor_document_generation();
+        self.app
+            .dispatch_at(app::AppCommand::SetEditorState(None), Instant::now());
+        self.editor_rich_render_cache = None;
+        self.editor_cursor_acceleration = None;
+        self.editor_settings_dialog = None;
+        self.editor_focus = ui::EditorFocus::Canvas;
+        self.editor_open_menu = None;
+        self.editor_selected_toolbar_action = None;
+        self.editor_quick_menu_anchor = None;
+        self.editor_drag_anchor = None;
+        self.editor_table_column_widths.clear();
+        self.editor_table_resize = None;
+        self.editor_fingerprint = None;
+        self.editor_close_after_save = false;
+        self.editor_open_after_save = false;
+        self.editor_discard_for_open = false;
+        self.editor_message = None;
+        self.editor_recovery_dirty_since = None;
+        self.editor_last_recovery_write = None;
+        self.app.dispatch_at(
+            app::AppCommand::SetDiagnosticsSnapshot(None),
+            Instant::now(),
+        );
+        self.diagnostics_tab = ui::DiagnosticsTab::Health;
+        self.diagnostics_selected_check = 0;
+        self.diagnostics_selected_log = 0;
+        self.diagnostics_selected_incident = 0;
+        self.diagnostics_list_window_start = 0;
+        self.diagnostics_scanning = false;
+        self.diagnostics_rescan_pending = false;
+        self.diagnostics_repair_preview.clear();
+        self.diagnostics_repair_selected = 0;
+        self.diagnostics_repair_scroll_offset = 0;
+        self.diagnostics_repair_confirm_selected = true;
+        self.diagnostics_feedback = None;
+        self.diagnostics_restart_required = self.diagnostics_restart_is_required();
+        self.active_popup = None;
+        self.hovered_component = None;
+        self.last_click = None;
+        self.drag_tracker = None;
+        self.login_password.clear();
+        self.login_password_visible_until = None;
+        self.error_message = None;
+        self.return_to_lockscreen_requested = false;
+        self.reset_login_idle_deadline_at(now);
+        let _ = self.refresh_login_users_from_storage();
+        self.reset_navigation(ShellScreen::Login);
+        self.focused_component = ShellComponent::LoginUserList;
+        self.refresh_hit_map();
+    }
+
+    pub(in crate::session) fn user_home_entries(&self) -> Vec<ui::ShellEntry> {
+        let _language = i18n::enter_snapshot(self.language.clone());
+        if self.is_strict_guest() {
+            return Vec::new();
+        }
+        let mut entries = user_home_entries();
+        entries.retain(|entry| {
+            !matches!(
+                entry.icon_identity(),
+                "logs"
+                    | "services"
+                    | "processes"
+                    | "packages"
+                    | "network"
+                    | "disks"
+                    | "user_management"
+                    | "user_profile"
+            )
+        });
+        entries
+    }
+
+    pub(in crate::session) fn is_strict_guest(&self) -> bool {
+        self.app
+            .auth_session()
+            .is_some_and(|session| session.role == UserRole::Guest)
+    }
+
+    pub(in crate::session) fn sync_home_entry_selection(&mut self) {
+        let count = self.user_home_entries().len();
+        self.selected_home_entry_index = if count == 0 {
+            0
+        } else {
+            self.selected_home_entry_index.min(count - 1)
+        };
+        self.sync_home_viewport();
+    }
+
+    pub(in crate::session) fn select_home_entry(&mut self, index: usize) {
+        let entries = self.user_home_entries();
+        if entries.is_empty() {
+            self.selected_home_entry_index = 0;
+            return;
+        }
+
+        self.selected_home_entry_index = index.min(entries.len() - 1);
+        self.sync_home_viewport();
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+            "shell-home-arg1",
+            arg1 = entries[self.selected_home_entry_index].label.clone()
+        )));
+    }
+
+    pub(in crate::session) fn select_home_entry_delta(&mut self, delta: isize) {
+        let count = self.user_home_entries().len();
+        if count == 0 {
+            self.selected_home_entry_index = 0;
+            return;
+        }
+
+        let current = self.selected_home_entry_index().min(count - 1) as isize;
+        let next = (current + delta).clamp(0, count.saturating_sub(1) as isize);
+        self.select_home_entry(next as usize);
+    }
+
+    pub(in crate::session) fn select_home_entry_row_delta(&mut self, direction: isize) {
+        let columns = self.visible_home_entry_columns().max(1) as isize;
+        self.select_home_entry_delta(direction.saturating_mul(columns));
+    }
+
+    pub(in crate::session) fn activate_selected_home_entry(&mut self, platform: &dyn Platform) {
+        self.activate_home_entry(self.selected_home_entry_index(), platform);
+    }
+
+    pub(in crate::session) fn activate_home_entry(
+        &mut self,
+        index: usize,
+        platform: &dyn Platform,
+    ) {
+        let entries = self.user_home_entries();
+        let Some(entry) = entries.get(index) else {
+            return;
+        };
+
+        self.selected_home_entry_index = index;
+        match entry.icon_identity() {
+            "explorer" => self.open_explorer(platform),
+            "launcher" => self.open_launcher(platform),
+            "settings" => self.open_settings(),
+            "system_status" => self.open_system_status(),
+            "user_management" | "user_profile" => self.open_user_management(),
+            _ => {}
+        }
+    }
+
+    pub(in crate::session) fn visible_home_entry_columns(&self) -> usize {
+        self.home_content_layout()
+            .map_or(1, |layout| layout.columns)
+    }
+
+    pub(in crate::session) fn home_entry_index_at(
+        &self,
+        coordinates: CellPosition,
+    ) -> Option<usize> {
+        self.home_content_layout()?.entry_at(coordinates)
+    }
+
+    fn home_content_layout(&self) -> Option<ui::HomeLayout> {
+        let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
+            return None;
+        };
+        Some(ui::home_layout(main, &self.to_home_view_model()))
+    }
+
+    fn sync_home_viewport(&mut self) {
+        if let Some(layout) = self.home_content_layout() {
+            self.home_viewport_offset = layout.visible_start;
+        }
+    }
+
+    pub(in crate::session) fn handle_home_pointer_scrollbar(&mut self, mouse: &MouseInput) -> bool {
+        if self.active_screen() != ShellScreen::Home {
+            if matches!(self.scrollbar_drag, Some(ScrollbarDragState::Home { .. })) {
+                self.scrollbar_drag = None;
+            }
+            return false;
+        }
+        match mouse.kind {
+            ui::MouseEventKind::Down(PointerButton::Left) => {
+                let Some(layout) = self.home_content_layout() else {
+                    return false;
+                };
+                let Some(track) = layout.scrollbar else {
+                    return false;
+                };
+                if !rect_contains(track, mouse.coordinates()) {
+                    return false;
+                }
+                let (start, height) = ui::components::Scrollbar::new(
+                    layout.scroll_content_len,
+                    layout.visible_capacity,
+                    layout.visible_start,
+                )
+                .thumb_range(track);
+                let thumb = Rect::new(track.x, track.y.saturating_add(start), track.width, height);
+                let grab_offset = if rect_contains(thumb, mouse.coordinates()) {
+                    mouse.coordinates().1.saturating_sub(thumb.y)
+                } else {
+                    height / 2
+                };
+                self.scrollbar_drag = Some(ScrollbarDragState::Home { grab_offset });
+                self.button_pointer_capture = None;
+                self.drag_tracker = None;
+                self.drag_home_scrollbar(mouse.coordinates(), grab_offset);
+                true
+            }
+            ui::MouseEventKind::Drag(PointerButton::Left)
+            | ui::MouseEventKind::Up(PointerButton::Left) => {
+                let Some(ScrollbarDragState::Home { grab_offset }) = self.scrollbar_drag else {
+                    return false;
+                };
+                self.drag_home_scrollbar(mouse.coordinates(), grab_offset);
+                if matches!(mouse.kind, ui::MouseEventKind::Up(_)) {
+                    self.scrollbar_drag = None;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn drag_home_scrollbar(&mut self, coordinates: CellPosition, grab_offset: u16) {
+        let Some(layout) = self.home_content_layout() else {
+            return;
+        };
+        let Some(track) = layout.scrollbar else {
+            self.scrollbar_drag = None;
+            return;
+        };
+        let (_, height) = ui::components::Scrollbar::new(
+            layout.scroll_content_len,
+            layout.visible_capacity,
+            layout.visible_start,
+        )
+        .thumb_range(track);
+        let requested = scrollbar_window_start(
+            coordinates.1,
+            grab_offset,
+            track.y,
+            track.height,
+            height,
+            layout.scroll_content_len,
+            layout.visible_capacity,
+        );
+        self.home_viewport_offset = requested / layout.columns * layout.columns;
+        let count = self.user_home_entries().len();
+        if count > 0 {
+            let last = self
+                .home_viewport_offset
+                .saturating_add(layout.visible_capacity)
+                .saturating_sub(1)
+                .min(count - 1);
+            self.selected_home_entry_index = self
+                .selected_home_entry_index
+                .clamp(self.home_viewport_offset.min(last), last);
+        }
+    }
+
+    pub(in crate::session) fn notification_action_index_at(
+        &self,
+        coordinates: CellPosition,
+    ) -> Option<usize> {
+        let model = self.notification_active_modal_view_model()?;
+        let area = self.shell_modal_area();
+        let ui::NotificationLayout::Dialog(layout) = ui::notification_layout(area, &model) else {
+            return None;
+        };
+
+        layout
+            .actions
+            .iter()
+            .find(|action| rect_contains(action.area, coordinates))
+            .map(|action| action.index)
+    }
+
+    pub(in crate::session) fn notification_can_render(&self) -> bool {
+        let Some(model) = self.notification_active_modal_view_model() else {
+            return false;
+        };
+        let area = self.shell_modal_area();
+        matches!(
+            ui::notification_layout(area, &model),
+            ui::NotificationLayout::Dialog(_)
+        )
+    }
+}

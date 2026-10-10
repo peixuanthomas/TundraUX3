@@ -15,7 +15,7 @@ TundraUX3 is written in Rust, using Ratatui and crossterm. It is under active de
 | Platform | Role |
 | --- | --- |
 | **Linux** | The main target for device operation and system management in terminal-only environments. |
-| **Windows && MacOS** | A demonstration platform for exploring the interface and interaction design. |
+| **Windows and macOS** | A demonstration platform for exploring the interface and interaction design. |
 
 System-management development focuses on Linux. Windows and macOS builds let you try the experience, but do not promise the same system controls. Available Linux operations depend on the installed tools, running services, and your user's permissions.
 
@@ -27,7 +27,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
 - **Make the interface your own:** choose English or Simplified Chinese, adjust appearance, and use the clock and weather applications.
 
-See [Linux system management](docs/linux-management.md) for supported operations and their requirements.
+See [Linux system management](crates/platform/docs/linux-management.md) for supported operations and their requirements.
 
 ## Keyboard, mouse, or touchscreen
 
@@ -39,7 +39,7 @@ Independent use of all three input methods is a core design requirement:
 | **Mouse alone** | Use visible buttons, menus, selectors, and scrollbars without depending on keyboard shortcuts. |
 | **Touchscreen alone** | Tap controls and drag scrollbars without needing a physical keyboard or mouse. |
 
-Support is being improved across pages. Mouse and touch interaction require a terminal that forwards the corresponding pointer events. Text entry in application forms still needs an input method, such as a physical keyboard or a terminal/system-provided on-screen keyboard. An English QWERTY on-screen keyboard demo is available through `tundra-cli debug screen-keyboard` in an external terminal. It fills the lower half of the terminal with keys that adapt to its width, including digits, symbols, F1–F12, Shift, Tab, CapsLock, Ctrl, Alt and right Ctrl. Modifier keys stay lit until clicked again and can be combined with subsequent keys. Each character key shows only the character it currently types, updating with Shift and CapsLock; taller terminals use taller keys. Hide/Show slides the keyboard at the saved global animation speed and respects reduced motion. Physical keys light their matching keycaps while the keyboard is visible. The Test AA button opens a harmless AA input popup; its Show keyboard button slides the keyboard up from the bottom. The final compositor moves the popup into the remaining space, keeping it on screen and above the keyboard, which may cover the status and time bars. Small terminals preserve the popup and ask for a larger window. It displays typed text and key combinations, and offers Hide/Show, Copy, Paste, Clear and Exit buttons. Copy copies all text and Paste appends clipboard text. It is not yet connected to application forms or embedded Command Line. Complete mouse-only or touch-only text-entry workflows therefore depend on the surrounding environment.
+Support is still being improved. Mouse and touch need a terminal that forwards pointer events. Application forms need a physical keyboard or an input method supplied by the terminal/system. The external-terminal `tundra-cli debug screen-keyboard` command offers a QWERTY and AA input demo, but is not connected to application forms or embedded Command Line. See [preview details](crates/shell/docs/previews.md).
 
 Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action.
 
@@ -97,17 +97,17 @@ Build both packages: the shell uses the companion CLI for the built-in command l
 
 ## Documentation
 
-Most detailed documentation is currently in Chinese.
+Most detailed documentation is currently in Chinese. Start with the [documentation index](docs/README.md); each crate keeps its own implementation guide.
 
 - [简体中文 README](docs/README.zh-CN.md)
 - [Technical documentation](docs/README-TECHNICAL.md) — architecture, building, testing, and packaging.
-- [Linux system management](docs/linux-management.md) — services, processes, packages, networks, and disks.
-- [Operations CLI](docs/operations-cli.md) — reusable commands, authorization, task IDs and exit codes.
-- [System configuration editor](docs/system-config.md) and [user management](docs/user-management.md).
+- [Linux system management](crates/platform/docs/linux-management.md) — services, processes, packages, networks, and disks.
+- [Operations CLI](crates/cli/docs/operations.md) — reusable commands, authorization, task IDs and exit codes.
+- [System configuration editor](crates/platform/docs/system-config.md) and [user management](crates/platform/docs/user-management.md).
 - [Linux runtime notes](docs/packaging/linux/README-LINUX.txt) — runtime dependencies, permissions, and portable updates (English).
-- [Logs and diagnostics](docs/LOGS.md)
-- [Localization and resource recovery](docs/LOCALIZATION.md)
-- [Linux update tests](docs/scripts/tests/README.md)
+- [Logs and diagnostics](crates/runtime-log/docs/logs.md)
+- [Localization and resource recovery](crates/i18n/docs/localization.md)
+- [Linux update tests](crates/app/docs/update-tests.md)
 
 ## License
 

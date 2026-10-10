@@ -1,0 +1,782 @@
+mod input;
+pub(in crate::session) mod sync;
+use crate::session::*;
+impl ShellSession {
+    pub(in crate::session) fn open_clock(&mut self) {
+        self.enter_screen(ShellScreen::Clock);
+        self.active_popup = None;
+        self.clock_create_state = None;
+        self.focused_component = if self.is_strict_guest() {
+            ShellComponent::ClockButton
+        } else {
+            ShellComponent::ClockNewButton
+        };
+        self.sync_clock_selection();
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-clock")));
+        self.refresh_hit_map();
+    }
+
+    pub(in crate::session) fn close_clock(&mut self) {
+        self.clock_create_state = None;
+        self.return_from_screen(ShellScreen::Clock);
+    }
+
+    pub(in crate::session) fn load_clock_for_session(&mut self, session: &AuthSession) {
+        self.clock_scheduler = None;
+        self.clock_selected_entry_id = None;
+        self.clock_entry_window_start = 0;
+        self.clock_create_state = None;
+        self.clock_persist_pending = false;
+        self.clock_pending_due_summary = None;
+        self.clock_profile_pending_sync = None;
+
+        let Some(storage) = self.storage_manager.clone() else {
+            return;
+        };
+        let document = match storage.load_clock() {
+            Ok(document) => document,
+            Err(error) => {
+                self.report_clock_storage_error(error.to_string());
+                return;
+            }
+        };
+        let profile = document
+            .profiles
+            .get(&session.user_id)
+            .cloned()
+            .unwrap_or_default();
+        if !self.time_sync_attempted && !profile.entries.is_empty() {
+            self.clock_profile_pending_sync = Some(profile);
+            self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                "shell-waiting-for-initial-time-sync-to-restore-reminders"
+            )));
+            return;
+        }
+        self.restore_clock_profile(profile);
+    }
+
+    pub(in crate::session) fn restore_clock_profile(&mut self, profile: ClockProfile) {
+        let snapshot = self.app.snapshot().clock;
+        let now = Instant::now();
+        let (scheduler, due) = ClockScheduler::restore(profile, &snapshot, now);
+        self.clock_scheduler = Some(scheduler);
+        self.sync_clock_selection_at(now);
+        let ordinary_due = self.handle_clock_due_events(due);
+        if let Some(summary) = ordinary_due {
+            self.remember_clock_due_summary(summary);
+        }
+
+        if let Err(error) = self.persist_clock_scheduler_at(&snapshot, now) {
+            self.clock_persist_pending = true;
+            self.report_clock_storage_error(error);
+        } else {
+            self.clock_pending_due_summary = None;
+            self.resolve_notification_alert(CLOCK_STORAGE_ALERT_KEY);
+        }
+    }
+
+    pub(in crate::session) fn restore_clock_profile_after_initial_sync(&mut self) {
+        if self.app.auth_session().is_none() {
+            self.clock_profile_pending_sync = None;
+            return;
+        }
+        if let Some(profile) = self.clock_profile_pending_sync.take() {
+            self.restore_clock_profile(profile);
+            self.refresh_hit_map();
+        }
+    }
+
+    pub(in crate::session) fn persist_clock_scheduler_at(
+        &self,
+        snapshot: &time::ClockSnapshot,
+        now: Instant,
+    ) -> Result<(), i18n::LocalizedText> {
+        let storage = self.storage_manager.as_ref().ok_or_else(|| {
+            i18n::LocalizedText::from(i18n::msg!("shell-clock-storage-is-unavailable"))
+        })?;
+        let user_id = self
+            .app
+            .auth_session()
+            .map(|session| session.user_id.as_str())
+            .ok_or_else(|| {
+                i18n::LocalizedText::from(i18n::msg!("shell-sign-in-to-save-alarms-and-countdowns"))
+            })?;
+        let scheduler = self.clock_scheduler.as_ref().ok_or_else(|| {
+            i18n::LocalizedText::from(i18n::msg!("shell-clock-scheduler-is-unavailable"))
+        })?;
+        let mut document = storage
+            .load_clock()
+            .map_err(|error| i18n::LocalizedText::from(error.to_string()))?;
+        document
+            .profiles
+            .insert(user_id.to_string(), scheduler.export_profile(snapshot, now));
+        storage
+            .save_clock(&document)
+            .map_err(|error| i18n::LocalizedText::from(error.to_string()))
+    }
+
+    pub(in crate::session) fn report_clock_storage_error(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+    ) {
+        let ordinary_due = self.clock_pending_due_summary.clone();
+        self.report_clock_storage_error_with_due(message, ordinary_due.as_ref());
+    }
+
+    pub(in crate::session) fn remember_clock_due_summary(
+        &mut self,
+        summary: impl Into<i18n::LocalizedText>,
+    ) {
+        let summary = summary.into();
+        self.clock_pending_due_summary = Some(match self.clock_pending_due_summary.take() {
+            None => summary,
+            Some(previous) if previous == summary => previous,
+            Some(_) => i18n::LocalizedText::from(i18n::msg!("shell-multiple-reminders-are-due")),
+        });
+    }
+
+    pub(in crate::session) fn report_clock_storage_error_with_due(
+        &mut self,
+        message: impl Into<i18n::LocalizedText>,
+        ordinary_due: Option<&i18n::LocalizedText>,
+    ) {
+        let storage_error = i18n::LocalizedText::from(i18n::msg!(
+            "shell-clock-data-could-not-be-saved-arg1",
+            arg1 = i18n::LocalizedText::from(message.into())
+        ));
+        let message = ordinary_due
+            .map(|due| {
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-due-storage-error",
+                    due = due.clone(),
+                    storage_error = storage_error.clone()
+                ))
+            })
+            .unwrap_or(storage_error);
+        self.notify_alert_with_key(
+            CLOCK_STORAGE_ALERT_KEY,
+            message,
+            ui::NotificationTone::Error,
+        );
+    }
+
+    pub(in crate::session) fn commit_clock_mutation(
+        &mut self,
+        previous: ClockScheduler,
+        snapshot: &time::ClockSnapshot,
+        now: Instant,
+    ) -> Result<(), i18n::LocalizedText> {
+        match self.persist_clock_scheduler_at(snapshot, now) {
+            Ok(()) => {
+                self.clock_persist_pending = false;
+                self.clock_pending_due_summary = None;
+                self.resolve_notification_alert(CLOCK_STORAGE_ALERT_KEY);
+                Ok(())
+            }
+            Err(error) => {
+                self.clock_scheduler = Some(previous);
+                self.report_clock_storage_error(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    pub(in crate::session) fn advance_clock_background(&mut self) {
+        let snapshot = self.app.snapshot().clock;
+        self.advance_clock_background_at(&snapshot, Instant::now());
+    }
+
+    pub(in crate::session) fn advance_clock_background_at(
+        &mut self,
+        snapshot: &time::ClockSnapshot,
+        now: Instant,
+    ) {
+        self.notification_expire(now);
+        let due = self
+            .clock_scheduler
+            .as_mut()
+            .map(|scheduler| scheduler.advance(snapshot, now))
+            .unwrap_or_default();
+        let has_due = !due.is_empty();
+        let ordinary_due = if has_due {
+            self.sync_clock_selection_at(now);
+            let ordinary_due = self.handle_clock_due_events(due);
+            self.refresh_hit_map();
+            ordinary_due
+        } else {
+            None
+        };
+        if let Some(summary) = ordinary_due {
+            self.remember_clock_due_summary(summary);
+        }
+        if has_due || self.clock_persist_pending {
+            match self.persist_clock_scheduler_at(snapshot, now) {
+                Ok(()) => {
+                    self.clock_persist_pending = false;
+                    self.clock_pending_due_summary = None;
+                    self.resolve_notification_alert(CLOCK_STORAGE_ALERT_KEY);
+                }
+                Err(error) => {
+                    self.clock_persist_pending = true;
+                    self.report_clock_storage_error(error);
+                }
+            }
+        }
+    }
+
+    pub(in crate::session) fn handle_clock_due_events(
+        &mut self,
+        due: Vec<DueEvent>,
+    ) -> Option<i18n::LocalizedText> {
+        let mut ordinary = Vec::new();
+        for event in due {
+            let message = match event.kind {
+                ScheduledClockEntryKind::DailyAlarm => i18n::LocalizedText::from(i18n::msg!(
+                    "shell-alarm-arg1-is-due",
+                    arg1 = event.display_time
+                )),
+                ScheduledClockEntryKind::Countdown => {
+                    i18n::LocalizedText::from(i18n::msg!("shell-countdown-finished"))
+                }
+            };
+            if !event.strong {
+                ordinary.push(message);
+                continue;
+            }
+
+            let user_id = self
+                .app
+                .auth_session()
+                .map(|session| session.user_id.as_str())
+                .unwrap_or("unknown");
+            let key = format!("{CLOCK_DUE_NOTIFICATION_KEY_PREFIX}.{user_id}.{}", event.id);
+            let (title, actions) = match event.kind {
+                ScheduledClockEntryKind::DailyAlarm => (
+                    i18n::LocalizedText::from(i18n::msg!("shell-alarm")),
+                    vec![
+                        ShellNotificationAction::new(
+                            "snooze",
+                            i18n::LocalizedText::from(i18n::msg!("shell-snooze-5-min")),
+                        )
+                        .with_shortcut(InputKey::Char('s'))
+                        .with_follow_up(ShellCommand::ClockSnoozeFiveMinutes(event.id)),
+                        ShellNotificationAction::new(
+                            "dismiss",
+                            i18n::LocalizedText::from(i18n::msg!("shell-dismiss")),
+                        )
+                        .with_shortcut(InputKey::Escape)
+                        .cancel(),
+                    ],
+                ),
+                ScheduledClockEntryKind::Countdown => (
+                    i18n::LocalizedText::from(i18n::msg!("shell-countdown")),
+                    vec![
+                        ShellNotificationAction::new(
+                            "dismiss",
+                            i18n::LocalizedText::from(i18n::msg!("shell-dismiss")),
+                        )
+                        .with_shortcut(InputKey::Escape)
+                        .cancel(),
+                    ],
+                ),
+            };
+            self.notify_modal_with_options(
+                ShellNotification::modal(title, message, ui::NotificationTone::Critical, actions)
+                    .with_key(key)
+                    .with_component(ShellComponent::NotificationDialog),
+            );
+        }
+
+        let message = match ordinary.len() {
+            0 => None,
+            1 => ordinary.pop(),
+            count => Some(i18n::LocalizedText::from(i18n::msg!(
+                "shell-count-reminders-are-due",
+                count = count
+            ))),
+        };
+        if let Some(message) = &message {
+            self.notify_toast(message.clone());
+        }
+        message
+    }
+
+    pub(in crate::session) fn open_clock_create_dialog(&mut self) {
+        if self.is_strict_guest() {
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-guest-clock-is-read-only"
+            )));
+            return;
+        }
+        if self.clock_scheduler.is_none() {
+            if self.clock_profile_pending_sync.is_some() {
+                self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-waiting-for-initial-time-sync-to-restore-reminders"
+                )));
+            } else {
+                self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-sign-in-to-create-alarms-and-countdowns"
+                )));
+            }
+            return;
+        }
+        self.capture_modal_focus_context();
+        self.clock_create_state = Some(ClockCreateState::default());
+        self.refresh_hit_map();
+    }
+
+    pub(in crate::session) fn close_clock_create_dialog(&mut self) {
+        self.clock_create_state = None;
+        self.refresh_hit_map();
+    }
+
+    pub(in crate::session) fn move_clock_create_focus(&mut self, direction: i8) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        let current = match state.focus {
+            ui::ClockCreateDialogFocus::Input => state.active_field,
+            ui::ClockCreateDialogFocus::CreateAlarm => 3,
+            ui::ClockCreateDialogFocus::CreateCountdown => 4,
+        };
+        let next = (current as isize + direction as isize).rem_euclid(5) as usize;
+        match next {
+            0..=2 => self.select_clock_create_field(next),
+            3 => self.set_clock_create_focus(ui::ClockCreateDialogFocus::CreateAlarm),
+            _ => self.set_clock_create_focus(ui::ClockCreateDialogFocus::CreateCountdown),
+        }
+    }
+
+    pub(in crate::session) fn set_clock_create_focus(&mut self, focus: ui::ClockCreateDialogFocus) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        state.focus = focus;
+        state.pending_digit = false;
+        self.focused_component = match focus {
+            ui::ClockCreateDialogFocus::Input => ShellComponent::ClockCreateInput,
+            ui::ClockCreateDialogFocus::CreateAlarm => ShellComponent::ClockCreateAlarmButton,
+            ui::ClockCreateDialogFocus::CreateCountdown => {
+                ShellComponent::ClockCreateCountdownButton
+            }
+        };
+    }
+
+    pub(in crate::session) fn select_clock_create_field(&mut self, field: usize) {
+        if field >= 3 {
+            return;
+        }
+        self.set_clock_create_focus(ui::ClockCreateDialogFocus::Input);
+        if let Some(state) = self.clock_create_state.as_mut() {
+            state.active_field = field;
+        }
+    }
+
+    pub(in crate::session) fn adjust_clock_create_field(&mut self, field: usize, delta: i8) {
+        if field >= 3 {
+            return;
+        }
+        self.select_clock_create_field(field);
+        if let Some(state) = self.clock_create_state.as_mut() {
+            let limit = if field == 0 { 24 } else { 60 };
+            state.values[field] =
+                (i16::from(state.values[field]) + i16::from(delta)).rem_euclid(limit) as u8;
+            state.error = None;
+        }
+    }
+
+    pub(in crate::session) fn append_clock_create_char(&mut self, character: char) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        if state.focus != ui::ClockCreateDialogFocus::Input || !character.is_ascii_digit() {
+            return;
+        }
+        let field = state.active_field;
+        let digit = character as u8 - b'0';
+        let limit = if field == 0 { 23 } else { 59 };
+        let value = if state.pending_digit {
+            state.values[field] * 10 + digit
+        } else {
+            digit
+        };
+        if value > limit {
+            return;
+        }
+        state.values[field] = value;
+        state.error = None;
+        if state.pending_digit {
+            state.pending_digit = false;
+            if field < 2 {
+                state.active_field += 1;
+            }
+        } else {
+            state.pending_digit = true;
+        }
+    }
+
+    pub(in crate::session) fn clock_create_backspace(&mut self) {
+        let Some(state) = self.clock_create_state.as_mut() else {
+            return;
+        };
+        if state.focus == ui::ClockCreateDialogFocus::Input {
+            state.values[state.active_field] = 0;
+            state.pending_digit = false;
+            state.error = None;
+        }
+    }
+
+    pub(in crate::session) fn create_clock_entry(&mut self, kind: ScheduledClockEntryKind) {
+        let Some(input) = self.clock_create_state.as_ref().map(|state| {
+            format!(
+                "{:02} {:02} {:02}",
+                state.values[0], state.values[1], state.values[2]
+            )
+        }) else {
+            return;
+        };
+        let snapshot = self.app.snapshot().clock;
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            if let Some(state) = self.clock_create_state.as_mut() {
+                state.error = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-sign-in-to-create-clock-entries"
+                )));
+            }
+            return;
+        };
+        let result = match (kind, self.clock_scheduler.as_mut()) {
+            (ScheduledClockEntryKind::DailyAlarm, Some(scheduler)) => {
+                scheduler.create_daily_alarm(&input, &snapshot)
+            }
+            (ScheduledClockEntryKind::Countdown, Some(scheduler)) => {
+                scheduler.create_countdown(&input, &snapshot, now)
+            }
+            (_, None) => Err(ClockSchedulerError::EntryNotFound),
+        };
+        let id = match result {
+            Ok(id) => id,
+            Err(error) => {
+                if let Some(state) = self.clock_create_state.as_mut() {
+                    state.error = Some(clock_scheduler_error_message(&error));
+                }
+                return;
+            }
+        };
+        if let Err(error) = self.commit_clock_mutation(previous, &snapshot, now) {
+            if let Some(state) = self.clock_create_state.as_mut() {
+                state.error = Some(i18n::LocalizedText::from(i18n::msg!(
+                    "shell-could-not-save-error",
+                    error = error.clone()
+                )));
+            }
+            return;
+        }
+
+        self.clock_create_state = None;
+        self.synchronize_overlay_focus();
+        self.clock_selected_entry_id = Some(id);
+        self.focused_component = ShellComponent::ClockEntryList;
+        self.sync_clock_window_at(now);
+        self.notify_toast(match kind {
+            ScheduledClockEntryKind::DailyAlarm => {
+                i18n::LocalizedText::from(i18n::msg!("shell-daily-alarm-created"))
+            }
+            ScheduledClockEntryKind::Countdown => {
+                i18n::LocalizedText::from(i18n::msg!("shell-countdown-created"))
+            }
+        });
+        self.refresh_hit_map();
+    }
+
+    pub(in crate::session) fn ordered_clock_entry_ids_at(&self, now: Instant) -> Vec<u64> {
+        let model = self.to_clock_view_model_at(&self.app.snapshot().clock, now);
+        model
+            .alarms
+            .iter()
+            .chain(&model.countdowns)
+            .map(|entry| entry.id)
+            .collect()
+    }
+
+    pub(in crate::session) fn sync_clock_selection(&mut self) {
+        self.sync_clock_selection_at(Instant::now());
+    }
+
+    pub(in crate::session) fn sync_clock_selection_at(&mut self, now: Instant) {
+        let ids = self.ordered_clock_entry_ids_at(now);
+        if !self
+            .clock_selected_entry_id
+            .is_some_and(|selected| ids.contains(&selected))
+        {
+            self.clock_selected_entry_id = ids.first().copied();
+        }
+        self.sync_clock_window_at(now);
+    }
+
+    pub(in crate::session) fn clock_entry_capacity_at(&self, now: Instant) -> usize {
+        let (width, height) = self.terminal_size;
+        let area = Rect::new(0, 0, width, height);
+        let main = match self.shell_layout_for(area) {
+            ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+        };
+        let snapshot = self.app.snapshot().clock;
+        let model = self.to_clock_view_model_at(&snapshot, now);
+        ui::clock_page_layout(main, &model).entry_capacity.max(1)
+    }
+
+    pub(in crate::session) fn sync_clock_window_at(&mut self, now: Instant) {
+        let ids = self.ordered_clock_entry_ids_at(now);
+        let capacity = self.clock_entry_capacity_at(now);
+        let max_start = ids.len().saturating_sub(capacity);
+        self.clock_entry_window_start = self.clock_entry_window_start.min(max_start);
+        let Some(index) = self
+            .clock_selected_entry_id
+            .and_then(|selected| ids.iter().position(|id| *id == selected))
+        else {
+            self.clock_entry_window_start = 0;
+            return;
+        };
+        if index < self.clock_entry_window_start {
+            self.clock_entry_window_start = index;
+        } else if index >= self.clock_entry_window_start.saturating_add(capacity) {
+            self.clock_entry_window_start = index.saturating_add(1).saturating_sub(capacity);
+        }
+    }
+
+    pub(in crate::session) fn select_clock_entry_delta(&mut self, delta: isize) {
+        let now = Instant::now();
+        let ids = self.ordered_clock_entry_ids_at(now);
+        if ids.is_empty() {
+            self.clock_selected_entry_id = None;
+            self.focused_component = ShellComponent::ClockNewButton;
+            return;
+        }
+        let current = self
+            .clock_selected_entry_id
+            .and_then(|selected| ids.iter().position(|id| *id == selected))
+            .unwrap_or(0);
+        let next =
+            (current as isize + delta).clamp(0, ids.len().saturating_sub(1) as isize) as usize;
+        self.clock_selected_entry_id = Some(ids[next]);
+        self.focused_component = ShellComponent::ClockEntryList;
+        self.sync_clock_window_at(now);
+    }
+
+    pub(in crate::session) fn select_clock_entry_edge(&mut self, last: bool) {
+        let now = Instant::now();
+        let ids = self.ordered_clock_entry_ids_at(now);
+        self.clock_selected_entry_id = if last {
+            ids.last().copied()
+        } else {
+            ids.first().copied()
+        };
+        if self.clock_selected_entry_id.is_some() {
+            self.focused_component = ShellComponent::ClockEntryList;
+        }
+        self.sync_clock_window_at(now);
+    }
+
+    pub(in crate::session) fn select_clock_entry(&mut self, id: u64) {
+        if self
+            .ordered_clock_entry_ids_at(Instant::now())
+            .contains(&id)
+        {
+            self.clock_selected_entry_id = Some(id);
+            self.focused_component = ShellComponent::ClockEntryList;
+            self.sync_clock_window_at(Instant::now());
+        }
+    }
+
+    pub(in crate::session) fn show_clock_manage_dialog(&mut self, id: u64) {
+        let Some(entry) = self.clock_scheduler.as_ref().and_then(|scheduler| {
+            scheduler
+                .entries(Instant::now())
+                .into_iter()
+                .find(|entry| entry.id == id)
+        }) else {
+            self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                "shell-clock-entry-no-longer-exists"
+            )));
+            return;
+        };
+        self.clock_selected_entry_id = Some(id);
+        let (title, kind_label) = match entry.kind {
+            ScheduledClockEntryKind::DailyAlarm => (
+                i18n::LocalizedText::from(i18n::msg!("shell-manage-alarm")),
+                i18n::LocalizedText::from(i18n::msg!("shell-daily-alarm")),
+            ),
+            ScheduledClockEntryKind::Countdown => (
+                i18n::LocalizedText::from(i18n::msg!("shell-manage-countdown")),
+                i18n::LocalizedText::from(i18n::msg!("shell-countdown")),
+            ),
+        };
+        let toggle_label = if entry.strong {
+            i18n::LocalizedText::from(i18n::msg!("shell-turn-strong-off"))
+        } else {
+            i18n::LocalizedText::from(i18n::msg!("shell-turn-strong-on"))
+        };
+        let user_id = self
+            .app
+            .auth_session()
+            .map(|session| session.user_id.as_str())
+            .unwrap_or("unknown");
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                title,
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-kind-label-arg1",
+                    kind_label = kind_label,
+                    arg1 = entry.display_time
+                )),
+                ui::NotificationTone::Info,
+                vec![
+                    ShellNotificationAction::new(
+                        "delete",
+                        i18n::LocalizedText::from(i18n::msg!("shell-delete")),
+                    )
+                    .with_shortcut(InputKey::Char('x'))
+                    .with_follow_up(ShellCommand::ClockDeleteEntry(id)),
+                    ShellNotificationAction::new("toggle-strong", toggle_label)
+                        .with_shortcut(InputKey::Char('t'))
+                        .with_follow_up(ShellCommand::ClockToggleStrong(id)),
+                    ShellNotificationAction::new(
+                        "cancel",
+                        i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
+                    )
+                    .with_shortcut(InputKey::Escape)
+                    .cancel(),
+                ],
+            )
+            .with_key(format!(
+                "{CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX}.{user_id}.{id}"
+            ))
+            .with_component(ShellComponent::NotificationDialog),
+        );
+    }
+
+    pub(in crate::session) fn delete_clock_entry(&mut self, id: u64) {
+        let snapshot = self.app.snapshot().clock;
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            return;
+        };
+        if !self
+            .clock_scheduler
+            .as_mut()
+            .is_some_and(|scheduler| scheduler.delete(id))
+        {
+            self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                "shell-clock-entry-no-longer-exists"
+            )));
+            return;
+        }
+        if self.commit_clock_mutation(previous, &snapshot, now).is_ok() {
+            if let Some(user_id) = self
+                .app
+                .auth_session()
+                .map(|session| session.user_id.clone())
+            {
+                self.notification_dismiss_modal_by_key(&format!(
+                    "{CLOCK_DUE_NOTIFICATION_KEY_PREFIX}.{user_id}.{id}"
+                ));
+            }
+            self.sync_clock_selection_at(now);
+            self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                "shell-clock-entry-deleted"
+            )));
+            self.refresh_hit_map();
+        }
+    }
+
+    pub(in crate::session) fn toggle_clock_entry_strong(&mut self, id: u64) {
+        let snapshot = self.app.snapshot().clock;
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            return;
+        };
+        let Some(enabled) = self
+            .clock_scheduler
+            .as_mut()
+            .and_then(|scheduler| scheduler.toggle_strong(id))
+        else {
+            self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                "shell-clock-entry-no-longer-exists"
+            )));
+            return;
+        };
+        if self.commit_clock_mutation(previous, &snapshot, now).is_ok() {
+            self.notify_toast(if enabled {
+                i18n::LocalizedText::from(i18n::msg!("shell-strong-notification-enabled"))
+            } else {
+                i18n::LocalizedText::from(i18n::msg!("shell-strong-notification-disabled"))
+            });
+            self.refresh_hit_map();
+        }
+    }
+
+    pub(in crate::session) fn snooze_clock_alarm(&mut self, id: u64) {
+        let snapshot = self.app.snapshot().clock;
+        let now = Instant::now();
+        let Some(previous) = self.clock_scheduler.clone() else {
+            return;
+        };
+        let retry_event = previous
+            .entries(now)
+            .into_iter()
+            .find(|entry| {
+                entry.id == id && entry.kind == ScheduledClockEntryKind::DailyAlarm && entry.strong
+            })
+            .map(|entry| DueEvent {
+                id: entry.id,
+                kind: entry.kind,
+                strong: true,
+                display_time: entry.display_time,
+            });
+        let result = self
+            .clock_scheduler
+            .as_mut()
+            .ok_or(ClockSchedulerError::EntryNotFound)
+            .and_then(|scheduler| scheduler.snooze_five_minutes(id, &snapshot, now));
+        match result {
+            Ok(()) => {
+                if self.commit_clock_mutation(previous, &snapshot, now).is_ok() {
+                    self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-alarm-snoozed-for-5-minutes"
+                    )));
+                    self.refresh_hit_map();
+                } else if let Some(event) = retry_event {
+                    let _ = self.handle_clock_due_events(vec![event]);
+                    self.refresh_hit_map();
+                }
+            }
+            Err(error) => self.notify_toast(clock_scheduler_error_message(&error)),
+        }
+    }
+}
+
+fn clock_scheduler_error_message(error: &ClockSchedulerError) -> i18n::LocalizedText {
+    use crate::clock_scheduler::ClockInputError;
+    match error {
+        ClockSchedulerError::InvalidInput(ClockInputError::InvalidFormat) => {
+            i18n::msg!("shell-clock-input-format").into()
+        }
+        ClockSchedulerError::InvalidInput(ClockInputError::HourOutOfRange) => {
+            i18n::msg!("shell-clock-input-hour").into()
+        }
+        ClockSchedulerError::InvalidInput(ClockInputError::MinuteOutOfRange) => {
+            i18n::msg!("shell-clock-input-minute").into()
+        }
+        ClockSchedulerError::InvalidInput(ClockInputError::SecondOutOfRange) => {
+            i18n::msg!("shell-clock-input-second").into()
+        }
+        ClockSchedulerError::InvalidInput(ClockInputError::ZeroCountdown) => {
+            i18n::msg!("shell-clock-input-zero").into()
+        }
+        ClockSchedulerError::IdSpaceExhausted => i18n::msg!("shell-clock-input-exhausted").into(),
+        ClockSchedulerError::EntryNotFound => i18n::msg!("shell-clock-input-missing").into(),
+        ClockSchedulerError::SnoozeRequiresStrongAlarm => {
+            i18n::msg!("shell-clock-input-snooze").into()
+        }
+    }
+}

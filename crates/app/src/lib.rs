@@ -1,4 +1,5 @@
 pub mod application;
+pub mod clock;
 pub mod diagnostics;
 pub mod editor;
 pub mod explorer;

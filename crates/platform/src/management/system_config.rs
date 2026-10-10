@@ -1547,7 +1547,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a private root mount namespace and a test SSH binary; see docs/system-config.md"]
+    #[ignore = "requires a private root mount namespace and a test SSH binary; see crates/platform/docs/system-config.md"]
     fn real_isolated_ssh_main_includes_and_host_keys() {
         assert_eq!(
             unsafe { libc::geteuid() },
