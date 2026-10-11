@@ -52,7 +52,7 @@ fn status_details_keep_the_displayed_toast_and_alert_text_after_updates() {
         );
         state.apply_input(InputEvent::key(InputKey::Escape));
         assert!(!state.notification_has_active_modal());
-        assert_eq!(state.focused_component, ShellComponent::Home);
+        assert_eq!(state.pages.common.focused_component, ShellComponent::Home);
     }
 }
 

@@ -89,7 +89,7 @@ impl ShellSession {
             scope: "system".into(),
             expected_content: None,
         };
-        self.editor_config = ConfigEditorState {
+        self.pages.editor.editor_config = ConfigEditorState {
             path: Some(path),
             draft: Some(draft),
             scope: "system".into(),
@@ -106,23 +106,14 @@ impl ShellSession {
         );
         self.config_form("find", String::new(), vec![field("text", String::new())]);
     }
-    pub(in crate::session) fn management_state_clear_config_form(&mut self) {
-        if self
-            .management_state
-            .form
-            .as_ref()
-            .is_some_and(|f| matches!(f.purpose, FormPurpose::Configuration(_)))
-        {
-            self.management_state.form = None;
-            self.reset_management_form_view();
-        }
-    }
     pub(in crate::session) fn config_editor_active(&self) -> bool {
-        self.editor_config.path.is_some()
+        self.pages.editor.editor_config.path.is_some()
     }
     pub(in crate::session) fn config_editor_form_visible(&self) -> bool {
         self.active_screen() == ShellScreen::Editor
             && self
+                .pages
+                .management
                 .management_state
                 .form
                 .as_ref()
@@ -136,12 +127,12 @@ impl ShellSession {
     }
 
     fn config_form(&mut self, action: &str, message: String, mut fields: Vec<ManagementField>) {
-        if action == "result" && self.editor_config.document.is_some() {
+        if action == "result" && self.pages.editor.editor_config.document.is_some() {
             let mut choices = vec![
                 i18n::tr!("config-editor-continue"),
                 i18n::tr!("config-editor-history"),
             ];
-            if self.editor_config.service.is_some() {
+            if self.pages.editor.editor_config.service.is_some() {
                 choices.push(i18n::tr!("config-editor-logs"));
                 choices.push(i18n::tr!("config-editor-reload"));
             }
@@ -154,8 +145,8 @@ impl ShellSession {
             });
         }
         self.reset_management_form_view();
-        self.management_state.terminal_mode = false;
-        self.management_state.form = Some(ManagementEditor {
+        self.pages.management.management_state.terminal_mode = false;
+        self.pages.management.management_state.form = Some(ManagementEditor {
             title: i18n::tr!(format!("config-editor-{action}")),
             message,
             message_scroll: 0,
@@ -163,16 +154,17 @@ impl ShellSession {
             selected: 0,
             purpose: FormPurpose::Configuration(action.into()),
         });
-        self.editor_open_menu = None;
+        self.pages.editor.editor_open_menu = None;
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn config_editor_action(&mut self, action: ui::EditorConfigAction) {
-        if self.editor_config.pending_action.is_some() {
-            self.editor_message = Some(i18n::msg!("management-operation-running").into());
+        if self.pages.editor.editor_config.pending_action.is_some() {
+            self.pages.editor.editor_message =
+                Some(i18n::msg!("management-operation-running").into());
             return;
         }
-        self.editor_open_menu = None;
+        self.pages.editor.editor_open_menu = None;
         match action {
             ui::EditorConfigAction::Menu => {
                 let choices = if self.config_editor_active() {
@@ -221,14 +213,16 @@ impl ShellSession {
             ui::EditorConfigAction::Preview => self.config_preview(),
             ui::EditorConfigAction::Check => self.config_operation("check", Default::default()),
             ui::EditorConfigAction::Properties => {
-                if let Some(d) = &self.editor_config.document {
+                if let Some(d) = &self.pages.editor.editor_config.document {
                     self.config_form(
                         "properties",
                         i18n::tr!("config-editor-properties-help"),
                         vec![
                             field(
                                 "uid",
-                                self.editor_config
+                                self.pages
+                                    .editor
+                                    .editor_config
                                     .properties
                                     .get("uid")
                                     .cloned()
@@ -236,7 +230,9 @@ impl ShellSession {
                             ),
                             field(
                                 "gid",
-                                self.editor_config
+                                self.pages
+                                    .editor
+                                    .editor_config
                                     .properties
                                     .get("gid")
                                     .cloned()
@@ -244,7 +240,9 @@ impl ShellSession {
                             ),
                             field(
                                 "mode",
-                                self.editor_config
+                                self.pages
+                                    .editor
+                                    .editor_config
                                     .properties
                                     .get("mode")
                                     .cloned()
@@ -257,6 +255,8 @@ impl ShellSession {
             ui::EditorConfigAction::History => self.config_operation("history", Default::default()),
             ui::EditorConfigAction::Reload => {
                 if self
+                    .pages
+                    .editor
                     .editor_config
                     .document
                     .as_ref()
@@ -278,28 +278,30 @@ impl ShellSession {
                 }
             }
             ui::EditorConfigAction::Logs => {
-                if let Some(unit) = self.editor_config.service.clone() {
-                    let scope = self.editor_config.scope.clone();
+                if let Some(unit) = self.pages.editor.editor_config.service.clone() {
+                    let scope = self.pages.editor.editor_config.scope.clone();
                     self.open_service_logs(&unit, &scope);
                 } else {
-                    self.editor_message = Some(i18n::msg!("config-editor-no-service").into());
+                    self.pages.editor.editor_message =
+                        Some(i18n::msg!("config-editor-no-service").into());
                 }
             }
         }
     }
 
     fn detach_edited_recovery(&mut self) {
-        if self.editor_config.restore_id.is_some()
-            && self.editor_config.restore_text.as_deref() != Some(self.config_text().as_str())
+        if self.pages.editor.editor_config.restore_id.is_some()
+            && self.pages.editor.editor_config.restore_text.as_deref()
+                != Some(self.config_text().as_str())
         {
-            self.editor_config.restore_id = None;
-            self.editor_config.restore_text = None;
-            self.editor_config.restore_removes = false;
+            self.pages.editor.editor_config.restore_id = None;
+            self.pages.editor.editor_config.restore_text = None;
+            self.pages.editor.editor_config.restore_removes = false;
         }
     }
 
     pub(super) fn config_save_disabled(&self, fields: &[ManagementField]) -> bool {
-        match self.editor_config.check {
+        match self.pages.editor.editor_config.check {
             ConfigCheck::Failed(_) => true,
             ConfigCheck::Passed => false,
             _ => !fields
@@ -310,11 +312,11 @@ impl ShellSession {
 
     fn config_preview(&mut self) {
         self.detach_edited_recovery();
-        let Some(d) = &self.editor_config.document else {
+        let Some(d) = &self.pages.editor.editor_config.document else {
             return;
         };
         let mut text = difference(&d.content, &self.config_text());
-        if self.editor_config.restore_removes {
+        if self.pages.editor.editor_config.restore_removes {
             text.push_str(&format!("\n{}", i18n::tr!("config-editor-restore-absence")));
         }
         for (key, original) in [
@@ -322,7 +324,7 @@ impl ShellSession {
             ("gid", d.gid.to_string()),
             ("mode", format!("{:04o}", d.mode)),
         ] {
-            if let Some(value) = self.editor_config.properties.get(key) {
+            if let Some(value) = self.pages.editor.editor_config.properties.get(key) {
                 text.push_str(&format!(
                     "\n{}: {original} → {value}",
                     management_text("field", key, key)
@@ -395,7 +397,8 @@ impl ShellSession {
                         }
                         self.reveal_source_caret();
                     } else {
-                        self.editor_message = Some(i18n::msg!("config-editor-not-found").into());
+                        self.pages.editor.editor_message =
+                            Some(i18n::msg!("config-editor-not-found").into());
                     }
                 }
             }
@@ -412,26 +415,30 @@ impl ShellSession {
             }
             "reload" => self.config_operation("reload", values),
             "properties" => {
-                self.editor_config.properties = values;
+                self.pages.editor.editor_config.properties = values;
                 self.config_preview();
             }
             "preview" => self.config_operation("check", Default::default()),
             "check" => {
-                if self.editor_config.checked_content.as_deref()
+                if self.pages.editor.editor_config.checked_content.as_deref()
                     != Some(self.config_text().as_str())
                 {
                     self.config_preview();
                     return;
                 }
-                if matches!(self.editor_config.check, ConfigCheck::Failed(_)) {
+                if matches!(
+                    self.pages.editor.editor_config.check,
+                    ConfigCheck::Failed(_)
+                ) {
                     return;
                 }
-                let unchecked = !matches!(self.editor_config.check, ConfigCheck::Passed);
+                let unchecked =
+                    !matches!(self.pages.editor.editor_config.check, ConfigCheck::Passed);
                 if unchecked && values.get("allow_unvalidated").map(String::as_str) != Some("true")
                 {
                     return;
                 }
-                let command = if self.editor_config.restore_id.is_some() {
+                let command = if self.pages.editor.editor_config.restore_id.is_some() {
                     "restore"
                 } else {
                     "apply"
@@ -440,7 +447,7 @@ impl ShellSession {
             }
             "history" => {
                 if let Some(id) = values.get("backup_id") {
-                    self.editor_config.restore_id = Some(id.clone());
+                    self.pages.editor.editor_config.restore_id = Some(id.clone());
                     self.config_operation("preview_restore", Default::default());
                 }
             }
@@ -460,9 +467,10 @@ impl ShellSession {
         if !self.authorize_editor_file(PermissionAction::ReadFile, &path) {
             return;
         }
-        if self.app.editor_state().is_some_and(|s| s.is_dirty())
-            || self.editor_load_state.is_some()
-            || self.editor_save_state.is_some()
+        if self.active_screen() == ShellScreen::Editor
+            && (self.app.editor_state().is_some_and(|s| s.is_dirty())
+                || self.pages.editor.editor_load_state.is_some()
+                || self.pages.editor.editor_save_state.is_some())
         {
             self.notify_toast(i18n::msg!("config-editor-finish-document"));
             return;
@@ -471,7 +479,8 @@ impl ShellSession {
             self.notify_toast(i18n::msg!("config-editor-absolute-path"));
             return;
         }
-        self.editor_config = ConfigEditorState {
+        self.enter_screen(ShellScreen::Editor);
+        self.pages.editor.editor_config = ConfigEditorState {
             path: Some(path),
             draft,
             service,
@@ -479,7 +488,9 @@ impl ShellSession {
             ..Default::default()
         };
         if let Some(validator) = validator {
-            self.editor_config
+            self.pages
+                .editor
+                .editor_config
                 .properties
                 .insert("validator".into(), validator);
         }
@@ -494,7 +505,7 @@ impl ShellSession {
         if matches!(action, "check" | "apply" | "restore") {
             self.detach_edited_recovery();
         }
-        let Some(path) = self.editor_config.path.clone() else {
+        let Some(path) = self.pages.editor.editor_config.path.clone() else {
             return;
         };
         if matches!(action, "apply" | "permissions" | "restore")
@@ -502,38 +513,47 @@ impl ShellSession {
         {
             return;
         }
-        if self.management_state.operation_job.is_some() {
+        if self
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .is_some()
+        {
             self.notify_toast(i18n::msg!("management-operation-running"));
             return;
         }
-        let mut values = self.editor_config.properties.clone();
+        let mut values = self.pages.editor.editor_config.properties.clone();
         values.insert("path".into(), path.display().to_string());
-        values.insert("scope".into(), self.editor_config.scope.clone());
-        if let Some(d) = &self.editor_config.document {
+        values.insert(
+            "scope".into(),
+            self.pages.editor.editor_config.scope.clone(),
+        );
+        if let Some(d) = &self.pages.editor.editor_config.document {
             values.insert("expected_version".into(), d.version.clone());
         }
         if action == "compare" {
-            if let Some(path) = &self.editor_config.compare_path {
+            if let Some(path) = &self.pages.editor.editor_config.compare_path {
                 values.insert("path".into(), path.clone());
             }
         }
-        if let Some(unit) = &self.editor_config.service {
+        if let Some(unit) = &self.pages.editor.editor_config.service {
             values.insert("service".into(), unit.clone());
         }
-        if let Some(id) = &self.editor_config.restore_id {
+        if let Some(id) = &self.pages.editor.editor_config.restore_id {
             values.insert("backup_id".into(), id.clone());
         }
         if matches!(action, "check" | "apply" | "permissions") {
             values.insert("content".into(), self.config_text());
         }
         values.extend(extra);
-        self.editor_config.pending_action = Some(action.into());
-        self.editor_config.received = None;
-        self.management_state.problem = None;
-        let user_reload = action == "reload" && self.editor_config.scope == "user";
+        self.pages.editor.editor_config.pending_action = Some(action.into());
+        self.pages.editor.editor_config.received = None;
+        self.pages.management.management_state.problem = None;
+        let user_reload = action == "reload" && self.pages.editor.editor_config.scope == "user";
         let privileged = !user_reload
             && (!matches!(action, "read" | "rebase" | "compare")
-                || self.editor_config.privileged_read);
+                || self.pages.editor.editor_config.privileged_read);
         self.start_management_operation(
             Some(ManagementCommand {
                 kind: ManagementKind::SystemConfig,
@@ -555,8 +575,14 @@ impl ShellSession {
                 path.display()
             )),
         );
-        if self.management_state.operation_job.is_none() {
-            self.editor_config.pending_action = None;
+        if self
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .is_none()
+        {
+            self.pages.editor.editor_config.pending_action = None;
         }
     }
 
@@ -580,32 +606,33 @@ impl ShellSession {
                 Instant::now(),
             );
         }
-        self.editor_read_session = None;
-        self.editor_fingerprint = None;
-        self.editor_open_menu = None;
-        self.editor_focus = ui::EditorFocus::Canvas;
-        self.editor_settings_dialog = None;
+        self.pages.editor.editor_read_session = None;
+        self.pages.editor.editor_fingerprint = None;
+        self.pages.editor.editor_open_menu = None;
+        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+        self.pages.editor.editor_settings_dialog = None;
         self.rebuild_editor_rich_render_cache();
-        self.enter_screen(ShellScreen::Editor);
-        self.refresh_hit_map();
+        if self.pages.editor.selected_id() == Some(self.active_page_id()) {
+            self.refresh_hit_map();
+        }
     }
 
     pub(super) fn finish_config_operation(&mut self) {
-        let Some(action) = self.editor_config.pending_action.take() else {
+        let Some(action) = self.pages.editor.editor_config.pending_action.take() else {
             return;
         };
         self.close_auto_admin();
-        if let Some(problem) = self.management_state.problem.clone() {
+        if let Some(problem) = self.pages.management.management_state.problem.clone() {
             if problem.exit_code == 3
                 && matches!(action.as_str(), "read" | "rebase" | "compare")
-                && !self.editor_config.privileged_read
+                && !self.pages.editor.editor_config.privileged_read
             {
-                self.editor_config.privileged_read = true;
-                self.management_state.problem = None;
+                self.pages.editor.editor_config.privileged_read = true;
+                self.pages.management.management_state.problem = None;
                 self.config_operation(&action, Default::default());
                 return;
             }
-            self.editor_message = Some(i18n::tr!(problem.summary_key.clone()).into());
+            self.pages.editor.editor_message = Some(i18n::tr!(problem.summary_key.clone()).into());
             if problem.exit_code == 5 {
                 self.config_form("conflict", i18n::tr!("config-editor-conflict-help"), vec![]);
             } else {
@@ -619,13 +646,15 @@ impl ShellSession {
                     vec![],
                 );
             }
-            if self.editor_config.document.is_none() {
-                self.editor_config.path = None;
+            if self.pages.editor.editor_config.document.is_none() {
+                self.pages.editor.editor_config.path = None;
             }
             return;
         }
         if action == "history" {
             let ids = self
+                .pages
+                .editor
                 .editor_config
                 .history
                 .rows
@@ -650,13 +679,18 @@ impl ShellSession {
             }
             return;
         }
-        let Some(document) = self.editor_config.received.take() else {
-            self.editor_message = Some(self.management_state.status.clone().into());
-            if self.editor_config.document.is_none() {
-                self.editor_config.path = None;
+        let Some(document) = self.pages.editor.editor_config.received.take() else {
+            self.pages.editor.editor_message =
+                Some(self.pages.management.management_state.status.clone().into());
+            if self.pages.editor.editor_config.document.is_none() {
+                self.pages.editor.editor_config.path = None;
             }
             if action == "reload" {
-                self.config_form("result", self.management_state.status.clone(), vec![]);
+                self.config_form(
+                    "result",
+                    self.pages.management.management_state.status.clone(),
+                    vec![],
+                );
             }
             return;
         };
@@ -668,28 +702,30 @@ impl ShellSession {
                 } else {
                     document.content.clone()
                 };
-                if let Some(draft) = self.editor_config.draft.take() {
+                if let Some(draft) = self.pages.editor.editor_config.draft.take() {
                     if draft
                         .expected_content
                         .as_ref()
                         .is_some_and(|s| s != &document.content)
                     {
-                        self.editor_config.document = Some(document.clone());
+                        self.pages.editor.editor_config.document = Some(document.clone());
                         self.replace_config_text(&document, document.content.clone());
                         self.config_form("result", i18n::tr!("config-editor-draft-stale"), vec![]);
                         return;
                     }
                     text = draft.content;
-                    self.editor_config
+                    self.pages
+                        .editor
+                        .editor_config
                         .properties
                         .insert("validator".into(), draft.validator);
-                    self.editor_config.service = draft.service;
-                    self.editor_config.scope = draft.scope;
+                    self.pages.editor.editor_config.service = draft.service;
+                    self.pages.editor.editor_config.scope = draft.scope;
                 }
-                self.editor_config.document = Some(document.clone());
-                if self.editor_config.service.is_none() {
+                self.pages.editor.editor_config.document = Some(document.clone());
+                if self.pages.editor.editor_config.service.is_none() {
                     if document.validator == "sshd" {
-                        self.editor_config.service =
+                        self.pages.editor.editor_config.service =
                             Some(
                                 if std::path::Path::new("/usr/lib/systemd/system/sshd.service")
                                     .exists()
@@ -701,7 +737,7 @@ impl ShellSession {
                                 .into(),
                             );
                     } else if document.validator == "systemd" {
-                        self.editor_config.service = document
+                        self.pages.editor.editor_config.service = document
                             .path
                             .components()
                             .filter_map(|c| c.as_os_str().to_str())
@@ -717,13 +753,13 @@ impl ShellSession {
                                     .map(String::from)
                             });
                         if document.path.to_string_lossy().contains("/systemd/user/") {
-                            self.editor_config.scope = "user".into();
+                            self.pages.editor.editor_config.scope = "user".into();
                         }
                     }
                 }
                 self.replace_config_text(&document, text);
-                self.editor_message = Some(i18n::msg!("config-editor-loaded").into());
-                if action == "read" && self.editor_config.compare_path.is_some() {
+                self.pages.editor.editor_message = Some(i18n::msg!("config-editor-loaded").into());
+                if action == "read" && self.pages.editor.editor_config.compare_path.is_some() {
                     self.config_operation("compare", Default::default());
                 }
                 if action == "rebase" {
@@ -732,27 +768,27 @@ impl ShellSession {
             }
             "compare" => {
                 self.close_auto_admin();
-                if let Some(original) = self.editor_config.document.clone() {
+                if let Some(original) = self.pages.editor.editor_config.document.clone() {
                     self.replace_config_text(&original, document.content);
                     self.config_preview();
                 }
             }
             "preview_restore" => {
-                self.editor_config.restore_text = Some(document.content.clone());
-                self.editor_config.restore_removes = !document.existed;
-                self.editor_config.properties.extend([
+                self.pages.editor.editor_config.restore_text = Some(document.content.clone());
+                self.pages.editor.editor_config.restore_removes = !document.existed;
+                self.pages.editor.editor_config.properties.extend([
                     ("uid".into(), document.uid.to_string()),
                     ("gid".into(), document.gid.to_string()),
                     ("mode".into(), format!("{:04o}", document.mode)),
                 ]);
-                if let Some(original) = self.editor_config.document.clone() {
+                if let Some(original) = self.pages.editor.editor_config.document.clone() {
                     self.replace_config_text(&original, document.content);
                     self.config_preview();
                 }
             }
             "check" => {
-                self.editor_config.checked_content = Some(document.content);
-                self.editor_config.check = document.check.clone();
+                self.pages.editor.editor_config.checked_content = Some(document.content);
+                self.pages.editor.editor_config.check = document.check.clone();
                 let (message, fields) = match document.check {
                     ConfigCheck::Passed => (i18n::tr!("config-editor-check-passed"), vec![]),
                     ConfigCheck::Failed(reason) => (
@@ -779,6 +815,8 @@ impl ShellSession {
                     ),
                 };
                 let preview = self
+                    .pages
+                    .editor
                     .editor_config
                     .document
                     .as_ref()
@@ -787,7 +825,7 @@ impl ShellSession {
                 self.config_form("check", format!("{message}\n\n{preview}"), fields);
             }
             "apply" | "permissions" | "restore" => {
-                let old = self.editor_config.document.as_ref();
+                let old = self.pages.editor.editor_config.document.as_ref();
                 let content_changed = old.is_none_or(|old| {
                     old.content != document.content || old.existed != document.existed
                 });
@@ -810,14 +848,16 @@ impl ShellSession {
                     i18n::tr!("config-editor-saved")
                 );
                 self.replace_config_text(&document, document.content.clone());
-                self.editor_config.document = Some(document);
-                self.editor_config.restore_id = None;
-                self.editor_config.restore_text = None;
-                self.editor_config.restore_removes = false;
-                self.editor_config
+                self.pages.editor.editor_config.document = Some(document);
+                self.pages.editor.editor_config.restore_id = None;
+                self.pages.editor.editor_config.restore_text = None;
+                self.pages.editor.editor_config.restore_removes = false;
+                self.pages
+                    .editor
+                    .editor_config
                     .properties
                     .retain(|k, _| k == "validator");
-                self.editor_message = Some(i18n::msg!("config-editor-saved").into());
+                self.pages.editor.editor_message = Some(i18n::msg!("config-editor-saved").into());
                 self.config_form("result", report, vec![]);
             }
             _ => {}
@@ -836,8 +876,9 @@ mod tests {
         );
         session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
         session.enter_screen(ShellScreen::Management);
-        session.management_state.kind = Some(ManagementKind::Services);
-        session.management_state.query = Some(ManagementQuery::new(ManagementKind::Services));
+        session.pages.management.management_state.kind = Some(ManagementKind::Services);
+        session.pages.management.management_state.query =
+            Some(ManagementQuery::new(ManagementKind::Services));
         session
     }
     fn document(content: &str) -> ConfigDocument {
@@ -856,9 +897,10 @@ mod tests {
     }
     fn loaded() -> ShellSession {
         let mut s = session();
-        s.editor_config.path = Some(PathBuf::from("/etc/test.conf"));
-        s.editor_config.pending_action = Some("read".into());
-        s.editor_config.received = Some(document("original\n"));
+        s.enter_screen(ShellScreen::Editor);
+        s.pages.editor.editor_config.path = Some(PathBuf::from("/etc/test.conf"));
+        s.pages.editor.editor_config.pending_action = Some("read".into());
+        s.pages.editor.editor_config.received = Some(document("original\n"));
         s.finish_config_operation();
         s
     }
@@ -885,42 +927,58 @@ mod tests {
         let mut d = document("invalid\n");
         d.check = ConfigCheck::Failed("bad line".into());
         s.replace_config_text(&document("original\n"), "invalid\n".into());
-        s.editor_config.pending_action = Some("check".into());
-        s.editor_config.received = Some(d);
+        s.pages.editor.editor_config.pending_action = Some("check".into());
+        s.pages.editor.editor_config.received = Some(d);
         s.finish_config_operation();
         assert!(s.to_management_view_model().form.unwrap().submit_disabled);
         s.submit_management_form();
-        assert!(s.management_state.operation_job.is_none());
+        assert!(s.pages.management.management_state.operation_job.is_none());
         assert_eq!(s.config_text(), "invalid\n");
         assert!(s.app.editor_state().unwrap().is_dirty());
     }
     #[test]
     fn failed_reload_keeps_saved_content_and_offers_recovery_and_logs() {
         let mut s = loaded();
-        s.editor_config.service = Some("sshd.service".into());
-        s.editor_config.pending_action = Some("reload".into());
-        s.management_state.problem = Some(problem::OperationProblem::from_error(
+        s.pages.editor.editor_config.service = Some("sshd.service".into());
+        s.pages.editor.editor_config.pending_action = Some("reload".into());
+        s.pages.management.management_state.problem = Some(problem::OperationProblem::from_error(
             &ManagementError::Failed("reload failed".into()),
         ));
         s.finish_config_operation();
         assert_eq!(s.config_text(), "original\n");
-        let choices = &s.management_state.form.as_ref().unwrap().fields[0].choices;
+        let choices = &s
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .unwrap()
+            .fields[0]
+            .choices;
         assert!(choices.contains(&i18n::tr!("config-editor-history")));
         assert!(choices.contains(&i18n::tr!("config-editor-logs")));
     }
     #[test]
     fn comparison_keeps_original_for_preview_and_marks_editor_dirty() {
         let mut s = loaded();
-        s.editor_config.pending_action = Some("compare".into());
-        s.editor_config.received = Some(document("package version\n"));
+        s.pages.editor.editor_config.pending_action = Some("compare".into());
+        s.pages.editor.editor_config.received = Some(document("package version\n"));
         s.finish_config_operation();
         assert_eq!(
-            s.editor_config.document.as_ref().unwrap().content,
+            s.pages
+                .editor
+                .editor_config
+                .document
+                .as_ref()
+                .unwrap()
+                .content,
             "original\n"
         );
         assert_eq!(s.config_text(), "package version\n");
         assert!(
-            s.management_state
+            s.pages
+                .management
+                .management_state
                 .form
                 .as_ref()
                 .unwrap()
@@ -936,27 +994,30 @@ mod tests {
         s.submit_config_form("find", vec![field("text", "original".into())]);
         assert_eq!(s.app.editor_state().unwrap().selection.unwrap().focus, 8);
         s.config_editor_action(ui::EditorConfigAction::Menu);
-        assert_eq!(s.management_state.choice_field, Some(0));
+        assert_eq!(s.pages.management.management_state.choice_field, Some(0));
         assert!(s.to_editor_view_model().config_form.is_some());
     }
 
     #[test]
     fn edited_recovery_becomes_a_normal_candidate_and_unchecked_save_needs_consent() {
         let mut s = loaded();
-        s.editor_config.restore_id = Some("1-2".into());
-        s.editor_config.pending_action = Some("preview_restore".into());
-        s.editor_config.received = Some(document("recovered\n"));
+        s.pages.editor.editor_config.restore_id = Some("1-2".into());
+        s.pages.editor.editor_config.pending_action = Some("preview_restore".into());
+        s.pages.editor.editor_config.received = Some(document("recovered\n"));
         s.finish_config_operation();
-        assert_eq!(s.editor_config.restore_id.as_deref(), Some("1-2"));
+        assert_eq!(
+            s.pages.editor.editor_config.restore_id.as_deref(),
+            Some("1-2")
+        );
         s.replace_config_text(&document("original\n"), "edited recovery\n".into());
         s.config_preview();
-        assert!(s.editor_config.restore_id.is_none());
-        assert!(!s.editor_config.restore_removes);
+        assert!(s.pages.editor.editor_config.restore_id.is_none());
+        assert!(!s.pages.editor.editor_config.restore_removes);
         assert_eq!(s.config_text(), "edited recovery\n");
-        s.editor_config.check = ConfigCheck::NotChecked;
+        s.pages.editor.editor_config.check = ConfigCheck::NotChecked;
         assert!(s.config_save_disabled(&[]));
         assert!(!s.config_save_disabled(&[field("allow_unvalidated", "true".into())]));
-        s.editor_config.check = ConfigCheck::Failed("invalid".into());
+        s.pages.editor.editor_config.check = ConfigCheck::Failed("invalid".into());
         assert!(s.config_save_disabled(&[field("allow_unvalidated", "true".into())]));
     }
 }

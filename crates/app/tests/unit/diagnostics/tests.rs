@@ -276,80 +276,57 @@ fn diagnostic_log_scan_does_not_follow_symbolic_links() {
 
 #[test]
 fn terminal_event_keeps_runtime_busy_until_drain_consumes_it() {
-    let (command_tx, command_rx) = mpsc::channel();
-    let (event_tx, event_rx) = mpsc::channel();
-    let runtime = DiagnosticsTaskRuntime {
-        command_tx,
-        event_rx,
-        busy: Arc::new(AtomicBool::new(true)),
-        restart_required: Arc::new(AtomicBool::new(false)),
-        worker: None,
-    };
-    event_tx
-        .send(DiagnosticsTaskEvent::ScanCompleted(Err(
-            "expected test result".to_string(),
-        )))
-        .expect("terminal event should queue");
-
+    let (root, _, runtime, watchdog_runtime) = diagnostics_runtime_fixture();
+    let task = runtime.request_scan().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !task.is_finished() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert!(runtime.is_busy());
-    assert_eq!(runtime.request_scan(), Err(DiagnosticsTaskError::Busy));
-
-    let events = runtime.drain_events();
+    assert_eq!(
+        runtime.request_repair(vec![DiagnosticsRepairAction::CreateDirectory {
+            label: "test".into(),
+            path: root.join("not-created")
+        }]),
+        Err(DiagnosticsTaskError::Busy)
+    );
+    let events = wait_for_diagnostics_events(&runtime, 1);
     assert!(matches!(
-        events.as_slice(),
-        [DiagnosticsTaskEvent::ScanCompleted(Err(message))]
-            if message == "expected test result"
+        &events[0].event,
+        DiagnosticsTaskEvent::ScanCompleted(Ok(_))
     ));
     assert!(!runtime.is_busy());
+    drop(runtime);
+    watchdog_runtime.shutdown().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
 
-    runtime
-        .request_scan()
-        .expect("a new scan should be accepted after consuming the terminal event");
-    assert!(matches!(command_rx.try_recv(), Ok(WorkerCommand::Scan)));
+fn wait_for_diagnostics_events(
+    runtime: &DiagnosticsTaskRuntime,
+    count: usize,
+) -> Vec<DiagnosticsTaskEnvelope> {
+    let mut events = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while events
+        .iter()
+        .filter(|event: &&DiagnosticsTaskEnvelope| event.event.is_terminal())
+        .count()
+        < count
+    {
+        events.extend(runtime.drain_events());
+        assert!(
+            std::time::Instant::now() < deadline,
+            "diagnostics did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    events
 }
 
 #[test]
 fn managed_runtime_scans_and_latches_after_changed_storage_repair() {
-    let root = diagnostic_test_path("tundra-diagnostics-runtime");
-    let paths = AppPaths::from_parts(
-        root.join("config/config.toml"),
-        root.join("data"),
-        root.join("cache"),
-        root.join("logs"),
-        root.join("temp"),
-    )
-    .expect("test paths");
-    let layout = storage::StorageLayout::from_app_paths(&paths);
-    let storage = StorageManager::open(paths.clone())
-        .expect("test storage")
-        .manager;
-    let user_dirs = UserDirs::new(
-        root.join("Desktop"),
-        root.join("Documents"),
-        root.join("Downloads"),
-        root.join("Pictures"),
-        root.join("Movies"),
-        root.join("Music"),
-        root.join("AppData"),
-    )
-    .expect("test user directories");
-    let platform: Arc<dyn Platform> = Arc::new(
-        platform::mock::MockPlatform::new(user_dirs, paths).with_kind(PlatformKind::Macos),
-    );
-    let config = WatchdogConfig::new(
-        root.join("watchdog/reports"),
-        root.join("watchdog/fallback"),
-        root.join("watchdog/data"),
-        "diagnostics-test",
-        "1.0.0",
-    );
-    let (watchdog_runtime, process) = WatchdogRuntime::start(config).expect("watchdog");
-    let app = process
-        .register_app(diagnostics_watchdog_descriptor())
-        .expect("diagnostics app");
-    let runtime = DiagnosticsTaskRuntime::new_managed(platform, storage, process, app)
-        .expect("managed runtime");
-
+    let (root, layout, runtime, watchdog_runtime) = diagnostics_runtime_fixture();
     runtime.request_scan().expect("scan accepted");
     let mut result = None;
     for _ in 0..200 {
@@ -359,7 +336,8 @@ fn managed_runtime_scans_and_latches_after_changed_storage_repair() {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    let DiagnosticsTaskEvent::ScanCompleted(Ok(snapshot)) = result.expect("scan event arrives")
+    let DiagnosticsTaskEvent::ScanCompleted(Ok(snapshot)) =
+        result.expect("scan event arrives").event
     else {
         panic!("scan should complete successfully");
     };
@@ -399,7 +377,7 @@ fn managed_runtime_scans_and_latches_after_changed_storage_repair() {
                 results,
                 restart_required: true,
                 ..
-            } = event
+            } = event.event
             {
                 completion_results = Some(results);
             }
@@ -430,4 +408,215 @@ fn managed_runtime_scans_and_latches_after_changed_storage_repair() {
     drop(runtime);
     watchdog_runtime.shutdown().expect("watchdog shutdown");
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn diagnostics_runtime_fixture() -> (
+    PathBuf,
+    storage::StorageLayout,
+    DiagnosticsTaskRuntime,
+    WatchdogRuntime,
+) {
+    let root = diagnostic_test_path("tundra-diagnostics-runtime");
+    let paths = AppPaths::from_parts(
+        root.join("config/config.toml"),
+        root.join("data"),
+        root.join("cache"),
+        root.join("logs"),
+        root.join("temp"),
+    )
+    .expect("test paths");
+    let layout = storage::StorageLayout::from_app_paths(&paths);
+    let storage = StorageManager::open(paths.clone())
+        .expect("test storage")
+        .manager;
+    let user_dirs = UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Movies"),
+        root.join("Music"),
+        root.join("AppData"),
+    )
+    .expect("test user directories");
+    let platform: Arc<dyn Platform> = Arc::new(
+        platform::mock::MockPlatform::new(user_dirs, paths).with_kind(PlatformKind::Macos),
+    );
+    let config = WatchdogConfig::new(
+        root.join("watchdog/reports"),
+        root.join("watchdog/fallback"),
+        root.join("watchdog/data"),
+        "diagnostics-test",
+        "1.0.0",
+    );
+    let (watchdog_runtime, process) = WatchdogRuntime::start_isolated(config).expect("watchdog");
+    let app = process
+        .register_app(diagnostics_watchdog_descriptor())
+        .expect("diagnostics app");
+    let runtime = DiagnosticsTaskRuntime::new_managed(platform, storage, process, app)
+        .expect("managed runtime");
+
+    (root, layout, runtime, watchdog_runtime)
+}
+
+#[test]
+fn independent_diagnostic_scans_keep_ids_and_cancelled_results_separate() {
+    let (root, _, runtime, watchdog_runtime) = diagnostics_runtime_fixture();
+    let first = runtime.request_scan().unwrap();
+    let second = runtime.request_scan().unwrap();
+    assert_ne!(first.request_id, second.request_id);
+    first.cancel();
+    let events = wait_for_diagnostics_events(&runtime, 2);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.request_id == first.request_id
+                && matches!(event.event, DiagnosticsTaskEvent::Cancelled))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.request_id == second.request_id
+                && matches!(event.event, DiagnosticsTaskEvent::ScanCompleted(Ok(_))))
+    );
+    assert!(!runtime.is_busy());
+    drop(runtime);
+    watchdog_runtime.shutdown().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn diagnostics_repair_cancel_keeps_completed_actions_and_skips_remaining_actions() {
+    let (root, _, runtime, watchdog_runtime) = diagnostics_runtime_fixture();
+    let cancelled = AtomicBool::new(false);
+    let events = std::cell::RefCell::new(Vec::new());
+    run_diagnostics_task(
+        runtime.platform.as_ref(),
+        &runtime.storage,
+        &runtime.process,
+        WorkerCommand::Repair(vec![
+            DiagnosticsRepairAction::CreateDirectory {
+                label: "first".into(),
+                path: root.join("first"),
+            },
+            DiagnosticsRepairAction::CreateDirectory {
+                label: "second".into(),
+                path: root.join("second"),
+            },
+        ]),
+        &runtime.restart_required,
+        &|| cancelled.load(Ordering::Acquire),
+        &|event| {
+            if matches!(
+                event,
+                DiagnosticsTaskEvent::RepairProgress { completed: 1, .. }
+            ) {
+                cancelled.store(true, Ordering::Release);
+            }
+            events.borrow_mut().push(event);
+        },
+    );
+    assert!(root.join("first").is_dir());
+    assert!(!root.join("second").exists());
+    assert!(
+        matches!(events.borrow().last(), Some(DiagnosticsTaskEvent::RepairCompleted { cancelled: true, results, .. }) if results.len() == 1)
+    );
+    drop(runtime);
+    watchdog_runtime.shutdown().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn diagnostics_cancel_before_scan_skips_platform_and_log_work() {
+    let (root, _, runtime, watchdog_runtime) = diagnostics_runtime_fixture();
+    let result = scan_diagnostics_cancellable(
+        runtime.platform.as_ref(),
+        &runtime.storage,
+        &runtime.process,
+        &|| true,
+    );
+    assert_eq!(result.unwrap_err(), "Diagnostics cancelled");
+    drop(runtime);
+    watchdog_runtime.shutdown().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn dropping_diagnostics_runtime_cancels_without_waiting_for_current_action() {
+    let (root, _, runtime, watchdog_runtime) = diagnostics_runtime_fixture();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let task = DiagnosticsTaskHandle {
+        request_id: u64::MAX,
+        cancelled: Arc::new(AtomicBool::new(false)),
+        finished: Arc::new(AtomicBool::new(false)),
+    };
+    let worker = runtime
+        .group
+        .spawn_thread(
+            TaskSpec::one_shot(TaskId::new("diagnostics-drop-test").unwrap()),
+            move || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            },
+        )
+        .unwrap();
+    runtime.workers.lock().unwrap().insert(
+        task.request_id,
+        DiagnosticsWorker {
+            task: task.clone(),
+            worker,
+            slot: 0,
+            repair: true,
+        },
+    );
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let before = std::time::Instant::now();
+    drop(runtime);
+    let elapsed = before.elapsed();
+    release_tx.send(()).unwrap();
+    assert!(task.cancelled.load(Ordering::Acquire));
+    assert!(
+        elapsed < Duration::from_millis(100),
+        "runtime drop blocked: {elapsed:?}"
+    );
+    watchdog_runtime.shutdown().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn worker_stopped_before_dispatch_still_completes_its_record() {
+    let (root, _, runtime, watchdog_runtime) = diagnostics_runtime_fixture();
+    let task = DiagnosticsTaskHandle {
+        request_id: u64::MAX,
+        cancelled: Arc::new(AtomicBool::new(true)),
+        finished: Arc::new(AtomicBool::new(false)),
+    };
+    // A worker that never sends models watchdog cancellation before dispatch.
+    let worker = runtime
+        .group
+        .spawn_thread(
+            TaskSpec::one_shot(TaskId::new("diagnostics-no-dispatch").unwrap()),
+            || (),
+        )
+        .unwrap();
+    runtime.workers.lock().unwrap().insert(
+        task.request_id,
+        DiagnosticsWorker {
+            task: task.clone(),
+            worker,
+            slot: 0,
+            repair: false,
+        },
+    );
+    let events = wait_for_diagnostics_events(&runtime, 1);
+    assert!(matches!(
+        events.last().unwrap().event,
+        DiagnosticsTaskEvent::Cancelled
+    ));
+    assert!(task.is_finished());
+    assert!(!runtime.is_busy());
+    drop(runtime);
+    watchdog_runtime.shutdown().unwrap();
+    fs::remove_dir_all(root).unwrap();
 }

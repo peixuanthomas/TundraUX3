@@ -81,7 +81,7 @@ impl ShellSession {
     ) {
         self.language_catalog = catalog;
         self.language = Arc::new(loaded.snapshot);
-        self.setup_selected_language_index = self
+        self.pages.setup.setup_selected_language_index = self
             .language_catalog
             .options()
             .iter()

@@ -1,5 +1,5 @@
 use super::*;
-use crate::InputModifiers;
+use crate::{InputModifiers, KeyInput};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -165,13 +165,32 @@ fn scrollbar_drag_maps_both_track_ends_to_history_ends() {
 }
 
 #[test]
-fn emergency_shortcut_is_exact() {
-    let emergency = KeyInput::with_modifiers(InputKey::Char('x'), InputModifiers::CTRL_SHIFT);
-    assert!(is_emergency_termination(&emergency));
-    assert!(!is_emergency_termination(&KeyInput::with_modifiers(
-        InputKey::Char('x'),
-        InputModifiers::CTRL,
-    )));
+fn failed_and_exited_terminals_ignore_escape_and_old_emergency_shortcut() {
+    let fixture = PtyFixture::new("failed-input");
+    let mut host = CommandLineHost::new(fixture.app.clone());
+    for state in [
+        CommandLineHostState::Failed {
+            message: "test failure".into(),
+        },
+        CommandLineHostState::Exited { code: 3 },
+    ] {
+        host.state = state;
+        for input in [
+            InputEvent::key(InputKey::Escape),
+            InputEvent::Key(KeyInput::with_modifiers(
+                InputKey::Char('x'),
+                InputModifiers::CTRL_SHIFT,
+            )),
+        ] {
+            assert_eq!(host.handle_input(&input, None), CommandLineHostEvent::None);
+            assert!(!matches!(host.state, CommandLineHostState::Inactive));
+        }
+        assert_eq!(
+            host.handle_input(&InputEvent::key(InputKey::Enter), None),
+            CommandLineHostEvent::None
+        );
+        assert!(matches!(host.state, CommandLineHostState::Inactive));
+    }
 }
 
 /// Windows ConPTY is the production backend for the embedded CLI.  A
@@ -277,7 +296,6 @@ fn windows_conpty_receives_initial_and_typed_output() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[cfg(windows)]
 fn assert_snapshot_contains(
     pty: &CommandLinePty,
     expected: &str,
@@ -306,80 +324,162 @@ fn assert_snapshot_contains(
 
 #[cfg(any(windows, unix))]
 #[test]
-fn shell_back_button_terminates_the_embedded_terminal() {
-    use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
-
-    let root = std::env::temp_dir().join(format!(
-        "tundra-command-line-pty-test-{}-{}",
-        std::process::id(),
-        NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    let config = WatchdogConfig::new(
-        root.join("reports"),
-        root.join("fallback"),
-        root.join("data"),
-        "command-line-pty-test",
-        env!("CARGO_PKG_VERSION"),
-    );
-    let (runtime, process) = WatchdogRuntime::start_isolated(config).expect("isolated watchdog");
-    let app = process
-        .register_app(AppDescriptor::new(
-            AppId::from_static("shell.command-line-test"),
-            "Command Line PTY Test",
-            env!("CARGO_PKG_VERSION"),
-            AppCriticality::Optional,
-        ))
-        .expect("test app watchdog");
-    let reader_tasks = app.task_group("pty-reader");
-
+fn physical_escape_and_ctrl_shift_x_reach_the_real_child_terminal() {
+    let fixture = PtyFixture::new("physical-key-bytes");
     #[cfg(windows)]
-    let (program, args) = (
-        OsString::from("cmd.exe"),
-        vec![OsString::from("/D"), OsString::from("/Q")],
-    );
+    let (program, args) = {
+        let script = fixture.root.join("read-keys.ps1");
+        std::fs::write(
+            &script,
+            "[Console]::WriteLine('READY_FOR_KEYS')\n$first = [Console]::ReadKey($true)\n$second = [Console]::ReadKey($true)\n[Console]::WriteLine(('KEY_BYTES:{0:x2} {1:x2}' -f [int]$first.KeyChar, [int]$second.KeyChar))\nStart-Sleep -Seconds 60\n",
+        ).unwrap();
+        (
+            OsString::from("powershell.exe"),
+            vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-File".into(),
+                script.into_os_string(),
+            ],
+        )
+    };
     #[cfg(unix)]
-    let (program, args) = (OsString::from("/bin/sh"), Vec::new());
-    #[cfg(target_os = "linux")]
-    let environment = vec![
-        ("HOME".into(), "/root".into()),
-        ("USER".into(), "root".into()),
-    ];
-    #[cfg(not(target_os = "linux"))]
-    let environment = Vec::new();
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
-            program,
-            args,
-            env: environment,
-            cwd: None,
-            columns: 160,
-            rows: 12,
-            scrollback_lines: 0,
-        },
-        &reader_tasks,
-    )
-    .expect("contained PTY process");
-    std::thread::sleep(Duration::from_millis(100));
-    assert!(
-        pty.try_wait().expect("initial PTY child status").is_none(),
-        "interactive PTY child exited before containment was exercised"
+    let (program, args) = (
+        OsString::from("/bin/sh"),
+        vec!["-c".into(), "stty raw -echo; printf 'READY_FOR_KEYS\\r\\n'; bytes=$(dd bs=1 count=2 2>/dev/null | od -An -tx1); printf 'KEY_BYTES:%s\\r\\n' \"$bytes\"; sleep 60".into()],
     );
+    let mut host = CommandLineHost::new(fixture.app.clone());
+    host.state = CommandLineHostState::Running(
+        CommandLinePty::spawn(
+            CommandLinePtyConfig {
+                program,
+                args,
+                env: Vec::new(),
+                cwd: Some(fixture.root.clone()),
+                columns: 160,
+                rows: 24,
+                scrollback_lines: 100,
+            },
+            &host.reader_tasks,
+        )
+        .unwrap(),
+    );
+    assert_snapshot_contains(
+        running_pty(&host),
+        "READY_FOR_KEYS",
+        Duration::from_secs(8),
+        "raw terminal input reader",
+    );
+    for input in [
+        InputEvent::key(InputKey::Escape),
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::Char('x'),
+            InputModifiers::CTRL_SHIFT,
+        )),
+    ] {
+        assert_eq!(
+            host.handle_input(&input, Some(Rect::new(0, 0, 160, 24))),
+            CommandLineHostEvent::None
+        );
+    }
+    assert_snapshot_contains(
+        running_pty(&host),
+        "1b 18",
+        Duration::from_secs(5),
+        "Escape and Ctrl+Shift+X bytes echoed by the child",
+    );
+    assert!(host.is_running());
+}
 
-    let mut host = CommandLineHost::new(app.clone());
-    host.state = CommandLineHostState::Running(pty);
-    assert!(matches!(
-        host.handle_input(
-            &InputEvent::key(InputKey::Escape),
-            Some(Rect::new(0, 0, 160, 12))
-        ),
-        CommandLineHostEvent::None
-    ));
-    assert!(matches!(host.state, CommandLineHostState::Running(_)));
+#[cfg(target_os = "linux")]
+#[test]
+fn terminal_close_also_stops_descendants_that_create_their_own_session() {
+    let fixture = PtyFixture::new("descendant-session");
+    let mut host = fixture.shell();
+    let root_pid = running_pty(&host).process_id().unwrap().unwrap();
+    let script = fixture.root.join("new-session.sh");
+    let pid_file = fixture.root.join("new-session-child.pid");
+    std::fs::write(
+        &script,
+        format!("sleep 60 &\necho $! > '{}'\nwait\n", pid_file.display()),
+    )
+    .unwrap();
+    running_pty(&host)
+        .write(format!("setsid --wait /bin/sh '{}' & wait\r", script.display()).as_bytes())
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let descendant_pid = loop {
+        if let Ok(contents) = std::fs::read_to_string(&pid_file)
+            && let Ok(pid) = contents.trim().parse::<u32>()
+        {
+            break pid;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "new-session child did not start"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(process_is_running(descendant_pid));
+    host.try_terminate().unwrap();
+    wait_until_stopped(root_pid);
+    wait_until_stopped(descendant_pid);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn shell_back_button_requires_confirmation_and_keeps_other_terminal_alive() {
+    let fixture = PtyFixture::new("close-confirmation");
+    let platform = platform::native_platform();
+    let mut hosts = CommandLineHosts::new(fixture.app.clone());
     let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
     state.set_navigation_path(vec![
         crate::ShellScreen::Home,
         crate::ShellScreen::CommandLine,
     ]);
+    let first_id = state.active_page_id();
+    let first = fixture.shell();
+    let first_pid = running_pty(&first).process_id().unwrap().unwrap();
+    hosts.hosts.insert(first_id, first);
+    state.enter_screen(crate::ShellScreen::Clock);
+    let caller_id = state.active_page_id();
+    state.enter_screen(crate::ShellScreen::CommandLine);
+    let second_id = state.active_page_id();
+    let second = fixture.shell();
+    let second_pid = running_pty(&second).process_id().unwrap().unwrap();
+    let descendant_pid = fixture.start_descendant(&second);
+    hosts.hosts.insert(second_id, second);
+
+    hosts.sync_tasks(&mut state);
+    for id in [first_id, second_id] {
+        assert_eq!(
+            state.tasks.owner(
+                crate::session::TaskDomain::CommandLine,
+                hosts.tasks[&id].request
+            ),
+            Some(crate::session::TaskOwner::Page(id))
+        );
+    }
+
+    // Physical terminal keys never act as Shell navigation, including the
+    // formerly reserved Ctrl+Shift+X chord.
+    for input in [
+        InputEvent::key(InputKey::Escape),
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::Char('x'),
+            InputModifiers::CTRL_SHIFT,
+        )),
+    ] {
+        assert_eq!(
+            hosts.handle_input(&state, &input, Some(Rect::new(0, 0, 120, 40))),
+            CommandLineHostEvent::None
+        );
+    }
+    assert!(process_is_running(first_pid));
+    assert!(process_is_running(second_pid));
+    assert!(process_is_running(descendant_pid));
+
     state.refresh_hit_map();
     let back = state
         .hit_map()
@@ -394,30 +494,302 @@ fn shell_back_button_terminates_the_embedded_terminal() {
         disabled: false,
     });
     let now = std::time::Instant::now();
-    let down = InputEvent::mouse_down(ui::MouseButton::Left, (back.x, back.y));
-    let up = InputEvent::mouse_up(ui::MouseButton::Left, (back.x, back.y));
-    assert!(state.prepare_button_input(down, now).is_none());
-    let click = state
-        .prepare_button_input(up.clone(), now + Duration::from_millis(20))
-        .unwrap();
-    let input = state.normalize_shell_navigation_input(click);
-    assert!(matches!(
-        host.handle_input(&input, None),
-        CommandLineHostEvent::ExitToCaller
-    ));
-    assert!(matches!(host.state, CommandLineHostState::Inactive));
-    let release = state
-        .prepare_button_input(up, now + Duration::from_millis(40))
-        .unwrap();
-    assert!(matches!(
-        host.handle_input(&state.normalize_shell_navigation_input(release), None),
-        CommandLineHostEvent::None
-    ));
-    drop(host);
+    state.apply_input_with_platform_at(
+        InputEvent::mouse_down(ui::MouseButton::Left, (back.x, back.y)),
+        platform.as_ref(),
+        now,
+    );
+    state.apply_input_with_platform_at(
+        InputEvent::mouse_up(ui::MouseButton::Left, (back.x, back.y)),
+        platform.as_ref(),
+        now + Duration::from_millis(20),
+    );
+    assert_eq!(state.command_line_close_request, Some((second_id, false)));
+    hosts.process_close_request(&mut state);
+    let modal = state
+        .to_notification_view_model()
+        .expect("close confirmation");
+    assert_eq!(modal.title, "Close Command Line?");
+    assert_eq!(modal.actions.len(), 2);
+    assert_eq!(modal.actions[0].id, "continue-command-line");
+    assert_eq!(modal.actions[0].label, "Continue using");
+    assert_eq!(modal.actions[1].label, "Terminate and return");
+    assert!(process_is_running(second_pid));
+    assert!(process_is_running(descendant_pid));
 
-    drop(reader_tasks);
-    drop(app);
-    drop(process);
-    runtime.shutdown().expect("watchdog shutdown");
-    let _ = std::fs::remove_dir_all(root);
+    state.apply_input_with_platform(InputEvent::key(InputKey::Escape), platform.as_ref());
+    assert!(state.to_notification_view_model().is_none());
+    assert_eq!(state.active_page_id(), second_id);
+    assert!(process_is_running(second_pid));
+    state.request_command_line_close();
+    hosts.process_close_request(&mut state);
+    state.apply_input_with_platform(InputEvent::key(InputKey::Right), platform.as_ref());
+    state.apply_input_with_platform(InputEvent::key(InputKey::Enter), platform.as_ref());
+    assert_eq!(state.command_line_close_request, Some((second_id, true)));
+    hosts.process_close_request(&mut state);
+    assert_eq!(state.active_page_id(), caller_id);
+    hosts.sync_tasks(&mut state);
+    assert!(!hosts.tasks.contains_key(&second_id));
+    assert!(hosts.tasks.contains_key(&first_id));
+    assert!(!hosts.hosts.contains_key(&second_id));
+    wait_until_stopped(second_pid);
+    wait_until_stopped(descendant_pid);
+    assert!(
+        process_is_running(first_pid),
+        "closing the top terminal must preserve the covered terminal"
+    );
+    hosts.terminate_all().unwrap();
+    wait_until_stopped(first_pid);
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn covered_terminal_output_input_and_completion_are_bound_to_page_ids() {
+    let fixture = PtyFixture::new("page-instances");
+    let platform = platform::native_platform();
+    let mut hosts = CommandLineHosts::new(fixture.app.clone());
+    let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
+    state.set_navigation_path(vec![
+        crate::ShellScreen::Home,
+        crate::ShellScreen::CommandLine,
+    ]);
+    let first_id = state.active_page_id();
+    hosts.hosts.insert(first_id, fixture.shell());
+    state.enter_screen(crate::ShellScreen::Clock);
+    state.enter_screen(crate::ShellScreen::CommandLine);
+    let second_id = state.active_page_id();
+    assert_ne!(first_id, second_id);
+    hosts.hosts.insert(second_id, fixture.shell());
+    let second_pid = running_pty(&hosts.hosts[&second_id])
+        .process_id()
+        .unwrap()
+        .unwrap();
+    running_pty(&hosts.hosts[&first_id])
+        .write(b"echo FIRST_BACKGROUND_OUTPUT\r")
+        .unwrap();
+    hosts.handle_input(
+        &state,
+        &InputEvent::paste("echo SECOND_ONLY_INPUT\r"),
+        Some(Rect::new(0, 0, 120, 40)),
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let (_, event) = hosts.poll(&mut state, platform.as_ref(), ratatui::style::Color::Cyan);
+        assert_eq!(event, CommandLineHostEvent::None);
+        let first_output = snapshot_text(&hosts.hosts[&first_id].snapshot);
+        let second_output = snapshot_text(&hosts.hosts[&second_id].snapshot);
+        if first_output.contains("FIRST_BACKGROUND_OUTPUT")
+            && second_output.contains("SECOND_ONLY_INPUT")
+        {
+            assert!(!first_output.contains("SECOND_ONLY_INPUT"));
+            assert!(!second_output.contains("FIRST_BACKGROUND_OUTPUT"));
+            assert_eq!(
+                hosts.visible_host(&state).view_model(),
+                hosts.hosts[&second_id].view_model()
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "independent terminal output never arrived"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    state.enter_screen(crate::ShellScreen::Clock);
+    let top_id = state.active_page_id();
+    running_pty(&hosts.hosts[&first_id])
+        .write(b"exit 0\r")
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while hosts.hosts.contains_key(&first_id) {
+        hosts.poll(&mut state, platform.as_ref(), ratatui::style::Color::Cyan);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "covered successful exit was not reaped"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!state.live_page_ids().contains(&first_id));
+    assert_eq!(
+        state.active_page_id(),
+        top_id,
+        "a covered exit must not close the visible page"
+    );
+    assert!(process_is_running(second_pid));
+
+    state.close_page_instance(second_id);
+    hosts.poll(&mut state, platform.as_ref(), ratatui::style::Color::Cyan);
+    assert!(hosts.hosts.is_empty());
+    wait_until_stopped(second_pid);
+    assert_eq!(state.active_page_id(), top_id);
+}
+
+#[test]
+fn nonrunning_terminal_returns_without_confirmation_and_stale_confirmation_is_ignored() {
+    let fixture = PtyFixture::new("nonrunning-close");
+    let mut hosts = CommandLineHosts::new(fixture.app.clone());
+    let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
+    state.set_navigation_path(vec![
+        crate::ShellScreen::Home,
+        crate::ShellScreen::CommandLine,
+    ]);
+    let first_id = state.active_page_id();
+    let mut failed = CommandLineHost::new(fixture.app.clone());
+    failed.state = CommandLineHostState::Failed {
+        message: "could not start test child".into(),
+    };
+    hosts.hosts.insert(first_id, failed);
+    state.request_command_line_close();
+    hosts.process_close_request(&mut state);
+    assert_eq!(state.active_screen(), crate::ShellScreen::Home);
+    assert!(state.to_notification_view_model().is_none());
+    assert!(hosts.hosts.is_empty());
+
+    state.enter_screen(crate::ShellScreen::CommandLine);
+    let replacement_id = state.active_page_id();
+    assert_ne!(first_id, replacement_id);
+    state.confirm_command_line_close(first_id);
+    assert!(state.command_line_close_request.is_none());
+    state.notify_critical_modal("Existing modal", "Must close first", vec![]);
+    state.request_command_line_close();
+    assert!(state.command_line_close_request.is_none());
+    assert_eq!(state.active_page_id(), replacement_id);
+}
+
+fn snapshot_text(snapshot: &TerminalSnapshot) -> String {
+    snapshot
+        .cells
+        .iter()
+        .flat_map(|row| row.iter())
+        .map(|cell| cell.text.as_str())
+        .collect()
+}
+
+struct PtyFixture {
+    root: PathBuf,
+    runtime: Option<watchdog::WatchdogRuntime>,
+    app: watchdog::AppWatchdog,
+}
+
+impl PtyFixture {
+    fn new(name: &str) -> Self {
+        use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
+        let root = std::env::temp_dir().join(format!(
+            "tundra-command-line-{name}-{}-{}",
+            std::process::id(),
+            NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("data"),
+            "command-line-test",
+            "test",
+        ))
+        .unwrap();
+        let app = process
+            .register_app(AppDescriptor::new(
+                AppId::from_static("command-line-test"),
+                "Command Line Test",
+                "test",
+                AppCriticality::Optional,
+            ))
+            .unwrap();
+        Self {
+            root,
+            runtime: Some(runtime),
+            app,
+        }
+    }
+
+    fn shell(&self) -> CommandLineHost {
+        #[cfg(windows)]
+        let (program, args) = ("cmd.exe", vec!["/D", "/Q"]);
+        #[cfg(unix)]
+        let (program, args) = ("/bin/sh", Vec::<&str>::new());
+        let mut host = CommandLineHost::new(self.app.clone());
+        let pty = CommandLinePty::spawn(
+            CommandLinePtyConfig {
+                program: program.into(),
+                args: args.into_iter().map(OsString::from).collect(),
+                env: Vec::new(),
+                cwd: Some(self.root.clone()),
+                columns: 160,
+                rows: 24,
+                scrollback_lines: 200,
+            },
+            &host.reader_tasks,
+        )
+        .unwrap();
+        host.state = CommandLineHostState::Running(pty);
+        host
+    }
+
+    fn start_descendant(&self, host: &CommandLineHost) -> u32 {
+        let pid_file = self.root.join("descendant.pid");
+        #[cfg(windows)]
+        let command = {
+            let script = self.root.join("descendant.ps1");
+            std::fs::write(&script, format!("$child = Start-Process ping.exe -ArgumentList '-t','127.0.0.1' -NoNewWindow -PassThru\n$child.Id | Set-Content -LiteralPath '{}'\nWait-Process -Id $child.Id\n", pid_file.display())).unwrap();
+            format!(
+                "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"{}\"\r",
+                script.display()
+            )
+        };
+        #[cfg(unix)]
+        let command = format!("sleep 60 & echo $! > '{}'; wait\r", pid_file.display());
+        running_pty(host).write(command.as_bytes()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        loop {
+            if let Ok(contents) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = contents.trim().parse()
+            {
+                return pid;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "descendant did not publish its pid"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl Drop for PtyFixture {
+    fn drop(&mut self) {
+        self.runtime.take().unwrap().shutdown().unwrap();
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn running_pty(host: &CommandLineHost) -> &CommandLinePty {
+    match &host.state {
+        CommandLineHostState::Running(pty) => pty,
+        other => panic!("expected running PTY, got {other:?}"),
+    }
+}
+
+fn process_is_running(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        && stat
+            .rsplit_once(") ")
+            .is_some_and(|(_, state)| state.starts_with('Z'))
+    {
+        return false;
+    }
+    platform::native_platform().is_process_alive(pid).unwrap()
+}
+
+fn wait_until_stopped(pid: u32) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while process_is_running(pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "process {pid} survived terminal close"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }

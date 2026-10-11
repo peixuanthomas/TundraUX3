@@ -9,11 +9,13 @@ impl ShellSession {
             return None;
         }
         let mut diagnostics = self.to_diagnostics_view_model();
-        if let ui::SystemStatusRoute::Detail(detail) = self.system_status_route
+        if let ui::SystemStatusRoute::Detail(detail) = self.pages.system_status.system_status_route
             && let Some(tab) = detail.diagnostics_tab()
         {
             diagnostics.tab = tab;
             diagnostics.sort = self
+                .pages
+                .common
                 .table_sorts
                 .get(&format!("diagnostics.{tab:?}"))
                 .copied();
@@ -198,16 +200,25 @@ impl ShellSession {
                 network_rows,
             }),
             diagnostics,
-            route: self.system_status_route,
+            route: self.pages.system_status.system_status_route,
             dashboard,
-            process_sort: self.system_status_process_sort,
+            process_sort: self.pages.system_status.system_status_process_sort,
             table_sort: self
+                .pages
+                .common
                 .table_sorts
-                .get(&format!("system-status.{:?}", self.system_status_route))
+                .get(&format!(
+                    "system-status.{:?}",
+                    self.pages.system_status.system_status_route
+                ))
                 .copied(),
-            selected_row: self.system_status_selected_row,
-            scroll_offset: self.system_status_scroll_offset,
-            refreshing: self.system_status_refresh_requested_revision.is_some(),
+            selected_row: self.pages.system_status.system_status_selected_row,
+            scroll_offset: self.pages.system_status.system_status_scroll_offset,
+            refreshing: self
+                .pages
+                .system_status
+                .system_status_refresh_requested_revision
+                .is_some(),
             feedback: None,
         };
         self.sort_system_status_view_model(&mut model);
@@ -242,38 +253,43 @@ impl ShellSession {
                 })
                 .collect::<Vec<_>>()
         };
-        let picker = self.system_status_add_picker.as_ref().map(|picker| {
-            let items = super::super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
-                .iter()
-                .copied()
-                .map(|kind| {
-                    let already_added = dashboard.widgets.contains(&kind);
-                    let reason = if already_added {
-                        Some(i18n::tr!("shell-already-added"))
-                    } else {
-                        self.system_status_widget_unavailable_reason(kind)
-                            .map(|text| text.render_current())
-                    };
-                    ui::SystemStatusPickerItemViewModel {
-                        kind: super::super::controller::system_status::ui_widget_kind(kind),
-                        label: super::super::controller::system_status::ui_widget_kind(kind)
-                            .label()
-                            .to_string(),
-                        detail: reason.clone().unwrap_or_default(),
-                        enabled: !already_added
-                            && reason.is_none()
-                            && self.system_status_picker_kind_enabled(kind),
-                    }
-                })
-                .collect();
-            ui::SystemStatusPickerViewModel {
-                title: i18n::tr!("shell-add-widget"),
-                items,
-                selected: picker.selected,
-            }
-        });
+        let picker = self
+            .pages
+            .system_status
+            .system_status_add_picker
+            .as_ref()
+            .map(|picker| {
+                let items = super::super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
+                    .iter()
+                    .copied()
+                    .map(|kind| {
+                        let already_added = dashboard.widgets.contains(&kind);
+                        let reason = if already_added {
+                            Some(i18n::tr!("shell-already-added"))
+                        } else {
+                            self.system_status_widget_unavailable_reason(kind)
+                                .map(|text| text.render_current())
+                        };
+                        ui::SystemStatusPickerItemViewModel {
+                            kind: super::super::controller::system_status::ui_widget_kind(kind),
+                            label: super::super::controller::system_status::ui_widget_kind(kind)
+                                .label()
+                                .to_string(),
+                            detail: reason.clone().unwrap_or_default(),
+                            enabled: !already_added
+                                && reason.is_none()
+                                && self.system_status_picker_kind_enabled(kind),
+                        }
+                    })
+                    .collect();
+                ui::SystemStatusPickerViewModel {
+                    title: i18n::tr!("shell-add-widget"),
+                    items,
+                    selected: picker.selected,
+                }
+            });
         let dirty = self.system_status_dashboard_is_dirty();
-        let overview_metrics = if self.system_status_route
+        let overview_metrics = if self.pages.system_status.system_status_route
             == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Overview)
         {
             use storage::SystemStatusWidgetKind as Kind;
@@ -320,47 +336,80 @@ impl ShellSession {
             wide_widgets: widgets_for(storage::DashboardProfile::Wide),
             narrow_widgets: widgets_for(storage::DashboardProfile::Narrow),
             selected: self
+                .pages
+                .system_status
                 .system_status_selected_widget
                 .map(super::super::controller::system_status::ui_widget_kind),
-            focus: self.system_status_dashboard_focus,
-            scroll_row: self.system_status_dashboard_scroll_row,
-            editing: self.system_status_dashboard_draft.is_some(),
+            focus: self.pages.system_status.system_status_dashboard_focus,
+            scroll_row: self.pages.system_status.system_status_dashboard_scroll_row,
+            editing: self
+                .pages
+                .system_status
+                .system_status_dashboard_draft
+                .is_some(),
             dirty,
             feedback: self
+                .pages
+                .system_status
                 .system_status_dashboard_feedback
                 .as_ref()
                 .map(i18n::LocalizedText::render_current),
             picker,
-            size_picker: self.system_status_size_picker.map(|picker| {
-                ui::SystemStatusSizePickerViewModel {
+            size_picker: self
+                .pages
+                .system_status
+                .system_status_size_picker
+                .map(|picker| ui::SystemStatusSizePickerViewModel {
                     selected: picker.selected,
-                }
-            }),
+                }),
             picker_anchor: self
+                .pages
+                .system_status
                 .system_status_add_picker
                 .as_ref()
                 .and_then(|picker| picker.anchor)
                 .or_else(|| {
-                    self.system_status_size_picker
+                    self.pages
+                        .system_status
+                        .system_status_size_picker
                         .as_ref()
                         .and_then(|picker| picker.anchor)
                 }),
             dialog: self
+                .pages
+                .system_status
                 .system_status_discard_dialog
                 .then(|| ui::SystemStatusDialogViewModel {
                     title: i18n::tr!("shell-discard-dashboard-changes"),
                     message: i18n::tr!("shell-your-unsaved-widget-layout-changes-will-be-lost"),
                     confirm_label: i18n::tr!("shell-discard"),
                     cancel_label: i18n::tr!("shell-continue-editing"),
-                    selected_action: usize::from(!self.system_status_discard_confirm_selected),
+                    selected_action: usize::from(
+                        !self
+                            .pages
+                            .system_status
+                            .system_status_discard_confirm_selected,
+                    ),
                 }),
             dragging: None,
             actions: ui::SystemStatusActionState {
-                refresh_disabled: self.system_status_refresh_requested_revision.is_some(),
+                refresh_disabled: self
+                    .pages
+                    .system_status
+                    .system_status_refresh_requested_revision
+                    .is_some(),
                 edit_disabled: false,
                 add_disabled: !self.system_status_has_addable_widget(),
-                size_disabled: self.system_status_selected_widget.is_none(),
-                remove_disabled: self.system_status_selected_widget.is_none(),
+                size_disabled: self
+                    .pages
+                    .system_status
+                    .system_status_selected_widget
+                    .is_none(),
+                remove_disabled: self
+                    .pages
+                    .system_status
+                    .system_status_selected_widget
+                    .is_none(),
                 save_disabled: !dirty,
             },
             updated: refreshed.to_string(),
@@ -979,7 +1028,7 @@ impl ShellSession {
                         .chain(processes.top_memory.iter().take(20))
                         .filter(|process| seen.insert(process.pid))
                         .collect::<Vec<_>>();
-                    let sort = self.system_status_process_sort;
+                    let sort = self.pages.system_status.system_status_process_sort;
                     rows.sort_by(|a, b| {
                         let order = match sort.column {
                             ui::SystemStatusProcessSortColumn::Pid => a.pid.cmp(&b.pid),
@@ -1134,7 +1183,7 @@ impl ShellSession {
             self.selected_home_entry_index(),
             self.ascii_assets.clone(),
         )
-        .with_viewport_offset(self.home_viewport_offset);
+        .with_viewport_offset(self.pages.home.home_viewport_offset);
         let model = match self.home_mode {
             ShellHomeMode::Debug => model.with_debug_diagnostics(ui::DebugDiagnosticsViewModel {
                 tick_count: self.tick_count,
@@ -1154,7 +1203,7 @@ impl ShellSession {
         {
             model.with_account_logout(
                 username,
-                self.focused_component == ShellComponent::HomeLogout,
+                self.pages.common.focused_component == ShellComponent::HomeLogout,
             )
         } else {
             model
@@ -1281,41 +1330,49 @@ impl ShellSession {
             })
             .unwrap_or_else(|| (Vec::new(), Vec::new(), Vec::new(), None));
 
-        let repair_dialog = (!self.diagnostics_repair_preview.is_empty()).then(|| {
-            ui::DiagnosticsRepairDialogViewModel {
-                items: self
-                    .diagnostics_repair_preview
-                    .iter()
-                    .enumerate()
-                    .map(|(index, action)| ui::DiagnosticsRepairItemViewModel {
-                        id: index.to_string(),
-                        label: action.localized_label().render_current(),
-                    })
-                    .collect(),
-                selected: self.diagnostics_repair_selected,
-                confirm_selected: self.diagnostics_repair_confirm_selected,
-                scroll_offset: self.diagnostics_repair_scroll_offset,
-            }
-        });
+        let repair_dialog =
+            (!self.pages.diagnostics.diagnostics_repair_preview.is_empty()).then(|| {
+                ui::DiagnosticsRepairDialogViewModel {
+                    items: self
+                        .pages
+                        .diagnostics
+                        .diagnostics_repair_preview
+                        .iter()
+                        .enumerate()
+                        .map(|(index, action)| ui::DiagnosticsRepairItemViewModel {
+                            id: index.to_string(),
+                            label: action.localized_label().render_current(),
+                        })
+                        .collect(),
+                    selected: self.pages.diagnostics.diagnostics_repair_selected,
+                    confirm_selected: self.pages.diagnostics.diagnostics_repair_confirm_selected,
+                    scroll_offset: self.pages.diagnostics.diagnostics_repair_scroll_offset,
+                }
+            });
 
         ui::DiagnosticsViewModel {
-            tab: self.diagnostics_tab,
+            tab: self.pages.diagnostics.diagnostics_tab,
             sort: self
+                .pages
+                .common
                 .table_sorts
-                .get(&format!("diagnostics.{:?}", self.diagnostics_tab))
+                .get(&format!(
+                    "diagnostics.{:?}",
+                    self.pages.diagnostics.diagnostics_tab
+                ))
                 .copied(),
             table_columns: Vec::new(),
             table_rows: Vec::new(),
             checks,
             logs,
             incidents,
-            selected_check: self.diagnostics_selected_check,
-            selected_log: self.diagnostics_selected_log,
-            selected_incident: self.diagnostics_selected_incident,
-            list_window_start: self.diagnostics_list_window_start,
-            list_window_is_explicit: self.diagnostics_list_window_is_explicit,
-            detail_scroll: self.diagnostics_detail_scroll,
-            scanning: self.diagnostics_scanning
+            selected_check: self.pages.diagnostics.diagnostics_selected_check,
+            selected_log: self.pages.diagnostics.diagnostics_selected_log,
+            selected_incident: self.pages.diagnostics.diagnostics_selected_incident,
+            list_window_start: self.pages.diagnostics.diagnostics_list_window_start,
+            list_window_is_explicit: self.pages.diagnostics.diagnostics_list_window_is_explicit,
+            detail_scroll: self.pages.diagnostics.diagnostics_detail_scroll,
+            scanning: self.pages.diagnostics.diagnostics_scanning
                 || self
                     .diagnostics_task_runtime
                     .as_ref()
@@ -1325,6 +1382,8 @@ impl ShellSession {
             restart_required: self.diagnostics_restart_is_required(),
             repair_dialog,
             feedback: self
+                .pages
+                .diagnostics
                 .diagnostics_feedback
                 .as_ref()
                 .map(i18n::LocalizedText::render_current),
@@ -1383,8 +1442,8 @@ impl ShellSession {
         )
         .with_ascii_assets(self.ascii_assets.clone())
         .with_read_only(self.is_strict_guest());
-        model.alarm_sort = self.table_sorts.get("clock.0").copied();
-        model.countdown_sort = self.table_sorts.get("clock.1").copied();
+        model.alarm_sort = self.pages.common.table_sorts.get("clock.0").copied();
+        model.countdown_sort = self.pages.common.table_sorts.get("clock.1").copied();
         if let Some(sort) = model.alarm_sort {
             alarms.sort_by(|a, b| sort.compare(&a.label, &b.label));
         }
@@ -1393,22 +1452,22 @@ impl ShellSession {
         }
         model.alarms = alarms;
         model.countdowns = countdowns;
-        model.selected_entry_id = (self.focused_component == ShellComponent::ClockEntryList)
-            .then_some(self.clock_selected_entry_id)
+        model.selected_entry_id = (self.pages.common.focused_component
+            == ShellComponent::ClockEntryList)
+            .then_some(self.pages.clock.clock_selected_entry_id)
             .flatten();
-        model.entry_window_start = self.clock_entry_window_start;
-        model.create_dialog =
-            self.clock_create_state
-                .as_ref()
-                .map(|state| ui::ClockCreateDialogViewModel {
-                    values: state.values,
-                    active_field: state.active_field,
-                    error: state
-                        .error
-                        .as_ref()
-                        .map(i18n::LocalizedText::render_current),
-                    focus: state.focus,
-                });
+        model.entry_window_start = self.pages.clock.clock_entry_window_start;
+        model.create_dialog = self.pages.clock.clock_create_state.as_ref().map(|state| {
+            ui::ClockCreateDialogViewModel {
+                values: state.values,
+                active_field: state.active_field,
+                error: state
+                    .error
+                    .as_ref()
+                    .map(i18n::LocalizedText::render_current),
+                focus: state.focus,
+            }
+        });
         model
     }
 
@@ -1439,22 +1498,24 @@ impl ShellSession {
                         .unwrap_or(false),
                 })
                 .collect(),
-            self.login_selected_user,
-            self.login_user_window_start,
-            self.login_password.chars().count(),
-            match self.focused_component {
+            self.pages.login.login_selected_user,
+            self.pages.login.login_user_window_start,
+            self.pages.login.login_password.chars().count(),
+            match self.pages.common.focused_component {
                 ShellComponent::LoginPassword => ui::LoginField::Password,
                 ShellComponent::LoginPasswordVisibility => ui::LoginField::PasswordVisibility,
                 _ => ui::LoginField::UserList,
             },
-            self.error_message
+            self.pages
+                .common
+                .error_message
                 .as_ref()
                 .map(i18n::LocalizedText::render_current),
         );
         model.system_users = self.identity_backend == identity::IdentityBackend::Linux;
-        model.scroll_offset = self.page_touch.login_scroll;
+        model.scroll_offset = self.pages.common.page_touch.login_scroll;
         if self.login_password_is_visible_at(now) {
-            model.with_visible_password(self.login_password.clone())
+            model.with_visible_password(self.pages.login.login_password.clone())
         } else {
             model
         }
@@ -1463,42 +1524,46 @@ impl ShellSession {
     pub fn to_bootstrap_admin_view_model(&self) -> ui::BootstrapAdminViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
         let mut model = ui::BootstrapAdminViewModel::new(
-            self.bootstrap_username.clone(),
-            self.bootstrap_password.chars().count(),
-            match self.focused_component {
+            self.pages.bootstrap.bootstrap_username.clone(),
+            self.pages.bootstrap.bootstrap_password.chars().count(),
+            match self.pages.common.focused_component {
                 ShellComponent::BootstrapPassword => ui::AuthField::Password,
                 _ => ui::AuthField::Username,
             },
-            self.error_message
+            self.pages
+                .common
+                .error_message
                 .as_ref()
                 .map(i18n::LocalizedText::render_current),
         );
-        model.scroll_offset = self.page_touch.bootstrap_scroll;
+        model.scroll_offset = self.pages.common.page_touch.bootstrap_scroll;
         model
     }
 
     pub fn to_setup_view_model(&self) -> ui::SetupViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
         let password_requirements = setup_password_requirements(
-            &self.setup_admin_username,
-            &self.setup_admin_password,
-            &self.setup_admin_password_confirm,
+            &self.pages.setup.setup_admin_username,
+            &self.pages.setup.setup_admin_password,
+            &self.pages.setup.setup_admin_password_confirm,
         );
-        let can_submit = !self.setup_admin_username.trim().is_empty()
+        let can_submit = !self.pages.setup.setup_admin_username.trim().is_empty()
             && password_requirements
                 .iter()
                 .all(|requirement| requirement.met);
         let custom_color = self
+            .pages
+            .setup
             .setup_custom_color_input
             .parse::<storage::BorderColor>()
             .ok();
-        let custom_color_conflicts_with_theme = self.setup_custom_color_target
+        let custom_color_conflicts_with_theme = self.pages.setup.setup_custom_color_target
             == Some(ui::SetupCustomColorTarget::Accent)
-            && custom_color == Some(self.setup_theme_color);
+            && custom_color == Some(self.pages.setup.setup_theme_color);
 
         ui::SetupViewModel {
-            scroll_offset: self.page_touch.setup_scroll,
-            step: self.setup_step,
+            scroll_offset: self.pages.common.page_touch.setup_scroll,
+            step: self.pages.setup.setup_step,
             languages: self.language_options(),
             timezones: app::setup_timezone_options()
                 .into_iter()
@@ -1508,35 +1573,44 @@ impl ShellSession {
                     option
                 })
                 .collect(),
-            selected_language_index: self.setup_selected_language_index,
-            selected_timezone_index: self.setup_selected_timezone_index,
-            timezone_window_start: self.setup_timezone_window_start,
-            admin_username: self.setup_admin_username.clone(),
-            admin_password_len: self.setup_admin_password.chars().count(),
-            admin_password_confirm_len: self.setup_admin_password_confirm.chars().count(),
+            selected_language_index: self.pages.setup.setup_selected_language_index,
+            selected_timezone_index: self.pages.setup.setup_selected_timezone_index,
+            timezone_window_start: self.pages.setup.setup_timezone_window_start,
+            admin_username: self.pages.setup.setup_admin_username.clone(),
+            admin_password_len: self.pages.setup.setup_admin_password.chars().count(),
+            admin_password_confirm_len: self
+                .pages
+                .setup
+                .setup_admin_password_confirm
+                .chars()
+                .count(),
             password_requirements,
-            password_hint: self.setup_admin_password_hint.clone(),
-            focused_field: self.setup_focused_field,
+            password_hint: self.pages.setup.setup_admin_password_hint.clone(),
+            focused_field: self.pages.setup.setup_focused_field,
             can_submit,
-            border_shape: match self.setup_border_shape {
+            border_shape: match self.pages.setup.setup_border_shape {
                 storage::BorderShape::Rounded => ui::BorderShape::Rounded,
                 storage::BorderShape::Square => ui::BorderShape::Square,
             },
-            theme_color: ui_theme_color(self.setup_theme_color),
-            theme_color_value: self.setup_theme_color.to_string(),
-            accent_color: ui_theme_color(self.setup_accent_color),
-            accent_color_value: self.setup_accent_color.to_string(),
-            custom_color_target: self.setup_custom_color_target,
-            custom_color_input: self.setup_custom_color_input.clone(),
-            custom_color_valid: !self.setup_custom_color_input.trim().is_empty()
+            theme_color: ui_theme_color(self.pages.setup.setup_theme_color),
+            theme_color_value: self.pages.setup.setup_theme_color.to_string(),
+            accent_color: ui_theme_color(self.pages.setup.setup_accent_color),
+            accent_color_value: self.pages.setup.setup_accent_color.to_string(),
+            custom_color_target: self.pages.setup.setup_custom_color_target,
+            custom_color_input: self.pages.setup.setup_custom_color_input.clone(),
+            custom_color_valid: !self.pages.setup.setup_custom_color_input.trim().is_empty()
                 && custom_color.is_some()
                 && !custom_color_conflicts_with_theme,
             custom_color_conflicts_with_theme,
             custom_color_error: self
+                .pages
+                .setup
                 .setup_custom_color_error
                 .as_ref()
                 .map(i18n::LocalizedText::render_current),
             error: self
+                .pages
+                .common
                 .error_message
                 .as_ref()
                 .map(i18n::LocalizedText::render_current),
@@ -1551,6 +1625,8 @@ impl ShellSession {
             .map(|session| session.username.clone())
             .unwrap_or_else(|| i18n::tr!("shell-unauthenticated"));
         let message = self
+            .pages
+            .user_management
             .user_management_message
             .as_ref()
             .map(i18n::LocalizedText::render_current)
@@ -1577,19 +1653,19 @@ impl ShellSession {
                         .usernames_match(&user.username, &current_user),
                 })
                 .collect(),
-            self.user_management_selected,
+            self.pages.user_management.user_management_selected,
             message,
             self.can_manage_all_users(),
             self.user_management_form_view_model(),
         );
-        model.sort = self.table_sorts.get("users").copied();
-        model.user_window_start = self.user_management_window_start;
-        model.focus = match self.user_management_focus {
+        model.sort = self.pages.common.table_sorts.get("users").copied();
+        model.user_window_start = self.pages.user_management.user_management_window_start;
+        model.focus = match self.pages.user_management.user_management_focus {
             UserManagementPageFocus::UserList => ui::UserManagementFocus::UserList,
             UserManagementPageFocus::Action(action) => ui::UserManagementFocus::Action(action),
         };
         model.actions = self.user_management_action_view_models();
-        model.feedback_tone = match self.user_management_feedback_tone {
+        model.feedback_tone = match self.pages.user_management.user_management_feedback_tone {
             UserManagementFeedbackTone::Info => ui::UserManagementFeedbackTone::Info,
             UserManagementFeedbackTone::Success => ui::UserManagementFeedbackTone::Success,
             UserManagementFeedbackTone::Error => ui::UserManagementFeedbackTone::Error,
@@ -1641,16 +1717,17 @@ impl ShellSession {
             self.ascii_assets.clone(),
         );
         model.is_trash = is_trash;
-        model.quick_location_viewport_offset = self.explorer_locations_scroll;
-        model.address_editing = self.explorer_input_mode == ExplorerInputMode::Address;
+        model.quick_location_viewport_offset = self.pages.explorer.explorer_locations_scroll;
+        model.address_editing =
+            self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address;
         model.address_value = if model.address_editing {
-            self.explorer_input.clone()
+            self.pages.explorer.explorer_input.clone()
         } else {
             display_path
         };
         if model.address_editing {
-            model.address_cursor = Some(self.explorer_address_cursor);
-            model.address_selection_anchor = self.explorer_address_selection_anchor;
+            model.address_cursor = Some(self.pages.explorer.explorer_address_cursor);
+            model.address_selection_anchor = self.pages.explorer.explorer_address_selection_anchor;
         }
         model.entry_presentations = state
             .entries
@@ -1819,9 +1896,9 @@ impl ShellSession {
             .error
             .as_ref()
             .map(i18n::LocalizedText::render_current);
-        model.search = if self.explorer_input_mode == ExplorerInputMode::Search {
+        model.search = if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Search {
             Some(ui::ExplorerSearchViewModel::new(
-                self.explorer_input.clone(),
+                self.pages.explorer.explorer_input.clone(),
                 true,
                 Some(state.entries.len()),
             ))
@@ -1853,7 +1930,7 @@ impl ShellSession {
             )
         });
 
-        model.overlay_selection = self.explorer_overlay_selection;
+        model.overlay_selection = self.pages.explorer.explorer_overlay_selection;
         model.overlay = if let Some(conflict) = state.pending_restore.as_ref() {
             Some(ui::ExplorerOverlayViewModel::Conflict(
                 ui::ExplorerConflictViewModel {
@@ -1883,18 +1960,19 @@ impl ShellSession {
                         ui::ExplorerConflictChoice::Cancel,
                     ],
                     selected_choice: ui::ExplorerConflictChoice::KeepBoth,
-                    apply_to_remaining: self.explorer_conflict_apply_to_remaining,
+                    apply_to_remaining: self.pages.explorer.explorer_conflict_apply_to_remaining,
                     allow_apply_to_remaining: true,
                 },
             ))
         } else if matches!(
-            self.explorer_input_mode,
+            self.pages.explorer.explorer_input_mode,
             ExplorerInputMode::NewFolder
                 | ExplorerInputMode::NewTextFile
                 | ExplorerInputMode::Rename
                 | ExplorerInputMode::RestoreDestination
         ) {
-            let (kind, title, prompt, confirm_label) = match self.explorer_input_mode {
+            let (kind, title, prompt, confirm_label) = match self.pages.explorer.explorer_input_mode
+            {
                 ExplorerInputMode::NewFolder => (
                     ui::ExplorerNameDialogKind::NewFolder,
                     i18n::tr!("shell-new-folder"),
@@ -1928,7 +2006,7 @@ impl ShellSession {
                     kind,
                     title: title.to_string(),
                     prompt: prompt.to_string(),
-                    value: self.explorer_input.clone(),
+                    value: self.pages.explorer.explorer_input.clone(),
                     error: state
                         .error
                         .as_ref()
@@ -1937,7 +2015,7 @@ impl ShellSession {
                     cancel_label: i18n::tr!("shell-cancel"),
                 },
             ))
-        } else if let Some(overlay_mode) = self.explorer_overlay_mode {
+        } else if let Some(overlay_mode) = self.pages.explorer.explorer_overlay_mode {
             Some(match overlay_mode {
                 ExplorerOverlayMode::ContextMenu { anchor } => {
                     explorer_context_menu_view_model(ExplorerContextMenuInput {
@@ -1947,7 +2025,7 @@ impl ShellSession {
                         clipboard_available: state.clipboard.is_some(),
                         is_trash,
                         trash_has_items: !state.entries.is_empty(),
-                        focused_index: self.explorer_overlay_selection,
+                        focused_index: self.pages.explorer.explorer_overlay_selection,
                         can_manage_launcher: self.can_manage_launcher(),
                         can_execute_command_line: self.can_execute_command_line(),
                         launcher_eligible_count: state
@@ -1964,11 +2042,11 @@ impl ShellSession {
                 ExplorerOverlayMode::Sort { anchor } => explorer_sort_menu_view_model(
                     anchor,
                     model.sort_column,
-                    self.explorer_overlay_selection,
+                    self.pages.explorer.explorer_overlay_selection,
                 ),
                 ExplorerOverlayMode::Options => explorer_options_view_model(
                     state,
-                    self.explorer_overlay_selection,
+                    self.pages.explorer.explorer_overlay_selection,
                     self.can_change_explorer_settings(),
                 ),
                 ExplorerOverlayMode::Properties => {
@@ -1980,7 +2058,9 @@ impl ShellSession {
         };
 
         if let Some(ui::ExplorerOverlayViewModel::Conflict(conflict)) = &mut model.overlay
-            && let Some(choice) = conflict.choices.get(self.explorer_overlay_selection)
+            && let Some(choice) = conflict
+                .choices
+                .get(self.pages.explorer.explorer_overlay_selection)
         {
             conflict.selected_choice = *choice;
         }
@@ -1999,7 +2079,10 @@ impl ShellSession {
     ) -> Vec<ui::UserManagementActionViewModel> {
         use ui::UserManagementAction;
 
-        let selected = self.app.managed_users().get(self.user_management_selected);
+        let selected = self
+            .app
+            .managed_users()
+            .get(self.pages.user_management.user_management_selected);
         let last_enabled_admin = self.selected_is_last_enabled_admin();
         let mut actions = Vec::new();
 
@@ -2111,7 +2194,7 @@ impl ShellSession {
     }
 
     fn user_management_form_view_model(&self) -> Option<ui::UserManagementFormViewModel> {
-        match &self.user_management_mode {
+        match &self.pages.user_management.user_management_mode {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(form) => Some(ui::UserManagementFormViewModel {
                 kind: ui::UserManagementFormKind::Create,
@@ -2137,9 +2220,12 @@ impl ShellSession {
     }
 
     fn user_management_form_error(&self) -> Option<String> {
-        (self.user_management_feedback_tone == UserManagementFeedbackTone::Error)
+        (self.pages.user_management.user_management_feedback_tone
+            == UserManagementFeedbackTone::Error)
             .then(|| {
-                self.user_management_message
+                self.pages
+                    .user_management
+                    .user_management_message
                     .as_ref()
                     .map(i18n::LocalizedText::render_current)
             })

@@ -72,7 +72,7 @@ impl ShellSession {
             _ => false,
         };
         if self.login_idle_tracking_active()
-            && received_at >= self.login_idle_deadline
+            && received_at >= self.pages.login.login_idle_deadline
             && !requests_shutdown
         {
             self.prepare_return_to_lockscreen();
@@ -82,7 +82,7 @@ impl ShellSession {
             );
         }
         if self.login_idle_tracking_active() && resets_login_idle_timeout(input) {
-            self.login_idle_deadline = received_at + LOGIN_IDLE_TIMEOUT;
+            self.pages.login.login_idle_deadline = received_at + LOGIN_IDLE_TIMEOUT;
         }
         None
     }
@@ -126,7 +126,7 @@ impl ShellSession {
             ),
             InputEvent::Paste(_)
                 if self.active_screen() == ShellScreen::Explorer
-                    && self.explorer_input_mode == ExplorerInputMode::Address
+                    && self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address
                     && self.active_overlay_descriptor().is_none() =>
             {
                 (
@@ -238,7 +238,20 @@ impl ShellSession {
         self.last_routed_target = Some(routed.target);
         self.last_command = Some(routed.command.clone());
 
-        if self.editor_save_state.is_some()
+        if (self.pending_login_reset.is_some() || self.pending_session_exit.is_some())
+            && !matches!(
+                routed.command,
+                ShellCommand::Tick | ShellCommand::RefreshHitMap { .. } | ShellCommand::Shutdown
+            )
+        {
+            return ShellAction::Redraw;
+        }
+
+        if self
+            .pages
+            .editor
+            .iter()
+            .any(|(_, page)| page.editor_save_state.is_some())
             && matches!(
                 &routed.command,
                 ShellCommand::Shutdown
@@ -252,7 +265,7 @@ impl ShellSession {
             let status = i18n::LocalizedText::from(i18n::msg!(
                 "shell-wait-for-the-editor-save-to-finish-before-exiting"
             ));
-            self.editor_message = Some(status.clone());
+            self.pages.editor.editor_message = Some(status.clone());
             self.notify_status(status);
             if matches!(
                 routed.command,
@@ -264,43 +277,35 @@ impl ShellSession {
             return ShellAction::Redraw;
         }
 
-        let editor_task_busy = self.editor_load_state.is_some() || self.editor_save_state.is_some();
-        let changes_screen = matches!(
-            &routed.command,
-            ShellCommand::RequestExit
-                | ShellCommand::ActivateSelectedHomeEntry
-                | ShellCommand::ActivateHomeEntryAt(_, _)
-                | ShellCommand::Logout
-                | ShellCommand::LogoutToLockscreen
-                | ShellCommand::OpenExplorer
-                | ShellCommand::OpenLauncher
-                | ShellCommand::OpenEditor
-                | ShellCommand::OpenSettings
-                | ShellCommand::OpenSystemStatus
-                | ShellCommand::OpenUserManagement
-                | ShellCommand::OpenClock
-                | ShellCommand::OpenDiagnostics
-                | ShellCommand::OpenLogs
-        );
-        if editor_task_busy && changes_screen {
-            let status = if self.editor_save_state.is_some() {
-                i18n::LocalizedText::from(i18n::msg!(
-                    "shell-wait-for-the-editor-save-to-finish-before-switching-applications"
-                ))
-            } else {
-                i18n::LocalizedText::from(i18n::msg!(
-                    "shell-press-esc-to-cancel-loading-before-switching-applications"
-                ))
-            };
-            self.editor_message = Some(status.clone());
-            self.notify_status(status);
-            self.refresh_hit_map();
-            return ShellAction::Redraw;
-        }
-
         match routed.command {
+            ShellCommand::PageAction(owner, command) => {
+                if owner != self.active_page_id() || self.page_screen(owner).is_none() {
+                    ShellAction::Redraw
+                } else {
+                    self.apply_routed_event_once(
+                        RoutedEvent {
+                            command: *command,
+                            ..routed
+                        },
+                        platform,
+                        received_at,
+                    )
+                }
+            }
+            ShellCommand::PageCloseBackground(id) => {
+                self.continue_page_tasks_in_background(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::PageCloseCancelTasks(id) => {
+                self.cancel_page_tasks_and_close(id);
+                ShellAction::Redraw
+            }
+            ShellCommand::PageCloseStay(id) => {
+                self.stay_on_page(id);
+                ShellAction::Redraw
+            }
             ShellCommand::Shutdown => {
-                let _ = self.persist_editor_recovery_now(received_at);
+                let _ = self.persist_all_editor_recovery_now(received_at);
                 self.shutdown_requested = true;
                 self.app
                     .dispatch_at(app::AppCommand::ConfirmExit, received_at)
@@ -314,12 +319,41 @@ impl ShellSession {
                 self.poll_launcher_background_tasks();
                 self.poll_settings_background_tasks();
                 self.drain_diagnostics_events();
-                self.poll_logs_tasks();
-                self.poll_management();
+                if self.pending_login_reset.is_some() || self.pending_session_exit.is_some() {
+                    self.drain_logs_for_shutdown();
+                    self.drain_management_for_shutdown();
+                } else {
+                    self.poll_logs_tasks();
+                    self.poll_management();
+                }
                 self.poll_auto_admin();
                 self.poll_user_management_task();
                 self.poll_editor_background_tasks(platform);
-                self.persist_editor_recovery_if_due(received_at);
+                self.persist_all_editor_recovery_if_due(received_at);
+                self.poll_page_closes();
+                if !self.tasks.has_running()
+                    && let Some(status) = self.pending_login_reset.take()
+                {
+                    let lockscreen = std::mem::take(&mut self.pending_lockscreen_after_logout);
+                    self.return_to_login_at(status, received_at);
+                    if lockscreen && self.app.auth_session().is_none() {
+                        self.prepare_return_to_lockscreen();
+                        return ShellAction::Exit;
+                    }
+                }
+                if !self.tasks.has_running()
+                    && let Some(command) = self.pending_session_exit.take()
+                {
+                    return self.apply_routed_event_once(
+                        RoutedEvent {
+                            command,
+                            input: InputEvent::Tick,
+                            target: RoutedTarget::Global,
+                        },
+                        platform,
+                        received_at,
+                    );
+                }
                 ShellAction::Redraw
             }
             ShellCommand::RefreshHitMap { width, height } => {
@@ -348,7 +382,7 @@ impl ShellSession {
             ShellCommand::RequestExit => {
                 self.capture_modal_focus_context();
                 self.enter_screen(ShellScreen::ExitConfirm);
-                self.active_popup = None;
+                self.pages.common.active_popup = None;
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-confirm-exit")));
                 self.show_exit_confirmation_modal(platform);
                 self.refresh_hit_map();
@@ -356,8 +390,14 @@ impl ShellSession {
                     .dispatch_at(app::AppCommand::RequestExit, received_at)
             }
             ShellCommand::ConfirmExit => {
-                if !self.persist_editor_recovery_now(received_at) {
+                if !self.persist_all_editor_recovery_now(received_at) {
                     self.shutdown_requested = false;
+                    return ShellAction::Redraw;
+                }
+                if !self.stop_session_tasks(false) {
+                    return ShellAction::Redraw;
+                }
+                if self.wait_for_session_exit(ShellCommand::ConfirmExit) {
                     return ShellAction::Redraw;
                 }
                 self.shutdown_requested = true;
@@ -372,9 +412,15 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::Restart => {
-                if !self.persist_editor_recovery_now(received_at) {
+                if !self.persist_all_editor_recovery_now(received_at) {
                     self.shutdown_requested = false;
                     self.restart_requested = false;
+                    return ShellAction::Redraw;
+                }
+                if !self.stop_session_tasks(false) {
+                    return ShellAction::Redraw;
+                }
+                if self.wait_for_session_exit(ShellCommand::Restart) {
                     return ShellAction::Redraw;
                 }
                 self.restart_requested = true;
@@ -383,9 +429,15 @@ impl ShellSession {
                     .dispatch_at(app::AppCommand::ConfirmExit, received_at)
             }
             ShellCommand::PowerOff | ShellCommand::Reboot => {
-                if !self.persist_editor_recovery_now(received_at) {
+                if !self.persist_all_editor_recovery_now(received_at) {
                     self.shutdown_requested = false;
                     self.show_exit_confirmation_modal(platform);
+                    return ShellAction::Redraw;
+                }
+                if !self.stop_session_tasks(false) {
+                    return ShellAction::Redraw;
+                }
+                if self.wait_for_session_exit(routed.command.clone()) {
                     return ShellAction::Redraw;
                 }
                 let command = if routed.command == ShellCommand::Reboot {
@@ -398,7 +450,7 @@ impl ShellSession {
             ShellCommand::CancelExit => {
                 self.notification_dismiss_modal_by_key(EXIT_CONFIRM_NOTIFICATION_KEY);
                 self.cancel_exit_confirmation();
-                self.active_popup = None;
+                self.pages.common.active_popup = None;
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
                 self.refresh_hit_map();
                 self.app
@@ -480,7 +532,7 @@ impl ShellSession {
                 self.move_focus(ui::FocusDirection::Next);
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-focus-arg1",
-                    arg1 = component_message(self.focused_component)
+                    arg1 = component_message(self.pages.common.focused_component)
                 )));
                 ShellAction::Redraw
             }
@@ -488,7 +540,7 @@ impl ShellSession {
                 self.move_focus(ui::FocusDirection::Previous);
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-focus-arg1",
-                    arg1 = component_message(self.focused_component)
+                    arg1 = component_message(self.pages.common.focused_component)
                 )));
                 ShellAction::Redraw
             }
@@ -525,27 +577,27 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LoginFocusUserList => {
-                self.focused_component = ShellComponent::LoginUserList;
-                self.error_message = None;
+                self.pages.common.focused_component = ShellComponent::LoginUserList;
+                self.pages.common.error_message = None;
                 ShellAction::Redraw
             }
             ShellCommand::LoginFocusPassword => {
-                self.focused_component = ShellComponent::LoginPassword;
-                self.error_message = None;
+                self.pages.common.focused_component = ShellComponent::LoginPassword;
+                self.pages.common.error_message = None;
                 ShellAction::Redraw
             }
             ShellCommand::LoginFocusPasswordVisibility => {
-                self.focused_component = ShellComponent::LoginPasswordVisibility;
-                self.error_message = None;
+                self.pages.common.focused_component = ShellComponent::LoginPasswordVisibility;
+                self.pages.common.error_message = None;
                 ShellAction::Redraw
             }
             ShellCommand::ToggleLoginPasswordVisibility => {
-                self.focused_component = ShellComponent::LoginPasswordVisibility;
+                self.pages.common.focused_component = ShellComponent::LoginPasswordVisibility;
                 self.toggle_login_password_visibility_at(received_at);
                 ShellAction::Redraw
             }
             ShellCommand::SubmitLogin => {
-                self.login_password_visible_until = None;
+                self.pages.login.login_password_visible_until = None;
                 self.submit_login();
                 ShellAction::Redraw
             }
@@ -729,6 +781,14 @@ impl ShellSession {
                 self.close_launcher();
                 ShellAction::Redraw
             }
+            ShellCommand::RequestCommandLineClose => {
+                self.request_command_line_close();
+                ShellAction::Redraw
+            }
+            ShellCommand::ConfirmCommandLineClose(id) => {
+                self.confirm_command_line_close(id);
+                ShellAction::Redraw
+            }
             ShellCommand::CloseCommandLine => {
                 self.close_command_line();
                 ShellAction::Redraw
@@ -761,7 +821,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherActivate => {
-                self.launcher_drag = None;
+                self.pages.launcher.launcher_drag = None;
                 self.request_launcher_launch(platform);
                 ShellAction::Redraw
             }
@@ -778,7 +838,8 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherToggleConfirmationAction => {
-                self.launcher_confirm_selected = !self.launcher_confirm_selected;
+                self.pages.launcher.launcher_confirm_selected =
+                    !self.pages.launcher.launcher_confirm_selected;
                 ShellAction::Redraw
             }
             ShellCommand::LauncherConfirm => {
@@ -786,7 +847,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherCancelConfirmation => {
-                self.launcher_pending_confirmation = None;
+                self.pages.launcher.launcher_pending_confirmation = None;
                 ShellAction::Redraw
             }
             ShellCommand::LauncherPointer(coordinates, _) => {
@@ -802,7 +863,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherCancelDrag => {
-                self.launcher_drag = None;
+                self.pages.launcher.launcher_drag = None;
                 ShellAction::Redraw
             }
             ShellCommand::LauncherScroll(delta) => {
@@ -863,22 +924,34 @@ impl ShellSession {
                     .editor_state()
                     .is_some_and(EditorState::is_read_only)
                 {
-                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-this-document-is-read-only"
                     )));
                     return ShellAction::Redraw;
                 }
-                self.editor_close_after_save = true;
+                if self.pages.editor.editor_save_state.is_some() {
+                    let owner = self
+                        .pages
+                        .editor
+                        .selected_id()
+                        .unwrap_or(self.content_page_id());
+                    self.request_page_close_after_editor_check(owner, false);
+                    return ShellAction::Redraw;
+                }
+                self.pages.editor.editor_close_after_save = true;
                 self.apply_editor_command(app::editor::EditorCommand::RequestSave, platform);
                 ShellAction::Redraw
             }
             ShellCommand::EditorDiscardAndClose => {
-                self.editor_close_after_save = false;
+                self.pages.editor.editor_close_after_save = false;
                 self.finish_editor_close(true);
                 ShellAction::Redraw
             }
             ShellCommand::EditorCancelClose => {
-                self.editor_close_after_save = false;
+                if let Some(owner) = self.pages.editor.selected_id() {
+                    self.stay_on_page(owner);
+                }
+                self.pages.editor.editor_close_after_save = false;
                 self.notification_dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-close-cancelled"
@@ -891,13 +964,13 @@ impl ShellSession {
                     .editor_state()
                     .is_some_and(EditorState::is_read_only)
                 {
-                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-this-document-is-read-only"
                     )));
                     return ShellAction::Redraw;
                 }
-                self.editor_open_after_save = true;
-                self.editor_discard_for_open = false;
+                self.pages.editor.editor_open_after_save = true;
+                self.pages.editor.editor_discard_for_open = false;
                 self.notification_dismiss_modal_by_key(EDITOR_OPEN_NOTIFICATION_KEY);
                 self.apply_editor_command(app::editor::EditorCommand::RequestSave, platform);
                 ShellAction::Redraw
@@ -908,20 +981,20 @@ impl ShellSession {
                     .editor_state()
                     .is_some_and(EditorState::is_read_only)
                 {
-                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-this-document-is-read-only"
                     )));
                     return ShellAction::Redraw;
                 }
-                self.editor_open_after_save = false;
-                self.editor_discard_for_open = true;
+                self.pages.editor.editor_open_after_save = false;
+                self.pages.editor.editor_discard_for_open = true;
                 self.notification_dismiss_modal_by_key(EDITOR_OPEN_NOTIFICATION_KEY);
                 self.open_editor_picker(platform);
                 ShellAction::Redraw
             }
             ShellCommand::EditorCancelOpen => {
-                self.editor_open_after_save = false;
-                self.editor_discard_for_open = false;
+                self.pages.editor.editor_open_after_save = false;
+                self.pages.editor.editor_discard_for_open = false;
                 self.notification_dismiss_modal_by_key(EDITOR_OPEN_NOTIFICATION_KEY);
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-open-cancelled"
@@ -1163,7 +1236,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerConflictKeepBoth => {
-                let apply_to_all = self.explorer_conflict_apply_to_remaining;
+                let apply_to_all = self.pages.explorer.explorer_conflict_apply_to_remaining;
                 self.apply_explorer_command(
                     ExplorerCommand::ResolveConflict {
                         action: ExplorerConflictAction::KeepBoth,
@@ -1171,11 +1244,11 @@ impl ShellSession {
                     },
                     platform,
                 );
-                self.explorer_conflict_apply_to_remaining = false;
+                self.pages.explorer.explorer_conflict_apply_to_remaining = false;
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerConflictReplace => {
-                let apply_to_all = self.explorer_conflict_apply_to_remaining;
+                let apply_to_all = self.pages.explorer.explorer_conflict_apply_to_remaining;
                 self.apply_explorer_command(
                     ExplorerCommand::ResolveConflict {
                         action: ExplorerConflictAction::Replace,
@@ -1183,11 +1256,11 @@ impl ShellSession {
                     },
                     platform,
                 );
-                self.explorer_conflict_apply_to_remaining = false;
+                self.pages.explorer.explorer_conflict_apply_to_remaining = false;
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerConflictSkip => {
-                let apply_to_all = self.explorer_conflict_apply_to_remaining;
+                let apply_to_all = self.pages.explorer.explorer_conflict_apply_to_remaining;
                 self.apply_explorer_command(
                     ExplorerCommand::ResolveConflict {
                         action: ExplorerConflictAction::Skip,
@@ -1195,7 +1268,7 @@ impl ShellSession {
                     },
                     platform,
                 );
-                self.explorer_conflict_apply_to_remaining = false;
+                self.pages.explorer.explorer_conflict_apply_to_remaining = false;
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerConflictCancel => {
@@ -1206,12 +1279,12 @@ impl ShellSession {
                     },
                     platform,
                 );
-                self.explorer_conflict_apply_to_remaining = false;
+                self.pages.explorer.explorer_conflict_apply_to_remaining = false;
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerConflictToggleApplyToRemaining => {
-                self.explorer_conflict_apply_to_remaining =
-                    !self.explorer_conflict_apply_to_remaining;
+                self.pages.explorer.explorer_conflict_apply_to_remaining =
+                    !self.pages.explorer.explorer_conflict_apply_to_remaining;
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerCancelOperation => {
@@ -1375,7 +1448,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusActivateSelectedWidget => {
-                if let Some(kind) = self.system_status_selected_widget {
+                if let Some(kind) = self.pages.system_status.system_status_selected_widget {
                     self.open_system_status_detail(kind);
                 }
                 ShellAction::Redraw
@@ -1417,8 +1490,12 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusToggleDiscardAction => {
-                self.system_status_discard_confirm_selected =
-                    !self.system_status_discard_confirm_selected;
+                self.pages
+                    .system_status
+                    .system_status_discard_confirm_selected = !self
+                    .pages
+                    .system_status
+                    .system_status_discard_confirm_selected;
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusSaveDashboard => {
@@ -1508,7 +1585,7 @@ impl ShellSession {
             }
             ShellCommand::SystemStatusOpenWidget(kind) => {
                 self.select_system_status_widget(kind);
-                if let Some(kind) = self.system_status_selected_widget {
+                if let Some(kind) = self.pages.system_status.system_status_selected_widget {
                     self.open_system_status_detail(kind);
                 }
                 ShellAction::Redraw
@@ -1526,7 +1603,11 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusPrevious => {
-                self.system_status_selected_row = self.system_status_selected_row.saturating_sub(1);
+                self.pages.system_status.system_status_selected_row = self
+                    .pages
+                    .system_status
+                    .system_status_selected_row
+                    .saturating_sub(1);
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusNext => {
@@ -1534,13 +1615,17 @@ impl ShellSession {
                     .to_system_status_view_model()
                     .map(|m| m.item_count())
                     .unwrap_or(0);
-                self.system_status_selected_row =
-                    (self.system_status_selected_row + 1).min(count.saturating_sub(1));
+                self.pages.system_status.system_status_selected_row =
+                    (self.pages.system_status.system_status_selected_row + 1)
+                        .min(count.saturating_sub(1));
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusPageUp => {
-                self.system_status_selected_row =
-                    self.system_status_selected_row.saturating_sub(10);
+                self.pages.system_status.system_status_selected_row = self
+                    .pages
+                    .system_status
+                    .system_status_selected_row
+                    .saturating_sub(10);
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusPageDown => {
@@ -1548,16 +1633,17 @@ impl ShellSession {
                     .to_system_status_view_model()
                     .map(|m| m.item_count())
                     .unwrap_or(0);
-                self.system_status_selected_row =
-                    (self.system_status_selected_row + 10).min(count.saturating_sub(1));
+                self.pages.system_status.system_status_selected_row =
+                    (self.pages.system_status.system_status_selected_row + 10)
+                        .min(count.saturating_sub(1));
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusFirst => {
-                self.system_status_selected_row = 0;
+                self.pages.system_status.system_status_selected_row = 0;
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusLast => {
-                self.system_status_selected_row = self
+                self.pages.system_status.system_status_selected_row = self
                     .to_system_status_view_model()
                     .map(|m| m.item_count().saturating_sub(1))
                     .unwrap_or(0);
@@ -1568,7 +1654,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusSortProcesses(column) => {
-                if self.system_status_route
+                if self.pages.system_status.system_status_route
                     == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Processes)
                 {
                     self.sort_system_status_processes(column);
@@ -1576,7 +1662,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusSelectRow(index) => {
-                self.system_status_selected_row = index;
+                self.pages.system_status.system_status_selected_row = index;
                 ShellAction::Redraw
             }
             ShellCommand::SystemStatusScroll(delta) => {
@@ -1680,8 +1766,8 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::DiagnosticsRepairToggleAction => {
-                self.diagnostics_repair_confirm_selected =
-                    !self.diagnostics_repair_confirm_selected;
+                self.pages.diagnostics.diagnostics_repair_confirm_selected =
+                    !self.pages.diagnostics.diagnostics_repair_confirm_selected;
                 ShellAction::Redraw
             }
             ShellCommand::DiagnosticsSelectRepairItem(index) => {
@@ -1775,7 +1861,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::ClockActivateSelected => {
-                if let Some(id) = self.clock_selected_entry_id {
+                if let Some(id) = self.pages.clock.clock_selected_entry_id {
                     self.show_clock_manage_dialog(id);
                 }
                 ShellAction::Redraw
@@ -1823,8 +1909,9 @@ impl ShellSession {
             }
             ShellCommand::UserManagementSelectRow(index) => {
                 if index < self.app.managed_users().len() {
-                    self.user_management_selected = index;
-                    self.user_management_focus = UserManagementPageFocus::UserList;
+                    self.pages.user_management.user_management_selected = index;
+                    self.pages.user_management.user_management_focus =
+                        UserManagementPageFocus::UserList;
                     self.ensure_user_management_selection_visible();
                 }
                 ShellAction::Redraw
@@ -1917,7 +2004,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::UserManagementFocusNext => {
-                if self.user_management_mode == UserManagementMode::Browse {
+                if self.pages.user_management.user_management_mode == UserManagementMode::Browse {
                     self.move_user_management_page_focus(1);
                 } else {
                     self.move_user_management_form_focus(1);
@@ -1925,7 +2012,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::UserManagementFocusPrevious => {
-                if self.user_management_mode == UserManagementMode::Browse {
+                if self.pages.user_management.user_management_mode == UserManagementMode::Browse {
                     self.move_user_management_page_focus(-1);
                 } else {
                     self.move_user_management_form_focus(-1);
@@ -1955,7 +2042,9 @@ impl ShellSession {
                     self.open_status_details();
                     return ShellAction::Redraw;
                 }
-                if target == ShellComponent::ContextMenu && self.explorer_overlay_mode.is_some() {
+                if target == ShellComponent::ContextMenu
+                    && self.pages.explorer.explorer_overlay_mode.is_some()
+                {
                     self.activate_explorer_overlay_at(coordinates, platform);
                     return ShellAction::Redraw;
                 }
@@ -2007,17 +2096,17 @@ impl ShellSession {
                         state.clear_selection();
                     });
                 }
-                self.explorer_overlay_mode = (target == Some(ShellComponent::Explorer)).then_some(
-                    ExplorerOverlayMode::ContextMenu {
-                        anchor: coordinates,
-                    },
-                );
-                self.explorer_overlay_selection = 0;
-                self.active_popup = Some(ShellPopup {
+                self.pages.explorer.explorer_overlay_mode = (target
+                    == Some(ShellComponent::Explorer))
+                .then_some(ExplorerOverlayMode::ContextMenu {
+                    anchor: coordinates,
+                });
+                self.pages.explorer.explorer_overlay_selection = 0;
+                self.pages.common.active_popup = Some(ShellPopup {
                     owner: target,
                     anchor: coordinates,
                 });
-                self.focused_component = ShellComponent::ContextMenu;
+                self.pages.common.focused_component = ShellComponent::ContextMenu;
                 let status = match target {
                     Some(target) => i18n::LocalizedText::from(i18n::msg!(
                         "shell-context-menu-arg1",
@@ -2030,12 +2119,12 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::ClosePopup => {
-                if self.explorer_overlay_mode.is_some() {
+                if self.pages.explorer.explorer_overlay_mode.is_some() {
                     self.close_explorer_popup();
                 }
-                self.active_popup = None;
-                self.explorer_overlay_mode = None;
-                self.explorer_overlay_selection = 0;
+                self.pages.common.active_popup = None;
+                self.pages.explorer.explorer_overlay_mode = None;
+                self.pages.explorer.explorer_overlay_selection = 0;
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-ready")));
                 self.refresh_hit_map();
                 ShellAction::Redraw

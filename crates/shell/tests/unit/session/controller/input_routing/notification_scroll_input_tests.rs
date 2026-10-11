@@ -36,8 +36,8 @@ fn notification_back_waits_for_matching_release_and_cancels_on_drag() {
 #[test]
 fn a_new_modal_cancels_dragging_on_the_page_below_it() {
     let mut session = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
-    session.logs_state.scrollbar_grab = Some(0);
-    session.diagnostics_detail_drag = Some(0);
+    session.pages.logs.logs_state.scrollbar_grab = Some(0);
+    session.pages.diagnostics.diagnostics_detail_drag = Some(0);
     session.scrollbar_drag = Some(ScrollbarDragState::Home { grab_offset: 0 });
     session.notify_modal(
         "Notice",
@@ -45,8 +45,8 @@ fn a_new_modal_cancels_dragging_on_the_page_below_it() {
         ui::NotificationTone::Info,
         vec![],
     );
-    assert!(session.logs_state.scrollbar_grab.is_none());
-    assert!(session.diagnostics_detail_drag.is_none());
+    assert!(session.pages.logs.logs_state.scrollbar_grab.is_none());
+    assert!(session.pages.diagnostics.diagnostics_detail_drag.is_none());
     assert!(session.scrollbar_drag.is_none());
 }
 

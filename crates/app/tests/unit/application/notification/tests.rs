@@ -1,5 +1,63 @@
 use super::*;
 
+#[test]
+fn page_alerts_with_the_same_key_do_not_replace_or_resolve_each_other() {
+    let first = crate::PageInstanceId::new();
+    let second = crate::PageInstanceId::new();
+    let mut center = NotificationCenter::new("Ready");
+    center.notify_alert_with_key("read.failed", "session", NotificationTone::Warning);
+    center.notify_page_alert_with_key(first, "read.failed", "first", NotificationTone::Error);
+    center.notify_page_alert_with_key(second, "read.failed", "second", NotificationTone::Error);
+    center.notify_page_alert_with_key(
+        first,
+        "read.failed",
+        "first updated",
+        NotificationTone::Error,
+    );
+    assert_eq!(center.alert_count(), 3);
+    assert_eq!(
+        center.page_alert_message_for_key(second, "read.failed"),
+        Some(&"second".into())
+    );
+    center.resolve_page_alert_at(first, "read.failed", Instant::now());
+    assert_eq!(
+        center.page_alert_message_for_key(first, "read.failed"),
+        None
+    );
+    assert_eq!(
+        center.page_alert_message_for_key(second, "read.failed"),
+        Some(&"second".into())
+    );
+    assert_eq!(
+        center.alert_message_for_key("read.failed"),
+        Some(&"session".into())
+    );
+    center.resolve_alert("read.failed");
+    assert_eq!(center.alert_count(), 1);
+    assert_eq!(center.alert(), Some(&"second".into()));
+}
+
+#[test]
+fn removing_a_page_removes_its_alerts_and_preserves_other_owners() {
+    let first = crate::PageInstanceId::new();
+    let second = crate::PageInstanceId::new();
+    let mut center = NotificationCenter::new("Ready");
+    center.notify_alert_with_key("same", "session", NotificationTone::Warning);
+    center.notify_page_alert_with_key(first, "same", "first", NotificationTone::Error);
+    center.notify_page_alert_with_key(second, "same", "second", NotificationTone::Error);
+    center.remove_page(first);
+    assert_eq!(center.alert_count(), 2);
+    assert!(center.page_alert_message_for_key(first, "same").is_none());
+    assert_eq!(
+        center.page_alert_message_for_key(second, "same"),
+        Some(&"second".into())
+    );
+    assert_eq!(
+        center.alert_message_for_key("same"),
+        Some(&"session".into())
+    );
+}
+
 fn language_snapshots() -> Vec<(std::sync::Arc<i18n::LanguageSnapshot>, &'static str)> {
     let root = std::env::temp_dir().join(format!(
         "tux3-app-notifications-{}-{}",

@@ -107,3 +107,75 @@ fn managed_refresh_publishes_presence_results() {
     drop(runtime);
     platform::cleanup_temp_path(&root).expect("cleanup test fixture");
 }
+
+#[test]
+fn covered_launcher_receives_its_result_but_closed_and_old_session_results_are_discarded() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (100, 30),
+        ShellHomeMode::User,
+    );
+    state.enter_new_page(ShellScreen::Launcher);
+    let first = state.active_page_id();
+    state.app.dispatch_at(
+        app::AppCommand::SetLauncherState(Some(LauncherState::default())),
+        Instant::now(),
+    );
+    state.pages.launcher.launcher_refresh_request = Some(900);
+    state.register_page_task(
+        TaskDomain::Launcher,
+        900,
+        TaskClass::Query,
+        TaskControl::new(|| {}, || true),
+    );
+    state.enter_new_page(ShellScreen::Launcher);
+    let second = state.active_page_id();
+    state.app.dispatch_at(
+        app::AppCommand::SetLauncherState(Some(LauncherState::default())),
+        Instant::now(),
+    );
+    state.deliver_launcher_refresh_event(LauncherRefreshEvent::Finished {
+        request_id: 900,
+        error: Some("first only".into()),
+    });
+    assert_eq!(state.active_page_id(), second);
+    assert!(state.app.launcher_state().unwrap().error.is_none());
+    assert!(
+        state
+            .with_page_context(first, |s| s.app.launcher_state().unwrap().error.is_some())
+            .unwrap()
+    );
+    state.pages.launcher.launcher_refresh_request = Some(901);
+    state.register_page_task(
+        TaskDomain::Launcher,
+        901,
+        TaskClass::Query,
+        TaskControl::new(|| {}, || true),
+    );
+    state.close_page_instance(second);
+    state.enter_new_page(ShellScreen::Launcher);
+    let third = state.active_page_id();
+    state.app.dispatch_at(
+        app::AppCommand::SetLauncherState(Some(LauncherState::default())),
+        Instant::now(),
+    );
+    state.deliver_launcher_refresh_event(LauncherRefreshEvent::Finished {
+        request_id: 901,
+        error: Some("late closed page".into()),
+    });
+    assert_eq!(state.active_page_id(), third);
+    assert!(state.app.launcher_state().unwrap().error.is_none());
+    state.pages.launcher.launcher_refresh_request = Some(902);
+    state.register_page_task(
+        TaskDomain::Launcher,
+        902,
+        TaskClass::Query,
+        TaskControl::new(|| {}, || true),
+    );
+    state.tasks.reset();
+    state.deliver_launcher_refresh_event(LauncherRefreshEvent::Finished {
+        request_id: 902,
+        error: Some("old login".into()),
+    });
+    assert!(state.app.launcher_state().unwrap().error.is_none());
+}

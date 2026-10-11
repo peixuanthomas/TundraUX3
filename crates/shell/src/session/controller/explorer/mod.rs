@@ -11,7 +11,9 @@ impl ShellSession {
             self.scrollbar_drag,
             Some(ScrollbarDragState::ExplorerLocations { .. })
         );
-        if self.active_screen() != ShellScreen::Explorer || self.explorer_overlay_mode.is_some() {
+        if self.active_screen() != ShellScreen::Explorer
+            || self.pages.explorer.explorer_overlay_mode.is_some()
+        {
             if dragging {
                 self.scrollbar_drag = None;
             }
@@ -41,7 +43,7 @@ impl ShellSession {
                     .sidebar
                     .is_some_and(|sidebar| rect_contains(sidebar, mouse.coordinates())) =>
             {
-                self.explorer_locations_scroll = Some(match direction {
+                self.pages.explorer.explorer_locations_scroll = Some(match direction {
                     ScrollDirection::Up => layout.quick_location_visible_start.saturating_sub(1),
                     ScrollDirection::Down => layout
                         .quick_location_visible_start
@@ -69,7 +71,7 @@ impl ShellSession {
         else {
             return false;
         };
-        self.explorer_locations_scroll = Some(scrollbar_window_start(
+        self.pages.explorer.explorer_locations_scroll = Some(scrollbar_window_start(
             mouse.row(),
             grab_offset,
             track.y,
@@ -171,20 +173,20 @@ impl ShellSession {
 
     pub(in crate::session) fn open_explorer(&mut self, platform: &dyn Platform) {
         if self.is_strict_guest() {
-            self.error_message = None;
+            self.pages.common.error_message = None;
             self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                 "shell-guest-access-is-read-only"
             )));
             return;
         }
         if self.app.auth_session().is_none() {
-            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.common.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-login-required"
             )));
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.common.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-storage-unavailable"
             )));
             return;
@@ -194,8 +196,8 @@ impl ShellSession {
             Ok(dirs) => dirs,
             Err(error) => {
                 let message = error.to_string();
-                self.error_message = Some(message.clone().into());
-                self.notify_alert_with_key(
+                self.pages.common.error_message = Some(message.clone().into());
+                self.notify_page_alert_with_key(
                     EXPLORER_ALERT_KEY,
                     message,
                     ui::NotificationTone::Error,
@@ -220,48 +222,53 @@ impl ShellSession {
         start_path: std::path::PathBuf,
         purpose: ExplorerPurpose,
     ) {
-        self.enter_screen(ShellScreen::Explorer);
+        self.enter_new_page(ShellScreen::Explorer);
         let explorer_config = self.app.storage_config().explorer.clone();
         self.replace_explorer_state(Some(ExplorerState::with_config(
             start_path,
             &explorer_config,
         )));
-        self.explorer_purpose = purpose;
+        self.pages.explorer.explorer_purpose = purpose;
         self.refresh_explorer_quick_locations(platform);
-        self.explorer_input_mode = ExplorerInputMode::Browse;
-        self.explorer_input.clear();
-        self.explorer_input_replace_all = false;
-        self.explorer_overlay_mode = None;
-        self.focused_component = ShellComponent::Explorer;
+        self.pages.explorer.explorer_input_mode = ExplorerInputMode::Browse;
+        self.pages.explorer.explorer_input.clear();
+        self.pages.explorer.explorer_input_replace_all = false;
+        self.pages.explorer.explorer_overlay_mode = None;
+        self.pages.common.focused_component = ShellComponent::Explorer;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
         self.apply_explorer_command(ExplorerCommand::Refresh, platform);
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_explorer(&mut self) {
-        self.explorer_input_mode = ExplorerInputMode::Browse;
-        self.explorer_input.clear();
-        self.explorer_input_replace_all = false;
-        self.explorer_overlay_mode = None;
-        self.resolve_explorer_alert();
-        if matches!(self.explorer_purpose, ExplorerPurpose::DiagnosticsLogs) {
-            self.explorer_purpose = ExplorerPurpose::Browse;
-            self.replace_explorer_state(None);
-            self.return_from_screen(ShellScreen::Explorer);
-            return;
-        }
-        if !matches!(self.explorer_purpose, ExplorerPurpose::Browse)
-            && self.app.editor_state().is_some()
-        {
-            if matches!(self.explorer_purpose, ExplorerPurpose::EditorSaveAs { .. }) {
-                self.editor_close_after_save = false;
-                self.editor_open_after_save = false;
-            }
-            self.return_from_editor_picker();
-            return;
-        }
-        self.explorer_purpose = ExplorerPurpose::Browse;
         self.return_from_screen(ShellScreen::Explorer);
+    }
+
+    pub(in crate::session) fn finish_explorer_page_close(&mut self, id: PageInstanceId) {
+        let Some(picker) = self.pages.explorer.get(id) else {
+            return;
+        };
+        if !matches!(
+            picker.explorer_purpose,
+            ExplorerPurpose::EditorOpen | ExplorerPurpose::EditorSaveAs { .. }
+        ) {
+            return;
+        }
+        let Some(owner) = picker.editor_picker_owner else {
+            return;
+        };
+        let cancelled_save = !picker.editor_picker_save_submitted
+            && matches!(
+                picker.explorer_purpose,
+                ExplorerPurpose::EditorSaveAs { .. }
+            );
+        if let Some(editor) = self.pages.editor.get_mut(owner) {
+            editor.editor_discard_for_open = false;
+            if cancelled_save {
+                editor.editor_close_after_save = false;
+                editor.editor_open_after_save = false;
+            }
+        }
     }
 
     pub(in crate::session) fn refresh_explorer_quick_locations(&mut self, platform: &dyn Platform) {
@@ -363,13 +370,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn resolve_explorer_alert(&mut self) {
-        let resolved_message = self
-            .notification_alert_message_for_key(EXPLORER_ALERT_KEY)
-            .cloned();
-        if self.error_message.as_ref() == resolved_message.as_ref() {
-            self.error_message = None;
+        let resolved_message = self.page_alert_message_for_key(EXPLORER_ALERT_KEY).cloned();
+        if self.pages.common.error_message.as_ref() == resolved_message.as_ref() {
+            self.pages.common.error_message = None;
         }
-        self.resolve_notification_alert(EXPLORER_ALERT_KEY);
+        self.resolve_page_alert(EXPLORER_ALERT_KEY);
     }
 
     pub(in crate::session) fn cycle_explorer_quick_location(
@@ -384,7 +389,7 @@ impl ShellSession {
     }
 
     fn activate_explorer_quick_location(&mut self, index: usize, platform: &dyn Platform) {
-        self.explorer_locations_scroll = None;
+        self.pages.explorer.explorer_locations_scroll = None;
         let model = self.to_explorer_view_model();
         let Some(command) = self
             .app
@@ -411,7 +416,7 @@ impl ShellSession {
                 | ExplorerCommand::DeleteToTrash
                 | ExplorerCommand::DumpTrash
         ) {
-            self.explorer_overlay_selection = 0;
+            self.pages.explorer.explorer_overlay_selection = 0;
         }
         if self.try_handle_explorer_background_command(&command, platform) {
             return;
@@ -420,14 +425,22 @@ impl ShellSession {
         let can_change_settings = self.can_change_explorer_settings();
         let Some(storage) = self.storage_manager.clone() else {
             let message = i18n::LocalizedText::from(i18n::msg!("shell-storage-unavailable"));
-            self.error_message = Some(message.clone().into());
-            self.notify_alert_with_key(EXPLORER_ALERT_KEY, message, ui::NotificationTone::Error);
+            self.pages.common.error_message = Some(message.clone().into());
+            self.notify_page_alert_with_key(
+                EXPLORER_ALERT_KEY,
+                message,
+                ui::NotificationTone::Error,
+            );
             return;
         };
         if self.app.explorer_state().is_none() {
             let message = i18n::LocalizedText::from(i18n::msg!("shell-explorer-unavailable"));
-            self.error_message = Some(message.clone().into());
-            self.notify_alert_with_key(EXPLORER_ALERT_KEY, message, ui::NotificationTone::Error);
+            self.pages.common.error_message = Some(message.clone().into());
+            self.notify_page_alert_with_key(
+                EXPLORER_ALERT_KEY,
+                message,
+                ui::NotificationTone::Error,
+            );
             return;
         }
 
@@ -466,13 +479,13 @@ impl ShellSession {
             })
             .unwrap_or((None, None, None, None));
         if let Some(error) = explorer_error {
-            self.error_message = Some(error.clone());
-            self.notify_alert_with_key(EXPLORER_ALERT_KEY, error, ui::NotificationTone::Error);
+            self.pages.common.error_message = Some(error.clone());
+            self.notify_page_alert_with_key(EXPLORER_ALERT_KEY, error, ui::NotificationTone::Error);
             self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                 "shell-explorer-error"
             )));
         } else {
-            self.error_message = None;
+            self.pages.common.error_message = None;
             self.resolve_explorer_alert();
             if let Some(message) = explorer_message {
                 self.notify_status(message);
@@ -598,9 +611,9 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn begin_explorer_input(&mut self, mode: ExplorerInputMode) {
-        self.explorer_overlay_selection = 0;
-        self.explorer_input_mode = mode;
-        self.explorer_input = match mode {
+        self.pages.explorer.explorer_overlay_selection = 0;
+        self.pages.explorer.explorer_input_mode = mode;
+        self.pages.explorer.explorer_input = match mode {
             ExplorerInputMode::Address => self
                 .app
                 .explorer_state()
@@ -618,9 +631,10 @@ impl ShellSession {
             | ExplorerInputMode::NewTextFile
             | ExplorerInputMode::RestoreDestination => String::new(),
         };
-        self.explorer_input_replace_all = false;
-        self.explorer_address_cursor = self.explorer_input.chars().count();
-        self.explorer_address_selection_anchor = None;
+        self.pages.explorer.explorer_input_replace_all = false;
+        self.pages.explorer.explorer_address_cursor =
+            self.pages.explorer.explorer_input.chars().count();
+        self.pages.explorer.explorer_address_selection_anchor = None;
         let _ = self.update_explorer_state(|state| {
             state.error = None;
         });
@@ -632,34 +646,34 @@ impl ShellSession {
         character: char,
         platform: &dyn Platform,
     ) {
-        if self.explorer_input_mode == ExplorerInputMode::Address {
+        if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address {
             self.edit_explorer_address(InputEvent::key(InputKey::Char(character)));
             return;
         }
-        if self.explorer_input_replace_all {
-            self.explorer_input.clear();
-            self.explorer_input_replace_all = false;
+        if self.pages.explorer.explorer_input_replace_all {
+            self.pages.explorer.explorer_input.clear();
+            self.pages.explorer.explorer_input_replace_all = false;
         }
-        self.explorer_input.push(character);
+        self.pages.explorer.explorer_input.push(character);
         self.apply_live_explorer_search(platform);
     }
 
     pub(in crate::session) fn explorer_backspace(&mut self, platform: &dyn Platform) {
-        if self.explorer_input_mode == ExplorerInputMode::Address {
+        if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address {
             self.edit_explorer_address(InputEvent::key(InputKey::Backspace));
             return;
         }
-        if self.explorer_input_replace_all {
-            self.explorer_input.clear();
-            self.explorer_input_replace_all = false;
+        if self.pages.explorer.explorer_input_replace_all {
+            self.pages.explorer.explorer_input.clear();
+            self.pages.explorer.explorer_input_replace_all = false;
         } else {
-            self.explorer_input.pop();
+            self.pages.explorer.explorer_input.pop();
         }
         self.apply_live_explorer_search(platform);
     }
 
     pub(in crate::session) fn edit_explorer_address(&mut self, mut event: InputEvent) {
-        if self.explorer_input_mode != ExplorerInputMode::Address {
+        if self.pages.explorer.explorer_input_mode != ExplorerInputMode::Address {
             return;
         }
         match &mut event {
@@ -672,20 +686,20 @@ impl ShellSession {
             _ => {}
         }
         let mut input = ui::components::TextInput::new("explorer.address.input");
-        input.set_value(&self.explorer_input);
-        input.set_cursor(self.explorer_address_cursor);
-        input.set_selection_anchor(self.explorer_address_selection_anchor);
+        input.set_value(&self.pages.explorer.explorer_input);
+        input.set_cursor(self.pages.explorer.explorer_address_cursor);
+        input.set_selection_anchor(self.pages.explorer.explorer_address_selection_anchor);
         input.set_focused(true);
         input.handle_event_borderless(event, Rect::default());
-        self.explorer_input = input.value().to_string();
-        self.explorer_address_cursor = input.cursor();
-        self.explorer_address_selection_anchor = input.selection_anchor();
+        self.pages.explorer.explorer_input = input.value().to_string();
+        self.pages.explorer.explorer_address_cursor = input.cursor();
+        self.pages.explorer.explorer_address_selection_anchor = input.selection_anchor();
     }
 
     pub(in crate::session) fn apply_live_explorer_search(&mut self, platform: &dyn Platform) {
-        if self.explorer_input_mode == ExplorerInputMode::Search {
+        if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Search {
             self.apply_explorer_command(
-                ExplorerCommand::Search(self.explorer_input.clone()),
+                ExplorerCommand::Search(self.pages.explorer.explorer_input.clone()),
                 platform,
             );
         }
@@ -695,9 +709,9 @@ impl ShellSession {
         if self.submit_editor_save_as_from_explorer(platform) {
             return;
         }
-        let raw_value = self.explorer_input.clone();
+        let raw_value = self.pages.explorer.explorer_input.clone();
         let trimmed_value = raw_value.trim().to_string();
-        let command = match self.explorer_input_mode {
+        let command = match self.pages.explorer.explorer_input_mode {
             ExplorerInputMode::Browse => return,
             ExplorerInputMode::Address => {
                 ExplorerCommand::Navigate(std::path::PathBuf::from(raw_value))
@@ -719,9 +733,9 @@ impl ShellSession {
         {
             return;
         }
-        self.explorer_input_mode = ExplorerInputMode::Browse;
-        self.explorer_input.clear();
-        self.explorer_input_replace_all = false;
+        self.pages.explorer.explorer_input_mode = ExplorerInputMode::Browse;
+        self.pages.explorer.explorer_input.clear();
+        self.pages.explorer.explorer_input_replace_all = false;
     }
 
     pub(in crate::session) fn restore_selected_explorer_item(&mut self, platform: &dyn Platform) {
@@ -752,9 +766,9 @@ impl ShellSession {
             self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-cancelled")));
             return;
         }
-        self.explorer_input_mode = ExplorerInputMode::Browse;
-        self.explorer_input.clear();
-        self.explorer_input_replace_all = false;
+        self.pages.explorer.explorer_input_mode = ExplorerInputMode::Browse;
+        self.pages.explorer.explorer_input.clear();
+        self.pages.explorer.explorer_input_replace_all = false;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-explorer")));
     }
 
@@ -953,7 +967,7 @@ impl ShellSession {
                 let Some(item) = item else {
                     return;
                 };
-                let anchor = match self.explorer_overlay_mode {
+                let anchor = match self.pages.explorer.explorer_overlay_mode {
                     Some(ExplorerOverlayMode::ContextMenu { anchor })
                     | Some(ExplorerOverlayMode::Sort { anchor }) => anchor,
                     Some(ExplorerOverlayMode::Options)
@@ -1026,7 +1040,7 @@ impl ShellSession {
                     _ => {}
                 }
             }
-            ExplorerOverlayControl::NameInput => self.explorer_overlay_selection = 0,
+            ExplorerOverlayControl::NameInput => self.pages.explorer.explorer_overlay_selection = 0,
             ExplorerOverlayControl::Confirm => {
                 let command = match self.resolved_explorer_overlay() {
                     Some(ResolvedExplorerOverlay::PendingDialog(kind)) => Some(match kind {
@@ -1050,7 +1064,7 @@ impl ShellSession {
                 self.cancel_explorer_input();
             }
             ExplorerOverlayControl::Option(index) => {
-                self.explorer_overlay_selection = index;
+                self.pages.explorer.explorer_overlay_selection = index;
                 let option = match self.to_explorer_view_model().overlay {
                     Some(ExplorerOverlayViewModel::Options(options)) => options
                         .options
@@ -1101,26 +1115,26 @@ impl ShellSession {
                     self.apply_explorer_command(
                         ExplorerCommand::ResolveConflict {
                             action,
-                            apply_to_all: self.explorer_conflict_apply_to_remaining,
+                            apply_to_all: self.pages.explorer.explorer_conflict_apply_to_remaining,
                         },
                         platform,
                     );
                 }
-                self.explorer_conflict_apply_to_remaining = false;
+                self.pages.explorer.explorer_conflict_apply_to_remaining = false;
             }
             ExplorerOverlayControl::ApplyToRemaining => {
                 if let Some(ExplorerOverlayViewModel::Conflict(conflict)) =
                     self.to_explorer_view_model().overlay
                 {
-                    self.explorer_overlay_selection = conflict.choices.len();
+                    self.pages.explorer.explorer_overlay_selection = conflict.choices.len();
                 }
                 if self
                     .app
                     .explorer_state()
                     .is_none_or(|state| state.pending_restore.is_none())
                 {
-                    self.explorer_conflict_apply_to_remaining =
-                        !self.explorer_conflict_apply_to_remaining;
+                    self.pages.explorer.explorer_conflict_apply_to_remaining =
+                        !self.pages.explorer.explorer_conflict_apply_to_remaining;
                 }
             }
         }
@@ -1132,7 +1146,7 @@ impl ShellSession {
         mode: ExplorerOverlayMode,
         anchor: CellPosition,
     ) {
-        self.explorer_overlay_selection = match mode {
+        self.pages.explorer.explorer_overlay_selection = match mode {
             ExplorerOverlayMode::Sort { .. } => self
                 .app
                 .explorer_state()
@@ -1147,20 +1161,20 @@ impl ShellSession {
             | ExplorerOverlayMode::Options
             | ExplorerOverlayMode::Properties => 0,
         };
-        self.explorer_overlay_mode = Some(mode);
-        self.active_popup = Some(ShellPopup {
+        self.pages.explorer.explorer_overlay_mode = Some(mode);
+        self.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
             anchor,
         });
-        self.focused_component = ShellComponent::ContextMenu;
+        self.pages.common.focused_component = ShellComponent::ContextMenu;
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_explorer_popup(&mut self) {
-        self.active_popup = None;
-        self.explorer_overlay_mode = None;
-        self.explorer_overlay_selection = 0;
-        self.focused_component = ShellComponent::Explorer;
+        self.pages.common.active_popup = None;
+        self.pages.explorer.explorer_overlay_mode = None;
+        self.pages.explorer.explorer_overlay_selection = 0;
+        self.pages.common.focused_component = ShellComponent::Explorer;
         self.refresh_hit_map();
     }
 
@@ -1185,12 +1199,14 @@ impl ShellSession {
         if count == 0 {
             return;
         }
-        self.explorer_overlay_selection = if delta < 0 {
-            self.explorer_overlay_selection
+        self.pages.explorer.explorer_overlay_selection = if delta < 0 {
+            self.pages
+                .explorer
+                .explorer_overlay_selection
                 .checked_sub(delta.unsigned_abs())
                 .unwrap_or(count - 1)
         } else {
-            (self.explorer_overlay_selection + delta as usize) % count
+            (self.pages.explorer.explorer_overlay_selection + delta as usize) % count
         };
         self.refresh_hit_map();
     }
@@ -1202,23 +1218,27 @@ impl ShellSession {
         let control = match self.to_explorer_view_model().overlay {
             Some(ui::ExplorerOverlayViewModel::ContextMenu(menu)) => menu
                 .items
-                .get(self.explorer_overlay_selection)
+                .get(self.pages.explorer.explorer_overlay_selection)
                 .filter(|item| item.enabled)
-                .map(|_| ui::ExplorerOverlayControl::ContextItem(self.explorer_overlay_selection)),
+                .map(|_| {
+                    ui::ExplorerOverlayControl::ContextItem(
+                        self.pages.explorer.explorer_overlay_selection,
+                    )
+                }),
             Some(ui::ExplorerOverlayViewModel::Options(options))
-                if self.explorer_overlay_selection == options.options.len() =>
+                if self.pages.explorer.explorer_overlay_selection == options.options.len() =>
             {
                 Some(ui::ExplorerOverlayControl::OptionsClose)
             }
             Some(ui::ExplorerOverlayViewModel::Name(_)) => {
-                Some(match self.explorer_overlay_selection {
+                Some(match self.pages.explorer.explorer_overlay_selection {
                     0 | 1 => ui::ExplorerOverlayControl::Confirm,
                     _ => ui::ExplorerOverlayControl::Cancel,
                 })
             }
             Some(ui::ExplorerOverlayViewModel::Conflict(conflict)) => conflict
                 .choices
-                .get(self.explorer_overlay_selection)
+                .get(self.pages.explorer.explorer_overlay_selection)
                 .copied()
                 .map(ui::ExplorerOverlayControl::ConflictChoice)
                 .or_else(|| {
@@ -1231,7 +1251,7 @@ impl ShellSession {
                 .explorer_state()
                 .is_some_and(|state| state.pending_dialog.is_some()) =>
             {
-                Some(if self.explorer_overlay_selection == 0 {
+                Some(if self.pages.explorer.explorer_overlay_selection == 0 {
                     ui::ExplorerOverlayControl::Confirm
                 } else {
                     ui::ExplorerOverlayControl::Cancel
@@ -1239,9 +1259,13 @@ impl ShellSession {
             }
             Some(ui::ExplorerOverlayViewModel::Options(options)) => options
                 .options
-                .get(self.explorer_overlay_selection)
+                .get(self.pages.explorer.explorer_overlay_selection)
                 .filter(|option| option.enabled)
-                .map(|_| ui::ExplorerOverlayControl::Option(self.explorer_overlay_selection)),
+                .map(|_| {
+                    ui::ExplorerOverlayControl::Option(
+                        self.pages.explorer.explorer_overlay_selection,
+                    )
+                }),
             Some(ui::ExplorerOverlayViewModel::Properties(_)) => {
                 Some(ui::ExplorerOverlayControl::PropertiesClose)
             }

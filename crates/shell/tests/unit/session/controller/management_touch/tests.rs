@@ -15,7 +15,7 @@ fn session(size: (u16, u16)) -> ShellSession {
         Instant::now(),
     );
     session.enter_screen(ShellScreen::Management);
-    session.management_state.kind = Some(ManagementKind::Services);
+    session.pages.management.management_state.kind = Some(ManagementKind::Services);
     while session.notification_dismiss_active_modal_without_response() {}
     session
 }
@@ -24,7 +24,7 @@ fn session(size: (u16, u16)) -> ShellSession {
 fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
     for size in [(40, 10), (60, 18), (120, 40)] {
         let mut session = session(size);
-        session.management_state.form = Some(ManagementEditor {
+        session.pages.management.management_state.form = Some(ManagementEditor {
             title: "Select an option".into(),
             message: String::new(),
             message_scroll: 0,
@@ -44,12 +44,10 @@ fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
                 &session.to_management_view_model(),
             );
             assert!(
-                layout
-                    .choice_rows
-                    .iter()
-                    .any(|(index, _)| *index == session.management_state.choice_selected),
+                layout.choice_rows.iter().any(|(index, _)| *index
+                    == session.pages.management.management_state.choice_selected),
                 "{size:?}: selection {} is outside {:?}",
-                session.management_state.choice_selected,
+                session.pages.management.management_state.choice_selected,
                 layout.choice_rows
             );
         };
@@ -62,7 +60,7 @@ fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
             InputKey::PageDown,
             InputKey::Down,
         ] {
-            let before = session.management_state.choice_selected;
+            let before = session.pages.management.management_state.choice_selected;
             let page = ui::management_layout(
                 session.management_main(),
                 &session.to_management_view_model(),
@@ -72,21 +70,28 @@ fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
             session.handle_management_choice_key(&KeyInput::new(key.clone()));
             if key == InputKey::PageDown {
                 assert_eq!(
-                    session.management_state.choice_selected,
+                    session.pages.management.management_state.choice_selected,
                     before.saturating_add(page).min(19)
                 );
             } else if key == InputKey::PageUp {
                 assert_eq!(
-                    session.management_state.choice_selected,
+                    session.pages.management.management_state.choice_selected,
                     before.saturating_sub(page)
                 );
             }
             assert_selected_visible(&session);
         }
         session.handle_management_choice_key(&KeyInput::new(InputKey::Escape));
-        assert!(session.management_state.choice_field.is_none());
         assert!(
-            session.management_state.form.is_some(),
+            session
+                .pages
+                .management
+                .management_state
+                .choice_field
+                .is_none()
+        );
+        assert!(
+            session.pages.management.management_state.form.is_some(),
             "closing a field picker keeps its parent form"
         );
     }
@@ -109,7 +114,7 @@ fn management_forms_block_buttons_from_the_previous_frame_registry() {
             let point = (background.area.x, background.area.y);
             // The menu has just opened, before its first draw replaces the registry.
             session.button_regions = vec![background];
-            session.management_state.form = Some(ManagementEditor {
+            session.pages.management.management_state.form = Some(ManagementEditor {
                 title: "Review".into(),
                 message: String::new(),
                 message_scroll: 0,
@@ -146,7 +151,7 @@ fn management_forms_block_buttons_from_the_previous_frame_registry() {
                 !session.management_overlay_contains((0, 0)),
                 "the form does not own shell chrome"
             );
-            session.management_state.terminal_mode = true;
+            session.pages.management.management_state.terminal_mode = true;
             assert!(
                 !session.management_overlay_contains(point),
                 "hidden forms do not own the terminal"

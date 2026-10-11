@@ -6,7 +6,7 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Launcher);
-        if self.launcher_pending_confirmation.is_some() {
+        if self.pages.launcher.launcher_pending_confirmation.is_some() {
             if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
                 return (target, ShellCommand::CaptureOverlayInput);
             }
@@ -19,7 +19,7 @@ impl ShellSession {
                 | InputKey::Down => (target, ShellCommand::LauncherToggleConfirmationAction),
                 InputKey::Enter | InputKey::Char(' ') if key.is_unmodified_action_key() => (
                     target,
-                    if self.launcher_confirm_selected {
+                    if self.pages.launcher.launcher_confirm_selected {
                         ShellCommand::LauncherConfirm
                     } else {
                         ShellCommand::LauncherCancelConfirmation
@@ -32,7 +32,7 @@ impl ShellSession {
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };
         }
-        if self.launcher_drag.is_some() && matches!(key.key, InputKey::Escape) {
+        if self.pages.launcher.launcher_drag.is_some() && matches!(key.key, InputKey::Escape) {
             return (target, ShellCommand::LauncherCancelDrag);
         }
         if key.has_non_shift_modifier() {

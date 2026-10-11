@@ -29,7 +29,7 @@ fn row(terminal: &Terminal<TestBackend>, y: u16) -> String {
 #[test]
 fn back_button_shows_and_fits_the_actual_page_shortcut() {
     for size in [(50, 12), (108, 30), (40, 10)] {
-        for shortcut in ["Esc", "Ctrl+Shift+X"] {
+        for shortcut in ["Esc", ""] {
             let mut model = chrome(size.0, size.1);
             model.back_shortcut = shortcut;
             let (terminal, layout) = render(&model, &RenderContext::default());
@@ -38,7 +38,12 @@ fn back_button_shows_and_fits_the_actual_page_shortcut() {
             let label: String = (back.x..back.right())
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect();
-            assert!(label.contains(&format!("[◀ {shortcut}]")), "{label}");
+            let expected = if shortcut.is_empty() {
+                "[◀]".to_owned()
+            } else {
+                format!("[◀ {shortcut}]")
+            };
+            assert!(label.contains(&expected), "{label}");
             assert!(back.intersection(layout.main).is_empty());
         }
     }

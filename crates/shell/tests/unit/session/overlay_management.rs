@@ -18,7 +18,7 @@ fn nested_aa_notification_and_page_dialog_restore_each_focus_without_navigation(
     let mut state = state();
     state.enter_screen(ShellScreen::Clock);
     state.refresh_hit_map();
-    state.clock_create_state = Some(ClockCreateState::default());
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
     state.focus_component(ShellComponent::ClockCreateCountdownButton);
     notice(&mut state);
@@ -30,20 +30,26 @@ fn nested_aa_notification_and_page_dialog_restore_each_focus_without_navigation(
     state.apply_input(InputEvent::key(InputKey::Escape));
     assert!(!state.auto_admin_visible());
     assert!(state.notification_has_active_modal());
-    assert_eq!(state.focused_component, ShellComponent::NotificationDialog);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::NotificationDialog
+    );
     let mut release = KeyInput::new(InputKey::Escape);
     release.phase = InputPhase::Release;
     state.apply_input(InputEvent::Key(release));
     state.apply_input(InputEvent::key(InputKey::Escape));
     assert!(!state.notification_has_active_modal());
     assert_eq!(
-        state.focused_component,
+        state.pages.common.focused_component,
         ShellComponent::ClockCreateCountdownButton
     );
     state.apply_input(InputEvent::key(InputKey::Escape));
-    assert!(state.clock_create_state.is_none());
+    assert!(state.pages.clock.clock_create_state.is_none());
     assert_eq!(state.active_screen(), ShellScreen::Clock);
-    assert_eq!(state.focused_component, ShellComponent::ClockNewButton);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::ClockNewButton
+    );
 }
 
 #[test]
@@ -52,19 +58,25 @@ fn context_popup_restores_origin_and_replacement_notice_does_not_resurrect_it() 
         let mut state = state();
         state.focus_component(ShellComponent::StatusBar);
         state.capture_modal_focus_context();
-        state.active_popup = Some(ShellPopup {
+        state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Home),
             anchor: (12, 8),
         });
         state.refresh_hit_map();
-        assert_eq!(state.focused_component, ShellComponent::ContextMenu);
+        assert_eq!(
+            state.pages.common.focused_component,
+            ShellComponent::ContextMenu
+        );
         if with_notice {
             notice(&mut state);
         }
         state.apply_input(InputEvent::key(InputKey::Escape));
-        assert!(state.active_popup.is_none());
+        assert!(state.pages.common.active_popup.is_none());
         assert!(!state.notification_has_active_modal());
-        assert_eq!(state.focused_component, ShellComponent::StatusBar);
+        assert_eq!(
+            state.pages.common.focused_component,
+            ShellComponent::StatusBar
+        );
         assert_eq!(state.active_screen(), ShellScreen::Home);
     }
 }
@@ -73,29 +85,32 @@ fn context_popup_restores_origin_and_replacement_notice_does_not_resurrect_it() 
 fn covered_pages_do_not_claim_input_or_focus() {
     let mut state = state();
     state.enter_screen(ShellScreen::Editor);
-    state.editor_open_menu = Some(ui::EditorMenu::File);
+    state.pages.editor.editor_open_menu = Some(ui::EditorMenu::File);
     state.refresh_hit_map();
     state.enter_screen(ShellScreen::Home);
     state.refresh_hit_map();
     assert!(state.interactive_overlays().is_empty());
-    assert_eq!(state.focused_component, ShellComponent::Home);
+    assert_eq!(state.pages.common.focused_component, ShellComponent::Home);
     state.apply_input(InputEvent::key(InputKey::Tab));
-    assert_ne!(state.focused_component, ShellComponent::Editor);
+    assert_ne!(state.pages.common.focused_component, ShellComponent::Editor);
 }
 
 #[test]
 fn page_change_closes_the_previous_context_popup() {
     let mut state = state();
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Home),
         anchor: (12, 8),
     });
     state.refresh_hit_map();
     state.enter_screen(ShellScreen::Clock);
     state.refresh_hit_map();
-    assert!(state.active_popup.is_none());
+    assert!(state.pages.common.active_popup.is_none());
     assert!(state.interactive_overlays().is_empty());
-    assert_eq!(state.focused_component, ShellComponent::ClockNewButton);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::ClockNewButton
+    );
 }
 
 #[test]
@@ -106,7 +121,7 @@ fn editor_menu_and_notification_capture_paste_without_mutating_document() {
         app::AppCommand::SetEditorState(Some(EditorState::new())),
         Instant::now(),
     );
-    state.editor_open_menu = Some(ui::EditorMenu::File);
+    state.pages.editor.editor_open_menu = Some(ui::EditorMenu::File);
     state.refresh_hit_map();
     for with_notice in [false, true] {
         if with_notice {
@@ -141,7 +156,7 @@ fn editor_form_receives_paste_without_changing_the_document() {
 fn modal_captures_global_shortcuts_and_cancels_background_pointer_state() {
     let mut state = state();
     state.scrollbar_drag = Some(ScrollbarDragState::Home { grab_offset: 0 });
-    state.editor_drag_anchor = Some(app::editor::EditorPosition::Source(0));
+    state.pages.editor.editor_drag_anchor = Some(app::editor::EditorPosition::Source(0));
     state.drag_tracker = Some(DragTracker {
         button: PointerButton::Left,
         origin_coordinates: (4, 8),
@@ -154,7 +169,7 @@ fn modal_captures_global_shortcuts_and_cancels_background_pointer_state() {
     });
     notice(&mut state);
     assert!(state.scrollbar_drag.is_none());
-    assert!(state.editor_drag_anchor.is_none());
+    assert!(state.pages.editor.editor_drag_anchor.is_none());
     assert!(state.drag_tracker.is_none());
     assert!(state.button_at((5, 9)).is_none());
     state.apply_input(InputEvent::from_key_label("Ctrl+C"));

@@ -128,18 +128,19 @@ impl ShellSession {
         match &input {
             InputEvent::Key(key)
                 if key.phase == InputPhase::Repeat
-                    && self.explorer_search_shortcut_held.as_ref() == Some(&key.key) =>
+                    && self.pages.explorer.explorer_search_shortcut_held.as_ref()
+                        == Some(&key.key) =>
             {
                 return None;
             }
             InputEvent::Key(key) if key.phase == InputPhase::Press => {
-                self.explorer_search_shortcut_held = None;
+                self.pages.explorer.explorer_search_shortcut_held = None;
             }
             InputEvent::Key(key) if key.phase == InputPhase::Release => {
-                self.explorer_search_shortcut_held = None;
+                self.pages.explorer.explorer_search_shortcut_held = None;
             }
             InputEvent::Mouse(_) | InputEvent::FocusLost | InputEvent::Paste(_) => {
-                self.explorer_search_shortcut_held = None;
+                self.pages.explorer.explorer_search_shortcut_held = None;
             }
             _ => {}
         }
@@ -156,8 +157,8 @@ impl ShellSession {
             }
             if matches!(input, InputEvent::FocusLost) {
                 self.mouse_coordinates = None;
-                self.launcher_drag = None;
-                self.editor_cursor_acceleration = None;
+                self.pages.launcher.launcher_drag = None;
+                self.pages.editor.editor_cursor_acceleration = None;
             }
             if matches!(input, InputEvent::Resize { .. }) {
                 self.button_regions.clear();
@@ -298,7 +299,7 @@ impl ShellSession {
                 }
                 let (_, command) = self.route_key_input(key);
                 if key.phase == InputPhase::Press && command == ShellCommand::BeginExplorerSearch {
-                    self.explorer_search_shortcut_held = Some(key.key.clone());
+                    self.pages.explorer.explorer_search_shortcut_held = Some(key.key.clone());
                 }
                 if !matches!(
                     command,
@@ -496,7 +497,7 @@ impl ShellSession {
 
         match self.active_screen() {
             ShellScreen::Home
-                if self.focused_component == ShellComponent::HomeLogout
+                if self.pages.common.focused_component == ShellComponent::HomeLogout
                     && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
             {
                 (
@@ -504,7 +505,7 @@ impl ShellSession {
                     ShellCommand::Logout,
                 )
             }
-            _ if self.focused_component == ShellComponent::ClockButton
+            _ if self.pages.common.focused_component == ShellComponent::ClockButton
                 && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
             {
                 (
@@ -512,7 +513,7 @@ impl ShellSession {
                     self.clock_button_activation_command(),
                 )
             }
-            _ if self.focused_component == ShellComponent::StatusBar
+            _ if self.pages.common.focused_component == ShellComponent::StatusBar
                 && key.phase == InputPhase::Press
                 && key.is_unmodified_action_key()
                 && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
@@ -565,7 +566,7 @@ impl ShellSession {
                 (RoutedTarget::Global, ShellCommand::RequestExit)
             }
             _ => (
-                RoutedTarget::Component(self.focused_component),
+                RoutedTarget::Component(self.pages.common.focused_component),
                 ShellCommand::RecordInput,
             ),
         }
@@ -607,7 +608,7 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Popup(ShellComponent::ContextMenu);
 
-        if self.explorer_overlay_mode.is_some() {
+        if self.pages.explorer.explorer_overlay_mode.is_some() {
             return self.route_explorer_overlay_key(key);
         }
 
@@ -635,6 +636,14 @@ impl ShellSession {
         let hit_target = self.hit_map.target_at(coordinates);
         let hit_layer = self.hit_map.layer_at(coordinates);
 
+        if self.active_screen() == ShellScreen::CommandLine
+            && self.interactive_overlays().is_empty()
+            && hit_target == Some(ShellComponent::BackButton)
+            && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
+        {
+            return (RoutedTarget::Global, ShellCommand::RequestCommandLineClose);
+        }
+
         if self.notification_has_active_modal()
             && self.notification_scrollbar_drag.is_some()
             && let Some(routed) = self.route_overlay_mouse(mouse, hit_target, received_at)
@@ -651,7 +660,7 @@ impl ShellSession {
 
         if !self.notification_has_active_modal()
             && !self.time_sync_dialog_visible
-            && self.active_popup.is_none()
+            && self.pages.common.active_popup.is_none()
         {
             if matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
                 && let Some(column) = self.table_sort_header_at(coordinates)
@@ -662,7 +671,7 @@ impl ShellSession {
                 return (target_route(hit_target), command);
             }
             let coordinates = mouse.coordinates();
-            if self.system_status_widget_drag.is_some() {
+            if self.pages.system_status.system_status_widget_drag.is_some() {
                 match mouse.kind {
                     ui::MouseEventKind::Drag(PointerButton::Left) => {
                         return (
@@ -679,7 +688,7 @@ impl ShellSession {
                     _ => {}
                 }
             }
-            if self.launcher_drag.is_some() {
+            if self.pages.launcher.launcher_drag.is_some() {
                 match mouse.kind {
                     ui::MouseEventKind::Drag(PointerButton::Left) => {
                         return (

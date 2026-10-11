@@ -5,7 +5,7 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
-        let target = RoutedTarget::Component(self.focused_component);
+        let target = RoutedTarget::Component(self.pages.common.focused_component);
         if key.phase == InputPhase::Release {
             return (target, ShellCommand::Noop);
         }
@@ -30,7 +30,8 @@ impl ShellSession {
         if key.phase != InputPhase::Press
             && (matches!(key.key, InputKey::Enter | InputKey::Escape | InputKey::F(2))
                 || (key.key == InputKey::Char(' ')
-                    && self.focused_component == ShellComponent::LoginPasswordVisibility))
+                    && self.pages.common.focused_component
+                        == ShellComponent::LoginPasswordVisibility))
         {
             return (target, ShellCommand::RecordInput);
         }
@@ -40,7 +41,7 @@ impl ShellSession {
         if matches!(&key.key, InputKey::F(2)) {
             return (target, ShellCommand::ToggleLoginPasswordVisibility);
         }
-        match self.focused_component {
+        match self.pages.common.focused_component {
             ShellComponent::LoginPassword => match &key.key {
                 InputKey::BackTab => (target, ShellCommand::LoginFocusUserList),
                 InputKey::Tab if key.modifiers.shift => (target, ShellCommand::LoginFocusUserList),
@@ -85,7 +86,7 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
-        let target = RoutedTarget::Component(self.focused_component);
+        let target = RoutedTarget::Component(self.pages.common.focused_component);
         if key.phase == InputPhase::Release {
             return (target, ShellCommand::Noop);
         }
@@ -128,7 +129,7 @@ impl ShellSession {
         }
         if matches!(&key.key, InputKey::Enter) {
             if matches!(
-                self.focused_component,
+                self.pages.common.focused_component,
                 ShellComponent::LoginUsername | ShellComponent::BootstrapUsername
             ) {
                 return (target, ShellCommand::FocusNext);
@@ -171,7 +172,7 @@ impl ShellSession {
             {
                 return (
                     target,
-                    if self.setup_custom_color_target.is_some() {
+                    if self.pages.setup.setup_custom_color_target.is_some() {
                         ShellCommand::ApplySetupCustomColor
                     } else {
                         ShellCommand::SetupPrimaryAction
@@ -185,8 +186,8 @@ impl ShellSession {
                 && !key.modifiers.hyper
                 && !key.modifiers.meta
                 && key.key == InputKey::Left
-                && self.setup_custom_color_target.is_none()
-                && self.setup_step == ui::SetupStep::Timezone
+                && self.pages.setup.setup_custom_color_target.is_none()
+                && self.pages.setup.setup_step == ui::SetupStep::Timezone
             {
                 return (target, ShellCommand::SetupPreviousStep);
             }
@@ -195,13 +196,13 @@ impl ShellSession {
         if key.phase != InputPhase::Press
             && (matches!(key.key, InputKey::Enter | InputKey::Escape)
                 || (key.key == InputKey::Char(' ')
-                    && self.setup_custom_color_target.is_none()
-                    && self.setup_step != ui::SetupStep::Admin))
+                    && self.pages.setup.setup_custom_color_target.is_none()
+                    && self.pages.setup.setup_step != ui::SetupStep::Admin))
         {
             return (target, ShellCommand::RecordInput);
         }
 
-        if self.setup_custom_color_target.is_some() {
+        if self.pages.setup.setup_custom_color_target.is_some() {
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::CancelSetupCustomColor),
                 InputKey::Enter => (target, ShellCommand::ApplySetupCustomColor),
@@ -217,7 +218,7 @@ impl ShellSession {
             return (RoutedTarget::Global, ShellCommand::RequestExit);
         }
 
-        match self.setup_step {
+        match self.pages.setup.setup_step {
             ui::SetupStep::Language => match &key.key {
                 InputKey::Up | InputKey::Left => (target, ShellCommand::SetupPreviousLanguage),
                 InputKey::Down | InputKey::Right => (target, ShellCommand::SetupNextLanguage),
@@ -240,14 +241,20 @@ impl ShellSession {
                 InputKey::Tab => (target, ShellCommand::SetupFocusNext),
                 InputKey::Up => (target, ShellCommand::SetupFocusPrevious),
                 InputKey::Down => (target, ShellCommand::SetupFocusNext),
-                InputKey::Backspace if setup_admin_text_field(self.setup_focused_field) => {
+                InputKey::Backspace
+                    if setup_admin_text_field(self.pages.setup.setup_focused_field) =>
+                {
                     (target, ShellCommand::SetupAdminBackspace)
                 }
-                InputKey::Enter if self.setup_focused_field == ui::SetupField::Submit => {
+                InputKey::Enter
+                    if self.pages.setup.setup_focused_field == ui::SetupField::Submit =>
+                {
                     (target, ShellCommand::SetupPrimaryAction)
                 }
                 InputKey::Enter => (target, ShellCommand::SetupFocusNext),
-                InputKey::Char(character) if setup_admin_text_field(self.setup_focused_field) => {
+                InputKey::Char(character)
+                    if setup_admin_text_field(self.pages.setup.setup_focused_field) =>
+                {
                     (target, ShellCommand::AppendSetupAdminChar(*character))
                 }
                 _ => (target, ShellCommand::RecordInput),
@@ -286,7 +293,7 @@ impl ShellSession {
                     && !key.modifiers.meta
                     && key.key == InputKey::Enter
                     && key.phase == InputPhase::Press
-                    && self.user_management_mode != UserManagementMode::Browse
+                    && self.pages.user_management.user_management_mode != UserManagementMode::Browse
                 {
                     ShellCommand::SubmitUserManagementForm
                 } else {
@@ -294,7 +301,8 @@ impl ShellSession {
                 },
             );
         }
-        let editing_text = self.user_management_mode != UserManagementMode::Browse
+        let editing_text = self.pages.user_management.user_management_mode
+            != UserManagementMode::Browse
             && matches!(
                 self.user_management_form_field(),
                 Some(
@@ -310,7 +318,7 @@ impl ShellSession {
             return (target, ShellCommand::RecordInput);
         }
 
-        if self.user_management_mode != UserManagementMode::Browse {
+        if self.pages.user_management.user_management_mode != UserManagementMode::Browse {
             let field = self.user_management_form_field();
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::CancelUserManagementForm),
@@ -394,7 +402,7 @@ impl ShellSession {
                 if self
                     .app
                     .managed_users()
-                    .get(self.user_management_selected)
+                    .get(self.pages.user_management.user_management_selected)
                     .is_some_and(|user| user.enabled && !user_is_locked(user)) =>
             {
                 (
@@ -406,7 +414,7 @@ impl ShellSession {
                 if self
                     .app
                     .managed_users()
-                    .get(self.user_management_selected)
+                    .get(self.pages.user_management.user_management_selected)
                     .is_some_and(|user| !user.enabled || user_is_locked(user)) =>
             {
                 (
@@ -438,7 +446,7 @@ impl ShellSession {
         let target = RoutedTarget::Component(ShellComponent::UserManagement);
         let coordinates = mouse.coordinates();
 
-        if self.user_management_mode == UserManagementMode::Browse
+        if self.pages.user_management.user_management_mode == UserManagementMode::Browse
             && hit_target == Some(ShellComponent::ClockButton)
             && matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
         {
@@ -451,7 +459,7 @@ impl ShellSession {
         let Some(layout) = self.user_management_layout() else {
             return (target, ShellCommand::CaptureOverlayInput);
         };
-        if self.user_management_mode != UserManagementMode::Browse {
+        if self.pages.user_management.user_management_mode != UserManagementMode::Browse {
             return match mouse.kind {
                 ui::MouseEventKind::Moved => (target, ShellCommand::Hover(hit_target)),
                 ui::MouseEventKind::Down(PointerButton::Left) => layout
@@ -510,7 +518,7 @@ impl ShellSession {
             }
             ui::MouseEventKind::Scroll(ScrollDirection::Up)
                 if hit_target == Some(ShellComponent::SetupLanguage)
-                    && self.setup_step == ui::SetupStep::Language =>
+                    && self.pages.setup.setup_step == ui::SetupStep::Language =>
             {
                 (
                     RoutedTarget::Component(ShellComponent::SetupLanguage),
@@ -519,7 +527,7 @@ impl ShellSession {
             }
             ui::MouseEventKind::Scroll(ScrollDirection::Down)
                 if hit_target == Some(ShellComponent::SetupLanguage)
-                    && self.setup_step == ui::SetupStep::Language =>
+                    && self.pages.setup.setup_step == ui::SetupStep::Language =>
             {
                 (
                     RoutedTarget::Component(ShellComponent::SetupLanguage),
@@ -528,7 +536,7 @@ impl ShellSession {
             }
             ui::MouseEventKind::Scroll(ScrollDirection::Up)
                 if hit_target == Some(ShellComponent::SetupTimezone)
-                    && self.setup_step == ui::SetupStep::Timezone =>
+                    && self.pages.setup.setup_step == ui::SetupStep::Timezone =>
             {
                 (
                     RoutedTarget::Component(ShellComponent::SetupTimezone),
@@ -537,7 +545,7 @@ impl ShellSession {
             }
             ui::MouseEventKind::Scroll(ScrollDirection::Down)
                 if hit_target == Some(ShellComponent::SetupTimezone)
-                    && self.setup_step == ui::SetupStep::Timezone =>
+                    && self.pages.setup.setup_step == ui::SetupStep::Timezone =>
             {
                 (
                     RoutedTarget::Component(ShellComponent::SetupTimezone),
@@ -547,7 +555,7 @@ impl ShellSession {
             ui::MouseEventKind::Down(PointerButton::Left) => {
                 if let Some(target) = hit_target
                     && setup_field_for_component(target).is_some()
-                    && setup_component_active_for_step(target, self.setup_step)
+                    && setup_component_active_for_step(target, self.pages.setup.setup_step)
                 {
                     return (
                         RoutedTarget::Component(target),

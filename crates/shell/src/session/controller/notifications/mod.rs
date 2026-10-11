@@ -58,7 +58,7 @@ impl ShellSession {
                 if self.notification_scrollbar_drag.is_some() => {}
             _ => return false,
         }
-        self.notification_message_scroll = scrollbar_window_start(
+        self.pages.common.notification_message_scroll = scrollbar_window_start(
             mouse.row(),
             self.notification_scrollbar_drag.unwrap().1,
             track.y,
@@ -125,6 +125,49 @@ impl ShellSession {
         self.resolve_notification_alert_at(key, Instant::now());
     }
 
+    pub(in crate::session) fn notify_page_alert_with_key(
+        &mut self,
+        key: impl Into<String>,
+        message: impl Into<LocalizedText>,
+        tone: ui::NotificationTone,
+    ) {
+        let Some(page) = self.pages.common.selected_id() else {
+            return;
+        };
+        self.dispatch_notification(
+            app::NotificationCommand::ShowPageAlert {
+                page,
+                key: key.into(),
+                message: message.into(),
+                tone,
+            },
+            Instant::now(),
+        );
+    }
+
+    pub(in crate::session) fn resolve_page_alert(&mut self, key: &str) {
+        let Some(page) = self.pages.common.selected_id() else {
+            return;
+        };
+        self.dispatch_notification(
+            app::NotificationCommand::ResolvePageAlert {
+                page,
+                key: key.into(),
+            },
+            Instant::now(),
+        );
+    }
+
+    pub(in crate::session) fn page_alert_message_for_key(
+        &self,
+        key: &str,
+    ) -> Option<&LocalizedText> {
+        let page = self.pages.common.selected_id()?;
+        self.app
+            .notification_center()
+            .page_alert_message_for_key(page, key)
+    }
+
     pub fn clear_notification_alert(&mut self) {
         self.dispatch_notification(app::NotificationCommand::ClearAlerts, Instant::now());
     }
@@ -155,12 +198,12 @@ impl ShellSession {
         let app_notification = notification.to_app_notification();
         let id = self.app.push_critical_notification_modal(app_notification);
         self.cancel_pointer_gestures_for_modal();
-        self.ui.notification_message_scroll = 0;
+        self.pages.common.notification_message_scroll = 0;
         self.ui.notification_bindings.bind(id, &notification);
-        self.active_popup = None;
+        self.pages.common.active_popup = None;
         self.notification_pointer_capture = None;
         if let Some(component) = self.notification_active_modal_component() {
-            self.focused_component = component;
+            self.pages.common.focused_component = component;
         }
         self.refresh_hit_map();
         id
@@ -182,6 +225,25 @@ impl ShellSession {
         // Record alert lifecycle metadata only. The producing operation owns the
         // failure record; notification text may contain user content.
         let transition = match &command {
+            app::NotificationCommand::ShowPageAlert {
+                page, key, message, ..
+            } if self
+                .app
+                .notification_center()
+                .page_alert_message_for_key(*page, key)
+                != Some(message) =>
+            {
+                Some((key.clone(), "alert_shown"))
+            }
+            app::NotificationCommand::ResolvePageAlert { page, key }
+                if self
+                    .app
+                    .notification_center()
+                    .page_alert_message_for_key(*page, key)
+                    .is_some() =>
+            {
+                Some((key.clone(), "alert_resolved"))
+            }
             app::NotificationCommand::ShowAlert { key, message, .. }
                 if self.app.notification_center().alert_message_for_key(key) != Some(message) =>
             {
@@ -207,7 +269,7 @@ impl ShellSession {
         self.app
             .dispatch_at(app::AppCommand::Notification(command), at);
         if previous_modal != self.notification_active_modal_id() {
-            self.ui.notification_message_scroll = 0;
+            self.pages.common.notification_message_scroll = 0;
         }
         if let Some((key, operation)) = transition {
             let mut event = runtime_log::RuntimeLogEvent::new(
@@ -261,7 +323,7 @@ impl ShellSession {
             .active_view_model(self.app.notification_center())?;
         model.stacked_actions =
             self.notification_active_modal_component() == Some(ShellComponent::ExitDialog);
-        model.scroll_offset = self.ui.notification_message_scroll;
+        model.scroll_offset = self.pages.common.notification_message_scroll;
         Some(model)
     }
 
@@ -274,7 +336,7 @@ impl ShellSession {
         let _language = i18n::enter_snapshot(self.language.clone());
         self.notification_pointer_capture = None;
         let Some(model) = self.notification_active_modal_view_model() else {
-            self.ui.notification_message_scroll = 0;
+            self.pages.common.notification_message_scroll = 0;
             return ShellAction::Redraw;
         };
         let area = self.shell_modal_area();
@@ -287,7 +349,7 @@ impl ShellSession {
             1
         };
         let distance = delta.unsigned_abs().saturating_mul(step);
-        self.ui.notification_message_scroll = if delta < 0 {
+        self.pages.common.notification_message_scroll = if delta < 0 {
             layout.scroll_offset.saturating_sub(distance)
         } else {
             layout
@@ -348,7 +410,10 @@ impl ShellSession {
 
     pub(in crate::session) fn notification_dismiss_modal_by_key(&mut self, key: &str) {
         self.dispatch_notification(
-            app::NotificationCommand::DismissModalByKey(key.to_string()),
+            app::NotificationCommand::DismissPageModalByKey {
+                key: key.to_string(),
+                page: self.pages.common.selected_id(),
+            },
             Instant::now(),
         );
         self.ui
@@ -360,6 +425,7 @@ impl ShellSession {
         self.dispatch_notification(app::NotificationCommand::ResolveAlert(key.to_string()), now);
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn notification_alert_message_for_key(
         &self,
         key: &str,
@@ -369,23 +435,44 @@ impl ShellSession {
 
     pub(in crate::session) fn notify_modal_with_options(
         &mut self,
-        notification: ShellNotification,
+        mut notification: ShellNotification,
     ) -> u64 {
-        self.capture_modal_focus_context();
-        let app_notification = notification.to_app_notification();
+        let owner = (!notification.session_scope).then(|| {
+            self.pages
+                .common
+                .selected_id()
+                .unwrap_or(self.content_page_id())
+        });
+        let visible = owner.is_none_or(|id| id == self.active_page_id());
+        if visible {
+            self.capture_modal_focus_context();
+        }
+        if let Some(owner) = owner {
+            for action in &mut notification.actions {
+                action.follow_up = action
+                    .follow_up
+                    .take()
+                    .map(|command| ShellCommand::PageAction(owner, Box::new(command)));
+            }
+        }
+        let mut app_notification = notification.to_app_notification();
+        app_notification.page = owner;
         let previous_modal = self.notification_active_modal_id();
         let id = self.app.push_notification_modal(app_notification);
+        self.ui.notification_bindings.bind(id, &notification);
+        if !visible {
+            return id;
+        }
         self.cancel_pointer_gestures_for_modal();
         if previous_modal != self.notification_active_modal_id()
             || self.notification_active_modal_id() == Some(id)
         {
-            self.ui.notification_message_scroll = 0;
+            self.pages.common.notification_message_scroll = 0;
         }
-        self.ui.notification_bindings.bind(id, &notification);
-        self.active_popup = None;
+        self.pages.common.active_popup = None;
         self.notification_pointer_capture = None;
         if let Some(component) = self.notification_active_modal_component() {
-            self.focused_component = component;
+            self.pages.common.focused_component = component;
         }
         self.refresh_hit_map();
         id
@@ -396,7 +483,7 @@ impl ShellSession {
         let previous_modal = self.notification_active_modal_id();
         let response = self.app.activate_selected_notification_action();
         if previous_modal != self.notification_active_modal_id() {
-            self.ui.notification_message_scroll = 0;
+            self.pages.common.notification_message_scroll = 0;
         }
         let follow_up = response
             .as_ref()
@@ -409,7 +496,7 @@ impl ShellSession {
         let previous_modal = self.notification_active_modal_id();
         let response = self.app.activate_notification_action(index);
         if previous_modal != self.notification_active_modal_id() {
-            self.ui.notification_message_scroll = 0;
+            self.pages.common.notification_message_scroll = 0;
         }
         let follow_up = response
             .as_ref()
@@ -422,7 +509,7 @@ impl ShellSession {
         follow_up: Option<ShellCommand>,
     ) -> ShellAction {
         if let Some(component) = self.notification_active_modal_component() {
-            self.focused_component = component;
+            self.pages.common.focused_component = component;
             self.refresh_hit_map();
         } else {
             self.prepare_modal_focus_for_follow_up();

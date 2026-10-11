@@ -1,32 +1,110 @@
 use super::*;
 
+fn pending_snapshot(state: &mut ShellSession, text: &str) -> LogsJob {
+    let mut snapshot = LogsSnapshot::default();
+    snapshot
+        .result
+        .events
+        .push(runtime_log::RuntimeLogEvent::new(
+            runtime_log::LogContext::default(),
+            LogLevel::Info,
+            runtime_log::LogPhase::Observed,
+            text,
+        ));
+    let job = LogsJob(Arc::new(LogsJobShared {
+        id: PageInstanceId::new().get(),
+        cancelled: Arc::new(AtomicBool::new(false)),
+        result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
+        worker: Mutex::new(None),
+        background: false,
+    }));
+    state.register_logs_job(&job);
+    state.pages.logs.logs_state.job = Some(job.clone());
+    job
+}
+
+#[test]
+fn covered_log_queries_preserve_each_pages_filter_and_result() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    let first = state.active_page_id();
+    state.pages.logs.logs_state.query.module = Some("first module".into());
+    pending_snapshot(&mut state, "first result");
+    state.open_logs();
+    let second = state.active_page_id();
+    assert_ne!(first, second);
+    state.pages.logs.logs_state.query.module = Some("second module".into());
+    pending_snapshot(&mut state, "second result");
+    state.poll_logs_tasks();
+    assert_eq!(state.active_page_id(), second);
+    assert_eq!(
+        state.pages.logs.logs_state.snapshot.result.events[0].message,
+        "second result"
+    );
+    let hidden = &state.pages.logs.get(first).unwrap().logs_state;
+    assert_eq!(hidden.snapshot.result.events[0].message, "first result");
+    assert_eq!(hidden.query.module.as_deref(), Some("first module"));
+    state.close_page_instance(second);
+    assert_eq!(
+        state.pages.logs.logs_state.query.module.as_deref(),
+        Some("first module")
+    );
+    assert_eq!(
+        state.pages.logs.logs_state.snapshot.result.events[0].message,
+        "first result"
+    );
+}
+
+#[test]
+fn closing_a_log_page_cancels_its_query_and_rejects_late_result() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    let first = state.active_page_id();
+    let job = pending_snapshot(&mut state, "late result");
+    state.close_page_instance(first);
+    assert!(job.0.cancelled.load(AtomicOrdering::Relaxed));
+    state.open_logs();
+    state.poll_logs_tasks();
+    assert!(
+        state
+            .pages
+            .logs
+            .logs_state
+            .snapshot
+            .result
+            .events
+            .is_empty()
+    );
+    assert_eq!(state.tasks.owner(TaskDomain::Logs, job.0.id), None);
+}
+
 #[test]
 fn global_notification_releases_log_detail_scroll_capture() {
     let mut state = state(UserRole::User);
-    state.logs_state.detail_scrollbar_grab = Some(0);
+    state.pages.logs.logs_state.detail_scrollbar_grab = Some(0);
     state.notify_modal(
         "Notice",
         "Stop dragging",
         ui::NotificationTone::Info,
         vec![],
     );
-    assert!(state.logs_state.detail_scrollbar_grab.is_none());
+    assert!(state.pages.logs.logs_state.detail_scrollbar_grab.is_none());
 }
 
 #[test]
 fn paused_live_capture_keeps_the_view_and_counts_new_records() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     let old = runtime_log::RuntimeLogEvent::new(
         runtime_log::LogContext::default(),
         LogLevel::Info,
         runtime_log::LogPhase::Observed,
         "old",
     );
-    state.logs_state.snapshot.result.events = vec![old.clone()];
-    state.logs_state.paused = true;
-    state.logs_state.explicit_scroll = true;
+    state.pages.logs.logs_state.snapshot.result.events = vec![old.clone()];
+    state.pages.logs.logs_state.paused = true;
+    state.pages.logs.logs_state.explicit_scroll = true;
     let new = runtime_log::RuntimeLogEvent::new(
         runtime_log::LogContext::default(),
         LogLevel::Info,
@@ -35,24 +113,29 @@ fn paused_live_capture_keeps_the_view_and_counts_new_records() {
     );
     let mut snapshot = LogsSnapshot::default();
     snapshot.result.events = vec![new, old];
-    state.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+    state.pages.logs.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+        id: PageInstanceId::new().get(),
         cancelled: Arc::new(AtomicBool::new(false)),
         result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
         worker: Mutex::new(None),
         background: true,
     })));
+    state.register_logs_job(&state.pages.logs.logs_state.job.clone().unwrap());
     state.poll_logs_tasks();
-    assert_eq!(state.logs_state.new_events, 1);
-    assert_eq!(state.logs_state.selected, 1);
-    assert_eq!(state.logs_state.scroll, 1);
-    assert_eq!(state.logs_state.snapshot.result.events[1].message, "old");
+    assert_eq!(state.pages.logs.logs_state.new_events, 1);
+    assert_eq!(state.pages.logs.logs_state.selected, 1);
+    assert_eq!(state.pages.logs.logs_state.scroll, 1);
+    assert_eq!(
+        state.pages.logs.logs_state.snapshot.result.events[1].message,
+        "old"
+    );
     state.logs_follow_control();
-    assert!(!state.logs_state.paused);
+    assert!(!state.pages.logs.logs_state.paused);
     assert_eq!(
         (
-            state.logs_state.selected,
-            state.logs_state.scroll,
-            state.logs_state.new_events
+            state.pages.logs.logs_state.selected,
+            state.pages.logs.logs_state.scroll,
+            state.pages.logs.logs_state.new_events
         ),
         (0, 0, 0)
     );
@@ -62,10 +145,10 @@ fn paused_live_capture_keeps_the_view_and_counts_new_records() {
 fn visible_filters_button_applies_service_boot_and_file_choices() {
     let mut state = state(UserRole::Admin);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     press_log_control(&mut state, ui::LogsHitTarget::Filters);
-    assert!(state.logs_state.filter_form.is_some());
-    let form = state.logs_state.filter_form.as_mut().unwrap();
+    assert!(state.pages.logs.logs_state.filter_form.is_some());
+    let form = state.pages.logs.logs_state.filter_form.as_mut().unwrap();
     form.fields
         .iter_mut()
         .find(|field| field.id == "unit")
@@ -78,14 +161,19 @@ fn visible_filters_button_applies_service_boot_and_file_choices() {
         .value = "-1".into();
     state.logs_apply_filter_form();
     assert_eq!(
-        state.logs_state.query.systemd_unit.as_deref(),
+        state.pages.logs.logs_state.query.systemd_unit.as_deref(),
         Some("sshd.service")
     );
-    assert_eq!(state.logs_state.query.systemd_boot.as_deref(), Some("-1"));
-    state.logs_state.job = None;
+    assert_eq!(
+        state.pages.logs.logs_state.query.systemd_boot.as_deref(),
+        Some("-1")
+    );
+    state.pages.logs.logs_state.job = None;
     state.logs_open_filter_form();
     let path = std::env::temp_dir().join("selected-system.log");
     state
+        .pages
+        .logs
         .logs_state
         .filter_form
         .as_mut()
@@ -96,33 +184,33 @@ fn visible_filters_button_applies_service_boot_and_file_choices() {
         .unwrap()
         .value = path.display().to_string();
     state.logs_apply_filter_form();
-    assert_eq!(state.logs_state.query.file_path, Some(path));
-    assert!(state.logs_state.query.systemd_unit.is_none());
-    assert!(state.logs_state.query.systemd_boot.is_none());
+    assert_eq!(state.pages.logs.logs_state.query.file_path, Some(path));
+    assert!(state.pages.logs.logs_state.query.systemd_unit.is_none());
+    assert!(state.pages.logs.logs_state.query.systemd_boot.is_none());
 }
 
 #[test]
 fn more_dialog_navigation_skips_disabled_actions_and_space_closes() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     key(&mut state, "F10");
-    state.logs_state.more_selected = Some(3);
+    state.pages.logs.logs_state.more_selected = Some(3);
     key(&mut state, "Down");
-    assert_eq!(state.logs_state.more_selected, Some(6));
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(6));
     key(&mut state, "Home");
-    assert_eq!(state.logs_state.more_selected, Some(0));
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(0));
     key(&mut state, "End");
-    assert_eq!(state.logs_state.more_selected, Some(6));
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(6));
     key(&mut state, "Tab");
-    assert_eq!(state.logs_state.more_selected, Some(0));
-    state.logs_state.more_selected = Some(4);
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(0));
+    state.pages.logs.logs_state.more_selected = Some(4);
     key(&mut state, "Enter");
-    assert_eq!(state.logs_state.more_selected, Some(4));
-    assert_eq!(state.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(4));
+    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
     key(&mut state, "End");
     state.handle_logs_key(&KeyInput::new(InputKey::Space));
-    assert!(state.logs_state.more_selected.is_none());
+    assert!(state.pages.logs.logs_state.more_selected.is_none());
     assert_eq!(state.active_screen(), ShellScreen::Logs);
 }
 
@@ -130,7 +218,7 @@ fn more_dialog_navigation_skips_disabled_actions_and_space_closes() {
 fn more_dialog_blocks_stale_background_buttons_before_its_first_redraw() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
     let control = layout
         .controls
@@ -148,13 +236,13 @@ fn more_dialog_blocks_stale_background_buttons_before_its_first_redraw() {
         region.area.y,
         PointerButton::Left,
     ));
-    assert!(state.logs_state.more_selected.is_none());
+    assert!(state.pages.logs.logs_state.more_selected.is_none());
     assert!(
-        state.logs_state.job.is_none(),
+        state.pages.logs.logs_state.job.is_none(),
         "outside dismissal must not refresh the covered page"
     );
     key(&mut state, "F");
-    assert!(state.logs_state.filter_form.is_some());
+    assert!(state.pages.logs.logs_state.filter_form.is_some());
     assert!(state.button_at((region.area.x, region.area.y)).is_none());
 }
 
@@ -162,7 +250,7 @@ fn more_dialog_blocks_stale_background_buttons_before_its_first_redraw() {
 fn more_dialog_waits_for_release_and_cancels_press_on_drag_resize_or_focus_loss() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     key(&mut state, "F10");
     let main = state.logs_main_area().unwrap();
     let layout = ui::logs_layout(main, &state.to_logs_view_model());
@@ -173,15 +261,15 @@ fn more_dialog_waits_for_release_and_cancels_press_on_drag_resize_or_focus_loss(
         .unwrap();
     let point = (control.area.x, control.area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert_eq!(state.logs_state.query.min_level, None);
-    assert!(state.logs_state.more_selected.is_some());
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+    assert!(state.pages.logs.logs_state.more_selected.is_some());
     state.apply_input(InputEvent::mouse_drag(
         PointerButton::Left,
         (layout.menu.x, layout.menu.y),
     ));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert_eq!(state.logs_state.query.min_level, None);
-    assert!(state.logs_state.more_selected.is_some());
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+    assert!(state.pages.logs.logs_state.more_selected.is_some());
     for cancelled in [
         InputEvent::FocusLost,
         InputEvent::Resize {
@@ -192,34 +280,37 @@ fn more_dialog_waits_for_release_and_cancels_press_on_drag_resize_or_focus_loss(
         state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
         state.apply_input(cancelled);
         state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-        assert_eq!(state.logs_state.query.min_level, None);
-        assert!(state.logs_state.more_selected.is_some());
+        assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+        assert!(state.pages.logs.logs_state.more_selected.is_some());
     }
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert_eq!(state.logs_state.query.min_level, Some(LogLevel::Warning));
-    assert!(state.logs_state.more_selected.is_none());
+    assert_eq!(
+        state.pages.logs.logs_state.query.min_level,
+        Some(LogLevel::Warning)
+    );
+    assert!(state.pages.logs.logs_state.more_selected.is_none());
 }
 
 #[test]
 fn more_dialog_padding_and_outside_wheel_do_not_change_or_dismiss_the_selection() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     key(&mut state, "F10");
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
     let padding = (layout.menu.x + 1, layout.menu.y + 1);
     state.handle_logs_pointer(MouseInput::down(padding.0, padding.1, PointerButton::Left));
-    assert_eq!(state.logs_state.more_selected, Some(0));
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(0));
     state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, (0, 1)));
-    assert_eq!(state.logs_state.more_selected, Some(0));
-    assert_eq!(state.logs_state.scroll, 0);
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(0));
+    assert_eq!(state.pages.logs.logs_state.scroll, 0);
     state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Down, padding));
-    assert_eq!(state.logs_state.more_selected, Some(1));
-    state.logs_state.more_selected = Some(0);
+    assert_eq!(state.pages.logs.logs_state.more_selected, Some(1));
+    state.pages.logs.logs_state.more_selected = Some(0);
     state.apply_input(InputEvent::mouse_scroll(ScrollDirection::Up, padding));
     assert_eq!(
-        state.logs_state.more_selected,
+        state.pages.logs.logs_state.more_selected,
         Some(0),
         "scrolling stops at the first option"
     );
@@ -230,9 +321,9 @@ fn more_dialog_padding_and_outside_wheel_do_not_change_or_dismiss_the_selection(
         .unwrap();
     let point = (close.area.x, close.area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert!(state.logs_state.more_selected.is_some());
+    assert!(state.pages.logs.logs_state.more_selected.is_some());
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert!(state.logs_state.more_selected.is_none());
+    assert!(state.pages.logs.logs_state.more_selected.is_none());
 }
 
 #[test]
@@ -240,7 +331,7 @@ fn compact_more_dialog_scrollbar_drags_within_the_dialog_and_cancels_on_focus_lo
     let mut state = state(UserRole::User);
     state.terminal_size = (49, 11);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     key(&mut state, "F10");
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
     let bar = layout.menu_scrollbar.unwrap();
@@ -258,10 +349,10 @@ fn compact_more_dialog_scrollbar_drags_within_the_dialog_and_cancels_on_focus_lo
         layout.menu_scrollbar.unwrap().offset,
         bar.content_len - bar.viewport_len
     );
-    assert_eq!(state.logs_state.scroll, 0);
+    assert_eq!(state.pages.logs.logs_state.scroll, 0);
     state.apply_input(InputEvent::FocusLost);
     assert!(!state.logs_pointer_drag_active());
-    assert!(state.logs_state.more_selected.is_some());
+    assert!(state.pages.logs.logs_state.more_selected.is_some());
 }
 
 #[test]
@@ -317,7 +408,7 @@ fn press_log_control(state: &mut ShellSession, target: ui::LogsHitTarget) {
             | ui::LogsHitTarget::Filters
             | ui::LogsHitTarget::More
     ) {
-        state.logs_state.more_selected = Some(0);
+        state.pages.logs.logs_state.more_selected = Some(0);
     }
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
     let area = layout
@@ -334,8 +425,8 @@ fn press_log_control(state: &mut ShellSession, target: ui::LogsHitTarget) {
 fn log_action_shortcuts_ignore_modifiers_release_and_repeated_presses() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.query.min_level = Some(LogLevel::Warning);
-    let before = state.logs_state.clone();
+    state.pages.logs.logs_state.query.min_level = Some(LogLevel::Warning);
+    let before = state.pages.logs.logs_state.clone();
     for phase in [InputPhase::Release, InputPhase::Repeat] {
         for key in [
             InputKey::Char('c'),
@@ -344,13 +435,13 @@ fn log_action_shortcuts_ignore_modifiers_release_and_repeated_presses() {
             InputKey::F(5),
         ] {
             state.handle_logs_key(&KeyInput::with_phase(key, InputModifiers::none(), phase));
-            assert_eq!(state.logs_state, before);
+            assert_eq!(state.pages.logs.logs_state, before);
         }
     }
     state.handle_logs_key(&KeyInput::from_label("Ctrl+C"));
-    assert_eq!(state.logs_state, before);
+    assert_eq!(state.pages.logs.logs_state, before);
     state.handle_logs_key(&KeyInput::from_label("C"));
-    assert_eq!(state.logs_state.query.min_level, None);
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
 }
 
 #[test]
@@ -359,34 +450,36 @@ fn disabled_log_controls_cannot_be_activated_by_shortcuts() {
     state.open_logs();
     state.handle_logs_key(&KeyInput::from_label("Enter"));
     assert!(
-        state.logs_state.last_document.is_none(),
+        state.pages.logs.logs_state.last_document.is_none(),
         "an empty list cannot be opened"
     );
     state.handle_logs_key(&KeyInput::from_label("I"));
-    assert_eq!(state.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
 
-    state.logs_state.query.min_level = Some(LogLevel::Warning);
-    state.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+    state.pages.logs.logs_state.query.min_level = Some(LogLevel::Warning);
+    state.pages.logs.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+        id: PageInstanceId::new().get(),
         cancelled: Arc::new(AtomicBool::new(false)),
         result: Mutex::new(None),
         worker: Mutex::new(None),
         background: false,
     })));
-    let before = state.logs_state.clone();
+    state.register_logs_job(&state.pages.logs.logs_state.job.clone().unwrap());
+    let before = state.pages.logs.logs_state.clone();
     for label in ["R", "F5", "L", "M", "T", "C", "I", "E", "Enter"] {
         state.handle_logs_key(&KeyInput::from_label(label));
         assert_eq!(
-            state.logs_state, before,
+            state.pages.logs.logs_state, before,
             "{label} must respect the loading state"
         );
     }
-    state.logs_state.job = None;
-    state.logs_state.category = ui::LogsCategory::Linux;
-    let before = state.logs_state.clone();
+    state.pages.logs.logs_state.job = None;
+    state.pages.logs.logs_state.category = ui::LogsCategory::Linux;
+    let before = state.pages.logs.logs_state.clone();
     for label in ["C", "L", "F5", "Enter"] {
         state.handle_logs_key(&KeyInput::from_label(label));
         assert_eq!(
-            state.logs_state, before,
+            state.pages.logs.logs_state, before,
             "{label} must respect Linux log permissions"
         );
     }
@@ -396,22 +489,22 @@ fn disabled_log_controls_cannot_be_activated_by_shortcuts() {
 fn f5_refresh_and_clear_filters_match_their_log_buttons() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.feedback = None;
+    state.pages.logs.logs_state.feedback = None;
     state.handle_logs_key(&KeyInput::from_label("F5"));
-    let feedback = state.logs_state.feedback.clone();
+    let feedback = state.pages.logs.logs_state.feedback.clone();
     assert!(
         feedback.is_some(),
         "the fixture has no storage, so a real refresh reports that prerequisite"
     );
-    state.logs_state.feedback = None;
+    state.pages.logs.logs_state.feedback = None;
     press_log_control(&mut state, ui::LogsHitTarget::Refresh);
-    assert_eq!(state.logs_state.feedback, feedback);
-    state.logs_state.query.min_level = Some(LogLevel::Warning);
+    assert_eq!(state.pages.logs.logs_state.feedback, feedback);
+    state.pages.logs.logs_state.query.min_level = Some(LogLevel::Warning);
     press_log_control(&mut state, ui::LogsHitTarget::ClearFilters);
-    assert_eq!(state.logs_state.query.min_level, None);
-    state.logs_state.query.min_level = Some(LogLevel::Warning);
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+    state.pages.logs.logs_state.query.min_level = Some(LogLevel::Warning);
     state.handle_logs_key(&KeyInput::from_label("C"));
-    assert_eq!(state.logs_state.query.min_level, None);
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
 }
 
 #[test]
@@ -442,25 +535,42 @@ fn logs_launcher_entry_and_direct_route_enforce_guest_gate() {
     }
 }
 #[test]
-fn logs_navigation_retains_filters_and_selection_across_close() {
+fn logs_navigation_restores_covered_filters_and_new_pages_start_clean() {
     let mut state = state(UserRole::User);
     state.open_logs();
     key(&mut state, "L");
     key(&mut state, "Tab");
-    assert_eq!(state.logs_state.section, ui::LogsSection::Files);
-    assert_eq!(state.logs_state.query.min_level, Some(LogLevel::Warning));
-    key(&mut state, "Esc");
-    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Files);
+    assert_eq!(
+        state.pages.logs.logs_state.query.min_level,
+        Some(LogLevel::Warning)
+    );
+    let first = state.active_page_id();
     state.open_logs();
-    assert_eq!(state.logs_state.section, ui::LogsSection::Files);
-    assert_eq!(state.logs_state.query.min_level, Some(LogLevel::Warning));
+    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+    key(&mut state, "Esc");
+    assert_eq!(state.active_page_id(), first);
+    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Files);
+    assert_eq!(
+        state.pages.logs.logs_state.query.min_level,
+        Some(LogLevel::Warning)
+    );
     key(&mut state, "Right");
-    assert_eq!(state.logs_state.category, ui::LogsCategory::Linux);
-    assert_eq!(state.logs_state.query.min_level, None);
+    assert_eq!(
+        state.pages.logs.logs_state.category,
+        ui::LogsCategory::Linux
+    );
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
     assert_eq!(
         state.to_logs_view_model().linux_available,
         cfg!(target_os = "linux")
     );
+    key(&mut state, "Esc");
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    state.open_logs();
+    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
 }
 #[test]
 fn legacy_status_navigation_redirects_to_logs_app() {
@@ -468,7 +578,10 @@ fn legacy_status_navigation_redirects_to_logs_app() {
     state.enter_screen(ShellScreen::SystemStatus);
     state.set_system_status_tab(ui::SystemStatusTab::Incidents);
     assert_eq!(state.active_screen(), ShellScreen::Logs);
-    assert_eq!(state.logs_state.section, ui::LogsSection::Incidents);
+    assert_eq!(
+        state.pages.logs.logs_state.section,
+        ui::LogsSection::Incidents
+    );
     key(&mut state, "Esc");
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
     assert!(!ui::SystemStatusWidgetKind::ALL.contains(&ui::SystemStatusWidgetKind::Logs));
@@ -484,45 +597,57 @@ fn refresh_preserves_selected_event_and_scroll() {
         runtime_log::LogPhase::Succeeded,
         "finished",
     );
-    state.logs_state.snapshot.result.events.push(event.clone());
-    state.logs_state.scroll = 4;
-    state.logs_state.explicit_scroll = true;
+    state
+        .pages
+        .logs
+        .logs_state
+        .snapshot
+        .result
+        .events
+        .push(event.clone());
+    state.pages.logs.logs_state.scroll = 4;
+    state.pages.logs.logs_state.explicit_scroll = true;
     let mut snapshot = LogsSnapshot::default();
     let mut newer = event.clone();
     newer.event_id = "newer".into();
     snapshot.result.events = vec![newer, event];
-    state.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+    state.pages.logs.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+        id: PageInstanceId::new().get(),
         cancelled: Arc::new(AtomicBool::new(false)),
         result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
         worker: Mutex::new(None),
         background: false,
     })));
+    state.register_logs_job(&state.pages.logs.logs_state.job.clone().unwrap());
     state.poll_logs_tasks();
-    assert_eq!(state.logs_state.selected, 1);
-    assert_eq!(state.logs_state.scroll, 4);
-    assert!(state.logs_state.explicit_scroll);
+    assert_eq!(state.pages.logs.logs_state.selected, 1);
+    assert_eq!(state.pages.logs.logs_state.scroll, 4);
+    assert!(state.pages.logs.logs_state.explicit_scroll);
 }
 
 #[test]
 fn service_logs_open_exact_linux_filter_and_return_to_the_previous_screen() {
     let mut state = state(UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
-    state.logs_state.query.min_level = Some(LogLevel::Error);
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
+    state.pages.logs.logs_state.query.min_level = Some(LogLevel::Error);
     state.open_service_logs("example.service", "user");
     assert_eq!(state.active_screen(), ShellScreen::Logs);
-    assert_eq!(state.logs_state.category, ui::LogsCategory::Linux);
-    assert_eq!(state.logs_state.section, ui::LogsSection::Events);
-    assert_eq!(state.logs_state.query.source, LogSource::Linux);
     assert_eq!(
-        state.logs_state.query.systemd_unit.as_deref(),
+        state.pages.logs.logs_state.category,
+        ui::LogsCategory::Linux
+    );
+    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.query.source, LogSource::Linux);
+    assert_eq!(
+        state.pages.logs.logs_state.query.systemd_unit.as_deref(),
         Some("example.service")
     );
     assert_eq!(
-        state.logs_state.query.systemd_scope.as_deref(),
+        state.pages.logs.logs_state.query.systemd_scope.as_deref(),
         Some("user")
     );
-    assert_eq!(state.logs_state.query.min_level, None);
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
     assert!(
         state
             .to_logs_view_model()
@@ -531,7 +656,10 @@ fn service_logs_open_exact_linux_filter_and_return_to_the_previous_screen() {
     );
     key(&mut state, "Esc");
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::SystemStatus
+    );
 }
 
 #[test]
@@ -554,8 +682,8 @@ fn guest_and_invalid_service_log_requests_do_not_change_navigation() {
 fn logs_detail_drag_and_cancel_do_not_move_the_event_selection() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.job = None;
-    state.logs_state.snapshot.result.events = vec![runtime_log::RuntimeLogEvent::new(
+    state.pages.logs.logs_state.job = None;
+    state.pages.logs.logs_state.snapshot.result.events = vec![runtime_log::RuntimeLogEvent::new(
         runtime_log::LogContext::default(),
         LogLevel::Info,
         runtime_log::LogPhase::Succeeded,
@@ -577,10 +705,10 @@ fn logs_detail_drag_and_cancel_do_not_move_the_event_selection() {
         ui::MouseEventKind::Drag(PointerButton::Left),
     ));
     assert_eq!(
-        state.logs_state.detail_scroll,
+        state.pages.logs.logs_state.detail_scroll,
         bar.content_len - bar.viewport_len
     );
-    assert_eq!(state.logs_state.selected, 0);
+    assert_eq!(state.pages.logs.logs_state.selected, 0);
     state.cancel_logs_pointer_gesture();
     assert!(!state.logs_pointer_drag_active());
 }
@@ -589,7 +717,7 @@ fn logs_detail_drag_and_cancel_do_not_move_the_event_selection() {
 fn escape_returns_logs_to_launcher_and_global_overlays_hide_background_buttons() {
     let mut state = state(UserRole::User);
     state.enter_screen(ShellScreen::Launcher);
-    state.focused_component = ShellComponent::Launcher;
+    state.pages.common.focused_component = ShellComponent::Launcher;
     state.open_logs();
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
     let area = layout
@@ -603,15 +731,18 @@ fn escape_returns_logs_to_launcher_and_global_overlays_hide_background_buttons()
     state.time_sync_dialog_visible = true;
     assert!(state.logs_button_at(point).is_none());
     state.time_sync_dialog_visible = false;
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Logs),
         anchor: point,
     });
     assert!(state.logs_button_at(point).is_none());
-    state.active_popup = None;
+    state.pages.common.active_popup = None;
     state.handle_logs_key(&KeyInput::new(InputKey::Escape));
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
-    assert_eq!(state.focused_component, ShellComponent::Launcher);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::Launcher
+    );
 }
 
 #[test]
@@ -627,7 +758,7 @@ fn compact_logs_uses_the_reserved_shell_content_area() {
 fn sorting_log_headers_waits_for_release_and_refresh_preserves_selected_event() {
     let mut state = state(UserRole::User);
     state.open_logs();
-    state.logs_state.job = None;
+    state.pages.logs.logs_state.job = None;
     let event = |message: &str| {
         runtime_log::RuntimeLogEvent::new(
             runtime_log::LogContext::default(),
@@ -639,7 +770,7 @@ fn sorting_log_headers_waits_for_release_and_refresh_preserves_selected_event() 
     let zulu = event("Zulu");
     let selected_id = zulu.event_id.clone();
     let alpha = event("alpha");
-    state.logs_state.snapshot.result.events = vec![zulu.clone(), alpha.clone()];
+    state.pages.logs.logs_state.snapshot.result.events = vec![zulu.clone(), alpha.clone()];
     let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
     let header = layout
         .content
@@ -653,27 +784,38 @@ fn sorting_log_headers_waits_for_release_and_refresh_preserves_selected_event() 
         InputEvent::mouse_down(PointerButton::Left, (header.x, header.y)),
         now,
     );
-    assert_eq!(state.logs_state.snapshot.result.events[0].message, "Zulu");
+    assert_eq!(
+        state.pages.logs.logs_state.snapshot.result.events[0].message,
+        "Zulu"
+    );
     state.apply_input_at(
         InputEvent::mouse_up(PointerButton::Left, (header.x, header.y)),
         now + Duration::from_millis(20),
     );
-    assert_eq!(state.logs_state.snapshot.result.events[0].message, "alpha");
     assert_eq!(
-        state.logs_state.snapshot.result.events[state.logs_state.selected].event_id,
+        state.pages.logs.logs_state.snapshot.result.events[0].message,
+        "alpha"
+    );
+    assert_eq!(
+        state.pages.logs.logs_state.snapshot.result.events[state.pages.logs.logs_state.selected]
+            .event_id,
         selected_id
     );
     let mut snapshot = LogsSnapshot::default();
     snapshot.result.events = vec![event("Beta"), zulu, alpha];
-    state.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+    state.pages.logs.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
+        id: PageInstanceId::new().get(),
         cancelled: Arc::new(AtomicBool::new(false)),
         result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
         worker: Mutex::new(None),
         background: true,
     })));
+    state.register_logs_job(&state.pages.logs.logs_state.job.clone().unwrap());
     state.poll_logs_tasks();
     assert_eq!(
         state
+            .pages
+            .logs
             .logs_state
             .snapshot
             .result
@@ -684,9 +826,16 @@ fn sorting_log_headers_waits_for_release_and_refresh_preserves_selected_event() 
         ["alpha", "Beta", "Zulu"]
     );
     assert_eq!(
-        state.logs_state.snapshot.result.events[state.logs_state.selected].event_id,
+        state.pages.logs.logs_state.snapshot.result.events[state.pages.logs.logs_state.selected]
+            .event_id,
         selected_id
     );
     state.logs_follow_control();
-    assert!(!state.table_sorts.contains_key(&state.logs_sort_key()));
+    assert!(
+        !state
+            .pages
+            .common
+            .table_sorts
+            .contains_key(&state.logs_sort_key())
+    );
 }

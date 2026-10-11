@@ -22,6 +22,7 @@ pub(in crate::session) struct LogsUiState {
     pub(super) scrollbar_grab: Option<u16>,
     last_document: Option<LogDocumentSelection>,
     editor_snapshot: Option<PathBuf>,
+    pending_document: Option<PathBuf>,
     refreshing_editor: bool,
     pub(super) paused: bool,
     new_events: usize,
@@ -35,6 +36,7 @@ pub(in crate::session) struct LogsUiState {
 #[derive(Clone)]
 struct LogsJob(Arc<LogsJobShared>);
 struct LogsJobShared {
+    id: u64,
     cancelled: Arc<AtomicBool>,
     result: Mutex<Option<LogsJobResult>>,
     worker: Mutex<Option<ManagedThreadHandle<()>>>,
@@ -55,6 +57,16 @@ impl PartialEq for LogsJob {
     }
 }
 impl Eq for LogsJob {}
+impl LogsJob {
+    fn finished(&self) -> bool {
+        self.0
+            .worker
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .is_none_or(ManagedThreadHandle::is_finished)
+    }
+}
 impl Drop for LogsJobShared {
     fn drop(&mut self) {
         self.cancelled.store(true, AtomicOrdering::Relaxed);
@@ -73,7 +85,7 @@ impl ShellSession {
         {
             return;
         }
-        self.enter_screen(ShellScreen::Logs);
+        self.enter_new_page(ShellScreen::Logs);
         self.request_logs_job(None);
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
         self.refresh_hit_map();
@@ -106,18 +118,21 @@ impl ShellSession {
         query.since = since_usec
             .and_then(|micros| i64::try_from(micros).ok())
             .and_then(chrono::DateTime::from_timestamp_micros);
-        self.logs_state.query = query;
-        self.logs_state.category = ui::LogsCategory::Linux;
-        self.logs_state.section = ui::LogsSection::Events;
-        self.logs_state.time_filter = 0;
-        self.logs_state.known_modules.clear();
-        self.logs_state.selected = 0;
-        self.logs_state.scroll = 0;
-        self.logs_state.explicit_scroll = false;
-        self.logs_state.snapshot = LogsSnapshot::default();
-        self.logs_state.paused = false;
-        self.logs_state.new_events = 0;
-        self.open_logs();
+        self.enter_new_page(ShellScreen::Logs);
+        self.pages.logs.logs_state.query = query;
+        self.pages.logs.logs_state.category = ui::LogsCategory::Linux;
+        self.pages.logs.logs_state.section = ui::LogsSection::Events;
+        self.pages.logs.logs_state.time_filter = 0;
+        self.pages.logs.logs_state.known_modules.clear();
+        self.pages.logs.logs_state.selected = 0;
+        self.pages.logs.logs_state.scroll = 0;
+        self.pages.logs.logs_state.explicit_scroll = false;
+        self.pages.logs.logs_state.snapshot = LogsSnapshot::default();
+        self.pages.logs.logs_state.paused = false;
+        self.pages.logs.logs_state.new_events = 0;
+        self.request_logs_job(None);
+        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-logs")));
+        self.refresh_hit_map();
     }
 
     pub(in crate::session) fn logs_select_legacy_section(&mut self, incidents: bool) {
@@ -145,31 +160,33 @@ impl ShellSession {
             return;
         };
         let Some(storage) = self.storage_manager.clone() else {
-            self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.logs.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-log-storage-unavailable"
             )));
             return;
         };
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
-            self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.logs.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-logs-worker-unavailable"
             )));
             return;
         };
-        if let Some(previous) = self.logs_state.job.take() {
+        if let Some(previous) = self.pages.logs.logs_state.job.take() {
             previous.0.cancelled.store(true, AtomicOrdering::Relaxed);
+            self.tasks.cancel(TaskDomain::Logs, previous.0.id);
+            self.tasks.complete(TaskDomain::Logs, previous.0.id);
         }
-        let mut query = self.logs_state.query.clone();
-        query.source = if self.logs_state.category == ui::LogsCategory::Linux {
+        let mut query = self.pages.logs.logs_state.query.clone();
+        query.source = if self.pages.logs.logs_state.category == ui::LogsCategory::Linux {
             LogSource::Linux
         } else {
             LogSource::Ux
         };
-        query.since = match self.logs_state.time_filter {
+        query.since = match self.pages.logs.logs_state.time_filter {
             1 => Some(Utc::now() - chrono::Duration::hours(1)),
             2 => Some(Utc::now() - chrono::Duration::days(1)),
             3 => Some(Utc::now() - chrono::Duration::days(7)),
-            _ => self.logs_state.query.since,
+            _ => self.pages.logs.logs_state.query.since,
         };
         let job_context = group.new_log_context(
             "ux.logs",
@@ -185,17 +202,17 @@ impl ShellSession {
             .clone()
             .unwrap_or_else(|| Arc::from(platform::native_platform()));
         let shared = Arc::new(LogsJobShared {
+            id: PageInstanceId::new().get(),
             cancelled: Arc::new(AtomicBool::new(false)),
             result: Mutex::new(None),
             worker: Mutex::new(None),
-            background: self.logs_state.background_refresh,
+            background: self.pages.logs.logs_state.background_refresh,
         });
-        self.logs_state.last_refresh = Some(Instant::now());
+        self.pages.logs.logs_state.last_refresh = Some(Instant::now());
         let output = Arc::downgrade(&shared);
         let cancelled = shared.cancelled.clone();
-        self.logs_state.revision = self.logs_state.revision.wrapping_add(1);
-        let task = TaskId::new(format!("logs-query-{}", self.logs_state.revision % 64))
-            .expect("bounded logs task id");
+        self.pages.logs.logs_state.revision = self.pages.logs.logs_state.revision.wrapping_add(1);
+        let task = TaskId::new(format!("logs-query-{}", shared.id)).expect("unique logs task id");
         match group.spawn_thread(TaskSpec::one_shot(task), move || {
             let result = match &document {
                 Some(selection) => {
@@ -225,11 +242,13 @@ impl ShellSession {
         }) {
             Ok(worker) => {
                 *shared.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
-                self.logs_state.job = Some(LogsJob(shared));
-                self.logs_state.feedback = None;
+                let job = LogsJob(shared);
+                self.register_logs_job(&job);
+                self.pages.logs.logs_state.job = Some(job);
+                self.pages.logs.logs_state.feedback = None;
             }
             Err(error) => {
-                self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.logs.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-cannot-start-logs-query-error",
                     error = error.to_string()
                 )))
@@ -238,20 +257,72 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn poll_logs_tasks(&mut self) {
+        for id in self.pages.logs.ids() {
+            self.with_page_context(id, |session| session.poll_logs_page());
+        }
+    }
+
+    pub(in crate::session) fn drain_logs_for_shutdown(&mut self) {
+        for id in self.pages.logs.ids() {
+            if let Some(page) = self.pages.logs.get(id)
+                && let Some(job) = &page.logs_state.job
+            {
+                job.0
+                    .result
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take();
+            }
+        }
+    }
+
+    fn register_logs_job(&mut self, job: &LogsJob) {
+        let cancel = job.clone();
+        let finished = job.clone();
+        self.register_page_task(
+            TaskDomain::Logs,
+            job.0.id,
+            TaskClass::Query,
+            TaskControl::new(
+                move || cancel.0.cancelled.store(true, AtomicOrdering::Relaxed),
+                move || finished.finished(),
+            ),
+        );
+    }
+
+    fn poll_logs_page(&mut self) {
+        let visible = self.pages.logs.selected_id() == Some(self.active_page_id());
+        if visible && let Some(path) = self.pages.logs.logs_state.pending_document.take() {
+            self.show_logs_document(path);
+            return;
+        }
+        if self.pages.logs.logs_state.job.as_ref().is_some_and(|job| {
+            self.tasks.owner(TaskDomain::Logs, job.0.id)
+                != self.pages.logs.selected_id().map(TaskOwner::Page)
+        }) {
+            self.pages.logs.logs_state.job = None;
+            return;
+        }
+        let stopped = self.pages.logs.logs_state.job.as_ref().is_some_and(|job| {
+            job.0.worker.lock().ok().is_some_and(|worker| {
+                worker
+                    .as_ref()
+                    .is_some_and(ManagedThreadHandle::is_finished)
+            })
+        });
         let result = self
+            .pages
+            .logs
             .logs_state
             .job
             .as_ref()
             .and_then(|job| job.0.result.lock().ok()?.take());
         let Some(result) = result else {
-            let stopped = self.logs_state.job.as_ref().is_some_and(|job| {
-                job.0.worker.lock().ok().is_some_and(|worker| {
-                    worker.as_ref().is_some_and(|worker| worker.is_finished())
-                })
-            });
             if stopped {
-                self.logs_state.job = None;
-                self.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                if let Some(job) = self.pages.logs.logs_state.job.take() {
+                    self.tasks.complete(TaskDomain::Logs, job.0.id);
+                }
+                self.pages.logs.logs_state.feedback = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-logs-worker-stopped-before-completing-the-request"
                 )));
             }
@@ -259,17 +330,28 @@ impl ShellSession {
             return;
         };
         let background = self
+            .pages
+            .logs
             .logs_state
             .job
             .as_ref()
             .is_some_and(|job| job.0.background);
-        self.logs_state.job = None;
+        if let Some(job) = self.pages.logs.logs_state.job.take() {
+            self.tasks.complete(TaskDomain::Logs, job.0.id);
+        }
         match result {
             LogsJobResult::Snapshot(mut snapshot) => {
-                let selected_id = self.logs_id_at(self.logs_state.selected);
-                let top_id = self.logs_id_at(self.logs_state.scroll);
+                let selected_id = self.logs_id_at(self.pages.logs.logs_state.selected);
+                let top_id = self.logs_id_at(self.pages.logs.logs_state.scroll);
                 if background {
-                    let old_status = self.logs_state.snapshot.result.file_status.as_ref();
+                    let old_status = self
+                        .pages
+                        .logs
+                        .logs_state
+                        .snapshot
+                        .result
+                        .file_status
+                        .as_ref();
                     let current_status = snapshot.result.file_status.as_ref();
                     if old_status.zip(current_status).is_some_and(|(old, new)| {
                         old.identity != new.identity || old.length > new.length
@@ -278,38 +360,44 @@ impl ShellSession {
                             .result
                             .notices
                             .push(i18n::tr!("ui-logs-file-replaced"));
-                        self.logs_state.snapshot.result.events.clear();
+                        self.pages.logs.logs_state.snapshot.result.events.clear();
                     }
-                    let new = merge_live_events(&mut snapshot, &self.logs_state.snapshot);
-                    if self.logs_state.paused {
-                        self.logs_state.new_events = self.logs_state.new_events.saturating_add(new);
+                    let new =
+                        merge_live_events(&mut snapshot, &self.pages.logs.logs_state.snapshot);
+                    if self.pages.logs.logs_state.paused {
+                        self.pages.logs.logs_state.new_events =
+                            self.pages.logs.logs_state.new_events.saturating_add(new);
                     }
                 }
                 for event in &snapshot.result.events {
-                    if self.logs_state.known_modules.len() < 128
+                    if self.pages.logs.logs_state.known_modules.len() < 128
                         && !self
+                            .pages
+                            .logs
                             .logs_state
                             .known_modules
                             .contains(&event.context.module)
                     {
-                        self.logs_state
+                        self.pages
+                            .logs
+                            .logs_state
                             .known_modules
                             .push(event.context.module.clone());
                     }
                 }
-                self.logs_state.known_modules.sort();
-                self.logs_state.snapshot = snapshot;
+                self.pages.logs.logs_state.known_modules.sort();
+                self.pages.logs.logs_state.snapshot = snapshot;
                 self.apply_logs_sort();
-                if background && !self.logs_state.paused {
-                    self.logs_state.selected = 0;
-                    self.logs_state.scroll = 0;
-                    self.logs_state.explicit_scroll = false;
+                if background && !self.pages.logs.logs_state.paused {
+                    self.pages.logs.logs_state.selected = 0;
+                    self.pages.logs.logs_state.scroll = 0;
+                    self.pages.logs.logs_state.explicit_scroll = false;
                 } else {
                     if let Some(index) = selected_id.and_then(|id| {
                         (0..self.logs_count())
                             .find(|index| self.logs_id_at(*index).as_ref() == Some(&id))
                     }) {
-                        self.logs_state.selected = index;
+                        self.pages.logs.logs_state.selected = index;
                     }
                     if background
                         && let Some(index) = top_id.and_then(|id| {
@@ -317,23 +405,35 @@ impl ShellSession {
                                 .find(|index| self.logs_id_at(*index).as_ref() == Some(&id))
                         })
                     {
-                        self.logs_state.scroll = index;
+                        self.pages.logs.logs_state.scroll = index;
                     }
                 }
-                self.logs_state.selected = self
+                self.pages.logs.logs_state.selected = self
+                    .pages
+                    .logs
                     .logs_state
                     .selected
                     .min(self.logs_count().saturating_sub(1));
-                self.logs_state.feedback = Some(
+                self.pages.logs.logs_state.feedback = Some(
                     format!(
                         "{}{}",
-                        log_state_label(self.logs_state.snapshot.result.state),
-                        if self.logs_state.snapshot.result.notices.is_empty() {
+                        log_state_label(self.pages.logs.logs_state.snapshot.result.state),
+                        if self
+                            .pages
+                            .logs
+                            .logs_state
+                            .snapshot
+                            .result
+                            .notices
+                            .is_empty()
+                        {
                             String::new()
                         } else {
                             format!(
                                 " — {}",
-                                self.logs_state
+                                self.pages
+                                    .logs
+                                    .logs_state
                                     .snapshot
                                     .result
                                     .notices
@@ -348,36 +448,50 @@ impl ShellSession {
                 );
             }
             LogsJobResult::Document(Ok(path)) => {
-                if self.active_screen() == ShellScreen::Logs {
-                    self.logs_state.editor_snapshot = Some(path.clone());
-                    if let Err(error) =
-                        self.open_diagnostics_editor(EditorReloadPolicy::Log { path })
-                    {
-                        self.logs_state.feedback = Some(error);
-                    }
-                } else if self.active_screen() == ShellScreen::Editor
-                    && self.logs_state.refreshing_editor
-                {
-                    if let Some(session) = self.editor_read_session.as_mut() {
-                        session.reload = EditorReloadPolicy::Log { path: path.clone() };
-                    }
-                    self.logs_state.editor_snapshot = Some(path);
-                    self.logs_state.refreshing_editor = false;
-                    self.reload_log_editor_file();
+                if visible {
+                    self.show_logs_document(path);
+                } else {
+                    self.pages.logs.logs_state.pending_document = Some(path);
                 }
             }
             LogsJobResult::Document(Err(error)) => {
-                self.logs_state.refreshing_editor = false;
-                self.logs_state.feedback = Some(error.clone().into());
-                if self.active_screen() == ShellScreen::Editor {
+                self.pages.logs.logs_state.refreshing_editor = false;
+                self.pages.logs.logs_state.feedback = Some(error.clone().into());
+                if visible && self.active_screen() == ShellScreen::Editor {
                     self.report_editor_error(error);
                 }
             }
         }
     }
 
+    fn show_logs_document(&mut self, path: PathBuf) {
+        if self.active_screen() == ShellScreen::Logs {
+            let context = LogsUiState {
+                category: self.pages.logs.logs_state.category,
+                query: self.pages.logs.logs_state.query.clone(),
+                time_filter: self.pages.logs.logs_state.time_filter,
+                last_document: self.pages.logs.logs_state.last_document.clone(),
+                editor_snapshot: Some(path.clone()),
+                ..LogsUiState::default()
+            };
+            match self.open_diagnostics_editor(EditorReloadPolicy::Log { path }) {
+                Ok(()) => self.pages.logs.logs_state = context,
+                Err(error) => self.pages.logs.logs_state.feedback = Some(error),
+            }
+        } else if self.active_screen() == ShellScreen::Editor
+            && self.pages.logs.logs_state.refreshing_editor
+        {
+            if let Some(session) = self.pages.editor.editor_read_session.as_mut() {
+                session.reload = EditorReloadPolicy::Log { path: path.clone() };
+            }
+            self.pages.logs.logs_state.editor_snapshot = Some(path);
+            self.pages.logs.logs_state.refreshing_editor = false;
+            self.reload_log_editor_file();
+        }
+    }
+
     fn logs_id_at(&self, index: usize) -> Option<String> {
-        let state = &self.logs_state;
+        let state = &self.pages.logs.logs_state;
         if state.category == ui::LogsCategory::Linux || state.section == ui::LogsSection::Events {
             state
                 .snapshot
@@ -400,14 +514,14 @@ impl ShellSession {
         }
     }
     fn logs_count(&self) -> usize {
-        if self.logs_state.category == ui::LogsCategory::Linux
-            || self.logs_state.section == ui::LogsSection::Events
+        if self.pages.logs.logs_state.category == ui::LogsCategory::Linux
+            || self.pages.logs.logs_state.section == ui::LogsSection::Events
         {
-            self.logs_state.snapshot.result.events.len()
-        } else if self.logs_state.section == ui::LogsSection::Files {
-            self.logs_state.snapshot.files.len()
+            self.pages.logs.logs_state.snapshot.result.events.len()
+        } else if self.pages.logs.logs_state.section == ui::LogsSection::Files {
+            self.pages.logs.logs_state.snapshot.files.len()
         } else {
-            self.logs_state.snapshot.incidents.len()
+            self.pages.logs.logs_state.snapshot.incidents.len()
         }
     }
     pub(super) fn logs_main_area(&self) -> Option<Rect> {
@@ -416,124 +530,142 @@ impl ShellSession {
         }
     }
     fn logs_move(&mut self, delta: isize) {
-        self.logs_state.paused = true;
-        self.logs_state.selected = self
+        self.pages.logs.logs_state.paused = true;
+        self.pages.logs.logs_state.selected = self
+            .pages
+            .logs
             .logs_state
             .selected
             .saturating_add_signed(delta)
             .min(self.logs_count().saturating_sub(1));
-        self.logs_state.explicit_scroll = false;
+        self.pages.logs.logs_state.explicit_scroll = false;
     }
     fn logs_open_selected(&mut self) {
-        let selection = if self.logs_state.category == ui::LogsCategory::Linux
-            || self.logs_state.section == ui::LogsSection::Events
+        let selection = if self.pages.logs.logs_state.category == ui::LogsCategory::Linux
+            || self.pages.logs.logs_state.section == ui::LogsSection::Events
         {
             Some(LogDocumentSelection::Events)
-        } else if self.logs_state.section == ui::LogsSection::Files {
-            self.logs_state
+        } else if self.pages.logs.logs_state.section == ui::LogsSection::Files {
+            self.pages
+                .logs
+                .logs_state
                 .snapshot
                 .files
-                .get(self.logs_state.selected)
+                .get(self.pages.logs.logs_state.selected)
                 .map(|f| LogDocumentSelection::File(f.path.clone()))
         } else {
-            self.logs_state
+            self.pages
+                .logs
+                .logs_state
                 .snapshot
                 .incidents
-                .get(self.logs_state.selected)
+                .get(self.pages.logs.logs_state.selected)
                 .map(|i| LogDocumentSelection::Incident(i.incident_id.clone()))
         };
         if let Some(selection) = selection {
-            self.logs_state.last_document = Some(selection.clone());
+            self.pages.logs.logs_state.last_document = Some(selection.clone());
             self.request_logs_job(Some(selection));
         }
     }
     pub(in crate::session) fn refresh_logs_editor_snapshot(&mut self) -> bool {
-        let matches = self.editor_read_session.as_ref().is_some_and(|session| {
-            self.logs_state.editor_snapshot.as_deref() == Some(session.reload.path())
-        });
+        let matches = self
+            .pages
+            .editor
+            .editor_read_session
+            .as_ref()
+            .is_some_and(|session| {
+                self.pages.logs.logs_state.editor_snapshot.as_deref() == Some(session.reload.path())
+            });
         if !matches {
             return false;
         }
-        let Some(selection) = self.logs_state.last_document.clone() else {
+        let Some(selection) = self.pages.logs.logs_state.last_document.clone() else {
             return false;
         };
-        if self.logs_state.job.is_none() {
-            self.logs_state.refreshing_editor = true;
+        if self.pages.logs.logs_state.job.is_none() {
+            self.pages.logs.logs_state.refreshing_editor = true;
             self.request_logs_job(Some(selection));
-            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-refreshing-log-query"
             )));
         }
         true
     }
     fn logs_set_category(&mut self, category: ui::LogsCategory) {
-        self.logs_state.category = category;
-        self.logs_state.query = LogQuery::default();
-        self.logs_state.known_modules.clear();
-        self.logs_state.selected = 0;
-        self.logs_state.scroll = 0;
-        self.logs_state.snapshot = LogsSnapshot::default();
-        self.logs_state.paused = false;
-        self.logs_state.new_events = 0;
+        self.pages.logs.logs_state.category = category;
+        self.pages.logs.logs_state.query = LogQuery::default();
+        self.pages.logs.logs_state.known_modules.clear();
+        self.pages.logs.logs_state.selected = 0;
+        self.pages.logs.logs_state.scroll = 0;
+        self.pages.logs.logs_state.snapshot = LogsSnapshot::default();
+        self.pages.logs.logs_state.paused = false;
+        self.pages.logs.logs_state.new_events = 0;
         self.request_logs_job(None);
     }
     fn logs_set_section(&mut self, section: ui::LogsSection) {
-        self.logs_state.section = section;
+        self.pages.logs.logs_state.section = section;
         self.apply_logs_sort();
-        self.logs_state.selected = 0;
-        self.logs_state.scroll = 0;
-        self.logs_state.explicit_scroll = false;
+        self.pages.logs.logs_state.selected = 0;
+        self.pages.logs.logs_state.scroll = 0;
+        self.pages.logs.logs_state.explicit_scroll = false;
     }
     fn logs_filter_level(&mut self) {
-        self.logs_state.query.min_level = match self.logs_state.query.min_level {
-            None => Some(LogLevel::Warning),
-            Some(LogLevel::Warning) => Some(LogLevel::Error),
-            _ => None,
-        };
-        self.logs_state.selected = 0;
+        self.pages.logs.logs_state.query.min_level =
+            match self.pages.logs.logs_state.query.min_level {
+                None => Some(LogLevel::Warning),
+                Some(LogLevel::Warning) => Some(LogLevel::Error),
+                _ => None,
+            };
+        self.pages.logs.logs_state.selected = 0;
         self.request_logs_job(None);
     }
     fn logs_filter_module(&mut self) {
-        let modules = &self.logs_state.known_modules;
-        self.logs_state.query.module = match self.logs_state.query.module.as_ref() {
-            None => modules.first().cloned(),
-            Some(current) => modules
-                .iter()
-                .position(|module| module == current)
-                .and_then(|index| modules.get(index + 1))
-                .cloned(),
-        };
-        self.logs_state.selected = 0;
+        let modules = &self.pages.logs.logs_state.known_modules;
+        self.pages.logs.logs_state.query.module =
+            match self.pages.logs.logs_state.query.module.as_ref() {
+                None => modules.first().cloned(),
+                Some(current) => modules
+                    .iter()
+                    .position(|module| module == current)
+                    .and_then(|index| modules.get(index + 1))
+                    .cloned(),
+            };
+        self.pages.logs.logs_state.selected = 0;
         self.request_logs_job(None);
     }
     fn logs_filter_time(&mut self) {
-        self.logs_state.time_filter = (self.logs_state.time_filter + 1) % 4;
-        self.logs_state.selected = 0;
+        self.pages.logs.logs_state.time_filter = (self.pages.logs.logs_state.time_filter + 1) % 4;
+        self.pages.logs.logs_state.selected = 0;
         self.request_logs_job(None);
     }
 
     fn poll_live_logs(&mut self) {
         if self.active_screen() == ShellScreen::Logs
-            && self.logs_state.job.is_none()
-            && (self.logs_state.category == ui::LogsCategory::Linux
-                || self.logs_state.section == ui::LogsSection::Events)
+            && self.pages.logs.selected_id() == Some(self.active_page_id())
+            && self.pages.logs.logs_state.job.is_none()
+            && (self.pages.logs.logs_state.category == ui::LogsCategory::Linux
+                || self.pages.logs.logs_state.section == ui::LogsSection::Events)
             && self
+                .pages
+                .logs
                 .logs_state
                 .last_refresh
                 .is_some_and(|time| time.elapsed() >= Duration::from_secs(1))
         {
-            self.logs_state.background_refresh = true;
+            self.pages.logs.logs_state.background_refresh = true;
             self.request_logs_job(None);
-            self.logs_state.background_refresh = false;
+            self.pages.logs.logs_state.background_refresh = false;
         }
     }
     fn logs_restore_event_order(&mut self) {
-        if self.logs_state.category == ui::LogsCategory::Linux
-            || self.logs_state.section == ui::LogsSection::Events
+        if self.pages.logs.logs_state.category == ui::LogsCategory::Linux
+            || self.pages.logs.logs_state.section == ui::LogsSection::Events
         {
             let sort_key = self.logs_sort_key();
-            self.table_sorts.remove(&sort_key);
-            self.logs_state
+            self.pages.common.table_sorts.remove(&sort_key);
+            self.pages
+                .logs
+                .logs_state
                 .snapshot
                 .result
                 .events
@@ -541,17 +673,17 @@ impl ShellSession {
         }
     }
     fn logs_follow_control(&mut self) {
-        self.logs_state.paused = !self.logs_state.paused;
-        if !self.logs_state.paused {
+        self.pages.logs.logs_state.paused = !self.pages.logs.logs_state.paused;
+        if !self.pages.logs.logs_state.paused {
             self.logs_restore_event_order();
-            self.logs_state.selected = 0;
-            self.logs_state.scroll = 0;
-            self.logs_state.explicit_scroll = false;
-            self.logs_state.new_events = 0;
+            self.pages.logs.logs_state.selected = 0;
+            self.pages.logs.logs_state.scroll = 0;
+            self.pages.logs.logs_state.explicit_scroll = false;
+            self.pages.logs.logs_state.new_events = 0;
         }
     }
     fn logs_open_filter_form(&mut self) {
-        let query = &self.logs_state.query;
+        let query = &self.pages.logs.logs_state.query;
         let fields = [
             (
                 "unit",
@@ -599,8 +731,8 @@ impl ShellSession {
             ..Default::default()
         })
         .collect();
-        self.logs_state.more_selected = None;
-        self.logs_state.filter_form = Some(ui::ManagementForm {
+        self.pages.logs.logs_state.more_selected = None;
+        self.pages.logs.logs_state.filter_form = Some(ui::ManagementForm {
             identity: "logs.filters".into(),
             title: i18n::tr!("ui-logs-source-filters"),
             fields,
@@ -608,7 +740,7 @@ impl ShellSession {
         });
     }
     fn logs_apply_filter_form(&mut self) {
-        let Some(form) = self.logs_state.filter_form.clone() else {
+        let Some(form) = self.pages.logs.logs_state.filter_form.clone() else {
             return;
         };
         let value = |id: &str| {
@@ -625,7 +757,7 @@ impl ShellSession {
         if !value("file").is_empty() {
             let path = PathBuf::from(value("file"));
             if !path.is_absolute() {
-                if let Some(form) = self.logs_state.filter_form.as_mut() {
+                if let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() {
                     form.message = i18n::tr!("ui-logs-file-absolute");
                 }
                 return;
@@ -634,7 +766,7 @@ impl ShellSession {
         } else {
             if !value("unit").is_empty() {
                 let Some(service) = service_log_query(value("unit"), value("scope")) else {
-                    if let Some(form) = self.logs_state.filter_form.as_mut() {
+                    if let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() {
                         form.message = i18n::tr!("ui-logs-invalid-service");
                     }
                     return;
@@ -652,7 +784,7 @@ impl ShellSession {
                         (-10_000..=0).contains(&number) && number.to_string() == value("boot")
                     })
                 {
-                    if let Some(form) = self.logs_state.filter_form.as_mut() {
+                    if let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() {
                         form.message = i18n::tr!("ui-logs-invalid-boot");
                     }
                     return;
@@ -661,7 +793,7 @@ impl ShellSession {
             }
             if !value("invocation").is_empty() {
                 if !valid_id(value("invocation")) {
-                    if let Some(form) = self.logs_state.filter_form.as_mut() {
+                    if let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() {
                         form.message = i18n::tr!("ui-logs-invalid-invocation");
                     }
                     return;
@@ -669,16 +801,16 @@ impl ShellSession {
                 query.systemd_invocation = Some(value("invocation").into());
             }
         }
-        self.logs_state.query = query;
-        self.logs_state.category = ui::LogsCategory::Linux;
-        self.logs_state.section = ui::LogsSection::Events;
-        self.logs_state.time_filter = 0;
-        self.logs_state.filter_form = None;
-        self.logs_state.snapshot = LogsSnapshot::default();
-        self.logs_state.selected = 0;
-        self.logs_state.scroll = 0;
-        self.logs_state.paused = false;
-        self.logs_state.new_events = 0;
+        self.pages.logs.logs_state.query = query;
+        self.pages.logs.logs_state.category = ui::LogsCategory::Linux;
+        self.pages.logs.logs_state.section = ui::LogsSection::Events;
+        self.pages.logs.logs_state.time_filter = 0;
+        self.pages.logs.logs_state.filter_form = None;
+        self.pages.logs.logs_state.snapshot = LogsSnapshot::default();
+        self.pages.logs.logs_state.selected = 0;
+        self.pages.logs.logs_state.scroll = 0;
+        self.pages.logs.logs_state.paused = false;
+        self.pages.logs.logs_state.new_events = 0;
         self.request_logs_job(None);
     }
     fn logs_handle_filter_key(&mut self, key: &KeyInput) {
@@ -688,7 +820,7 @@ impl ShellSession {
             return;
         }
         if key.key == InputKey::Escape {
-            self.logs_state.filter_form = None;
+            self.pages.logs.logs_state.filter_form = None;
             return;
         }
         if key.modifiers.is_control() && key.key == InputKey::Enter {
@@ -698,7 +830,7 @@ impl ShellSession {
         if key.has_non_shift_modifier() {
             return;
         }
-        let Some(form) = self.logs_state.filter_form.as_mut() else {
+        let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() else {
             return;
         };
         let count = form.fields.len();
@@ -756,27 +888,28 @@ impl ShellSession {
         if !key.phase.is_press_like() {
             return;
         }
-        if self.logs_state.filter_form.is_some() {
+        if self.pages.logs.logs_state.filter_form.is_some() {
             self.logs_handle_filter_key(key);
             return;
         }
-        if let Some(selected) = self.logs_state.more_selected {
+        if let Some(selected) = self.pages.logs.logs_state.more_selected {
             if key.has_non_shift_modifier() {
                 return;
             }
             let controls = ui::logs_more_controls();
             match key.key {
                 InputKey::Escape | InputKey::F(10) if key.phase == InputPhase::Press => {
-                    self.logs_state.more_selected = None
+                    self.pages.logs.logs_state.more_selected = None
                 }
                 InputKey::Up | InputKey::BackTab => self.logs_move_more_selection(-1, true),
                 InputKey::Down | InputKey::Tab => self.logs_move_more_selection(1, true),
                 InputKey::Home => {
-                    self.logs_state.more_selected = Some(controls.len().saturating_sub(1));
+                    self.pages.logs.logs_state.more_selected =
+                        Some(controls.len().saturating_sub(1));
                     self.logs_move_more_selection(1, true);
                 }
                 InputKey::End => {
-                    self.logs_state.more_selected = Some(0);
+                    self.pages.logs.logs_state.more_selected = Some(0);
                     self.logs_move_more_selection(-1, true);
                 }
                 InputKey::Enter | InputKey::Space | InputKey::Char(' ')
@@ -786,7 +919,7 @@ impl ShellSession {
                         && ui::logs_control_enabled(&self.to_logs_view_model(), *target)
                     {
                         let target = *target;
-                        self.logs_state.more_selected = None;
+                        self.pages.logs.logs_state.more_selected = None;
                         self.logs_touch_action(target);
                     }
                 }
@@ -830,7 +963,9 @@ impl ShellSession {
             self.cancel_logs_pointer_gesture();
         }
         if detail_navigation {
-            self.logs_state.detail_scroll = self
+            self.pages.logs.logs_state.detail_scroll = self
+                .pages
+                .logs
                 .logs_state
                 .detail_scroll
                 .saturating_add_signed(if key.key == InputKey::PageUp { -5 } else { 5 });
@@ -845,22 +980,22 @@ impl ShellSession {
                 | InputKey::Home
                 | InputKey::End
         ) {
-            self.logs_state.detail_scroll = 0;
+            self.pages.logs.logs_state.detail_scroll = 0;
         }
         match key.key {
             InputKey::Escape => {
-                self.logs_state.job = None;
-                self.logs_state.scrollbar_grab = None;
+                self.pages.logs.logs_state.job = None;
+                self.pages.logs.logs_state.scrollbar_grab = None;
                 self.return_from_screen(ShellScreen::Logs);
             }
-            InputKey::Left | InputKey::Right => {
-                self.logs_set_category(if self.logs_state.category == ui::LogsCategory::Ux {
+            InputKey::Left | InputKey::Right => self.logs_set_category(
+                if self.pages.logs.logs_state.category == ui::LogsCategory::Ux {
                     ui::LogsCategory::Linux
                 } else {
                     ui::LogsCategory::Ux
-                })
-            }
-            InputKey::Tab => self.logs_set_section(match self.logs_state.section {
+                },
+            ),
+            InputKey::Tab => self.logs_set_section(match self.pages.logs.logs_state.section {
                 ui::LogsSection::Events => ui::LogsSection::Files,
                 ui::LogsSection::Files => ui::LogsSection::Incidents,
                 ui::LogsSection::Incidents => ui::LogsSection::Events,
@@ -871,15 +1006,15 @@ impl ShellSession {
             InputKey::PageDown => self.logs_move(10),
             InputKey::Home => {
                 self.logs_restore_event_order();
-                self.logs_state.selected = 0;
-                self.logs_state.explicit_scroll = false;
-                self.logs_state.paused = false;
-                self.logs_state.new_events = 0;
+                self.pages.logs.logs_state.selected = 0;
+                self.pages.logs.logs_state.explicit_scroll = false;
+                self.pages.logs.logs_state.paused = false;
+                self.pages.logs.logs_state.new_events = 0;
             }
             InputKey::End => {
-                self.logs_state.selected = self.logs_count().saturating_sub(1);
-                self.logs_state.explicit_scroll = false;
-                self.logs_state.paused = true;
+                self.pages.logs.logs_state.selected = self.logs_count().saturating_sub(1);
+                self.pages.logs.logs_state.explicit_scroll = false;
+                self.pages.logs.logs_state.paused = true;
             }
             InputKey::Enter | InputKey::Char('o' | 'O') => self.logs_open_selected(),
             InputKey::Char('r' | 'R') | InputKey::F(5) => self.request_logs_job(None),
@@ -887,45 +1022,51 @@ impl ShellSession {
             InputKey::Char('m' | 'M') => self.logs_filter_module(),
             InputKey::Char('t' | 'T') => self.logs_filter_time(),
             InputKey::Char('p' | 'P') => self.logs_follow_control(),
-            InputKey::F(10) => self.logs_state.more_selected = Some(0),
+            InputKey::F(10) => self.pages.logs.logs_state.more_selected = Some(0),
             InputKey::Char('f' | 'F') => self.logs_open_filter_form(),
-            InputKey::Char('i' | 'I') if self.logs_state.category == ui::LogsCategory::Ux => {
+            InputKey::Char('i' | 'I')
+                if self.pages.logs.logs_state.category == ui::LogsCategory::Ux =>
+            {
                 let id = self
+                    .pages
+                    .logs
                     .logs_state
                     .snapshot
                     .result
                     .events
-                    .get(self.logs_state.selected)
+                    .get(self.pages.logs.logs_state.selected)
                     .and_then(|e| e.incident_id.clone());
-                self.logs_state.query = LogQuery {
+                self.pages.logs.logs_state.query = LogQuery {
                     incident_id: id,
                     ..Default::default()
                 };
-                self.logs_state.time_filter = 0;
+                self.pages.logs.logs_state.time_filter = 0;
                 self.logs_set_section(ui::LogsSection::Incidents);
                 self.request_logs_job(None);
             }
             InputKey::Char('e' | 'E')
-                if self.logs_state.category == ui::LogsCategory::Ux
-                    && self.logs_state.section == ui::LogsSection::Incidents =>
+                if self.pages.logs.logs_state.category == ui::LogsCategory::Ux
+                    && self.pages.logs.logs_state.section == ui::LogsSection::Incidents =>
             {
                 let id = self
+                    .pages
+                    .logs
                     .logs_state
                     .snapshot
                     .incidents
-                    .get(self.logs_state.selected)
+                    .get(self.pages.logs.logs_state.selected)
                     .map(|e| e.incident_id.clone());
-                self.logs_state.query = LogQuery {
+                self.pages.logs.logs_state.query = LogQuery {
                     incident_id: id,
                     ..Default::default()
                 };
-                self.logs_state.time_filter = 0;
+                self.pages.logs.logs_state.time_filter = 0;
                 self.logs_set_section(ui::LogsSection::Events);
                 self.request_logs_job(None);
             }
             InputKey::Char('c' | 'C') => {
-                self.logs_state.query = LogQuery::default();
-                self.logs_state.time_filter = 0;
+                self.pages.logs.logs_state.query = LogQuery::default();
+                self.pages.logs.logs_state.time_filter = 0;
                 self.request_logs_job(None);
             }
             _ => {}
@@ -933,7 +1074,7 @@ impl ShellSession {
     }
     pub(in crate::session) fn to_logs_view_model(&self) -> ui::LogsViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
-        let state = &self.logs_state;
+        let state = &self.pages.logs.logs_state;
         let system = matches!(
             self.logs_access(),
             Some(LogAccess::Admin | LogAccess::OsUser)
@@ -1011,7 +1152,12 @@ impl ShellSession {
             };
         ui::LogsViewModel {
             category: state.category,
-            sort: self.table_sorts.get(&self.logs_sort_key()).copied(),
+            sort: self
+                .pages
+                .common
+                .table_sorts
+                .get(&self.logs_sort_key())
+                .copied(),
             section: state.section,
             diagnostics,
             events: state

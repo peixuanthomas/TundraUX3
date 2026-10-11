@@ -81,12 +81,24 @@ pub(in crate::session) enum EditorTaskEvent {
     },
 }
 
+/// Completion data for a save whose editor was closed. The document buffer
+/// and page state are not retained.
+#[derive(Debug)]
+pub(in crate::session) struct EditorDetachedSave {
+    pub(in crate::session) path: PathBuf,
+    pub(in crate::session) recovery: Option<app::editor_recovery::EditorRecoveryLease>,
+    pub(in crate::session) clear_recovery_on_success: bool,
+}
+
 pub(in crate::session) struct ShellEditorTaskShared {
     pub(in crate::session) task_group: Option<ManagedTaskGroup>,
     pub(in crate::session) event_tx: std_mpsc::Sender<EditorTaskEvent>,
     pub(in crate::session) event_rx: StdMutex<std_mpsc::Receiver<EditorTaskEvent>>,
     pub(in crate::session) cancelled: StdArc<StdMutex<BTreeSet<u64>>>,
     pub(in crate::session) workers: StdMutex<BTreeMap<u64, ManagedThreadHandle<()>>>,
+    save_slots: StdMutex<BTreeMap<usize, u64>>,
+    detached_saves: StdMutex<BTreeMap<u64, EditorDetachedSave>>,
+    recovery_cleanup: StdMutex<Vec<(app::editor_recovery::EditorRecoveryLease, Instant)>>,
     /// Bitset of occupied load slots, allowing one stale cancelled parser and
     /// one current load to coexist without unbounded resource growth.
     pub(in crate::session) active_loads: StdArc<AtomicUsize>,
@@ -137,6 +149,9 @@ impl ShellEditorTaskRuntime {
                 event_rx: StdMutex::new(event_rx),
                 cancelled: StdArc::new(StdMutex::new(BTreeSet::new())),
                 workers: StdMutex::new(BTreeMap::new()),
+                save_slots: StdMutex::new(BTreeMap::new()),
+                detached_saves: StdMutex::new(BTreeMap::new()),
+                recovery_cleanup: StdMutex::new(Vec::new()),
                 active_loads: StdArc::new(AtomicUsize::new(0)),
                 active_load_bytes: StdArc::new(AtomicU64::new(0)),
             }),
@@ -155,6 +170,9 @@ impl ShellEditorTaskRuntime {
                 event_rx: StdMutex::new(event_rx),
                 cancelled: StdArc::new(StdMutex::new(BTreeSet::new())),
                 workers: StdMutex::new(BTreeMap::new()),
+                save_slots: StdMutex::new(BTreeMap::new()),
+                detached_saves: StdMutex::new(BTreeMap::new()),
+                recovery_cleanup: StdMutex::new(Vec::new()),
                 active_loads: StdArc::new(AtomicUsize::new(0)),
                 active_load_bytes: StdArc::new(AtomicU64::new(0)),
             }),
@@ -301,12 +319,29 @@ impl ShellEditorTaskRuntime {
             .task_group
             .clone()
             .ok_or_else(|| "Editor I/O worker is unavailable".to_string())?;
+        let mut workers = self
+            .shared
+            .workers
+            .lock()
+            .map_err(|_| "Editor task registry is unavailable".to_string())?;
+        let mut save_slots = self
+            .shared
+            .save_slots
+            .lock()
+            .map_err(|_| "Editor save slots are unavailable".to_string())?;
+        save_slots.retain(|_, id| workers.get(id).is_some_and(|worker| !worker.is_finished()));
+        // Watchdog retains completed task names. Reuse only fully stopped
+        // slots so its history grows with peak concurrency, not save count.
+        let slot = (0..).find(|slot| !save_slots.contains_key(slot)).unwrap();
+        let task_name = format!("document-save-{slot}");
+        let mut log_context = editor_log_context(&task_group, id, "save", owner_id);
+        log_context.task_id = Some(task_name.clone());
         let request = EditorSaveTaskRequest {
             id,
             path,
             snapshot,
             expected,
-            log_context: editor_log_context(&task_group, id, "save", owner_id),
+            log_context,
             failure: StdMutex::new(None),
         };
         let task_group = task_group.with_log_context(
@@ -314,13 +349,8 @@ impl ShellEditorTaskRuntime {
             request.log_context.operation_id.clone(),
         );
         let events = self.shared.event_tx.clone();
-        let task_id = TaskId::new("document-save")
-            .map_err(|error| format!("invalid Editor save task: {error}"))?;
-        let mut workers = self
-            .shared
-            .workers
-            .lock()
-            .map_err(|_| "Editor task registry is unavailable".to_string())?;
+        let task_id =
+            TaskId::new(task_name).map_err(|error| format!("invalid Editor save task: {error}"))?;
         let worker = task_group
             .spawn_thread(TaskSpec::one_shot(task_id), move || {
                 record_editor_task(
@@ -395,6 +425,7 @@ impl ShellEditorTaskRuntime {
                 }
             })
             .map_err(|error| format!("Could not start Editor save task: {error}"))?;
+        save_slots.insert(slot, id);
         workers.insert(id, worker);
         Ok(())
     }
@@ -406,16 +437,9 @@ impl ShellEditorTaskRuntime {
         let events = std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>();
         drop(receiver);
         if let Ok(mut workers) = self.shared.workers.lock() {
-            for event in &events {
-                let finished = match event {
-                    EditorTaskEvent::LoadFinished { id, .. }
-                    | EditorTaskEvent::SaveFinished { id, .. } => Some(*id),
-                    EditorTaskEvent::Progress { .. } => None,
-                };
-                if let Some(id) = finished {
-                    workers.remove(&id);
-                }
-            }
+            // A terminal event is sent just before the worker returns. Keep
+            // its handle until it has actually stopped, including on close.
+            workers.retain(|_, worker| !worker.is_finished());
         }
         if let Ok(mut cancelled) = self.shared.cancelled.lock() {
             for event in &events {
@@ -425,6 +449,70 @@ impl ShellEditorTaskRuntime {
             }
         }
         events
+    }
+
+    pub(in crate::session) fn task_control(&self, id: u64, cancellable: bool) -> TaskControl {
+        let cancel = self.clone();
+        let finished = self.clone();
+        TaskControl::new(
+            move || {
+                if cancellable {
+                    cancel.cancel(id);
+                }
+            },
+            move || {
+                finished
+                    .shared
+                    .workers
+                    .lock()
+                    .is_ok_and(|workers| workers.get(&id).is_none_or(|worker| worker.is_finished()))
+            },
+        )
+    }
+
+    pub(in crate::session) fn retain_detached_save(
+        &self,
+        id: u64,
+        save: EditorDetachedSave,
+    ) -> Result<(), String> {
+        self.shared
+            .detached_saves
+            .lock()
+            .map_err(|_| "Editor save completion registry is unavailable".to_string())?
+            .insert(id, save);
+        Ok(())
+    }
+
+    pub(in crate::session) fn take_detached_save(&self, id: u64) -> Option<EditorDetachedSave> {
+        self.shared.detached_saves.lock().ok()?.remove(&id)
+    }
+
+    pub(in crate::session) fn defer_recovery_cleanup(
+        &self,
+        lease: app::editor_recovery::EditorRecoveryLease,
+    ) {
+        self.shared
+            .recovery_cleanup
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((lease, Instant::now() + super::EDITOR_RECOVERY_INTERVAL));
+    }
+
+    pub(in crate::session) fn retry_recovery_cleanup(&self, now: Instant) {
+        self.shared
+            .recovery_cleanup
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain_mut(|(lease, retry_at)| {
+                if now < *retry_at {
+                    return true;
+                }
+                if app::editor_recovery::clear_editor_recovery(lease).is_ok() {
+                    return false;
+                }
+                *retry_at = now + super::EDITOR_RECOVERY_INTERVAL;
+                true
+            });
     }
 }
 
@@ -655,7 +743,9 @@ pub(in crate::session) fn load_editor_document_task(
 pub(in crate::session) static NEXT_EDITOR_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(in crate::session) fn next_editor_task_id() -> u64 {
-    NEXT_EDITOR_TASK_ID.fetch_add(1, Ordering::Relaxed).max(1)
+    NEXT_EDITOR_TASK_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("editor task identifiers exhausted")
 }
 
 #[derive(Debug)]
@@ -743,4 +833,99 @@ fn record_editor_task(
         ));
     }
     record_shell_runtime_event(event);
+}
+
+#[cfg(test)]
+mod instance_tests {
+    use super::*;
+
+    fn snapshot(text: &str) -> app::editor::SaveSnapshot {
+        let mut state = EditorState::new();
+        state.apply(app::editor::EditorCommand::InsertText(text.into()));
+        match state
+            .apply(app::editor::EditorCommand::RequestSave)
+            .remove(0)
+        {
+            app::editor::EditorEffect::SaveFilePicker { snapshot, .. } => snapshot,
+            _ => panic!("untitled document should produce a save snapshot"),
+        }
+    }
+
+    fn wait_for_worker(runtime: &ShellEditorTaskRuntime, id: u64) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while runtime
+            .shared
+            .workers
+            .lock()
+            .unwrap()
+            .get(&id)
+            .is_some_and(|worker| !worker.is_finished())
+        {
+            assert!(Instant::now() < deadline, "editor worker did not stop");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn save_workers_use_separate_watchdog_slots_and_reuse_them_after_completion() {
+        let runtime = ShellEditorTaskRuntime::new();
+        let group = runtime.shared.task_group.as_ref().unwrap();
+        let blocker_id = next_editor_task_id();
+        let (release, wait) = std_mpsc::channel();
+        let blocker = group
+            .spawn_thread(
+                TaskSpec::one_shot(TaskId::new("document-save-0").unwrap()),
+                move || {
+                    wait.recv_timeout(Duration::from_secs(10)).unwrap();
+                },
+            )
+            .unwrap();
+        runtime
+            .shared
+            .workers
+            .lock()
+            .unwrap()
+            .insert(blocker_id, blocker);
+        runtime
+            .shared
+            .save_slots
+            .lock()
+            .unwrap()
+            .insert(0, blocker_id);
+        let root = std::env::temp_dir().join(format!(
+            "tundra-editor-save-slots-{}-{blocker_id}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let first = next_editor_task_id();
+        runtime
+            .submit_save_with_owner(first, root.join("first.txt"), snapshot("first"), None, None)
+            .unwrap();
+        assert_eq!(
+            runtime.shared.save_slots.lock().unwrap().get(&1),
+            Some(&first)
+        );
+        wait_for_worker(&runtime, first);
+        assert_eq!(std::fs::read(root.join("first.txt")).unwrap(), b"first");
+        release.send(()).unwrap();
+        wait_for_worker(&runtime, blocker_id);
+        let second = next_editor_task_id();
+        runtime
+            .submit_save_with_owner(
+                second,
+                root.join("second.txt"),
+                snapshot("second"),
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            *runtime.shared.save_slots.lock().unwrap(),
+            BTreeMap::from([(0, second)])
+        );
+        wait_for_worker(&runtime, second);
+        assert_eq!(std::fs::read(root.join("second.txt")).unwrap(), b"second");
+        drop(runtime);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

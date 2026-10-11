@@ -207,7 +207,7 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
         if launcher {
             state.enter_screen(ShellScreen::Launcher);
             if mode == 2 {
-                state.launcher_view_mode = ui::LauncherViewMode::Details;
+                state.pages.launcher.launcher_view_mode = ui::LauncherViewMode::Details;
             }
             state.refresh_hit_map();
         }
@@ -250,9 +250,9 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
         let border = (area.x, area.y);
         let focused_color = terminal.backend().buffer()[border].fg;
         let selection = if launcher {
-            state.launcher_selected_index
+            state.pages.launcher.launcher_selected_index
         } else {
-            state.selected_home_entry_index
+            state.pages.home.selected_home_entry_index
         };
         for pointer in [
             InputEvent::mouse_moved((0, 0)),
@@ -264,9 +264,9 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
             assert_ne!(terminal.backend().buffer()[border].fg, focused_color);
             assert_eq!(
                 if launcher {
-                    state.launcher_selected_index
+                    state.pages.launcher.launcher_selected_index
                 } else {
-                    state.selected_home_entry_index
+                    state.pages.home.selected_home_entry_index
                 },
                 selection
             );
@@ -311,26 +311,19 @@ fn pointer_back_button_does_not_restore_keyboard_focus() {
 }
 
 #[test]
-fn command_line_back_hint_matches_the_host_exit_key_and_button_width() {
+fn command_line_back_button_has_no_keyboard_shortcut_and_routes_to_confirmation() {
     let mut state = session();
     assert_eq!(state.to_shell_chrome_view_model().back_shortcut, "Esc");
     state.enter_screen(ShellScreen::CommandLine);
     state.refresh_hit_map();
-    assert_eq!(
-        state.to_shell_chrome_view_model().back_shortcut,
-        "Ctrl+Shift+X"
-    );
+    assert_eq!(state.to_shell_chrome_view_model().back_shortcut, "");
     let back = state.frame_layout.unwrap().back_button.unwrap();
-    assert_eq!(back.width, 18);
+    assert!(back.width < 18);
+    let input = InputEvent::mouse_down(PointerButton::Left, (back.x, back.y));
+    assert_eq!(state.normalize_shell_navigation_input(input.clone()), input);
     assert_eq!(
-        state.normalize_shell_navigation_input(InputEvent::mouse_down(
-            PointerButton::Left,
-            (back.x, back.y)
-        )),
-        InputEvent::Key(KeyInput::with_modifiers(
-            InputKey::Char('x'),
-            InputModifiers::CTRL_SHIFT
-        ))
+        state.route_input_at(input, Instant::now()).command,
+        ShellCommand::RequestCommandLineClose
     );
 }
 
@@ -608,7 +601,7 @@ fn button_click_allows_short_presses_but_rejects_holds_over_500_ms() {
             if kind == 1 || kind == 2 {
                 state.enter_screen(ShellScreen::Launcher);
                 if kind == 2 {
-                    state.launcher_view_mode = ui::LauncherViewMode::Details;
+                    state.pages.launcher.launcher_view_mode = ui::LauncherViewMode::Details;
                 }
                 state.refresh_hit_map();
             } else if kind == 3 {
@@ -714,14 +707,14 @@ fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_di
         theme.button_hover_color()
     );
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert!(state.clock_create_state.is_none());
+    assert!(state.pages.clock.clock_create_state.is_none());
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
     assert_eq!(
         terminal.backend().buffer()[point].fg,
         theme.button_pressed_color()
     );
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert!(state.clock_create_state.is_some());
+    assert!(state.pages.clock.clock_create_state.is_some());
 }
 
 #[test]
@@ -761,7 +754,7 @@ fn launcher_click_launches_only_after_matching_release_in_both_views() {
         for cancel in 0..5 {
             let mut state = session();
             state.enter_screen(ShellScreen::Launcher);
-            state.launcher_view_mode = view;
+            state.pages.launcher.launcher_view_mode = view;
             state.refresh_hit_map();
             let mut compositor = ScreenCompositor::default();
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
@@ -884,7 +877,7 @@ fn home_entry_single_click_opens_on_first_release() {
     keyboard_state.select_home_entry(launcher_index);
     keyboard_state.apply_input_with_platform(InputEvent::key(InputKey::Enter), &platform);
     assert_eq!(keyboard_state.active_screen(), ShellScreen::Launcher);
-    assert!(keyboard_state.error_message.is_none());
+    assert!(keyboard_state.pages.common.error_message.is_none());
 
     let mut state = launcher_session();
     let mut compositor = ScreenCompositor::default();
@@ -920,7 +913,7 @@ fn home_entry_single_click_opens_on_first_release() {
         pressed_at + Duration::from_millis(10),
     );
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
-    assert!(state.error_message.is_none());
+    assert!(state.pages.common.error_message.is_none());
 }
 
 #[test]

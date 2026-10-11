@@ -26,7 +26,7 @@ impl ShellSession {
         }
         let selected_index = self.settings_picker_initial_index(kind);
         let image_icons_supported = self.terminal_image_support;
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.picker = Some(SettingsPickerState {
                 kind,
                 query: String::new(),
@@ -47,7 +47,7 @@ impl ShellSession {
         &self,
         kind: ui::SettingsPickerKind,
     ) -> usize {
-        if self.settings_state.is_none() {
+        if self.pages.settings.settings_state.is_none() {
             return 0;
         }
         let config = self.app.storage_config();
@@ -102,13 +102,15 @@ impl ShellSession {
         match &key.key {
             InputKey::Escape => {
                 let return_to_theme = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_ref()
                     .and_then(|state| state.picker.as_ref())
                     .is_some_and(|picker| picker.kind == ui::SettingsPickerKind::DefaultThemeIcons);
                 if return_to_theme {
                     self.open_settings_picker(ui::SettingsPickerKind::Theme);
-                } else if let Some(state) = self.settings_state.as_mut() {
+                } else if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.picker = None;
                     state.status = i18n::msg!("settings-ready").into();
                 }
@@ -120,6 +122,8 @@ impl ShellSession {
             InputKey::Home => self.select_settings_picker_at(0),
             InputKey::End => {
                 let last = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_ref()
                     .and_then(|state| state.picker.as_ref())
@@ -130,7 +134,7 @@ impl ShellSession {
             }
             InputKey::Enter => self.apply_settings_picker_selection(),
             InputKey::Backspace => {
-                if let Some(state) = self.settings_state.as_mut()
+                if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(picker) = state.picker.as_mut()
                     && matches!(
                         picker.kind,
@@ -145,6 +149,8 @@ impl ShellSession {
             InputKey::Char(character)
                 if !character.is_control()
                     && self
+                        .pages
+                        .settings
                         .settings_state
                         .as_ref()
                         .and_then(|state| state.picker.as_ref())
@@ -155,7 +161,7 @@ impl ShellSession {
                             )
                         }) =>
             {
-                if let Some(state) = self.settings_state.as_mut()
+                if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(picker) = state.picker.as_mut()
                 {
                     picker.query.push(*character);
@@ -169,6 +175,8 @@ impl ShellSession {
 
     pub(in crate::session) fn select_settings_picker_delta(&mut self, delta: isize) {
         let count = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.picker.as_ref())
@@ -179,6 +187,8 @@ impl ShellSession {
             return;
         }
         let current = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.picker.as_ref())
@@ -191,6 +201,8 @@ impl ShellSession {
 
     pub(in crate::session) fn select_settings_picker_at(&mut self, index: usize) {
         let count = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.picker.as_ref())
@@ -198,7 +210,7 @@ impl ShellSession {
             .map(|options| options.len())
             .unwrap_or(0);
         let visible = settings_picker_visible_rows(self.terminal_size.1);
-        if let Some(state) = self.settings_state.as_mut()
+        if let Some(state) = self.pages.settings.settings_state.as_mut()
             && let Some(picker) = state.picker.as_mut()
             && count > 0
         {
@@ -216,6 +228,8 @@ impl ShellSession {
 
     pub(in crate::session) fn apply_settings_picker_selection(&mut self) {
         let Some(picker) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.picker.as_ref())
@@ -229,7 +243,7 @@ impl ShellSession {
             return;
         };
         if !option.enabled {
-            if let Some(state) = self.settings_state.as_mut() {
+            if let Some(state) = self.pages.settings.settings_state.as_mut() {
                 state.status = i18n::msg!("settings-images-unavailable").into();
             }
             return;
@@ -264,7 +278,7 @@ impl ShellSession {
                 }
                 appearance.icon_display_mode = icon_display_mode;
                 if self.save_settings_appearance(appearance, i18n::msg!("settings-saved-icon-mode"))
-                    && let Some(state) = self.settings_state.as_mut()
+                    && let Some(state) = self.pages.settings.settings_state.as_mut()
                 {
                     state.picker = None;
                 }
@@ -282,7 +296,7 @@ impl ShellSession {
                 if self.save_settings_appearance(
                     appearance,
                     settings_saved_field(ui::SettingsField::AnimationSpeed),
-                ) && let Some(state) = self.settings_state.as_mut()
+                ) && let Some(state) = self.pages.settings.settings_state.as_mut()
                 {
                     state.picker = None;
                 }
@@ -295,7 +309,7 @@ impl ShellSession {
             }
             ui::SettingsPickerKind::BorderColor | ui::SettingsPickerKind::AccentColor => {
                 if option.detail == "#RRGGBB" {
-                    if let Some(state) = self.settings_state.as_mut() {
+                    if let Some(state) = self.pages.settings.settings_state.as_mut() {
                         state.picker = None;
                         state.color_editor = Some(SettingsColorEditorState {
                             kind: picker.kind,
@@ -318,7 +332,7 @@ impl ShellSession {
                     _ => {}
                 }
                 if self.save_settings_appearance(appearance, settings_saved_picker(picker.kind))
-                    && let Some(state) = self.settings_state.as_mut()
+                    && let Some(state) = self.pages.settings.settings_state.as_mut()
                 {
                     state.picker = None;
                 }
@@ -401,7 +415,7 @@ impl ShellSession {
         if let Some((catalog, loaded)) = candidate {
             self.publish_language(catalog, loaded);
         }
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.picker = None;
             state.status = i18n::msg!("settings-saved-region").into();
         }
@@ -420,7 +434,7 @@ impl ShellSession {
             .weather_location
             .clone()
             .unwrap_or_default();
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.weather_location_editor =
                 Some(SettingsWeatherLocationEditorState { value, error: None });
             state.picker = None;
@@ -440,7 +454,7 @@ impl ShellSession {
         let value = format_editor_explorer_open_extensions(
             &self.app.storage_config().editor.explorer_open_extensions,
         );
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.file_extensions_editor =
                 Some(SettingsFileExtensionsEditorState { value, error: None });
             state.picker = None;
@@ -468,7 +482,7 @@ impl ShellSession {
             .server_url
             .clone()
             .unwrap_or_default();
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
                 value,
                 error: None,
@@ -488,13 +502,15 @@ impl ShellSession {
             return;
         }
         let validating = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.time_sync_server_editor.as_ref())
             .is_some_and(|editor| editor.validating);
         match &key.key {
             InputKey::Escape => {
-                if let Some(state) = self.settings_state.as_mut() {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.time_sync_server_editor = None;
                     state.time_sync_validation_request_id = None;
                     state.status = i18n::msg!("settings-ready").into();
@@ -503,6 +519,8 @@ impl ShellSession {
             _ if validating => {}
             InputKey::Backspace => {
                 if let Some(editor) = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_mut()
                     .and_then(|state| state.time_sync_server_editor.as_mut())
@@ -513,6 +531,8 @@ impl ShellSession {
             }
             InputKey::Char(character) if !character.is_control() => {
                 if let Some(editor) = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_mut()
                     .and_then(|state| state.time_sync_server_editor.as_mut())
@@ -538,6 +558,8 @@ impl ShellSession {
 
     pub(in crate::session) fn validate_settings_time_sync_server(&mut self) {
         let Some(value) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.time_sync_server_editor.as_ref())
@@ -549,6 +571,8 @@ impl ShellSession {
             Ok(server_url) => server_url,
             Err(error) => {
                 if let Some(editor) = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_mut()
                     .and_then(|state| state.time_sync_server_editor.as_mut())
@@ -574,13 +598,15 @@ impl ShellSession {
         }
         match &key.key {
             InputKey::Escape => {
-                if let Some(state) = self.settings_state.as_mut() {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.file_extensions_editor = None;
                     state.status = i18n::msg!("settings-ready").into();
                 }
             }
             InputKey::Backspace => {
                 if let Some(editor) = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_mut()
                     .and_then(|state| state.file_extensions_editor.as_mut())
@@ -591,6 +617,8 @@ impl ShellSession {
             }
             InputKey::Char(character) => {
                 let Some(editor) = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_mut()
                     .and_then(|state| state.file_extensions_editor.as_mut())
@@ -623,6 +651,8 @@ impl ShellSession {
             return;
         }
         let Some(value) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.file_extensions_editor.as_ref())
@@ -634,6 +664,8 @@ impl ShellSession {
             Ok(extensions) => extensions,
             Err(error) => {
                 if let Some(editor) = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_mut()
                     .and_then(|state| state.file_extensions_editor.as_mut())
@@ -666,7 +698,7 @@ impl ShellSession {
             return;
         }
         self.replace_storage_config(config);
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.file_extensions_editor = None;
             state.status = i18n::msg!("settings-saved-suffixes").into();
         }
@@ -679,13 +711,13 @@ impl ShellSession {
         }
         match &key.key {
             InputKey::Escape => {
-                if let Some(state) = self.settings_state.as_mut() {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.weather_location_editor = None;
                     state.status = i18n::msg!("settings-ready").into();
                 }
             }
             InputKey::Backspace => {
-                if let Some(state) = self.settings_state.as_mut()
+                if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(editor) = state.weather_location_editor.as_mut()
                 {
                     editor.value.pop();
@@ -694,6 +726,8 @@ impl ShellSession {
             }
             InputKey::Char(character) => {
                 let Some(editor) = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_mut()
                     .and_then(|state| state.weather_location_editor.as_mut())
@@ -719,6 +753,8 @@ impl ShellSession {
 
     pub(in crate::session) fn request_settings_weather_location_confirmation(&mut self) {
         let Some(value) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.weather_location_editor.as_ref())
@@ -756,6 +792,8 @@ impl ShellSession {
             return;
         }
         let Some(value) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.weather_location_editor.as_ref())
@@ -786,7 +824,7 @@ impl ShellSession {
             return;
         }
         self.replace_storage_config(config);
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.weather_location_editor = None;
             state.status = i18n::msg!("settings-saved-weather").into();
         }
@@ -799,13 +837,13 @@ impl ShellSession {
         }
         match &key.key {
             InputKey::Escape => {
-                if let Some(state) = self.settings_state.as_mut() {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.color_editor = None;
                     state.status = i18n::msg!("settings-ready").into();
                 }
             }
             InputKey::Backspace => {
-                if let Some(state) = self.settings_state.as_mut()
+                if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(editor) = state.color_editor.as_mut()
                 {
                     editor.value.pop();
@@ -815,12 +853,14 @@ impl ShellSession {
             InputKey::Char(character)
                 if (*character == '#' || character.is_ascii_hexdigit())
                     && self
+                        .pages
+                        .settings
                         .settings_state
                         .as_ref()
                         .and_then(|state| state.color_editor.as_ref())
                         .is_some_and(|editor| editor.value.len() < 7) =>
             {
-                if let Some(state) = self.settings_state.as_mut()
+                if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(editor) = state.color_editor.as_mut()
                 {
                     editor.value.push(*character);
@@ -834,6 +874,8 @@ impl ShellSession {
 
     pub(in crate::session) fn apply_settings_custom_color(&mut self) {
         let Some(editor) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .and_then(|state| state.color_editor.as_ref())
@@ -844,7 +886,7 @@ impl ShellSession {
         let color = match editor.value.parse::<storage::BorderColor>() {
             Ok(color) => color,
             Err(_) => {
-                if let Some(state) = self.settings_state.as_mut()
+                if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(color_editor) = state.color_editor.as_mut()
                 {
                     color_editor.error = Some(i18n::msg!("settings-invalid-custom-color").into());
@@ -861,7 +903,7 @@ impl ShellSession {
             _ => return,
         }
         if self.save_settings_appearance(appearance, settings_saved_picker(editor.kind))
-            && let Some(state) = self.settings_state.as_mut()
+            && let Some(state) = self.pages.settings.settings_state.as_mut()
         {
             state.color_editor = None;
         }

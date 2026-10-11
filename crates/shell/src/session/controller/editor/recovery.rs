@@ -2,24 +2,35 @@ use super::*;
 use crate::session::*;
 
 impl ShellSession {
+    pub(in crate::session) fn reset_editor_recovery_identity(&mut self) -> bool {
+        if !self.clear_editor_recovery() {
+            return false;
+        }
+        self.pages.editor.editor_recovery_lease = None;
+        self.pages.editor.editor_recovery_id = Default::default();
+        self.pages.editor.editor_recovery_dirty_since = None;
+        self.pages.editor.editor_last_recovery_write = None;
+        true
+    }
+
     pub(in crate::session) fn restore_editor_recovery_if_present(&mut self) {
         let Some((app_paths, user_key)) = self.editor_recovery_context() else {
             return;
         };
-        let recovery = match app::editor_recovery::read_versioned_editor_recovery(
-            &app_paths,
-            user_key.as_str(),
-        ) {
-            Ok(Some(record)) => record,
-            Ok(None) => return,
-            Err(error) => {
-                self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-could-not-read-the-editor-recovery-error",
-                    error = error.to_string()
-                )));
-                return;
-            }
-        };
+        let (lease, recovery) =
+            match app::editor_recovery::claim_next_editor_recovery(&app_paths, user_key.as_str()) {
+                Ok(Some(record)) => record,
+                Ok(None) => return,
+                Err(error) => {
+                    self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-read-the-editor-recovery-error",
+                        error = error.to_string()
+                    )));
+                    return;
+                }
+            };
+        self.pages.editor.editor_recovery_id = lease.id().clone();
+        self.pages.editor.editor_recovery_lease = Some(lease);
 
         let (mut state, fingerprint, unbound, warning) = match recovery {
             app::editor_recovery::VersionedEditorRecovery::V1(record) => {
@@ -42,12 +53,12 @@ impl ShellSession {
         self.advance_editor_document_generation();
         self.app
             .dispatch_at(app::AppCommand::SetEditorState(Some(state)), Instant::now());
-        self.editor_quick_menu_anchor = None;
-        self.editor_table_column_widths.clear();
-        self.editor_table_resize = None;
-        self.editor_fingerprint = fingerprint;
-        self.editor_recovery_dirty_since = Some(Instant::now());
-        self.editor_message = Some(if let Some(warning) = warning {
+        self.pages.editor.editor_quick_menu_anchor = None;
+        self.pages.editor.editor_table_column_widths.clear();
+        self.pages.editor.editor_table_resize = None;
+        self.pages.editor.editor_fingerprint = fingerprint;
+        self.pages.editor.editor_recovery_dirty_since = Some(Instant::now());
+        self.pages.editor.editor_message = Some(if let Some(warning) = warning {
             warning
         } else if unbound {
             i18n::LocalizedText::from(i18n::msg!(
@@ -69,12 +80,14 @@ impl ShellSession {
         {
             return;
         }
-        let Some(dirty_since) = self.editor_recovery_dirty_since else {
-            self.editor_recovery_dirty_since = Some(now);
+        let Some(dirty_since) = self.pages.editor.editor_recovery_dirty_since else {
+            self.pages.editor.editor_recovery_dirty_since = Some(now);
             return;
         };
         if now.saturating_duration_since(dirty_since) < EDITOR_RECOVERY_IDLE
             || self
+                .pages
+                .editor
                 .editor_last_recovery_write
                 .is_some_and(|last| now.saturating_duration_since(last) < EDITOR_RECOVERY_INTERVAL)
         {
@@ -131,7 +144,11 @@ impl ShellSession {
             path: state.document.path.clone(),
             document_kind,
             metadata: editor_recovery_metadata(state.document.metadata),
-            saved_content_hash: self.editor_fingerprint.map(|value| value.content_hash),
+            saved_content_hash: self
+                .pages
+                .editor
+                .editor_fingerprint
+                .map(|value| value.content_hash),
             updated_at_epoch_ms: 0,
             payload,
         };
@@ -139,10 +156,31 @@ impl ShellSession {
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
             .unwrap_or_default();
-        match app::editor_recovery::write_editor_recovery_v2(&app_paths, user_key.as_str(), &record)
-        {
+        if self.pages.editor.editor_recovery_lease.is_none() {
+            match app::editor_recovery::acquire_editor_recovery(
+                &app_paths,
+                user_key.as_str(),
+                &self.pages.editor.editor_recovery_id,
+            ) {
+                Ok(lease) => self.pages.editor.editor_recovery_lease = Some(lease),
+                Err(error) => {
+                    self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-could-not-save-recovery-error",
+                        error = error.to_string()
+                    )));
+                    return false;
+                }
+            }
+        }
+        let lease = self
+            .pages
+            .editor
+            .editor_recovery_lease
+            .as_ref()
+            .expect("recovery was acquired");
+        match app::editor_recovery::write_editor_recovery_v2(lease, &record) {
             Ok(()) => {
-                self.editor_last_recovery_write = Some(now);
+                self.pages.editor.editor_last_recovery_write = Some(now);
                 true
             }
             Err(error) => {
@@ -158,7 +196,13 @@ impl ShellSession {
     pub(in crate::session) fn editor_recovery_context(
         &self,
     ) -> Option<(platform::AppPaths, String)> {
-        if self.config_editor_active() {
+        if self.config_editor_active()
+            || self.pages.editor.editor_read_session.is_some()
+            || self
+                .app
+                .editor_state()
+                .is_some_and(EditorState::is_read_only)
+        {
             return None;
         }
         let storage = self.storage_manager.as_ref()?;
@@ -167,17 +211,19 @@ impl ShellSession {
         Some((app_paths, user_key))
     }
 
-    pub(in crate::session) fn clear_editor_recovery(&mut self) {
-        if let Some((app_paths, user_key)) = self.editor_recovery_context()
-            && let Err(error) =
-                app::editor_recovery::clear_editor_recovery(&app_paths, user_key.as_str())
+    pub(in crate::session) fn clear_editor_recovery(&mut self) -> bool {
+        if self.editor_recovery_context().is_some()
+            && let Some(lease) = self.pages.editor.editor_recovery_lease.as_ref()
+            && let Err(error) = app::editor_recovery::clear_editor_recovery(lease)
         {
-            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
                 "shell-could-not-clear-recovery-error",
                 error = error.to_string()
             )));
+            return false;
         }
-        self.editor_recovery_dirty_since = None;
-        self.editor_last_recovery_write = None;
+        self.pages.editor.editor_recovery_dirty_since = None;
+        self.pages.editor.editor_last_recovery_write = None;
+        true
     }
 }

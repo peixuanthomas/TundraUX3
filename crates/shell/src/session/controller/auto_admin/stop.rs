@@ -1,6 +1,9 @@
 use super::*;
 impl ShellSession {
     pub(super) fn poll_auto_admin_stop(&mut self, now: Instant) {
+        if self.auto_admin.closing_page.is_some() {
+            return;
+        }
         if self
             .auto_admin
             .job

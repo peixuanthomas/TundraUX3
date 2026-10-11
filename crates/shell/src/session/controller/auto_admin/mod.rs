@@ -26,6 +26,8 @@ pub(super) fn policy_label(policy: storage::AutoAdminPolicy) -> String {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::session) struct AutoAdminState {
     job: Option<AutoAdminJob>,
+    task_request: Option<u64>,
+    closing_page: Option<PageInstanceId>,
     pub(super) visible: bool,
     approve_selected: bool,
     scroll: u16,
@@ -71,7 +73,11 @@ impl ShellSession {
         #[cfg(target_os = "linux")]
         self.privilege_session.revoke();
         if let Some(job) = &self.auto_admin.job {
-            job.cancel();
+            if job.phase() == WAITING {
+                job.decide(false);
+            } else {
+                job.request_stop(false);
+            }
         }
     }
     pub(in crate::session) fn auto_admin_power_succeeded(&self) -> bool {
@@ -198,9 +204,31 @@ impl ShellSession {
         } else {
             storage::AutoAdminPolicy::Automatic
         };
+        if let Some(request) = self.auto_admin.task_request.take() {
+            self.tasks.complete(TaskDomain::AutoAdmin, request);
+        }
         let job = AutoAdminJob::new(description, policy, responses);
+        let task_request = PageInstanceId::new().get();
+        let cancel = job.clone();
+        let finished = job.clone();
+        self.register_page_task(
+            TaskDomain::AutoAdmin,
+            task_request,
+            TaskClass::Operation,
+            TaskControl::new(
+                move || {
+                    if cancel.phase() == WAITING {
+                        cancel.decide(false);
+                    } else {
+                        cancel.request_stop(false);
+                    }
+                },
+                move || finished.task_finished(),
+            ),
+        );
         self.auto_admin = AutoAdminState {
             job: Some(job.clone()),
+            task_request: Some(task_request),
             visible: true,
             approve_selected: true,
             suppress_repeats: true,
@@ -214,6 +242,50 @@ impl ShellSession {
     }
     pub(in crate::session) fn auto_admin_visible(&self) -> bool {
         self.auto_admin.visible && self.auto_admin.job.is_some()
+    }
+
+    fn request_auto_admin_owner_close(&mut self) -> bool {
+        let Some(request) = self.auto_admin.task_request else {
+            return false;
+        };
+        let Some(TaskOwner::Page(owner)) = self.tasks.owner(TaskDomain::AutoAdmin, request) else {
+            return false;
+        };
+        if owner != self.active_page_id() {
+            return false;
+        }
+        self.auto_admin.closing_page = Some(owner);
+        self.auto_admin.visible = false;
+        self.auto_admin.pointer = None;
+        self.synchronize_overlay_focus();
+        self.request_page_close(owner);
+        true
+    }
+
+    pub(in crate::session) fn finish_auto_admin_close_choice(
+        &mut self,
+        owner: PageInstanceId,
+        restore: bool,
+    ) {
+        if self.auto_admin.closing_page == Some(owner) {
+            self.auto_admin.closing_page = None;
+            self.auto_admin.visible = restore;
+            self.synchronize_overlay_focus();
+        }
+    }
+    pub(in crate::session) fn hide_background_auto_admin(&mut self) {
+        if let Some(request) = self.auto_admin.task_request
+            && self.tasks.owner(TaskDomain::AutoAdmin, request) == Some(TaskOwner::Session)
+            && self
+                .auto_admin
+                .job
+                .as_ref()
+                .is_some_and(|job| !job.needs_input())
+        {
+            self.auto_admin.visible = false;
+            self.auto_admin.pointer = None;
+            self.synchronize_overlay_focus();
+        }
     }
     pub(in crate::session) fn cancel_auto_admin_pointer(&mut self) {
         self.auto_admin.pointer = None;
@@ -244,7 +316,7 @@ impl ShellSession {
     }
     pub(in crate::session) fn poll_auto_admin(&mut self) -> bool {
         self.poll_auto_admin_stop(Instant::now());
-        let Some(job) = &self.auto_admin.job else {
+        let Some(job) = self.auto_admin.job.clone() else {
             return false;
         };
         #[cfg(target_os = "linux")]
@@ -252,7 +324,22 @@ impl ShellSession {
         let revision = job.revision();
         let changed = revision != self.auto_admin.revision;
         self.auto_admin.revision = revision;
-        changed
+        let needs_input = job.needs_input();
+        let finished = job.task_finished();
+        let show =
+            needs_input && !self.auto_admin.visible && self.auto_admin.closing_page.is_none();
+        if show {
+            self.auto_admin.visible = true;
+            self.auto_admin.pointer = None;
+            self.auto_admin.suppress_repeats = true;
+            self.button_pointer_capture = None;
+            self.last_key_event = None;
+            self.synchronize_overlay_focus();
+        }
+        if finished && let Some(request) = self.auto_admin.task_request.take() {
+            self.tasks.complete(TaskDomain::AutoAdmin, request);
+        }
+        changed || show
     }
     pub(in crate::session) fn close_auto_admin(&mut self) {
         self.synchronize_overlay_focus();
@@ -269,6 +356,9 @@ impl ShellSession {
         self.synchronize_overlay_focus();
     }
     pub(in crate::session) fn show_auto_admin_job(&mut self, job: AutoAdminJob) {
+        if self.auto_admin.closing_page.is_some() && self.auto_admin.job.as_ref() == Some(&job) {
+            return;
+        }
         self.synchronize_overlay_focus();
         if self
             .auto_admin
@@ -282,6 +372,9 @@ impl ShellSession {
             return;
         }
         if self.auto_admin.job.as_ref() != Some(&job) {
+            if let Some(request) = self.auto_admin.task_request.take() {
+                self.tasks.complete(TaskDomain::AutoAdmin, request);
+            }
             self.auto_admin = AutoAdminState {
                 job: Some(job),
                 approve_selected: true,
@@ -301,6 +394,14 @@ impl ShellSession {
             return None;
         }
         self.auto_admin_model()
+    }
+
+    pub(in crate::session) fn show_stopping_auto_admin(&mut self) {
+        if self.auto_admin_running() {
+            self.auto_admin.closing_page = None;
+            self.auto_admin.visible = true;
+            self.synchronize_overlay_focus();
+        }
     }
     pub(in crate::session) fn auto_admin_pressed_button(
         &self,
@@ -354,6 +455,16 @@ impl ShellSession {
                 return true;
             };
             normalized = self.normalize_shell_navigation_input(prepared);
+            if matches!(&normalized, InputEvent::Key(key) if key.key == InputKey::Escape)
+                && self
+                    .auto_admin
+                    .job
+                    .as_ref()
+                    .is_some_and(|job| job.phase() == RUNNING)
+                && self.request_auto_admin_owner_close()
+            {
+                return true;
+            }
             &normalized
         } else {
             input
@@ -373,6 +484,7 @@ impl ShellSession {
                     ..
                 })
             ) && self.auto_admin.job.is_some()
+                && self.auto_admin.closing_page.is_none()
             {
                 self.auto_admin.visible = true;
                 self.update_button_input_mode(input);
@@ -440,7 +552,9 @@ impl ShellSession {
             }
             InputEvent::Key(key) if key.key == InputKey::F(12) => {
                 if key.phase == InputPhase::Press {
-                    self.close_auto_admin();
+                    if job.phase() != RUNNING || !self.request_auto_admin_owner_close() {
+                        self.close_auto_admin();
+                    }
                     self.auto_admin.action_key = Some((key.key.clone(), received_at));
                 }
             }

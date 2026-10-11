@@ -55,6 +55,7 @@ impl NotificationAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notification {
+    pub page: Option<super::pages::PageInstanceId>,
     pub id: u64,
     pub key: Option<String>,
     pub level: NotificationLevel,
@@ -72,6 +73,7 @@ impl Notification {
         actions: Vec<NotificationAction>,
     ) -> Self {
         Self {
+            page: None,
             id: 0,
             key: None,
             level: NotificationLevel::Modal,
@@ -111,13 +113,27 @@ pub enum NotificationCommand {
         message: LocalizedText,
         tone: NotificationTone,
     },
+    ShowPageAlert {
+        page: super::pages::PageInstanceId,
+        key: String,
+        message: LocalizedText,
+        tone: NotificationTone,
+    },
     ResolveAlert(String),
+    ResolvePageAlert {
+        page: super::pages::PageInstanceId,
+        key: String,
+    },
     ClearAlerts,
     SelectNextAction,
     SelectPreviousAction,
     SelectAction(usize),
     DismissActiveModal,
     DismissModalByKey(String),
+    DismissPageModalByKey {
+        key: String,
+        page: Option<super::pages::PageInstanceId>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationResponse {
@@ -127,6 +143,7 @@ pub struct NotificationResponse {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AlertState {
+    page: Option<super::pages::PageInstanceId>,
     key: String,
     message: LocalizedText,
     tone: NotificationTone,
@@ -135,6 +152,7 @@ struct AlertState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotificationCenter {
+    visible_page: Option<super::pages::PageInstanceId>,
     status: LocalizedText,
     toast: Option<LocalizedText>,
     toast_expires_at: Option<Instant>,
@@ -149,6 +167,7 @@ pub struct NotificationCenter {
 impl NotificationCenter {
     pub fn new(status: impl Into<LocalizedText>) -> Self {
         Self {
+            visible_page: None,
             status: status.into(),
             toast: None,
             toast_expires_at: None,
@@ -159,6 +178,34 @@ impl NotificationCenter {
             next_id: 1,
             next_alert_sequence: 1,
         }
+    }
+
+    pub fn set_visible_page(&mut self, page: super::pages::PageInstanceId) {
+        self.visible_page = Some(page);
+        if self
+            .active_modal
+            .as_ref()
+            .is_some_and(|modal| modal.page.is_some() && modal.page != Some(page))
+        {
+            self.modal_queue
+                .push_front(self.active_modal.take().unwrap());
+        }
+        self.promote_next_modal();
+    }
+
+    pub fn remove_page(&mut self, page: super::pages::PageInstanceId) {
+        let had_alerts = !self.alerts.is_empty();
+        self.alerts.retain(|alert| alert.page != Some(page));
+        self.resume_toast_if_last_alert_cleared(had_alerts, Instant::now());
+        self.modal_queue.retain(|modal| modal.page != Some(page));
+        if self
+            .active_modal
+            .as_ref()
+            .is_some_and(|modal| modal.page == Some(page))
+        {
+            self.active_modal = None;
+        }
+        self.promote_next_modal();
     }
 
     pub fn notify_status(&mut self, message: impl Into<LocalizedText>) {
@@ -189,11 +236,35 @@ impl NotificationCenter {
         message: impl Into<LocalizedText>,
         tone: NotificationTone,
     ) {
+        self.notify_owned_alert_with_key(None, key, message, tone);
+    }
+
+    pub fn notify_page_alert_with_key(
+        &mut self,
+        page: super::pages::PageInstanceId,
+        key: impl Into<String>,
+        message: impl Into<LocalizedText>,
+        tone: NotificationTone,
+    ) {
+        self.notify_owned_alert_with_key(Some(page), key, message, tone);
+    }
+
+    fn notify_owned_alert_with_key(
+        &mut self,
+        page: Option<super::pages::PageInstanceId>,
+        key: impl Into<String>,
+        message: impl Into<LocalizedText>,
+        tone: NotificationTone,
+    ) {
         let key = key.into();
         let sequence = self.next_alert_sequence;
         self.next_alert_sequence = self.next_alert_sequence.saturating_add(1).max(1);
 
-        if let Some(alert) = self.alerts.iter_mut().find(|alert| alert.key == key) {
+        if let Some(alert) = self
+            .alerts
+            .iter_mut()
+            .find(|alert| alert.page == page && alert.key == key)
+        {
             alert.message = message.into();
             alert.tone = tone;
             alert.sequence = sequence;
@@ -212,6 +283,7 @@ impl NotificationCenter {
         }
 
         self.alerts.push_back(AlertState {
+            page,
             key,
             message: message.into(),
             tone,
@@ -224,8 +296,27 @@ impl NotificationCenter {
     }
 
     pub fn resolve_alert_at(&mut self, key: &str, now: Instant) {
+        self.resolve_owned_alert_at(None, key, now);
+    }
+
+    pub fn resolve_page_alert_at(
+        &mut self,
+        page: super::pages::PageInstanceId,
+        key: &str,
+        now: Instant,
+    ) {
+        self.resolve_owned_alert_at(Some(page), key, now);
+    }
+
+    fn resolve_owned_alert_at(
+        &mut self,
+        page: Option<super::pages::PageInstanceId>,
+        key: &str,
+        now: Instant,
+    ) {
         let had_alerts = !self.alerts.is_empty();
-        self.alerts.retain(|alert| alert.key != key);
+        self.alerts
+            .retain(|alert| alert.page != page || alert.key != key);
         self.resume_toast_if_last_alert_cleared(had_alerts, now);
     }
 
@@ -274,7 +365,7 @@ impl NotificationCenter {
     pub fn push_modal(&mut self, mut notification: Notification) -> u64 {
         notification.actions = normalized_actions(std::mem::take(&mut notification.actions));
         if let Some(key) = notification.key.clone()
-            && let Some(existing) = self.modal_with_key_mut(&key)
+            && let Some(existing) = self.modal_with_key_mut(&key, notification.page)
         {
             notification.id = existing.id;
             let id = existing.id;
@@ -284,7 +375,9 @@ impl NotificationCenter {
 
         notification.id = self.allocate_id();
         let id = notification.id;
-        if self.active_modal.is_none() {
+        if self.active_modal.is_none()
+            && (notification.page.is_none() || notification.page == self.visible_page)
+        {
             self.active_modal = Some(notification);
         } else {
             self.modal_queue.push_back(notification);
@@ -295,7 +388,7 @@ impl NotificationCenter {
     pub fn push_critical_modal(&mut self, mut notification: Notification) -> u64 {
         notification.actions = normalized_actions(std::mem::take(&mut notification.actions));
         if let Some(key) = notification.key.clone()
-            && let Some(existing) = self.modal_with_key_mut(&key)
+            && let Some(existing) = self.modal_with_key_mut(&key, notification.page)
         {
             notification.id = existing.id;
             let id = existing.id;
@@ -305,6 +398,10 @@ impl NotificationCenter {
 
         notification.id = self.allocate_id();
         let id = notification.id;
+        if notification.page.is_some() && notification.page != self.visible_page {
+            self.modal_queue.push_front(notification);
+            return id;
+        }
         if let Some(previous) = self.active_modal.replace(notification) {
             self.modal_queue.push_front(previous);
         }
@@ -312,17 +409,23 @@ impl NotificationCenter {
     }
 
     pub fn dismiss_modal_by_key(&mut self, key: &str) {
-        let active_matches = self
-            .active_modal
-            .as_ref()
-            .and_then(|modal| modal.key.as_deref())
-            == Some(key);
+        self.dismiss_page_modal_by_key(key, self.visible_page);
+    }
+
+    pub fn dismiss_page_modal_by_key(
+        &mut self,
+        key: &str,
+        page: Option<super::pages::PageInstanceId>,
+    ) {
+        let matches = |modal: &Notification| {
+            modal.key.as_deref() == Some(key) && (modal.page.is_none() || modal.page == page)
+        };
+        let active_matches = self.active_modal.as_ref().is_some_and(matches);
         if active_matches {
             self.active_modal = None;
-            self.promote_next_modal();
         }
-        self.modal_queue
-            .retain(|modal| modal.key.as_deref() != Some(key));
+        self.modal_queue.retain(|modal| !matches(modal));
+        self.promote_next_modal();
     }
 
     pub fn dismiss_active_modal_without_response(&mut self) -> bool {
@@ -438,9 +541,25 @@ impl NotificationCenter {
     }
 
     pub fn alert_message_for_key(&self, key: &str) -> Option<&LocalizedText> {
+        self.owned_alert_message_for_key(None, key)
+    }
+
+    pub fn page_alert_message_for_key(
+        &self,
+        page: super::pages::PageInstanceId,
+        key: &str,
+    ) -> Option<&LocalizedText> {
+        self.owned_alert_message_for_key(Some(page), key)
+    }
+
+    fn owned_alert_message_for_key(
+        &self,
+        page: Option<super::pages::PageInstanceId>,
+        key: &str,
+    ) -> Option<&LocalizedText> {
         self.alerts
             .iter()
-            .find(|alert| alert.key == key)
+            .find(|alert| alert.page == page && alert.key == key)
             .map(|alert| &alert.message)
     }
 
@@ -487,24 +606,38 @@ impl NotificationCenter {
         }
     }
 
-    fn modal_with_key_mut(&mut self, key: &str) -> Option<&mut Notification> {
+    fn modal_with_key_mut(
+        &mut self,
+        key: &str,
+        page: Option<super::pages::PageInstanceId>,
+    ) -> Option<&mut Notification> {
         if self
             .active_modal
             .as_ref()
             .and_then(|modal| modal.key.as_deref())
             == Some(key)
+            && self
+                .active_modal
+                .as_ref()
+                .is_some_and(|modal| modal.page == page)
         {
             return self.active_modal.as_mut();
         }
 
         self.modal_queue
             .iter_mut()
-            .find(|modal| modal.key.as_deref() == Some(key))
+            .find(|modal| modal.key.as_deref() == Some(key) && modal.page == page)
     }
 
     fn promote_next_modal(&mut self) {
         if self.active_modal.is_none() {
-            self.active_modal = self.modal_queue.pop_front();
+            if let Some(index) = self
+                .modal_queue
+                .iter()
+                .position(|modal| modal.page.is_none() || modal.page == self.visible_page)
+            {
+                self.active_modal = self.modal_queue.remove(index);
+            }
         }
     }
 

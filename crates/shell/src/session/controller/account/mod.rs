@@ -4,17 +4,21 @@ pub(in crate::session) mod users;
 use crate::session::*;
 impl ShellSession {
     pub(in crate::session) fn append_auth_char(&mut self, character: char) {
-        match self.focused_component {
-            ShellComponent::LoginPassword => self.login_password.push(character),
-            ShellComponent::BootstrapUsername => self.bootstrap_username.push(character),
-            ShellComponent::BootstrapPassword => self.bootstrap_password.push(character),
+        match self.pages.common.focused_component {
+            ShellComponent::LoginPassword => self.pages.login.login_password.push(character),
+            ShellComponent::BootstrapUsername => {
+                self.pages.bootstrap.bootstrap_username.push(character)
+            }
+            ShellComponent::BootstrapPassword => {
+                self.pages.bootstrap.bootstrap_password.push(character)
+            }
             _ => {}
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn reset_login_idle_deadline_at(&mut self, now: Instant) {
-        self.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
+        self.pages.login.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
     }
 
     pub(in crate::session) fn login_idle_tracking_active(&self) -> bool {
@@ -25,15 +29,19 @@ impl ShellSession {
 
     pub(in crate::session) fn expire_login_password_visibility_at(&mut self, now: Instant) {
         if self
+            .pages
+            .login
             .login_password_visible_until
             .is_some_and(|deadline| now >= deadline)
         {
-            self.login_password_visible_until = None;
+            self.pages.login.login_password_visible_until = None;
         }
     }
 
     pub(in crate::session) fn login_password_is_visible_at(&self, now: Instant) -> bool {
-        self.login_password_visible_until
+        self.pages
+            .login
+            .login_password_visible_until
             .is_some_and(|deadline| now < deadline)
     }
 
@@ -44,9 +52,14 @@ impl ShellSession {
     ) -> Duration {
         let mut timeout = fallback;
         if self.login_idle_tracking_active() {
-            timeout = timeout.min(self.login_idle_deadline.saturating_duration_since(now));
+            timeout = timeout.min(
+                self.pages
+                    .login
+                    .login_idle_deadline
+                    .saturating_duration_since(now),
+            );
         }
-        if let Some(deadline) = self.login_password_visible_until {
+        if let Some(deadline) = self.pages.login.login_password_visible_until {
             timeout = timeout.min(deadline.saturating_duration_since(now));
         }
         timeout
@@ -54,83 +67,96 @@ impl ShellSession {
 
     pub(in crate::session) fn toggle_login_password_visibility_at(&mut self, now: Instant) {
         if self.login_password_is_visible_at(now) {
-            self.login_password_visible_until = None;
+            self.pages.login.login_password_visible_until = None;
         } else {
-            self.login_password_visible_until = Some(now + PASSWORD_REVEAL_DURATION);
+            self.pages.login.login_password_visible_until = Some(now + PASSWORD_REVEAL_DURATION);
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn prepare_return_to_lockscreen(&mut self) {
         if self.identity_backend == identity::IdentityBackend::Linux {
             return;
         }
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.error_message = None;
+        self.pages.login.login_password.clear();
+        self.pages.login.login_password_visible_until = None;
+        self.pages.common.error_message = None;
         self.return_to_lockscreen_requested = true;
     }
 
     pub(in crate::session) fn auth_backspace(&mut self) {
-        match self.focused_component {
+        match self.pages.common.focused_component {
             ShellComponent::LoginPassword => {
-                self.login_password.pop();
+                self.pages.login.login_password.pop();
             }
             ShellComponent::BootstrapUsername => {
-                self.bootstrap_username.pop();
+                self.pages.bootstrap.bootstrap_username.pop();
             }
             ShellComponent::BootstrapPassword => {
-                self.bootstrap_password.pop();
+                self.pages.bootstrap.bootstrap_password.pop();
             }
             _ => {}
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn selected_login_username(&self) -> Option<&str> {
         self.login_users
-            .get(self.login_selected_user)
+            .get(self.pages.login.login_selected_user)
             .map(|user| user.username.as_str())
     }
 
     pub(in crate::session) fn selected_login_password_hint(&self) -> Option<&str> {
         self.login_users
-            .get(self.login_selected_user)?
+            .get(self.pages.login.login_selected_user)?
             .password_hint
             .as_deref()
     }
 
     pub(in crate::session) fn sync_login_selection(&mut self) {
         if self.login_users.is_empty() {
-            self.login_selected_user = 0;
-            self.login_user_window_start = 0;
-            self.login_username.clear();
+            self.pages.login.login_selected_user = 0;
+            self.pages.login.login_user_window_start = 0;
+            self.pages.login.login_username.clear();
             return;
         }
 
-        self.login_selected_user = self.login_selected_user.min(self.login_users.len() - 1);
-        self.login_username = self.login_users[self.login_selected_user].username.clone();
+        self.pages.login.login_selected_user = self
+            .pages
+            .login
+            .login_selected_user
+            .min(self.login_users.len() - 1);
+        self.pages.login.login_username = self.login_users[self.pages.login.login_selected_user]
+            .username
+            .clone();
         self.sync_login_user_window();
     }
 
     pub(in crate::session) fn sync_login_user_window(&mut self) {
         let count = self.login_users.len();
         if count == 0 {
-            self.login_user_window_start = 0;
+            self.pages.login.login_user_window_start = 0;
             return;
         }
 
         let visible_rows = self.login_user_visible_row_count().min(count).max(1);
         let max_start = count.saturating_sub(visible_rows);
-        self.login_user_window_start = self.login_user_window_start.min(max_start);
+        self.pages.login.login_user_window_start =
+            self.pages.login.login_user_window_start.min(max_start);
 
-        if self.login_selected_user < self.login_user_window_start {
-            self.login_user_window_start = self.login_selected_user;
+        if self.pages.login.login_selected_user < self.pages.login.login_user_window_start {
+            self.pages.login.login_user_window_start = self.pages.login.login_selected_user;
         }
 
-        let window_end = self.login_user_window_start.saturating_add(visible_rows);
-        if self.login_selected_user >= window_end {
-            self.login_user_window_start = self
+        let window_end = self
+            .pages
+            .login
+            .login_user_window_start
+            .saturating_add(visible_rows);
+        if self.pages.login.login_selected_user >= window_end {
+            self.pages.login.login_user_window_start = self
+                .pages
+                .login
                 .login_selected_user
                 .saturating_add(1)
                 .saturating_sub(visible_rows)
@@ -153,20 +179,24 @@ impl ShellSession {
             return;
         }
 
-        let current = self.login_selected_user.min(self.login_users.len() - 1) as isize;
-        self.login_selected_user =
+        let current = self
+            .pages
+            .login
+            .login_selected_user
+            .min(self.login_users.len() - 1) as isize;
+        self.pages.login.login_selected_user =
             (current + delta).clamp(0, self.login_users.len() as isize - 1) as usize;
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.error_message = None;
+        self.pages.login.login_password.clear();
+        self.pages.login.login_password_visible_until = None;
+        self.pages.common.error_message = None;
         self.sync_login_selection();
     }
 
     pub(in crate::session) fn select_first_login_user(&mut self) {
-        self.login_selected_user = 0;
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.error_message = None;
+        self.pages.login.login_selected_user = 0;
+        self.pages.login.login_password.clear();
+        self.pages.login.login_password_visible_until = None;
+        self.pages.common.error_message = None;
         self.sync_login_selection();
     }
 
@@ -176,10 +206,10 @@ impl ShellSession {
             return;
         }
 
-        self.login_selected_user = self.login_users.len() - 1;
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.error_message = None;
+        self.pages.login.login_selected_user = self.login_users.len() - 1;
+        self.pages.login.login_password.clear();
+        self.pages.login.login_password_visible_until = None;
+        self.pages.common.error_message = None;
         self.sync_login_selection();
     }
 
@@ -188,10 +218,10 @@ impl ShellSession {
             return;
         }
 
-        self.login_selected_user = index;
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.error_message = None;
+        self.pages.login.login_selected_user = index;
+        self.pages.login.login_password.clear();
+        self.pages.login.login_password_visible_until = None;
+        self.pages.common.error_message = None;
         self.sync_login_selection();
     }
 
@@ -204,7 +234,7 @@ impl ShellSession {
             .with_backend(self.identity_backend)
             .login_records()?;
         self.login_users = users.iter().map(ShellLoginUser::from_record).collect();
-        self.login_selected_user = previous_username
+        self.pages.login.login_selected_user = previous_username
             .as_deref()
             .and_then(|username| {
                 self.login_users.iter().position(|user| {
@@ -222,8 +252,9 @@ impl ShellSession {
         if count == 0 {
             return;
         }
-        self.setup_selected_language_index = (self.setup_selected_language_index + 1) % count;
-        self.error_message = None;
+        self.pages.setup.setup_selected_language_index =
+            (self.pages.setup.setup_selected_language_index + 1) % count;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn setup_previous_language(&mut self) {
@@ -231,29 +262,33 @@ impl ShellSession {
         if count == 0 {
             return;
         }
-        self.setup_selected_language_index =
-            (self.setup_selected_language_index + count - 1) % count;
-        self.error_message = None;
+        self.pages.setup.setup_selected_language_index =
+            (self.pages.setup.setup_selected_language_index + count - 1) % count;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn setup_select_timezone_delta(&mut self, delta: isize) {
         let count = app::setup_timezone_options().len();
         if count == 0 {
-            self.setup_timezone_window_start = 0;
+            self.pages.setup.setup_timezone_window_start = 0;
             return;
         }
 
-        let current = self.setup_selected_timezone_index.min(count - 1) as isize;
+        let current = self
+            .pages
+            .setup
+            .setup_selected_timezone_index
+            .min(count - 1) as isize;
         let next = (current + delta).clamp(0, count as isize - 1) as usize;
-        self.setup_selected_timezone_index = next;
+        self.pages.setup.setup_selected_timezone_index = next;
         self.sync_setup_timezone_window();
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn setup_select_first_timezone(&mut self) {
-        self.setup_selected_timezone_index = 0;
+        self.pages.setup.setup_selected_timezone_index = 0;
         self.sync_setup_timezone_window();
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn setup_select_last_timezone(&mut self) {
@@ -261,33 +296,45 @@ impl ShellSession {
         if count == 0 {
             return;
         }
-        self.setup_selected_timezone_index = count - 1;
+        self.pages.setup.setup_selected_timezone_index = count - 1;
         self.sync_setup_timezone_window();
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn sync_setup_timezone_window(&mut self) {
         let count = app::setup_timezone_options().len();
         if count == 0 {
-            self.setup_selected_timezone_index = 0;
-            self.setup_timezone_window_start = 0;
+            self.pages.setup.setup_selected_timezone_index = 0;
+            self.pages.setup.setup_timezone_window_start = 0;
             return;
         }
 
-        self.setup_selected_timezone_index = self.setup_selected_timezone_index.min(count - 1);
+        self.pages.setup.setup_selected_timezone_index = self
+            .pages
+            .setup
+            .setup_selected_timezone_index
+            .min(count - 1);
         let visible_rows = self.setup_timezone_visible_row_count().min(count).max(1);
         let max_start = count.saturating_sub(visible_rows);
-        self.setup_timezone_window_start = self.setup_timezone_window_start.min(max_start);
+        self.pages.setup.setup_timezone_window_start =
+            self.pages.setup.setup_timezone_window_start.min(max_start);
 
-        if self.setup_selected_timezone_index < self.setup_timezone_window_start {
-            self.setup_timezone_window_start = self.setup_selected_timezone_index;
+        if self.pages.setup.setup_selected_timezone_index
+            < self.pages.setup.setup_timezone_window_start
+        {
+            self.pages.setup.setup_timezone_window_start =
+                self.pages.setup.setup_selected_timezone_index;
         }
 
         let window_end = self
+            .pages
+            .setup
             .setup_timezone_window_start
             .saturating_add(visible_rows);
-        if self.setup_selected_timezone_index >= window_end {
-            self.setup_timezone_window_start = self
+        if self.pages.setup.setup_selected_timezone_index >= window_end {
+            self.pages.setup.setup_timezone_window_start = self
+                .pages
+                .setup
                 .setup_selected_timezone_index
                 .saturating_add(1)
                 .saturating_sub(visible_rows)
@@ -300,22 +347,24 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn setup_previous_step(&mut self) {
-        if self.setup_custom_color_target.is_some() || self.setup_step != ui::SetupStep::Timezone {
+        if self.pages.setup.setup_custom_color_target.is_some()
+            || self.pages.setup.setup_step != ui::SetupStep::Timezone
+        {
             return;
         }
-        self.setup_step = ui::SetupStep::Language;
-        self.setup_focused_field = ui::SetupField::LanguageList;
-        self.focused_component = ShellComponent::SetupLanguage;
-        self.page_touch.setup_scroll = 0;
-        self.error_message = None;
+        self.pages.setup.setup_step = ui::SetupStep::Language;
+        self.pages.setup.setup_focused_field = ui::SetupField::LanguageList;
+        self.pages.common.focused_component = ShellComponent::SetupLanguage;
+        self.pages.common.page_touch.setup_scroll = 0;
+        self.pages.common.error_message = None;
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn setup_primary_action(&mut self) {
-        if self.setup_custom_color_target.is_some() {
+        if self.pages.setup.setup_custom_color_target.is_some() {
             return;
         }
-        match self.setup_step {
+        match self.pages.setup.setup_step {
             ui::SetupStep::Language | ui::SetupStep::Timezone => self.setup_continue(),
             ui::SetupStep::Admin => self.submit_first_run_setup(),
             ui::SetupStep::Appearance => self.finish_first_run_setup(),
@@ -323,8 +372,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn setup_continue(&mut self) {
-        self.page_touch.setup_scroll = 0;
-        match self.setup_step {
+        self.pages.common.page_touch.setup_scroll = 0;
+        match self.pages.setup.setup_step {
             ui::SetupStep::Language => {
                 let code = self.selected_setup_language_value();
                 match self.prepare_language(&code) {
@@ -334,30 +383,30 @@ impl ShellSession {
                         return;
                     }
                 }
-                self.setup_step = ui::SetupStep::Timezone;
-                self.setup_focused_field = ui::SetupField::TimezoneList;
-                self.focused_component = ShellComponent::SetupTimezone;
+                self.pages.setup.setup_step = ui::SetupStep::Timezone;
+                self.pages.setup.setup_focused_field = ui::SetupField::TimezoneList;
+                self.pages.common.focused_component = ShellComponent::SetupTimezone;
                 self.sync_setup_timezone_window();
             }
             ui::SetupStep::Timezone => {
                 if self.pending_personalization_session.is_some() {
-                    self.setup_step = ui::SetupStep::Appearance;
-                    self.setup_focused_field = ui::SetupField::AppearanceShape;
-                    self.focused_component = ShellComponent::SetupAppearanceShape;
+                    self.pages.setup.setup_step = ui::SetupStep::Appearance;
+                    self.pages.setup.setup_focused_field = ui::SetupField::AppearanceShape;
+                    self.pages.common.focused_component = ShellComponent::SetupAppearanceShape;
                 } else {
-                    self.setup_step = ui::SetupStep::Admin;
-                    self.setup_focused_field = ui::SetupField::AdminUsername;
-                    self.focused_component = ShellComponent::SetupAdminUsername;
+                    self.pages.setup.setup_step = ui::SetupStep::Admin;
+                    self.pages.setup.setup_focused_field = ui::SetupField::AdminUsername;
+                    self.pages.common.focused_component = ShellComponent::SetupAdminUsername;
                 }
             }
             ui::SetupStep::Admin | ui::SetupStep::Appearance => {}
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn move_setup_admin_focus(&mut self, direction: i8) {
-        if self.setup_step == ui::SetupStep::Appearance {
+        if self.pages.setup.setup_step == ui::SetupStep::Appearance {
             let order = [
                 (
                     ui::SetupField::AppearanceShape,
@@ -386,7 +435,7 @@ impl ShellSession {
             ];
             let next = match order
                 .iter()
-                .position(|(field, _)| *field == self.setup_focused_field)
+                .position(|(field, _)| *field == self.pages.setup.setup_focused_field)
             {
                 Some(current) => (current as isize + direction as isize)
                     .rem_euclid(order.len() as isize) as usize,
@@ -394,9 +443,9 @@ impl ShellSession {
                 None => 0,
             };
             let (field, component) = order[next];
-            self.setup_focused_field = field;
-            self.focused_component = component;
-            self.error_message = None;
+            self.pages.setup.setup_focused_field = field;
+            self.pages.common.focused_component = component;
+            self.pages.common.error_message = None;
             self.ensure_touch_auth_focus_visible();
             return;
         }
@@ -419,7 +468,7 @@ impl ShellSession {
         ];
         let next = match order
             .iter()
-            .position(|(field, _)| *field == self.setup_focused_field)
+            .position(|(field, _)| *field == self.pages.setup.setup_focused_field)
         {
             Some(current) => {
                 (current as isize + direction as isize).rem_euclid(order.len() as isize) as usize
@@ -428,14 +477,14 @@ impl ShellSession {
             None => 0,
         };
         let (field, component) = order[next];
-        self.setup_focused_field = field;
-        self.focused_component = component;
-        self.error_message = None;
+        self.pages.setup.setup_focused_field = field;
+        self.pages.common.focused_component = component;
+        self.pages.common.error_message = None;
         self.ensure_touch_auth_focus_visible();
     }
 
     pub(in crate::session) fn focus_setup_component(&mut self, component: ShellComponent) {
-        if !setup_component_active_for_step(component, self.setup_step) {
+        if !setup_component_active_for_step(component, self.pages.setup.setup_step) {
             return;
         }
 
@@ -443,29 +492,29 @@ impl ShellSession {
             return;
         };
 
-        self.setup_focused_field = field;
-        self.focused_component = component;
+        self.pages.setup.setup_focused_field = field;
+        self.pages.common.focused_component = component;
         self.ensure_touch_auth_focus_visible();
     }
 
     pub(in crate::session) fn setup_active_key_component(&self) -> ShellComponent {
-        match self.setup_step {
+        match self.pages.setup.setup_step {
             ui::SetupStep::Language => ShellComponent::SetupLanguage,
             ui::SetupStep::Timezone => ShellComponent::SetupTimezone,
             ui::SetupStep::Admin => {
-                let component = setup_component_for_field(self.setup_focused_field);
-                if setup_component_active_for_step(component, self.setup_step) {
+                let component = setup_component_for_field(self.pages.setup.setup_focused_field);
+                if setup_component_active_for_step(component, self.pages.setup.setup_step) {
                     component
                 } else {
                     ShellComponent::SetupAdminUsername
                 }
             }
             ui::SetupStep::Appearance => {
-                if self.setup_custom_color_target.is_some() {
+                if self.pages.setup.setup_custom_color_target.is_some() {
                     ShellComponent::SetupCustomColorDialog
                 } else {
-                    let component = setup_component_for_field(self.setup_focused_field);
-                    if setup_component_active_for_step(component, self.setup_step) {
+                    let component = setup_component_for_field(self.pages.setup.setup_focused_field);
+                    if setup_component_active_for_step(component, self.pages.setup.setup_step) {
                         component
                     } else {
                         ShellComponent::SetupAppearanceShape
@@ -476,35 +525,40 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn append_setup_admin_char(&mut self, character: char) {
-        match self.setup_focused_field {
-            ui::SetupField::AdminUsername => self.setup_admin_username.push(character),
-            ui::SetupField::AdminPassword => self.setup_admin_password.push(character),
+        match self.pages.setup.setup_focused_field {
+            ui::SetupField::AdminUsername => self.pages.setup.setup_admin_username.push(character),
+            ui::SetupField::AdminPassword => self.pages.setup.setup_admin_password.push(character),
             ui::SetupField::AdminPasswordConfirm => {
-                self.setup_admin_password_confirm.push(character);
+                self.pages
+                    .setup
+                    .setup_admin_password_confirm
+                    .push(character);
             }
-            ui::SetupField::PasswordHint => self.setup_admin_password_hint.push(character),
+            ui::SetupField::PasswordHint => {
+                self.pages.setup.setup_admin_password_hint.push(character)
+            }
             _ => {}
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn setup_admin_backspace(&mut self) {
-        match self.setup_focused_field {
+        match self.pages.setup.setup_focused_field {
             ui::SetupField::AdminUsername => {
-                self.setup_admin_username.pop();
+                self.pages.setup.setup_admin_username.pop();
             }
             ui::SetupField::AdminPassword => {
-                self.setup_admin_password.pop();
+                self.pages.setup.setup_admin_password.pop();
             }
             ui::SetupField::AdminPasswordConfirm => {
-                self.setup_admin_password_confirm.pop();
+                self.pages.setup.setup_admin_password_confirm.pop();
             }
             ui::SetupField::PasswordHint => {
-                self.setup_admin_password_hint.pop();
+                self.pages.setup.setup_admin_password_hint.pop();
             }
             _ => {}
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn activate_setup(
@@ -512,13 +566,13 @@ impl ShellSession {
         target: ShellComponent,
         coordinates: CellPosition,
     ) {
-        match self.setup_step {
+        match self.pages.setup.setup_step {
             ui::SetupStep::Language => {
                 if target == ShellComponent::SetupLanguage
                     && let Some(index) = self.setup_language_index_at(coordinates)
                 {
-                    self.setup_selected_language_index = index;
-                    self.error_message = None;
+                    self.pages.setup.setup_selected_language_index = index;
+                    self.pages.common.error_message = None;
                 }
                 self.focus_setup_component(ShellComponent::SetupLanguage);
             }
@@ -526,9 +580,9 @@ impl ShellSession {
                 if target == ShellComponent::SetupTimezone
                     && let Some(index) = self.setup_timezone_index_at(coordinates)
                 {
-                    self.setup_selected_timezone_index = index;
+                    self.pages.setup.setup_selected_timezone_index = index;
                     self.sync_setup_timezone_window();
-                    self.error_message = None;
+                    self.pages.common.error_message = None;
                 }
                 self.focus_setup_component(ShellComponent::SetupTimezone);
             }
@@ -549,10 +603,10 @@ impl ShellSession {
         target: ShellComponent,
         coordinates: CellPosition,
     ) {
-        if self.setup_custom_color_target.is_some() {
+        if self.pages.setup.setup_custom_color_target.is_some() {
             return;
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
 
         match target {
             ShellComponent::SetupAppearanceShape => {
@@ -560,7 +614,7 @@ impl ShellSession {
                     let main = self.touch_setup_viewport().content;
                     for (shape, area) in ui::setup_appearance_shape_option_areas(main) {
                         if rect_contains(area, coordinates) {
-                            self.setup_border_shape = match shape {
+                            self.pages.setup.setup_border_shape = match shape {
                                 ui::BorderShape::Rounded => storage::BorderShape::Rounded,
                                 ui::BorderShape::Square => storage::BorderShape::Square,
                             };
@@ -607,9 +661,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn setup_select_appearance_choice(&mut self, delta: isize) {
-        match self.setup_focused_field {
+        match self.pages.setup.setup_focused_field {
             ui::SetupField::AppearanceShape => {
-                self.setup_border_shape = match self.setup_border_shape {
+                self.pages.setup.setup_border_shape = match self.pages.setup.setup_border_shape {
                     storage::BorderShape::Rounded => storage::BorderShape::Square,
                     storage::BorderShape::Square => storage::BorderShape::Rounded,
                 };
@@ -621,8 +675,10 @@ impl ShellSession {
                     return;
                 }
                 let current_value = match field {
-                    ui::SetupField::AppearanceThemeColor => self.setup_theme_color.to_string(),
-                    _ => self.setup_accent_color.to_string(),
+                    ui::SetupField::AppearanceThemeColor => {
+                        self.pages.setup.setup_theme_color.to_string()
+                    }
+                    _ => self.pages.setup.setup_accent_color.to_string(),
                 };
                 let current = options
                     .iter()
@@ -635,7 +691,7 @@ impl ShellSession {
                         continue;
                     };
                     if field == ui::SetupField::AppearanceAccentColor
-                        && candidate == self.setup_theme_color
+                        && candidate == self.pages.setup.setup_theme_color
                     {
                         continue;
                     }
@@ -645,7 +701,7 @@ impl ShellSession {
             }
             _ => return,
         }
-        self.error_message = None;
+        self.pages.common.error_message = None;
     }
 
     pub(in crate::session) fn set_setup_standard_color(
@@ -662,31 +718,33 @@ impl ShellSession {
         };
         match field {
             ui::SetupField::AppearanceThemeColor => {
-                self.setup_theme_color = color;
+                self.pages.setup.setup_theme_color = color;
                 self.ensure_setup_accent_differs();
             }
-            ui::SetupField::AppearanceAccentColor if color != self.setup_theme_color => {
-                self.setup_accent_color = color;
+            ui::SetupField::AppearanceAccentColor
+                if color != self.pages.setup.setup_theme_color =>
+            {
+                self.pages.setup.setup_accent_color = color;
             }
             _ => {}
         }
     }
 
     pub(in crate::session) fn ensure_setup_accent_differs(&mut self) {
-        if self.setup_accent_color != self.setup_theme_color {
+        if self.pages.setup.setup_accent_color != self.pages.setup.setup_theme_color {
             return;
         }
         if let Some(color) = ui::setup_standard_color_options()
             .iter()
             .filter_map(|option| option.value.parse::<storage::BorderColor>().ok())
-            .find(|color| *color != self.setup_theme_color)
+            .find(|color| *color != self.pages.setup.setup_theme_color)
         {
-            self.setup_accent_color = color;
+            self.pages.setup.setup_accent_color = color;
         }
     }
 
     pub(in crate::session) fn activate_setup_appearance_control(&mut self) {
-        match self.setup_focused_field {
+        match self.pages.setup.setup_focused_field {
             ui::SetupField::AppearanceThemeCustom => {
                 self.open_setup_custom_color(ui::SetupCustomColorTarget::Theme);
             }
@@ -704,67 +762,71 @@ impl ShellSession {
         target: ui::SetupCustomColorTarget,
     ) {
         self.capture_modal_focus_context();
-        self.setup_custom_color_target = Some(target);
-        self.setup_custom_color_input = match target {
-            ui::SetupCustomColorTarget::Theme => self.setup_theme_color.to_string(),
-            ui::SetupCustomColorTarget::Accent => self.setup_accent_color.to_string(),
+        self.pages.setup.setup_custom_color_target = Some(target);
+        self.pages.setup.setup_custom_color_input = match target {
+            ui::SetupCustomColorTarget::Theme => self.pages.setup.setup_theme_color.to_string(),
+            ui::SetupCustomColorTarget::Accent => self.pages.setup.setup_accent_color.to_string(),
         };
-        self.setup_custom_color_error = None;
+        self.pages.setup.setup_custom_color_error = None;
         self.synchronize_overlay_focus();
     }
 
     pub(in crate::session) fn append_setup_custom_color_char(&mut self, character: char) {
-        if self.setup_custom_color_target.is_none()
+        if self.pages.setup.setup_custom_color_target.is_none()
             || character.is_control()
-            || self.setup_custom_color_input.chars().count() >= 32
+            || self.pages.setup.setup_custom_color_input.chars().count() >= 32
         {
             return;
         }
-        self.setup_custom_color_input.push(character);
-        self.setup_custom_color_error = None;
+        self.pages.setup.setup_custom_color_input.push(character);
+        self.pages.setup.setup_custom_color_error = None;
     }
 
     pub(in crate::session) fn setup_custom_color_backspace(&mut self) {
-        if self.setup_custom_color_target.is_some() {
-            self.setup_custom_color_input.pop();
-            self.setup_custom_color_error = None;
+        if self.pages.setup.setup_custom_color_target.is_some() {
+            self.pages.setup.setup_custom_color_input.pop();
+            self.pages.setup.setup_custom_color_error = None;
         }
     }
 
     pub(in crate::session) fn apply_setup_custom_color(&mut self) {
-        let Some(target) = self.setup_custom_color_target else {
+        let Some(target) = self.pages.setup.setup_custom_color_target else {
             return;
         };
         let color = match self
+            .pages
+            .setup
             .setup_custom_color_input
             .parse::<storage::BorderColor>()
         {
             Ok(color) => color,
             Err(_) => {
-                self.setup_custom_color_error = Some(i18n::msg!("account-invalid-color").into());
+                self.pages.setup.setup_custom_color_error =
+                    Some(i18n::msg!("account-invalid-color").into());
                 return;
             }
         };
         match target {
             ui::SetupCustomColorTarget::Theme => {
-                self.setup_theme_color = color;
+                self.pages.setup.setup_theme_color = color;
                 self.ensure_setup_accent_differs();
             }
-            ui::SetupCustomColorTarget::Accent if color == self.setup_theme_color => {
-                self.setup_custom_color_error =
+            ui::SetupCustomColorTarget::Accent if color == self.pages.setup.setup_theme_color => {
+                self.pages.setup.setup_custom_color_error =
                     Some(i18n::msg!("account-accent-must-differ").into());
                 return;
             }
-            ui::SetupCustomColorTarget::Accent => self.setup_accent_color = color,
+            ui::SetupCustomColorTarget::Accent => self.pages.setup.setup_accent_color = color,
         }
         self.cancel_setup_custom_color();
     }
 
     pub(in crate::session) fn cancel_setup_custom_color(&mut self) {
-        self.setup_custom_color_target = None;
-        self.setup_custom_color_input.clear();
-        self.setup_custom_color_error = None;
-        self.focused_component = setup_component_for_field(self.setup_focused_field);
+        self.pages.setup.setup_custom_color_target = None;
+        self.pages.setup.setup_custom_color_input.clear();
+        self.pages.setup.setup_custom_color_error = None;
+        self.pages.common.focused_component =
+            setup_component_for_field(self.pages.setup.setup_focused_field);
         self.refresh_hit_map();
     }
 
@@ -778,13 +840,13 @@ impl ShellSession {
                 if let Some(index) = self.login_user_index_at(coordinates) {
                     self.select_login_user_at(index);
                 }
-                self.focused_component = ShellComponent::LoginPassword;
+                self.pages.common.focused_component = ShellComponent::LoginPassword;
             }
             ShellComponent::LoginUsername => {
-                self.focused_component = ShellComponent::LoginUserList;
+                self.pages.common.focused_component = ShellComponent::LoginUserList;
             }
             ShellComponent::LoginPassword => {
-                self.focused_component = ShellComponent::LoginPassword;
+                self.pages.common.focused_component = ShellComponent::LoginPassword;
             }
             _ => {}
         }
@@ -814,6 +876,8 @@ impl ShellSession {
 
         let visible_rows = self.setup_timezone_visible_row_count().min(count);
         let start = self
+            .pages
+            .setup
             .setup_timezone_window_start
             .min(count.saturating_sub(visible_rows));
         let index = start.saturating_add(row);
@@ -832,6 +896,8 @@ impl ShellSession {
 
         let visible_rows = self.login_user_visible_row_count().min(count);
         let start = self
+            .pages
+            .login
             .login_user_window_start
             .min(count.saturating_sub(visible_rows));
         let index = start.saturating_add(row);
@@ -840,34 +906,36 @@ impl ShellSession {
 
     pub(in crate::session) fn selected_setup_language_value(&self) -> String {
         let options = self.language_options();
-        setup_language_code_at(&options, self.setup_selected_language_index)
+        setup_language_code_at(&options, self.pages.setup.setup_selected_language_index)
             .unwrap_or_else(|| "en-US".to_string())
     }
 
     pub(in crate::session) fn selected_setup_timezone_value(&self) -> String {
         let options = app::setup_timezone_options();
-        setup_timezone_id_at(&options, self.setup_selected_timezone_index)
+        setup_timezone_id_at(&options, self.pages.setup.setup_selected_timezone_index)
             .unwrap_or_else(|| "UTC".to_string())
     }
 
     pub(in crate::session) fn submit_login(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
+            self.pages.common.error_message =
+                Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
         let Some(username) = self.selected_login_username().map(str::to_string) else {
-            self.error_message = Some(i18n::msg!("account-no-user-selected").into());
+            self.pages.common.error_message = Some(i18n::msg!("account-no-user-selected").into());
             self.notify_status(i18n::msg!("account-login-failed"));
             return;
         };
         let password_hint = self.selected_login_password_hint().map(str::to_string);
         let mut sessions = SessionService::new(storage).with_backend(self.identity_backend);
-        match sessions.login(&username, &self.login_password) {
+        match sessions.login(&username, &self.pages.login.login_password) {
             Ok(session) => self.complete_login(session),
             Err(error) => {
-                self.login_password_visible_until = None;
-                self.login_password.clear();
-                self.error_message = Some(login_error_message(&error, password_hint.as_deref()));
+                self.pages.login.login_password_visible_until = None;
+                self.pages.login.login_password.clear();
+                self.pages.common.error_message =
+                    Some(login_error_message(&error, password_hint.as_deref()));
                 self.notify_status(i18n::msg!("account-login-failed"));
                 let _ = self.refresh_login_users_from_storage();
             }
@@ -876,26 +944,33 @@ impl ShellSession {
 
     pub(in crate::session) fn submit_bootstrap_admin(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
+            self.pages.common.error_message =
+                Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy)
             .with_backend(self.identity_backend);
-        match users.bootstrap_admin(&self.bootstrap_username, &self.bootstrap_password) {
+        match users.bootstrap_admin(
+            &self.pages.bootstrap.bootstrap_username,
+            &self.pages.bootstrap.bootstrap_password,
+        ) {
             Ok(_) => {
-                self.login_username = self.bootstrap_username.clone();
-                self.login_password = self.bootstrap_password.clone();
+                self.pages.login.login_username = self.pages.bootstrap.bootstrap_username.clone();
+                self.pages.login.login_password = self.pages.bootstrap.bootstrap_password.clone();
                 let mut sessions = SessionService::new(storage).with_backend(self.identity_backend);
-                match sessions.login(&self.login_username, &self.login_password) {
+                match sessions.login(
+                    &self.pages.login.login_username,
+                    &self.pages.login.login_password,
+                ) {
                     Ok(session) => self.complete_login(session),
                     Err(error) => {
-                        self.error_message = Some(format_core_error(&error));
+                        self.pages.common.error_message = Some(format_core_error(&error));
                         self.notify_status(i18n::msg!("account-login-failed"));
                     }
                 }
             }
             Err(error) => {
-                self.error_message = Some(format_core_error(&error));
+                self.pages.common.error_message = Some(format_core_error(&error));
                 self.notify_status(i18n::msg!("account-admin-bootstrap-failed"));
             }
         }
@@ -903,28 +978,35 @@ impl ShellSession {
 
     pub(in crate::session) fn submit_first_run_setup(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
+            self.pages.common.error_message =
+                Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
 
-        let username = self.setup_admin_username.trim().to_string();
-        let password = self.setup_admin_password.clone();
-        if password != self.setup_admin_password_confirm {
-            self.setup_focused_field = ui::SetupField::AdminPasswordConfirm;
-            self.focused_component = ShellComponent::SetupAdminPasswordConfirm;
-            self.error_message = Some(i18n::msg!("account-passwords-do-not-match").into());
+        let username = self.pages.setup.setup_admin_username.trim().to_string();
+        let password = self.pages.setup.setup_admin_password.clone();
+        if password != self.pages.setup.setup_admin_password_confirm {
+            self.pages.setup.setup_focused_field = ui::SetupField::AdminPasswordConfirm;
+            self.pages.common.focused_component = ShellComponent::SetupAdminPasswordConfirm;
+            self.pages.common.error_message =
+                Some(i18n::msg!("account-passwords-do-not-match").into());
             self.ensure_touch_auth_focus_visible();
             self.notify_status(i18n::msg!("account-setup-incomplete"));
             return;
         }
 
-        let hint = self.setup_admin_password_hint.trim().to_string();
+        let hint = self
+            .pages
+            .setup
+            .setup_admin_password_hint
+            .trim()
+            .to_string();
         let hint = (!hint.is_empty()).then_some(hint);
 
         let mut config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
+                self.pages.common.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
                 self.notify_status(i18n::msg!("account-setup-failed"));
                 return;
             }
@@ -932,7 +1014,7 @@ impl ShellSession {
         config.language = self.selected_setup_language_value();
         config.timezone = self.selected_setup_timezone_value();
         if let Err(error) = storage.save_config(&config) {
-            self.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
+            self.pages.common.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
             self.notify_status(i18n::msg!("account-setup-failed"));
             return;
         }
@@ -942,16 +1024,16 @@ impl ShellSession {
             .with_backend(self.identity_backend);
         match users.validate_bootstrap_admin(&username, &password, hint.as_deref()) {
             Ok(()) => {
-                self.setup_step = ui::SetupStep::Appearance;
-                self.page_touch.setup_scroll = 0;
-                self.setup_focused_field = ui::SetupField::AppearanceShape;
-                self.focused_component = ShellComponent::SetupAppearanceShape;
-                self.error_message = None;
+                self.pages.setup.setup_step = ui::SetupStep::Appearance;
+                self.pages.common.page_touch.setup_scroll = 0;
+                self.pages.setup.setup_focused_field = ui::SetupField::AppearanceShape;
+                self.pages.common.focused_component = ShellComponent::SetupAppearanceShape;
+                self.pages.common.error_message = None;
                 self.notify_status(i18n::msg!("account-choose-appearance"));
                 self.refresh_hit_map();
             }
             Err(error) => {
-                self.error_message = Some(format_core_error(&error));
+                self.pages.common.error_message = Some(format_core_error(&error));
                 self.notify_status(i18n::msg!("account-setup-failed"));
             }
         }
@@ -959,25 +1041,31 @@ impl ShellSession {
 
     pub(in crate::session) fn finish_first_run_setup(&mut self) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::msg!("account-storage-unavailable").into());
+            self.pages.common.error_message =
+                Some(i18n::msg!("account-storage-unavailable").into());
             return;
         };
 
-        let username = self.setup_admin_username.trim().to_string();
-        let password = self.setup_admin_password.clone();
-        if self.setup_theme_color == self.setup_accent_color {
-            self.setup_focused_field = ui::SetupField::AppearanceAccentColor;
-            self.focused_component = ShellComponent::SetupAppearanceAccentColor;
-            self.error_message = Some(i18n::msg!("account-accent-must-differ").into());
+        let username = self.pages.setup.setup_admin_username.trim().to_string();
+        let password = self.pages.setup.setup_admin_password.clone();
+        if self.pages.setup.setup_theme_color == self.pages.setup.setup_accent_color {
+            self.pages.setup.setup_focused_field = ui::SetupField::AppearanceAccentColor;
+            self.pages.common.focused_component = ShellComponent::SetupAppearanceAccentColor;
+            self.pages.common.error_message = Some(i18n::msg!("account-accent-must-differ").into());
             self.notify_status(i18n::msg!("account-setup-incomplete"));
             return;
         }
-        let hint = self.setup_admin_password_hint.trim().to_string();
+        let hint = self
+            .pages
+            .setup
+            .setup_admin_password_hint
+            .trim()
+            .to_string();
         let hint = (!hint.is_empty()).then_some(hint);
         let appearance = storage::AppearanceConfig {
-            border_shape: self.setup_border_shape,
-            border_color: self.setup_theme_color,
-            accent_color: self.setup_accent_color,
+            border_shape: self.pages.setup.setup_border_shape,
+            border_color: self.pages.setup.setup_theme_color,
+            accent_color: self.pages.setup.setup_accent_color,
             icon_display_mode: storage::IconDisplayMode::Image,
             ..storage::AppearanceConfig::default()
         };
@@ -995,7 +1083,8 @@ impl ShellSession {
             match result {
                 Ok(config) => self.replace_storage_config(config),
                 Err(error) => {
-                    self.error_message = Some(i18n::LocalizedText::Raw(error.to_string()));
+                    self.pages.common.error_message =
+                        Some(i18n::LocalizedText::Raw(error.to_string()));
                     self.notify_status(i18n::msg!("account-personalization-save-failed"));
                     return;
                 }
@@ -1007,7 +1096,7 @@ impl ShellSession {
             match users.complete_personalization(&session, appearance) {
                 Ok(_) => self.complete_login(session),
                 Err(error) => {
-                    self.error_message = Some(format_core_error(&error));
+                    self.pages.common.error_message = Some(format_core_error(&error));
                     self.notify_status(i18n::msg!("account-personalization-save-failed"));
                 }
             }
@@ -1019,7 +1108,7 @@ impl ShellSession {
             hint.as_deref(),
             appearance,
         ) {
-            self.error_message = Some(format_core_error(&error));
+            self.pages.common.error_message = Some(format_core_error(&error));
             self.notify_status(i18n::msg!("account-setup-failed"));
             return;
         }
@@ -1028,20 +1117,20 @@ impl ShellSession {
         match sessions.login(&username, &password) {
             Ok(session) => self.complete_login(session),
             Err(error) => {
-                self.setup_admin_password.clear();
-                self.setup_admin_password_confirm.clear();
-                self.error_message = Some(format_core_error(&error));
+                self.pages.setup.setup_admin_password.clear();
+                self.pages.setup.setup_admin_password_confirm.clear();
+                self.pages.common.error_message = Some(format_core_error(&error));
                 self.notify_status(i18n::msg!("account-login-failed"));
             }
         }
     }
 
     fn clear_auth_passwords(&mut self) {
-        self.login_password.clear();
-        self.login_password_visible_until = None;
-        self.bootstrap_password.clear();
-        self.setup_admin_password.clear();
-        self.setup_admin_password_confirm.clear();
+        self.pages.login.login_password.clear();
+        self.pages.login.login_password_visible_until = None;
+        self.pages.bootstrap.bootstrap_password.clear();
+        self.pages.setup.setup_admin_password.clear();
+        self.pages.setup.setup_admin_password_confirm.clear();
     }
 
     fn begin_linux_personalization(
@@ -1050,16 +1139,17 @@ impl ShellSession {
         appearance: storage::AppearanceConfig,
     ) {
         self.clear_auth_passwords();
-        self.login_username = session.username.clone();
-        self.setup_admin_username = session.username.clone();
-        self.setup_admin_password_hint.clear();
-        self.setup_border_shape = appearance.border_shape;
-        self.setup_theme_color = appearance.border_color;
-        self.setup_accent_color = appearance.accent_color;
+        self.reset_navigation(ShellScreen::FirstRunSetup);
+        self.pages.login.login_username = session.username.clone();
+        self.pages.setup.setup_admin_username = session.username.clone();
+        self.pages.setup.setup_admin_password_hint.clear();
+        self.pages.setup.setup_border_shape = appearance.border_shape;
+        self.pages.setup.setup_theme_color = appearance.border_color;
+        self.pages.setup.setup_accent_color = appearance.accent_color;
         self.ensure_setup_accent_differs();
-        self.setup_custom_color_target = None;
-        self.setup_custom_color_input.clear();
-        self.setup_custom_color_error = None;
+        self.pages.setup.setup_custom_color_target = None;
+        self.pages.setup.setup_custom_color_input.clear();
+        self.pages.setup.setup_custom_color_error = None;
         self.pending_personalization_session = Some(session);
         self.app
             .dispatch_at(app::AppCommand::SetAuthSession(None), Instant::now());
@@ -1069,13 +1159,12 @@ impl ShellSession {
             app::AppCommand::SetActiveSystemStatusDashboard(None),
             Instant::now(),
         );
-        self.setup_step = ui::SetupStep::Language;
-        self.page_touch.setup_scroll = 0;
-        self.setup_focused_field = ui::SetupField::LanguageList;
-        self.reset_navigation(ShellScreen::FirstRunSetup);
-        self.focused_component = ShellComponent::SetupLanguage;
-        self.active_popup = None;
-        self.error_message = None;
+        self.pages.setup.setup_step = ui::SetupStep::Language;
+        self.pages.common.page_touch.setup_scroll = 0;
+        self.pages.setup.setup_focused_field = ui::SetupField::LanguageList;
+        self.pages.common.focused_component = ShellComponent::SetupLanguage;
+        self.pages.common.active_popup = None;
+        self.pages.common.error_message = None;
         self.notify_status(i18n::msg!("account-first-sign-in-setup"));
         self.refresh_hit_map();
     }
@@ -1098,7 +1187,7 @@ impl ShellSession {
             }),
             Err(error) if self.identity_backend == identity::IdentityBackend::Linux => {
                 self.clear_auth_passwords();
-                self.error_message = Some(
+                self.pages.common.error_message = Some(
                     i18n::msg!("account-profile-load-failed", error = error.to_string()).into(),
                 );
                 self.notify_status(i18n::msg!("account-login-incomplete"));
@@ -1159,9 +1248,9 @@ impl ShellSession {
             app::AppCommand::SetActiveSystemStatusDashboard(active_dashboard),
             Instant::now(),
         );
-        self.login_username = session.username.clone();
+        self.pages.login.login_username = session.username.clone();
         self.clear_auth_passwords();
-        self.error_message = None;
+        self.pages.common.error_message = None;
         self.notify_status(i18n::msg!(
             "account-signed-in",
             username = session.username.clone()
@@ -1189,8 +1278,8 @@ impl ShellSession {
 
         self.pending_personalization_session = None;
         self.reset_navigation(ShellScreen::Home);
-        self.focused_component = ShellComponent::Home;
-        self.active_popup = None;
+        self.pages.common.focused_component = ShellComponent::Home;
+        self.pages.common.active_popup = None;
         if session.role != UserRole::Guest {
             self.load_clock_for_session(&session);
         }
@@ -1199,12 +1288,12 @@ impl ShellSession {
 
     pub(in crate::session) fn open_user_management(&mut self) {
         if self.is_strict_guest() {
-            self.error_message = None;
+            self.pages.common.error_message = None;
             self.notify_status(i18n::msg!("account-guest-read-only"));
             return;
         }
         if self.app.auth_session().is_none() {
-            self.error_message = Some(i18n::msg!("account-login-required").into());
+            self.pages.common.error_message = Some(i18n::msg!("account-login-required").into());
             return;
         };
 
@@ -1214,10 +1303,10 @@ impl ShellSession {
             return;
         }
 
+        self.enter_new_page(ShellScreen::UserManagement);
         if self.refresh_user_management() {
-            self.enter_screen(ShellScreen::UserManagement);
-            self.user_management_mode = UserManagementMode::Browse;
-            self.user_management_focus = UserManagementPageFocus::UserList;
+            self.pages.user_management.user_management_mode = UserManagementMode::Browse;
+            self.pages.user_management.user_management_focus = UserManagementPageFocus::UserList;
             self.ensure_user_management_selection_visible();
             let status = if self.can_manage_all_users() {
                 i18n::msg!("account-user-management")

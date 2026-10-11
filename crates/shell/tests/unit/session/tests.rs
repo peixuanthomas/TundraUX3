@@ -292,9 +292,14 @@ fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
-    let mut draft = state.system_status_dashboard_draft.take().unwrap();
+    let mut draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .take()
+        .unwrap();
     draft.add_widget(storage::SystemStatusWidgetKind::Battery);
     let battery = draft
         .wide
@@ -304,22 +309,27 @@ fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
         .unwrap();
     battery.column = 0;
     battery.row = 20;
-    state.system_status_dashboard_draft = Some(draft);
-    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::UptimeLoad);
-    state.system_status_dashboard_focus =
+    state.pages.system_status.system_status_dashboard_draft = Some(draft);
+    state.pages.system_status.system_status_selected_widget =
+        Some(storage::SystemStatusWidgetKind::UptimeLoad);
+    state.pages.system_status.system_status_dashboard_focus =
         ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::UptimeLoad);
     state.select_system_status_widget_direction(0, 1);
     assert_eq!(
-        state.system_status_selected_widget,
+        state.pages.system_status.system_status_selected_widget,
         Some(storage::SystemStatusWidgetKind::Battery)
     );
-    assert!(state.system_status_dashboard_scroll_row > 0);
+    assert!(state.pages.system_status.system_status_dashboard_scroll_row > 0);
     state.select_system_status_widget_direction(0, -1);
     assert_ne!(
-        state.system_status_selected_widget,
+        state.pages.system_status.system_status_selected_widget,
         Some(storage::SystemStatusWidgetKind::Battery)
     );
-    let focused = state.system_status_selected_widget.unwrap();
+    let focused = state
+        .pages
+        .system_status
+        .system_status_selected_widget
+        .unwrap();
     let (_, layout) = state.system_status_layout().unwrap();
     let widget = state
         .to_system_status_view_model()
@@ -334,17 +344,22 @@ fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
             && widget.row + widget.size.rows() <= layout.visible_row_end
     );
 
-    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Battery);
+    state.pages.system_status.system_status_selected_widget =
+        Some(storage::SystemStatusWidgetKind::Battery);
     state.scroll_system_status_focused_widget_into_view(ui::SystemStatusWidgetKind::Battery);
     state.remove_selected_system_status_widget();
     let (_, layout) = state.system_status_layout().unwrap();
     assert_eq!(
-        state.system_status_dashboard_scroll_row,
+        state.pages.system_status.system_status_dashboard_scroll_row,
         layout.visible_row_start
     );
     assert!(!layout.widgets.is_empty());
     let replacement = super::controller::system_status::ui_widget_kind(
-        state.system_status_selected_widget.unwrap(),
+        state
+            .pages
+            .system_status
+            .system_status_selected_widget
+            .unwrap(),
     );
     assert!(
         layout
@@ -353,12 +368,12 @@ fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
             .any(|widget| widget.kind == replacement)
     );
 
-    state.system_status_dashboard_scroll_row = 20;
+    state.pages.system_status.system_status_dashboard_scroll_row = 20;
     state.terminal_size = (80, 20);
     state.clamp_system_status_dashboard_scroll();
     let (_, narrow) = state.system_status_layout().unwrap();
     assert_eq!(
-        state.system_status_dashboard_scroll_row,
+        state.pages.system_status.system_status_dashboard_scroll_row,
         narrow.visible_row_start
     );
     assert!(!narrow.widgets.is_empty());
@@ -373,7 +388,7 @@ fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     let index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
         .iter()
@@ -383,14 +398,14 @@ fn system_status_add_scrolls_new_bottom_widget_fully_into_view() {
     state.select_system_status_picker_item(index);
     state.add_selected_system_status_widget();
     assert_eq!(
-        state.system_status_selected_widget,
+        state.pages.system_status.system_status_selected_widget,
         Some(storage::SystemStatusWidgetKind::Temperature)
     );
     assert_eq!(
-        state.system_status_dashboard_focus,
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::Temperature)
     );
-    assert!(state.system_status_dashboard_scroll_row > 0);
+    assert!(state.pages.system_status.system_status_dashboard_scroll_row > 0);
     let (model, layout) = state.system_status_layout().unwrap();
     let activity = model
         .dashboard
@@ -416,7 +431,7 @@ fn system_status_short_add_picker_click_uses_visible_absolute_index() {
         );
         set_test_auth_role(&mut state, UserRole::Admin);
         state.enter_screen(ShellScreen::SystemStatus);
-        state.focused_component = ShellComponent::SystemStatus;
+        state.pages.common.focused_component = ShellComponent::SystemStatus;
         state.begin_system_status_dashboard_edit();
         state.open_system_status_add_picker();
         state.select_system_status_picker_item(5);
@@ -433,10 +448,15 @@ fn system_status_short_add_picker_click_uses_visible_absolute_index() {
             .area;
         state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(row.x, row.y, kind)));
         assert_eq!(
-            state.system_status_selected_widget,
+            state.pages.system_status.system_status_selected_widget,
             Some(storage::SystemStatusWidgetKind::Temperature)
         );
-        let draft = state.system_status_dashboard_draft.as_ref().unwrap();
+        let draft = state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap();
         assert_eq!(
             draft
                 .widgets
@@ -445,7 +465,7 @@ fn system_status_short_add_picker_click_uses_visible_absolute_index() {
                 .count(),
             1
         );
-        assert!(state.system_status_add_picker.is_none());
+        assert!(state.pages.system_status.system_status_add_picker.is_none());
     }
 }
 
@@ -458,10 +478,12 @@ fn system_status_disabled_add_and_picker_rows_are_inert() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     for kind in super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS {
         state
+            .pages
+            .system_status
             .system_status_dashboard_draft
             .as_mut()
             .unwrap()
@@ -483,13 +505,23 @@ fn system_status_disabled_add_and_picker_rows_are_inert() {
         layout.add_button.y,
         ui::MouseEventKind::Down(PointerButton::Left),
     )));
-    assert!(state.system_status_add_picker.is_none());
+    assert!(state.pages.system_status.system_status_add_picker.is_none());
 
     state.finish_cancel_system_status_dashboard_edit();
     state.begin_system_status_dashboard_edit();
     state.open_system_status_add_picker();
-    let selected = state.system_status_add_picker.unwrap().selected;
-    let before = state.system_status_dashboard_draft.clone().unwrap();
+    let selected = state
+        .pages
+        .system_status
+        .system_status_add_picker
+        .unwrap()
+        .selected;
+    let before = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone()
+        .unwrap();
     let model = state.to_system_status_view_model().unwrap();
     let layout = ui::system_status_layout(main, &model);
     let disabled = layout
@@ -511,15 +543,41 @@ fn system_status_disabled_add_and_picker_rows_are_inert() {
             kind,
         )));
     }
-    assert_eq!(state.system_status_add_picker.unwrap().selected, selected);
     assert_eq!(
-        state.system_status_dashboard_draft.as_ref().unwrap(),
+        state
+            .pages
+            .system_status
+            .system_status_add_picker
+            .unwrap()
+            .selected,
+        selected
+    );
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap(),
         &before
     );
     state.activate_system_status_picker_item(disabled.index);
-    assert_eq!(state.system_status_add_picker.unwrap().selected, selected);
     assert_eq!(
-        state.system_status_dashboard_draft.as_ref().unwrap(),
+        state
+            .pages
+            .system_status
+            .system_status_add_picker
+            .unwrap()
+            .selected,
+        selected
+    );
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap(),
         &before
     );
 }
@@ -533,12 +591,20 @@ fn system_status_clean_save_is_inert_for_shortcut_mouse_and_direct_call() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
-    let draft = state.system_status_dashboard_draft.clone();
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone();
     let active = state.app.active_system_status_dashboard().cloned();
-    let focus = state.system_status_dashboard_focus;
-    let feedback = state.system_status_dashboard_feedback.clone();
+    let focus = state.pages.system_status.system_status_dashboard_focus;
+    let feedback = state
+        .pages
+        .system_status
+        .system_status_dashboard_feedback
+        .clone();
     assert_eq!(
         state
             .route_key_input(&KeyInput::with_modifiers(
@@ -562,10 +628,19 @@ fn system_status_clean_save_is_inert_for_shortcut_mouse_and_direct_call() {
         state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(save.x, save.y, kind)));
     }
     state.save_system_status_dashboard();
-    assert_eq!(state.system_status_dashboard_draft, draft);
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_draft,
+        draft
+    );
     assert_eq!(state.app.active_system_status_dashboard().cloned(), active);
-    assert_eq!(state.system_status_dashboard_focus, focus);
-    assert_eq!(state.system_status_dashboard_feedback, feedback);
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_focus,
+        focus
+    );
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_feedback,
+        feedback
+    );
 }
 
 #[test]
@@ -577,11 +652,21 @@ fn system_status_pending_refresh_is_inert_for_keyboard_mouse_and_direct_call() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
-    state.system_status_refresh_requested_revision = Some(41);
-    state.system_status_dashboard_feedback = Some("keep feedback".into());
-    let marker = state.system_status_refresh_requested_revision;
-    let feedback = state.system_status_dashboard_feedback.clone();
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
+    state
+        .pages
+        .system_status
+        .system_status_refresh_requested_revision = Some(41);
+    state.pages.system_status.system_status_dashboard_feedback = Some("keep feedback".into());
+    let marker = state
+        .pages
+        .system_status
+        .system_status_refresh_requested_revision;
+    let feedback = state
+        .pages
+        .system_status
+        .system_status_dashboard_feedback
+        .clone();
     let model = state.to_system_status_view_model().unwrap();
     assert!(model.dashboard.actions.refresh_disabled);
     assert_eq!(
@@ -602,8 +687,17 @@ fn system_status_pending_refresh_is_inert_for_keyboard_mouse_and_direct_call() {
         )));
     }
     state.refresh_system_status();
-    assert_eq!(state.system_status_refresh_requested_revision, marker);
-    assert_eq!(state.system_status_dashboard_feedback, feedback);
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_refresh_requested_revision,
+        marker
+    );
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_feedback,
+        feedback
+    );
 }
 
 #[test]
@@ -624,7 +718,12 @@ fn system_status_add_picker_shows_full_unavailable_reasons_to_users() {
     };
     state.apply_system_status_snapshot(snapshot);
     state.begin_system_status_dashboard_edit();
-    let config = state.system_status_dashboard_draft.clone().unwrap();
+    let config = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone()
+        .unwrap();
     state.open_system_status_add_picker();
     let user = state
         .to_system_status_view_model()
@@ -647,7 +746,12 @@ fn system_status_add_picker_shows_full_unavailable_reasons_to_users() {
     assert!(!temperature.enabled && !battery.enabled);
     assert!(format!("{:?}", user).contains(sentinel));
     assert_eq!(
-        state.system_status_dashboard_draft.as_ref().unwrap(),
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap(),
         &config
     );
 
@@ -667,7 +771,12 @@ fn system_status_add_picker_shows_full_unavailable_reasons_to_users() {
         assert!(!item.enabled);
     }
     assert_eq!(
-        state.system_status_dashboard_draft.as_ref().unwrap(),
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap(),
         &config
     );
 }
@@ -691,10 +800,10 @@ fn system_status_role_gate_and_missing_service_reject_open() {
             role != UserRole::Guest
         );
         assert!(!labels.contains(&"Diagnostics".to_string()));
-        let original_focus = state.focused_component;
+        let original_focus = state.pages.common.focused_component;
         state.open_system_status();
         assert_eq!(state.active_screen(), ShellScreen::Home);
-        assert_eq!(state.focused_component, original_focus);
+        assert_eq!(state.pages.common.focused_component, original_focus);
         if role != UserRole::Guest {
             assert_eq!(state.status(), "System Status service unavailable");
         }
@@ -727,19 +836,25 @@ fn diagnostics_is_integrated_into_system_status_tabs() {
         assert_eq!(state.status(), "Open Diagnostics from System Status");
 
         state.enter_screen(ShellScreen::SystemStatus);
-        state.focused_component = ShellComponent::SystemStatus;
+        state.pages.common.focused_component = ShellComponent::SystemStatus;
         state.open_diagnostics();
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-        assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
         assert_eq!(
-            state.system_status_route,
+            state.pages.system_status.system_status_tab,
+            ui::SystemStatusTab::Health
+        );
+        assert_eq!(
+            state.pages.system_status.system_status_route,
             ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
         );
         assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
 
         state.apply_input(InputEvent::from_key_label("Esc"));
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-        assert_eq!(state.system_status_route, ui::SystemStatusRoute::Dashboard);
+        assert_eq!(
+            state.pages.system_status.system_status_route,
+            ui::SystemStatusRoute::Dashboard
+        );
         state.apply_input(InputEvent::from_key_label("Esc"));
         assert_eq!(state.active_screen(), ShellScreen::Home);
         assert_eq!(state.focused_component(), ShellComponent::Home);
@@ -762,7 +877,7 @@ fn system_status_process_sort_handles_clicks_keys_duplicates_units_and_refresh()
         Instant::now(),
     );
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.open_system_status_detail(storage::SystemStatusWidgetKind::TopProcesses);
     let process = |pid, cpu_percent, memory_bytes| system_services::ProcessMetricSnapshot {
         pid,
@@ -803,9 +918,9 @@ fn system_status_process_sort_handles_clicks_keys_duplicates_units_and_refresh()
         (Memory, vec![1, 4, 2, 3], true),
         (Memory, vec![3, 2, 4, 1], false),
     ] {
-        state.system_status_selected_row = 2;
+        state.pages.system_status.system_status_selected_row = 2;
         let selected_pid = pids(&state)[2];
-        state.system_status_scroll_offset = 2;
+        state.pages.system_status.system_status_scroll_offset = 2;
         let layout = ui::system_status_layout(main, &state.to_system_status_view_model().unwrap());
         let area = layout
             .process_sort_headers
@@ -823,9 +938,19 @@ fn system_status_process_sort_handles_clicks_keys_duplicates_units_and_refresh()
             at + Duration::from_millis(20),
         );
         assert_eq!(pids(&state), expected);
-        assert_eq!(state.system_status_process_sort.descending, descending);
-        assert_eq!(pids(&state)[state.system_status_selected_row], selected_pid);
-        assert_eq!(state.system_status_scroll_offset, 0);
+        assert_eq!(
+            state
+                .pages
+                .system_status
+                .system_status_process_sort
+                .descending,
+            descending
+        );
+        assert_eq!(
+            pids(&state)[state.pages.system_status.system_status_selected_row],
+            selected_pid
+        );
+        assert_eq!(state.pages.system_status.system_status_scroll_offset, 0);
     }
     snapshot.revision += 1;
     state.apply_system_status_snapshot(snapshot);
@@ -845,7 +970,7 @@ fn system_status_widget_double_click_from_terminal_events_opens_detail() {
     );
     set_test_auth_role(&mut state, UserRole::User);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     let model = state.to_system_status_view_model().unwrap();
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
     else {
@@ -876,9 +1001,12 @@ fn system_status_widget_double_click_from_terminal_events_opens_detail() {
     );
 
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-    assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
     assert_eq!(
-        state.system_status_route,
+        state.pages.system_status.system_status_tab,
+        ui::SystemStatusTab::Health
+    );
+    assert_eq!(
+        state.pages.system_status.system_status_route,
         ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
     );
     assert_eq!(state.focused_component(), ShellComponent::SystemStatus);
@@ -893,7 +1021,7 @@ fn system_status_keyboard_navigates_dashboard_and_routes_detail_actions() {
     );
     set_test_auth_role(&mut user, UserRole::User);
     user.enter_screen(ShellScreen::SystemStatus);
-    user.focused_component = ShellComponent::SystemStatus;
+    user.pages.common.focused_component = ShellComponent::SystemStatus;
     assert_eq!(
         user.route_key_input(&KeyInput::from_label("Tab")).1,
         ShellCommand::SystemStatusFocusNext
@@ -934,7 +1062,7 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
 
     let (_, layout) = state.system_status_layout().unwrap();
     let widget = layout
@@ -946,15 +1074,26 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
     let widget_point = (widget.area.x + 1, widget.area.y + 1);
     state.apply_input(InputEvent::mouse_down(PointerButton::Right, widget_point));
 
-    assert!(state.system_status_dashboard_draft.is_some());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_some()
+    );
     assert_eq!(
-        state.system_status_selected_widget,
+        state.pages.system_status.system_status_selected_widget,
         Some(super::controller::system_status::storage_widget_kind(
             widget.kind
         ))
     );
     assert_eq!(
-        state.system_status_size_picker.unwrap().anchor,
+        state
+            .pages
+            .system_status
+            .system_status_size_picker
+            .unwrap()
+            .anchor,
         Some(widget_point)
     );
     let contextual_layout = ui::system_status_layout(
@@ -973,8 +1112,19 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
     let size_point = (size_row.x, size_row.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, size_point));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, size_point));
-    assert!(state.system_status_size_picker.is_none());
-    let draft = state.system_status_dashboard_draft.as_ref().unwrap();
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_size_picker
+            .is_none()
+    );
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap();
     assert_eq!(
         draft
             .wide
@@ -985,7 +1135,13 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
             .size,
         storage::SystemStatusWidgetSize::Large
     );
-    assert!(state.system_status_widget_drag.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .is_none()
+    );
     state.finish_cancel_system_status_dashboard_edit();
     let layout = ui::system_status_layout(
         match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
@@ -1000,24 +1156,62 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
         .expect("dashboard has blank canvas space");
     state.apply_input(InputEvent::mouse_down(PointerButton::Right, blank_point));
 
-    assert!(state.system_status_dashboard_draft.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_none()
+    );
     let baseline = state.system_status_dashboard_config();
-    let focus = state.system_status_dashboard_focus;
+    let focus = state.pages.system_status.system_status_dashboard_focus;
     state.apply_input(InputEvent::key(InputKey::Escape));
-    assert!(state.system_status_add_picker.is_none());
-    assert!(state.system_status_dashboard_draft.is_none());
+    assert!(state.pages.system_status.system_status_add_picker.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_none()
+    );
     assert_eq!(state.system_status_dashboard_config(), baseline);
-    assert_eq!(state.system_status_dashboard_focus, focus);
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_focus,
+        focus
+    );
     state.apply_input(InputEvent::mouse_down(PointerButton::Right, blank_point));
-    assert!(state.system_status_dashboard_draft.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_none()
+    );
     // Activating an already-added item must not enter edit mode.
     state.activate_system_status_picker_item(0);
-    assert!(state.system_status_dashboard_draft.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_none()
+    );
     assert_eq!(
-        state.system_status_add_picker.unwrap().anchor,
+        state
+            .pages
+            .system_status
+            .system_status_add_picker
+            .unwrap()
+            .anchor,
         Some(blank_point)
     );
-    assert!(state.system_status_size_picker.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_size_picker
+            .is_none()
+    );
     let (model, layout) = state.system_status_layout().unwrap();
     let picker = model.dashboard.picker.as_ref().unwrap();
     let row = layout
@@ -1027,10 +1221,22 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
         .unwrap();
     let point = (row.area.x, row.area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert!(state.system_status_add_picker.is_none());
-    let draft = state.system_status_dashboard_draft.clone().unwrap();
+    assert!(state.pages.system_status.system_status_add_picker.is_none());
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone()
+        .unwrap();
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert_eq!(state.system_status_dashboard_draft.as_ref(), Some(&draft));
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref(),
+        Some(&draft)
+    );
     assert_eq!(
         draft
             .widgets
@@ -1039,7 +1245,13 @@ fn system_status_right_click_opens_contextual_edit_pickers() {
             .count(),
         1
     );
-    assert!(state.system_status_widget_drag.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .is_none()
+    );
 }
 
 #[test]
@@ -1051,18 +1263,24 @@ fn system_status_modules_open_directly_from_dashboard_by_keyboard() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     for key in ['l', 'i'] {
         state.apply_input(InputEvent::key(InputKey::Char(key)));
-        assert_eq!(state.system_status_route, ui::SystemStatusRoute::Dashboard);
+        assert_eq!(
+            state.pages.system_status.system_status_route,
+            ui::SystemStatusRoute::Dashboard
+        );
         assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
     }
     state.apply_input(InputEvent::key(InputKey::Char('h')));
     assert_eq!(
-        state.system_status_route,
+        state.pages.system_status.system_status_route,
         ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Diagnostics)
     );
-    assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Health);
+    assert_eq!(
+        state.pages.diagnostics.diagnostics_tab,
+        ui::DiagnosticsTab::Health
+    );
 }
 
 #[test]
@@ -1074,55 +1292,75 @@ fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.ensure_system_status_widget_selection();
     state.restore_system_status_widget_focus();
-    let first = state.system_status_dashboard_focus;
-    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Refresh;
+    let first = state.pages.system_status.system_status_dashboard_focus;
+    state.pages.system_status.system_status_dashboard_focus =
+        ui::SystemStatusDashboardFocus::Refresh;
     state.move_system_status_dashboard_focus(1);
-    assert_eq!(state.system_status_dashboard_focus, first, "forward wraps");
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_focus, first,
+        "forward wraps"
+    );
     state.move_system_status_dashboard_focus(-1);
     assert_eq!(
-        state.system_status_dashboard_focus,
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Refresh,
         "reverse wraps"
     );
 
     state.begin_system_status_dashboard_edit();
-    state.system_status_selected_widget = None;
+    state.pages.system_status.system_status_selected_widget = None;
     let first_edit_focus = state.system_status_dashboard_focus_order()[0];
-    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
+    state.pages.system_status.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
     state.move_system_status_dashboard_focus(1);
     assert_eq!(
-        state.system_status_dashboard_focus, first_edit_focus,
+        state.pages.system_status.system_status_dashboard_focus, first_edit_focus,
         "disabled Size, Remove, and clean Save are skipped before wrapping"
     );
-    assert!(state.system_status_selected_widget.is_some());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_selected_widget
+            .is_some()
+    );
     state.move_system_status_dashboard_focus(-1);
     assert_eq!(
-        state.system_status_dashboard_focus,
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Remove,
         "focusing a widget enables Size and Remove; clean Save remains skipped"
     );
-    state.system_status_selected_widget = None;
-    state.system_status_dashboard_focus = first_edit_focus;
+    state.pages.system_status.system_status_selected_widget = None;
+    state.pages.system_status.system_status_dashboard_focus = first_edit_focus;
     state.move_system_status_dashboard_focus(-1);
     assert_eq!(
-        state.system_status_dashboard_focus,
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Add,
         "without a selected widget reverse wrapping skips Size, Remove, and clean Save"
     );
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert!(
-        state.system_status_add_picker.is_some(),
+        state.pages.system_status.system_status_add_picker.is_some(),
         "focused Add activates"
     );
     state.apply_input(InputEvent::from_key_label("Esc"));
-    assert!(state.system_status_add_picker.is_none());
-    assert!(state.system_status_dashboard_draft.is_some());
+    assert!(state.pages.system_status.system_status_add_picker.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_some()
+    );
     state.apply_input(InputEvent::from_key_label("Esc"));
     assert!(
-        state.system_status_dashboard_draft.is_none(),
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_none(),
         "Escape cancels clean dashboard edits"
     );
 }
@@ -1136,23 +1374,33 @@ fn system_status_dashboard_focus_restores_and_tabs_offscreen() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.ensure_system_status_widget_selection();
-    let kind = state.system_status_selected_widget.expect("default widget");
-    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Widget(
-        super::controller::system_status::ui_widget_kind(kind),
-    );
+    let kind = state
+        .pages
+        .system_status
+        .system_status_selected_widget
+        .expect("default widget");
+    state.pages.system_status.system_status_dashboard_focus =
+        ui::SystemStatusDashboardFocus::Widget(super::controller::system_status::ui_widget_kind(
+            kind,
+        ));
     state.open_system_status_detail(kind);
     state.back_from_system_status_detail();
     assert_eq!(
-        state.system_status_dashboard_focus,
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Widget(super::controller::system_status::ui_widget_kind(
             kind
         ))
     );
 
     state.begin_system_status_dashboard_edit();
-    let draft = state.system_status_dashboard_draft.as_mut().unwrap();
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_mut()
+        .unwrap();
     let last = draft.wide.placements.last_mut().unwrap();
     last.row = 20;
     let last_kind = super::controller::system_status::ui_widget_kind(last.kind);
@@ -1161,14 +1409,14 @@ fn system_status_dashboard_focus_restores_and_tabs_offscreen() {
         .iter()
         .position(|focus| *focus == ui::SystemStatusDashboardFocus::Widget(last_kind))
         .unwrap();
-    state.system_status_dashboard_focus = order[position.saturating_sub(1)];
+    state.pages.system_status.system_status_dashboard_focus = order[position.saturating_sub(1)];
     state.move_system_status_dashboard_focus(1);
     assert_eq!(
-        state.system_status_dashboard_focus,
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Widget(last_kind)
     );
     assert!(
-        state.system_status_dashboard_scroll_row > 0,
+        state.pages.system_status.system_status_dashboard_scroll_row > 0,
         "Tab scrolls the offscreen widget into view"
     );
 }
@@ -1182,13 +1430,16 @@ fn system_status_size_shortcut_cycles_and_picker_applies_active_profile_only() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
-    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
-    state.system_status_dashboard_focus =
+    state.pages.system_status.system_status_selected_widget =
+        Some(storage::SystemStatusWidgetKind::Cpu);
+    state.pages.system_status.system_status_dashboard_focus =
         ui::SystemStatusDashboardFocus::Widget(ui::SystemStatusWidgetKind::Cpu);
     let size = |state: &ShellSession, profile| {
         state
+            .pages
+            .system_status
             .system_status_dashboard_draft
             .as_ref()
             .unwrap()
@@ -1207,18 +1458,36 @@ fn system_status_size_shortcut_cycles_and_picker_applies_active_profile_only() {
         "S remains immediate cycle"
     );
 
-    state.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Size;
+    state.pages.system_status.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Size;
     state.apply_input(InputEvent::from_key_label("Enter"));
     let expected = match size(&state, storage::DashboardProfile::Wide) {
         storage::SystemStatusWidgetSize::Small => 0,
         storage::SystemStatusWidgetSize::Wide => 1,
         storage::SystemStatusWidgetSize::Large => 2,
     };
-    assert_eq!(state.system_status_size_picker.unwrap().selected, expected);
-    let unchanged = state.system_status_dashboard_draft.clone().unwrap();
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_size_picker
+            .unwrap()
+            .selected,
+        expected
+    );
+    let unchanged = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone()
+        .unwrap();
     state.apply_input(InputEvent::from_key_label("Esc"));
     assert_eq!(
-        state.system_status_dashboard_draft.as_ref().unwrap(),
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref()
+            .unwrap(),
         &unchanged,
         "Esc does not resize"
     );
@@ -1237,7 +1506,7 @@ fn system_status_size_shortcut_cycles_and_picker_applies_active_profile_only() {
         "other profile is unchanged"
     );
     assert_eq!(
-        state.system_status_dashboard_focus,
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Size
     );
 }
@@ -1256,9 +1525,10 @@ fn system_status_size_picker_click_applies_exact_size_and_transitions_clear_it()
         );
         set_test_auth_role(&mut state, UserRole::Admin);
         state.enter_screen(ShellScreen::SystemStatus);
-        state.focused_component = ShellComponent::SystemStatus;
+        state.pages.common.focused_component = ShellComponent::SystemStatus;
         state.begin_system_status_dashboard_edit();
-        state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+        state.pages.system_status.system_status_selected_widget =
+            Some(storage::SystemStatusWidgetKind::Cpu);
         state.open_system_status_size_picker();
         let model = state.to_system_status_view_model().unwrap();
         let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
@@ -1268,6 +1538,8 @@ fn system_status_size_picker_click_applies_exact_size_and_transitions_clear_it()
         let row = ui::system_status_layout(main, &model).size_picker_items[2].area;
         state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(row.x, row.y, kind)));
         let wide = state
+            .pages
+            .system_status
             .system_status_dashboard_draft
             .as_ref()
             .unwrap()
@@ -1277,15 +1549,33 @@ fn system_status_size_picker_click_applies_exact_size_and_transitions_clear_it()
             .find(|p| p.kind == storage::SystemStatusWidgetKind::Cpu)
             .unwrap();
         assert_eq!(wide.size, storage::SystemStatusWidgetSize::Large);
-        assert!(state.system_status_size_picker.is_none());
+        assert!(
+            state
+                .pages
+                .system_status
+                .system_status_size_picker
+                .is_none()
+        );
 
         state.open_system_status_size_picker();
         state.open_system_status_add_picker();
-        assert!(state.system_status_size_picker.is_none());
+        assert!(
+            state
+                .pages
+                .system_status
+                .system_status_size_picker
+                .is_none()
+        );
         state.close_system_status_add_picker();
         state.open_system_status_size_picker();
         state.finish_cancel_system_status_dashboard_edit();
-        assert!(state.system_status_size_picker.is_none());
+        assert!(
+            state
+                .pages
+                .system_status
+                .system_status_size_picker
+                .is_none()
+        );
     }
 }
 
@@ -1298,13 +1588,19 @@ fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     let baseline = state.system_status_dashboard_config();
     state.begin_system_status_dashboard_edit();
-    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    state.pages.system_status.system_status_selected_widget =
+        Some(storage::SystemStatusWidgetKind::Cpu);
     state.move_selected_system_status_widget(1, 2);
     state.cycle_selected_system_status_widget_size();
-    let changed = state.system_status_dashboard_draft.as_ref().unwrap();
+    let changed = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap();
     assert_eq!(
         changed.wide, baseline.wide,
         "narrow edits leave wide semantics identical"
@@ -1327,6 +1623,8 @@ fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
     state.select_system_status_picker_item(picker_index);
     state.apply_input(InputEvent::from_key_label("Enter"));
     let added = state
+        .pages
+        .system_status
         .system_status_dashboard_draft
         .as_ref()
         .unwrap()
@@ -1350,7 +1648,12 @@ fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
         );
     }
     state.remove_selected_system_status_widget();
-    let removed = state.system_status_dashboard_draft.as_ref().unwrap();
+    let removed = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap();
     assert!(!removed.widgets.contains(&add_kind));
     assert_eq!(
         removed.wide, baseline.wide,
@@ -1361,14 +1664,29 @@ fn system_status_draft_profiles_catalog_cancel_and_save_failure_are_isolated() {
         "removal does not compact unrelated narrow gaps"
     );
 
-    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    state.pages.system_status.system_status_selected_widget =
+        Some(storage::SystemStatusWidgetKind::Cpu);
     state.cycle_selected_system_status_widget_size();
-    let dirty = state.system_status_dashboard_draft.clone().unwrap();
+    let dirty = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone()
+        .unwrap();
     state.save_system_status_dashboard();
-    assert_eq!(state.system_status_dashboard_draft.as_ref(), Some(&dirty));
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .as_ref(),
+        Some(&dirty)
+    );
     assert_eq!(state.app.active_system_status_dashboard(), None);
     assert!(
         state
+            .pages
+            .system_status
             .system_status_dashboard_feedback
             .as_ref()
             .map(i18n::LocalizedText::render_current)
@@ -1411,7 +1729,7 @@ fn system_status_users_share_admin_view_permissions() {
         user.back_from_system_status_detail();
         user.open_system_status_detail(kind);
         assert_eq!(
-            user.system_status_route,
+            user.pages.system_status.system_status_route,
             ui::SystemStatusRoute::Detail(detail)
         );
     }
@@ -1424,9 +1742,15 @@ fn system_status_users_share_admin_view_permissions() {
     );
 
     user.set_system_status_tab(ui::SystemStatusTab::Storage);
-    assert_eq!(user.system_status_tab, ui::SystemStatusTab::Storage);
+    assert_eq!(
+        user.pages.system_status.system_status_tab,
+        ui::SystemStatusTab::Storage
+    );
     user.set_system_status_tab(ui::SystemStatusTab::Network);
-    assert_eq!(user.system_status_tab, ui::SystemStatusTab::Network);
+    assert_eq!(
+        user.pages.system_status.system_status_tab,
+        ui::SystemStatusTab::Network
+    );
 }
 
 #[test]
@@ -1438,16 +1762,21 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
     );
     set_test_auth_role(&mut state, UserRole::User);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
-    state.system_status_selected_widget = Some(storage::SystemStatusWidgetKind::Cpu);
+    state.pages.system_status.system_status_selected_widget =
+        Some(storage::SystemStatusWidgetKind::Cpu);
     let inactive = state
+        .pages
+        .system_status
         .system_status_dashboard_draft
         .as_ref()
         .unwrap()
         .narrow
         .clone();
     let before = state
+        .pages
+        .system_status
         .system_status_dashboard_draft
         .as_ref()
         .unwrap()
@@ -1476,7 +1805,13 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
         InputEvent::mouse_down(PointerButton::Left, down),
         started_at,
     );
-    assert!(state.system_status_widget_drag.is_some());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .is_some()
+    );
     state.apply_input_at(
         InputEvent::mouse_drag(PointerButton::Left, target),
         started_at + Duration::from_millis(20),
@@ -1485,8 +1820,19 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
         InputEvent::mouse_up(PointerButton::Left, target),
         started_at + Duration::from_millis(40),
     );
-    assert!(state.system_status_widget_drag.is_none());
-    let draft = state.system_status_dashboard_draft.as_ref().unwrap();
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .is_none()
+    );
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .as_ref()
+        .unwrap();
     assert_ne!(draft.wide, before);
     assert_eq!(draft.narrow, inactive);
     let rendered = state.to_system_status_view_model().unwrap();
@@ -1514,7 +1860,7 @@ fn system_status_drag_changes_only_active_profile_and_clears_capture() {
         InputEvent::from_key_label("Esc"),
         started_at + Duration::from_millis(80),
     );
-    assert!(state.system_status_discard_dialog);
+    assert!(state.pages.system_status.system_status_discard_dialog);
     for (index, left) in layout.widgets.iter().filter(|w| !w.preview).enumerate() {
         for right in layout.widgets.iter().filter(|w| !w.preview).skip(index + 1) {
             assert!(
@@ -1534,9 +1880,9 @@ fn system_status_clipped_widget_click_release_preserves_drag_origin() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
-    state.system_status_dashboard_scroll_row = 1;
+    state.pages.system_status.system_status_dashboard_scroll_row = 1;
     state.clamp_system_status_dashboard_scroll();
     let (model, layout) = state.system_status_layout().unwrap();
     assert_eq!(layout.visible_row_start, 1);
@@ -1558,6 +1904,8 @@ fn system_status_clipped_widget_click_release_preserves_drag_origin() {
     assert_eq!(clipped.area.y, layout.canvas.y);
     let profile = super::controller::system_status::storage_profile(layout.profile);
     let before = state
+        .pages
+        .system_status
         .system_status_dashboard_draft
         .as_ref()
         .unwrap()
@@ -1566,10 +1914,24 @@ fn system_status_clipped_widget_click_release_preserves_drag_origin() {
         .clone();
     let pointer = (clipped.area.x.saturating_add(1), clipped.area.y);
     state.begin_system_status_widget_drag(overview.kind, pointer);
-    assert!(state.system_status_widget_drag.is_some());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .is_some()
+    );
     state.finish_system_status_widget_drag(pointer);
-    assert!(state.system_status_widget_drag.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_widget_drag
+            .is_none()
+    );
     let after = state
+        .pages
+        .system_status
         .system_status_dashboard_draft
         .as_ref()
         .unwrap()
@@ -1622,7 +1984,7 @@ fn system_status_save_persists_dashboard_to_user_record() {
         .cloned()
         .expect("login loads dashboard");
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     let index = super::controller::system_status::SYSTEM_STATUS_WIDGET_KINDS
         .iter()
@@ -1631,10 +1993,21 @@ fn system_status_save_persists_dashboard_to_user_record() {
     state.open_system_status_add_picker();
     state.select_system_status_picker_item(index);
     state.apply_input(InputEvent::from_key_label("Enter"));
-    let expected = state.system_status_dashboard_draft.clone().unwrap();
+    let expected = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone()
+        .unwrap();
     assert_ne!(expected, loaded);
     state.save_system_status_dashboard();
-    assert!(state.system_status_dashboard_draft.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_none()
+    );
     assert_eq!(state.app.active_system_status_dashboard(), Some(&expected));
     let persisted = manager
         .load_users()
@@ -1656,7 +2029,7 @@ fn diagnostics_rejects_guest_even_with_system_status_parent() {
     );
     set_test_auth_role(&mut state, UserRole::Guest);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
 
     state.open_diagnostics();
 
@@ -1992,7 +2365,7 @@ fn system_status_focus_clock_roundtrip_and_close_restore_home() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.refresh_hit_map();
     assert_eq!(state.focus_order(), vec![ShellComponent::SystemStatus]);
     state.open_clock();
@@ -2031,7 +2404,7 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
         .collect();
     state.apply_system_status_snapshot(snapshot);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.set_system_status_tab(ui::SystemStatusTab::Storage);
     state.refresh_hit_map();
     state.apply_input(InputEvent::from_key_label("End"));
@@ -2042,7 +2415,7 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
     };
     let keyboard_layout = ui::system_status_layout(main, &model);
     assert!(keyboard_layout.visible_start > 1);
-    assert_eq!(state.system_status_scroll_offset, 0);
+    assert_eq!(state.pages.system_status.system_status_scroll_offset, 0);
     state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
         10,
         8,
@@ -2054,9 +2427,11 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
         after_wheel_layout.visible_start,
         keyboard_layout.visible_start.saturating_sub(1)
     );
-    assert!(state.system_status_selected_row >= after_wheel_layout.visible_start);
     assert!(
-        state.system_status_selected_row
+        state.pages.system_status.system_status_selected_row >= after_wheel_layout.visible_start
+    );
+    assert!(
+        state.pages.system_status.system_status_selected_row
             < after_wheel_layout.visible_start + after_wheel_layout.visible_capacity
     );
     state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
@@ -2064,7 +2439,7 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
         8,
         ui::MouseEventKind::Scroll(ScrollDirection::Down),
     )));
-    assert!(state.system_status_scroll_offset > 0);
+    assert!(state.pages.system_status.system_status_scroll_offset > 0);
     let model = state.to_system_status_view_model().unwrap();
     let layout = ui::system_status_layout(main, &model);
     let track = layout.scrollbar.expect("scrollbar");
@@ -2082,7 +2457,7 @@ fn system_status_mouse_wheel_and_scrollbar_drag_update_explicit_viewport() {
         track.bottom().saturating_sub(1),
         ui::MouseEventKind::Drag(PointerButton::Left),
     )));
-    assert!(state.system_status_scroll_offset > 1);
+    assert!(state.pages.system_status.system_status_scroll_offset > 1);
     state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(
         track.x,
         track.bottom().saturating_sub(1),
@@ -2100,7 +2475,7 @@ fn system_status_modal_focus_traps_and_restores_page_focus() {
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.notify_modal(
         "Confirm",
         "Modal over status",
@@ -2112,22 +2487,37 @@ fn system_status_modal_focus_traps_and_restores_page_focus() {
         state.focus_order(),
         vec![ShellComponent::NotificationDialog]
     );
-    assert_eq!(state.focused_component, ShellComponent::NotificationDialog);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::NotificationDialog
+    );
     state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(state.focused_component, ShellComponent::NotificationDialog);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::NotificationDialog
+    );
     state.apply_input(InputEvent::from_key_label("Enter"));
     state.refresh_hit_map();
     assert_eq!(state.focus_order(), vec![ShellComponent::SystemStatus]);
-    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::SystemStatus
+    );
 
     state.apply_time_sync_failure_for_test("offline");
     state.refresh_hit_map();
     assert_eq!(state.focus_order(), vec![ShellComponent::TimeSyncDialog]);
     state.move_focus(ui::FocusDirection::Previous);
-    assert_eq!(state.focused_component, ShellComponent::TimeSyncDialog);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::TimeSyncDialog
+    );
     state.apply_input(InputEvent::from_key_label("Enter"));
     state.refresh_hit_map();
-    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::SystemStatus
+    );
 }
 
 #[test]
@@ -2145,7 +2535,10 @@ fn system_status_runtime_watch_drain_applies_revision_and_completes_refresh() {
         system_services::SystemVolumeSource::Detected,
     );
     state.apply_system_status_snapshot(initial.clone());
-    state.system_status_refresh_requested_revision = Some(4);
+    state
+        .pages
+        .system_status
+        .system_status_refresh_requested_revision = Some(4);
     let system = |snapshot: app::AppSystemStatusSnapshot| system_services::SystemSnapshot {
         revision: snapshot.revision,
         observed_at: snapshot.observed_at,
@@ -2168,7 +2561,13 @@ fn system_status_runtime_watch_drain_applies_revision_and_completes_refresh() {
     sender.send(system(updated)).unwrap();
     assert!(drain_system_status_snapshot(&mut receiver, &mut state));
     assert_eq!(state.app.system_status_snapshot().unwrap().revision, 5);
-    assert!(state.system_status_refresh_requested_revision.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_refresh_requested_revision
+            .is_none()
+    );
 }
 
 #[test]
@@ -2263,7 +2662,7 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
     );
     state.complete_login(admin_session);
     state.set_navigation_path(vec![ShellScreen::Home]);
-    state.focused_component = ShellComponent::Home;
+    state.pages.common.focused_component = ShellComponent::Home;
     let index = state
         .user_home_entries()
         .iter()
@@ -2301,12 +2700,20 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         .revision;
     state.apply_input(InputEvent::from_key_label("R"));
     assert_eq!(
-        state.system_status_refresh_requested_revision,
+        state
+            .pages
+            .system_status
+            .system_status_refresh_requested_revision,
         Some(opened_revision)
     );
     runtime.block_on(async {
         tokio::time::timeout(Duration::from_secs(3), async {
-            while state.system_status_refresh_requested_revision.is_some() {
+            while state
+                .pages
+                .system_status
+                .system_status_refresh_requested_revision
+                .is_some()
+            {
                 receiver.changed().await.unwrap();
                 apply_current_system_status_snapshot(&mut receiver, &mut state);
             }
@@ -2314,7 +2721,13 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         .await
         .expect("refreshed status sample timed out");
     });
-    assert!(state.system_status_refresh_requested_revision.is_none());
+    assert!(
+        state
+            .pages
+            .system_status
+            .system_status_refresh_requested_revision
+            .is_none()
+    );
     assert!(state.app.system_status_snapshot().unwrap().revision > opened_revision);
     state.apply_input(InputEvent::from_key_label("Esc"));
     assert_eq!(state.active_screen(), ShellScreen::Home);
@@ -2392,7 +2805,7 @@ fn critical_modal_preempts_and_then_restores_the_previous_modal() {
 fn exit_confirmation_keeps_login_as_the_content_screen() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     state.set_navigation_path(vec![ShellScreen::Login]);
-    state.focused_component = ShellComponent::LoginUserList;
+    state.pages.common.focused_component = ShellComponent::LoginUserList;
     state.refresh_hit_map();
 
     let action = state.apply_input(InputEvent::from_key_label("Esc"));
@@ -2554,7 +2967,7 @@ fn entering_overlays_gate_keyboard_focus_and_popup_activation_until_ready() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Home),
         anchor: (10, 10),
     });
@@ -2601,7 +3014,7 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
         ShellHomeMode::User,
     );
     state.set_navigation_path(vec![ShellScreen::Clock]);
-    state.clock_create_state = Some(ClockCreateState::default());
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     assert_eq!(
         state
             .active_overlay_descriptor()
@@ -2635,14 +3048,14 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
     );
 
     let mut state = explorer_routing_test_state();
-    state.explorer_overlay_mode = Some(ExplorerOverlayMode::Options);
+    state.pages.explorer.explorer_overlay_mode = Some(ExplorerOverlayMode::Options);
     assert_eq!(
         state
             .active_overlay_descriptor()
             .map(|overlay| overlay.category),
         Some(ShellOverlayCategory::PagePopover)
     );
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (10, 10),
     });
@@ -2653,8 +3066,8 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
         Some(ShellOverlayCategory::PagePopover)
     );
 
-    state.active_popup = None;
-    state.explorer_overlay_mode = None;
+    state.pages.common.active_popup = None;
+    state.pages.explorer.explorer_overlay_mode = None;
     state.set_navigation_path(vec![ShellScreen::Home]);
     state.notify_toast("Saved");
     let toast = state.active_overlay_descriptor().expect("toast descriptor");
@@ -2698,7 +3111,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
     };
 
     state.set_navigation_path(vec![ShellScreen::FirstRunSetup]);
-    state.setup_custom_color_target = Some(ui::SetupCustomColorTarget::Theme);
+    state.pages.setup.setup_custom_color_target = Some(ui::SetupCustomColorTarget::Theme);
     let setup_area = ui::setup_custom_color_dialog_area(main);
     for motion in [ui::MotionTransitions::default(), gated] {
         state.refresh_hit_map_with_motion(motion);
@@ -2708,9 +3121,9 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         );
     }
 
-    state.setup_custom_color_target = None;
+    state.pages.setup.setup_custom_color_target = None;
     state.set_navigation_path(vec![ShellScreen::Clock]);
-    state.clock_create_state = Some(ClockCreateState::default());
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     let clock_model = state.to_clock_view_model();
     let clock_layout = ui::clock_page_layout(main, &clock_model)
         .create_dialog
@@ -2740,9 +3153,9 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
             .contains(&ShellComponent::ClockCreateInput)
     );
 
-    state.clock_create_state = None;
+    state.pages.clock.clock_create_state = None;
     state.set_navigation_path(vec![ShellScreen::Diagnostics]);
-    state.diagnostics_repair_preview =
+    state.pages.diagnostics.diagnostics_repair_preview =
         vec![app::diagnostics::DiagnosticsRepairAction::CreateDirectory {
             label: "Data".into(),
             path: std::path::PathBuf::from("/private/example/data"),
@@ -2760,7 +3173,9 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
         );
     }
 
+    let repair_preview = state.pages.diagnostics.diagnostics_repair_preview.clone();
     state.set_navigation_path(vec![ShellScreen::SystemStatus]);
+    state.pages.diagnostics.diagnostics_repair_preview = repair_preview;
     let system_dialog = state
         .to_diagnostics_view_model()
         .repair_dialog
@@ -2783,11 +3198,12 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         ShellHomeMode::User,
     );
     launcher.set_navigation_path(vec![ShellScreen::Launcher]);
-    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
-        id: "app-1".into(),
-        path: "/first/display/path".into(),
-        kind: LauncherExecutableKind::NativeBinary,
-    });
+    launcher.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Launch {
+            id: "app-1".into(),
+            path: "/first/display/path".into(),
+            kind: LauncherExecutableKind::NativeBinary,
+        });
     let launch = launcher
         .active_overlay_descriptor()
         .expect("launch confirm");
@@ -2797,11 +3213,12 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         launch.target,
         Some(RoutedTarget::Component(ShellComponent::Launcher))
     );
-    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
-        id: "app-1".into(),
-        path: "/changed/display/path".into(),
-        kind: LauncherExecutableKind::NativeBinary,
-    });
+    launcher.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Launch {
+            id: "app-1".into(),
+            path: "/changed/display/path".into(),
+            kind: LauncherExecutableKind::NativeBinary,
+        });
     assert_eq!(
         launcher
             .active_overlay_descriptor()
@@ -2810,17 +3227,19 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         launch.id
     );
 
-    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Remove {
-        ids: vec!["app-1".into()],
-        label: "First label".into(),
-    });
+    launcher.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Remove {
+            ids: vec!["app-1".into()],
+            label: "First label".into(),
+        });
     let remove = launcher
         .active_overlay_descriptor()
         .expect("remove confirm");
-    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Remove {
-        ids: vec!["app-1".into()],
-        label: "Changed label".into(),
-    });
+    launcher.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Remove {
+            ids: vec!["app-1".into()],
+            label: "Changed label".into(),
+        });
     assert_eq!(
         launcher
             .active_overlay_descriptor()
@@ -2830,7 +3249,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     );
     assert_ne!(launch.id, remove.id);
 
-    launcher.active_popup = Some(ShellPopup {
+    launcher.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Launcher),
         anchor: (2, 2),
     });
@@ -2870,7 +3289,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         ui::EditorMenu::View,
         ui::EditorMenu::Settings,
     ] {
-        editor.editor_open_menu = Some(menu);
+        editor.pages.editor.editor_open_menu = Some(menu);
         let overlay = editor.active_overlay_descriptor().expect("editor menu");
         assert_eq!(overlay.kind, ui::MotionOverlayKind::Popover);
         assert_eq!(overlay.category, ShellOverlayCategory::PagePopover);
@@ -2883,10 +3302,10 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     menu_ids.sort();
     menu_ids.dedup();
     assert_eq!(menu_ids.len(), 6);
-    editor.editor_open_menu = None;
-    editor.editor_quick_menu_anchor = Some((4, 5));
+    editor.pages.editor.editor_open_menu = None;
+    editor.pages.editor.editor_quick_menu_anchor = Some((4, 5));
     let quick = editor.active_overlay_descriptor().expect("quick menu");
-    editor.editor_quick_menu_anchor = Some((40, 15));
+    editor.pages.editor.editor_quick_menu_anchor = Some((40, 15));
     assert_eq!(
         editor
             .active_overlay_descriptor()
@@ -2901,32 +3320,36 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
         ShellHomeMode::User,
     );
     users.set_navigation_path(vec![ShellScreen::UserManagement]);
-    users.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
-        username: "first".into(),
-        display_name: "First".into(),
-        password: "secret".into(),
-        role: UserRole::User,
-        focused_field: UserManagementFormField::Username,
-    });
+    users.pages.user_management.user_management_mode =
+        UserManagementMode::Create(UserManagementCreateForm {
+            username: "first".into(),
+            display_name: "First".into(),
+            password: "secret".into(),
+            role: UserRole::User,
+            focused_field: UserManagementFormField::Username,
+        });
     let create = users.active_overlay_descriptor().expect("create user");
-    if let UserManagementMode::Create(form) = &mut users.user_management_mode {
+    if let UserManagementMode::Create(form) = &mut users.pages.user_management.user_management_mode
+    {
         form.username = "typing".into();
     }
     assert_eq!(
         users.active_overlay_descriptor().expect("stable create").id,
         create.id
     );
-    users.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
-        username: "user".into(),
-        display_name: "Display".into(),
-        focused_field: UserManagementFormField::DisplayName,
-    });
+    users.pages.user_management.user_management_mode =
+        UserManagementMode::EditInfo(UserManagementInfoForm {
+            username: "user".into(),
+            display_name: "Display".into(),
+            focused_field: UserManagementFormField::DisplayName,
+        });
     let edit = users.active_overlay_descriptor().expect("edit user");
-    users.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
-        username: "other-user".into(),
-        display_name: "Typed name".into(),
-        focused_field: UserManagementFormField::DisplayName,
-    });
+    users.pages.user_management.user_management_mode =
+        UserManagementMode::EditInfo(UserManagementInfoForm {
+            username: "other-user".into(),
+            display_name: "Typed name".into(),
+            focused_field: UserManagementFormField::DisplayName,
+        });
     let other_edit = users
         .active_overlay_descriptor()
         .expect("edit another user");
@@ -2950,11 +3373,12 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         ShellHomeMode::User,
     );
     launcher.set_navigation_path(vec![ShellScreen::Launcher]);
-    launcher.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Launch {
-        id: "app-1".into(),
-        path: "/app".into(),
-        kind: LauncherExecutableKind::NativeBinary,
-    });
+    launcher.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Launch {
+            id: "app-1".into(),
+            path: "/app".into(),
+            kind: LauncherExecutableKind::NativeBinary,
+        });
 
     let mut editor = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -2962,7 +3386,7 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         ShellHomeMode::User,
     );
     editor.set_navigation_path(vec![ShellScreen::Editor]);
-    editor.editor_open_menu = Some(ui::EditorMenu::File);
+    editor.pages.editor.editor_open_menu = Some(ui::EditorMenu::File);
 
     let mut users = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -2970,11 +3394,12 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
         ShellHomeMode::User,
     );
     users.set_navigation_path(vec![ShellScreen::UserManagement]);
-    users.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
-        username: "user".into(),
-        display_name: String::new(),
-        focused_field: UserManagementFormField::DisplayName,
-    });
+    users.pages.user_management.user_management_mode =
+        UserManagementMode::EditInfo(UserManagementInfoForm {
+            username: "user".into(),
+            display_name: String::new(),
+            focused_field: UserManagementFormField::DisplayName,
+        });
 
     for (state, kind, owner) in [
         (
@@ -3065,14 +3490,14 @@ fn rendered_editor_menu_hit_surface_matches_editor_layout() {
         (120, 40),
         ShellHomeMode::User,
     );
+    state.set_navigation_path(vec![ShellScreen::Editor]);
     state.app.dispatch_at(
         app::AppCommand::SetEditorState(Some(EditorState::untitled(
             app::editor::DocumentKind::PlainText,
         ))),
         Instant::now(),
     );
-    state.set_navigation_path(vec![ShellScreen::Editor]);
-    state.editor_open_menu = Some(ui::EditorMenu::File);
+    state.pages.editor.editor_open_menu = Some(ui::EditorMenu::File);
     state.refresh_hit_map();
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
     else {
@@ -3128,8 +3553,8 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
     }
 
     let mut state = explorer_routing_test_state();
-    state.explorer_input_mode = ExplorerInputMode::NewFolder;
-    state.explorer_input = "first typed value".into();
+    state.pages.explorer.explorer_input_mode = ExplorerInputMode::NewFolder;
+    state.pages.explorer.explorer_input = "first typed value".into();
     let input = state
         .active_overlay_descriptor()
         .expect("new folder dialog");
@@ -3139,12 +3564,12 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
         input.target,
         Some(RoutedTarget::Component(ShellComponent::Explorer))
     );
-    state.explorer_input = "changed typed value".into();
+    state.pages.explorer.explorer_input = "changed typed value".into();
     assert_eq!(
         state.active_overlay_descriptor().expect("stable input").id,
         input.id
     );
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (1, 1),
     });
@@ -3161,8 +3586,8 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
         ShellCommand::CancelExplorerInput
     );
 
-    state.explorer_input_mode = ExplorerInputMode::Browse;
-    state.active_popup = None;
+    state.pages.explorer.explorer_input_mode = ExplorerInputMode::Browse;
+    state.pages.common.active_popup = None;
     let mut explorer = state.app.explorer_state().expect("explorer state").clone();
     explorer.pending_conflict = Some(app::explorer::ExplorerConflict {
         source: "/source-a".into(),
@@ -3192,7 +3617,7 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
             .id,
         conflict.id
     );
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (1, 1),
     });
@@ -3221,12 +3646,12 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
         ShellCommand::ExplorerConflictCancel
     );
 
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (1, 1),
     });
     let popup = state.active_overlay_descriptor().expect("popup");
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (80, 20),
     });
@@ -3235,14 +3660,14 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
         popup.id
     );
 
-    state.active_popup = None;
+    state.pages.common.active_popup = None;
     let mut explorer = state.app.explorer_state().expect("explorer state").clone();
     explorer.pending_conflict = None;
     state.app.dispatch_at(
         app::AppCommand::SetExplorerState(Some(explorer)),
         Instant::now(),
     );
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (5, 5),
     });
@@ -3261,7 +3686,7 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
             "explorer-popover:properties",
         ),
     ] {
-        state.explorer_overlay_mode = Some(mode);
+        state.pages.explorer.explorer_overlay_mode = Some(mode);
         assert_eq!(
             state
                 .active_overlay_descriptor()
@@ -3277,7 +3702,8 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
             ShellOverlayCategory::PagePopover
         );
     }
-    state.explorer_overlay_mode = Some(ExplorerOverlayMode::ContextMenu { anchor: (90, 30) });
+    state.pages.explorer.explorer_overlay_mode =
+        Some(ExplorerOverlayMode::ContextMenu { anchor: (90, 30) });
     assert_eq!(
         state
             .active_overlay_descriptor()
@@ -3301,7 +3727,7 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
             .id,
         "explorer-popover:context-menu"
     );
-    state.explorer_overlay_mode = None;
+    state.pages.explorer.explorer_overlay_mode = None;
     let delete = state.active_overlay_descriptor().expect("delete dialog");
     assert_eq!(delete.id, "explorer-dialog:delete-to-trash");
     assert_eq!(delete.kind, ui::MotionOverlayKind::Dialog);
@@ -3355,7 +3781,7 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
 fn explorer_address_and_search_keep_non_overlay_text_input_routing() {
     for mode in [ExplorerInputMode::Address, ExplorerInputMode::Search] {
         let mut state = explorer_routing_test_state();
-        state.explorer_input_mode = mode;
+        state.pages.explorer.explorer_input_mode = mode;
 
         assert_eq!(state.resolved_explorer_overlay(), None);
         assert_eq!(state.active_overlay_descriptor(), None);
@@ -3386,7 +3812,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         ShellHomeMode::User,
     );
     state.enter_screen(ShellScreen::Settings);
-    state.settings_state = Some(SettingsState {
+    state.pages.settings.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -3404,14 +3830,24 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         ui::SettingsPickerKind::BorderColor,
         ui::SettingsPickerKind::AccentColor,
     ] {
-        let settings = state.settings_state.as_mut().expect("settings");
+        let settings = state
+            .pages
+            .settings
+            .settings_state
+            .as_mut()
+            .expect("settings");
         settings.color_editor = Some(SettingsColorEditorState {
             kind,
             value: "#112233".into(),
             error: Some("first error".into()),
         });
         let first = state.active_overlay_descriptor().expect("color editor");
-        let settings = state.settings_state.as_mut().expect("settings");
+        let settings = state
+            .pages
+            .settings
+            .settings_state
+            .as_mut()
+            .expect("settings");
         let editor = settings.color_editor.as_mut().expect("color editor");
         editor.value = "#abcdef".into();
         editor.error = Some("changed error".into());
@@ -3421,6 +3857,8 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         );
         ids.push(first.id);
         state
+            .pages
+            .settings
             .settings_state
             .as_mut()
             .expect("settings")
@@ -3428,6 +3866,8 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     }
 
     state
+        .pages
+        .settings
         .settings_state
         .as_mut()
         .expect("settings")
@@ -3442,11 +3882,15 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
             .id,
     );
     state
+        .pages
+        .settings
         .settings_state
         .as_mut()
         .expect("settings")
         .weather_location_editor = None;
     state
+        .pages
+        .settings
         .settings_state
         .as_mut()
         .expect("settings")
@@ -3461,11 +3905,15 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
             .id,
     );
     state
+        .pages
+        .settings
         .settings_state
         .as_mut()
         .expect("settings")
         .file_extensions_editor = None;
     state
+        .pages
+        .settings
         .settings_state
         .as_mut()
         .expect("settings")
@@ -3476,6 +3924,8 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     });
     let time_sync = state.active_overlay_descriptor().expect("time sync editor");
     let editor = state
+        .pages
+        .settings
         .settings_state
         .as_mut()
         .expect("settings")
@@ -3515,8 +3965,8 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
         ExplorerInputMode::RestoreDestination,
     ] {
         let mut state = explorer_routing_test_state();
-        state.explorer_input_mode = mode;
-        state.active_popup = Some(ShellPopup {
+        state.pages.explorer.explorer_input_mode = mode;
+        state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
             anchor: (1, 1),
         });
@@ -3625,11 +4075,11 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
         ExplorerOverlayMode::Properties,
     ] {
         let mut state = explorer_routing_test_state();
-        state.active_popup = Some(ShellPopup {
+        state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
             anchor: (1, 1),
         });
-        state.explorer_overlay_mode = Some(mode);
+        state.pages.explorer.explorer_overlay_mode = Some(mode);
         assert!(matches!(
             state.resolved_explorer_overlay(),
             Some(ResolvedExplorerOverlay::Semantic(resolved)) if resolved == mode
@@ -3696,7 +4146,7 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
         app::explorer::ExplorerDialog::dump_trash(2),
     ] {
         let mut state = explorer_routing_test_state();
-        state.active_popup = Some(ShellPopup {
+        state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
             anchor: (1, 1),
         });
@@ -3758,7 +4208,7 @@ fn explorer_semantic_replacements_gate_input_while_active_popup_is_present() {
         (120, 40),
         ShellHomeMode::User,
     );
-    generic.active_popup = Some(ShellPopup {
+    generic.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Home),
         anchor: (10, 10),
     });
@@ -3851,10 +4301,16 @@ fn exit_confirmation_distinguishes_program_and_computer_actions() {
         assert_eq!(state.restart_requested(), restart, "{key}");
     }
 
-    state.editor_save_state = Some(EditorSaveState {
+    state.set_navigation_path(vec![
+        ShellScreen::Home,
+        ShellScreen::Editor,
+        ShellScreen::ExitConfirm,
+    ]);
+    state.show_exit_confirmation_modal(&platform);
+    state.pages.editor.editor_save_state = Some(EditorSaveState {
         id: 5,
         path: PathBuf::from("large.txt"),
-        document_generation: state.editor_document_generation,
+        document_generation: state.pages.editor.editor_document_generation,
         revision: 1,
         stage: EditorTaskStage::Writing,
     });
@@ -3866,7 +4322,7 @@ fn exit_confirmation_distinguishes_program_and_computer_actions() {
         state.to_notification_view_model().is_some(),
         "keep the menu available while saving"
     );
-    state.editor_save_state = None;
+    state.pages.editor.editor_save_state = None;
     assert_eq!(
         state.apply_input_with_platform(InputEvent::from_key_label("b"), &platform),
         ShellAction::Reboot
@@ -4097,7 +4553,7 @@ fn command_line_keeps_the_shell_clock_button_visible_and_clickable() {
 }
 
 #[test]
-fn back_button_routes_escape_except_for_command_line_force_exit() {
+fn back_button_routes_escape_except_for_command_line_close_confirmation() {
     for size in [(120, 40), (49, 11), (30, 8)] {
         let mut state = ShellSession::new(ShellLaunchConfig::default(), size);
         set_test_auth_role(&mut state, UserRole::Admin);
@@ -4123,20 +4579,21 @@ fn back_button_routes_escape_except_for_command_line_force_exit() {
             state.set_navigation_path(vec![ShellScreen::Home, screen]);
             state.refresh_hit_map();
             let back = hit_region_center(&state, ShellComponent::BackButton);
-            let expected = if screen == ShellScreen::CommandLine {
-                InputEvent::Key(KeyInput::with_modifiers(
-                    InputKey::Char('x'),
-                    InputModifiers::CTRL_SHIFT,
-                ))
-            } else {
-                InputEvent::key(InputKey::Escape)
-            };
-            let escape = state.route_input_at(expected, Instant::now());
             let click = state.route_input_at(
                 InputEvent::mouse_down(PointerButton::Left, back),
                 Instant::now(),
             );
-            assert_eq!(click, escape, "{screen:?} at {size:?}");
+            if screen == ShellScreen::CommandLine {
+                assert_eq!(
+                    click.command,
+                    ShellCommand::RequestCommandLineClose,
+                    "{size:?}"
+                );
+            } else {
+                let escape =
+                    state.route_input_at(InputEvent::key(InputKey::Escape), Instant::now());
+                assert_eq!(click, escape, "{screen:?} at {size:?}");
+            }
         }
     }
 }
@@ -4146,13 +4603,13 @@ fn back_button_cancels_the_overlay_before_leaving_the_page_and_only_activates_on
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Clock]);
-    state.clock_create_state = Some(ClockCreateState::default());
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
     let back = hit_region_center(&state, ShellComponent::BackButton);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, back));
-    assert!(state.clock_create_state.is_some());
+    assert!(state.pages.clock.clock_create_state.is_some());
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, back));
-    assert!(state.clock_create_state.is_none());
+    assert!(state.pages.clock.clock_create_state.is_none());
     assert_eq!(state.active_screen(), ShellScreen::Clock);
     for input in [
         InputEvent::mouse_up(PointerButton::Left, back),
@@ -4365,23 +4822,41 @@ fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
         ShellHomeMode::User,
     );
     state.set_navigation_path(vec![ShellScreen::Clock]);
-    state.clock_create_state = Some(ClockCreateState::default());
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
     for key in ["2", "3", "5", "9", "5", "9"] {
         state.apply_input(InputEvent::from_key_label(key));
     }
     assert_eq!(
-        state.clock_create_state.as_ref().unwrap().values,
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values,
         [23, 59, 59]
     );
     state.apply_input(InputEvent::from_key_label("Up"));
     assert_eq!(
-        state.clock_create_state.as_ref().unwrap().values,
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values,
         [23, 59, 0]
     );
     state.apply_input(InputEvent::from_key_label("Down"));
     assert_eq!(
-        state.clock_create_state.as_ref().unwrap().values,
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values,
         [23, 59, 59]
     );
     state.apply_input(InputEvent::from_key_label("Left"));
@@ -4389,28 +4864,61 @@ fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
     state.apply_input(InputEvent::from_key_label("4"));
     state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(
-        state.clock_create_state.as_ref().unwrap().values,
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values,
         [23, 4, 59]
     );
     state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(
-        state.focused_component,
+        state.pages.common.focused_component,
         ShellComponent::ClockCreateAlarmButton
     );
     state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(
-        state.focused_component,
+        state.pages.common.focused_component,
         ShellComponent::ClockCreateCountdownButton
     );
     state.apply_input(InputEvent::from_key_label("Tab"));
-    assert_eq!(state.clock_create_state.as_ref().unwrap().active_field, 0);
+    assert_eq!(
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .active_field,
+        0
+    );
     state.apply_input(InputEvent::from_key_label("2"));
     state.apply_input(InputEvent::from_key_label("9"));
-    assert_eq!(state.clock_create_state.as_ref().unwrap().values[0], 2);
+    assert_eq!(
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values[0],
+        2
+    );
     state.apply_input(InputEvent::from_key_label("3"));
-    assert_eq!(state.clock_create_state.as_ref().unwrap().values[0], 23);
+    assert_eq!(
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values[0],
+        23
+    );
     state.apply_input(InputEvent::from_key_label("Esc"));
-    assert!(state.clock_create_state.is_none());
+    assert!(state.pages.clock.clock_create_state.is_none());
 }
 
 #[test]
@@ -4422,7 +4930,7 @@ fn clock_create_arrows_are_clickable_once_and_fields_accept_replacement_digits()
             ShellHomeMode::User,
         );
         state.set_navigation_path(vec![ShellScreen::Clock]);
-        state.clock_create_state = Some(ClockCreateState::default());
+        state.pages.clock.clock_create_state = Some(ClockCreateState::default());
         state.refresh_hit_map();
         let ui::ShellLayout::Full { main, .. } =
             state.shell_layout_for(Rect::new(0, 0, size.0, size.1))
@@ -4441,7 +4949,7 @@ fn clock_create_arrows_are_clickable_once_and_fields_accept_replacement_digits()
                 let point = (area.x + area.width / 2, area.y);
                 state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
                 state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-                let create = state.clock_create_state.as_ref().unwrap();
+                let create = state.pages.clock.clock_create_state.as_ref().unwrap();
                 assert_eq!(create.values[field], expected);
                 assert_eq!(create.active_field, field);
             }
@@ -4452,7 +4960,16 @@ fn clock_create_arrows_are_clickable_once_and_fields_accept_replacement_digits()
             for digit in ['1', '2'] {
                 state.apply_input(InputEvent::key(InputKey::Char(digit)));
             }
-            assert_eq!(state.clock_create_state.as_ref().unwrap().values[field], 12);
+            assert_eq!(
+                state
+                    .pages
+                    .clock
+                    .clock_create_state
+                    .as_ref()
+                    .unwrap()
+                    .values[field],
+                12
+            );
         }
     }
 }
@@ -4469,7 +4986,7 @@ fn compact_clock_keeps_visible_controls_and_keyboard_access() {
     );
     assert_eq!(state.focus_order(), vec![ShellComponent::ClockNewButton]);
 
-    state.clock_create_state = Some(ClockCreateState::default());
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     assert_eq!(
         state.route_clock_key(&KeyInput::from_label("Esc")).1,
         ShellCommand::ClockCloseCreate
@@ -4484,7 +5001,7 @@ fn focus_navigation_cycles_the_dynamic_home_order_in_both_directions() {
         ShellHomeMode::User,
     );
     state.set_navigation_path(vec![ShellScreen::Home]);
-    state.focused_component = ShellComponent::Home;
+    state.pages.common.focused_component = ShellComponent::Home;
     state.refresh_hit_map();
 
     assert_eq!(
@@ -4498,11 +5015,14 @@ fn focus_navigation_cycles_the_dynamic_home_order_in_both_directions() {
     );
 
     state.move_focus(ui::FocusDirection::Previous);
-    assert_eq!(state.focused_component, ShellComponent::TopBar);
+    assert_eq!(state.pages.common.focused_component, ShellComponent::TopBar);
     state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(state.focused_component, ShellComponent::Home);
+    assert_eq!(state.pages.common.focused_component, ShellComponent::Home);
     state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(state.focused_component, ShellComponent::ClockButton);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::ClockButton
+    );
 }
 
 #[test]
@@ -4513,11 +5033,14 @@ fn refresh_hit_map_normalizes_an_illegal_focus_to_the_order_start() {
         ShellHomeMode::User,
     );
     state.set_navigation_path(vec![ShellScreen::Login]);
-    state.focused_component = ShellComponent::TopBar;
+    state.pages.common.focused_component = ShellComponent::TopBar;
 
     state.refresh_hit_map();
 
-    assert_eq!(state.focused_component, ShellComponent::LoginUserList);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::LoginUserList
+    );
 }
 
 #[test]
@@ -4539,9 +5062,15 @@ fn focus_navigation_does_not_leave_a_single_component_modal_scope() {
         vec![ShellComponent::NotificationDialog]
     );
     state.move_focus(ui::FocusDirection::Previous);
-    assert_eq!(state.focused_component, ShellComponent::NotificationDialog);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::NotificationDialog
+    );
     state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(state.focused_component, ShellComponent::NotificationDialog);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::NotificationDialog
+    );
 }
 #[test]
 fn notification_alerts_resolve_by_key_and_preserve_other_sources() {
@@ -4609,7 +5138,10 @@ fn keyed_modal_update_replaces_presentation_binding_atomically() {
     state.activate_notification_selected();
     assert_eq!(
         state.pending_notification_commands.pop_front(),
-        Some(ShellCommand::FocusPrevious)
+        Some(ShellCommand::PageAction(
+            state.active_page_id(),
+            Box::new(ShellCommand::FocusPrevious)
+        ))
     );
 }
 #[test]
@@ -4688,8 +5220,8 @@ fn auth_poll_timeout_wakes_at_password_reveal_deadline() {
     let now = Instant::now();
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
     state.set_navigation_path(vec![ShellScreen::Login]);
-    state.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
-    state.login_password_visible_until = Some(now + Duration::from_millis(10));
+    state.pages.login.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
+    state.pages.login.login_password_visible_until = Some(now + Duration::from_millis(10));
 
     assert_eq!(
         state.auth_poll_timeout(now, Duration::from_millis(250)),
@@ -4770,11 +5302,12 @@ fn hit_map_keeps_duplicate_component_regions_distinct() {
 fn clock_button_routes_before_explorer_popup_and_app_forms() {
     let mut explorer = explorer_routing_test_state();
     let clock = hit_region_center(&explorer, ShellComponent::ClockButton);
-    explorer.active_popup = Some(ShellPopup {
+    explorer.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (10, 10),
     });
-    explorer.explorer_overlay_mode = Some(ExplorerOverlayMode::ContextMenu { anchor: (10, 10) });
+    explorer.pages.explorer.explorer_overlay_mode =
+        Some(ExplorerOverlayMode::ContextMenu { anchor: (10, 10) });
     explorer.refresh_hit_map();
 
     let routed = explorer.route_input_at(
@@ -4787,9 +5320,9 @@ fn clock_button_routes_before_explorer_popup_and_app_forms() {
     );
     assert_eq!(routed.command, ShellCommand::OpenClock);
 
-    explorer.active_popup = None;
-    explorer.explorer_overlay_mode = None;
-    explorer.explorer_input_mode = ExplorerInputMode::NewFolder;
+    explorer.pages.common.active_popup = None;
+    explorer.pages.explorer.explorer_overlay_mode = None;
+    explorer.pages.explorer.explorer_input_mode = ExplorerInputMode::NewFolder;
     explorer.refresh_hit_map();
     let routed = explorer.route_input_at(
         InputEvent::mouse_down(PointerButton::Left, clock),
@@ -4803,13 +5336,14 @@ fn clock_button_routes_before_explorer_popup_and_app_forms() {
         ShellHomeMode::User,
     );
     user_management.set_navigation_path(vec![ShellScreen::UserManagement]);
-    user_management.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
-        username: String::new(),
-        display_name: String::new(),
-        password: String::new(),
-        role: UserRole::User,
-        focused_field: UserManagementFormField::Username,
-    });
+    user_management.pages.user_management.user_management_mode =
+        UserManagementMode::Create(UserManagementCreateForm {
+            username: String::new(),
+            display_name: String::new(),
+            password: String::new(),
+            role: UserRole::User,
+            focused_field: UserManagementFormField::Username,
+        });
     user_management.refresh_hit_map();
     let clock = hit_region_center(&user_management, ShellComponent::ClockButton);
     let routed = user_management.route_input_at(
@@ -4852,7 +5386,7 @@ fn clock_button_routes_outside_shell_modal_while_modal_region_stays_highest() {
 }
 
 #[test]
-fn editor_load_blocks_clock_navigation_and_restores_its_origin() {
+fn editor_load_allows_covering_page_and_failure_restores_only_its_origin() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -4866,7 +5400,7 @@ fn editor_load_blocks_clock_navigation_and_restores_its_origin() {
         reload: None,
         replacing_dirty: false,
     };
-    state.editor_load_state = Some(EditorLoadState {
+    state.pages.editor.editor_load_state = Some(EditorLoadState {
         id: 17,
         path: PathBuf::from("large.log"),
         stage: EditorTaskStage::Reading,
@@ -4879,27 +5413,36 @@ fn editor_load_blocks_clock_navigation_and_restores_its_origin() {
 
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, clock));
 
-    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert_eq!(state.active_screen(), ShellScreen::Clock);
+    let clock_page = state.active_page_id();
+    let clock_focus = state.pages.common.focused_component;
     assert_eq!(
         state.screen_stack(),
         vec![
             ShellScreen::Home,
             ShellScreen::Explorer,
-            ShellScreen::Editor
+            ShellScreen::Editor,
+            ShellScreen::Clock
         ]
     );
-    assert!(
-        state
-            .editor_message
-            .as_ref()
-            .map(i18n::LocalizedText::render_current)
-            .is_some_and(|message| message.contains("Press Esc"))
+    state.pages.editor.editor_load_state = None;
+    let pages = state.live_page_ids();
+    let loading_editor = pages[pages.len() - 2];
+    state.with_page_context(loading_editor, |s| {
+        s.restore_editor_load_navigation(&operation)
+    });
+    assert_eq!(state.active_page_id(), clock_page);
+    assert_eq!(state.pages.common.focused_component, clock_focus);
+    assert_eq!(
+        state.screen_stack(),
+        vec![ShellScreen::Home, ShellScreen::Explorer, ShellScreen::Clock]
     );
-
-    state.editor_load_state = None;
-    state.restore_editor_load_navigation(&operation);
+    state.close_page_instance(clock_page);
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    assert_eq!(state.focused_component, ShellComponent::Explorer);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::Explorer
+    );
 }
 
 #[test]
@@ -4974,13 +5517,13 @@ fn stale_save_completion_does_not_mark_a_replacement_document_saved() {
         "replacement".to_string(),
     ));
     let expected = replacement.clone();
-    state.editor_document_generation = 9;
+    state.pages.editor.editor_document_generation = 9;
     state.app.dispatch_at(
         app::AppCommand::SetEditorState(Some(replacement)),
         Instant::now(),
     );
-    state.editor_close_after_save = true;
-    state.editor_open_after_save = true;
+    state.pages.editor.editor_close_after_save = true;
+    state.pages.editor.editor_open_after_save = true;
 
     state.finish_editor_save(
         EditorSaveState {
@@ -4999,9 +5542,9 @@ fn stale_save_completion_does_not_mark_a_replacement_document_saved() {
     );
 
     assert_eq!(state.app.editor_state(), Some(&expected));
-    assert_eq!(state.editor_fingerprint, None);
-    assert!(!state.editor_close_after_save);
-    assert!(!state.editor_open_after_save);
+    assert_eq!(state.pages.editor.editor_fingerprint, None);
+    assert!(!state.pages.editor.editor_close_after_save);
+    assert!(!state.pages.editor.editor_open_after_save);
 }
 
 #[test]
@@ -5011,19 +5554,21 @@ fn shutdown_waits_for_an_active_editor_save() {
         (120, 40),
         ShellHomeMode::User,
     );
-    state.editor_save_state = Some(EditorSaveState {
+    state.enter_new_page(ShellScreen::Editor);
+    state.enter_new_page(ShellScreen::Clock);
+    state.pages.editor.editor_save_state = Some(EditorSaveState {
         id: 5,
         path: PathBuf::from("large.txt"),
-        document_generation: state.editor_document_generation,
+        document_generation: state.pages.editor.editor_document_generation,
         revision: 1,
         stage: EditorTaskStage::Writing,
     });
 
     assert_eq!(state.apply_input(InputEvent::Shutdown), ShellAction::Redraw);
     assert!(!state.shutdown_requested);
-    assert!(state.editor_save_state.is_some());
+    assert!(state.pages.editor.editor_save_state.is_some());
 
-    state.editor_save_state = None;
+    state.pages.editor.editor_save_state = None;
     assert_eq!(state.apply_input(InputEvent::Shutdown), ShellAction::Exit);
     assert!(state.shutdown_requested);
 }
@@ -5189,7 +5734,7 @@ fn previous_unclean_exit_does_not_interrupt_the_login_screen() {
         ShellHomeMode::User,
     );
     state.set_navigation_path(vec![ShellScreen::Login]);
-    state.focused_component = ShellComponent::LoginUserList;
+    state.pages.common.focused_component = ShellComponent::LoginUserList;
     let report_path = std::path::PathBuf::from("/reports/previous-run.txt");
 
     show_watchdog_incident(
@@ -5293,7 +5838,7 @@ fn explorer_toolbar_shortcuts_route_without_shifted_symbols() {
         );
     }
 
-    state.explorer_input_mode = ExplorerInputMode::NewFolder;
+    state.pages.explorer.explorer_input_mode = ExplorerInputMode::NewFolder;
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("N")).1,
         ShellCommand::AppendExplorerChar('N')
@@ -5315,7 +5860,7 @@ fn explorer_routing_test_state() -> ShellSession {
         ShellHomeMode::User,
     );
     state.set_navigation_path(vec![ShellScreen::Explorer]);
-    state.focused_component = ShellComponent::Explorer;
+    state.pages.common.focused_component = ShellComponent::Explorer;
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
     state.refresh_hit_map();
     state
@@ -5503,21 +6048,31 @@ fn explorer_blank_context_opens_terminal_at_directory_and_returns_without_reusin
         assert_eq!(state.active_screen(), ShellScreen::CommandLine);
         assert_eq!(state.focused_component(), ShellComponent::CommandLine);
         assert_eq!(
-            state.command_line_start_directory.as_ref(),
+            state
+                .pages
+                .command_line
+                .command_line_start_directory
+                .as_ref(),
             Some(&directory)
         );
-        assert!(state.active_popup.is_none());
-        assert!(state.explorer_overlay_mode.is_none());
+        assert!(state.pages.common.active_popup.is_none());
+        assert!(state.pages.explorer.explorer_overlay_mode.is_none());
         assert_eq!(state.app.explorer_state(), Some(&explorer));
         state.close_command_line();
         assert_eq!(state.active_screen(), ShellScreen::Explorer);
         assert_eq!(state.focused_component(), ShellComponent::Explorer);
-        assert!(state.command_line_start_directory.is_none());
+        assert!(
+            state
+                .pages
+                .command_line
+                .command_line_start_directory
+                .is_none()
+        );
         assert_eq!(state.app.explorer_state(), Some(&explorer));
 
         state.enter_screen(ShellScreen::Launcher);
-        state.focused_component = ShellComponent::Launcher;
-        state.launcher_selected_index = state
+        state.pages.common.focused_component = ShellComponent::Launcher;
+        state.pages.launcher.launcher_selected_index = state
             .built_in_launcher_applications()
             .iter()
             .position(|application| application.id == app::COMMAND_LINE_APPLICATION.id)
@@ -5525,7 +6080,13 @@ fn explorer_blank_context_opens_terminal_at_directory_and_returns_without_reusin
         state.refresh_hit_map();
         state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
         assert_eq!(state.active_screen(), ShellScreen::CommandLine);
-        assert!(state.command_line_start_directory.is_none());
+        assert!(
+            state
+                .pages
+                .command_line
+                .command_line_start_directory
+                .is_none()
+        );
         state.close_command_line();
         assert_eq!(state.active_screen(), ShellScreen::Launcher);
     }
@@ -5571,12 +6132,24 @@ fn explorer_terminal_action_cannot_bypass_permissions_size_or_trash_location() {
         &platform,
     );
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    assert!(state.command_line_start_directory.is_none());
-    assert!(state.active_popup.is_some());
+    assert!(
+        state
+            .pages
+            .command_line
+            .command_line_start_directory
+            .is_none()
+    );
+    assert!(state.pages.common.active_popup.is_some());
     let directory = state.app.explorer_state().unwrap().current_path.clone();
     state.open_command_line_at(Some(directory.clone()));
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    assert!(state.command_line_start_directory.is_none());
+    assert!(
+        state
+            .pages
+            .command_line
+            .command_line_start_directory
+            .is_none()
+    );
     while state.notification_dismiss_active_modal_without_response() {}
     state.close_explorer_popup();
 
@@ -5594,8 +6167,14 @@ fn explorer_terminal_action_cannot_bypass_permissions_size_or_trash_location() {
     }
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    assert!(state.command_line_start_directory.is_none());
-    assert!(state.active_popup.is_none());
+    assert!(
+        state
+            .pages
+            .command_line
+            .command_line_start_directory
+            .is_none()
+    );
+    assert!(state.pages.common.active_popup.is_none());
     while state.notification_dismiss_active_modal_without_response() {}
     state.terminal_size = (120, 40);
     state.update_explorer_state(|explorer| {
@@ -5613,7 +6192,13 @@ fn explorer_terminal_action_cannot_bypass_permissions_size_or_trash_location() {
             .all(|item| item.id != "open-terminal")
     );
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    assert!(state.command_line_start_directory.is_none());
+    assert!(
+        state
+            .pages
+            .command_line
+            .command_line_start_directory
+            .is_none()
+    );
 }
 
 #[test]
@@ -5665,7 +6250,7 @@ fn explorer_search_shortcut_preserves_text_input_and_sort() {
         ExplorerInputMode::NewFolder,
         ExplorerInputMode::Rename,
     ] {
-        state.explorer_input_mode = mode;
+        state.pages.explorer.explorer_input_mode = mode;
         for character in ['s', 'S', 'r', 'c', 'x', 'v', 'd'] {
             assert_eq!(
                 state
@@ -5682,7 +6267,10 @@ fn explorer_search_shortcut_preserves_text_input_and_sort() {
 fn holding_explorer_search_key_does_not_type_into_the_new_search() {
     let mut state = explorer_routing_test_state();
     state.apply_input(InputEvent::from_key_label("s"));
-    assert_eq!(state.explorer_input_mode, ExplorerInputMode::Search);
+    assert_eq!(
+        state.pages.explorer.explorer_input_mode,
+        ExplorerInputMode::Search
+    );
     let repeated = KeyInput::with_phase(
         InputKey::Char('s'),
         InputModifiers::NONE,
@@ -5702,7 +6290,7 @@ fn holding_explorer_search_key_does_not_type_into_the_new_search() {
             .prepare_button_input(InputEvent::Key(repeated), Instant::now())
             .is_some()
     );
-    state.explorer_input_mode = ExplorerInputMode::Browse;
+    state.pages.explorer.explorer_input_mode = ExplorerInputMode::Browse;
     assert_ne!(
         state
             .route_key_input(&KeyInput::with_phase(
@@ -5765,19 +6353,33 @@ fn system_status_picker_wheel_moves_selection_without_editing_or_scrolling_dashb
     );
     set_test_auth_role(&mut state, UserRole::Admin);
     state.enter_screen(ShellScreen::SystemStatus);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state.begin_system_status_dashboard_edit();
     state.open_system_status_add_picker();
-    let draft = state.system_status_dashboard_draft.clone();
-    let scroll = state.system_status_dashboard_scroll_row;
-    let selected = state.system_status_add_picker.unwrap().selected;
+    let draft = state
+        .pages
+        .system_status
+        .system_status_dashboard_draft
+        .clone();
+    let scroll = state.pages.system_status.system_status_dashboard_scroll_row;
+    let selected = state
+        .pages
+        .system_status
+        .system_status_add_picker
+        .unwrap()
+        .selected;
     let (_, layout) = state.system_status_layout().unwrap();
     let area = layout.picker_items[0].area;
     state.apply_input(InputEvent::mouse_scroll(
         ScrollDirection::Down,
         (area.x, area.y),
     ));
-    let next = state.system_status_add_picker.unwrap().selected;
+    let next = state
+        .pages
+        .system_status
+        .system_status_add_picker
+        .unwrap()
+        .selected;
     assert_ne!(next, selected);
     let (model, layout) = state.system_status_layout().unwrap();
     assert!(model.dashboard.picker.as_ref().unwrap().items[next].enabled);
@@ -5795,19 +6397,46 @@ fn system_status_picker_wheel_moves_selection_without_editing_or_scrolling_dashb
         ui::MouseEventKind::Scroll(ScrollDirection::Right),
     ] {
         state.apply_input(InputEvent::Mouse(ui::MouseEvent::new(area.x, area.y, kind)));
-        assert_eq!(state.system_status_add_picker.unwrap().selected, next);
+        assert_eq!(
+            state
+                .pages
+                .system_status
+                .system_status_add_picker
+                .unwrap()
+                .selected,
+            next
+        );
     }
     state.apply_input(InputEvent::mouse_scroll(
         ScrollDirection::Up,
         (area.x, area.y),
     ));
-    assert_eq!(state.system_status_add_picker.unwrap().selected, selected);
-    assert_eq!(state.system_status_dashboard_draft, draft);
-    assert_eq!(state.system_status_dashboard_scroll_row, scroll);
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_add_picker
+            .unwrap()
+            .selected,
+        selected
+    );
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_draft,
+        draft
+    );
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_scroll_row,
+        scroll
+    );
 
     state.close_system_status_add_picker();
     state.open_system_status_size_picker();
-    let selected = state.system_status_size_picker.unwrap().selected;
+    let selected = state
+        .pages
+        .system_status
+        .system_status_size_picker
+        .unwrap()
+        .selected;
     let (_, layout) = state.system_status_layout().unwrap();
     let area = layout.size_picker_items[0].area;
     state.apply_input(InputEvent::mouse_scroll(
@@ -5815,16 +6444,35 @@ fn system_status_picker_wheel_moves_selection_without_editing_or_scrolling_dashb
         (area.x, area.y),
     ));
     assert_eq!(
-        state.system_status_size_picker.unwrap().selected,
+        state
+            .pages
+            .system_status
+            .system_status_size_picker
+            .unwrap()
+            .selected,
         (selected + 1) % 3
     );
     state.apply_input(InputEvent::mouse_scroll(
         ScrollDirection::Up,
         (area.x, area.y),
     ));
-    assert_eq!(state.system_status_size_picker.unwrap().selected, selected);
-    assert_eq!(state.system_status_dashboard_draft, draft);
-    assert_eq!(state.system_status_dashboard_scroll_row, scroll);
+    assert_eq!(
+        state
+            .pages
+            .system_status
+            .system_status_size_picker
+            .unwrap()
+            .selected,
+        selected
+    );
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_draft,
+        draft
+    );
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_scroll_row,
+        scroll
+    );
 }
 
 #[test]
@@ -5854,7 +6502,7 @@ fn linux_admin_can_manage_accounts_but_cannot_remove_own_access() {
     );
     state.activate_user_management_action(ui::UserManagementAction::NewUser);
     assert!(matches!(
-        state.user_management_mode,
+        state.pages.user_management.user_management_mode,
         UserManagementMode::Create(_)
     ));
 }
@@ -5933,7 +6581,7 @@ fn explorer_dialog_navigation_wraps_and_preserves_input_focus() {
         }
         state.apply_input(InputEvent::from_key_label("Left"));
         state.apply_input(InputEvent::from_key_label("x"));
-        assert!(state.explorer_input.is_empty());
+        assert!(state.pages.explorer.explorer_input.is_empty());
         state.apply_input(InputEvent::from_key_label("Enter"));
         assert!(state.to_explorer_view_model().overlay.is_none());
         assert_eq!(state.active_screen(), ShellScreen::Explorer);
@@ -5952,15 +6600,15 @@ fn explorer_conflict_navigation_reaches_apply_to_remaining_and_supports_reverse_
     });
     state.refresh_hit_map();
     state.apply_input(InputEvent::from_key_label("Shift+Tab"));
-    assert_eq!(state.explorer_overlay_selection, 4);
+    assert_eq!(state.pages.explorer.explorer_overlay_selection, 4);
     state.apply_input(InputEvent::from_key_label(" "));
-    assert!(state.explorer_conflict_apply_to_remaining);
+    assert!(state.pages.explorer.explorer_conflict_apply_to_remaining);
     state.apply_input(InputEvent::from_key_label("Enter"));
-    assert!(!state.explorer_conflict_apply_to_remaining);
+    assert!(!state.pages.explorer.explorer_conflict_apply_to_remaining);
     state.apply_input(InputEvent::from_key_label("Right"));
-    assert_eq!(state.explorer_overlay_selection, 0);
+    assert_eq!(state.pages.explorer.explorer_overlay_selection, 0);
     state.apply_input(InputEvent::from_key_label("Up"));
-    assert_eq!(state.explorer_overlay_selection, 4);
+    assert_eq!(state.pages.explorer.explorer_overlay_selection, 4);
 }
 
 #[test]
@@ -5973,7 +6621,10 @@ fn explorer_options_close_is_keyboard_reachable() {
     else {
         panic!("options");
     };
-    assert_eq!(state.explorer_overlay_selection, options.options.len());
+    assert_eq!(
+        state.pages.explorer.explorer_overlay_selection,
+        options.options.len()
+    );
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert!(state.to_explorer_view_model().overlay.is_none());
 }
@@ -5994,8 +6645,8 @@ fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
         for key in ["Right", "Left", "Up", "Down", "Tab", "Shift+Tab"] {
             let mut state = explorer_routing_test_state();
             state.set_navigation_path(vec![ShellScreen::Launcher]);
-            state.focused_component = ShellComponent::Launcher;
-            state.launcher_pending_confirmation = Some(pending.clone());
+            state.pages.common.focused_component = ShellComponent::Launcher;
+            state.pages.launcher.launcher_pending_confirmation = Some(pending.clone());
             state.refresh_hit_map();
             state.apply_input(InputEvent::from_key_label(key));
             assert!(
@@ -6007,12 +6658,12 @@ fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
                 "{key}"
             );
             state.apply_input(InputEvent::from_key_label(" "));
-            assert!(state.launcher_pending_confirmation.is_none());
+            assert!(state.pages.launcher.launcher_pending_confirmation.is_none());
             assert_eq!(
                 state.last_command(),
                 Some(&ShellCommand::LauncherCancelConfirmation)
             );
-            state.launcher_pending_confirmation = Some(pending.clone());
+            state.pages.launcher.launcher_pending_confirmation = Some(pending.clone());
             state.refresh_hit_map();
             let ui::ShellLayout::Full { main, .. } =
                 ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
@@ -6027,7 +6678,7 @@ fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
                 PointerButton::Left,
                 (cancel.x, cancel.y),
             ));
-            assert!(state.launcher_pending_confirmation.is_none());
+            assert!(state.pages.launcher.launcher_pending_confirmation.is_none());
         }
     }
 }
@@ -6084,7 +6735,8 @@ fn system_overview_metrics_do_not_depend_on_dashboard_placements() {
         app::AppCommand::SetActiveSystemStatusDashboard(Some(config)),
         Instant::now(),
     );
-    state.system_status_route = ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Overview);
+    state.pages.system_status.system_status_route =
+        ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Overview);
     let model = state.to_system_status_view_model().unwrap();
     assert_eq!(model.dashboard.wide_widgets.len(), 1);
     assert_eq!(model.dashboard.overview_metrics.len(), 8);
@@ -6135,7 +6787,7 @@ fn linux_current_user_cannot_reenter_internal_authentication() {
         );
         assert_eq!(state.active_screen(), ShellScreen::Home);
         assert_eq!(state.app.auth_session(), original.as_ref());
-        assert!(state.login_password.is_empty());
+        assert!(state.pages.login.login_password.is_empty());
         assert!(!state.return_to_lockscreen_requested);
     }
     state.apply_input(InputEvent::key(InputKey::Char('L')));
@@ -6170,9 +6822,9 @@ fn launcher_sort_preserves_builtin_identity_and_keyboard_order() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut state, UserRole::Admin);
     state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Launcher]);
-    state.focused_component = ShellComponent::Launcher;
-    state.launcher_view_mode = ui::LauncherViewMode::Details;
-    state.launcher_selected_index = 2;
+    state.pages.common.focused_component = ShellComponent::Launcher;
+    state.pages.launcher.launcher_view_mode = ui::LauncherViewMode::Details;
+    state.pages.launcher.launcher_selected_index = 2;
     let original_id = state.to_launcher_view_model().items[2].id.clone();
     state.sort_active_table(0);
     let model = state.to_launcher_view_model();
@@ -6205,10 +6857,10 @@ fn launcher_sort_preserves_builtin_identity_and_keyboard_order() {
         InputEvent::mouse_down(PointerButton::Left, (header.x, header.y)),
         at,
     );
-    assert!(!state.table_sorts["launcher"].descending);
+    assert!(!state.pages.common.table_sorts["launcher"].descending);
     state.apply_input_at(
         InputEvent::mouse_up(PointerButton::Left, (header.x, header.y)),
         at + Duration::from_millis(20),
     );
-    assert!(state.table_sorts["launcher"].descending);
+    assert!(state.pages.common.table_sorts["launcher"].descending);
 }

@@ -1,6 +1,86 @@
 use super::*;
 
 #[test]
+fn page_error_alerts_only_clear_their_owner_and_leave_session_alerts_alone() {
+    for (screen, key) in [
+        (ShellScreen::Editor, EDITOR_ALERT_KEY),
+        (ShellScreen::Explorer, EXPLORER_ALERT_KEY),
+        (
+            ShellScreen::UserManagement,
+            USER_MANAGEMENT_REFRESH_ALERT_KEY,
+        ),
+    ] {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (100, 35));
+        let report = |session: &mut ShellSession, message: &str| match screen {
+            ShellScreen::Editor => session.report_editor_error(message),
+            ShellScreen::Explorer => session.report_explorer_task_error(message),
+            ShellScreen::UserManagement => session.report_user_management_refresh_error(message),
+            _ => unreachable!(),
+        };
+        state.notify_alert_with_key(key, "session", ui::NotificationTone::Warning);
+        state.enter_new_page(screen);
+        let first = state.active_page_id();
+        report(&mut state, "first");
+        state.enter_new_page(screen);
+        let second = state.active_page_id();
+        report(&mut state, "second");
+        state.with_page_context(first, |session| match screen {
+            ShellScreen::Editor => session.resolve_page_alert(key),
+            ShellScreen::Explorer => session.resolve_explorer_alert(),
+            ShellScreen::UserManagement => session.resolve_user_management_refresh_alert(),
+            _ => unreachable!(),
+        });
+        assert_eq!(state.active_page_id(), second);
+        assert_eq!(
+            state.page_alert_message_for_key(key),
+            Some(&"second".into())
+        );
+        assert_eq!(
+            state.notification_alert_message_for_key(key),
+            Some(&"session".into())
+        );
+        assert_eq!(state.pages.common.error_message, Some("second".into()));
+        state.close_page_instance(second);
+        assert!(
+            state
+                .app
+                .notification_center()
+                .page_alert_message_for_key(second, key)
+                .is_none()
+        );
+        assert_eq!(state.app.notification_center().alert_count(), 1);
+    }
+}
+
+#[test]
+fn notification_scroll_returns_with_its_page_after_another_page_is_closed() {
+    let mut session = session_with_long_notification();
+    let first = session.active_page_id();
+    let original = session.notification_active_modal_id();
+    session.scroll_notification_message(2, true);
+    let scrolled = session.pages.common.notification_message_scroll;
+    assert!(scrolled > 0);
+    session.enter_new_page(session.active_screen());
+    let second = session.active_page_id();
+    assert_eq!(session.pages.common.notification_message_scroll, 0);
+    session.notify_modal(
+        "Second",
+        "Short message",
+        ui::NotificationTone::Info,
+        vec![ShellNotificationAction::new("ok", "OK")],
+    );
+    assert_eq!(session.pages.common.notification_message_scroll, 0);
+    session.close_page_instance(second);
+    assert_eq!(session.active_page_id(), first);
+    assert_eq!(session.notification_active_modal_id(), original);
+    assert_eq!(session.pages.common.notification_message_scroll, scrolled);
+    assert_eq!(
+        session.to_notification_view_model().unwrap().scroll_offset,
+        scrolled
+    );
+}
+
+#[test]
 fn notification_public_text_uses_session_snapshot_outside_draw_scope() {
     let root = std::env::temp_dir().join(format!(
         "tux3-notification-snapshot-{}-{}",
@@ -109,7 +189,7 @@ fn notification_scroll_moves_by_pages_and_lines_without_changing_actions_or_hits
     session.terminal_size = (80, 24);
     session.scroll_notification_message(0, false);
     assert_eq!(
-        session.ui.notification_message_scroll,
+        session.pages.common.notification_message_scroll,
         dialog(&session).max_scroll_offset
     );
     session.scroll_notification_message(isize::MIN, true);
@@ -123,7 +203,7 @@ fn notification_scroll_moves_by_pages_and_lines_without_changing_actions_or_hits
 fn notification_scroll_resets_between_modals_but_not_when_a_following_modal_is_queued() {
     let mut session = session_with_long_notification();
     session.scroll_notification_message(2, true);
-    let scrolled = session.ui.notification_message_scroll;
+    let scrolled = session.pages.common.notification_message_scroll;
     assert!(scrolled > 0);
     let next = session.notify_modal(
         "完成",
@@ -131,7 +211,7 @@ fn notification_scroll_resets_between_modals_but_not_when_a_following_modal_is_q
         ui::NotificationTone::Info,
         vec![ShellNotificationAction::new("ok", "确认")],
     );
-    assert_eq!(session.ui.notification_message_scroll, scrolled);
+    assert_eq!(session.pages.common.notification_message_scroll, scrolled);
     session.activate_notification_selected();
     assert_eq!(session.notification_active_modal_id(), Some(next));
     assert_eq!(
@@ -139,10 +219,10 @@ fn notification_scroll_resets_between_modals_but_not_when_a_following_modal_is_q
         0
     );
     session.scroll_notification_message(100, true);
-    assert_eq!(session.ui.notification_message_scroll, 0);
+    assert_eq!(session.pages.common.notification_message_scroll, 0);
     session.activate_notification_selected();
     assert!(!session.notification_has_active_modal());
-    assert_eq!(session.ui.notification_message_scroll, 0);
+    assert_eq!(session.pages.common.notification_message_scroll, 0);
 }
 
 #[test]

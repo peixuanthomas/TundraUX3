@@ -2,6 +2,34 @@ use super::*;
 use crate::session::*;
 
 impl ShellSession {
+    pub(in crate::session) fn cancel_update(&mut self) {
+        self.update_restart_requested = false;
+        match self.settings_task_runtime.cancel_update() {
+            Ok(true) => {
+                self.settings_update_state.error = None;
+                // Clear the restart request immediately. The worker remains
+                // registered until its processes and private files are gone.
+                self.update_apply_manifest = None;
+                self.settings_update_state.confirmation_open = false;
+                self.settings_update_state.busy = true;
+                self.settings_update_state.phase = Some(app::update::UpdatePhase::Cancelling);
+                self.settings_update_state.status = i18n::msg!("settings-update-cancelling").into();
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.update_apply_manifest = None;
+                // A durable cancellation can fail to start cleanup. In that case
+                // the runtime has already released its record and sends no event.
+                if self.settings_task_runtime.active_update_id().is_none()
+                    && let Some(request) = self.settings_update_request.take()
+                {
+                    self.tasks.complete(TaskDomain::Update, request);
+                }
+                self.set_update_error(error);
+            }
+        }
+    }
+
     pub(in crate::session) fn switch_update_mode(&mut self) {
         if !cfg!(target_os = "linux")
             || !self.can_change_global_settings()
@@ -56,6 +84,7 @@ impl ShellSession {
             self.settings_update_state.mode,
         ) {
             Ok(()) => {
+                self.register_settings_update(TaskClass::Query);
                 self.settings_update_state.busy = true;
                 self.settings_update_state.phase = Some(app::update::UpdatePhase::Checking);
                 self.settings_update_state.status = i18n::msg!("settings-checking-github").into();
@@ -125,6 +154,7 @@ impl ShellSession {
             .submit_update_prepare(check, install_dir)
         {
             Ok(()) => {
+                self.register_settings_update(TaskClass::Operation);
                 self.settings_update_state.busy = true;
                 self.settings_update_state.error = None;
                 self.settings_update_state.activity =
@@ -139,6 +169,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn set_update_error(&mut self, message: impl Into<i18n::LocalizedText>) {
+        self.update_restart_requested = false;
         let message = message.into();
         self.settings_update_state.busy = false;
         self.settings_update_state.phase = Some(app::update::UpdatePhase::Failed);
@@ -155,48 +186,52 @@ impl ShellSession {
         self.notify_status(i18n::msg!("settings-update-failed", reason = message));
     }
 
+    fn register_settings_update(&mut self, class: TaskClass) {
+        if let Some(id) = self.settings_task_runtime.active_update_id() {
+            let control = self.settings_task_runtime.update_task_control();
+            self.register_page_task(TaskDomain::Update, id, class, control);
+            self.settings_update_request = Some(id);
+        }
+    }
+
     pub(in crate::session) fn poll_settings_background_tasks(&mut self) {
         let events = self
             .settings_task_runtime
             .drain_time_sync_validation_events();
         for event in events {
-            let active = self.settings_state.as_ref().is_some_and(|state| {
-                state.time_sync_validation_request_id == Some(event.request_id)
-            });
-            if !active {
-                continue;
-            }
-            if let Some(state) = self.settings_state.as_mut() {
-                state.time_sync_validation_request_id = None;
-                if let Some(editor) = state.time_sync_server_editor.as_mut() {
-                    editor.validating = false;
-                }
-            }
-            match event.result {
-                Ok(utc) => self.persist_validated_time_sync_config(event.config, utc),
-                Err(error) => {
-                    let message = match event.config.server_url.as_deref() {
-                        Some(server) => i18n::msg!(
-                            "settings-server-sync-failed",
-                            server = server,
-                            reason = error.to_string()
-                        ),
-                        None => {
-                            i18n::msg!("settings-default-sync-failed", reason = error.to_string())
-                        }
-                    };
-                    if let Some(state) = self.settings_state.as_mut() {
-                        state.status = i18n::msg!("settings-sync-test-failed").into();
-                        if let Some(editor) = state.time_sync_server_editor.as_mut() {
-                            editor.error = Some(i18n::msg!("settings-sync-review-error").into());
-                        }
-                    }
-                    self.show_time_sync_failure_dialog(message);
-                }
+            let request = event.request_id;
+            let owner = self.tasks.owner(TaskDomain::SettingsTimeSync, request);
+            self.tasks.complete(TaskDomain::SettingsTimeSync, request);
+            if let Some(TaskOwner::Page(owner)) = owner {
+                self.with_page_context(owner, |session| session.apply_time_validation_event(event));
             }
         }
 
         for event in self.settings_task_runtime.drain_update_events() {
+            let request = self.settings_update_request;
+            let owner = request.and_then(|id| self.tasks.owner(TaskDomain::Update, id));
+            let prepared = matches!(&event, SettingsUpdateTaskEvent::PrepareCompleted(Ok(_)));
+            if let Some(error) = self.settings_task_runtime.update_cancel_error() {
+                if let Some(TaskOwner::Page(page)) = owner {
+                    self.pending_page_closes.remove(&page);
+                }
+                self.pending_login_reset = None;
+                self.pending_lockscreen_after_logout = false;
+                self.pending_session_exit = None;
+                self.set_update_error(error);
+                continue;
+            }
+            let done = !matches!(&event, SettingsUpdateTaskEvent::Progress(_)) && !prepared;
+            if done && let Some(id) = request {
+                self.tasks.complete(TaskDomain::Update, id);
+                self.settings_update_request = None;
+            }
+            if request.is_some() && owner.is_none() {
+                if done {
+                    self.settings_update_state.busy = false;
+                }
+                continue;
+            }
             match event {
                 SettingsUpdateTaskEvent::Progress(progress) => {
                     self.settings_update_state.apply_progress(progress);
@@ -213,6 +248,9 @@ impl ShellSession {
                 | SettingsUpdateTaskEvent::PrepareCompleted(Err(error)) => {
                     self.set_update_error(error);
                 }
+                SettingsUpdateTaskEvent::PreparationFailed(error) => {
+                    self.set_update_error(error.to_string());
+                }
                 SettingsUpdateTaskEvent::PrepareCompleted(Ok(manifest_path)) => {
                     self.settings_update_state.busy = false;
                     self.settings_update_state.phase =
@@ -220,12 +258,61 @@ impl ShellSession {
                     self.settings_update_state.status = i18n::msg!("progress-phase-restart").into();
                     self.update_apply_manifest = Some(manifest_path);
                 }
+                SettingsUpdateTaskEvent::Cancelled => {
+                    self.update_apply_manifest = None;
+                    self.settings_update_state.busy = false;
+                    self.settings_update_state.phase = Some(app::update::UpdatePhase::Cancelled);
+                    self.settings_update_state.error = None;
+                    self.settings_update_state.status =
+                        i18n::msg!("settings-update-cancelled").into();
+                    self.notify_status(i18n::msg!("settings-update-cancelled"));
+                }
             }
         }
         // Keep a prepared update until AA finishes or its confirmation is rejected.
         if self.update_apply_manifest.is_some() && !self.auto_admin_running() {
             self.settings_update_state.status = i18n::msg!("settings-update-restarting").into();
-            self.shutdown_requested = true;
+            self.update_restart_requested = true;
+        }
+    }
+
+    fn apply_time_validation_event(&mut self, event: SettingsTimeSyncValidationEvent) {
+        let active = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| state.time_sync_validation_request_id == Some(event.request_id));
+        if !active {
+            return;
+        }
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
+            state.time_sync_validation_request_id = None;
+            if let Some(editor) = state.time_sync_server_editor.as_mut() {
+                editor.validating = false;
+            }
+        }
+        match event.result {
+            Ok(utc) => self.persist_validated_time_sync_config(event.config, utc),
+            Err(error) => {
+                let message = match event.config.server_url.as_deref() {
+                    Some(server) => i18n::msg!(
+                        "settings-server-sync-failed",
+                        server = server,
+                        reason = error.to_string()
+                    ),
+                    None => {
+                        i18n::msg!("settings-default-sync-failed", reason = error.to_string())
+                    }
+                };
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
+                    state.status = i18n::msg!("settings-sync-test-failed").into();
+                    if let Some(editor) = state.time_sync_server_editor.as_mut() {
+                        editor.error = Some(i18n::msg!("settings-sync-review-error").into());
+                    }
+                }
+                self.show_time_sync_failure_dialog(message);
+            }
         }
     }
 
@@ -258,7 +345,7 @@ impl ShellSession {
         }
         self.replace_storage_config(config);
         self.apply_time_sync_utc(utc);
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.time_sync_server_editor = None;
             state.time_sync_validation_request_id = None;
             state.status = i18n::msg!("settings-saved-time-sync").into();
@@ -300,6 +387,8 @@ impl ShellSession {
         config: storage::TimeSyncConfig,
     ) {
         if self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .is_some_and(|state| state.time_sync_validation_request_id.is_some())
@@ -312,7 +401,16 @@ impl ShellSession {
             .submit_time_sync_validation(config)
         {
             Ok(request_id) => {
-                if let Some(state) = self.settings_state.as_mut() {
+                let control = self
+                    .settings_task_runtime
+                    .validation_task_control(request_id);
+                self.register_page_task(
+                    TaskDomain::SettingsTimeSync,
+                    request_id,
+                    TaskClass::Query,
+                    control,
+                );
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.time_sync_validation_request_id = Some(request_id);
                     state.status = i18n::msg!("settings-testing-time").into();
                     if let Some(editor) = state.time_sync_server_editor.as_mut() {

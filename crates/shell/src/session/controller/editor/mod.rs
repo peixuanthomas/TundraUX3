@@ -85,7 +85,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn reject_editor_settings_change(&mut self) {
-        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
             "shell-editor-settings-are-read-only-administrator-permission-is-required"
         )));
         self.notify_status(i18n::LocalizedText::from(i18n::msg!(
@@ -94,53 +94,70 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn advance_editor_document_generation(&mut self) {
-        self.editor_document_generation = self.editor_document_generation.wrapping_add(1).max(1);
+        self.pages.editor.editor_document_generation = self
+            .pages
+            .editor
+            .editor_document_generation
+            .wrapping_add(1)
+            .max(1);
     }
 
     pub(in crate::session) fn open_editor(&mut self) {
-        if self.config_editor_active() {
+        if self.active_screen() == ShellScreen::Editor && self.config_editor_active() {
             self.notify_toast(i18n::msg!("config-editor-finish-document"));
             return;
         }
-        if self.editor_load_state.is_some() || self.editor_save_state.is_some() {
+        if self.active_screen() == ShellScreen::Editor
+            && self.app.editor_state().is_some_and(EditorState::is_dirty)
+        {
+            self.report_editor_error(i18n::msg!("shell-save-or-close-the-current-document-first"));
+            return;
+        }
+        if self.active_screen() == ShellScreen::Editor
+            && (self.pages.editor.editor_load_state.is_some()
+                || self.pages.editor.editor_save_state.is_some())
+        {
             self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
                 "shell-finish-or-cancel-the-active-editor-file-operation-before-creating-a-document"
             )));
             return;
         }
-        self.editor_read_session = None;
+        self.enter_screen(ShellScreen::Editor);
+        if !self.reset_editor_recovery_identity() {
+            return;
+        }
+        self.pages.editor.editor_read_session = None;
         self.advance_editor_document_generation();
         self.app.dispatch_at(
             app::AppCommand::SetEditorState(Some(EditorState::new())),
             Instant::now(),
         );
-        self.editor_cursor_acceleration = None;
-        self.editor_settings_dialog = None;
-        self.editor_focus = ui::EditorFocus::Canvas;
-        self.editor_open_menu = None;
-        self.editor_selected_toolbar_action = None;
-        self.editor_quick_menu_anchor = None;
-        self.editor_drag_anchor = None;
-        self.editor_table_column_widths.clear();
-        self.editor_table_resize = None;
-        self.editor_fingerprint = None;
-        self.editor_close_after_save = false;
-        self.editor_open_after_save = false;
-        self.editor_discard_for_open = false;
-        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+        self.pages.editor.editor_cursor_acceleration = None;
+        self.pages.editor.editor_settings_dialog = None;
+        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+        self.pages.editor.editor_open_menu = None;
+        self.pages.editor.editor_selected_toolbar_action = None;
+        self.pages.editor.editor_quick_menu_anchor = None;
+        self.pages.editor.editor_drag_anchor = None;
+        self.pages.editor.editor_table_column_widths.clear();
+        self.pages.editor.editor_table_resize = None;
+        self.pages.editor.editor_fingerprint = None;
+        self.pages.editor.editor_close_after_save = false;
+        self.pages.editor.editor_open_after_save = false;
+        self.pages.editor.editor_discard_for_open = false;
+        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
             "shell-new-text-document"
         )));
         self.restore_editor_recovery_if_present();
         self.rebuild_editor_rich_render_cache();
-        self.enter_screen(ShellScreen::Editor);
-        self.active_popup = None;
+        self.pages.common.active_popup = None;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-editor")));
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn rebuild_editor_rich_render_cache(&mut self) {
         let _language = i18n::enter_snapshot(self.language.clone());
-        self.editor_rich_render_cache = self.app.editor_state().and_then(|state| {
+        self.pages.editor.editor_rich_render_cache = self.app.editor_state().and_then(|state| {
             let projection = state.rich_projection()?;
             Some(EditorRichRenderCache {
                 revision: state.revision(),
@@ -485,8 +502,10 @@ pub(in crate::session) fn editor_rich_spans_in(
 }
 
 impl ShellSession {
-    pub(in crate::session) fn request_editor_close(&mut self, platform: &dyn Platform) {
-        self.apply_editor_command(app::editor::EditorCommand::RequestClose, platform);
+    pub(in crate::session) fn request_editor_close(&mut self, _platform: &dyn Platform) {
+        if let Some(owner) = self.pages.editor.selected_id() {
+            self.request_page_close(owner);
+        }
     }
 
     pub(in crate::session) fn apply_editor_command(
@@ -494,7 +513,7 @@ impl ShellSession {
         command: app::editor::EditorCommand,
         platform: &dyn Platform,
     ) {
-        if self.editor_config.pending_action.is_some() {
+        if self.pages.editor.editor_config.pending_action.is_some() {
             return;
         }
         if self.config_editor_active()
@@ -506,14 +525,16 @@ impl ShellSession {
             self.notify_toast(i18n::msg!("config-editor-finish-document"));
             return;
         }
-        if self.editor_save_state.is_some() || self.editor_load_state.is_some() {
+        if self.pages.editor.editor_save_state.is_some()
+            || self.pages.editor.editor_load_state.is_some()
+        {
             return;
         }
         if matches!(
             &command,
             app::editor::EditorCommand::SetMode(_) | app::editor::EditorCommand::ToggleMode
         ) {
-            self.editor_quick_menu_anchor = None;
+            self.pages.editor.editor_quick_menu_anchor = None;
         }
         if let app::editor::EditorCommand::ApplyFormat(format) = &command {
             let Some(state) = self.app.editor_state() else {
@@ -522,13 +543,13 @@ impl ShellSession {
             if state.mode != app::editor::EditorMode::Rich
                 || state.document.kind != app::editor::DocumentKind::Markdown
             {
-                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-markdown-formatting-is-available-in-rich-mode"
                 )));
                 return;
             }
             if editor_format_requires_selection(format) && !state.has_selection() {
-                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-select-text-before-applying-inline-formatting"
                 )));
                 return;
@@ -561,10 +582,12 @@ impl ShellSession {
         let mode_changed = mode_after != mode_before;
         let projection_changed = mode_changed || revision_after != revision_before;
         if revision_after != revision_before {
-            self.editor_recovery_dirty_since = Some(now);
+            self.pages.editor.editor_recovery_dirty_since = Some(now);
         }
         if !is_dirty {
-            if revision_after != revision_before && self.editor_last_recovery_write.is_some() {
+            if revision_after != revision_before
+                && self.pages.editor.editor_last_recovery_write.is_some()
+            {
                 // Undo/redo can return to the saved checkpoint after a dirty
                 // draft was persisted. Leaving that draft on disk would
                 // resurrect the undone edits at the next launch. Limit this
@@ -572,13 +595,13 @@ impl ShellSession {
                 // merely viewing a clean document must not erase recovery.
                 self.clear_editor_recovery();
             } else {
-                self.editor_recovery_dirty_since = None;
+                self.pages.editor.editor_recovery_dirty_since = None;
             }
         }
         if mode_changed {
-            self.editor_table_column_widths.clear();
-            self.editor_table_resize = None;
-            self.editor_quick_menu_anchor = None;
+            self.pages.editor.editor_table_column_widths.clear();
+            self.pages.editor.editor_table_resize = None;
+            self.pages.editor.editor_quick_menu_anchor = None;
         }
         if projection_changed {
             self.rebuild_editor_rich_render_cache();
@@ -653,7 +676,7 @@ impl ShellSession {
             app::editor::EditorEffect::WriteClipboard(text) => {
                 match platform.write_clipboard_text(&text) {
                     Ok(()) => {
-                        self.editor_message =
+                        self.pages.editor.editor_message =
                             Some(i18n::LocalizedText::from(i18n::msg!("shell-copied")))
                     }
                     Err(error) => self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
@@ -685,77 +708,52 @@ impl ShellSession {
                 suggested_name,
                 snapshot,
             } => self.open_editor_save_picker(platform, suggested_name, snapshot),
-            app::editor::EditorEffect::ConfirmClose => {
-                self.notify_modal_with_options(
-                    ShellNotification::modal(
-                        i18n::LocalizedText::from(i18n::msg!("shell-unsaved-document")),
-                        i18n::LocalizedText::from(i18n::msg!(
-                            "shell-save-your-changes-before-closing-the-editor"
-                        )),
-                        ui::NotificationTone::Warning,
-                        vec![
-                            ShellNotificationAction::new(
-                                "save",
-                                i18n::LocalizedText::from(i18n::msg!("shell-save")),
-                            )
-                            .with_shortcut(InputKey::Char('s'))
-                            .with_follow_up(ShellCommand::EditorSaveAndClose),
-                            ShellNotificationAction::new(
-                                "discard",
-                                i18n::LocalizedText::from(i18n::msg!("shell-discard")),
-                            )
-                            .with_shortcut(InputKey::Char('d'))
-                            .with_follow_up(ShellCommand::EditorDiscardAndClose),
-                            ShellNotificationAction::new(
-                                "cancel",
-                                i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
-                            )
-                            .with_shortcut(InputKey::Escape)
-                            .cancel()
-                            .with_follow_up(ShellCommand::EditorCancelClose),
-                        ],
-                    )
-                    .with_key(EDITOR_CLOSE_NOTIFICATION_KEY)
-                    .with_component(ShellComponent::NotificationDialog),
-                );
-            }
+            app::editor::EditorEffect::ConfirmClose => self.confirm_editor_close(),
             app::editor::EditorEffect::Close => self.finish_editor_close(false),
         }
     }
 
-    pub(in crate::session) fn finish_editor_close(&mut self, _discard: bool) {
-        if self.editor_config.pending_action.is_some() {
-            self.notify_toast(i18n::msg!("management-operation-running"));
+    pub(in crate::session) fn confirm_editor_close(&mut self) {
+        self.notify_modal_with_options(
+            ShellNotification::modal(
+                i18n::LocalizedText::from(i18n::msg!("shell-unsaved-document")),
+                i18n::LocalizedText::from(i18n::msg!(
+                    "shell-save-your-changes-before-closing-the-editor"
+                )),
+                ui::NotificationTone::Warning,
+                vec![
+                    ShellNotificationAction::new(
+                        "save",
+                        i18n::LocalizedText::from(i18n::msg!("shell-save")),
+                    )
+                    .with_shortcut(InputKey::Char('s'))
+                    .with_follow_up(ShellCommand::EditorSaveAndClose),
+                    ShellNotificationAction::new(
+                        "discard",
+                        i18n::LocalizedText::from(i18n::msg!("shell-discard")),
+                    )
+                    .with_shortcut(InputKey::Char('d'))
+                    .with_follow_up(ShellCommand::EditorDiscardAndClose),
+                    ShellNotificationAction::new(
+                        "cancel",
+                        i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
+                    )
+                    .with_shortcut(InputKey::Escape)
+                    .cancel()
+                    .with_follow_up(ShellCommand::EditorCancelClose),
+                ],
+            )
+            .with_key(EDITOR_CLOSE_NOTIFICATION_KEY)
+            .with_component(ShellComponent::NotificationDialog),
+        );
+    }
+
+    pub(in crate::session) fn finish_editor_close(&mut self, discard: bool) {
+        let Some(owner) = self.pages.editor.selected_id() else {
             return;
-        }
+        };
         self.notification_dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
-        if self.editor_read_session.is_none() {
-            self.clear_editor_recovery();
-        }
-        if let Some(load) = self.editor_load_state.take() {
-            self.editor_task_runtime.cancel(load.id);
-        }
-        self.advance_editor_document_generation();
-        self.app
-            .dispatch_at(app::AppCommand::SetEditorState(None), Instant::now());
-        self.editor_rich_render_cache = None;
-        self.editor_cursor_acceleration = None;
-        self.editor_settings_dialog = None;
-        self.editor_fingerprint = None;
-        self.editor_open_menu = None;
-        self.editor_selected_toolbar_action = None;
-        self.editor_quick_menu_anchor = None;
-        self.editor_drag_anchor = None;
-        self.editor_table_column_widths.clear();
-        self.editor_table_resize = None;
-        self.editor_close_after_save = false;
-        self.editor_open_after_save = false;
-        self.editor_discard_for_open = false;
-        self.editor_message = None;
-        self.editor_read_session = None;
-        self.editor_config = Default::default();
-        self.management_state_clear_config_form();
-        self.return_from_screen(ShellScreen::Editor);
+        self.request_page_close_after_editor_check(owner, discard);
     }
 
     pub(in crate::session) fn report_editor_error(
@@ -763,8 +761,8 @@ impl ShellSession {
         message: impl Into<i18n::LocalizedText>,
     ) {
         let message = message.into();
-        self.editor_message = Some(message.clone());
-        self.error_message = Some(message.clone());
-        self.notify_alert_with_key(EDITOR_ALERT_KEY, message, ui::NotificationTone::Error);
+        self.pages.editor.editor_message = Some(message.clone());
+        self.pages.common.error_message = Some(message.clone());
+        self.notify_page_alert_with_key(EDITOR_ALERT_KEY, message, ui::NotificationTone::Error);
     }
 }

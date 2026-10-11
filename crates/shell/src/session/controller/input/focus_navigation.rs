@@ -4,7 +4,7 @@ impl ShellSession {
     pub(in crate::session) fn shell_back_shortcut(&self) -> &'static str {
         if self.active_screen() == ShellScreen::CommandLine && !self.notification_has_active_modal()
         {
-            "Ctrl+Shift+X"
+            ""
         } else {
             "Esc"
         }
@@ -49,6 +49,9 @@ impl ShellSession {
         motion: ui::MotionTransitions,
         layout: ui::ShellFrameLayout,
     ) {
+        if self.pages.common.selected_id() != Some(self.active_page_id()) {
+            return;
+        }
         self.synchronize_overlay_focus();
         self.frame_layout = Some(layout);
         let _language = i18n::enter_snapshot(self.language.clone());
@@ -108,10 +111,10 @@ impl ShellSession {
             layout,
             content_screen,
             active_screen == ShellScreen::ExitConfirm,
-            self.active_popup,
-            self.setup_step,
+            self.pages.common.active_popup,
+            self.pages.setup.setup_step,
             self.language_catalog.options().len(),
-            self.setup_custom_color_target.is_some(),
+            self.pages.setup.setup_custom_color_target.is_some(),
             self.hit_map_generation,
             self.time_sync_dialog_visible,
             self.notification_active_modal_component(),
@@ -131,14 +134,15 @@ impl ShellSession {
         );
         self.sync_home_entry_selection();
 
-        let (focus_manager, focus_order) = self.focus_manager(Some(self.focused_component));
+        let (focus_manager, focus_order) =
+            self.focus_manager(Some(self.pages.common.focused_component));
         if let Some(focused_component) =
             self.focused_component_from_manager(&focus_manager, &focus_order)
-            && focused_component != self.focused_component
+            && focused_component != self.pages.common.focused_component
         {
-            self.focused_component = focused_component;
-            if let Some(field) = setup_field_for_component(self.focused_component) {
-                self.setup_focused_field = field;
+            self.pages.common.focused_component = focused_component;
+            if let Some(field) = setup_field_for_component(self.pages.common.focused_component) {
+                self.pages.setup.setup_focused_field = field;
             }
         }
     }
@@ -152,13 +156,15 @@ impl ShellSession {
             return overlay.focus_order();
         }
         if self.active_screen() == ShellScreen::SystemStatus {
-            if self.overlay_interaction_ready && !self.diagnostics_repair_preview.is_empty() {
+            if self.overlay_interaction_ready
+                && !self.pages.diagnostics.diagnostics_repair_preview.is_empty()
+            {
                 return vec![ShellComponent::DiagnosticsRepairDialog];
             }
             return vec![ShellComponent::SystemStatus];
         }
         if self.active_screen() == ShellScreen::FirstRunSetup {
-            return match self.setup_step {
+            return match self.pages.setup.setup_step {
                 ui::SetupStep::Language => vec![ShellComponent::SetupLanguage],
                 ui::SetupStep::Timezone => vec![ShellComponent::SetupTimezone],
                 ui::SetupStep::Admin => vec![
@@ -170,7 +176,7 @@ impl ShellSession {
                 ],
                 ui::SetupStep::Appearance
                     if self.overlay_interaction_ready
-                        && self.setup_custom_color_target.is_some() =>
+                        && self.pages.setup.setup_custom_color_target.is_some() =>
                 {
                     vec![ShellComponent::SetupCustomColorDialog]
                 }
@@ -222,13 +228,15 @@ impl ShellSession {
             return vec![ShellComponent::Management];
         }
         if self.active_screen() == ShellScreen::Diagnostics {
-            if self.overlay_interaction_ready && !self.diagnostics_repair_preview.is_empty() {
+            if self.overlay_interaction_ready
+                && !self.pages.diagnostics.diagnostics_repair_preview.is_empty()
+            {
                 return vec![ShellComponent::DiagnosticsRepairDialog];
             }
             return vec![ShellComponent::Diagnostics];
         }
         if self.active_screen() == ShellScreen::Clock {
-            if self.overlay_interaction_ready && self.clock_create_state.is_some() {
+            if self.overlay_interaction_ready && self.pages.clock.clock_create_state.is_some() {
                 return vec![
                     ShellComponent::ClockCreateInput,
                     ShellComponent::ClockCreateAlarmButton,
@@ -294,29 +302,31 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn move_focus(&mut self, direction: ui::FocusDirection) {
-        let (mut focus_manager, focus_order) = self.focus_manager(Some(self.focused_component));
+        let (mut focus_manager, focus_order) =
+            self.focus_manager(Some(self.pages.common.focused_component));
         focus_manager.move_focus(direction);
         if let Some(component) = self.focused_component_from_manager(&focus_manager, &focus_order) {
-            self.focused_component = component;
+            self.pages.common.focused_component = component;
         }
     }
 
     pub(in crate::session) fn focus_component(&mut self, component: ShellComponent) {
-        let (mut focus_manager, focus_order) = self.focus_manager(Some(self.focused_component));
+        let (mut focus_manager, focus_order) =
+            self.focus_manager(Some(self.pages.common.focused_component));
         if focus_manager.set_focus(component.focus_id()).is_ok()
             && let Some(component) =
                 self.focused_component_from_manager(&focus_manager, &focus_order)
         {
-            self.focused_component = component;
+            self.pages.common.focused_component = component;
         }
     }
 
     pub(in crate::session) fn apply_restored_session(&mut self, session: &ShellRestoredSession) {
         self.reset_navigation(ShellScreen::Home);
-        self.active_popup = None;
+        self.pages.common.active_popup = None;
 
         let (focus_manager, focus_order) = self.focus_manager(Some(session.focused_component));
-        self.focused_component = self
+        self.pages.common.focused_component = self
             .focused_component_from_manager(&focus_manager, &focus_order)
             .unwrap_or(ShellComponent::Home);
         self.refresh_hit_map();

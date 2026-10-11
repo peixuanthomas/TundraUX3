@@ -4,7 +4,7 @@ use crate::session::*;
 impl ShellSession {
     pub fn to_editor_view_model(&self) -> ui::EditorViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
-        if let Some(load) = self.editor_load_state.as_ref()
+        if let Some(load) = self.pages.editor.editor_load_state.as_ref()
             && matches!(load.operation, EditorLoadOperation::Open { .. })
         {
             let file_name = load
@@ -31,6 +31,8 @@ impl ShellSession {
         let mut model = match state.mode {
             app::editor::EditorMode::Rich => {
                 let mut model = if let Some(cache) = self
+                    .pages
+                    .editor
                     .editor_rich_render_cache
                     .as_ref()
                     .filter(|cache| cache.revision == state.revision())
@@ -54,7 +56,8 @@ impl ShellSession {
                     });
                     ui::EditorViewModel::new(state.document.display_name(), blocks)
                 };
-                model.rich_table_column_widths = self.editor_table_column_widths.clone();
+                model.rich_table_column_widths =
+                    self.pages.editor.editor_table_column_widths.clone();
                 model.rich_cursor = state.rich_cursor();
                 model.rich_selection = state
                     .rich_selection()
@@ -138,37 +141,45 @@ impl ShellSession {
             model.config_form = Some(Box::new(self.to_management_view_model()));
         }
         model.dirty = state.is_dirty();
-        let saving = self.editor_save_state.is_some();
+        let saving = self.pages.editor.editor_save_state.is_some();
         model.read_only = state.is_read_only() || saving;
-        model.read_window =
-            self.editor_read_session
-                .as_ref()
-                .map(|session| ui::EditorReadWindowViewModel {
-                    start_byte: 0,
-                    total_bytes: session.total_bytes,
-                });
+        model.read_window = self
+            .pages
+            .editor
+            .editor_read_session
+            .as_ref()
+            .map(|session| ui::EditorReadWindowViewModel {
+                start_byte: 0,
+                total_bytes: session.total_bytes,
+            });
         model.reload_available = self
+            .pages
+            .editor
             .editor_read_session
             .as_ref()
             .is_some_and(|session| matches!(session.reload, EditorReloadPolicy::Log { .. }))
             && !saving;
         model.mode = state.mode;
-        model.focus = self.editor_focus;
-        model.open_menu = self.editor_open_menu;
+        model.focus = self.pages.editor.editor_focus;
+        model.open_menu = self.pages.editor.editor_open_menu;
         model.settings = self.editor_settings_view_model();
         let has_selection = state.has_selection();
-        model.quick_menu = self.editor_quick_menu_anchor.and_then(|anchor| {
-            (!state.is_read_only()
-                && !saving
-                && state.mode == app::editor::EditorMode::Rich
-                && state.document.kind == app::editor::DocumentKind::Markdown
-                && has_selection)
-                .then_some(ui::EditorQuickMenuViewModel {
-                    anchor,
-                    block_actions_enabled: state.can_apply_block_format_to_selection(),
-                })
-        });
-        model.selected_toolbar_action = self.editor_selected_toolbar_action;
+        model.quick_menu = self
+            .pages
+            .editor
+            .editor_quick_menu_anchor
+            .and_then(|anchor| {
+                (!state.is_read_only()
+                    && !saving
+                    && state.mode == app::editor::EditorMode::Rich
+                    && state.document.kind == app::editor::DocumentKind::Markdown
+                    && has_selection)
+                    .then_some(ui::EditorQuickMenuViewModel {
+                        anchor,
+                        block_actions_enabled: state.can_apply_block_format_to_selection(),
+                    })
+            });
+        model.selected_toolbar_action = self.pages.editor.editor_selected_toolbar_action;
         model.scroll_line = state.viewport.top_line;
         model.horizontal_scroll = state.viewport.left_column;
         model.toolbar.can_save =
@@ -188,12 +199,22 @@ impl ShellSession {
         model.image_protocol = ui::EditorImageProtocolStatus::Unsupported;
         model.text_sizing_protocol = self.terminal_text_sizing_support;
         model.status_message = self
+            .pages
+            .editor
             .editor_load_state
             .as_ref()
             .map(editor_load_status)
-            .or_else(|| self.editor_save_state.as_ref().map(editor_save_status))
             .or_else(|| {
-                self.editor_message
+                self.pages
+                    .editor
+                    .editor_save_state
+                    .as_ref()
+                    .map(editor_save_status)
+            })
+            .or_else(|| {
+                self.pages
+                    .editor
+                    .editor_message
                     .as_ref()
                     .map(i18n::LocalizedText::render_current)
             });
@@ -203,7 +224,9 @@ impl ShellSession {
     pub(in crate::session) fn editor_settings_view_model(
         &self,
     ) -> Option<ui::EditorSettingsViewModel> {
-        self.editor_settings_dialog
+        self.pages
+            .editor
+            .editor_settings_dialog
             .as_ref()
             .map(|dialog| ui::EditorSettingsViewModel {
                 editable: self.can_change_editor_settings(),

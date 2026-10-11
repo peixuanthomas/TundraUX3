@@ -960,7 +960,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         std::sync::Arc::clone(&platform),
         shell_watchdog.clone(),
     ));
-    let mut command_line_host = CommandLineHost::new(shell_watchdog.clone());
+    let mut command_line_hosts = CommandLineHosts::new(shell_watchdog.clone());
     let mut reset_requested = false;
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
@@ -978,358 +978,357 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     let mut last_background_poll = runtime_origin;
     let mut update_ready_marked = false;
 
-    loop {
-        if state.poll_auto_admin() {
-            redraw.request_redraw();
-        }
-        if state.auto_admin_power_succeeded() {
-            break;
-        }
-        state.resize_auto_admin();
-        language_runtime.update_from(&state);
-        let _language = i18n::enter_snapshot(state.language.clone());
-        let state_before_polling = state.clone();
-        let theme_before_polling = theme.clone();
-        drain_system_status_snapshot(&mut system_status_snapshots, &mut state);
-        // logind signals are delivered by a backend worker and drained here so
-        // neither D-Bus nor policy authorization can block terminal input.
-        for _ in 0..16 {
-            let lifecycle_event = match platform.poll_lifecycle_event() {
-                Ok(event) => event,
-                Err(error) => {
-                    state.notify_alert_with_tone(
-                        i18n::msg!("startup-lifecycle-failed", reason = error.to_string()),
-                        ui::NotificationTone::Error,
-                    );
-                    break;
-                }
-            };
-            let Some(lifecycle_event) = lifecycle_event else {
+    let execution = std::panic::catch_unwind(AssertUnwindSafe(|| -> io::Result<Option<String>> {
+        loop {
+            if state.poll_auto_admin() {
+                redraw.request_redraw();
+            }
+            if state.auto_admin_power_succeeded() {
                 break;
-            };
-            match lifecycle_event {
-                PlatformLifecycleEvent::PrepareForShutdown => {
+            }
+            state.resize_auto_admin();
+            language_runtime.update_from(&state);
+            let _language = i18n::enter_snapshot(state.language.clone());
+            let state_before_polling = state.clone();
+            let theme_before_polling = theme.clone();
+            drain_system_status_snapshot(&mut system_status_snapshots, &mut state);
+            // logind signals are delivered by a backend worker and drained here so
+            // neither D-Bus nor policy authorization can block terminal input.
+            for _ in 0..16 {
+                let lifecycle_event = match platform.poll_lifecycle_event() {
+                    Ok(event) => event,
+                    Err(error) => {
+                        state.notify_alert_with_tone(
+                            i18n::msg!("startup-lifecycle-failed", reason = error.to_string()),
+                            ui::NotificationTone::Error,
+                        );
+                        break;
+                    }
+                };
+                let Some(lifecycle_event) = lifecycle_event else {
+                    break;
+                };
+                match lifecycle_event {
+                    PlatformLifecycleEvent::PrepareForShutdown => {
+                        state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
+                    }
+                    PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
+                        let _ = state.persist_all_editor_recovery_now(Instant::now());
+                        if let Some(routed) = compositor.cancel_for_suspend(&state) {
+                            state.apply_routed_event(routed, platform.as_ref(), Instant::now());
+                            redraw.request_redraw();
+                        }
+                        guard.restore()?;
+                        terminal_suspended = true;
+                    }
+                    PlatformLifecycleEvent::Resumed => {
+                        if terminal_suspended {
+                            guard.resume()?;
+                            terminal_suspended = false;
+                        }
+                        refresh_session_after_resume(
+                            &mut state,
+                            platform.as_ref(),
+                            time_sync_worker,
+                        );
+                    }
+                    PlatformLifecycleEvent::PrepareForSleep => {}
+                }
+            }
+
+            if terminal_suspended {
+                if terminal_control.shutdown_requested() {
                     state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
                 }
-                PlatformLifecycleEvent::PrepareForSleep if !terminal_suspended => {
-                    let _ = state.persist_editor_recovery_now(Instant::now());
-                    if let Some(routed) = compositor.cancel_for_suspend(&state) {
-                        state.apply_routed_event(routed, platform.as_ref(), Instant::now());
-                        redraw.request_redraw();
-                    }
-                    guard.restore()?;
-                    terminal_suspended = true;
+                if state.shutdown_requested() {
+                    break;
                 }
-                PlatformLifecycleEvent::Resumed => {
-                    if terminal_suspended {
-                        guard.resume()?;
-                        terminal_suspended = false;
-                    }
-                    refresh_session_after_resume(&mut state, platform.as_ref(), time_sync_worker);
-                }
-                PlatformLifecycleEvent::PrepareForSleep => {}
+                std::thread::sleep(Duration::from_millis(50));
+                continue;
             }
-        }
 
-        if terminal_suspended {
-            if terminal_control.shutdown_requested() {
-                state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
-            }
-            if state.shutdown_requested() {
+            if let Err(error) = terminal_size_requirement.validate(crossterm::terminal::size()?) {
+                terminal_size_error = Some(io::Error::other(error));
                 break;
             }
-            std::thread::sleep(Duration::from_millis(50));
-            continue;
-        }
 
-        if let Err(error) = terminal_size_requirement.validate(crossterm::terminal::size()?) {
-            terminal_size_error = Some(io::Error::other(error));
-            break;
-        }
-
-        let command_line_before_poll = (state.content_screen() == ShellScreen::CommandLine)
-            .then(|| command_line_host.view_model());
-        if state.content_screen() == ShellScreen::CommandLine {
-            let username = state.current_home_username().unwrap_or("tundra");
             let accent = theme
                 .tokens()
                 .for_capability(shell_render_capabilities(terminal_graphics_probe).color)
                 .accent;
-            command_line_host.ensure_started(
-                platform.as_ref(),
-                username,
-                accent,
-                state.command_line_start_directory.as_deref(),
-            );
-            match command_line_host.poll() {
-                CommandLineHostEvent::None => {
-                    let (width, height) = state.terminal_size();
-                    if let Some(terminal_area) =
-                        ui::command_line_terminal_area(Rect::new(0, 0, width, height))
-                    {
-                        command_line_host.resize_to_area(terminal_area);
-                    }
-                }
-                CommandLineHostEvent::ExitToCaller => state.close_command_line(),
+            let (terminal_changed, command_line_event) =
+                command_line_hosts.poll(&mut state, platform.as_ref(), accent);
+            match command_line_event {
+                CommandLineHostEvent::None | CommandLineHostEvent::ExitToCaller => {}
                 CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),
                 CommandLineHostEvent::ResetRequested => {
                     reset_requested = true;
                     break;
                 }
             }
-        }
-        if command_line_before_poll
-            .as_ref()
-            .is_some_and(|before| *before != command_line_host.view_model())
-        {
-            redraw.request_redraw();
-        }
+            if terminal_changed {
+                redraw.request_redraw();
+            }
 
-        drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
-        if let Some(message) = drain_watchdog_incidents(&mut state, process_watchdog) {
-            command_line_host.terminate();
-            guard.restore()?;
-            return Ok((
-                FullscreenShellSessionOutcome::Panic(message),
-                state.ascii_assets.clone(),
-            ));
-        }
-        shell_watchdog.heartbeat(RuntimeSnapshot {
-            screen: Some(format!("{:?}", state.active_screen())),
-            terminal_size: Some(state.terminal_size()),
-            ..RuntimeSnapshot::default()
-        });
-        let frame_now = Instant::now();
-        if launcher_icons
-            .as_mut()
-            .is_some_and(LauncherIconRuntime::poll_results)
-        {
-            redraw.request_redraw();
-        }
-        theme_reloader.poll_at(frame_now, &mut theme, &mut state);
-        let clock_snapshot = state.app.snapshot().clock;
-        state.advance_clock_background_at(&clock_snapshot, frame_now);
-        if session_render_state_changed(&state_before_polling, &state)
-            || theme != theme_before_polling
-        {
-            redraw.request_redraw();
-        }
-        redraw.observe(
-            frame_now,
-            RedrawIdentity::from_session(&state),
-            reduced_motion_enabled(&state),
-        );
-        if redraw.is_due(frame_now) {
-            let _language = i18n::enter_snapshot(state.language.clone());
-            let motion_frame = redraw.frame(frame_now, animation_speed_percent(&state));
-            let motion_transitions = redraw.transitions(frame_now);
-            let render_context = ui::RenderContext::from_theme_with_transitions(
-                &theme,
-                motion_frame,
-                motion_transitions,
-                shell_render_capabilities(terminal_graphics_probe),
-            );
-            let aspect = if state.content_screen() == ShellScreen::Clock {
-                crossterm::terminal::window_size()
-                    .map(|window| {
-                        ui::TerminalCellAspectRatio::from_window_size(
-                            window.columns,
-                            window.rows,
-                            window.width,
-                            window.height,
-                        )
-                    })
-                    .unwrap_or_default()
-            } else {
-                ui::TerminalCellAspectRatio::default()
-            };
-            let prepared = compositor.prepare(
-                &state,
-                &command_line_host,
+            drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
+            if let Some(message) = drain_watchdog_incidents(&mut state, process_watchdog) {
+                return Ok(Some(message));
+            }
+            shell_watchdog.heartbeat(RuntimeSnapshot {
+                screen: Some(format!("{:?}", state.active_screen())),
+                terminal_size: Some(state.terminal_size()),
+                ..RuntimeSnapshot::default()
+            });
+            let frame_now = Instant::now();
+            if launcher_icons
+                .as_mut()
+                .is_some_and(LauncherIconRuntime::poll_results)
+            {
+                redraw.request_redraw();
+            }
+            theme_reloader.poll_at(frame_now, &mut theme, &mut state);
+            let clock_snapshot = state.app.snapshot().clock;
+            state.advance_clock_background_at(&clock_snapshot, frame_now);
+            if session_render_state_changed(&state_before_polling, &state)
+                || theme != theme_before_polling
+            {
+                redraw.request_redraw();
+            }
+            redraw.observe(
                 frame_now,
-                aspect,
-                render_context,
-                launcher_icons.as_mut(),
+                RedrawIdentity::from_session(&state),
+                reduced_motion_enabled(&state),
             );
-            let mut animation_running = false;
-            guard.terminal_mut().draw(|frame| {
-                animation_running =
-                    compositor.render(frame, &mut state, &prepared, launcher_icons.as_ref());
-            })?;
-            if !update_ready_marked {
-                app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
-                update_ready_marked = true;
-            }
-            redraw.did_draw(frame_now);
-            if animation_running {
-                redraw.request_animation_frame(frame_now);
-            }
-        }
-
-        if terminal_control.shutdown_requested() {
-            state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
-        }
-        if state.shutdown_requested() {
-            break;
-        }
-
-        // An exit effect can finish on the frame just drawn. Apply its already-routed
-        // action before deriving any blocking poll deadline, then immediately render the
-        // resulting natural state on the next loop iteration.
-        if let Some(routed) = compositor.take_deferred_close(&state) {
-            state.apply_routed_event(routed, platform.as_ref(), Instant::now());
-            redraw.request_redraw();
-            continue;
-        }
-
-        let poll_now = Instant::now();
-        // The system-status watch receiver is intentionally polled even while
-        // the user is idle, so snapshots reach AppState within the 250 ms
-        // background cadence without a busy loop.
-        let background_work_outstanding = if system_status_snapshots.has_changed().is_ok() {
-            true
-        } else {
-            session_has_background_work(&state)
-                || launcher_icons
-                    .as_ref()
-                    .is_some_and(|icons| !icons.pending.is_empty())
-        };
-        let background_poll_timeout = background_poll_timeout(
-            background_work_outstanding,
-            poll_now.saturating_duration_since(last_background_poll),
-        );
-        let state_poll_timeout = state.auth_poll_timeout(
-            poll_now,
-            state.notification_poll_timeout(poll_now, background_poll_timeout),
-        );
-        let redraw_timeout = redraw.poll_timeout(poll_now, Duration::MAX);
-        let combined_timeout = state_poll_timeout.min(redraw_timeout);
-        let (poll_timeout, command_line_timeout_is_state) = command_line_poll_timeout(
-            state.content_screen() == ShellScreen::CommandLine
-                || (state.auto_admin_visible() && state.auto_admin_running()),
-            combined_timeout,
-        );
-        let state_timeout_wakeup =
-            command_line_timeout_is_state && state_poll_timeout <= redraw_timeout;
-        let mut action = None;
-        let mut terminal_event_received = false;
-        if event::poll(poll_timeout)? {
-            terminal_event_received = true;
-            let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
-            for terminal_event in terminal_events {
-                let identity_before_input = RedrawIdentity::from_session(&state);
-                if let event::Event::Resize(width, height) = &terminal_event
-                    && let Err(error) = terminal_size_requirement.validate((*width, *height))
-                {
-                    terminal_size_error = Some(io::Error::other(error));
-                    break;
-                }
-                let boundary_changed = matches!(&terminal_event, event::Event::Resize(_, _));
-                if boundary_changed {
-                    compositor.cancel_for_bounds_change();
-                }
-                let input = crossterm_event_to_input(terminal_event);
-                let received_at = Instant::now();
-                if state.handle_auto_admin_input_at(&input, received_at) {
-                    action = Some(ShellAction::Redraw);
-                    redraw.request_redraw();
-                    continue;
-                }
-                let Some(input) = state.prepare_button_input(input, received_at) else {
-                    action = Some(ShellAction::Redraw);
-                    continue;
-                };
-                let input = state.normalize_shell_navigation_input(input);
-                let command_line_captures = command_line_captures_input(&state, &input);
-                if command_line_captures {
-                    let (width, height) = state.terminal_size();
-                    let terminal_area =
-                        ui::command_line_terminal_area(Rect::new(0, 0, width, height));
-                    match command_line_host.handle_input(&input, terminal_area) {
-                        CommandLineHostEvent::None => {}
-                        CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),
-                        CommandLineHostEvent::ExitToCaller => {
-                            command_line_host.terminate();
-                            state.close_command_line();
-                        }
-                        CommandLineHostEvent::ResetRequested => {
-                            reset_requested = true;
-                            break;
-                        }
-                    }
-                    action = Some(ShellAction::Redraw);
-                } else {
-                    let (input_action, motion_blocked) = compositor.dispatch_input(
-                        &mut state,
-                        input,
-                        platform.as_ref(),
-                        received_at,
-                    );
-                    action = Some(input_action);
-                    if motion_blocked {
-                        redraw.request_animation_frame(received_at);
-                    }
-                }
-                synchronize_motion_hit_map_after_input(
-                    &mut state,
-                    &mut redraw,
-                    identity_before_input,
-                    Instant::now(),
-                );
-                let context = ui::RenderContext::from_theme(
+            if redraw.is_due(frame_now) {
+                let _language = i18n::enter_snapshot(state.language.clone());
+                let motion_frame = redraw.frame(frame_now, animation_speed_percent(&state));
+                let motion_transitions = redraw.transitions(frame_now);
+                let render_context = ui::RenderContext::from_theme_with_transitions(
                     &theme,
-                    redraw.frame(Instant::now(), animation_speed_percent(&state)),
+                    motion_frame,
+                    motion_transitions,
                     shell_render_capabilities(terminal_graphics_probe),
                 );
-                compositor.synchronize_after_input(&state, &context);
-                if let Some(routed) = compositor.take_deferred_close(&state) {
-                    action =
-                        Some(state.apply_routed_event(routed, platform.as_ref(), Instant::now()));
-                    redraw.request_redraw();
-                    break;
+                let aspect = if state.content_screen() == ShellScreen::Clock {
+                    crossterm::terminal::window_size()
+                        .map(|window| {
+                            ui::TerminalCellAspectRatio::from_window_size(
+                                window.columns,
+                                window.rows,
+                                window.width,
+                                window.height,
+                            )
+                        })
+                        .unwrap_or_default()
+                } else {
+                    ui::TerminalCellAspectRatio::default()
+                };
+                let prepared = compositor.prepare(
+                    &state,
+                    command_line_hosts.visible_host(&state),
+                    frame_now,
+                    aspect,
+                    render_context,
+                    launcher_icons.as_mut(),
+                );
+                let mut animation_running = false;
+                guard.terminal_mut().draw(|frame| {
+                    animation_running =
+                        compositor.render(frame, &mut state, &prepared, launcher_icons.as_ref());
+                })?;
+                if !update_ready_marked {
+                    app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
+                    update_ready_marked = true;
                 }
-                if action.is_some_and(|action| action != ShellAction::Redraw) {
-                    break;
+                redraw.did_draw(frame_now);
+                if animation_running {
+                    redraw.request_animation_frame(frame_now);
                 }
             }
-        } else if state_timeout_wakeup {
-            action = Some(state.apply_input_with_platform(InputEvent::Tick, platform.as_ref()));
-            if background_work_outstanding
-                && poll_now.saturating_duration_since(last_background_poll)
-                    >= BACKGROUND_POLL_INTERVAL
-            {
-                last_background_poll = Instant::now();
+
+            if terminal_control.shutdown_requested() {
+                state.apply_input_with_platform(InputEvent::Shutdown, platform.as_ref());
+            }
+            if state.shutdown_requested() {
+                break;
+            }
+
+            // An exit effect can finish on the frame just drawn. Apply its already-routed
+            // action before deriving any blocking poll deadline, then immediately render the
+            // resulting natural state on the next loop iteration.
+            if let Some(routed) = compositor.take_deferred_close(&state) {
+                state.apply_routed_event(routed, platform.as_ref(), Instant::now());
+                redraw.request_redraw();
+                continue;
+            }
+
+            let poll_now = Instant::now();
+            // The system-status watch receiver is intentionally polled even while
+            // the user is idle, so snapshots reach AppState within the 250 ms
+            // background cadence without a busy loop.
+            let background_work_outstanding = if system_status_snapshots.has_changed().is_ok() {
+                true
+            } else {
+                session_has_background_work(&state)
+                    || launcher_icons
+                        .as_ref()
+                        .is_some_and(|icons| !icons.pending.is_empty())
+            };
+            let background_poll_timeout = background_poll_timeout(
+                background_work_outstanding,
+                poll_now.saturating_duration_since(last_background_poll),
+            );
+            let state_poll_timeout = state.auth_poll_timeout(
+                poll_now,
+                state.notification_poll_timeout(poll_now, background_poll_timeout),
+            );
+            let redraw_timeout = redraw.poll_timeout(poll_now, Duration::MAX);
+            let combined_timeout = state_poll_timeout.min(redraw_timeout);
+            let (poll_timeout, command_line_timeout_is_state) = command_line_poll_timeout(
+                command_line_hosts.has_running_processes()
+                    || (state.auto_admin_visible() && state.auto_admin_running()),
+                combined_timeout,
+            );
+            let state_timeout_wakeup =
+                command_line_timeout_is_state && state_poll_timeout <= redraw_timeout;
+            let mut action = None;
+            let mut terminal_event_received = false;
+            if event::poll(poll_timeout)? {
+                terminal_event_received = true;
+                let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
+                for terminal_event in terminal_events {
+                    let identity_before_input = RedrawIdentity::from_session(&state);
+                    if let event::Event::Resize(width, height) = &terminal_event
+                        && let Err(error) = terminal_size_requirement.validate((*width, *height))
+                    {
+                        terminal_size_error = Some(io::Error::other(error));
+                        break;
+                    }
+                    let boundary_changed = matches!(&terminal_event, event::Event::Resize(_, _));
+                    if boundary_changed {
+                        compositor.cancel_for_bounds_change();
+                    }
+                    let input = crossterm_event_to_input(terminal_event);
+                    let received_at = Instant::now();
+                    if state.handle_auto_admin_input_at(&input, received_at) {
+                        action = Some(ShellAction::Redraw);
+                        redraw.request_redraw();
+                        continue;
+                    }
+                    let Some(input) = state.prepare_button_input(input, received_at) else {
+                        action = Some(ShellAction::Redraw);
+                        continue;
+                    };
+                    let input = state.normalize_shell_navigation_input(input);
+                    let command_line_captures = command_line_captures_input(&state, &input);
+                    if command_line_captures {
+                        let (width, height) = state.terminal_size();
+                        let terminal_area =
+                            ui::command_line_terminal_area(Rect::new(0, 0, width, height));
+                        match command_line_hosts.handle_input(&state, &input, terminal_area) {
+                            CommandLineHostEvent::None => {}
+                            CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),
+                            CommandLineHostEvent::ExitToCaller => {
+                                state.close_page_instance(state.active_page_id());
+                            }
+                            CommandLineHostEvent::ResetRequested => {
+                                reset_requested = true;
+                                break;
+                            }
+                        }
+                        action = Some(ShellAction::Redraw);
+                    } else {
+                        let (input_action, motion_blocked) = compositor.dispatch_input(
+                            &mut state,
+                            input,
+                            platform.as_ref(),
+                            received_at,
+                        );
+                        action = Some(input_action);
+                        if motion_blocked {
+                            redraw.request_animation_frame(received_at);
+                        }
+                    }
+                    synchronize_motion_hit_map_after_input(
+                        &mut state,
+                        &mut redraw,
+                        identity_before_input,
+                        Instant::now(),
+                    );
+                    let context = ui::RenderContext::from_theme(
+                        &theme,
+                        redraw.frame(Instant::now(), animation_speed_percent(&state)),
+                        shell_render_capabilities(terminal_graphics_probe),
+                    );
+                    compositor.synchronize_after_input(&state, &context);
+                    if let Some(routed) = compositor.take_deferred_close(&state) {
+                        action = Some(state.apply_routed_event(
+                            routed,
+                            platform.as_ref(),
+                            Instant::now(),
+                        ));
+                        redraw.request_redraw();
+                        break;
+                    }
+                    if action.is_some_and(|action| action != ShellAction::Redraw) {
+                        break;
+                    }
+                }
+            } else if state_timeout_wakeup {
+                action = Some(state.apply_input_with_platform(InputEvent::Tick, platform.as_ref()));
+                if background_work_outstanding
+                    && poll_now.saturating_duration_since(last_background_poll)
+                        >= BACKGROUND_POLL_INTERVAL
+                {
+                    last_background_poll = Instant::now();
+                }
+            }
+
+            if terminal_size_error.is_some() {
+                break;
+            }
+            if reset_requested {
+                break;
+            }
+
+            if terminal_event_received && action == Some(ShellAction::Redraw) {
+                redraw.request_redraw();
+            }
+            if session_render_state_changed(&state_before_polling, &state) {
+                redraw.request_redraw();
+            }
+
+            if action == Some(ShellAction::Exit) {
+                break;
+            }
+            if matches!(action, Some(ShellAction::PowerOff | ShellAction::Reboot)) {
+                state.start_auto_admin_power(action == Some(ShellAction::Reboot), platform.clone());
+                redraw.request_redraw();
             }
         }
+        Ok(None)
+    }));
 
-        if terminal_size_error.is_some() {
-            break;
-        }
-        if reset_requested {
-            break;
-        }
-
-        if terminal_event_received && action == Some(ShellAction::Redraw) {
-            redraw.request_redraw();
-        }
-        if session_render_state_changed(&state_before_polling, &state) {
-            redraw.request_redraw();
-        }
-
-        if action == Some(ShellAction::Exit) {
-            break;
-        }
-        if matches!(action, Some(ShellAction::PowerOff | ShellAction::Reboot)) {
-            state.start_auto_admin_power(action == Some(ShellAction::Reboot), platform.clone());
-            redraw.request_redraw();
-        }
-    }
-
-    state.stop_auto_admin();
-
-    command_line_host.terminate();
-    guard.restore()?;
+    let preserve_prepared_update = matches!(&execution, Ok(Ok(None)))
+        && terminal_size_error.is_none()
+        && state.update_apply_manifest().is_some();
+    let cleanup = stop_fullscreen_session_tasks(
+        &mut state,
+        &mut command_line_hosts,
+        platform.as_ref(),
+        shell_watchdog,
+        preserve_prepared_update,
+    );
+    let restore = guard.restore();
     drop(guard);
+    let panic_message = finish_session_execution(execution, cleanup.and(restore))?;
+
+    if let Some(message) = panic_message {
+        return Ok((
+            FullscreenShellSessionOutcome::Panic(message),
+            state.ascii_assets.clone(),
+        ));
+    }
 
     if let Some(error) = terminal_size_error {
         return Err(error);
@@ -1348,6 +1347,79 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     };
     language_runtime.update_from(&state);
     Ok((outcome, state.ascii_assets.clone()))
+}
+
+/// Cleanup has already run when this is called, including for a caught unwind.
+/// Keep the original panic payload so the outer watchdog reports that failure.
+fn finish_session_execution<T>(
+    execution: std::thread::Result<io::Result<T>>,
+    cleanup: io::Result<()>,
+) -> io::Result<T> {
+    match execution {
+        Err(panic) => std::panic::resume_unwind(panic),
+        Ok(result) => {
+            cleanup?;
+            result
+        }
+    }
+}
+
+fn stop_fullscreen_session_tasks(
+    state: &mut ShellSession,
+    command_line_hosts: &mut CommandLineHosts,
+    platform: &dyn Platform,
+    shell_watchdog: &AppWatchdog,
+    preserve_prepared_update: bool,
+) -> io::Result<()> {
+    if !state.stop_session_tasks(preserve_prepared_update) {
+        // An update cancellation error prevents a new session, but the other
+        // session workers still need their cancellation and completion drain.
+        state.tasks.stop_session(false);
+    }
+    let mut cleanup_error = state
+        .settings_task_runtime
+        .update_cancel_error()
+        .map(|error| io::Error::other(error.render_current()));
+    if let Err(error) = command_line_hosts.terminate_all() {
+        cleanup_error.get_or_insert(error);
+    }
+    for id in state.pages.editor.ids() {
+        if let Some(page) = state.pages.editor.get_mut(id) {
+            page.editor_open_after_save = false;
+        }
+    }
+    loop {
+        // Some workers release their busy handle only when their final event is
+        // drained. Do this before testing completion, without starting refreshes.
+        state.poll_explorer_background_tasks(platform);
+        state.poll_launcher_background_tasks();
+        state.poll_settings_background_tasks();
+        if let Some(error) = state.settings_task_runtime.update_cancel_error() {
+            cleanup_error.get_or_insert_with(|| io::Error::other(error.render_current()));
+        }
+        state.drain_diagnostics_events();
+        state.poll_editor_background_tasks(platform);
+        state.drain_management_for_shutdown();
+        state.drain_logs_for_shutdown();
+        state.poll_user_management_task();
+        state.poll_auto_admin();
+        state.tasks.reap();
+        if !state.tasks.has_running() {
+            break;
+        }
+        shell_watchdog.heartbeat(RuntimeSnapshot {
+            screen: Some("Waiting for session tasks to stop".into()),
+            terminal_size: Some(state.terminal_size()),
+            ..RuntimeSnapshot::default()
+        });
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Revoke authorization only after its operations have really stopped.
+    state.stop_auto_admin();
+    match cleanup_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 pub(super) fn dispatch_motion_aware_input(
@@ -1454,13 +1526,16 @@ fn session_render_state_changed(before: &ShellSession, after: &ShellSession) -> 
 }
 
 fn session_has_background_work(state: &ShellSession) -> bool {
-    state.auto_admin_running()
+    state.tasks.has_work()
+        || state.auto_admin_running()
         || state.content_screen() == ShellScreen::CommandLine
-        || state.launcher_refresh_request.is_some()
-        || state.editor_load_state.is_some()
-        || state.editor_save_state.is_some()
-        || state.diagnostics_scanning
+        || state.pages.launcher.launcher_refresh_request.is_some()
+        || state.pages.editor.editor_load_state.is_some()
+        || state.pages.editor.editor_save_state.is_some()
+        || state.pages.diagnostics.diagnostics_scanning
         || state
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .is_some_and(|settings| settings.time_sync_validation_request_id.is_some())
@@ -1491,9 +1566,7 @@ fn shell_render_capabilities(
 }
 
 fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool {
-    if state.auto_admin_visible()
-        || state.notification_has_active_modal()
-        || state.active_screen() != ShellScreen::CommandLine
+    if !state.interactive_overlays().is_empty() || state.active_screen() != ShellScreen::CommandLine
     {
         return false;
     }
@@ -1937,7 +2010,7 @@ pub(super) fn show_watchdog_incident(state: &mut ShellSession, incident: Inciden
             .as_ref()
             .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
         {
-            state.diagnostics_rescan_pending = true;
+            state.pages.diagnostics.diagnostics_rescan_pending = true;
         } else {
             state.request_diagnostics_scan();
         }

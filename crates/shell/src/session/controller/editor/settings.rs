@@ -8,6 +8,8 @@ impl ShellSession {
         repeated: bool,
     ) {
         let Some(selected) = self
+            .pages
+            .editor
             .editor_settings_dialog
             .as_ref()
             .map(|dialog| dialog.selected)
@@ -30,7 +32,7 @@ impl ShellSession {
             return;
         }
         match key.key {
-            InputKey::Escape if !repeated => self.editor_settings_dialog = None,
+            InputKey::Escape if !repeated => self.pages.editor.editor_settings_dialog = None,
             InputKey::Tab | InputKey::Down => {
                 self.select_editor_setting(selected.next());
             }
@@ -53,11 +55,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_editor_settings(&mut self) {
-        self.editor_open_menu = None;
-        self.editor_selected_toolbar_action = None;
-        self.editor_quick_menu_anchor = None;
-        self.editor_cursor_acceleration = None;
-        self.editor_settings_dialog = Some(EditorSettingsDialogState {
+        self.pages.editor.editor_open_menu = None;
+        self.pages.editor.editor_selected_toolbar_action = None;
+        self.pages.editor.editor_quick_menu_anchor = None;
+        self.pages.editor.editor_cursor_acceleration = None;
+        self.pages.editor.editor_settings_dialog = Some(EditorSettingsDialogState {
             draft: self.current_editor_config(),
             selected: ui::EditorSettingsField::Enabled,
         });
@@ -100,7 +102,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_editor_setting(&mut self, field: ui::EditorSettingsField) {
-        if let Some(dialog) = self.editor_settings_dialog.as_mut() {
+        if let Some(dialog) = self.pages.editor.editor_settings_dialog.as_mut() {
             dialog.selected = field;
         }
     }
@@ -113,7 +115,7 @@ impl ShellSession {
         }
         match field {
             Field::Enabled => {
-                if let Some(dialog) = self.editor_settings_dialog.as_mut() {
+                if let Some(dialog) = self.pages.editor.editor_settings_dialog.as_mut() {
                     dialog.draft.cursor_acceleration_enabled =
                         !dialog.draft.cursor_acceleration_enabled;
                 }
@@ -123,7 +125,7 @@ impl ShellSession {
             | Field::HorizontalMaxStep
             | Field::VerticalMaxStep => self.adjust_editor_setting(field, 1),
             Field::RestoreDefaults => {
-                if let Some(dialog) = self.editor_settings_dialog.as_mut() {
+                if let Some(dialog) = self.pages.editor.editor_settings_dialog.as_mut() {
                     let explorer_open_extensions = dialog.draft.explorer_open_extensions.clone();
                     dialog.draft = storage::EditorConfig {
                         explorer_open_extensions,
@@ -132,7 +134,7 @@ impl ShellSession {
                 }
             }
             Field::Save => self.save_editor_settings(),
-            Field::Cancel => self.editor_settings_dialog = None,
+            Field::Cancel => self.pages.editor.editor_settings_dialog = None,
         }
     }
 
@@ -145,7 +147,7 @@ impl ShellSession {
             self.reject_editor_settings_change();
             return;
         }
-        let Some(dialog) = self.editor_settings_dialog.as_mut() else {
+        let Some(dialog) = self.pages.editor.editor_settings_dialog.as_mut() else {
             return;
         };
         let increase = direction >= 0;
@@ -185,7 +187,7 @@ impl ShellSession {
             self.reject_editor_settings_change();
             return;
         }
-        let Some(dialog) = self.editor_settings_dialog.clone() else {
+        let Some(dialog) = self.pages.editor.editor_settings_dialog.clone() else {
             return;
         };
         let editor = normalized_editor_config(dialog.draft);
@@ -193,7 +195,7 @@ impl ShellSession {
             let mut config = match storage.load_config() {
                 Ok(config) => config,
                 Err(error) => {
-                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-could-not-save-editor-settings-error",
                         error = error.to_string()
                     )));
@@ -202,26 +204,26 @@ impl ShellSession {
             };
             config.editor = editor;
             if let Err(error) = storage.save_config(&config) {
-                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-could-not-save-editor-settings-error",
                     error = error.to_string()
                 )));
                 return;
             }
-            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-editor-settings-saved"
             )));
             config
         } else {
             let mut config = self.app.storage_config().clone();
             config.editor = editor;
-            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-editor-settings-applied-for-this-session"
             )));
             config
         };
         self.replace_storage_config(config);
-        self.editor_cursor_acceleration = None;
-        self.editor_settings_dialog = None;
+        self.pages.editor.editor_cursor_acceleration = None;
+        self.pages.editor.editor_settings_dialog = None;
     }
 }

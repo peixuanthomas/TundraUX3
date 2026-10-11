@@ -132,6 +132,28 @@ impl AutoAdminJob {
             _ => unreachable!("invalid AutoAdmin phase"),
         }
     }
+    /// Includes structured questions and secret prompts from background work.
+    pub fn needs_input(&self) -> bool {
+        self.phase() == WAITING
+            || self
+                .0
+                .display
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .question
+                .is_some()
+    }
+    pub fn task_finished(&self) -> bool {
+        !self.running()
+            && self
+                .0
+                .worker
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .is_none_or(|worker| worker.is_finished())
+    }
+
     pub fn running(&self) -> bool {
         matches!(self.phase(), WAITING | RUNNING)
     }

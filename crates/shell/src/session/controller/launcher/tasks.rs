@@ -111,9 +111,12 @@ impl ShellLauncherTaskRuntime {
         let worker = self
             .shared
             .task_group
-            .spawn_thread(watchdog::TaskSpec::one_shot(task_id), move || {
+            .spawn_thread_with_cancellation(watchdog::TaskSpec::one_shot(task_id), move |cancel| {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     for entry in &entries {
+                        if cancel.is_cancelled() {
+                            break;
+                        }
                         let result = app::launcher::verify_launcher_entry(entry, platform.as_ref())
                             .map_err(|error| i18n::LocalizedText::from(error.localized().message));
                         if events
@@ -156,6 +159,27 @@ impl ShellLauncherTaskRuntime {
         Ok(request_id)
     }
 
+    pub(in crate::session) fn task_control(&self, request: u64) -> TaskControl {
+        let cancel = self.clone();
+        let finished = self.clone();
+        TaskControl::new(
+            move || {
+                if let Ok(workers) = cancel.shared.workers.lock()
+                    && let Some(worker) = workers.get(&request)
+                {
+                    worker.cancel();
+                }
+            },
+            move || {
+                finished.shared.workers.lock().is_ok_and(|workers| {
+                    workers
+                        .get(&request)
+                        .is_none_or(|worker| worker.is_finished())
+                })
+            },
+        )
+    }
+
     pub(in crate::session) fn drain_events(&self) -> Vec<LauncherRefreshEvent> {
         let Ok(receiver) = self.shared.event_rx.lock() else {
             return Vec::new();
@@ -163,11 +187,7 @@ impl ShellLauncherTaskRuntime {
         let events = std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>();
         drop(receiver);
         if let Ok(mut workers) = self.shared.workers.lock() {
-            for event in &events {
-                if let LauncherRefreshEvent::Finished { request_id, .. } = event {
-                    workers.remove(request_id);
-                }
-            }
+            workers.retain(|_, worker| !worker.is_finished());
         }
         events
     }
@@ -181,36 +201,53 @@ impl ShellSession {
             .map(ShellLauncherTaskRuntime::drain_events)
             .unwrap_or_default();
         for event in events {
-            match event {
-                LauncherRefreshEvent::ItemChecked {
-                    request_id,
-                    id,
-                    result,
-                } if self.launcher_refresh_request == Some(request_id) => {
-                    self.update_launcher_state(|state| match result {
-                        Ok(status) => state.set_item_status(&id, status),
-                        Err(error) => {
-                            state.set_item_status(&id, LauncherItemStatus::Unsupported);
-                            state.error = Some(error);
-                        }
-                    });
-                }
-                LauncherRefreshEvent::Finished { request_id, error }
-                    if self.launcher_refresh_request == Some(request_id) =>
-                {
-                    self.launcher_refresh_request = None;
-                    self.update_launcher_state(|state| {
-                        if let Some(error) = error {
-                            state.error = Some(error);
-                        } else if state.error.is_none() {
-                            state.message = Some(i18n::LocalizedText::from(i18n::msg!(
-                                "shell-launcher-refresh-complete"
-                            )));
-                        }
-                    });
-                }
-                _ => {}
+            self.deliver_launcher_refresh_event(event);
+        }
+    }
+
+    fn deliver_launcher_refresh_event(&mut self, event: LauncherRefreshEvent) {
+        let (request, done) = match &event {
+            LauncherRefreshEvent::ItemChecked { request_id, .. } => (*request_id, false),
+            LauncherRefreshEvent::Finished { request_id, .. } => (*request_id, true),
+        };
+        if let Some(TaskOwner::Page(owner)) = self.tasks.owner(TaskDomain::Launcher, request) {
+            self.with_page_context(owner, |session| session.apply_launcher_refresh_event(event));
+        }
+        if done {
+            self.tasks.complete(TaskDomain::Launcher, request);
+        }
+    }
+
+    fn apply_launcher_refresh_event(&mut self, event: LauncherRefreshEvent) {
+        match event {
+            LauncherRefreshEvent::ItemChecked {
+                request_id,
+                id,
+                result,
+            } if self.pages.launcher.launcher_refresh_request == Some(request_id) => {
+                self.update_launcher_state(|state| match result {
+                    Ok(status) => state.set_item_status(&id, status),
+                    Err(error) => {
+                        state.set_item_status(&id, LauncherItemStatus::Unsupported);
+                        state.error = Some(error);
+                    }
+                });
             }
+            LauncherRefreshEvent::Finished { request_id, error }
+                if self.pages.launcher.launcher_refresh_request == Some(request_id) =>
+            {
+                self.pages.launcher.launcher_refresh_request = None;
+                self.update_launcher_state(|state| {
+                    if let Some(error) = error {
+                        state.error = Some(error);
+                    } else if state.error.is_none() {
+                        state.message = Some(i18n::LocalizedText::from(i18n::msg!(
+                            "shell-launcher-refresh-complete"
+                        )));
+                    }
+                });
+            }
+            _ => {}
         }
     }
 }

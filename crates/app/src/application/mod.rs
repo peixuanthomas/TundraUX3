@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod notification;
+pub mod pages;
 pub mod state;
 
 pub use notification::NotificationCommand;

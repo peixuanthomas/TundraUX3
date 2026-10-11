@@ -72,6 +72,7 @@ mod session;
 
 pub use session::*;
 
+pub use app::PageInstanceId;
 #[cfg(target_os = "linux")]
 pub use linux_startup::confirm_linux_startup;
 #[cfg(target_os = "linux")]

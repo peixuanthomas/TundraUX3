@@ -5,7 +5,7 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
-        let target = RoutedTarget::Component(self.focused_component);
+        let target = RoutedTarget::Component(self.pages.common.focused_component);
         if key.phase == InputPhase::Release {
             return (target, ShellCommand::Noop);
         }
@@ -16,6 +16,8 @@ impl ShellSession {
                     InputKey::Enter | InputKey::Escape | InputKey::F(3) | InputKey::F(4)
                 ) || (matches!(key.key, InputKey::Char(_))
                     && !self
+                        .pages
+                        .clock
                         .clock_create_state
                         .as_ref()
                         .is_some_and(|create| create.focus == ui::ClockCreateDialogFocus::Input))))
@@ -31,7 +33,7 @@ impl ShellSession {
             };
         }
 
-        if let Some(create) = &self.clock_create_state {
+        if let Some(create) = &self.pages.clock.clock_create_state {
             let target = RoutedTarget::Modal(ShellComponent::ClockCreateDialog);
             return match &key.key {
                 InputKey::F(3) => (target, ShellCommand::ClockCreateAlarm),
@@ -81,7 +83,7 @@ impl ShellSession {
             };
         }
 
-        let target = RoutedTarget::Component(self.focused_component);
+        let target = RoutedTarget::Component(self.pages.common.focused_component);
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseClock),
             InputKey::BackTab => (target, ShellCommand::FocusPrevious),
@@ -90,31 +92,43 @@ impl ShellSession {
             InputKey::Char('n' | 'N') => (target, ShellCommand::ClockOpenCreate),
             InputKey::Char('m' | 'M') => (target, ShellCommand::ClockActivateSelected),
             InputKey::Enter | InputKey::Char(' ')
-                if self.focused_component == ShellComponent::ClockNewButton =>
+                if self.pages.common.focused_component == ShellComponent::ClockNewButton =>
             {
                 (target, ShellCommand::ClockOpenCreate)
             }
             InputKey::Enter | InputKey::Char(' ')
-                if self.focused_component == ShellComponent::ClockEntryList =>
+                if self.pages.common.focused_component == ShellComponent::ClockEntryList =>
             {
                 (target, ShellCommand::ClockActivateSelected)
             }
-            InputKey::Up if self.focused_component == ShellComponent::ClockEntryList => {
+            InputKey::Up
+                if self.pages.common.focused_component == ShellComponent::ClockEntryList =>
+            {
                 (target, ShellCommand::ClockSelectPrevious)
             }
-            InputKey::Down if self.focused_component == ShellComponent::ClockEntryList => {
+            InputKey::Down
+                if self.pages.common.focused_component == ShellComponent::ClockEntryList =>
+            {
                 (target, ShellCommand::ClockSelectNext)
             }
-            InputKey::PageUp if self.focused_component == ShellComponent::ClockEntryList => {
+            InputKey::PageUp
+                if self.pages.common.focused_component == ShellComponent::ClockEntryList =>
+            {
                 (target, ShellCommand::ClockSelectPageUp)
             }
-            InputKey::PageDown if self.focused_component == ShellComponent::ClockEntryList => {
+            InputKey::PageDown
+                if self.pages.common.focused_component == ShellComponent::ClockEntryList =>
+            {
                 (target, ShellCommand::ClockSelectPageDown)
             }
-            InputKey::Home if self.focused_component == ShellComponent::ClockEntryList => {
+            InputKey::Home
+                if self.pages.common.focused_component == ShellComponent::ClockEntryList =>
+            {
                 (target, ShellCommand::ClockSelectFirst)
             }
-            InputKey::End if self.focused_component == ShellComponent::ClockEntryList => {
+            InputKey::End
+                if self.pages.common.focused_component == ShellComponent::ClockEntryList =>
+            {
                 (target, ShellCommand::ClockSelectLast)
             }
             _ => (target, ShellCommand::RecordInput),
@@ -150,7 +164,7 @@ impl ShellSession {
         let coordinates = mouse.coordinates();
         let modal_target = RoutedTarget::Modal(ShellComponent::ClockCreateDialog);
 
-        if self.clock_create_state.is_some() {
+        if self.pages.clock.clock_create_state.is_some() {
             return match mouse.kind {
                 ui::MouseEventKind::Moved => (modal_target, ShellCommand::Hover(hit_target)),
                 ui::MouseEventKind::Down(PointerButton::Left) => match hit_target {

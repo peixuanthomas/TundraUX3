@@ -110,7 +110,7 @@ fn same_language_selection_reloads_disk_and_keeps_retained_messages() {
 fn failed_reload_preserves_snapshot_configuration_and_user_input() {
     let mut f = fixture();
     f.state.save_region_picker_value(Some("zh-CN".into()), None);
-    f.state.login_username = "unchanged input".into();
+    f.state.pages.login.login_username = "unchanged input".into();
     let snapshot = f.state.language.clone();
     let config = std::fs::read(&f.storage.layout().config_path).unwrap();
     std::fs::write(
@@ -124,7 +124,7 @@ fn failed_reload_preserves_snapshot_configuration_and_user_input() {
         std::fs::read(&f.storage.layout().config_path).unwrap(),
         config
     );
-    assert_eq!(f.state.login_username, "unchanged input");
+    assert_eq!(f.state.pages.login.login_username, "unchanged input");
     assert!(
         f.state
             .app
@@ -379,8 +379,8 @@ fn discovered_language_rows_share_setup_render_and_mouse_geometry() {
     f.state.save_region_picker_value(Some("en-US".into()), None);
     f.state
         .set_navigation_path(vec![ShellScreen::FirstRunSetup]);
-    f.state.setup_step = ui::SetupStep::Language;
-    f.state.focused_component = ShellComponent::SetupLanguage;
+    f.state.pages.setup.setup_step = ui::SetupStep::Language;
+    f.state.pages.common.focused_component = ShellComponent::SetupLanguage;
     f.state.refresh_hit_map();
     let count = f.state.language_options().len();
     assert_eq!(count, 3);

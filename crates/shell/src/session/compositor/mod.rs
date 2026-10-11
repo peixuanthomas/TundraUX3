@@ -226,7 +226,7 @@ impl ScreenCompositor {
             &layout,
             &chrome,
             context,
-            state.focused_component == ShellComponent::StatusBar,
+            state.pages.common.focused_component == ShellComponent::StatusBar,
         );
         let mut displayed_status = chrome.status.clone();
         if prepared.notification.is_none()

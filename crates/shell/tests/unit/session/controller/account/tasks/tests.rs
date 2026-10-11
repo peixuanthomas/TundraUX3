@@ -1,5 +1,103 @@
 use super::*;
 
+#[test]
+fn detached_account_operation_finishes_without_replacing_a_new_pages_user_list() {
+    let (mut state, storage, _fixture) = local_state(storage::AutoAdminPolicy::Automatic);
+    let actor = state.app.auth_session().unwrap().clone();
+    let service = UserService::new(storage.clone());
+    service.disable_user(&actor, "other").unwrap();
+    assert!(
+        state.start_user_management_task(Some(UserManagementOperation::Enable {
+            username: "other".into()
+        }))
+    );
+    let old = state.active_page_id();
+    state.tasks.transfer_operations(old);
+    state.detach_user_management_page(old);
+    state.close_page_instance(old);
+    state.enter_new_page(ShellScreen::UserManagement);
+    state.app.dispatch_at(
+        app::AppCommand::SetManagedUsers(vec![user("new-page-list", UserRole::User)]),
+        Instant::now(),
+    );
+    wait_for(&mut state, |state| {
+        state.detached_user_management_jobs.is_empty()
+    });
+    assert_eq!(state.app.managed_users()[0].username, "new-page-list");
+    assert!(
+        identity::SessionService::new(storage)
+            .login("other", "InitialOther123!")
+            .is_ok()
+    );
+}
+
+fn pending_users(state: &mut ShellSession, username: &str) -> UserManagementJob {
+    let job = UserManagementJob(Arc::new(Job {
+        id: PageInstanceId::new().get(),
+        cancelled: AtomicBool::new(false),
+        auto_admin: None,
+        result: Mutex::new(Some(Outcome {
+            result: Ok(()),
+            users: Ok(vec![user(username, UserRole::Admin)]),
+            message: None,
+            select: None,
+        })),
+        worker: Mutex::new(None),
+        session_id: "session".into(),
+        completion: Completion::None,
+    }));
+    state.register_user_management_job(&job);
+    state.pages.user_management.user_management_job = Some(job.clone());
+    job
+}
+
+#[test]
+fn two_account_refreshes_update_only_the_page_that_started_them() {
+    let mut state = state();
+    let first = state.active_page_id();
+    pending_users(&mut state, "first");
+    state.enter_new_page(ShellScreen::UserManagement);
+    let second = state.active_page_id();
+    pending_users(&mut state, "second");
+    state.poll_user_management_task();
+    assert_eq!(state.active_page_id(), second);
+    assert_eq!(state.app.managed_users()[0].username, "second");
+    let first_names = state
+        .with_page_context(first, |session| {
+            session
+                .app
+                .managed_users()
+                .iter()
+                .map(|user| user.username.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(first_names, ["first"]);
+    assert_eq!(state.app.managed_users()[0].username, "second");
+    state.close_page_instance(second);
+    assert_eq!(state.app.managed_users()[0].username, "first");
+}
+
+#[test]
+fn closing_account_query_drops_its_result_without_overwriting_new_list() {
+    let mut state = state();
+    let first = state.active_page_id();
+    let job = pending_users(&mut state, "old");
+    state.close_page_instance(first);
+    assert!(job.0.cancelled.load(Ordering::Relaxed));
+    state.enter_new_page(ShellScreen::UserManagement);
+    state.app.dispatch_at(
+        app::AppCommand::SetManagedUsers(vec![user("new", UserRole::Admin)]),
+        Instant::now(),
+    );
+    state.poll_user_management_task();
+    assert_eq!(state.app.managed_users()[0].username, "new");
+    assert_eq!(
+        state.tasks.owner(TaskDomain::UserManagement, job.0.id),
+        None
+    );
+}
+
 struct AccountFixture(PathBuf);
 impl Drop for AccountFixture {
     fn drop(&mut self) {
@@ -46,6 +144,7 @@ fn local_state(policy: storage::AutoAdminPolicy) -> (ShellSession, StorageManage
         app::AppCommand::SetAuthSession(Some(actor.clone())),
         Instant::now(),
     );
+    state.enter_screen(ShellScreen::UserManagement);
     state.app.dispatch_at(
         app::AppCommand::SetManagedUsers(service.list_accessible_users(&actor).unwrap()),
         Instant::now(),
@@ -113,7 +212,7 @@ fn password_change_waits_for_approval_and_two_matching_hidden_answers() {
         .clone();
     state.begin_set_selected_password();
     assert!(matches!(
-        state.user_management_mode,
+        state.pages.user_management.user_management_mode,
         UserManagementMode::Browse
     ));
     assert!(state.auto_admin_view().unwrap().confirming);
@@ -150,9 +249,11 @@ fn password_change_waits_for_approval_and_two_matching_hidden_answers() {
     answer_secret(&mut state, "NewPassword123!");
     secret_prompt(&mut state);
     answer_secret(&mut state, "NewPassword123!");
-    wait_for(&mut state, |state| state.user_management_job.is_none());
+    wait_for(&mut state, |state| {
+        state.pages.user_management.user_management_job.is_none()
+    });
     assert_eq!(
-        state.user_management_feedback_tone,
+        state.pages.user_management.user_management_feedback_tone,
         UserManagementFeedbackTone::Success
     );
     assert!(
@@ -175,6 +276,7 @@ fn enter_approves_enabling_the_selected_user_and_updates_the_account() {
         .unwrap();
     let before = std::fs::read(&storage.layout().users_path).unwrap();
     state.open_user_management();
+    state.select_managed_username("other");
     state.focus_user_management_action(ui::UserManagementAction::ToggleEnabled);
     let at = Instant::now();
     state.apply_input_at(InputEvent::key(InputKey::Enter), at);
@@ -198,9 +300,11 @@ fn enter_approves_enabling_the_selected_user_and_updates_the_account() {
     let view = state.auto_admin_view().unwrap();
     assert!(!view.confirming);
     assert!(view.approve_selected);
-    wait_for(&mut state, |state| state.user_management_job.is_none());
+    wait_for(&mut state, |state| {
+        state.pages.user_management.user_management_job.is_none()
+    });
     assert_eq!(
-        state.user_management_feedback_tone,
+        state.pages.user_management.user_management_feedback_tone,
         UserManagementFeedbackTone::Success
     );
     assert!(
@@ -253,7 +357,9 @@ fn rejected_and_forbidden_account_operations_do_not_write_user_data() {
             if policy == storage::AutoAdminPolicy::Manual {
                 state.apply_input(InputEvent::key(InputKey::Escape));
             }
-            wait_for(&mut state, |state| state.user_management_job.is_none());
+            wait_for(&mut state, |state| {
+                state.pages.user_management.user_management_job.is_none()
+            });
             assert_eq!(
                 std::fs::read(&storage.layout().users_path).unwrap(),
                 before,
@@ -280,10 +386,12 @@ fn automatic_approval_still_requires_password_and_cancel_leaves_it_unchanged() {
         InputKey::Char('c'),
         InputModifiers::CTRL,
     )));
-    wait_for(&mut state, |state| state.user_management_job.is_none());
+    wait_for(&mut state, |state| {
+        state.pages.user_management.user_management_job.is_none()
+    });
     assert_eq!(std::fs::read(&storage.layout().users_path).unwrap(), before);
     assert_eq!(
-        state.user_management_feedback_tone,
+        state.pages.user_management.user_management_feedback_tone,
         UserManagementFeedbackTone::Error
     );
 }
@@ -301,10 +409,12 @@ fn local_admin_role_checks_still_apply_after_auto_admin_approval() {
     state.start_user_management_task(Some(UserManagementOperation::Delete {
         username: "admin".into(),
     }));
-    wait_for(&mut state, |state| state.user_management_job.is_none());
+    wait_for(&mut state, |state| {
+        state.pages.user_management.user_management_job.is_none()
+    });
     assert_eq!(std::fs::read(&storage.layout().users_path).unwrap(), before);
     assert_eq!(
-        state.user_management_feedback_tone,
+        state.pages.user_management.user_management_feedback_tone,
         UserManagementFeedbackTone::Error
     );
 }
@@ -344,6 +454,7 @@ fn state() -> ShellSession {
         })),
         Instant::now(),
     );
+    state.enter_screen(ShellScreen::UserManagement);
     state.app.dispatch_at(
         app::AppCommand::SetManagedUsers(vec![
             user("current", UserRole::Admin),
@@ -354,12 +465,23 @@ fn state() -> ShellSession {
     state
 }
 fn deliver(state: &mut ShellSession, outcome: Outcome, session_id: &str) {
-    state.user_management_job = Some(UserManagementJob(Arc::new(Job {
+    state.pages.user_management.user_management_job = Some(UserManagementJob(Arc::new(Job {
+        id: PageInstanceId::new().get(),
+        cancelled: AtomicBool::new(false),
+        auto_admin: None,
         result: Mutex::new(Some(outcome)),
         worker: Mutex::new(None),
         session_id: session_id.into(),
         completion: Completion::None,
     })));
+    state.register_user_management_job(
+        &state
+            .pages
+            .user_management
+            .user_management_job
+            .clone()
+            .unwrap(),
+    );
     state.poll_user_management_task();
 }
 #[test]
@@ -377,7 +499,7 @@ fn linux_refresh_removes_other_rows_and_admin_controls_after_demotion() {
     );
     assert_eq!(state.app.managed_users().len(), 1);
     assert!(!state.can_manage_all_users());
-    assert!(state.user_management_job.is_none());
+    assert!(state.pages.user_management.user_management_job.is_none());
 }
 #[test]
 fn linux_partial_write_error_survives_refresh_and_keeps_created_user_visible() {
@@ -400,11 +522,13 @@ fn linux_partial_write_error_survives_refresh_and_keeps_created_user_visible() {
         Some("created")
     );
     assert_eq!(
-        state.user_management_feedback_tone,
+        state.pages.user_management.user_management_feedback_tone,
         UserManagementFeedbackTone::Error
     );
     assert!(
         state
+            .pages
+            .user_management
             .user_management_message
             .as_ref()
             .unwrap()
@@ -439,6 +563,8 @@ fn linux_stale_results_are_ignored_and_failed_refresh_clears_other_users() {
     assert!(state.app.managed_users().is_empty());
     assert!(
         state
+            .pages
+            .user_management
             .user_management_message
             .as_ref()
             .unwrap()

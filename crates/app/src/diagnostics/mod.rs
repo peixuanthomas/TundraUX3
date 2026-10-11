@@ -1,20 +1,19 @@
 mod localization;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use platform::{AppPaths, CheckStatus, Platform, validate_no_follow_path};
 use storage::{StorageDocumentKind, StorageDocumentStatus, StorageManager, StorageRepairReport};
 use watchdog::{
-    AppCriticality, AppDescriptor, AppId, AppWatchdog, IncidentReportSummary, ManagedThreadHandle,
-    PanicAction, ProcessWatchdog, ReplaySafety, RestartPolicy, TaskId, TaskKind, TaskSpec,
-    WatchdogError,
+    AppCriticality, AppDescriptor, AppId, AppWatchdog, IncidentReportSummary, ManagedTaskGroup,
+    ManagedThreadHandle, ProcessWatchdog, TaskId, TaskSpec, WatchdogError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -196,6 +195,8 @@ pub struct DiagnosticsRepairResult {
 #[derive(Debug, Clone)]
 pub enum DiagnosticsTaskEvent {
     ScanCompleted(Result<DiagnosticsSnapshot, String>),
+    Cancelled,
+    Failed(String),
     RepairProgress {
         completed: usize,
         total: usize,
@@ -205,24 +206,62 @@ pub enum DiagnosticsTaskEvent {
         results: Vec<DiagnosticsRepairResult>,
         snapshot: Option<DiagnosticsSnapshot>,
         restart_required: bool,
+        cancelled: bool,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct DiagnosticsTaskEnvelope {
+    pub request_id: u64,
+    pub event: DiagnosticsTaskEvent,
+}
+impl DiagnosticsTaskEvent {
+    pub fn is_terminal(&self) -> bool {
+        !matches!(self, Self::RepairProgress { .. })
+    }
+}
+#[derive(Debug, Clone)]
+pub struct DiagnosticsTaskHandle {
+    pub request_id: u64,
+    cancelled: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+}
+impl DiagnosticsTaskHandle {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::Acquire)
+    }
+}
+impl PartialEq for DiagnosticsTaskHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.request_id == other.request_id
+    }
+}
+impl Eq for DiagnosticsTaskHandle {}
+#[derive(Debug, Clone)]
 enum WorkerCommand {
     Scan,
     Repair(Vec<DiagnosticsRepairAction>),
-    Shutdown,
 }
-
+struct DiagnosticsWorker {
+    task: DiagnosticsTaskHandle,
+    worker: ManagedThreadHandle<()>,
+    slot: usize,
+    repair: bool,
+}
 pub struct DiagnosticsTaskRuntime {
-    command_tx: mpsc::Sender<WorkerCommand>,
-    event_rx: mpsc::Receiver<DiagnosticsTaskEvent>,
-    busy: Arc<AtomicBool>,
+    platform: Arc<dyn Platform>,
+    storage: StorageManager,
+    process: ProcessWatchdog,
+    group: ManagedTaskGroup,
+    event_tx: mpsc::Sender<DiagnosticsTaskEnvelope>,
+    event_rx: mpsc::Receiver<DiagnosticsTaskEnvelope>,
+    workers: Mutex<BTreeMap<u64, DiagnosticsWorker>>,
     restart_required: Arc<AtomicBool>,
-    worker: Option<ManagedThreadHandle<()>>,
 }
-
+static NEXT_DIAGNOSTICS_REQUEST: AtomicU64 = AtomicU64::new(1);
 impl DiagnosticsTaskRuntime {
     pub fn new_managed(
         platform: Arc<dyn Platform>,
@@ -230,60 +269,25 @@ impl DiagnosticsTaskRuntime {
         process: ProcessWatchdog,
         watchdog: AppWatchdog,
     ) -> Result<Self, WatchdogError> {
-        let (command_tx, command_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
-        let busy = Arc::new(AtomicBool::new(false));
-        let restart_required = Arc::new(AtomicBool::new(false));
-        let worker_restart_required = Arc::clone(&restart_required);
-        let group = watchdog.task_group("diagnostics-worker");
-        let mut worker_inputs = Some((
+        Ok(Self {
             platform,
             storage,
             process,
-            command_rx,
+            group: watchdog.task_group("diagnostics-worker"),
             event_tx,
-            worker_restart_required,
-        ));
-        let worker = group.spawn_thread(
-            TaskSpec {
-                id: TaskId::from_static("event-loop"),
-                kind: TaskKind::LongRunning,
-                panic_action: PanicAction::ReportOnly,
-                replay_safety: ReplaySafety::Never,
-                restart_policy: RestartPolicy::never(),
-            },
-            move || {
-                let (platform, storage, process, command_rx, event_tx, worker_restart_required) =
-                    worker_inputs
-                        .take()
-                        .expect("the non-restartable Diagnostics worker factory runs once");
-                diagnostics_worker_loop(
-                    platform,
-                    storage,
-                    process,
-                    command_rx,
-                    event_tx,
-                    worker_restart_required,
-                )
-            },
-        )?;
-        Ok(Self {
-            command_tx,
             event_rx,
-            busy,
-            restart_required,
-            worker: Some(worker),
+            workers: Mutex::new(BTreeMap::new()),
+            restart_required: Arc::new(AtomicBool::new(false)),
         })
     }
-
-    pub fn request_scan(&self) -> Result<(), DiagnosticsTaskError> {
+    pub fn request_scan(&self) -> Result<DiagnosticsTaskHandle, DiagnosticsTaskError> {
         self.submit(WorkerCommand::Scan)
     }
-
     pub fn request_repair(
         &self,
         actions: Vec<DiagnosticsRepairAction>,
-    ) -> Result<(), DiagnosticsTaskError> {
+    ) -> Result<DiagnosticsTaskHandle, DiagnosticsTaskError> {
         if self.restart_required() {
             return Err(DiagnosticsTaskError::RestartRequired);
         }
@@ -292,62 +296,166 @@ impl DiagnosticsTaskRuntime {
         }
         self.submit(WorkerCommand::Repair(actions))
     }
-
-    fn submit(&self, command: WorkerCommand) -> Result<(), DiagnosticsTaskError> {
+    fn submit(
+        &self,
+        command: WorkerCommand,
+    ) -> Result<DiagnosticsTaskHandle, DiagnosticsTaskError> {
+        let mut workers = self
+            .workers
+            .lock()
+            .map_err(|_| DiagnosticsTaskError::WorkerStopped)?;
         if self.restart_required() {
             return Err(DiagnosticsTaskError::RestartRequired);
         }
-        if self
-            .busy
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err(if self.restart_required() {
-                DiagnosticsTaskError::RestartRequired
-            } else {
-                DiagnosticsTaskError::Busy
-            });
+        let repair = matches!(command, WorkerCommand::Repair(_));
+        // Pages scan independently. A repair exclusively owns shared documents.
+        if workers.values().any(|worker| worker.repair) || (repair && !workers.is_empty()) {
+            return Err(DiagnosticsTaskError::Busy);
         }
-        if self.restart_required() {
-            self.busy.store(false, Ordering::Release);
-            return Err(DiagnosticsTaskError::RestartRequired);
-        }
-        if self.command_tx.send(command).is_err() {
-            self.busy.store(false, Ordering::Release);
-            return Err(DiagnosticsTaskError::WorkerStopped);
-        }
-        Ok(())
+        // Watchdog keeps completed task registrations. Reuse a finished slot
+        // while keeping externally visible request ids unique.
+        let slot = (0..)
+            .find(|slot| workers.values().all(|worker| worker.slot != *slot))
+            .unwrap();
+        let id = NEXT_DIAGNOSTICS_REQUEST.fetch_add(1, Ordering::Relaxed);
+        let task = DiagnosticsTaskHandle {
+            request_id: id,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            finished: Arc::new(AtomicBool::new(false)),
+        };
+        let worker_task = task.clone();
+        let platform = self.platform.clone();
+        let storage = self.storage.clone();
+        let process = self.process.clone();
+        let restart = self.restart_required.clone();
+        let events = self.event_tx.clone();
+        let worker = self
+            .group
+            .spawn_thread_with_cancellation(
+                TaskSpec::one_shot(
+                    TaskId::new(format!("diagnostics-{slot}"))
+                        .map_err(|_| DiagnosticsTaskError::WorkerStopped)?,
+                ),
+                move |watchdog_cancel| {
+                    struct Finished(Arc<AtomicBool>);
+                    impl Drop for Finished {
+                        fn drop(&mut self) {
+                            self.0.store(true, Ordering::Release);
+                        }
+                    }
+                    let _finished = Finished(worker_task.finished.clone());
+                    let cancelled = || {
+                        worker_task.cancelled.load(Ordering::Acquire)
+                            || watchdog_cancel.is_cancelled()
+                    };
+                    let emit = |event| {
+                        let _ = events.send(DiagnosticsTaskEnvelope {
+                            request_id: id,
+                            event,
+                        });
+                    };
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        run_diagnostics_task(
+                            platform.as_ref(),
+                            &storage,
+                            &process,
+                            command.clone(),
+                            &restart,
+                            &cancelled,
+                            &emit,
+                        )
+                    }));
+                    if let Err(payload) = result {
+                        emit(DiagnosticsTaskEvent::Failed(
+                            "Diagnostics worker panicked".into(),
+                        ));
+                        std::panic::resume_unwind(payload);
+                    }
+                },
+            )
+            .map_err(|_| DiagnosticsTaskError::WorkerStopped)?;
+        workers.insert(
+            id,
+            DiagnosticsWorker {
+                task: task.clone(),
+                worker,
+                slot,
+                repair,
+            },
+        );
+        Ok(task)
     }
-
     pub fn is_busy(&self) -> bool {
-        self.busy.load(Ordering::Acquire)
+        self.workers.lock().is_ok_and(|workers| !workers.is_empty())
     }
-
     pub fn restart_required(&self) -> bool {
         self.restart_required.load(Ordering::Acquire)
     }
-
-    pub fn drain_events(&self) -> Vec<DiagnosticsTaskEvent> {
+    pub fn drain_events(&self) -> Vec<DiagnosticsTaskEnvelope> {
         let mut events = Vec::new();
-        while let Ok(event) = self.event_rx.try_recv() {
-            if matches!(
-                event,
-                DiagnosticsTaskEvent::ScanCompleted(_)
-                    | DiagnosticsTaskEvent::RepairCompleted { .. }
-            ) {
-                self.busy.store(false, Ordering::Release);
+        let Ok(mut workers) = self.workers.lock() else {
+            return events;
+        };
+        // Snapshot completion before reading the channel: a worker can send its
+        // terminal result and finish between channel reads.
+        let finished_ids: HashSet<_> = workers
+            .iter()
+            .filter(|(_, record)| record.worker.is_finished())
+            .map(|(id, _)| *id)
+            .collect();
+        let pending: Vec<_> = self.event_rx.try_iter().collect();
+        let terminal_ids: HashSet<_> = pending
+            .iter()
+            .filter(|event| event.event.is_terminal())
+            .map(|event| event.request_id)
+            .collect();
+        for mut envelope in pending {
+            if envelope.event.is_terminal() {
+                if workers
+                    .get(&envelope.request_id)
+                    .is_some_and(|record| !record.worker.is_finished())
+                {
+                    let _ = self.event_tx.send(envelope);
+                    continue;
+                }
+                if let Some(record) = workers.remove(&envelope.request_id) {
+                    if record.task.cancelled.load(Ordering::Acquire)
+                        && matches!(envelope.event, DiagnosticsTaskEvent::ScanCompleted(_))
+                    {
+                        envelope.event = DiagnosticsTaskEvent::Cancelled;
+                    }
+                    let _ = record.worker.join();
+                    record.task.finished.store(true, Ordering::Release);
+                }
             }
-            events.push(event);
+            events.push(envelope);
+        }
+        // Watchdog may cancel a queued worker before its closure ever starts.
+        let stopped: Vec<_> = workers
+            .iter()
+            .filter(|(id, _)| finished_ids.contains(id) && !terminal_ids.contains(id))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in stopped {
+            let record = workers.remove(&id).expect("stopped diagnostics worker");
+            let _ = record.worker.join();
+            record.task.finished.store(true, Ordering::Release);
+            events.push(DiagnosticsTaskEnvelope {
+                request_id: id,
+                event: DiagnosticsTaskEvent::Cancelled,
+            });
         }
         events
     }
 }
-
 impl Drop for DiagnosticsTaskRuntime {
     fn drop(&mut self) {
-        let _ = self.command_tx.send(WorkerCommand::Shutdown);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+        // Watchdog owns the join; dropping UI state never blocks mid-repair.
+        if let Ok(workers) = self.workers.get_mut() {
+            for record in workers.values() {
+                record.task.cancel();
+                record.worker.cancel();
+            }
         }
     }
 }
@@ -402,6 +510,16 @@ pub fn scan_diagnostics(
     storage: &StorageManager,
     process: &ProcessWatchdog,
 ) -> Result<DiagnosticsSnapshot, String> {
+    scan_diagnostics_cancellable(platform, storage, process, &|| false)
+}
+
+fn scan_diagnostics_cancellable(
+    platform: &dyn Platform,
+    storage: &StorageManager,
+    process: &ProcessWatchdog,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<DiagnosticsSnapshot, String> {
+    check_diagnostics_cancel(cancelled)?;
     let app_paths = platform.app_paths().map_err(|error| error.to_string())?;
     let expected_paths = expected_app_directories(&app_paths);
     let missing_paths = expected_paths
@@ -409,6 +527,7 @@ pub fn scan_diagnostics(
         .filter(|(_, path)| !path.exists())
         .map(|(_, path)| path.clone())
         .collect::<HashSet<_>>();
+    check_diagnostics_cancel(cancelled)?;
     let doctor = platform::run_doctor_with(platform).map_err(|error| error.to_string())?;
 
     let mut checks = doctor
@@ -454,6 +573,7 @@ pub fn scan_diagnostics(
         }
     }));
 
+    check_diagnostics_cancel(cancelled)?;
     let storage_checks = storage
         .check_documents()
         .map_err(|error| error.to_string())?;
@@ -490,6 +610,7 @@ pub fn scan_diagnostics(
         }
     }));
 
+    check_diagnostics_cancel(cancelled)?;
     let mut warnings = Vec::new();
     match ascii_assets::asset_root_from_env_or_current_exe() {
         Ok(root) => {
@@ -516,9 +637,10 @@ pub fn scan_diagnostics(
         }
     }
 
-    let (logs, log_warnings) = scan_diagnostic_logs(app_paths.logs_path());
+    let (logs, log_warnings) = scan_diagnostic_logs_cancellable(app_paths.logs_path(), cancelled);
     warnings.extend(log_warnings);
 
+    check_diagnostics_cancel(cancelled)?;
     let incident_catalog = process.list_incident_reports();
     for (index, warning) in incident_catalog.warnings.into_iter().enumerate() {
         checks.push(DiagnosticCheck {
@@ -533,6 +655,7 @@ pub fn scan_diagnostics(
         });
         warnings.push(warning);
     }
+    check_diagnostics_cancel(cancelled)?;
     Ok(DiagnosticsSnapshot {
         scanned_at: Utc::now(),
         checks,
@@ -547,6 +670,12 @@ pub fn scan_diagnostics(
 /// diagnostics never traverse or surface paths outside the application log
 /// root. Traversal failures are returned as user-visible warnings.
 pub fn scan_diagnostic_logs(logs_root: &Path) -> (Vec<DiagnosticLogFile>, Vec<String>) {
+    scan_diagnostic_logs_cancellable(logs_root, &|| false)
+}
+fn scan_diagnostic_logs_cancellable(
+    logs_root: &Path,
+    cancelled: &dyn Fn() -> bool,
+) -> (Vec<DiagnosticLogFile>, Vec<String>) {
     let mut logs = Vec::new();
     let mut warnings = Vec::new();
 
@@ -562,12 +691,16 @@ pub fn scan_diagnostic_logs(logs_root: &Path) -> (Vec<DiagnosticLogFile>, Vec<St
     }
     let mut directories = vec![logs_root.to_path_buf()];
     while let Some(directory) = directories.pop() {
+        if cancelled() {
+            break;
+        }
         scan_diagnostic_log_directory(
             logs_root,
             &directory,
             &mut directories,
             &mut logs,
             &mut warnings,
+            cancelled,
         );
     }
     logs.sort_by(|left, right| {
@@ -585,6 +718,7 @@ fn scan_diagnostic_log_directory(
     directories: &mut Vec<PathBuf>,
     logs: &mut Vec<DiagnosticLogFile>,
     warnings: &mut Vec<String>,
+    cancelled: &dyn Fn() -> bool,
 ) {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -598,6 +732,9 @@ fn scan_diagnostic_log_directory(
     };
 
     for entry in entries {
+        if cancelled() {
+            return;
+        }
         let entry = match entry {
             Ok(entry) => entry,
             Err(error) => {
@@ -729,55 +866,64 @@ fn diagnostic_asset_checks(root: &Path) -> Vec<DiagnosticCheck> {
         .collect()
 }
 
-fn diagnostics_worker_loop(
-    platform: Arc<dyn Platform>,
-    storage: StorageManager,
-    process: ProcessWatchdog,
-    command_rx: mpsc::Receiver<WorkerCommand>,
-    event_tx: mpsc::Sender<DiagnosticsTaskEvent>,
-    restart_required: Arc<AtomicBool>,
+fn run_diagnostics_task(
+    platform: &dyn Platform,
+    storage: &StorageManager,
+    process: &ProcessWatchdog,
+    command: WorkerCommand,
+    restart_required: &AtomicBool,
+    cancelled: &dyn Fn() -> bool,
+    emit: &dyn Fn(DiagnosticsTaskEvent),
 ) {
-    while let Ok(command) = command_rx.recv() {
-        match command {
-            WorkerCommand::Scan => {
-                let result = scan_diagnostics(platform.as_ref(), &storage, &process);
-                let _ = event_tx.send(DiagnosticsTaskEvent::ScanCompleted(result));
-            }
-            WorkerCommand::Repair(actions) => {
-                let total = actions.len();
-                let mut task_restart_required = false;
-                let mut results = Vec::with_capacity(total);
-                for (index, action) in actions.into_iter().enumerate() {
-                    let label = action.localized_label();
-                    let _ = event_tx.send(DiagnosticsTaskEvent::RepairProgress {
-                        completed: index,
-                        total,
-                        label,
-                    });
-                    let result = execute_repair(platform.as_ref(), &storage, action);
-                    task_restart_required |= result.success
-                        && result.changed
-                        && matches!(
-                            &result.action,
-                            DiagnosticsRepairAction::RepairStorageDocument(_)
-                        );
-                    results.push(result);
+    match command {
+        WorkerCommand::Scan => {
+            let result = scan_diagnostics_cancellable(platform, storage, process, cancelled);
+            emit(if cancelled() {
+                DiagnosticsTaskEvent::Cancelled
+            } else {
+                DiagnosticsTaskEvent::ScanCompleted(result)
+            });
+        }
+        WorkerCommand::Repair(actions) => {
+            let total = actions.len();
+            let mut task_restart_required = false;
+            let mut results = Vec::with_capacity(total);
+            for (index, action) in actions.into_iter().enumerate() {
+                if cancelled() {
+                    break;
                 }
-                let snapshot = if task_restart_required {
-                    None
-                } else {
-                    scan_diagnostics(platform.as_ref(), &storage, &process).ok()
-                };
+                emit(DiagnosticsTaskEvent::RepairProgress {
+                    completed: index,
+                    total,
+                    label: action.localized_label(),
+                });
+                if cancelled() {
+                    break;
+                }
+                // Once an action starts, finish its save/backup before cancelling.
+                let result = execute_repair(platform, storage, action);
+                task_restart_required |= result.success
+                    && result.changed
+                    && matches!(
+                        &result.action,
+                        DiagnosticsRepairAction::RepairStorageDocument(_)
+                    );
                 if task_restart_required {
                     restart_required.store(true, Ordering::Release);
                 }
-                let _ = event_tx.send(DiagnosticsTaskEvent::RepairCompleted {
-                    results,
-                    snapshot,
-                    restart_required: task_restart_required,
-                });
+                results.push(result);
             }
-            WorkerCommand::Shutdown => break,
+            let snapshot = if task_restart_required || cancelled() {
+                None
+            } else {
+                scan_diagnostics_cancellable(platform, storage, process, cancelled).ok()
+            };
+            emit(DiagnosticsTaskEvent::RepairCompleted {
+                results,
+                snapshot,
+                restart_required: task_restart_required,
+                cancelled: cancelled(),
+            });
         }
     }
 }
@@ -924,3 +1070,11 @@ const fn storage_document_id(kind: StorageDocumentKind) -> &'static str {
 #[cfg(test)]
 #[path = "../../tests/unit/diagnostics/tests.rs"]
 mod tests;
+
+fn check_diagnostics_cancel(cancelled: &dyn Fn() -> bool) -> Result<(), String> {
+    if cancelled() {
+        Err("Diagnostics cancelled".into())
+    } else {
+        Ok(())
+    }
+}

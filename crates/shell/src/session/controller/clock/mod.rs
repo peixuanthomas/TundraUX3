@@ -3,10 +3,10 @@ pub(in crate::session) mod sync;
 use crate::session::*;
 impl ShellSession {
     pub(in crate::session) fn open_clock(&mut self) {
-        self.enter_screen(ShellScreen::Clock);
-        self.active_popup = None;
-        self.clock_create_state = None;
-        self.focused_component = if self.is_strict_guest() {
+        self.enter_new_page(ShellScreen::Clock);
+        self.pages.common.active_popup = None;
+        self.pages.clock.clock_create_state = None;
+        self.pages.common.focused_component = if self.is_strict_guest() {
             ShellComponent::ClockButton
         } else {
             ShellComponent::ClockNewButton
@@ -17,15 +17,14 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn close_clock(&mut self) {
-        self.clock_create_state = None;
         self.return_from_screen(ShellScreen::Clock);
     }
 
     pub(in crate::session) fn load_clock_for_session(&mut self, session: &AuthSession) {
         self.clock_scheduler = None;
-        self.clock_selected_entry_id = None;
-        self.clock_entry_window_start = 0;
-        self.clock_create_state = None;
+        self.pages.clock.clock_selected_entry_id = None;
+        self.pages.clock.clock_entry_window_start = 0;
+        self.pages.clock.clock_create_state = None;
         self.clock_persist_pending = false;
         self.clock_pending_due_summary = None;
         self.clock_profile_pending_sync = None;
@@ -282,6 +281,7 @@ impl ShellSession {
             };
             self.notify_modal_with_options(
                 ShellNotification::modal(title, message, ui::NotificationTone::Critical, actions)
+                    .for_session()
                     .with_key(key)
                     .with_component(ShellComponent::NotificationDialog),
             );
@@ -321,17 +321,17 @@ impl ShellSession {
             return;
         }
         self.capture_modal_focus_context();
-        self.clock_create_state = Some(ClockCreateState::default());
+        self.pages.clock.clock_create_state = Some(ClockCreateState::default());
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_clock_create_dialog(&mut self) {
-        self.clock_create_state = None;
+        self.pages.clock.clock_create_state = None;
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn move_clock_create_focus(&mut self, direction: i8) {
-        let Some(state) = self.clock_create_state.as_mut() else {
+        let Some(state) = self.pages.clock.clock_create_state.as_mut() else {
             return;
         };
         let current = match state.focus {
@@ -348,12 +348,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn set_clock_create_focus(&mut self, focus: ui::ClockCreateDialogFocus) {
-        let Some(state) = self.clock_create_state.as_mut() else {
+        let Some(state) = self.pages.clock.clock_create_state.as_mut() else {
             return;
         };
         state.focus = focus;
         state.pending_digit = false;
-        self.focused_component = match focus {
+        self.pages.common.focused_component = match focus {
             ui::ClockCreateDialogFocus::Input => ShellComponent::ClockCreateInput,
             ui::ClockCreateDialogFocus::CreateAlarm => ShellComponent::ClockCreateAlarmButton,
             ui::ClockCreateDialogFocus::CreateCountdown => {
@@ -367,7 +367,7 @@ impl ShellSession {
             return;
         }
         self.set_clock_create_focus(ui::ClockCreateDialogFocus::Input);
-        if let Some(state) = self.clock_create_state.as_mut() {
+        if let Some(state) = self.pages.clock.clock_create_state.as_mut() {
             state.active_field = field;
         }
     }
@@ -377,7 +377,7 @@ impl ShellSession {
             return;
         }
         self.select_clock_create_field(field);
-        if let Some(state) = self.clock_create_state.as_mut() {
+        if let Some(state) = self.pages.clock.clock_create_state.as_mut() {
             let limit = if field == 0 { 24 } else { 60 };
             state.values[field] =
                 (i16::from(state.values[field]) + i16::from(delta)).rem_euclid(limit) as u8;
@@ -386,7 +386,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn append_clock_create_char(&mut self, character: char) {
-        let Some(state) = self.clock_create_state.as_mut() else {
+        let Some(state) = self.pages.clock.clock_create_state.as_mut() else {
             return;
         };
         if state.focus != ui::ClockCreateDialogFocus::Input || !character.is_ascii_digit() {
@@ -416,7 +416,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn clock_create_backspace(&mut self) {
-        let Some(state) = self.clock_create_state.as_mut() else {
+        let Some(state) = self.pages.clock.clock_create_state.as_mut() else {
             return;
         };
         if state.focus == ui::ClockCreateDialogFocus::Input {
@@ -427,7 +427,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn create_clock_entry(&mut self, kind: ScheduledClockEntryKind) {
-        let Some(input) = self.clock_create_state.as_ref().map(|state| {
+        let Some(input) = self.pages.clock.clock_create_state.as_ref().map(|state| {
             format!(
                 "{:02} {:02} {:02}",
                 state.values[0], state.values[1], state.values[2]
@@ -438,7 +438,7 @@ impl ShellSession {
         let snapshot = self.app.snapshot().clock;
         let now = Instant::now();
         let Some(previous) = self.clock_scheduler.clone() else {
-            if let Some(state) = self.clock_create_state.as_mut() {
+            if let Some(state) = self.pages.clock.clock_create_state.as_mut() {
                 state.error = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-sign-in-to-create-clock-entries"
                 )));
@@ -457,14 +457,14 @@ impl ShellSession {
         let id = match result {
             Ok(id) => id,
             Err(error) => {
-                if let Some(state) = self.clock_create_state.as_mut() {
+                if let Some(state) = self.pages.clock.clock_create_state.as_mut() {
                     state.error = Some(clock_scheduler_error_message(&error));
                 }
                 return;
             }
         };
         if let Err(error) = self.commit_clock_mutation(previous, &snapshot, now) {
-            if let Some(state) = self.clock_create_state.as_mut() {
+            if let Some(state) = self.pages.clock.clock_create_state.as_mut() {
                 state.error = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-could-not-save-error",
                     error = error.clone()
@@ -473,10 +473,10 @@ impl ShellSession {
             return;
         }
 
-        self.clock_create_state = None;
+        self.pages.clock.clock_create_state = None;
         self.synchronize_overlay_focus();
-        self.clock_selected_entry_id = Some(id);
-        self.focused_component = ShellComponent::ClockEntryList;
+        self.pages.clock.clock_selected_entry_id = Some(id);
+        self.pages.common.focused_component = ShellComponent::ClockEntryList;
         self.sync_clock_window_at(now);
         self.notify_toast(match kind {
             ScheduledClockEntryKind::DailyAlarm => {
@@ -506,10 +506,12 @@ impl ShellSession {
     pub(in crate::session) fn sync_clock_selection_at(&mut self, now: Instant) {
         let ids = self.ordered_clock_entry_ids_at(now);
         if !self
+            .pages
+            .clock
             .clock_selected_entry_id
             .is_some_and(|selected| ids.contains(&selected))
         {
-            self.clock_selected_entry_id = ids.first().copied();
+            self.pages.clock.clock_selected_entry_id = ids.first().copied();
         }
         self.sync_clock_window_at(now);
     }
@@ -529,18 +531,28 @@ impl ShellSession {
         let ids = self.ordered_clock_entry_ids_at(now);
         let capacity = self.clock_entry_capacity_at(now);
         let max_start = ids.len().saturating_sub(capacity);
-        self.clock_entry_window_start = self.clock_entry_window_start.min(max_start);
+        self.pages.clock.clock_entry_window_start =
+            self.pages.clock.clock_entry_window_start.min(max_start);
         let Some(index) = self
+            .pages
+            .clock
             .clock_selected_entry_id
             .and_then(|selected| ids.iter().position(|id| *id == selected))
         else {
-            self.clock_entry_window_start = 0;
+            self.pages.clock.clock_entry_window_start = 0;
             return;
         };
-        if index < self.clock_entry_window_start {
-            self.clock_entry_window_start = index;
-        } else if index >= self.clock_entry_window_start.saturating_add(capacity) {
-            self.clock_entry_window_start = index.saturating_add(1).saturating_sub(capacity);
+        if index < self.pages.clock.clock_entry_window_start {
+            self.pages.clock.clock_entry_window_start = index;
+        } else if index
+            >= self
+                .pages
+                .clock
+                .clock_entry_window_start
+                .saturating_add(capacity)
+        {
+            self.pages.clock.clock_entry_window_start =
+                index.saturating_add(1).saturating_sub(capacity);
         }
     }
 
@@ -548,31 +560,33 @@ impl ShellSession {
         let now = Instant::now();
         let ids = self.ordered_clock_entry_ids_at(now);
         if ids.is_empty() {
-            self.clock_selected_entry_id = None;
-            self.focused_component = ShellComponent::ClockNewButton;
+            self.pages.clock.clock_selected_entry_id = None;
+            self.pages.common.focused_component = ShellComponent::ClockNewButton;
             return;
         }
         let current = self
+            .pages
+            .clock
             .clock_selected_entry_id
             .and_then(|selected| ids.iter().position(|id| *id == selected))
             .unwrap_or(0);
         let next =
             (current as isize + delta).clamp(0, ids.len().saturating_sub(1) as isize) as usize;
-        self.clock_selected_entry_id = Some(ids[next]);
-        self.focused_component = ShellComponent::ClockEntryList;
+        self.pages.clock.clock_selected_entry_id = Some(ids[next]);
+        self.pages.common.focused_component = ShellComponent::ClockEntryList;
         self.sync_clock_window_at(now);
     }
 
     pub(in crate::session) fn select_clock_entry_edge(&mut self, last: bool) {
         let now = Instant::now();
         let ids = self.ordered_clock_entry_ids_at(now);
-        self.clock_selected_entry_id = if last {
+        self.pages.clock.clock_selected_entry_id = if last {
             ids.last().copied()
         } else {
             ids.first().copied()
         };
-        if self.clock_selected_entry_id.is_some() {
-            self.focused_component = ShellComponent::ClockEntryList;
+        if self.pages.clock.clock_selected_entry_id.is_some() {
+            self.pages.common.focused_component = ShellComponent::ClockEntryList;
         }
         self.sync_clock_window_at(now);
     }
@@ -582,8 +596,8 @@ impl ShellSession {
             .ordered_clock_entry_ids_at(Instant::now())
             .contains(&id)
         {
-            self.clock_selected_entry_id = Some(id);
-            self.focused_component = ShellComponent::ClockEntryList;
+            self.pages.clock.clock_selected_entry_id = Some(id);
+            self.pages.common.focused_component = ShellComponent::ClockEntryList;
             self.sync_clock_window_at(Instant::now());
         }
     }
@@ -600,7 +614,7 @@ impl ShellSession {
             )));
             return;
         };
-        self.clock_selected_entry_id = Some(id);
+        self.pages.clock.clock_selected_entry_id = Some(id);
         let (title, kind_label) = match entry.kind {
             ScheduledClockEntryKind::DailyAlarm => (
                 i18n::LocalizedText::from(i18n::msg!("shell-manage-alarm")),

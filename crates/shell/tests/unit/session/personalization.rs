@@ -140,7 +140,7 @@ fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices
         let (_guard, manager, session) = fixture(true);
         let mut expected_config = manager.load_config().unwrap();
         let mut state = linux_state(&manager, images);
-        state.login_password = "must be cleared".into();
+        state.pages.login.login_password = "must be cleared".into();
         state.complete_login(session.clone());
         assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
         advance_to_appearance(&mut state);
@@ -148,13 +148,13 @@ fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices
         expected_config.timezone = state.selected_setup_timezone_value();
         assert!(state.auth_session().is_none());
         assert!(state.app.active_appearance().is_none());
-        assert!(state.login_password.is_empty());
+        assert!(state.pages.login.login_password.is_empty());
         assert!(state.clock_scheduler.is_none());
         // Home shortcuts cannot bypass setup. Appearance input uses existing routing.
         state.apply_input(InputEvent::from_key_label("e"));
         assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
         state.apply_input(InputEvent::from_key_label("Right"));
-        let chosen_shape = state.setup_border_shape;
+        let chosen_shape = state.pages.setup.setup_border_shape;
         submit(&mut state);
         assert_eq!(state.active_screen(), ShellScreen::Home);
         assert_eq!(state.auth_session(), Some(&session));
@@ -236,6 +236,7 @@ fn config_save_failure_keeps_linux_setup_pending_and_allows_retry() {
     let backup = config_path.with_extension("test-backup");
     std::fs::rename(config_path, &backup).unwrap();
     std::fs::create_dir(config_path).unwrap();
+    let selected_timezone = state.selected_setup_timezone_value();
     submit(&mut state);
     assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
     assert!(state.auth_session().is_none());
@@ -245,10 +246,7 @@ fn config_save_failure_keeps_linux_setup_pending_and_allows_retry() {
     std::fs::rename(backup, config_path).unwrap();
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(
-        manager.load_config().unwrap().timezone,
-        state.selected_setup_timezone_value()
-    );
+    assert_eq!(manager.load_config().unwrap().timezone, selected_timezone);
     assert!(!manager.load_users().unwrap().users[0].personalization_pending);
 }
 

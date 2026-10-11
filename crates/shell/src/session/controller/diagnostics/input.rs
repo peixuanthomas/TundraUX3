@@ -33,7 +33,7 @@ impl ShellSession {
             };
         }
 
-        if !self.diagnostics_repair_preview.is_empty() {
+        if !self.pages.diagnostics.diagnostics_repair_preview.is_empty() {
             let target = RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog);
             return match &key.key {
                 InputKey::Escape => (target, ShellCommand::DiagnosticsCancelRepair),
@@ -45,7 +45,7 @@ impl ShellSession {
                     (target, ShellCommand::DiagnosticsRepairToggleAction)
                 }
                 InputKey::Enter | InputKey::Char(' ')
-                    if self.diagnostics_repair_confirm_selected =>
+                    if self.pages.diagnostics.diagnostics_repair_confirm_selected =>
                 {
                     (target, ShellCommand::DiagnosticsConfirmRepair)
                 }
@@ -86,27 +86,31 @@ impl ShellSession {
             InputKey::Home => (target, ShellCommand::DiagnosticsFirst),
             InputKey::End => (target, ShellCommand::DiagnosticsLast),
             InputKey::Char('r' | 'R') | InputKey::F(5) => (target, ShellCommand::DiagnosticsRescan),
-            InputKey::Char('x' | 'X') if !self.diagnostics_scanning => {
+            InputKey::Char('x' | 'X') if !self.pages.diagnostics.diagnostics_scanning => {
                 (RoutedTarget::Global, ShellCommand::Restart)
             }
-            InputKey::Char('f' | 'F') if self.diagnostics_tab == ui::DiagnosticsTab::Health => {
+            InputKey::Char('f' | 'F')
+                if self.pages.diagnostics.diagnostics_tab == ui::DiagnosticsTab::Health =>
+            {
                 (target, ShellCommand::DiagnosticsPreviewSelectedRepair)
             }
-            InputKey::Char('a' | 'A') if self.diagnostics_tab == ui::DiagnosticsTab::Health => {
+            InputKey::Char('a' | 'A')
+                if self.pages.diagnostics.diagnostics_tab == ui::DiagnosticsTab::Health =>
+            {
                 (target, ShellCommand::DiagnosticsPreviewAllRepairs)
             }
             InputKey::Char('c' | 'C') => (target, ShellCommand::DiagnosticsCopySummary),
 
             InputKey::Char('o' | 'O') => (target, ShellCommand::DiagnosticsOpenReport),
             InputKey::Char('e' | 'E')
-                if self.diagnostics_tab != ui::DiagnosticsTab::Health
+                if self.pages.diagnostics.diagnostics_tab != ui::DiagnosticsTab::Health
                     && self.diagnostics_can_view_details() =>
             {
                 (target, ShellCommand::DiagnosticsOpenLogsInExplorer)
             }
             InputKey::Enter
                 if matches!(
-                    self.diagnostics_tab,
+                    self.pages.diagnostics.diagnostics_tab,
                     ui::DiagnosticsTab::Logs | ui::DiagnosticsTab::Incidents
                 ) =>
             {
@@ -136,7 +140,7 @@ impl ShellSession {
         let model = self.to_diagnostics_view_model();
         let layout = ui::diagnostics_layout(main, &model);
         let diagnostic_target = ui::diagnostics_hit_test(&layout, (coordinates.0, coordinates.1));
-        let routed = if self.diagnostics_repair_preview.is_empty() {
+        let routed = if self.pages.diagnostics.diagnostics_repair_preview.is_empty() {
             RoutedTarget::Component(ShellComponent::Diagnostics)
         } else {
             RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog)
@@ -145,12 +149,12 @@ impl ShellSession {
         match mouse.kind {
             ui::MouseEventKind::Moved => (routed, ShellCommand::Hover(hit_target)),
             ui::MouseEventKind::Scroll(ScrollDirection::Up)
-                if self.diagnostics_repair_preview.is_empty() =>
+                if self.pages.diagnostics.diagnostics_repair_preview.is_empty() =>
             {
                 (routed, ShellCommand::DiagnosticsPrevious)
             }
             ui::MouseEventKind::Scroll(ScrollDirection::Down)
-                if self.diagnostics_repair_preview.is_empty() =>
+                if self.pages.diagnostics.diagnostics_repair_preview.is_empty() =>
             {
                 (routed, ShellCommand::DiagnosticsNext)
             }
@@ -170,7 +174,7 @@ impl ShellSession {
                     (routed, ShellCommand::DiagnosticsSelectIndex(index))
                 }
                 Some(ui::DiagnosticsHitTarget::Scrollbar)
-                    if self.diagnostics_repair_preview.is_empty() =>
+                    if self.pages.diagnostics.diagnostics_repair_preview.is_empty() =>
                 {
                     (
                         routed,

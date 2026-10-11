@@ -91,6 +91,7 @@ pub struct ShellNotification {
     pub message: LocalizedText,
     pub actions: Vec<ShellNotificationAction>,
     selected_action: usize,
+    pub(crate) session_scope: bool,
 }
 
 impl ShellNotification {
@@ -110,7 +111,13 @@ impl ShellNotification {
             message: message.into(),
             actions: non_empty_notification_actions(actions),
             selected_action: 0,
+            session_scope: false,
         }
+    }
+
+    pub fn for_session(mut self) -> Self {
+        self.session_scope = true;
+        self
     }
 
     pub fn with_key(mut self, key: impl Into<String>) -> Self {

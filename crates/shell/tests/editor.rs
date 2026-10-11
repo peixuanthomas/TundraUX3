@@ -840,6 +840,12 @@ fn discard_then_open_replaces_the_buffer_only_after_a_file_is_selected() {
     open_only_document_in_editor(&mut state, &platform);
     fs::write(&replacement, "replacement").expect("seed replacement document");
     type_text(&mut state, &platform, "local ");
+    state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let paths = app_paths(fixture.path());
+    let user_key = state.auth_session().unwrap().user_id.clone();
+    let original_recovery =
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+    assert_eq!(original_recovery.len(), 1);
 
     state.apply_input_with_platform(ctrl('o'), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
@@ -870,6 +876,77 @@ fn discard_then_open_replaces_the_buffer_only_after_a_file_is_selected() {
     assert_eq!(editor.mode, EditorMode::Source);
     assert_eq!(editor.source_lines.join("\n"), "replacement");
     assert!(!editor.dirty);
+    assert!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key)
+            .unwrap()
+            .is_empty()
+    );
+    type_text(&mut state, &platform, "edited ");
+    state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let replacement_recovery =
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+    assert_eq!(replacement_recovery.len(), 1);
+    assert_ne!(replacement_recovery[0].0, original_recovery[0].0);
+}
+
+#[test]
+fn failed_picker_replacement_keeps_the_original_document_and_recovery() {
+    let fixture = FixtureRoot::new("failed-replacement-recovery");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let documents = fixture.path().join("Documents");
+    fs::write(documents.join("original.txt"), "original").unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    let original_page = state.active_page_id();
+    type_text(&mut state, &platform, "unsaved ");
+    state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let paths = app_paths(fixture.path());
+    let user_key = state.auth_session().unwrap().user_id.clone();
+    let before = app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+    let file = fs::File::create(documents.join("z-too-large.txt")).unwrap();
+    file.set_len(platform::MAX_DOCUMENT_BYTES + 1).unwrap();
+    drop(file);
+    state.apply_input_with_platform(ctrl('o'), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    let picker_page = state.active_page_id();
+    let index = state
+        .to_explorer_view_model()
+        .entries
+        .iter()
+        .position(|entry| entry.name == "z-too-large.txt")
+        .unwrap();
+    for _ in 0..index {
+        state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    }
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert_eq!(state.active_page_id(), picker_page);
+    assert_eq!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap(),
+        before
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert_eq!(state.active_page_id(), original_page);
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        "unsaved original"
+    );
+    assert!(state.to_editor_view_model().dirty);
+    let status = state
+        .to_editor_view_model()
+        .status_message
+        .expect("failed replacement must finish the original editor's loading status");
+    assert!(!status.starts_with("Loading"));
+    assert!(status.contains("z-too-large.txt"));
+    assert!(
+        app::editor_recovery::claim_next_editor_recovery(&paths, &user_key)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -1437,9 +1514,9 @@ fn undo_to_saved_checkpoint_removes_stale_recovery_before_shutdown() {
         type_text(&mut state, &platform, "X");
         state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
         assert!(
-            app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key)
+            !app::editor_recovery::read_editor_recoveries(&paths, &user_key)
                 .unwrap()
-                .is_some()
+                .is_empty()
         );
 
         state.apply_input_with_platform(ctrl('z'), &platform);
@@ -1450,9 +1527,9 @@ fn undo_to_saved_checkpoint_removes_stale_recovery_before_shutdown() {
             if opened_file { "saved text" } else { "" }
         );
         assert!(
-            app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key)
+            app::editor_recovery::read_editor_recoveries(&paths, &user_key)
                 .unwrap()
-                .is_none()
+                .is_empty()
         );
         assert_eq!(
             state.apply_input_with_platform(InputEvent::Shutdown, &platform),
@@ -1484,9 +1561,8 @@ fn clean_editor_navigation_does_not_clear_another_sessions_recovery() {
     open_editor_from_home(&mut dirty, &platform);
     type_text(&mut dirty, &platform, "other draft");
     dirty.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
-    let recovery = app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key)
-        .unwrap()
-        .expect("other session persisted its draft");
+    let recovery = app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+    assert_eq!(recovery.len(), 1, "other session persisted its draft");
 
     clean.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
     // Even a dirty-to-clean transition must not clear a draft when this
@@ -1495,8 +1571,229 @@ fn clean_editor_navigation_does_not_clear_another_sessions_recovery() {
     clean.apply_input_with_platform(ctrl('z'), &platform);
     assert!(!clean.to_editor_view_model().dirty);
     assert_eq!(
-        app::editor_recovery::read_versioned_editor_recovery(&paths, &user_key).unwrap(),
-        Some(recovery)
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap(),
+        recovery
+    );
+}
+
+#[test]
+fn saving_and_discarding_recovery_only_clear_the_owning_editor() {
+    let fixture = FixtureRoot::new("separate-editor-recovery");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents/note.txt");
+    fs::write(&path, b"saved text").unwrap();
+    let mut first = logged_in_state(&platform);
+    open_only_document_in_editor(&mut first, &platform);
+    let paths = app_paths(fixture.path());
+    let user_key = first.auth_session().unwrap().user_id.clone();
+    type_text(&mut first, &platform, "first ");
+    first.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let first_records = app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+    assert_eq!(first_records.len(), 1);
+
+    let mut second = logged_in_state(&platform);
+    open_editor_from_home(&mut second, &platform);
+    assert!(
+        !second.to_editor_view_model().dirty,
+        "an active session's draft must not be restored into a second editor"
+    );
+    assert!(
+        second
+            .to_editor_view_model()
+            .source_lines
+            .join("\n")
+            .is_empty()
+    );
+    type_text(&mut second, &platform, "second draft");
+    second.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let records = app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+    assert_eq!(records.len(), 2);
+    let second_record = records
+        .into_iter()
+        .find(|(id, _)| id != &first_records[0].0)
+        .unwrap();
+
+    first.apply_input_with_platform(ctrl('s'), &platform);
+    wait_for_editor_background_tasks(&mut first, &platform);
+    assert!(!first.to_editor_view_model().dirty);
+    assert_eq!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap(),
+        vec![second_record]
+    );
+    assert_eq!(
+        second.to_editor_view_model().source_lines.join("\n"),
+        "second draft"
+    );
+    second.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    second.apply_input_with_platform(InputEvent::from_key_label("d"), &platform);
+    assert_eq!(second.active_screen(), ShellScreen::Launcher);
+    assert!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn failed_recovery_cleanup_keeps_the_editor_open_until_retry_succeeds() {
+    let fixture = FixtureRoot::new("failed-recovery-cleanup");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    let paths = app_paths(fixture.path());
+    let user_key = state.auth_session().unwrap().user_id.clone();
+    type_text(&mut state, &platform, "keep until cleanup succeeds");
+    state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let recovery_directory =
+        app::editor_recovery::editor_recovery_path(&paths, &user_key).with_extension("");
+    let recovery_path = fs::read_dir(recovery_directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .unwrap();
+    let record = fs::read(&recovery_path).unwrap();
+    // A directory at the owned JSON path makes file deletion fail on both OSes.
+    fs::remove_file(&recovery_path).unwrap();
+    fs::create_dir(&recovery_path).unwrap();
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("d"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        "keep until cleanup succeeds"
+    );
+    type_text(&mut state, &platform, " plus new edits");
+    fs::remove_dir(&recovery_path).unwrap();
+    fs::write(&recovery_path, record).unwrap();
+    assert!(
+        app::editor_recovery::claim_next_editor_recovery(&paths, &user_key)
+            .unwrap()
+            .is_none(),
+        "failed cleanup must keep the original lease"
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert!(state.to_notification_view_model().is_some());
+    assert_eq!(
+        state.to_editor_view_model().source_lines.join("\n"),
+        "keep until cleanup succeeds plus new edits"
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("d"), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Launcher);
+    assert!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn read_only_log_does_not_claim_or_write_editor_recovery() {
+    let fixture = FixtureRoot::new("log-preserves-recovery");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(fixture.path().join("Documents/service.log"), b"log line\n").unwrap();
+    let mut state = logged_in_state(&platform);
+    let user_key = state.auth_session().unwrap().user_id.clone();
+    let paths = app_paths(fixture.path());
+    let lease = app::editor_recovery::acquire_editor_recovery(
+        &paths,
+        &user_key,
+        &app::editor_recovery::RecoveryId::default(),
+    )
+    .unwrap();
+    let draft = app::editor_recovery::EditorRecoveryRecordV2::source(
+        "an unrelated abandoned draft",
+        app::editor_recovery::RecoveryDocumentKind::PlainText,
+    );
+    app::editor_recovery::write_editor_recovery_v2(&lease, &draft).unwrap();
+    drop(lease);
+    let before = app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+
+    open_only_document_in_editor(&mut state, &platform);
+    assert!(state.to_editor_view_model().read_only);
+    type_text(&mut state, &platform, "ignored");
+    state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert_eq!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap(),
+        before
+    );
+    assert!(
+        app::editor_recovery::claim_next_editor_recovery(&paths, &user_key)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn abandoned_recovery_drafts_are_claimed_once_per_new_editor() {
+    let fixture = FixtureRoot::new("several-abandoned-recoveries");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let paths = app_paths(fixture.path());
+    let mut first = logged_in_state(&platform);
+    open_editor_from_home(&mut first, &platform);
+    let user_key = first.auth_session().unwrap().user_id.clone();
+    type_text(&mut first, &platform, "first abandoned draft");
+    first.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let mut second = logged_in_state(&platform);
+    open_editor_from_home(&mut second, &platform);
+    type_text(&mut second, &platform, "second abandoned draft");
+    second.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
+    let records = app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
+    assert_eq!(records.len(), 2);
+    let expected_text: Vec<_> = records
+        .iter()
+        .map(|(_, record)| {
+            let app::editor_recovery::VersionedEditorRecovery::V2(record) = record else {
+                panic!("expected v2")
+            };
+            let app::editor_recovery::EditorRecoveryPayload::Source { text, .. } = &record.payload
+            else {
+                panic!("expected source")
+            };
+            text.clone()
+        })
+        .collect();
+    drop(first);
+    drop(second);
+
+    let mut restored_first = logged_in_state(&platform);
+    open_editor_from_home(&mut restored_first, &platform);
+    assert_eq!(
+        restored_first
+            .to_editor_view_model()
+            .source_lines
+            .join("\n"),
+        expected_text[0]
+    );
+    let mut restored_second = logged_in_state(&platform);
+    open_editor_from_home(&mut restored_second, &platform);
+    assert_eq!(
+        restored_second
+            .to_editor_view_model()
+            .source_lines
+            .join("\n"),
+        expected_text[1]
+    );
+    assert!(restored_first.to_editor_view_model().dirty);
+    assert!(restored_second.to_editor_view_model().dirty);
+    assert!(
+        app::editor_recovery::claim_next_editor_recovery(&paths, &user_key)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key)
+            .unwrap()
+            .len(),
+        2
     );
 }
 

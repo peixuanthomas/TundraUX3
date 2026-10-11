@@ -699,6 +699,9 @@ fn requests_read_the_saved_policy_and_fail_closed_when_config_cannot_be_read() {
             .unwrap();
         assert_eq!(job.phase(), expected);
         state.stop_auto_admin();
+        // This policy-only fixture has no worker to report its stopped result.
+        job.finish(Err("stopped".into()));
+        state.poll_auto_admin();
     }
     std::fs::remove_file(&storage.layout().config_path).unwrap();
     let (tx, _rx) = mpsc::channel();
@@ -735,4 +738,103 @@ fn confirmation_scroll_stops_at_the_last_description_line() {
     let layout = ui::auto_admin_layout(Rect::new(0, 0, 120, 40), &view);
     assert_eq!(usize::from(view.scroll + layout.description.height), 30);
     assert!(view.confirming);
+}
+
+#[test]
+fn background_question_reopens_auto_admin_and_captures_input() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (100, 30),
+        ShellHomeMode::User,
+    );
+    state.enter_new_page(ShellScreen::Management);
+    let owner = state.active_page_id();
+    let (tx, _rx) = mpsc::channel();
+    let job = state
+        .begin_auto_admin("Background operation".into(), false, tx)
+        .unwrap();
+    state.continue_page_tasks_in_background(owner);
+    assert!(!state.auto_admin_visible());
+    job.emit(&OperationEvent::Question {
+        id: "password".into(),
+        prompt: "Password".into(),
+        choices: vec![],
+        secret: true,
+    });
+    assert!(state.poll_auto_admin());
+    assert!(state.auto_admin_visible());
+    assert!(state.handle_auto_admin_input(&InputEvent::from_key_label("a")));
+    assert_eq!(state.page_screen(owner), None);
+    job.finish(Err("fixture complete".into()));
+    state.poll_auto_admin();
+}
+
+#[test]
+fn running_auto_admin_f12_reaches_page_close_choices_and_stay_restores_its_input() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (100, 30),
+        ShellHomeMode::User,
+    );
+    state.enter_new_page(ShellScreen::Management);
+    let owner = state.active_page_id();
+    let (tx, rx) = mpsc::channel();
+    let job = state
+        .begin_auto_admin("Managed operation".into(), false, tx)
+        .unwrap();
+    state.apply_input(InputEvent::key(InputKey::F(12)));
+    assert!(!state.auto_admin_visible());
+    assert_eq!(
+        state.app.notification_center().active_modal_action_count(),
+        3
+    );
+    job.emit(&OperationEvent::Question {
+        id: "choice".into(),
+        prompt: "Continue?".into(),
+        choices: vec![],
+        secret: false,
+    });
+    state.poll_auto_admin();
+    assert!(
+        !state.auto_admin_visible(),
+        "close choice retains input while pending"
+    );
+    state.apply_input(InputEvent::key(InputKey::Escape));
+    assert!(state.auto_admin_visible());
+    assert_eq!(state.active_page_id(), owner);
+    assert!(!state.notification_has_active_modal());
+    assert!(
+        rx.try_iter()
+            .all(|input| matches!(input, OperationInput::Resize { .. })),
+        "close-choice keys must not reach the operation"
+    );
+    state.refresh_hit_map();
+    let area = state
+        .hit_map()
+        .regions()
+        .iter()
+        .find(|region| region.component == ShellComponent::BackButton)
+        .unwrap()
+        .area;
+    let point = (area.x + area.width / 2, area.y + area.height / 2);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(
+        state.auto_admin_visible(),
+        "press alone must not request page close"
+    );
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(!state.auto_admin_visible());
+    assert_eq!(
+        state.app.notification_center().active_modal_action_count(),
+        3
+    );
+    state.apply_input(InputEvent::key(InputKey::Enter));
+    assert_eq!(state.page_screen(owner), None);
+    state.poll_auto_admin();
+    assert!(
+        state.auto_admin_visible(),
+        "background question still needs an answer"
+    );
+    job.finish(Ok("Done".into()));
+    state.poll_auto_admin();
 }

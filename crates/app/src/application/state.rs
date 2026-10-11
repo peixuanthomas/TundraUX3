@@ -1,11 +1,11 @@
 //! UI-independent application state for global clock and exit behavior.
 
-use std::collections::VecDeque;
 use std::time::Instant;
 
 use super::notification::{
     Notification, NotificationCenter, NotificationCommand, NotificationResponse,
 };
+use super::pages::{AppPageKind, AppPageModels, PageInstanceId};
 use crate::diagnostics::DiagnosticsSnapshot;
 use crate::editor::{EditorCommand, EditorEffect, EditorState, EditorViewport};
 use crate::explorer::{ExplorerCommand, ExplorerController, ExplorerEffect, ExplorerState};
@@ -102,16 +102,11 @@ pub struct AppState {
     exit_confirmation_requested: bool,
     notifications: NotificationCenter,
     auth_session: Option<AuthSession>,
-    managed_users: Vec<UserAccount>,
     storage_config: storage::StorageConfig,
     active_appearance: Option<storage::AppearanceConfig>,
     active_system_status_dashboard: Option<storage::SystemStatusDashboardConfig>,
-    explorer_state: Option<ExplorerState>,
-    launcher_state: Option<LauncherState>,
-    diagnostics_snapshot: Option<DiagnosticsSnapshot>,
     system_status_snapshot: Option<AppSystemStatusSnapshot>,
-    editor_state: Option<EditorState>,
-    pending_editor_effects: VecDeque<EditorEffect>,
+    page_models: AppPageModels,
 }
 
 impl AppState {
@@ -131,16 +126,11 @@ impl AppState {
             exit_confirmation_requested: false,
             notifications: NotificationCenter::new(i18n::msg!("notifications-status-ready")),
             auth_session: None,
-            managed_users: Vec::new(),
             storage_config,
             active_appearance: None,
             active_system_status_dashboard: None,
-            explorer_state: None,
-            launcher_state: None,
-            diagnostics_snapshot: None,
             system_status_snapshot: None,
-            editor_state: None,
-            pending_editor_effects: VecDeque::new(),
+            page_models: AppPageModels::default(),
         }
     }
 
@@ -167,7 +157,7 @@ impl AppState {
                 AppAction::Redraw
             }
             AppCommand::SetManagedUsers(managed_users) => {
-                self.managed_users = managed_users;
+                *self.page_models.managed_users = managed_users;
                 AppAction::Redraw
             }
             AppCommand::SetStorageConfig {
@@ -189,15 +179,15 @@ impl AppState {
                 AppAction::Redraw
             }
             AppCommand::SetExplorerState(explorer_state) => {
-                self.explorer_state = explorer_state;
+                *self.page_models.explorer = explorer_state;
                 AppAction::Redraw
             }
             AppCommand::SetLauncherState(launcher_state) => {
-                self.launcher_state = launcher_state;
+                *self.page_models.launcher = launcher_state;
                 AppAction::Redraw
             }
             AppCommand::SetDiagnosticsSnapshot(diagnostics_snapshot) => {
-                self.diagnostics_snapshot = diagnostics_snapshot;
+                *self.page_models.diagnostics = diagnostics_snapshot;
                 AppAction::Redraw
             }
             AppCommand::SetSystemStatusSnapshot(system_status_snapshot) => {
@@ -205,19 +195,19 @@ impl AppState {
                 AppAction::Redraw
             }
             AppCommand::SetEditorState(editor_state) => {
-                self.editor_state = editor_state;
-                self.pending_editor_effects.clear();
+                self.page_models.editor.state = editor_state;
+                self.page_models.editor.effects.clear();
                 AppAction::Redraw
             }
             AppCommand::Editor(command) => {
-                if let Some(editor_state) = self.editor_state.as_mut() {
-                    self.pending_editor_effects
-                        .extend(editor_state.apply(command));
+                let editor = &mut *self.page_models.editor;
+                if let Some(editor_state) = editor.state.as_mut() {
+                    editor.effects.extend(editor_state.apply(command));
                 }
                 AppAction::Redraw
             }
             AppCommand::SetEditorViewport(viewport) => {
-                if let Some(editor_state) = self.editor_state.as_mut() {
+                if let Some(editor_state) = self.page_models.editor.state.as_mut() {
                     editor_state.viewport = viewport;
                 }
                 AppAction::Redraw
@@ -264,15 +254,15 @@ impl AppState {
             exit_confirmation_requested: self.exit_confirmation_requested,
             notifications: &self.notifications,
             auth_session: self.auth_session.as_ref(),
-            managed_users: &self.managed_users,
+            managed_users: &self.page_models.managed_users,
             storage_config: &self.storage_config,
             active_appearance: self.active_appearance.as_ref(),
             active_system_status_dashboard: self.active_system_status_dashboard.as_ref(),
-            explorer: self.explorer_state.as_ref(),
-            launcher: self.launcher_state.as_ref(),
-            diagnostics: self.diagnostics_snapshot.as_ref(),
+            explorer: self.page_models.explorer.as_ref(),
+            launcher: self.page_models.launcher.as_ref(),
+            diagnostics: self.page_models.diagnostics.as_ref(),
             system_status: self.system_status_snapshot.as_ref(),
-            editor: self.editor_state.as_ref(),
+            editor: self.page_models.editor.state.as_ref(),
         }
     }
 
@@ -313,8 +303,20 @@ impl AppState {
             NotificationCommand::ShowAlert { key, message, tone } => {
                 self.notifications.notify_alert_with_key(key, message, tone);
             }
+            NotificationCommand::ShowPageAlert {
+                page,
+                key,
+                message,
+                tone,
+            } => {
+                self.notifications
+                    .notify_page_alert_with_key(page, key, message, tone);
+            }
             NotificationCommand::ResolveAlert(key) => {
                 self.notifications.resolve_alert_at(&key, at);
+            }
+            NotificationCommand::ResolvePageAlert { page, key } => {
+                self.notifications.resolve_page_alert_at(page, &key, at);
             }
             NotificationCommand::ClearAlerts => self.notifications.clear_alerts_at(at),
             NotificationCommand::SelectNextAction => self.notifications.select_next_action(),
@@ -328,6 +330,9 @@ impl AppState {
             NotificationCommand::DismissModalByKey(key) => {
                 self.notifications.dismiss_modal_by_key(&key);
             }
+            NotificationCommand::DismissPageModalByKey { key, page } => {
+                self.notifications.dismiss_page_modal_by_key(&key, page);
+            }
         }
     }
 
@@ -335,7 +340,7 @@ impl AppState {
         self.auth_session.as_ref()
     }
     pub fn managed_users(&self) -> &[UserAccount] {
-        &self.managed_users
+        &self.page_models.managed_users
     }
     pub fn storage_config(&self) -> &storage::StorageConfig {
         &self.storage_config
@@ -346,8 +351,25 @@ impl AppState {
     pub fn active_system_status_dashboard(&self) -> Option<&storage::SystemStatusDashboardConfig> {
         self.active_system_status_dashboard.as_ref()
     }
+    pub fn register_page(&mut self, id: PageInstanceId, kind: AppPageKind) {
+        self.page_models.register(id, kind);
+    }
+
+    pub fn select_page(&mut self, id: Option<PageInstanceId>, kind: AppPageKind) {
+        self.page_models.select(id, kind);
+    }
+
+    pub fn select_notification_page(&mut self, id: PageInstanceId) {
+        self.notifications.set_visible_page(id);
+    }
+
+    pub fn remove_page(&mut self, id: PageInstanceId) {
+        self.page_models.remove(id);
+        self.notifications.remove_page(id);
+    }
+
     pub fn explorer_state(&self) -> Option<&ExplorerState> {
-        self.explorer_state.as_ref()
+        self.page_models.explorer.as_ref()
     }
 
     pub fn dispatch_explorer_at(
@@ -360,7 +382,8 @@ impl AppState {
         let controller = ExplorerController::default()
             .with_editor_extensions(self.storage_config.editor.explorer_open_extensions.clone());
         let effect = self
-            .explorer_state
+            .page_models
+            .explorer
             .as_mut()
             .map(|state| {
                 controller.apply(
@@ -375,7 +398,7 @@ impl AppState {
         (AppAction::Redraw, effect)
     }
     pub fn launcher_state(&self) -> Option<&LauncherState> {
-        self.launcher_state.as_ref()
+        self.page_models.launcher.as_ref()
     }
 
     pub fn dispatch_launcher_at(
@@ -386,7 +409,8 @@ impl AppState {
         _at: Instant,
     ) -> (AppAction, LauncherEffect) {
         let effect = self
-            .launcher_state
+            .page_models
+            .launcher
             .as_mut()
             .map(|state| {
                 LauncherController::default().apply(
@@ -401,17 +425,17 @@ impl AppState {
         (AppAction::Redraw, effect)
     }
     pub fn diagnostics_snapshot(&self) -> Option<&DiagnosticsSnapshot> {
-        self.diagnostics_snapshot.as_ref()
+        self.page_models.diagnostics.as_ref()
     }
     pub fn system_status_snapshot(&self) -> Option<&AppSystemStatusSnapshot> {
         self.system_status_snapshot.as_ref()
     }
     pub fn editor_state(&self) -> Option<&EditorState> {
-        self.editor_state.as_ref()
+        self.page_models.editor.state.as_ref()
     }
 
     pub fn take_editor_effects(&mut self) -> Vec<EditorEffect> {
-        self.pending_editor_effects.drain(..).collect()
+        self.page_models.editor.effects.drain(..).collect()
     }
     pub fn current_clock_display(&self) -> ClockDisplay {
         self.network_clock.current()
@@ -437,16 +461,11 @@ impl PartialEq for AppState {
             && self.exit_confirmation_requested == other.exit_confirmation_requested
             && self.notifications == other.notifications
             && self.auth_session == other.auth_session
-            && self.managed_users == other.managed_users
             && self.storage_config == other.storage_config
             && self.active_appearance == other.active_appearance
             && self.active_system_status_dashboard == other.active_system_status_dashboard
-            && self.explorer_state == other.explorer_state
-            && self.launcher_state == other.launcher_state
-            && self.diagnostics_snapshot == other.diagnostics_snapshot
             && self.system_status_snapshot == other.system_status_snapshot
-            && self.editor_state == other.editor_state
-            && self.pending_editor_effects == other.pending_editor_effects
+            && self.page_models == other.page_models
     }
 }
 

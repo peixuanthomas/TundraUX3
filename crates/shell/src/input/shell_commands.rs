@@ -5,6 +5,10 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
+    PageAction(crate::PageInstanceId, Box<ShellCommand>),
+    PageCloseBackground(crate::PageInstanceId),
+    PageCloseCancelTasks(crate::PageInstanceId),
+    PageCloseStay(crate::PageInstanceId),
     OpenLogs,
     LogsKey(KeyInput),
     LogsPointer(MouseInput),
@@ -87,6 +91,8 @@ pub enum ShellCommand {
     OpenLauncher,
     CloseLauncher,
     CloseCommandLine,
+    RequestCommandLineClose,
+    ConfirmCommandLineClose(crate::PageInstanceId),
     CommandLineKey(KeyInput),
     CommandLinePaste(String),
     LauncherNext,

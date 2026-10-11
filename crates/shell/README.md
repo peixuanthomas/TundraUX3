@@ -9,7 +9,8 @@
 | `src/session/controller/` | 按应用分组，处理操作、任务结果和输入路由 |
 | `src/session/presentation/` | 把应用状态和会话状态转换成界面需要的数据 |
 | `src/session/compositor/` | 按顺序绘制页面、标题栏、状态栏和弹窗 |
-| `src/session/navigation.rs`、`overlay*.rs` | 保存页面来路、安排最上层弹窗和恢复焦点 |
+| `src/session/navigation.rs`、`page_state.rs`、`page_lifecycle.rs` | 保存独立页面实例，安排打开、覆盖、确认关闭和清理 |
+| `src/session/tasks.rs`、`overlay*.rs` | 核对任务结果和弹窗的页面归属，恢复对应焦点 |
 | `src/session/runtime.rs` | 事件循环、刷新和退出处理 |
 | `src/startup/` | 启动检查、首次设置和启动画面 |
 | `src/previews/` | 样式、AA 和屏幕键盘演示 |

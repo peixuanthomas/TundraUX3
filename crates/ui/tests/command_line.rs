@@ -294,11 +294,11 @@ fn undersized_command_line_is_blocked() {
 }
 
 #[test]
-fn stopped_and_failed_cli_states_replace_the_running_shortcut_hint() {
+fn stopped_and_failed_cli_states_offer_restart_and_the_return_button() {
     for (state, expected) in [
         (
             CommandLineProcessState::Exited { code: 75 },
-            "CLI exited (75); Enter restart · Esc Launcher",
+            "CLI exited (75); Enter restart · use the top-right button to return",
         ),
         (
             CommandLineProcessState::Failed {
@@ -330,6 +330,8 @@ fn stopped_and_failed_cli_states_replace_the_running_shortcut_hint() {
             .collect::<String>();
 
         assert!(output.contains(expected));
+        assert!(!output.contains("Esc Launcher"));
+        assert!(!output.contains("Ctrl+Shift+X"));
         assert!(output.contains("Status"));
         assert!(output.contains("2026-07-27 10:15"));
     }

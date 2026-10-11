@@ -2,9 +2,9 @@ use super::*;
 
 impl ShellSession {
     pub(in crate::session) fn logs_overlay_id(&self) -> Option<&'static str> {
-        if self.logs_state.filter_form.is_some() {
+        if self.pages.logs.logs_state.filter_form.is_some() {
             Some("logs-filter")
-        } else if self.logs_state.more_selected.is_some() {
+        } else if self.pages.logs.logs_state.more_selected.is_some() {
             Some("logs-more")
         } else {
             None
@@ -14,15 +14,15 @@ impl ShellSession {
         self.logs_overlay_id().is_some()
     }
     pub(in crate::session) fn cancel_logs_pointer_gesture(&mut self) {
-        self.logs_state.scrollbar_grab = None;
-        self.logs_state.detail_scrollbar_grab = None;
-        self.logs_state.more_scrollbar_grab = None;
+        self.pages.logs.logs_state.scrollbar_grab = None;
+        self.pages.logs.logs_state.detail_scrollbar_grab = None;
+        self.pages.logs.logs_state.more_scrollbar_grab = None;
     }
     pub(in crate::session) fn logs_pointer_drag_active(&self) -> bool {
         self.active_screen() == ShellScreen::Logs
-            && (self.logs_state.scrollbar_grab.is_some()
-                || self.logs_state.detail_scrollbar_grab.is_some()
-                || self.logs_state.more_scrollbar_grab.is_some())
+            && (self.pages.logs.logs_state.scrollbar_grab.is_some()
+                || self.pages.logs.logs_state.detail_scrollbar_grab.is_some()
+                || self.pages.logs.logs_state.more_scrollbar_grab.is_some())
     }
     pub(in crate::session) fn logs_button_at(
         &self,
@@ -30,7 +30,7 @@ impl ShellSession {
     ) -> Option<ui::components::ButtonRegion> {
         if self.notification_has_active_modal()
             || self.time_sync_dialog_visible
-            || self.active_popup.is_some()
+            || self.pages.common.active_popup.is_some()
         {
             return None;
         }
@@ -99,11 +99,11 @@ impl ShellSession {
     pub(super) fn logs_touch_action(&mut self, target: ui::LogsHitTarget) {
         match target {
             ui::LogsHitTarget::Category(category) => {
-                self.logs_state.detail_scroll = 0;
+                self.pages.logs.logs_state.detail_scroll = 0;
                 self.logs_set_category(category);
             }
             ui::LogsHitTarget::Section(section) => {
-                self.logs_state.detail_scroll = 0;
+                self.pages.logs.logs_state.detail_scroll = 0;
                 self.logs_set_section(section);
             }
             ui::LogsHitTarget::Refresh => self.request_logs_job(None),
@@ -114,14 +114,14 @@ impl ShellSession {
             ui::LogsHitTarget::Follow => self.logs_follow_control(),
             ui::LogsHitTarget::More => {
                 self.cancel_logs_pointer_gesture();
-                self.logs_state.more_selected = Some(0);
+                self.pages.logs.logs_state.more_selected = Some(0);
             }
-            ui::LogsHitTarget::CloseMore => self.logs_state.more_selected = None,
+            ui::LogsHitTarget::CloseMore => self.pages.logs.logs_state.more_selected = None,
             ui::LogsHitTarget::Filters => self.logs_open_filter_form(),
             ui::LogsHitTarget::FormApply => self.logs_apply_filter_form(),
-            ui::LogsHitTarget::FormCancel => self.logs_state.filter_form = None,
+            ui::LogsHitTarget::FormCancel => self.pages.logs.logs_state.filter_form = None,
             ui::LogsHitTarget::FormField(index) => {
-                if let Some(form) = self.logs_state.filter_form.as_mut() {
+                if let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() {
                     form.selected = index;
                     if let Some(field) = form.fields.get_mut(index)
                         && !field.choices.is_empty()
@@ -148,7 +148,7 @@ impl ShellSession {
         }
     }
     pub(super) fn logs_move_more_selection(&mut self, direction: isize, wrap: bool) {
-        let Some(selected) = self.logs_state.more_selected else {
+        let Some(selected) = self.pages.logs.logs_state.more_selected else {
             return;
         };
         let options = ui::logs_more_controls();
@@ -160,7 +160,7 @@ impl ShellSession {
             }
             let index = index.rem_euclid(options.len() as isize) as usize;
             if ui::logs_control_enabled(&model, options[index].0) {
-                self.logs_state.more_selected = Some(index);
+                self.pages.logs.logs_state.more_selected = Some(index);
                 break;
             }
         }
@@ -190,10 +190,10 @@ impl ShellSession {
             } else {
                 0
             };
-            if self.logs_state.filter_form.is_some() {
+            if self.pages.logs.logs_state.filter_form.is_some() {
                 return;
             }
-            if self.logs_state.more_selected.is_some() {
+            if self.pages.logs.logs_state.more_selected.is_some() {
                 if layout.menu.contains(point.into()) && delta != 0 {
                     self.logs_move_more_selection(delta.signum(), false);
                 }
@@ -201,18 +201,18 @@ impl ShellSession {
             }
             if layout.content.detail_panel.contains(point.into()) {
                 if let Some(bar) = layout.detail_scrollbar {
-                    self.logs_state.detail_scroll = bar
+                    self.pages.logs.logs_state.detail_scroll = bar
                         .offset
                         .saturating_add_signed(delta)
                         .min(bar.content_len.saturating_sub(bar.viewport_len));
                 }
             } else {
-                self.logs_state.scroll = layout
+                self.pages.logs.logs_state.scroll = layout
                     .visible_start
                     .saturating_add_signed(delta)
                     .min(self.logs_count().saturating_sub(layout.visible_capacity));
-                self.logs_state.explicit_scroll = true;
-                self.logs_state.paused = true;
+                self.pages.logs.logs_state.explicit_scroll = true;
+                self.pages.logs.logs_state.paused = true;
             }
             return;
         }
@@ -224,25 +224,29 @@ impl ShellSession {
             return;
         }
         let Some(target) = ui::logs_hit_test(main, &model, point) else {
-            if self.logs_state.more_selected.is_some() && !layout.menu.contains(point.into()) {
-                self.logs_state.more_selected = None;
+            if self.pages.logs.logs_state.more_selected.is_some()
+                && !layout.menu.contains(point.into())
+            {
+                self.pages.logs.logs_state.more_selected = None;
             }
             return;
         };
-        if self.logs_state.more_selected.is_some() && target != ui::LogsHitTarget::MoreScrollbar {
-            self.logs_state.more_selected = None;
+        if self.pages.logs.logs_state.more_selected.is_some()
+            && target != ui::LogsHitTarget::MoreScrollbar
+        {
+            self.pages.logs.logs_state.more_selected = None;
         }
         match target {
             ui::LogsHitTarget::MoreScrollbar => {
-                self.logs_state.scrollbar_grab = None;
-                self.logs_state.detail_scrollbar_grab = None;
-                self.logs_state.more_scrollbar_grab =
+                self.pages.logs.logs_state.scrollbar_grab = None;
+                self.pages.logs.logs_state.detail_scrollbar_grab = None;
+                self.pages.logs.logs_state.more_scrollbar_grab =
                     layout.menu_scrollbar.map(|bar| bar.grab_at(point));
                 self.drag_logs_scrollbar(point);
             }
             ui::LogsHitTarget::Scrollbar => {
-                self.logs_state.detail_scrollbar_grab = None;
-                self.logs_state.scrollbar_grab = Some(
+                self.pages.logs.logs_state.detail_scrollbar_grab = None;
+                self.pages.logs.logs_state.scrollbar_grab = Some(
                     layout
                         .content
                         .list_scrollbar
@@ -252,8 +256,8 @@ impl ShellSession {
                 self.drag_logs_scrollbar(point);
             }
             ui::LogsHitTarget::DetailScrollbar => {
-                self.logs_state.scrollbar_grab = None;
-                self.logs_state.detail_scrollbar_grab =
+                self.pages.logs.logs_state.scrollbar_grab = None;
+                self.pages.logs.logs_state.detail_scrollbar_grab =
                     layout.detail_scrollbar.map(|bar| bar.grab_at(point));
                 self.drag_logs_scrollbar(point);
             }
@@ -266,9 +270,9 @@ impl ShellSession {
                     PointerButton::Left,
                     Instant::now(),
                 );
-                self.logs_state.selected = index;
-                self.logs_state.paused = true;
-                self.logs_state.detail_scroll = 0;
+                self.pages.logs.logs_state.selected = index;
+                self.pages.logs.logs_state.paused = true;
+                self.pages.logs.logs_state.detail_scroll = 0;
                 if click == ClickKind::Double {
                     self.logs_open_selected();
                 }
@@ -284,10 +288,10 @@ impl ShellSession {
             return;
         };
         let layout = ui::logs_layout(main, &self.to_logs_view_model());
-        if let Some(grab) = self.logs_state.more_scrollbar_grab {
+        if let Some(grab) = self.pages.logs.logs_state.more_scrollbar_grab {
             if let Some(bar) = layout.menu_scrollbar {
                 let selected = bar.offset_at(point, grab) + bar.viewport_len.saturating_sub(1);
-                self.logs_state.more_selected = Some(selected);
+                self.pages.logs.logs_state.more_selected = Some(selected);
                 if !ui::logs_control_enabled(
                     &self.to_logs_view_model(),
                     ui::logs_more_controls()[selected].0,
@@ -299,9 +303,9 @@ impl ShellSession {
             }
             return;
         }
-        if let Some(grab) = self.logs_state.detail_scrollbar_grab {
+        if let Some(grab) = self.pages.logs.logs_state.detail_scrollbar_grab {
             if let Some(bar) = layout.detail_scrollbar {
-                self.logs_state.detail_scroll = bar.offset_at(point, grab);
+                self.pages.logs.logs_state.detail_scroll = bar.offset_at(point, grab);
             } else {
                 self.cancel_logs_pointer_gesture();
             }
@@ -315,16 +319,16 @@ impl ShellSession {
         let scrollbar =
             ui::components::Scrollbar::new(count, layout.visible_capacity, layout.visible_start);
         let (_, thumb) = scrollbar.thumb_range(bar.track);
-        self.logs_state.scroll = scrollbar_window_start(
+        self.pages.logs.logs_state.scroll = scrollbar_window_start(
             point.1,
-            self.logs_state.scrollbar_grab.unwrap_or(0),
+            self.pages.logs.logs_state.scrollbar_grab.unwrap_or(0),
             bar.track.y,
             bar.track.height,
             thumb,
             count,
             layout.visible_capacity,
         );
-        self.logs_state.explicit_scroll = true;
-        self.logs_state.paused = true;
+        self.pages.logs.logs_state.explicit_scroll = true;
+        self.pages.logs.logs_state.paused = true;
     }
 }

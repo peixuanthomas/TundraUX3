@@ -216,6 +216,7 @@ fn launcher_scrollbars_reach_tail_in_both_views_without_launch_or_reorder() {
         ui::LauncherViewMode::Details,
     ] {
         let mut state = state((72, 20));
+        state.enter_screen(ShellScreen::Launcher);
         state.app.dispatch_at(
             app::AppCommand::SetLauncherState(Some(LauncherState {
                 items: (0..30)
@@ -235,8 +236,7 @@ fn launcher_scrollbars_reach_tail_in_both_views_without_launch_or_reorder() {
             })),
             Instant::now(),
         );
-        state.enter_screen(ShellScreen::Launcher);
-        state.launcher_view_mode = mode;
+        state.pages.launcher.launcher_view_mode = mode;
         state.refresh_hit_map();
         let original = state.app.launcher_state().unwrap().items.clone();
         let main = main_area(&state);
@@ -260,7 +260,7 @@ fn launcher_scrollbars_reach_tail_in_both_views_without_launch_or_reorder() {
         );
         assert_eq!(state.active_screen(), ShellScreen::Launcher);
         assert_eq!(state.app.launcher_state().unwrap().items, original);
-        assert!(state.launcher_drag.is_none());
+        assert!(state.pages.launcher.launcher_drag.is_none());
         assert!(state.scrollbar_drag.is_none());
     }
 }
@@ -269,7 +269,7 @@ fn launcher_scrollbars_reach_tail_in_both_views_without_launch_or_reorder() {
 fn launcher_open_button_waits_for_release_and_drag_cancels_activation() {
     let mut state = state((72, 20));
     state.enter_screen(ShellScreen::Launcher);
-    state.launcher_selected_index = state
+    state.pages.launcher.launcher_selected_index = state
         .built_in_launcher_applications()
         .iter()
         .position(|app| app.id == app::EDITOR_APPLICATION.id)

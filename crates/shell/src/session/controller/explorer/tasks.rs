@@ -484,8 +484,8 @@ impl ShellSession {
             .explorer_state()
             .is_some_and(|state| state.confirm_name_conflicts);
         if confirm_conflicts && !conflicts.is_empty() {
-            self.explorer_overlay_selection = 0;
-            self.explorer_conflict_apply_to_remaining = false;
+            self.pages.explorer.explorer_overlay_selection = 0;
+            self.pages.explorer.explorer_conflict_apply_to_remaining = false;
             let (source, target) = conflicts[0].clone();
             let _ = self.update_explorer_state(|state| {
                 state.pending_conflict = Some(ExplorerConflict {
@@ -668,7 +668,22 @@ impl ShellSession {
             .unwrap_or_else(|| "Guest".to_string());
         let operation = plan.operation();
         match runtime.submit(plan, kind, actor) {
-            Ok(_) => {
+            Ok(id) => {
+                let cancel = runtime.clone();
+                let finished = runtime.clone();
+                self.register_page_task(
+                    TaskDomain::Explorer,
+                    id.0,
+                    TaskClass::Operation,
+                    TaskControl::new(
+                        move || {
+                            if cancel.context_for(id).is_some() {
+                                cancel.cancel_active();
+                            }
+                        },
+                        move || finished.context_for(id).is_none(),
+                    ),
+                );
                 let _ = self.update_explorer_state(|state| {
                     state.pending_conflict = None;
                     state.pending_transfer = None;
@@ -685,7 +700,7 @@ impl ShellSession {
                         cancellable: true,
                     });
                 });
-                self.error_message = None;
+                self.pages.common.error_message = None;
                 self.resolve_explorer_alert();
                 self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-explorer-operation-started"
@@ -698,8 +713,8 @@ impl ShellSession {
                 let _ = self.update_explorer_state(|state| {
                     state.error = Some(message.clone());
                 });
-                self.error_message = Some(message.clone());
-                self.notify_alert_with_key(
+                self.pages.common.error_message = Some(message.clone());
+                self.notify_page_alert_with_key(
                     EXPLORER_ALERT_KEY,
                     message,
                     ui::NotificationTone::Error,
@@ -748,6 +763,93 @@ impl ShellSession {
         event: ExplorerTaskEvent,
         platform: &dyn Platform,
     ) {
+        let id = match &event {
+            ExplorerTaskEvent::Accepted { id }
+            | ExplorerTaskEvent::PhaseChanged { id, .. }
+            | ExplorerTaskEvent::PlanningProgress { id, .. }
+            | ExplorerTaskEvent::Progress { id, .. }
+            | ExplorerTaskEvent::ItemCompleted { id, .. }
+            | ExplorerTaskEvent::ItemSkipped { id, .. }
+            | ExplorerTaskEvent::ItemFailed { id, .. }
+            | ExplorerTaskEvent::Finished { id, .. }
+            | ExplorerTaskEvent::Panicked { id, .. } => *id,
+        };
+        let done = matches!(
+            &event,
+            ExplorerTaskEvent::Finished { .. } | ExplorerTaskEvent::Panicked { .. }
+        );
+        match self.tasks.owner(TaskDomain::Explorer, id.0) {
+            Some(TaskOwner::Page(owner)) if self.page_screen(owner).is_some() => {
+                self.with_page_context(owner, |session| {
+                    session.apply_explorer_page_event(event, platform)
+                });
+            }
+            Some(TaskOwner::Session) => self.apply_explorer_session_event(event),
+            _ => {
+                if done && let Some(runtime) = &self.explorer_task_runtime {
+                    runtime.finish(id);
+                }
+            }
+        }
+        if done {
+            self.tasks.complete(TaskDomain::Explorer, id.0);
+        }
+    }
+
+    fn apply_explorer_session_event(&mut self, event: ExplorerTaskEvent) {
+        match event {
+            ExplorerTaskEvent::Finished { id, summary } => {
+                if let Some(runtime) = &self.explorer_task_runtime {
+                    runtime.finish(id);
+                }
+                let detail =
+                    explorer_task_error_detail(summary.fatal_error.as_ref(), &summary.failures);
+                let message = if summary.cancelled {
+                    i18n::msg!(
+                        "shell-operation-cancelled-arg1-succeeded-arg2-failedarg3",
+                        arg1 = summary.succeeded_items,
+                        arg2 = summary.failed_items,
+                        arg3 = detail.unwrap_or_else(|| "".into())
+                    )
+                } else if summary.failed_items > 0 || summary.fatal_error.is_some() {
+                    i18n::msg!(
+                        "shell-operation-finished-with-errors-arg1-succeeded-arg2-failedarg3",
+                        arg1 = summary.succeeded_items,
+                        arg2 = summary.failed_items,
+                        arg3 = detail.unwrap_or_else(|| "".into())
+                    )
+                } else {
+                    i18n::msg!(
+                        "shell-operation-complete-arg1-succeeded-arg2-skipped",
+                        arg1 = summary.succeeded_items,
+                        arg2 = summary.skipped_items
+                    )
+                };
+                self.notify_alert_with_key(
+                    format!("explorer.task.{}", id.0),
+                    message,
+                    if summary.failed_items > 0 || summary.fatal_error.is_some() {
+                        ui::NotificationTone::Error
+                    } else {
+                        ui::NotificationTone::Info
+                    },
+                );
+            }
+            ExplorerTaskEvent::Panicked { id, message, .. } => {
+                if let Some(runtime) = &self.explorer_task_runtime {
+                    runtime.finish(id);
+                }
+                self.notify_alert_with_key(
+                    format!("explorer.task.{}", id.0),
+                    message,
+                    ui::NotificationTone::Error,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_explorer_page_event(&mut self, event: ExplorerTaskEvent, platform: &dyn Platform) {
         match event {
             ExplorerTaskEvent::Accepted { .. } => {}
             ExplorerTaskEvent::PhaseChanged { id, phase } => {
@@ -817,7 +919,7 @@ impl ShellSession {
                     state.message = Some(detail.clone());
                     state.error = Some(detail.clone());
                 });
-                self.error_message = Some(detail);
+                self.pages.common.error_message = Some(detail);
                 self.apply_explorer_command(ExplorerCommand::Refresh, platform);
             }
             ExplorerTaskEvent::Finished { id, summary } => {
@@ -909,14 +1011,14 @@ impl ShellSession {
                     state.error = has_error.then_some(message.clone());
                 });
                 if has_error {
-                    self.error_message = Some(message.clone());
-                    self.notify_alert_with_key(
+                    self.pages.common.error_message = Some(message.clone());
+                    self.notify_page_alert_with_key(
                         EXPLORER_ALERT_KEY,
                         message,
                         ui::NotificationTone::Error,
                     );
                 } else {
-                    self.error_message = None;
+                    self.pages.common.error_message = None;
                     self.resolve_explorer_alert();
                     self.notify_status(message);
                 }
@@ -971,8 +1073,8 @@ impl ShellSession {
             state.operation = None;
             state.error = Some(message.clone());
         });
-        self.error_message = Some(message.clone());
-        self.notify_alert_with_key(EXPLORER_ALERT_KEY, message, ui::NotificationTone::Error);
+        self.pages.common.error_message = Some(message.clone());
+        self.notify_page_alert_with_key(EXPLORER_ALERT_KEY, message, ui::NotificationTone::Error);
     }
 }
 

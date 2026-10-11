@@ -60,23 +60,23 @@ impl ShellSession {
             Some(ResolvedExplorerOverlay::Input(_)) => {
                 return match &key.key {
                     InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
-                    InputKey::Enter if self.explorer_overlay_selection == 0 => {
+                    InputKey::Enter if self.pages.explorer.explorer_overlay_selection == 0 => {
                         (target, ShellCommand::SubmitExplorerInput)
                     }
                     InputKey::Enter | InputKey::Char(' ')
-                        if self.explorer_overlay_selection != 0
+                        if self.pages.explorer.explorer_overlay_selection != 0
                             && key.phase == InputPhase::Press
                             && key.is_unmodified_action_key() =>
                     {
                         (target, ShellCommand::ExplorerOverlayActivate)
                     }
                     InputKey::Backspace | InputKey::Delete
-                        if self.explorer_overlay_selection == 0 =>
+                        if self.pages.explorer.explorer_overlay_selection == 0 =>
                     {
                         (target, ShellCommand::ExplorerBackspace)
                     }
                     InputKey::Char(character)
-                        if self.explorer_overlay_selection == 0
+                        if self.pages.explorer.explorer_overlay_selection == 0
                             && !key.has_non_shift_modifier() =>
                     {
                         (target, ShellCommand::AppendExplorerChar(*character))
@@ -102,7 +102,7 @@ impl ShellSession {
                 return match &key.key {
                     InputKey::Enter | InputKey::Char(' ') if key.is_unmodified_action_key() => (
                         target,
-                        if self.explorer_overlay_selection == 0 {
+                        if self.pages.explorer.explorer_overlay_selection == 0 {
                             confirm.clone()
                         } else {
                             ShellCommand::CancelExplorerInput
@@ -120,7 +120,7 @@ impl ShellSession {
         }
 
         if matches!(
-            self.explorer_input_mode,
+            self.pages.explorer.explorer_input_mode,
             ExplorerInputMode::Address | ExplorerInputMode::Search
         ) {
             return match &key.key {
@@ -131,7 +131,7 @@ impl ShellSession {
                 | InputKey::Home
                 | InputKey::End
                 | InputKey::Delete
-                    if self.explorer_input_mode == ExplorerInputMode::Address
+                    if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address
                         && !key.has_non_shift_modifier() =>
                 {
                     (
@@ -140,7 +140,7 @@ impl ShellSession {
                     )
                 }
                 InputKey::Char('a' | 'A')
-                    if self.explorer_input_mode == ExplorerInputMode::Address
+                    if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address
                         && (key.modifiers.control || key.modifiers.super_key)
                         && !key.modifiers.alt =>
                 {

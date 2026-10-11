@@ -77,17 +77,18 @@ impl ShellSession {
             return;
         }
         let Some(actor) = self.app.auth_session().cloned() else {
-            self.error_message = Some(i18n::msg!("settings-login-required").into());
+            self.pages.common.error_message = Some(i18n::msg!("settings-login-required").into());
             return;
         };
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::msg!("settings-storage-unavailable").into());
+            self.pages.common.error_message =
+                Some(i18n::msg!("settings-storage-unavailable").into());
             return;
         };
         let config = match storage.load_config() {
             Ok(config) => config,
             Err(error) => {
-                self.error_message =
+                self.pages.common.error_message =
                     Some(i18n::msg!("settings-load-failed", reason = error.to_string()).into());
                 self.notify_status(i18n::msg!("settings-unavailable"));
                 return;
@@ -98,7 +99,7 @@ impl ShellSession {
         let appearance = match users.current_user_appearance(&actor) {
             Ok(appearance) => appearance,
             Err(error) => {
-                self.error_message = Some(
+                self.pages.common.error_message = Some(
                     i18n::msg!(
                         "settings-appearance-load-failed",
                         reason = error.to_string()
@@ -121,7 +122,8 @@ impl ShellSession {
             app::AppCommand::SetActiveAppearance(Some(appearance)),
             Instant::now(),
         );
-        self.settings_state = Some(SettingsState {
+        self.enter_new_page(ShellScreen::Settings);
+        self.pages.settings.settings_state = Some(SettingsState {
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
             status: i18n::msg!("settings-ready").into(),
@@ -133,14 +135,12 @@ impl ShellSession {
             time_sync_server_editor: None,
             time_sync_validation_request_id: None,
         });
-        self.enter_screen(ShellScreen::Settings);
-        self.error_message = None;
+        self.pages.common.error_message = None;
         self.notify_status(i18n::msg!("settings-title"));
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_settings(&mut self) {
-        self.settings_state = None;
         self.return_from_screen(ShellScreen::Settings);
     }
 
@@ -175,21 +175,26 @@ impl ShellSession {
         key: &KeyInput,
         platform: &dyn Platform,
     ) {
-        if self.settings_state.is_none() || key.phase == InputPhase::Release {
+        if self.pages.settings.settings_state.is_none() || key.phase == InputPhase::Release {
             return;
         }
-        let editing_text = self.settings_state.as_ref().is_some_and(|state| {
-            state.time_sync_server_editor.is_some()
-                || state.file_extensions_editor.is_some()
-                || state.weather_location_editor.is_some()
-                || state.color_editor.is_some()
-                || state.picker.as_ref().is_some_and(|picker| {
-                    matches!(
-                        picker.kind,
-                        ui::SettingsPickerKind::Language | ui::SettingsPickerKind::Timezone
-                    )
-                })
-        });
+        let editing_text = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| {
+                state.time_sync_server_editor.is_some()
+                    || state.file_extensions_editor.is_some()
+                    || state.weather_location_editor.is_some()
+                    || state.color_editor.is_some()
+                    || state.picker.as_ref().is_some_and(|picker| {
+                        matches!(
+                            picker.kind,
+                            ui::SettingsPickerKind::Language | ui::SettingsPickerKind::Timezone
+                        )
+                    })
+            });
         if key.phase == InputPhase::Repeat
             && (matches!(key.key, InputKey::Enter | InputKey::Escape)
                 || (key.key == InputKey::Char(' ') && !editing_text))
@@ -219,6 +224,8 @@ impl ShellSession {
             return;
         }
         if self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .is_some_and(|state| state.time_sync_server_editor.is_some())
@@ -227,6 +234,8 @@ impl ShellSession {
             return;
         }
         if self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .is_some_and(|state| state.file_extensions_editor.is_some())
@@ -235,6 +244,8 @@ impl ShellSession {
             return;
         }
         if self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .is_some_and(|state| state.weather_location_editor.is_some())
@@ -243,6 +254,8 @@ impl ShellSession {
             return;
         }
         if self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .is_some_and(|state| state.color_editor.is_some())
@@ -251,6 +264,8 @@ impl ShellSession {
             return;
         }
         if self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .is_some_and(|state| state.picker.is_some())
@@ -272,6 +287,8 @@ impl ShellSession {
             InputKey::Home => self.select_settings_field_at(0),
             InputKey::End => {
                 let last = self
+                    .pages
+                    .settings
                     .settings_state
                     .as_ref()
                     .map(|state| settings_fields(state.category).len().saturating_sub(1))
@@ -293,7 +310,7 @@ impl ShellSession {
         input: MouseInput,
         platform: &dyn Platform,
     ) {
-        if self.settings_state.is_none() {
+        if self.pages.settings.settings_state.is_none() {
             return;
         }
         if let Some(direction) = input.scroll_direction() {
@@ -303,6 +320,8 @@ impl ShellSession {
                 ScrollDirection::Left | ScrollDirection::Right => return,
             };
             if self
+                .pages
+                .settings
                 .settings_state
                 .as_ref()
                 .is_some_and(|state| state.picker.is_some())
@@ -340,7 +359,7 @@ impl ShellSession {
                 self.handle_settings_key(&KeyInput::new(InputKey::Escape), platform)
             }
             Some(ui::SettingsHitTarget::AdjustField(field, delta)) => {
-                if let Some(state) = self.settings_state.as_mut() {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.selected_field = field;
                 }
                 self.adjust_selected_setting(delta, platform);
@@ -351,7 +370,7 @@ impl ShellSession {
                 self.select_settings_category(category);
             }
             Some(ui::SettingsHitTarget::Field(field)) => {
-                if let Some(state) = self.settings_state.as_mut() {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.selected_field = field;
                 }
                 if field == ui::SettingsField::AnimationSpeed {
@@ -361,7 +380,7 @@ impl ShellSession {
                 }
             }
             Some(ui::SettingsHitTarget::PickerOption(index)) => {
-                if let Some(state) = self.settings_state.as_mut()
+                if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(picker) = state.picker.as_mut()
                 {
                     picker.selected_index = index;
@@ -378,7 +397,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_settings_category_delta(&mut self, delta: isize) {
-        let Some(current) = self.settings_state.as_ref().map(|state| state.category) else {
+        let Some(current) = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .map(|state| state.category)
+        else {
             return;
         };
         let index = ui::SettingsCategory::ALL
@@ -391,7 +416,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_settings_category(&mut self, category: ui::SettingsCategory) {
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.category = category;
             state.selected_field = settings_fields(category)[0];
             state.scroll_offset = 0;
@@ -413,7 +438,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_settings_field_delta(&mut self, delta: isize) {
-        let Some(state) = self.settings_state.as_ref() else {
+        let Some(state) = self.pages.settings.settings_state.as_ref() else {
             return;
         };
         let fields = settings_fields(state.category);
@@ -427,7 +452,7 @@ impl ShellSession {
 
     pub(in crate::session) fn select_settings_field_at(&mut self, index: usize) {
         {
-            let Some(state) = self.settings_state.as_mut() else {
+            let Some(state) = self.pages.settings.settings_state.as_mut() else {
                 return;
             };
             let fields = settings_fields(state.category);
@@ -435,7 +460,7 @@ impl ShellSession {
         }
         if let Some(layout) = self.current_settings_layout()
             && let Some(row) = layout.selected_field_row
-            && let Some(state) = self.settings_state.as_mut()
+            && let Some(state) = self.pages.settings.settings_state.as_mut()
         {
             state.scroll_offset = if row < layout.scroll_offset {
                 row
@@ -454,7 +479,7 @@ impl ShellSession {
             return;
         };
         let next = settings_scroll_offset(layout.scroll_offset, delta, layout.max_scroll_offset);
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.scroll_offset = next;
         }
     }
@@ -476,7 +501,7 @@ impl ShellSession {
         else {
             return;
         };
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.scroll_offset = scroll_offset;
         }
     }
@@ -486,6 +511,8 @@ impl ShellSession {
             return;
         }
         let Some(field) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .map(|state| state.selected_field)
@@ -534,6 +561,8 @@ impl ShellSession {
             return;
         }
         let Some(field) = self
+            .pages
+            .settings
             .settings_state
             .as_ref()
             .map(|state| state.selected_field)
@@ -785,7 +814,7 @@ impl ShellSession {
             return;
         }
         self.replace_storage_config(config);
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.status = settings_saved_field(field).into();
         }
         self.notify_status(settings_saved_field(field));
@@ -817,7 +846,7 @@ impl ShellSession {
                     app::AppCommand::SetActiveAppearance(Some(account.appearance)),
                     Instant::now(),
                 );
-                if let Some(state) = self.settings_state.as_mut() {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.status = message.clone();
                 }
                 self.notify_status(message);
@@ -858,7 +887,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn request_settings_restore_defaults(&mut self) {
-        let Some(category) = self.settings_state.as_ref().map(|state| state.category) else {
+        let Some(category) = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .map(|state| state.category)
+        else {
             return;
         };
         if category.is_system_device() {
@@ -889,7 +924,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn restore_settings_defaults(&mut self) {
-        let Some(category) = self.settings_state.as_ref().map(|state| state.category) else {
+        let Some(category) = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .map(|state| state.category)
+        else {
             return;
         };
         if category.is_system_device() {
@@ -972,7 +1013,7 @@ impl ShellSession {
         if let Some((catalog, loaded)) = candidate {
             self.publish_language(catalog, loaded);
         }
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.status = i18n::msg!(
                 "settings-restored-category",
                 category = format!("{category:?}")
@@ -990,7 +1031,7 @@ impl ShellSession {
         message: impl Into<i18n::LocalizedText>,
     ) {
         let message = message.into();
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.status = i18n::msg!("settings-error", reason = message.clone()).into();
         }
         self.notify_status(i18n::msg!("settings-status-error", reason = message));

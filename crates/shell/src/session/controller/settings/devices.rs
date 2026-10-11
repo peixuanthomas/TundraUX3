@@ -66,13 +66,19 @@ impl ShellSession {
 
     /// All keyboard and pointer activation paths share this availability guard.
     pub(super) fn block_unavailable_system_setting(&mut self) -> bool {
-        let Some(category) = self.settings_state.as_ref().map(|state| state.category) else {
+        let Some(category) = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .map(|state| state.category)
+        else {
             return false;
         };
         let Some(reason) = self.system_settings_unavailable_reason(category) else {
             return false;
         };
-        if let Some(state) = self.settings_state.as_mut() {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.status = reason.into();
         }
         true

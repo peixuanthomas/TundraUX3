@@ -64,6 +64,8 @@ mod localization;
 mod motion_effects;
 mod navigation;
 use navigation::{NavigationCheckpoint, ShellNavigation};
+mod page_state;
+use page_state::ShellPages;
 mod overlay_focus;
 mod overlay_input;
 mod overlays;
@@ -99,3 +101,8 @@ pub(in crate::session) struct ShellRuntimeServices {
     editor: ShellEditorTaskRuntime,
     settings: ShellSettingsTaskRuntime,
 }
+
+mod tasks;
+use tasks::{ShellTasks, TaskClass, TaskControl, TaskDomain, TaskOwner};
+
+mod page_lifecycle;

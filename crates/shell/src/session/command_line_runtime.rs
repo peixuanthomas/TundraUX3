@@ -1,10 +1,12 @@
 //! Connects the Command Line page to the independent terminal runtime.
-use crate::{InputEvent, InputKey, KeyInput};
+use crate::{InputEvent, InputKey, PageInstanceId};
 use platform::Platform;
 use ratatui::layout::Rect;
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) use terminal_runtime::pty::*;
 use watchdog::{AppWatchdog, ComponentId, ManagedTaskGroup};
 const SCROLL_LINES_PER_NOTCH: usize = 3;
@@ -24,7 +26,7 @@ enum CommandLineHostState {
     Failed { message: String },
 }
 
-/// Owns the PTY only while the Command Line screen is active. The ordinary
+/// Owns one page instance's PTY, including while another page covers it. The ordinary
 /// Shell state remains cloneable and deterministic for controller tests.
 pub struct CommandLineHost {
     state: CommandLineHostState,
@@ -170,14 +172,6 @@ impl CommandLineHost {
         input: &InputEvent,
         terminal_area: Option<Rect>,
     ) -> CommandLineHostEvent {
-        if let InputEvent::Key(key) = input
-            && key.phase.is_press_like()
-            && is_emergency_termination(key)
-        {
-            self.terminate();
-            return CommandLineHostEvent::ExitToCaller;
-        }
-
         match &self.state {
             CommandLineHostState::Exited { .. } | CommandLineHostState::Failed { .. } => {
                 if let InputEvent::Key(key) = input
@@ -188,7 +182,6 @@ impl CommandLineHost {
                             self.install_blank_snapshot();
                             self.state = CommandLineHostState::Inactive;
                         }
-                        InputKey::Escape => return CommandLineHostEvent::ExitToCaller,
                         _ => {}
                     }
                 }
@@ -253,13 +246,23 @@ impl CommandLineHost {
         }
     }
 
-    pub fn terminate(&mut self) {
-        let previous = std::mem::replace(&mut self.state, CommandLineHostState::Inactive);
-        if let CommandLineHostState::Running(pty) = previous {
-            let _ = pty.force_terminate();
-            drop(pty);
+    pub fn is_running(&self) -> bool {
+        matches!(self.state, CommandLineHostState::Running(_))
+    }
+
+    /// A confirmed close must report a failure instead of hiding a live child.
+    pub fn try_terminate(&mut self) -> io::Result<()> {
+        if let CommandLineHostState::Running(pty) = &self.state {
+            pty.force_terminate()?;
         }
+        let previous = std::mem::replace(&mut self.state, CommandLineHostState::Inactive);
+        drop(previous);
         self.install_blank_snapshot();
+        Ok(())
+    }
+
+    pub fn terminate(&mut self) {
+        let _ = self.try_terminate();
     }
 
     fn handle_mouse(&mut self, mouse: ui::MouseEvent, terminal_area: Rect) {
@@ -364,6 +367,236 @@ impl Drop for CommandLineHost {
     }
 }
 
+/// Runtime resources follow page ids, rather than whichever page happens to be
+/// visible. ShellSession can therefore save ordinary page state without cloning
+/// a PTY, and covering a terminal never stops its process or output reader.
+pub(super) struct CommandLineHosts {
+    hosts: HashMap<PageInstanceId, CommandLineHost>,
+    tasks: HashMap<PageInstanceId, CommandLineTask>,
+    empty: CommandLineHost,
+    watchdog: AppWatchdog,
+}
+
+struct CommandLineTask {
+    request: u64,
+    cancelled: Arc<AtomicBool>,
+    finished: Arc<AtomicBool>,
+}
+
+impl Drop for CommandLineHosts {
+    fn drop(&mut self) {
+        let _ = self.terminate_all();
+    }
+}
+
+impl CommandLineHosts {
+    pub(super) fn new(watchdog: AppWatchdog) -> Self {
+        Self {
+            hosts: HashMap::new(),
+            tasks: HashMap::new(),
+            empty: CommandLineHost::new(watchdog.clone()),
+            watchdog,
+        }
+    }
+
+    pub(super) fn visible_host(&self, state: &super::ShellSession) -> &CommandLineHost {
+        self.hosts
+            .get(&state.content_page_id())
+            .unwrap_or(&self.empty)
+    }
+
+    pub(super) fn has_running_processes(&self) -> bool {
+        self.hosts.values().any(CommandLineHost::is_running)
+    }
+
+    pub(super) fn terminate_all(&mut self) -> io::Result<()> {
+        let mut first_error = None;
+        for host in self.hosts.values_mut() {
+            if let Err(error) = host.try_terminate() {
+                first_error.get_or_insert(error);
+            }
+        }
+        // Drop retries failed termination and releases each host's PTY handles. The
+        // caller must propagate the error before allowing another session.
+        self.hosts.clear();
+        for task in self.tasks.values() {
+            task.finished.store(true, Ordering::Relaxed);
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    fn sync_tasks(&mut self, state: &mut super::ShellSession) {
+        use super::{TaskClass, TaskControl, TaskDomain, TaskOwner};
+        self.tasks.retain(|id, task| {
+            if self.hosts.get(id).is_some_and(CommandLineHost::is_running) {
+                return true;
+            }
+            task.finished.store(true, Ordering::Relaxed);
+            state.tasks.complete(TaskDomain::CommandLine, task.request);
+            false
+        });
+        for (id, host) in &self.hosts {
+            if !host.is_running() || self.tasks.contains_key(id) {
+                continue;
+            }
+            let request = PageInstanceId::new().get();
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let finished = Arc::new(AtomicBool::new(false));
+            let cancel_signal = cancelled.clone();
+            let finished_signal = finished.clone();
+            state.tasks.register(
+                TaskDomain::CommandLine,
+                request,
+                TaskOwner::Page(*id),
+                TaskClass::Operation,
+                TaskControl::new(
+                    move || cancel_signal.store(true, Ordering::Relaxed),
+                    move || finished_signal.load(Ordering::Relaxed),
+                ),
+            );
+            self.tasks.insert(
+                *id,
+                CommandLineTask {
+                    request,
+                    cancelled,
+                    finished,
+                },
+            );
+        }
+    }
+
+    pub(super) fn poll(
+        &mut self,
+        state: &mut super::ShellSession,
+        platform: &dyn Platform,
+        accent: ratatui::style::Color,
+    ) -> (bool, CommandLineHostEvent) {
+        let visible_before = (state.content_screen() == crate::ShellScreen::CommandLine)
+            .then(|| self.visible_host(state).view_model());
+        let cancelled = self
+            .tasks
+            .iter()
+            .filter(|(_, task)| task.cancelled.swap(false, Ordering::Relaxed))
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        for id in cancelled {
+            if let Some(host) = self.hosts.get_mut(&id) {
+                match host.try_terminate() {
+                    Ok(()) => state.close_page_instance(id),
+                    Err(error) => state.notify_alert_with_tone(
+                        i18n::msg!(
+                            "shell-command-line-close-failed",
+                            reason = error.to_string()
+                        ),
+                        ui::NotificationTone::Error,
+                    ),
+                }
+            }
+        }
+        let live_ids = state.live_page_ids();
+        self.hosts.retain(|id, _| live_ids.contains(id));
+
+        if state.content_screen() == crate::ShellScreen::CommandLine {
+            let id = state.content_page_id();
+            let host = self
+                .hosts
+                .entry(id)
+                .or_insert_with(|| CommandLineHost::new(self.watchdog.clone()));
+            host.ensure_started(
+                platform,
+                state.current_home_username().unwrap_or("tundra"),
+                accent,
+                state.command_line_start_directory_for(id),
+            );
+        }
+
+        let mut completed = Vec::new();
+        let mut shell_event = CommandLineHostEvent::None;
+        for (id, host) in &mut self.hosts {
+            match host.poll() {
+                CommandLineHostEvent::None => {}
+                CommandLineHostEvent::ExitToCaller => completed.push(*id),
+                CommandLineHostEvent::PanicRequested => {
+                    shell_event = CommandLineHostEvent::PanicRequested;
+                }
+                CommandLineHostEvent::ResetRequested
+                    if shell_event != CommandLineHostEvent::PanicRequested =>
+                {
+                    shell_event = CommandLineHostEvent::ResetRequested;
+                }
+                CommandLineHostEvent::ResetRequested => {}
+            }
+        }
+        for id in completed {
+            self.hosts.remove(&id);
+            state.close_page_instance(id);
+        }
+
+        self.process_close_request(state);
+        self.sync_tasks(state);
+        if state.content_screen() == crate::ShellScreen::CommandLine {
+            let (width, height) = state.terminal_size();
+            if let Some(host) = self.hosts.get_mut(&state.content_page_id())
+                && let Some(area) = ui::command_line_terminal_area(Rect::new(0, 0, width, height))
+            {
+                host.resize_to_area(area);
+            }
+        }
+        let visible_after = (state.content_screen() == crate::ShellScreen::CommandLine)
+            .then(|| self.visible_host(state).view_model());
+        (visible_before != visible_after, shell_event)
+    }
+
+    fn process_close_request(&mut self, state: &mut super::ShellSession) {
+        let Some((id, confirmed)) = state.command_line_close_request.take() else {
+            return;
+        };
+        if state.active_page_id() != id
+            || state.active_screen() != crate::ShellScreen::CommandLine
+            || (!confirmed && !state.interactive_overlays().is_empty())
+        {
+            return;
+        }
+        let running = self.hosts.get(&id).is_some_and(CommandLineHost::is_running);
+        if running && !confirmed {
+            state.show_command_line_close_confirmation(id);
+            return;
+        }
+        if let Some(host) = self.hosts.get_mut(&id)
+            && let Err(error) = host.try_terminate()
+        {
+            state.notify_alert_with_tone(
+                i18n::msg!(
+                    "shell-command-line-close-failed",
+                    reason = error.to_string()
+                ),
+                ui::NotificationTone::Error,
+            );
+            return;
+        }
+        self.hosts.remove(&id);
+        state.close_page_instance(id);
+    }
+
+    pub(super) fn handle_input(
+        &mut self,
+        state: &super::ShellSession,
+        input: &InputEvent,
+        terminal_area: Option<Rect>,
+    ) -> CommandLineHostEvent {
+        if state.active_screen() != crate::ShellScreen::CommandLine
+            || !state.interactive_overlays().is_empty()
+        {
+            return CommandLineHostEvent::None;
+        }
+        self.hosts
+            .get_mut(&state.active_page_id())
+            .map_or(CommandLineHostEvent::None, |host| {
+                host.handle_input(input, terminal_area)
+            })
+    }
+}
+
 fn resolve_tundra_cli_program() -> io::Result<PathBuf> {
     let current = std::env::current_exe()?;
     let parent = current.parent().ok_or_else(|| {
@@ -386,16 +619,6 @@ fn resolve_tundra_cli_program() -> io::Result<PathBuf> {
         ));
     }
     Ok(program)
-}
-
-fn is_emergency_termination(key: &KeyInput) -> bool {
-    matches!(key.key, InputKey::Char('x' | 'X'))
-        && key.modifiers.is_control()
-        && key.modifiers.shift
-        && !key.modifiers.alt
-        && !key.modifiers.super_key
-        && !key.modifiers.hyper
-        && !key.modifiers.meta
 }
 
 fn blank_terminal_snapshot() -> TerminalSnapshot {

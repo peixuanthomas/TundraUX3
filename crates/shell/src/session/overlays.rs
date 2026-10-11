@@ -200,15 +200,17 @@ impl ShellSession {
             return Some(ResolvedExplorerOverlay::OperationConflict);
         }
         if matches!(
-            self.explorer_input_mode,
+            self.pages.explorer.explorer_input_mode,
             ExplorerInputMode::NewFolder
                 | ExplorerInputMode::NewTextFile
                 | ExplorerInputMode::Rename
                 | ExplorerInputMode::RestoreDestination
         ) {
-            return Some(ResolvedExplorerOverlay::Input(self.explorer_input_mode));
+            return Some(ResolvedExplorerOverlay::Input(
+                self.pages.explorer.explorer_input_mode,
+            ));
         }
-        if let Some(mode) = self.explorer_overlay_mode {
+        if let Some(mode) = self.pages.explorer.explorer_overlay_mode {
             return Some(ResolvedExplorerOverlay::Semantic(mode));
         }
         explorer
@@ -241,13 +243,17 @@ impl ShellSession {
             ShellScreen::Editor if self.config_editor_form_visible() => self
                 .management_overlay_id()
                 .map(|id| (id, ShellComponent::Editor)),
-            ShellScreen::SystemStatus if self.system_status_discard_dialog => {
+            ShellScreen::SystemStatus if self.pages.system_status.system_status_discard_dialog => {
                 Some(("system-status-discard", ShellComponent::SystemStatus))
             }
-            ShellScreen::SystemStatus if self.system_status_add_picker.is_some() => {
+            ShellScreen::SystemStatus
+                if self.pages.system_status.system_status_add_picker.is_some() =>
+            {
                 Some(("system-status-add", ShellComponent::SystemStatus))
             }
-            ShellScreen::SystemStatus if self.system_status_size_picker.is_some() => {
+            ShellScreen::SystemStatus
+                if self.pages.system_status.system_status_size_picker.is_some() =>
+            {
                 Some(("system-status-size", ShellComponent::SystemStatus))
             }
             _ => None,
@@ -260,7 +266,7 @@ impl ShellSession {
             ));
         }
         if self.content_screen() == ShellScreen::Launcher
-            && let Some(confirmation) = self.launcher_pending_confirmation.as_ref()
+            && let Some(confirmation) = self.pages.launcher.launcher_pending_confirmation.as_ref()
         {
             let id = match confirmation {
                 LauncherPendingConfirmation::Launch { id, kind, .. } => {
@@ -279,7 +285,7 @@ impl ShellSession {
             });
         }
         if self.content_screen() == ShellScreen::Editor
-            && let Some(menu) = self.editor_open_menu
+            && let Some(menu) = self.pages.editor.editor_open_menu
         {
             return Some(ShellOverlayDescriptor {
                 kind: ui::MotionOverlayKind::Popover,
@@ -289,7 +295,9 @@ impl ShellSession {
                 immediate: false,
             });
         }
-        if self.content_screen() == ShellScreen::Editor && self.editor_quick_menu_anchor.is_some() {
+        if self.content_screen() == ShellScreen::Editor
+            && self.pages.editor.editor_quick_menu_anchor.is_some()
+        {
             return Some(ShellOverlayDescriptor {
                 kind: ui::MotionOverlayKind::Popover,
                 id: "editor-quick-menu".into(),
@@ -300,6 +308,8 @@ impl ShellSession {
         }
         if self.content_screen() == ShellScreen::Settings
             && let Some(picker) = self
+                .pages
+                .settings
                 .settings_state
                 .as_ref()
                 .and_then(|settings| settings.picker.as_ref())
@@ -313,26 +323,28 @@ impl ShellSession {
             });
         }
         let page_dialog = if self.content_screen() == ShellScreen::FirstRunSetup
-            && self.setup_custom_color_target.is_some()
+            && self.pages.setup.setup_custom_color_target.is_some()
         {
             Some(("setup-custom-color", ShellComponent::SetupCustomColorDialog))
-        } else if self.content_screen() == ShellScreen::Clock && self.clock_create_state.is_some() {
+        } else if self.content_screen() == ShellScreen::Clock
+            && self.pages.clock.clock_create_state.is_some()
+        {
             Some(("clock-create", ShellComponent::ClockCreateInput))
         } else if self.content_screen() == ShellScreen::Editor
-            && self.editor_settings_dialog.is_some()
+            && self.pages.editor.editor_settings_dialog.is_some()
         {
             Some(("editor-settings", ShellComponent::Editor))
         } else if matches!(
             self.content_screen(),
             ShellScreen::Diagnostics | ShellScreen::SystemStatus
-        ) && !self.diagnostics_repair_preview.is_empty()
+        ) && !self.pages.diagnostics.diagnostics_repair_preview.is_empty()
         {
             Some((
                 "diagnostics-repair",
                 ShellComponent::DiagnosticsRepairDialog,
             ))
         } else if self.content_screen() == ShellScreen::Settings
-            && let Some(settings) = self.settings_state.as_ref()
+            && let Some(settings) = self.pages.settings.settings_state.as_ref()
         {
             if let Some(editor) = settings.color_editor.as_ref() {
                 Some((
@@ -362,7 +374,7 @@ impl ShellSession {
                 component,
             ));
         }
-        let user_management_mode = match &self.user_management_mode {
+        let user_management_mode = match &self.pages.user_management.user_management_mode {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(_) => Some("user-management:create"),
             UserManagementMode::EditInfo(_) => Some("user-management:edit-info"),

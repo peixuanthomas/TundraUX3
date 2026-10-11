@@ -33,7 +33,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
         ShellHomeMode::User,
     );
     state.set_navigation_path(vec![ShellScreen::Clock]);
-    state.clock_create_state = Some(ClockCreateState::default());
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
     let full = Rect::new(0, 0, 120, 40);
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(full) else {
@@ -85,14 +85,14 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         motion.update(&state, full, full, None, theme, false);
         buffer = Buffer::filled(full, Cell::new("A"));
         motion.test_frame(Duration::ZERO, &mut buffer, &state);
-        state.login_idle_deadline = now + Duration::from_secs(1);
+        state.pages.login.login_idle_deadline = now + Duration::from_secs(1);
         (state, motion)
     }
 
     let platform = platform::mock::UnsupportedPlatform;
     let now = Instant::now();
     let (mut expired, mut expired_motion) = login_exit_fixture(now);
-    expired.login_idle_deadline = now - Duration::from_millis(1);
+    expired.pages.login.login_idle_deadline = now - Duration::from_millis(1);
     let (_, motion_blocked) = dispatch_motion_aware_input(
         &mut expired,
         &mut expired_motion,
@@ -113,7 +113,10 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(motion_blocked);
-    assert_eq!(active.login_idle_deadline, now + LOGIN_IDLE_TIMEOUT);
+    assert_eq!(
+        active.pages.login.login_idle_deadline,
+        now + LOGIN_IDLE_TIMEOUT
+    );
     assert!(active_motion.deferred_close.is_some());
 
     let (mut clicked, mut clicked_motion) = login_exit_fixture(now);
@@ -132,7 +135,10 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(motion_blocked);
-    assert_eq!(clicked.login_idle_deadline, now + LOGIN_IDLE_TIMEOUT);
+    assert_eq!(
+        clicked.pages.login.login_idle_deadline,
+        now + LOGIN_IDLE_TIMEOUT
+    );
     assert_eq!(
         clicked_motion.deferred_close.as_ref().unwrap().routed,
         active_motion.deferred_close.as_ref().unwrap().routed
@@ -381,7 +387,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     );
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
-    state.settings_state = Some(SettingsState {
+    state.pages.settings.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -399,7 +405,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     let mut buffer = Buffer::filled(full, Cell::new("N"));
     motion.test_frame(Duration::ZERO, &mut buffer, &state);
 
-    state.settings_state.as_mut().unwrap().picker = Some(theme_picker());
+    state.pages.settings.settings_state.as_mut().unwrap().picker = Some(theme_picker());
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
     let snapshot_area = Rect::new(20, 8, 30, 10);
@@ -449,7 +455,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     motion.update(&state, full, full, None, theme, false);
     buffer = Buffer::filled(full, Cell::new("N"));
     motion.test_frame(Duration::ZERO, &mut buffer, &state);
-    state.settings_state.as_mut().unwrap().picker = Some(theme_picker());
+    state.pages.settings.settings_state.as_mut().unwrap().picker = Some(theme_picker());
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
     assert_eq!(current_overlay(&state).as_ref(), Some(&original));
@@ -472,7 +478,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
         },
     });
 
-    state.settings_state.as_mut().unwrap().picker = None;
+    state.pages.settings.settings_state.as_mut().unwrap().picker = None;
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
     assert!(motion.completed_exit.is_none());
@@ -847,11 +853,11 @@ fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
     motion.update(&state, full, full, None, theme, false);
     let mut buffer = Buffer::filled(full, Cell::new("N"));
     let natural = buffer.clone();
-    state.active_popup = Some(ShellPopup {
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Home),
         anchor: (20, 10),
     });
-    state.focused_component = ShellComponent::ContextMenu;
+    state.pages.common.focused_component = ShellComponent::ContextMenu;
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
     let generic_input = state
@@ -865,20 +871,20 @@ fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
     assert_eq!(buffer, natural);
     assert!(!motion.manager.is_running());
     assert_eq!(motion.overlay_gate, Duration::ZERO);
-    state.active_popup = None;
-    state.focused_component = ShellComponent::Home;
+    state.pages.common.active_popup = None;
+    state.pages.common.focused_component = ShellComponent::Home;
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
     assert!(!motion.manager.is_running());
 
     state.set_navigation_path(vec![ShellScreen::Explorer]);
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
-    state.explorer_overlay_mode = Some(ExplorerOverlayMode::Options);
-    state.active_popup = Some(ShellPopup {
+    state.pages.explorer.explorer_overlay_mode = Some(ExplorerOverlayMode::Options);
+    state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Explorer),
         anchor: (20, 10),
     });
-    state.focused_component = ShellComponent::Explorer;
+    state.pages.common.focused_component = ShellComponent::Explorer;
     state.refresh_hit_map();
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(full) else {
         panic!("expected full layout");
@@ -1128,7 +1134,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     );
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
-    state.settings_state = Some(SettingsState {
+    state.pages.settings.settings_state = Some(SettingsState {
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -1169,7 +1175,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
         screen: Some(state.content_screen()),
         ..ShellMotionEffects::default()
     };
-    state.settings_state.as_mut().unwrap().picker = None;
+    state.pages.settings.settings_state.as_mut().unwrap().picker = None;
     state.refresh_hit_map();
     motion.update(
         &state,
@@ -1404,7 +1410,7 @@ fn page_overlay_covered_by_shell_modal(
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![screen]);
     if screen == ShellScreen::Clock {
-        state.clock_create_state = Some(ClockCreateState::default());
+        state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     } else {
         state.app.dispatch_at(
             app::AppCommand::SetEditorState(Some(EditorState::untitled(
@@ -1412,7 +1418,7 @@ fn page_overlay_covered_by_shell_modal(
             ))),
             Instant::now(),
         );
-        state.editor_open_menu = Some(ui::EditorMenu::File);
+        state.pages.editor.editor_open_menu = Some(ui::EditorMenu::File);
     }
     state.refresh_hit_map();
     let mut motion = ShellMotionEffects::default();
@@ -1492,8 +1498,8 @@ fn deferred_shell_modal_close_does_not_reenter_covered_page() {
 fn new_page_overlay_after_shell_close_still_enters() {
     let (mut state, mut motion, layout) = page_overlay_covered_by_shell_modal(ShellScreen::Editor);
     state.notification_dismiss_active_modal_without_response();
-    state.editor_quick_menu_anchor = None;
-    state.editor_open_menu = Some(ui::EditorMenu::Edit);
+    state.pages.editor.editor_quick_menu_anchor = None;
+    state.pages.editor.editor_open_menu = Some(ui::EditorMenu::Edit);
     state.refresh_hit_map();
     motion.update_layout(&state, &layout, ui::ThemeTokens::glacier_night(), false);
     assert_eq!(motion.overlay_gate, Duration::from_millis(260));
@@ -1510,7 +1516,7 @@ fn changing_pages_cancels_old_outgoing_cells_but_keeps_new_page_entry() {
     let mut old = Buffer::filled(layout.bounds, Cell::new("P"));
     motion.process(Duration::ZERO, &mut old, &state);
     assert!(motion.active_visual_outgoing.is_some());
-    state.clock_create_state = None;
+    state.pages.clock.clock_create_state = None;
     state.set_navigation_path(vec![ShellScreen::Editor]);
     state.refresh_hit_map();
     motion.focus = None;

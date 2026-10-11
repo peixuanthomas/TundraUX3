@@ -14,8 +14,8 @@ mod tests;
 /// Remembers focus for each visible overlay without owning page navigation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ShellOverlayManager {
-    screen: Option<ShellScreen>,
-    popup_origin: Option<(ShellScreen, ShellPopup)>,
+    screen: Option<PageInstanceId>,
+    popup_origin: Option<(PageInstanceId, ShellPopup)>,
     frames: Vec<OverlayFocusFrame>,
     last_focus: Option<ShellComponent>,
 }
@@ -23,7 +23,7 @@ pub(super) struct ShellOverlayManager {
 impl ShellOverlayManager {
     fn synchronize(
         &mut self,
-        screen: ShellScreen,
+        screen: PageInstanceId,
         overlays: &[ShellOverlayDescriptor],
         current: ShellComponent,
         ready: bool,
@@ -74,28 +74,28 @@ impl ShellOverlayManager {
 
 impl ShellSession {
     pub(in crate::session) fn synchronize_overlay_focus(&mut self) -> bool {
-        let screen = self.content_screen();
-        if let Some((origin, popup)) = self.overlay_manager.popup_origin
-            && origin != screen
-            && self.active_popup == Some(popup)
-        {
-            self.active_popup = None;
+        if self.pages.common.selected_id() != Some(self.active_page_id()) {
+            return false;
         }
-        self.overlay_manager.popup_origin = self.active_popup.map(|popup| (screen, popup));
+        let screen = self.content_page_id();
+        self.pages.common.overlay_manager.popup_origin =
+            self.pages.common.active_popup.map(|popup| (screen, popup));
         let overlays = self.interactive_overlays();
-        let focus = self.focused_component;
+        let focus = self.pages.common.focused_component;
         let ready = self.overlay_interaction_ready;
         let (focus, changed) = self
+            .pages
+            .common
             .overlay_manager
             .synchronize(screen, &overlays, focus, ready);
-        self.focused_component = focus;
+        self.pages.common.focused_component = focus;
         if let Some(field) = setup_field_for_component(focus) {
-            self.setup_focused_field = field;
+            self.pages.setup.setup_focused_field = field;
         }
         if changed {
             self.cancel_pointer_gestures_for_modal();
-            self.system_status_widget_drag = None;
-            self.editor_drag_anchor = None;
+            self.pages.system_status.system_status_widget_drag = None;
+            self.pages.editor.editor_drag_anchor = None;
             self.button_regions.clear();
             self.hovered_component = None;
             self.last_click = None;
@@ -115,7 +115,7 @@ impl ShellSession {
     pub(in crate::session) fn finish_modal_focus_transition(&mut self) {
         if !self.notification_has_active_modal() {
             self.notification_pointer_capture = None;
-            self.notification_message_scroll = 0;
+            self.pages.common.notification_message_scroll = 0;
         }
         if self.synchronize_overlay_focus() {
             self.refresh_hit_map();
@@ -126,11 +126,11 @@ impl ShellSession {
         self.button_pointer_capture = None;
         self.notification_pointer_capture = None;
         self.notification_scrollbar_drag = None;
-        self.diagnostics_detail_drag = None;
+        self.pages.diagnostics.diagnostics_detail_drag = None;
         self.scrollbar_drag = None;
-        self.launcher_drag = None;
+        self.pages.launcher.launcher_drag = None;
         self.drag_tracker = None;
-        self.editor_table_resize = None;
+        self.pages.editor.editor_table_resize = None;
         self.cancel_auto_admin_pointer();
         self.cancel_touch_pages_pointer();
         self.cancel_management_pointer_gesture();

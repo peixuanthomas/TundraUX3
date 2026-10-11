@@ -11,7 +11,7 @@ impl TestEditorTaskDriver {
     fn complete_next_load(&self, state: &mut ShellSession) {
         for _ in 0..400 {
             state.poll_editor_background_tasks(&platform::mock::UnsupportedPlatform);
-            if state.editor_load_state.is_none() {
+            if state.pages.editor.editor_load_state.is_none() {
                 return;
             }
             std::thread::yield_now();
@@ -105,12 +105,12 @@ fn state(role: UserRole) -> ShellSession {
         app::AppCommand::SetAuthSession(Some(session(role))),
         Instant::now(),
     );
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::SystemStatus]);
     state.app.dispatch_at(
         app::AppCommand::SetDiagnosticsSnapshot(Some(snapshot())),
         Instant::now(),
     );
-    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::SystemStatus]);
-    state.focused_component = ShellComponent::SystemStatus;
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
     state
 }
 
@@ -130,10 +130,17 @@ fn update_diagnostics_snapshot(
 fn diagnostics_toolbar_shortcuts_match_in_both_hosts_and_keep_disabled_actions_inert() {
     for standalone in [true, false] {
         let mut state = state(UserRole::Admin);
-        state.diagnostics_tab = ui::DiagnosticsTab::Logs;
-        state.system_status_route = ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Logs);
+        state.pages.diagnostics.diagnostics_tab = ui::DiagnosticsTab::Logs;
+        state.pages.system_status.system_status_route =
+            ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Logs);
         if standalone {
+            let snapshot = state.app.diagnostics_snapshot().cloned();
             state.enter_screen(ShellScreen::Diagnostics);
+            state.app.dispatch_at(
+                app::AppCommand::SetDiagnosticsSnapshot(snapshot),
+                Instant::now(),
+            );
+            state.pages.diagnostics.diagnostics_tab = ui::DiagnosticsTab::Logs;
         }
         let route = |state: &ShellSession, key: &KeyInput| {
             if standalone {
@@ -168,7 +175,7 @@ fn diagnostics_toolbar_shortcuts_match_in_both_hosts_and_keep_disabled_actions_i
             ),
             ShellCommand::Noop
         );
-        state.diagnostics_scanning = true;
+        state.pages.diagnostics.diagnostics_scanning = true;
         for label in ["R", "F5", "C", "Enter", "O", "E", "X"] {
             assert_eq!(
                 route(&state, &KeyInput::from_label(label)),
@@ -206,7 +213,7 @@ fn system_status_f4_matches_the_size_button_and_repair_requires_confirmation() {
             .1,
         ShellCommand::SystemStatusOpenSizePicker,
     );
-    state.system_status_selected_widget = None;
+    state.pages.system_status.system_status_selected_widget = None;
     assert_eq!(
         state.route_system_status_key(&KeyInput::from_label("F4")).1,
         ShellCommand::Noop
@@ -214,6 +221,8 @@ fn system_status_f4_matches_the_size_button_and_repair_requires_confirmation() {
     let save = KeyInput::with_modifiers(InputKey::Char('s'), InputModifiers::CTRL);
     assert_eq!(state.route_system_status_key(&save).1, ShellCommand::Noop);
     state
+        .pages
+        .system_status
         .system_status_dashboard_draft
         .as_mut()
         .unwrap()
@@ -227,7 +236,7 @@ fn system_status_f4_matches_the_size_button_and_repair_requires_confirmation() {
     state.finish_cancel_system_status_dashboard_edit();
     state.open_diagnostics();
     state.preview_selected_diagnostics_repair();
-    assert_eq!(state.diagnostics_repair_preview.len(), 1);
+    assert_eq!(state.pages.diagnostics.diagnostics_repair_preview.len(), 1);
     let release =
         KeyInput::with_phase(InputKey::Enter, InputModifiers::none(), InputPhase::Release);
     assert_eq!(
@@ -241,11 +250,11 @@ fn system_status_f4_matches_the_size_button_and_repair_requires_confirmation() {
         ShellCommand::DiagnosticsConfirmRepair
     );
     assert_eq!(
-        state.diagnostics_repair_preview.len(),
+        state.pages.diagnostics.diagnostics_repair_preview.len(),
         1,
         "routing a key only proposes the confirmed action"
     );
-    state.diagnostics_repair_confirm_selected = false;
+    state.pages.diagnostics.diagnostics_repair_confirm_selected = false;
     assert_eq!(
         state
             .route_system_status_key(&KeyInput::from_label("Enter"))
@@ -268,8 +277,11 @@ fn system_status_f4_matches_the_size_button_and_repair_requires_confirmation() {
 fn dashboard_discard_shortcut_is_explicit_when_cancel_is_selected() {
     let mut state = state(UserRole::Admin);
     state.begin_system_status_dashboard_edit();
-    state.system_status_discard_dialog = true;
-    state.system_status_discard_confirm_selected = false;
+    state.pages.system_status.system_status_discard_dialog = true;
+    state
+        .pages
+        .system_status
+        .system_status_discard_confirm_selected = false;
     assert_eq!(
         state
             .route_system_status_key(&KeyInput::from_label("Enter"))
@@ -304,7 +316,7 @@ fn system_status_refresh_aliases_respect_the_busy_state_in_dashboard_and_details
         ui::SystemStatusRoute::Dashboard,
         ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Cpu),
     ] {
-        state.system_status_route = route;
+        state.pages.system_status.system_status_route = route;
         for label in ["R", "F5"] {
             assert_eq!(
                 state
@@ -313,7 +325,10 @@ fn system_status_refresh_aliases_respect_the_busy_state_in_dashboard_and_details
                 ShellCommand::SystemStatusRefresh
             );
         }
-        state.system_status_refresh_requested_revision = Some(0);
+        state
+            .pages
+            .system_status
+            .system_status_refresh_requested_revision = Some(0);
         for label in ["R", "F5"] {
             assert_eq!(
                 state
@@ -322,7 +337,10 @@ fn system_status_refresh_aliases_respect_the_busy_state_in_dashboard_and_details
                 ShellCommand::Noop
             );
         }
-        state.system_status_refresh_requested_revision = None;
+        state
+            .pages
+            .system_status
+            .system_status_refresh_requested_revision = None;
     }
 }
 
@@ -357,11 +375,14 @@ fn diagnostics_detail_drag_reaches_last_line_without_changing_selection() {
         PointerButton::Left,
         (track.x + 2, track.bottom() + 2),
     ));
-    assert_eq!(state.diagnostics_detail_scroll, count - viewport);
-    assert!(state.diagnostics_detail_drag.is_none());
+    assert_eq!(
+        state.pages.diagnostics.diagnostics_detail_scroll,
+        count - viewport
+    );
+    assert!(state.pages.diagnostics.diagnostics_detail_drag.is_none());
     assert_eq!(state.to_diagnostics_view_model().selected_check, 0);
     state.select_diagnostics_index(0);
-    assert_eq!(state.diagnostics_detail_scroll, 0);
+    assert_eq!(state.pages.diagnostics.diagnostics_detail_scroll, 0);
 }
 
 #[test]
@@ -396,13 +417,25 @@ fn diagnostics_repair_toolbar_opens_preview_only_after_matching_release() {
         .unwrap();
     let point = (region.area.x, region.area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert!(state.diagnostics_repair_preview.is_empty());
+    assert!(
+        state
+            .pages
+            .diagnostics
+            .diagnostics_repair_preview
+            .is_empty()
+    );
     state.apply_input(InputEvent::mouse_drag(PointerButton::Left, (0, 0)));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert!(state.diagnostics_repair_preview.is_empty());
+    assert!(
+        state
+            .pages
+            .diagnostics
+            .diagnostics_repair_preview
+            .is_empty()
+    );
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert_eq!(state.diagnostics_repair_preview.len(), 1);
+    assert_eq!(state.pages.diagnostics.diagnostics_repair_preview.len(), 1);
 }
 
 #[test]
@@ -669,7 +702,7 @@ fn diagnostics_log_opens_read_only_in_editor_and_returns_to_logs() {
     let editor = state.app.editor_state().unwrap();
     assert!(editor.is_read_only());
     assert_eq!(editor.source_buffer().as_deref(), Some("first\nsecond\n"));
-    assert!(state.editor_read_session.is_some());
+    assert!(state.pages.editor.editor_read_session.is_some());
 
     state.handle_editor_key(
         KeyInput::with_phase(
@@ -694,7 +727,10 @@ fn diagnostics_log_opens_read_only_in_editor_and_returns_to_logs() {
     state.request_editor_close(&platform);
     assert_eq!(state.active_screen(), ShellScreen::Logs);
     assert_eq!(state.to_logs_view_model().category, ui::LogsCategory::Ux);
-    assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Logs);
+    assert_eq!(
+        state.pages.diagnostics.diagnostics_tab,
+        ui::DiagnosticsTab::Logs
+    );
     assert!(state.app.editor_state().is_none());
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -743,6 +779,8 @@ fn diagnostics_log_reload_replaces_only_after_a_successful_read() {
     );
     assert!(
         state
+            .pages
+            .editor
             .editor_message
             .as_ref()
             .unwrap()
@@ -848,7 +886,7 @@ fn diagnostics_log_editor_loads_a_single_long_line_in_full() {
     let source = state.app.editor_state().unwrap().source_buffer().unwrap();
     assert_eq!(source.len(), contents.len());
     assert_eq!(source.as_bytes(), contents);
-    let session = state.editor_read_session.as_ref().unwrap();
+    let session = state.pages.editor.editor_read_session.as_ref().unwrap();
     assert_eq!(session.total_bytes, contents.len() as u64);
     state.request_editor_close(&platform::mock::UnsupportedPlatform);
     std::fs::remove_dir_all(directory).unwrap();
@@ -858,9 +896,8 @@ fn diagnostics_log_editor_loads_a_single_long_line_in_full() {
 fn diagnostics_viewer_never_replaces_an_existing_unsaved_editor_document() {
     let (directory, path) = temporary_document("blocked.log", b"diagnostic\n");
     let mut state = state(UserRole::Admin);
-    update_diagnostics_snapshot(&mut state, |snapshot| {
-        snapshot.logs.push(log_file(path, "blocked.log"));
-    });
+    state.enter_screen(ShellScreen::Editor);
+    let original = state.active_page_id();
     let mut editor = EditorState::new();
     editor.apply(app::editor::EditorCommand::InsertText(
         "unsaved".to_string(),
@@ -869,16 +906,35 @@ fn diagnostics_viewer_never_replaces_an_existing_unsaved_editor_document() {
         app::AppCommand::SetEditorState(Some(editor)),
         Instant::now(),
     );
+    state.enter_screen(ShellScreen::SystemStatus);
+    state.app.dispatch_at(
+        app::AppCommand::SetDiagnosticsSnapshot(Some(snapshot())),
+        Instant::now(),
+    );
+    update_diagnostics_snapshot(&mut state, |snapshot| {
+        snapshot.logs.push(log_file(path, "blocked.log"));
+    });
     state.open_diagnostics();
     state.set_diagnostics_tab(ui::DiagnosticsTab::Logs);
-
+    let driver = TestEditorTaskDriver::install(&mut state);
     state.open_selected_diagnostics_report(&platform::mock::UnsupportedPlatform);
-
-    assert_eq!(state.active_screen(), ShellScreen::Logs);
-    let editor = state.app.editor_state().unwrap();
-    assert!(editor.is_dirty());
-    assert_eq!(editor.export_text(), "unsaved");
-    assert!(state.editor_read_session.is_none());
+    driver.complete_next_load(&mut state);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert_ne!(state.active_page_id(), original);
+    assert!(state.pages.editor.editor_read_session.is_some());
+    assert_eq!(
+        state.app.editor_state().unwrap().export_text(),
+        "diagnostic\n"
+    );
+    state
+        .with_page_context(original, |state| {
+            let editor = state.app.editor_state().unwrap();
+            assert!(editor.is_dirty());
+            assert_eq!(editor.export_text(), "unsaved");
+            assert!(state.pages.editor.editor_read_session.is_none());
+        })
+        .expect("original editor stays open");
+    state.request_editor_close(&platform::mock::UnsupportedPlatform);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -939,7 +995,7 @@ fn incident_prefers_text_report_and_falls_back_to_json_in_read_only_editor() {
     assert!(
         state.app.editor_state().is_some(),
         "JSON incident should load: {:?}",
-        state.editor_message
+        state.pages.editor.editor_message
     );
     assert_eq!(
         state.app.editor_state().unwrap().source_buffer().as_deref(),
@@ -960,13 +1016,13 @@ fn diagnostics_rescan_preserves_log_selection_by_relative_path() {
     update_diagnostics_snapshot(&mut state, |snapshot| {
         snapshot.logs = vec![first.clone(), second.clone()];
     });
-    state.diagnostics_selected_log = 1;
+    state.pages.diagnostics.diagnostics_selected_log = 1;
 
     let mut replacement = snapshot();
     replacement.logs = vec![second, first];
     state.install_diagnostics_snapshot(replacement);
 
-    assert_eq!(state.diagnostics_selected_log, 0);
+    assert_eq!(state.pages.diagnostics.diagnostics_selected_log, 0);
     assert_eq!(
         state.app.diagnostics_snapshot().unwrap().logs[0].relative_path,
         std::path::PathBuf::from("nested/second.log")
@@ -1010,7 +1066,10 @@ fn diagnostics_opens_log_directory_in_explorer_and_returns_on_close() {
     state.open_diagnostics_logs_in_explorer(&platform::mock::UnsupportedPlatform);
 
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    assert_eq!(state.explorer_purpose, ExplorerPurpose::DiagnosticsLogs);
+    assert_eq!(
+        state.pages.explorer.explorer_purpose,
+        ExplorerPurpose::DiagnosticsLogs
+    );
     assert_eq!(state.app.explorer_state().unwrap().current_path, logs_path);
     assert!(
         state
@@ -1025,7 +1084,10 @@ fn diagnostics_opens_log_directory_in_explorer_and_returns_on_close() {
     state.close_explorer();
 
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::SystemStatus
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -1051,10 +1113,13 @@ fn diagnostics_navigation_and_repair_preview_are_modal() {
     let mut state = state(UserRole::Admin);
     state.open_diagnostics();
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-    assert_eq!(state.system_status_tab, ui::SystemStatusTab::Health);
+    assert_eq!(
+        state.pages.system_status.system_status_tab,
+        ui::SystemStatusTab::Health
+    );
 
     state.preview_selected_diagnostics_repair();
-    assert_eq!(state.diagnostics_repair_preview.len(), 1);
+    assert_eq!(state.pages.diagnostics.diagnostics_repair_preview.len(), 1);
     assert_eq!(
         state.focus_order(),
         vec![ShellComponent::DiagnosticsRepairDialog]
@@ -1062,7 +1127,10 @@ fn diagnostics_navigation_and_repair_preview_are_modal() {
 
     state.cancel_diagnostics_repair_preview();
     state.set_diagnostics_tab(ui::DiagnosticsTab::Incidents);
-    assert_eq!(state.diagnostics_tab, ui::DiagnosticsTab::Incidents);
+    assert_eq!(
+        state.pages.diagnostics.diagnostics_tab,
+        ui::DiagnosticsTab::Incidents
+    );
     assert_eq!(state.active_screen(), ShellScreen::Logs);
     assert_eq!(
         state.to_logs_view_model().section,
@@ -1071,20 +1139,29 @@ fn diagnostics_navigation_and_repair_preview_are_modal() {
     state.handle_logs_key(&KeyInput::from_label("Esc"));
     state.close_diagnostics();
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
-    assert_eq!(state.system_status_tab, ui::SystemStatusTab::Overview);
-    assert_eq!(state.focused_component, ShellComponent::SystemStatus);
+    assert_eq!(
+        state.pages.system_status.system_status_tab,
+        ui::SystemStatusTab::Overview
+    );
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::SystemStatus
+    );
 }
 
 #[test]
 fn diagnostics_close_returns_to_its_actual_parent() {
     let mut state = state(UserRole::Admin);
     state.set_navigation_path(vec![ShellScreen::Settings, ShellScreen::Diagnostics]);
-    state.focused_component = ShellComponent::Diagnostics;
+    state.pages.common.focused_component = ShellComponent::Diagnostics;
 
     state.close_diagnostics();
 
     assert_eq!(state.active_screen(), ShellScreen::Settings);
-    assert_eq!(state.focused_component, ShellComponent::Settings);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::Settings
+    );
 }
 
 #[test]

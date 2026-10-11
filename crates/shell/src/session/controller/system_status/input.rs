@@ -6,7 +6,11 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::SystemStatus);
-        let save_shortcut = self.system_status_dashboard_draft.is_some()
+        let save_shortcut = self
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_some()
             && matches!(key.key, InputKey::Char('s' | 'S'))
             && key.modifiers.is_control()
             && !key.modifiers.alt
@@ -42,7 +46,7 @@ impl ShellSession {
             };
         }
 
-        if !self.diagnostics_repair_preview.is_empty() {
+        if !self.pages.diagnostics.diagnostics_repair_preview.is_empty() {
             let modal = RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog);
             return match &key.key {
                 InputKey::Escape => (modal, ShellCommand::DiagnosticsCancelRepair),
@@ -54,7 +58,7 @@ impl ShellSession {
                     (modal, ShellCommand::DiagnosticsRepairToggleAction)
                 }
                 InputKey::Enter | InputKey::Char(' ')
-                    if self.diagnostics_repair_confirm_selected =>
+                    if self.pages.diagnostics.diagnostics_repair_confirm_selected =>
                 {
                     (modal, ShellCommand::DiagnosticsConfirmRepair)
                 }
@@ -65,12 +69,15 @@ impl ShellSession {
             };
         }
 
-        if self.system_status_discard_dialog {
+        if self.pages.system_status.system_status_discard_dialog {
             let modal = RoutedTarget::Modal(ShellComponent::SystemStatus);
             return match &key.key {
                 InputKey::Char('y' | 'Y') => (modal, ShellCommand::SystemStatusDiscardEdit),
                 InputKey::Enter | InputKey::Char(' ')
-                    if self.system_status_discard_confirm_selected =>
+                    if self
+                        .pages
+                        .system_status
+                        .system_status_discard_confirm_selected =>
                 {
                     (modal, ShellCommand::SystemStatusDiscardEdit)
                 }
@@ -88,7 +95,7 @@ impl ShellSession {
             };
         }
 
-        if self.system_status_add_picker.is_some() {
+        if self.pages.system_status.system_status_add_picker.is_some() {
             let modal = RoutedTarget::Modal(ShellComponent::SystemStatus);
             return match &key.key {
                 InputKey::Escape => (modal, ShellCommand::SystemStatusCloseAddPicker),
@@ -101,7 +108,7 @@ impl ShellSession {
             };
         }
 
-        if self.system_status_size_picker.is_some() {
+        if self.pages.system_status.system_status_size_picker.is_some() {
             let modal = RoutedTarget::Modal(ShellComponent::SystemStatus);
             return match &key.key {
                 InputKey::Escape => (modal, ShellCommand::SystemStatusCloseSizePicker),
@@ -117,14 +124,14 @@ impl ShellSession {
         }
 
         let diagnostics_active = matches!(
-            self.system_status_route,
+            self.pages.system_status.system_status_route,
             ui::SystemStatusRoute::Detail(
                 ui::SystemStatusDetail::Diagnostics
                     | ui::SystemStatusDetail::Logs
                     | ui::SystemStatusDetail::Incidents
             )
         );
-        let diagnostics_tab = diagnostics_active.then_some(self.diagnostics_tab);
+        let diagnostics_tab = diagnostics_active.then_some(self.pages.diagnostics.diagnostics_tab);
         if diagnostics_active
             && self.diagnostics_is_busy()
             && matches!(
@@ -145,7 +152,12 @@ impl ShellSession {
             };
         }
 
-        if self.system_status_dashboard_draft.is_none() {
+        if self
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_none()
+        {
             let module = match key.key {
                 InputKey::Char('h' | 'H') => Some(ui::SystemStatusTab::Health),
                 _ => None,
@@ -154,17 +166,17 @@ impl ShellSession {
                 return (target, ShellCommand::SystemStatusTab(tab));
             }
         }
-        if let ui::SystemStatusRoute::Detail(_) = self.system_status_route {
+        if let ui::SystemStatusRoute::Detail(_) = self.pages.system_status.system_status_route {
             let command = match &key.key {
                 InputKey::Escape => ShellCommand::SystemStatusBack,
                 InputKey::Char('c' | 'C')
-                    if self.system_status_route
+                    if self.pages.system_status.system_status_route
                         == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Processes) =>
                 {
                     ShellCommand::SystemStatusSortProcesses(ui::SystemStatusProcessSortColumn::Cpu)
                 }
                 InputKey::Char('m' | 'M')
-                    if self.system_status_route
+                    if self.pages.system_status.system_status_route
                         == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Processes) =>
                 {
                     ShellCommand::SystemStatusSortProcesses(
@@ -175,7 +187,12 @@ impl ShellSession {
                     ShellCommand::DiagnosticsRescan
                 }
                 InputKey::Char('r' | 'R') | InputKey::F(5) => {
-                    if self.system_status_refresh_requested_revision.is_some() {
+                    if self
+                        .pages
+                        .system_status
+                        .system_status_refresh_requested_revision
+                        .is_some()
+                    {
                         ShellCommand::Noop
                     } else {
                         ShellCommand::SystemStatusRefresh
@@ -193,7 +210,9 @@ impl ShellSession {
                 InputKey::PageDown => ShellCommand::SystemStatusPageDown,
                 InputKey::Home => ShellCommand::SystemStatusFirst,
                 InputKey::End => ShellCommand::SystemStatusLast,
-                InputKey::Char('x' | 'X') if diagnostics_active && !self.diagnostics_scanning => {
+                InputKey::Char('x' | 'X')
+                    if diagnostics_active && !self.pages.diagnostics.diagnostics_scanning =>
+                {
                     ShellCommand::Restart
                 }
                 InputKey::Char('f' | 'F')
@@ -238,7 +257,12 @@ impl ShellSession {
             return (target, command);
         }
 
-        if self.system_status_dashboard_draft.is_some() {
+        if self
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_some()
+        {
             let command = match &key.key {
                 InputKey::Escape => ShellCommand::SystemStatusRequestCancelEdit,
                 InputKey::Char('s' | 'S') if key.modifiers.is_control() => {
@@ -258,7 +282,13 @@ impl ShellSession {
                 InputKey::Char('s' | 'S') if !key.modifiers.has_non_shift_modifier() => {
                     ShellCommand::SystemStatusCycleWidgetSize
                 }
-                InputKey::F(4) if self.system_status_selected_widget.is_some() => {
+                InputKey::F(4)
+                    if self
+                        .pages
+                        .system_status
+                        .system_status_selected_widget
+                        .is_some() =>
+                {
                     ShellCommand::SystemStatusOpenSizePicker
                 }
                 InputKey::Delete | InputKey::Backspace => ShellCommand::SystemStatusRemoveWidget,
@@ -288,7 +318,12 @@ impl ShellSession {
         let command = match &key.key {
             InputKey::Escape => ShellCommand::CloseSystemStatus,
             InputKey::Char('r' | 'R') | InputKey::F(5) => {
-                if self.system_status_refresh_requested_revision.is_some() {
+                if self
+                    .pages
+                    .system_status
+                    .system_status_refresh_requested_revision
+                    .is_some()
+                {
                     ShellCommand::Noop
                 } else {
                     ShellCommand::SystemStatusRefresh
@@ -317,11 +352,11 @@ impl ShellSession {
         received_at: Instant,
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
-        let target = if !self.diagnostics_repair_preview.is_empty() {
+        let target = if !self.pages.diagnostics.diagnostics_repair_preview.is_empty() {
             RoutedTarget::Modal(ShellComponent::DiagnosticsRepairDialog)
-        } else if self.system_status_discard_dialog
-            || self.system_status_add_picker.is_some()
-            || self.system_status_size_picker.is_some()
+        } else if self.pages.system_status.system_status_discard_dialog
+            || self.pages.system_status.system_status_add_picker.is_some()
+            || self.pages.system_status.system_status_size_picker.is_some()
         {
             RoutedTarget::Modal(ShellComponent::SystemStatus)
         } else {
@@ -344,18 +379,22 @@ impl ShellSession {
         let layout = ui::system_status_layout(main, &model);
         let hit = ui::system_status_hit_test(&layout, coordinates);
         let diagnostics_active = matches!(
-            self.system_status_route,
+            self.pages.system_status.system_status_route,
             ui::SystemStatusRoute::Detail(
                 ui::SystemStatusDetail::Diagnostics
                     | ui::SystemStatusDetail::Logs
                     | ui::SystemStatusDetail::Incidents
             )
         );
-        let editing = self.system_status_dashboard_draft.is_some();
-        let modal_open = !self.diagnostics_repair_preview.is_empty()
-            || self.system_status_discard_dialog
-            || self.system_status_add_picker.is_some()
-            || self.system_status_size_picker.is_some();
+        let editing = self
+            .pages
+            .system_status
+            .system_status_dashboard_draft
+            .is_some();
+        let modal_open = !self.pages.diagnostics.diagnostics_repair_preview.is_empty()
+            || self.pages.system_status.system_status_discard_dialog
+            || self.pages.system_status.system_status_add_picker.is_some()
+            || self.pages.system_status.system_status_size_picker.is_some();
         let dashboard_canvas = matches!(model.route, ui::SystemStatusRoute::Dashboard)
             && coordinates.0 >= layout.canvas.x
             && coordinates.0 < layout.canvas.right()
@@ -507,7 +546,7 @@ impl ShellSession {
                 )) => ShellCommand::DiagnosticsSelectIndex(index),
                 Some(ui::SystemStatusHitTarget::Diagnostics(
                     ui::DiagnosticsHitTarget::Scrollbar,
-                )) if self.diagnostics_repair_preview.is_empty() => {
+                )) if self.pages.diagnostics.diagnostics_repair_preview.is_empty() => {
                     ShellCommand::DiagnosticsScrollbarPointerDown(coordinates)
                 }
                 Some(ui::SystemStatusHitTarget::Diagnostics(

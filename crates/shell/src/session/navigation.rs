@@ -2,16 +2,8 @@ use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NavigationEntry {
-    id: u64,
+    id: PageInstanceId,
     focus: ShellComponent,
-    explorer: Option<Box<ExplorerReturnState>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ExplorerReturnState {
-    state: ExplorerState,
-    purpose: ExplorerPurpose,
-    locations_scroll: Option<usize>,
 }
 
 /// Owns the actual opening path. Only this module can change its private storage.
@@ -20,16 +12,23 @@ struct ExplorerReturnState {
 pub(super) struct ShellNavigation {
     path: Vec<ShellScreen>,
     entries: Vec<NavigationEntry>,
-    next_id: u64,
+    restored_checkpoints: HashSet<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct NavigationCheckpoint {
     before: ShellNavigation,
-    after: Vec<u64>,
+    after: Vec<PageInstanceId>,
+    operation: u64,
 }
 
-fn screen_focus(screen: ShellScreen) -> ShellComponent {
+impl NavigationCheckpoint {
+    pub(in crate::session) fn origin_page_id(&self) -> PageInstanceId {
+        self.before.entries.last().expect("navigation root").id
+    }
+}
+
+pub(super) fn screen_focus(screen: ShellScreen) -> ShellComponent {
     match screen {
         ShellScreen::FirstRunSetup => ShellComponent::SetupLanguage,
         ShellScreen::BootstrapAdmin => ShellComponent::BootstrapUsername,
@@ -50,12 +49,42 @@ fn screen_focus(screen: ShellScreen) -> ShellComponent {
     }
 }
 
+const PAGE_SCREENS: [ShellScreen; 16] = [
+    ShellScreen::FirstRunSetup,
+    ShellScreen::BootstrapAdmin,
+    ShellScreen::Login,
+    ShellScreen::Home,
+    ShellScreen::Clock,
+    ShellScreen::Diagnostics,
+    ShellScreen::Logs,
+    ShellScreen::Management,
+    ShellScreen::SystemStatus,
+    ShellScreen::Explorer,
+    ShellScreen::Launcher,
+    ShellScreen::CommandLine,
+    ShellScreen::Editor,
+    ShellScreen::Settings,
+    ShellScreen::UserManagement,
+    ShellScreen::ExitConfirm,
+];
+
+fn app_page_kind(screen: ShellScreen) -> Option<app::AppPageKind> {
+    Some(match screen {
+        ShellScreen::UserManagement => app::AppPageKind::UserManagement,
+        ShellScreen::Explorer => app::AppPageKind::Explorer,
+        ShellScreen::Launcher => app::AppPageKind::Launcher,
+        ShellScreen::Editor => app::AppPageKind::Editor,
+        ShellScreen::Diagnostics | ShellScreen::SystemStatus => app::AppPageKind::Diagnostics,
+        _ => return None,
+    })
+}
+
 impl ShellNavigation {
     pub(super) fn new(root: ShellScreen) -> Self {
         let mut navigation = Self {
             path: Vec::new(),
             entries: Vec::new(),
-            next_id: 0,
+            restored_checkpoints: HashSet::new(),
         };
         navigation.push(root);
         navigation
@@ -66,25 +95,16 @@ impl ShellNavigation {
     }
 
     fn push(&mut self, screen: ShellScreen) {
-        self.next_id += 1;
         self.path.push(screen);
         self.entries.push(NavigationEntry {
-            id: self.next_id,
+            id: PageInstanceId::new(),
             focus: screen_focus(screen),
-            explorer: None,
         });
     }
 
     fn remember_focus(&mut self, focus: ShellComponent) {
         if let Some(entry) = self.entries.last_mut() {
             entry.focus = focus;
-        }
-    }
-
-    fn enter(&mut self, screen: ShellScreen, focus: ShellComponent) {
-        if self.path.last() != Some(&screen) {
-            self.remember_focus(focus);
-            self.push(screen);
         }
     }
 
@@ -107,6 +127,10 @@ impl ShellNavigation {
     }
 
     fn restore(&mut self, checkpoint: &NavigationCheckpoint) -> Option<ShellComponent> {
+        // Each load may restore its saved path only once.
+        if self.restored_checkpoints.contains(&checkpoint.operation) {
+            return None;
+        }
         // A late failure must not replace a page the user has since closed/reopened.
         if !self
             .entries
@@ -117,6 +141,7 @@ impl ShellNavigation {
         {
             return None;
         }
+        self.restored_checkpoints.insert(checkpoint.operation);
         let tail_path = self.path.split_off(checkpoint.after.len());
         let tail_entries = self.entries.split_off(checkpoint.after.len());
         self.path = checkpoint.before.path.clone();
@@ -128,8 +153,8 @@ impl ShellNavigation {
 }
 
 impl ShellSession {
-    /// The chrome shortcut acts like Escape except in Command Line, where it
-    /// uses the host's emergency termination shortcut to stop the child PTY.
+    /// Ordinary pages map the Back button to Escape. Command Line routes the
+    /// button separately so it can ask before terminating its child processes.
     /// The shared pointer capture delivers this press only after release
     /// and leaves keyboard focus with the page being returned to.
     pub(in crate::session) fn normalize_shell_navigation_input(
@@ -141,8 +166,8 @@ impl ShellSession {
             && !self.auto_admin_visible()
             && !self.notification_has_active_modal()
             && !self.time_sync_dialog_visible
-            && self.active_popup.is_none()
-            && self.diagnostics_repair_preview.is_empty()
+            && self.pages.common.active_popup.is_none()
+            && self.pages.diagnostics.diagnostics_repair_preview.is_empty()
             && matches!(
                 self.active_screen(),
                 ShellScreen::Diagnostics | ShellScreen::SystemStatus
@@ -165,105 +190,254 @@ impl ShellSession {
                 && !self.notification_has_active_modal()
                 && !self.auto_admin_visible()
             {
-                return InputEvent::Key(KeyInput::with_modifiers(
-                    InputKey::Char('x'),
-                    InputModifiers::CTRL_SHIFT,
-                ));
+                return input;
             }
             return InputEvent::Key(KeyInput::new(InputKey::Escape));
         }
         input
     }
 
-    pub(in crate::session) fn enter_screen(&mut self, screen: ShellScreen) {
-        if self.active_screen() != screen {
-            self.button_pointer_capture = None;
+    pub(in crate::session) fn initialize_root_page(&mut self) {
+        let id = self.active_page_id();
+        let screen = self.active_screen();
+        self.pages.create(id, screen);
+        self.app.select_notification_page(id);
+        if let Some(kind) = app_page_kind(screen) {
+            self.app.register_page(id, kind);
         }
-        // A file picker can open another Explorer above an existing browser.
-        // Preserve the earlier visit before the picker replaces the shared model.
-        if screen == ShellScreen::Explorer
-            && self.active_screen() != screen
-            && let Some(index) = self.screen_stack().iter().rposition(|page| *page == screen)
-            && self.navigation.entries[index].explorer.is_none()
-            && let Some(state) = self.app.explorer_state().cloned()
+    }
+
+    pub fn active_page_id(&self) -> PageInstanceId {
+        self.navigation.entries.last().expect("navigation root").id
+    }
+
+    pub fn content_page_id(&self) -> PageInstanceId {
+        let index = if self.active_screen() == ShellScreen::ExitConfirm
+            && self.navigation.entries.len() > 1
         {
-            let saved = ExplorerReturnState {
-                state,
-                purpose: self.explorer_purpose.clone(),
-                locations_scroll: self.explorer_locations_scroll,
-            };
-            self.navigation.entries[index].explorer = Some(Box::new(saved));
+            self.navigation.entries.len() - 2
+        } else {
+            self.navigation.entries.len() - 1
+        };
+        self.navigation.entries[index].id
+    }
+
+    pub fn live_page_ids(&self) -> Vec<PageInstanceId> {
+        self.navigation
+            .entries
+            .iter()
+            .map(|entry| entry.id)
+            .collect()
+    }
+
+    pub fn page_screen(&self, id: PageInstanceId) -> Option<ShellScreen> {
+        self.pages.screens.get(&id).copied()
+    }
+
+    pub fn command_line_start_directory_for(&self, id: PageInstanceId) -> Option<&std::path::Path> {
+        self.pages
+            .command_line
+            .get(id)?
+            .command_line_start_directory
+            .as_deref()
+    }
+
+    pub(in crate::session) fn enter_screen(&mut self, screen: ShellScreen) {
+        if self.active_screen() == screen {
+            return;
         }
-        let focus = self.focused_component;
-        self.navigation.enter(screen, focus);
-        self.focused_component = screen_focus(screen);
+        self.enter_new_page(screen);
+    }
+
+    pub(in crate::session) fn enter_new_page(&mut self, screen: ShellScreen) {
+        self.cancel_pointer_gestures_for_modal();
+        let focus = self.pages.common.focused_component;
+        self.navigation.remember_focus(focus);
+        self.navigation.push(screen);
+        let id = self.active_page_id();
+        self.pages.create(id, screen);
+        self.app.select_notification_page(id);
+        if let Some(kind) = app_page_kind(screen) {
+            self.app.register_page(id, kind);
+        }
     }
 
     pub(in crate::session) fn reset_navigation(&mut self, root: ShellScreen) {
-        self.button_pointer_capture = None;
+        self.cancel_pointer_gestures_for_modal();
+        self.tasks.reset();
+        self.pending_session_exit = None;
+        self.pending_page_closes.clear();
+        self.approved_editor_closes.clear();
+        let old = self.pages.common.ids();
+        for id in old {
+            self.pages.remove(id);
+            self.app.remove_page(id);
+        }
         self.navigation.reset(root);
-        self.focused_component = screen_focus(root);
+        self.initialize_root_page();
     }
 
-    /// Called only after the page has cancelled/confirmed its local work and cleaned up.
-    pub(in crate::session) fn return_from_screen(&mut self, screen: ShellScreen) {
-        if let Some(focus) = self.navigation.leave(screen) {
-            self.button_pointer_capture = None;
-            self.focused_component = focus;
-            self.restore_navigation_page();
-            let message = match self.active_screen() {
-                ShellScreen::Launcher => i18n::msg!("shell-launcher"),
-                ShellScreen::Explorer => i18n::msg!("shell-explorer"),
-                ShellScreen::Editor => i18n::msg!("shell-editor"),
-                ShellScreen::Logs => i18n::msg!("shell-logs"),
-                ShellScreen::Diagnostics => i18n::msg!("shell-diagnostics"),
-                ShellScreen::SystemStatus => i18n::msg!("shell-system-status"),
-                ShellScreen::Settings => i18n::msg!("settings-ready"),
-                ShellScreen::Clock => i18n::msg!("shell-clock"),
-                _ => i18n::msg!("shell-ready"),
-            };
-            self.notify_status(message);
-            self.refresh_hit_map();
-        }
-    }
-
+    /// Select the nearest live instance of each kind for controller calls. An
+    /// Editor remains available to its file picker without sharing another Editor.
     fn restore_navigation_page(&mut self) {
-        if self.active_screen() == ShellScreen::Explorer
-            && let Some(saved) = self
+        for screen in PAGE_SCREENS {
+            let id = self
                 .navigation
-                .entries
-                .last_mut()
-                .and_then(|entry| entry.explorer.take())
-        {
-            self.replace_explorer_state(Some(saved.state));
-            self.explorer_purpose = saved.purpose;
-            self.explorer_locations_scroll = saved.locations_scroll;
+                .path
+                .iter()
+                .zip(&self.navigation.entries)
+                .rev()
+                .find(|(kind, _)| **kind == screen)
+                .map(|(_, entry)| entry.id);
+            self.pages.select(id, screen);
+            if let Some(kind) = app_page_kind(screen) {
+                let id = self
+                    .navigation
+                    .path
+                    .iter()
+                    .zip(&self.navigation.entries)
+                    .rev()
+                    .find(|(screen, _)| app_page_kind(**screen) == Some(kind))
+                    .map(|(_, entry)| entry.id);
+                self.app.select_page(id, kind);
+            }
         }
+        let diagnostics = self
+            .navigation
+            .path
+            .iter()
+            .zip(&self.navigation.entries)
+            .rev()
+            .find(|(screen, _)| {
+                matches!(screen, ShellScreen::Diagnostics | ShellScreen::SystemStatus)
+            })
+            .map(|(_, entry)| entry.id);
+        self.pages.diagnostics.select(diagnostics);
+        let management = self
+            .navigation
+            .path
+            .iter()
+            .zip(&self.navigation.entries)
+            .rev()
+            .find(|(screen, _)| matches!(screen, ShellScreen::Management | ShellScreen::Editor))
+            .map(|(_, entry)| entry.id);
+        self.pages.management.select(management);
+        let logs = self
+            .navigation
+            .path
+            .iter()
+            .zip(&self.navigation.entries)
+            .rev()
+            .find(|(screen, _)| matches!(screen, ShellScreen::Logs | ShellScreen::Editor))
+            .map(|(_, entry)| entry.id);
+        self.pages.logs.select(logs);
+        let id = self.active_page_id();
+        self.pages.common.select(Some(id));
+        self.app.select_notification_page(id);
+    }
+
+    /// Deliver a result to its owner without changing the visible navigation path.
+    pub(in crate::session) fn with_page_context<R>(
+        &mut self,
+        id: PageInstanceId,
+        action: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        let screen = self.page_screen(id)?;
+        let selection = self.pages.selection();
+        let path = self.live_page_ids();
+        self.pages.select(Some(id), screen);
+        self.pages.common.select(Some(id));
+        if matches!(screen, ShellScreen::SystemStatus | ShellScreen::Diagnostics) {
+            self.pages.diagnostics.select(Some(id));
+        }
+        if let Some(kind) = app_page_kind(screen) {
+            self.app.select_page(Some(id), kind);
+        }
+        let result = action(self);
+        if path == self.live_page_ids() {
+            self.pages.restore_selection(selection);
+            self.app
+                .select_page(selection.explorer, app::AppPageKind::Explorer);
+            self.app
+                .select_page(selection.launcher, app::AppPageKind::Launcher);
+            self.app
+                .select_page(selection.editor, app::AppPageKind::Editor);
+            self.app
+                .select_page(selection.diagnostics, app::AppPageKind::Diagnostics);
+            self.app
+                .select_page(selection.user_management, app::AppPageKind::UserManagement);
+        } else {
+            self.restore_navigation_page();
+        }
+        Some(result)
+    }
+
+    pub(in crate::session) fn return_from_screen(&mut self, screen: ShellScreen) {
+        if self.active_screen() == screen {
+            self.request_page_close(self.active_page_id());
+        }
+    }
+
+    /// Close an exact instance; a late terminal exit cannot close a different page.
+    pub fn close_page_instance(&mut self, id: PageInstanceId) {
+        let Some(index) = self
+            .navigation
+            .entries
+            .iter()
+            .position(|entry| entry.id == id)
+        else {
+            return;
+        };
+        let was_visible = self.active_page_id() == id;
+        if was_visible {
+            self.cancel_pointer_gestures_for_modal();
+        }
+        self.navigation.path.remove(index);
+        self.navigation.entries.remove(index);
+        self.tasks.close_queries(id);
+        self.pending_page_closes.remove(&id);
+        self.approved_editor_closes.remove(&id);
+        self.pages.remove(id);
+        self.app.remove_page(id);
+        if self.navigation.path.is_empty() {
+            self.navigation.push(ShellScreen::Home);
+            self.initialize_root_page();
+        }
+        self.restore_navigation_page();
+        if !was_visible {
+            return;
+        }
+        let message = match self.active_screen() {
+            ShellScreen::Launcher => i18n::msg!("shell-launcher"),
+            ShellScreen::Explorer => i18n::msg!("shell-explorer"),
+            ShellScreen::Editor => i18n::msg!("shell-editor"),
+            ShellScreen::Logs => i18n::msg!("shell-logs"),
+            ShellScreen::Diagnostics => i18n::msg!("shell-diagnostics"),
+            ShellScreen::SystemStatus => i18n::msg!("shell-system-status"),
+            ShellScreen::Settings => i18n::msg!("settings-ready"),
+            ShellScreen::Clock => i18n::msg!("shell-clock"),
+            _ => i18n::msg!("shell-ready"),
+        };
+        self.notify_status(message);
+        self.refresh_hit_map();
     }
 
     pub(in crate::session) fn begin_editor_navigation(
         &mut self,
         from_picker: bool,
     ) -> NavigationCheckpoint {
-        let focus = self.focused_component;
+        let focus = self.pages.common.focused_component;
         self.navigation.remember_focus(focus);
         let before = self.navigation.clone();
         if from_picker {
             if let Some(focus) = self.navigation.leave(ShellScreen::Explorer) {
-                self.focused_component = focus;
+                self.pages.common.focused_component = focus;
+                self.restore_navigation_page();
             }
         }
         self.enter_screen(ShellScreen::Editor);
-        // Even an existing Editor gets a new visit ID for this load. Restoring
-        // the old path then consumes the checkpoint and cannot insert it twice.
-        self.navigation.next_id += 1;
-        let id = self.navigation.next_id;
-        self.navigation
-            .entries
-            .last_mut()
-            .expect("navigation root")
-            .id = id;
         NavigationCheckpoint {
+            operation: PageInstanceId::new().get(),
             before,
             after: self
                 .navigation
@@ -274,18 +448,49 @@ impl ShellSession {
         }
     }
 
+    pub(in crate::session) fn finish_editor_load_navigation(
+        &mut self,
+        operation: &EditorLoadOperation,
+    ) {
+        if let EditorLoadOperation::Open { rollback, .. } = operation {
+            let live = self.live_page_ids();
+            for entry in &rollback.before.entries {
+                if !live.contains(&entry.id) {
+                    self.tasks.close_queries(entry.id);
+                    self.pages.remove(entry.id);
+                    self.app.remove_page(entry.id);
+                }
+            }
+            self.restore_navigation_page();
+        }
+    }
+
     pub(in crate::session) fn restore_editor_load_navigation(
         &mut self,
         operation: &EditorLoadOperation,
     ) {
         if let EditorLoadOperation::Open { rollback, .. } = operation {
             // Keep a later overlay's live focus while restoring the path beneath it.
-            let focus = self.focused_component;
+            let focus = self
+                .pages
+                .common
+                .get(self.active_page_id())
+                .expect("visible page state")
+                .focused_component;
             self.navigation.remember_focus(focus);
+            let previous = self.live_page_ids();
             if let Some(focus) = self.navigation.restore(rollback) {
+                let live = self.live_page_ids();
+                for id in previous {
+                    if !live.contains(&id) {
+                        self.tasks.close_queries(id);
+                        self.pages.remove(id);
+                        self.app.remove_page(id);
+                    }
+                }
                 self.button_pointer_capture = None;
-                self.focused_component = focus;
                 self.restore_navigation_page();
+                self.pages.common.focused_component = focus;
             }
         }
     }
@@ -299,16 +504,6 @@ impl ShellSession {
         if self.notification_has_active_modal() {
             return self.route_notification_key(key);
         }
-        if self.active_screen() == ShellScreen::CommandLine {
-            return (
-                RoutedTarget::Component(ShellComponent::CommandLine),
-                if key.phase.is_press_like() {
-                    ShellCommand::CommandLineKey(key.clone())
-                } else {
-                    ShellCommand::Noop
-                },
-            );
-        }
         if key.phase != InputPhase::Press {
             return (RoutedTarget::Global, ShellCommand::Noop);
         }
@@ -321,8 +516,18 @@ impl ShellSession {
         if self.resolved_overlay_owner() == Some(ShellComponent::Explorer) {
             return self.route_explorer_key(key);
         }
-        if self.active_popup.is_some() {
+        if self.pages.common.active_popup.is_some() {
             return self.route_popup_key(key);
+        }
+        if self.active_screen() == ShellScreen::CommandLine {
+            return (
+                RoutedTarget::Component(ShellComponent::CommandLine),
+                if key.phase.is_press_like() {
+                    ShellCommand::CommandLineKey(key.clone())
+                } else {
+                    ShellCommand::Noop
+                },
+            );
         }
         match self.active_screen() {
             ShellScreen::FirstRunSetup => self.route_setup_key(key),

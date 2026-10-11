@@ -99,7 +99,7 @@ impl ShellSession {
         let message = message.into();
         self.time_sync_dialog_visible = true;
         self.time_sync_failure_message = Some(message.clone());
-        self.active_popup = None;
+        self.pages.common.active_popup = None;
         self.notify_status(message.clone());
         self.notify_modal_with_options(
             ShellNotification::modal(
@@ -113,6 +113,7 @@ impl ShellSession {
                         .with_follow_up(ShellCommand::CloseTimeSyncDialog),
                 ],
             )
+            .for_session()
             .with_key(TIME_SYNC_NOTIFICATION_KEY)
             .with_component(ShellComponent::TimeSyncDialog),
         );
@@ -132,7 +133,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn time_button_selected(&self) -> bool {
-        self.focused_component == ShellComponent::ClockButton
+        self.pages.common.focused_component == ShellComponent::ClockButton
             || self.content_screen() == ShellScreen::Clock
     }
 

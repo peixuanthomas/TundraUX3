@@ -51,7 +51,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn selected_external_launcher_index(&self) -> Option<usize> {
-        self.launcher_selected_index
+        self.pages
+            .launcher
+            .launcher_selected_index
             .checked_sub(self.built_in_launcher_count())
             .filter(|index| {
                 self.app
@@ -64,56 +66,50 @@ impl ShellSession {
         &self,
     ) -> Option<app::BuiltInApplicationDescriptor> {
         self.built_in_launcher_applications()
-            .get(self.launcher_selected_index)
+            .get(self.pages.launcher.launcher_selected_index)
             .copied()
     }
 
     pub(in crate::session) fn open_launcher(&mut self, platform: &dyn Platform) {
         if self.is_strict_guest() || self.app.auth_session().is_none() {
-            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.common.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-login-required-to-use-launcher"
             )));
             return;
         }
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.common.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-storage-unavailable"
             )));
             return;
         };
         match self.launcher_controller().load(&storage) {
             Ok(state) => {
+                self.enter_new_page(ShellScreen::Launcher);
                 self.app.dispatch_at(
                     app::AppCommand::SetLauncherState(Some(state)),
                     Instant::now(),
                 );
             }
             Err(error) => {
-                self.error_message = Some(error.localized().message.into());
+                self.pages.common.error_message = Some(error.localized().message.into());
                 return;
             }
         }
         self.load_launcher_view_preference();
         self.refresh_launcher(platform);
-        self.launcher_selected_index = self
+        self.pages.launcher.launcher_selected_index = self
+            .pages
+            .launcher
             .launcher_selected_index
             .min(self.launcher_item_count().saturating_sub(1));
-        self.enter_screen(ShellScreen::Launcher);
-        self.launcher_pending_confirmation = None;
-        self.launcher_drag = None;
+        self.pages.launcher.launcher_pending_confirmation = None;
+        self.pages.launcher.launcher_drag = None;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-launcher")));
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_launcher(&mut self) {
-        self.launcher_pending_confirmation = None;
-        self.launcher_drag = None;
-        if matches!(
-            self.scrollbar_drag,
-            Some(ScrollbarDragState::Launcher { .. })
-        ) {
-            self.scrollbar_drag = None;
-        }
         self.return_from_screen(ShellScreen::Launcher);
     }
 
@@ -131,22 +127,23 @@ impl ShellSession {
             return;
         };
         if let Ok(state) = storage.load_state() {
-            self.launcher_view_mode = match state.values.get(&key).map(String::as_str) {
-                Some("details") => app::launcher::LauncherViewMode::Details,
-                _ => app::launcher::LauncherViewMode::LargeIcons,
-            };
+            self.pages.launcher.launcher_view_mode =
+                match state.values.get(&key).map(String::as_str) {
+                    Some("details") => app::launcher::LauncherViewMode::Details,
+                    _ => app::launcher::LauncherViewMode::LargeIcons,
+                };
         }
     }
 
     pub(in crate::session) fn toggle_launcher_view(&mut self) {
-        self.launcher_drag = None;
+        self.pages.launcher.launcher_drag = None;
         if matches!(
             self.scrollbar_drag,
             Some(ScrollbarDragState::Launcher { .. })
         ) {
             self.scrollbar_drag = None;
         }
-        self.launcher_view_mode = match self.launcher_view_mode {
+        self.pages.launcher.launcher_view_mode = match self.pages.launcher.launcher_view_mode {
             app::launcher::LauncherViewMode::LargeIcons => app::launcher::LauncherViewMode::Details,
             app::launcher::LauncherViewMode::Details => app::launcher::LauncherViewMode::LargeIcons,
         };
@@ -161,7 +158,7 @@ impl ShellSession {
             Ok(mut state) => {
                 state.values.insert(
                     key,
-                    match self.launcher_view_mode {
+                    match self.pages.launcher.launcher_view_mode {
                         app::launcher::LauncherViewMode::LargeIcons => "large_icons",
                         app::launcher::LauncherViewMode::Details => "details",
                     }
@@ -221,7 +218,7 @@ impl ShellSession {
     pub(in crate::session) fn select_launcher_index(&mut self, index: usize) {
         let len = self.launcher_item_count();
         let model = self.to_launcher_view_model();
-        self.launcher_selected_index = model
+        self.pages.launcher.launcher_selected_index = model
             .items
             .get(index)
             .and_then(|item| self.canonical_launcher_index(&item.id))
@@ -256,7 +253,7 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         let Some(storage) = self.storage_manager.clone() else {
-            self.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.common.error_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-storage-unavailable"
             )));
             return;
@@ -270,7 +267,7 @@ impl ShellSession {
                     );
                 }
                 Err(error) => {
-                    self.error_message = Some(error.localized().message.into());
+                    self.pages.common.error_message = Some(error.localized().message.into());
                     return;
                 }
             }
@@ -335,8 +332,8 @@ impl ShellSession {
                 })
             }
             LauncherEffect::ConfirmationRequired { id, path, kind } => {
-                self.launcher_confirm_selected = true;
-                self.launcher_pending_confirmation =
+                self.pages.launcher.launcher_confirm_selected = true;
+                self.pages.launcher.launcher_pending_confirmation =
                     Some(LauncherPendingConfirmation::Launch { id, path, kind });
             }
             LauncherEffect::Added(results) => {
@@ -353,7 +350,7 @@ impl ShellSession {
                         .launcher_state()
                         .and_then(|state| state.items.iter().position(|item| &item.record.id == id))
                 {
-                    self.launcher_selected_index =
+                    self.pages.launcher.launcher_selected_index =
                         index.saturating_add(self.built_in_launcher_count());
                 }
                 self.update_launcher_state(|state| {
@@ -376,7 +373,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn refresh_launcher(&mut self, platform: &dyn Platform) {
-        if self.launcher_refresh_request.is_some() {
+        if self.pages.launcher.launcher_refresh_request.is_some() {
             self.update_launcher_state(|state| {
                 state.message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-launcher-refresh-already-in-progress"
@@ -398,7 +395,14 @@ impl ShellSession {
                 .unwrap_or_default();
             match runtime.submit(entries) {
                 Ok(request_id) => {
-                    self.launcher_refresh_request = Some(request_id);
+                    let control = runtime.task_control(request_id);
+                    self.register_page_task(
+                        TaskDomain::Launcher,
+                        request_id,
+                        TaskClass::Query,
+                        control,
+                    );
+                    self.pages.launcher.launcher_refresh_request = Some(request_id);
                     self.update_launcher_state(|state| {
                         state.error = None;
                         state.message = Some(i18n::LocalizedText::from(i18n::msg!(
@@ -473,15 +477,16 @@ impl ShellSession {
         else {
             return;
         };
-        self.launcher_pending_confirmation = Some(LauncherPendingConfirmation::Remove {
-            ids: vec![item.record.id.clone()],
-            label: item.record.path.clone(),
-        });
-        self.launcher_confirm_selected = true;
+        self.pages.launcher.launcher_pending_confirmation =
+            Some(LauncherPendingConfirmation::Remove {
+                ids: vec![item.record.id.clone()],
+                label: item.record.path.clone(),
+            });
+        self.pages.launcher.launcher_confirm_selected = true;
     }
 
     pub(in crate::session) fn confirm_launcher_action(&mut self, platform: &dyn Platform) {
-        let Some(pending) = self.launcher_pending_confirmation.take() else {
+        let Some(pending) = self.pages.launcher.launcher_pending_confirmation.take() else {
             return;
         };
         match pending {
@@ -528,7 +533,8 @@ impl ShellSession {
                 }
             })
         }) {
-            self.launcher_selected_index = index.saturating_add(self.built_in_launcher_count());
+            self.pages.launcher.launcher_selected_index =
+                index.saturating_add(self.built_in_launcher_count());
         } else {
             self.update_launcher_state(|state| {
                 state.error = Some(i18n::LocalizedText::from(i18n::msg!(
@@ -543,7 +549,7 @@ impl ShellSession {
         coordinates: CellPosition,
         platform: &dyn Platform,
     ) {
-        self.launcher_drag = None;
+        self.pages.launcher.launcher_drag = None;
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return;
@@ -555,12 +561,13 @@ impl ShellSession {
                 if let Some(capture) = &mut self.button_pointer_capture {
                     capture.activate_on_release = true;
                 }
-                if self.launcher_view_mode == app::launcher::LauncherViewMode::LargeIcons
+                if self.pages.launcher.launcher_view_mode
+                    == app::launcher::LauncherViewMode::LargeIcons
                     && self.can_manage_launcher()
-                    && !self.table_sorts.contains_key("launcher")
+                    && !self.pages.common.table_sorts.contains_key("launcher")
                     && let Some(item_id) = self.selected_launcher_id()
                 {
-                    self.launcher_drag = Some(LauncherDragState {
+                    self.pages.launcher.launcher_drag = Some(LauncherDragState {
                         item_id,
                         target: None,
                     });
@@ -573,7 +580,9 @@ impl ShellSession {
                 ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
             },
             Some(ui::LauncherHitTarget::Confirm) => self.confirm_launcher_action(platform),
-            Some(ui::LauncherHitTarget::Cancel) => self.launcher_pending_confirmation = None,
+            Some(ui::LauncherHitTarget::Cancel) => {
+                self.pages.launcher.launcher_pending_confirmation = None
+            }
             _ => {}
         }
     }
@@ -588,7 +597,7 @@ impl ShellSession {
 
     fn sync_launcher_viewport(&mut self) {
         if let Some(layout) = self.launcher_content_layout() {
-            self.launcher_viewport_offset = layout.visible_start;
+            self.pages.launcher.launcher_viewport_offset = layout.visible_start;
         }
     }
 
@@ -597,7 +606,7 @@ impl ShellSession {
         mouse: &MouseInput,
     ) -> bool {
         if self.active_screen() != ShellScreen::Launcher
-            || self.launcher_pending_confirmation.is_some()
+            || self.pages.launcher.launcher_pending_confirmation.is_some()
         {
             if matches!(
                 self.scrollbar_drag,
@@ -631,7 +640,7 @@ impl ShellSession {
                     height / 2
                 };
                 self.scrollbar_drag = Some(ScrollbarDragState::Launcher { grab_offset });
-                self.launcher_drag = None;
+                self.pages.launcher.launcher_drag = None;
                 self.button_pointer_capture = None;
                 self.drag_tracker = None;
                 self.drag_launcher_scrollbar(mouse.coordinates(), grab_offset);
@@ -675,10 +684,12 @@ impl ShellSession {
             layout.scroll_content_len,
             layout.visible_capacity,
         );
-        self.launcher_viewport_offset = requested / layout.columns * layout.columns;
+        self.pages.launcher.launcher_viewport_offset = requested / layout.columns * layout.columns;
         let count = self.launcher_item_count();
         if count > 0 {
             let last = self
+                .pages
+                .launcher
                 .launcher_viewport_offset
                 .saturating_add(layout.visible_capacity)
                 .saturating_sub(1)
@@ -687,27 +698,27 @@ impl ShellSession {
                 .to_launcher_view_model()
                 .selected_index
                 .unwrap_or(0)
-                .clamp(self.launcher_viewport_offset.min(last), last);
+                .clamp(self.pages.launcher.launcher_viewport_offset.min(last), last);
             self.select_launcher_index(index);
         }
     }
 
     pub(in crate::session) fn update_launcher_drag(&mut self, coordinates: CellPosition) {
-        if self.table_sorts.contains_key("launcher")
-            || self.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
+        if self.pages.common.table_sorts.contains_key("launcher")
+            || self.pages.launcher.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
         {
-            self.launcher_drag = None;
+            self.pages.launcher.launcher_drag = None;
             return;
         }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
-            self.launcher_drag = None;
+            self.pages.launcher.launcher_drag = None;
             return;
         };
         let model = self.to_launcher_view_model();
         let target =
             ui::launcher_layout(main, &model).large_icon_drop_target(coordinates.0, coordinates.1);
-        if let Some(drag) = self.launcher_drag.as_mut() {
+        if let Some(drag) = self.pages.launcher.launcher_drag.as_mut() {
             drag.target = target;
         }
     }
@@ -717,14 +728,14 @@ impl ShellSession {
         coordinates: CellPosition,
         platform: &dyn Platform,
     ) {
-        let Some(drag) = self.launcher_drag.take() else {
+        let Some(drag) = self.pages.launcher.launcher_drag.take() else {
             return;
         };
         if drag.target.is_none() {
             return;
         }
-        if self.table_sorts.contains_key("launcher")
-            || self.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
+        if self.pages.common.table_sorts.contains_key("launcher")
+            || self.pages.launcher.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
         {
             return;
         }
@@ -754,7 +765,8 @@ impl ShellSession {
                 .iter()
                 .position(|item| item.record.id == drag.item_id)
         }) {
-            self.launcher_selected_index = index.saturating_add(self.built_in_launcher_count());
+            self.pages.launcher.launcher_selected_index =
+                index.saturating_add(self.built_in_launcher_count());
         }
     }
 
@@ -770,7 +782,7 @@ impl ShellSession {
                 item.name = descriptor.localized_name().render_current();
                 item.path = descriptor.localized_description().render_current();
                 item.type_label = descriptor.localized_type_label().render_current();
-                item.selected = self.launcher_selected_index == index;
+                item.selected = self.pages.launcher.launcher_selected_index == index;
                 item
             })
             .collect::<Vec<_>>();
@@ -806,13 +818,13 @@ impl ShellSession {
                             item.status,
                         );
                         model.selected = external_index.saturating_add(built_in_count)
-                            == self.launcher_selected_index;
+                            == self.pages.launcher.launcher_selected_index;
                         model
                     })
                     .collect::<Vec<_>>(),
             );
         }
-        let sort = self.table_sorts.get("launcher").copied();
+        let sort = self.pages.common.table_sorts.get("launcher").copied();
         if let Some(sort) = sort {
             items.sort_by(|a, b| {
                 let field = |i: &ui::LauncherItemViewModel| match sort.column {
@@ -831,13 +843,18 @@ impl ShellSession {
         let mut model = ui::LauncherViewModel::with_ascii_assets(
             items,
             selected,
-            self.launcher_view_mode,
+            self.pages.launcher.launcher_view_mode,
             self.can_manage_launcher(),
             self.ascii_assets.clone(),
         );
         model.sort = sort;
-        model.viewport_offset = self.launcher_viewport_offset;
-        model.drop_target = self.launcher_drag.as_ref().and_then(|drag| drag.target);
+        model.viewport_offset = self.pages.launcher.launcher_viewport_offset;
+        model.drop_target = self
+            .pages
+            .launcher
+            .launcher_drag
+            .as_ref()
+            .and_then(|drag| drag.target);
         if let Some(state) = self.app.launcher_state() {
             model.message = state
                 .message
@@ -848,38 +865,40 @@ impl ShellSession {
                 .as_ref()
                 .map(i18n::LocalizedText::render_current);
         }
-        model.confirmation =
-            self.launcher_pending_confirmation
-                .as_ref()
-                .map(|pending| match pending {
-                    LauncherPendingConfirmation::Launch { path, kind, .. } => {
-                        ui::LauncherConfirmationViewModel {
-                            kind: ui::LauncherConfirmationKind::Launch,
-                            title: i18n::tr!("shell-confirm-launch"),
-                            message: i18n::tr!(
-                                "shell-open-arg1-kind-with-the-system-default-handler",
-                                arg1 = path.display().to_string(),
-                                kind = format!("{:?}", kind)
-                            ),
-                            confirm_label: i18n::tr!("shell-launch"),
-                            cancel_label: i18n::tr!("shell-cancel"),
-                            confirm_selected: self.launcher_confirm_selected,
-                        }
+        model.confirmation = self
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .as_ref()
+            .map(|pending| match pending {
+                LauncherPendingConfirmation::Launch { path, kind, .. } => {
+                    ui::LauncherConfirmationViewModel {
+                        kind: ui::LauncherConfirmationKind::Launch,
+                        title: i18n::tr!("shell-confirm-launch"),
+                        message: i18n::tr!(
+                            "shell-open-arg1-kind-with-the-system-default-handler",
+                            arg1 = path.display().to_string(),
+                            kind = format!("{:?}", kind)
+                        ),
+                        confirm_label: i18n::tr!("shell-launch"),
+                        cancel_label: i18n::tr!("shell-cancel"),
+                        confirm_selected: self.pages.launcher.launcher_confirm_selected,
                     }
-                    LauncherPendingConfirmation::Remove { label, .. } => {
-                        ui::LauncherConfirmationViewModel {
-                            kind: ui::LauncherConfirmationKind::Remove,
-                            title: i18n::tr!("shell-remove-from-launcher"),
-                            message: i18n::tr!(
-                                "shell-remove-label-from-launcher-the-file-will-not-be-deleted",
-                                label = label
-                            ),
-                            confirm_label: i18n::tr!("shell-remove"),
-                            cancel_label: i18n::tr!("shell-cancel"),
-                            confirm_selected: self.launcher_confirm_selected,
-                        }
+                }
+                LauncherPendingConfirmation::Remove { label, .. } => {
+                    ui::LauncherConfirmationViewModel {
+                        kind: ui::LauncherConfirmationKind::Remove,
+                        title: i18n::tr!("shell-remove-from-launcher"),
+                        message: i18n::tr!(
+                            "shell-remove-label-from-launcher-the-file-will-not-be-deleted",
+                            label = label
+                        ),
+                        confirm_label: i18n::tr!("shell-remove"),
+                        cancel_label: i18n::tr!("shell-cancel"),
+                        confirm_selected: self.pages.launcher.launcher_confirm_selected,
                     }
-                });
+                }
+            });
         model
     }
 }

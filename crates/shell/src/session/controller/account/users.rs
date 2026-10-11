@@ -33,11 +33,11 @@ impl ShellSession {
             .dispatch_at(app::AppCommand::SetManagedUsers(users), Instant::now());
         self.apply_user_table_sort();
         if self.app.managed_users().is_empty() {
-            self.user_management_selected = 0;
-            self.user_management_window_start = 0;
-            self.user_management_focus = UserManagementPageFocus::UserList;
+            self.pages.user_management.user_management_selected = 0;
+            self.pages.user_management.user_management_window_start = 0;
+            self.pages.user_management.user_management_focus = UserManagementPageFocus::UserList;
         } else if let Some(username) = selected_username {
-            self.user_management_selected = self
+            self.pages.user_management.user_management_selected = self
                 .app
                 .managed_users()
                 .iter()
@@ -46,11 +46,15 @@ impl ShellSession {
                         .usernames_match(&user.username, &username)
                 })
                 .unwrap_or_else(|| {
-                    self.user_management_selected
+                    self.pages
+                        .user_management
+                        .user_management_selected
                         .min(self.app.managed_users().len() - 1)
                 });
         } else {
-            self.user_management_selected = self
+            self.pages.user_management.user_management_selected = self
+                .pages
+                .user_management
                 .user_management_selected
                 .min(self.app.managed_users().len() - 1);
         }
@@ -62,15 +66,16 @@ impl ShellSession {
 
     pub(in crate::session) fn resolve_user_management_refresh_alert(&mut self) {
         let resolved_message = self
-            .notification_alert_message_for_key(USER_MANAGEMENT_REFRESH_ALERT_KEY)
+            .page_alert_message_for_key(USER_MANAGEMENT_REFRESH_ALERT_KEY)
             .cloned();
-        if self.user_management_message.as_ref() == resolved_message.as_ref() {
-            self.user_management_message = None;
+        if self.pages.user_management.user_management_message.as_ref() == resolved_message.as_ref()
+        {
+            self.pages.user_management.user_management_message = None;
         }
-        if self.error_message.as_ref() == resolved_message.as_ref() {
-            self.error_message = None;
+        if self.pages.common.error_message.as_ref() == resolved_message.as_ref() {
+            self.pages.common.error_message = None;
         }
-        self.resolve_notification_alert(USER_MANAGEMENT_REFRESH_ALERT_KEY);
+        self.resolve_page_alert(USER_MANAGEMENT_REFRESH_ALERT_KEY);
     }
 
     pub(in crate::session) fn report_user_management_refresh_error(
@@ -78,10 +83,11 @@ impl ShellSession {
         message: impl Into<i18n::LocalizedText>,
     ) {
         let message = message.into();
-        self.error_message = Some(message.clone());
-        self.user_management_message = Some(message.clone());
-        self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
-        self.notify_alert_with_key(
+        self.pages.common.error_message = Some(message.clone());
+        self.pages.user_management.user_management_message = Some(message.clone());
+        self.pages.user_management.user_management_feedback_tone =
+            UserManagementFeedbackTone::Error;
+        self.notify_page_alert_with_key(
             USER_MANAGEMENT_REFRESH_ALERT_KEY,
             message,
             ui::NotificationTone::Error,
@@ -93,9 +99,10 @@ impl ShellSession {
             return;
         }
         let last = self.app.managed_users().len().saturating_sub(1) as isize;
-        let next = (self.user_management_selected as isize + direction).clamp(0, last);
-        self.user_management_selected = next as usize;
-        self.user_management_focus = UserManagementPageFocus::UserList;
+        let next = (self.pages.user_management.user_management_selected as isize + direction)
+            .clamp(0, last);
+        self.pages.user_management.user_management_selected = next as usize;
+        self.pages.user_management.user_management_focus = UserManagementPageFocus::UserList;
         self.ensure_user_management_selection_visible();
     }
 
@@ -103,12 +110,12 @@ impl ShellSession {
         if self.app.managed_users().is_empty() {
             return;
         }
-        self.user_management_selected = if last {
+        self.pages.user_management.user_management_selected = if last {
             self.app.managed_users().len().saturating_sub(1)
         } else {
             0
         };
-        self.user_management_focus = UserManagementPageFocus::UserList;
+        self.pages.user_management.user_management_focus = UserManagementPageFocus::UserList;
         self.ensure_user_management_selection_visible();
     }
 
@@ -121,31 +128,34 @@ impl ShellSession {
         if !self.can_manage_all_users() {
             return;
         }
-        self.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
-            username: String::new(),
-            display_name: String::new(),
-            password: String::new(),
-            role: UserRole::User,
-            focused_field: UserManagementFormField::Username,
-        });
-        self.user_management_message = None;
-        self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
+        self.pages.user_management.user_management_mode =
+            UserManagementMode::Create(UserManagementCreateForm {
+                username: String::new(),
+                display_name: String::new(),
+                password: String::new(),
+                role: UserRole::User,
+                focused_field: UserManagementFormField::Username,
+            });
+        self.pages.user_management.user_management_message = None;
+        self.pages.user_management.user_management_feedback_tone = UserManagementFeedbackTone::Info;
     }
 
     pub(in crate::session) fn begin_edit_selected_user_info(&mut self) {
         if let Some(user) = self
             .app
             .managed_users()
-            .get(self.user_management_selected)
+            .get(self.pages.user_management.user_management_selected)
             .cloned()
         {
-            self.user_management_mode = UserManagementMode::EditInfo(UserManagementInfoForm {
-                username: user.username,
-                display_name: user.display_name,
-                focused_field: UserManagementFormField::DisplayName,
-            });
-            self.user_management_message = None;
-            self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
+            self.pages.user_management.user_management_mode =
+                UserManagementMode::EditInfo(UserManagementInfoForm {
+                    username: user.username,
+                    display_name: user.display_name,
+                    focused_field: UserManagementFormField::DisplayName,
+                });
+            self.pages.user_management.user_management_message = None;
+            self.pages.user_management.user_management_feedback_tone =
+                UserManagementFeedbackTone::Info;
         }
     }
 
@@ -172,7 +182,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn cycle_selected_role(&mut self) {
-        if let Some(user) = self.app.managed_users().get(self.user_management_selected) {
+        if let Some(user) = self
+            .app
+            .managed_users()
+            .get(self.pages.user_management.user_management_selected)
+        {
             let operation = UserManagementOperation::Role {
                 username: user.username.clone(),
                 role: if user.role == UserRole::Admin {
@@ -186,7 +200,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn submit_user_management_form(&mut self) {
-        let operation = match self.user_management_mode.clone() {
+        let operation = match self.pages.user_management.user_management_mode.clone() {
             UserManagementMode::Browse => return,
             UserManagementMode::Create(form) => UserManagementOperation::Create(form),
             UserManagementMode::EditInfo(form) => UserManagementOperation::EditInfo(form),
@@ -201,7 +215,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn append_user_management_char(&mut self, character: char) {
-        match &mut self.user_management_mode {
+        match &mut self.pages.user_management.user_management_mode {
             UserManagementMode::Create(form) => match form.focused_field {
                 UserManagementFormField::Username => form.username.push(character),
                 UserManagementFormField::DisplayName => form.display_name.push(character),
@@ -221,7 +235,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn user_management_backspace(&mut self) {
-        match &mut self.user_management_mode {
+        match &mut self.pages.user_management.user_management_mode {
             UserManagementMode::Create(form) => match form.focused_field {
                 UserManagementFormField::Username => {
                     form.username.pop();
@@ -247,22 +261,23 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn move_user_management_form_focus(&mut self, direction: i8) {
-        let fields: &[UserManagementFormField] = match self.user_management_mode {
-            UserManagementMode::Create(_) => &[
-                UserManagementFormField::Username,
-                UserManagementFormField::DisplayName,
-                UserManagementFormField::Role,
-                UserManagementFormField::Password,
-                UserManagementFormField::Submit,
-                UserManagementFormField::Cancel,
-            ],
-            UserManagementMode::EditInfo(_) => &[
-                UserManagementFormField::DisplayName,
-                UserManagementFormField::Submit,
-                UserManagementFormField::Cancel,
-            ],
-            UserManagementMode::Browse => return,
-        };
+        let fields: &[UserManagementFormField] =
+            match self.pages.user_management.user_management_mode {
+                UserManagementMode::Create(_) => &[
+                    UserManagementFormField::Username,
+                    UserManagementFormField::DisplayName,
+                    UserManagementFormField::Role,
+                    UserManagementFormField::Password,
+                    UserManagementFormField::Submit,
+                    UserManagementFormField::Cancel,
+                ],
+                UserManagementMode::EditInfo(_) => &[
+                    UserManagementFormField::DisplayName,
+                    UserManagementFormField::Submit,
+                    UserManagementFormField::Cancel,
+                ],
+                UserManagementMode::Browse => return,
+            };
         let current = self.user_management_form_field();
         let index = fields
             .iter()
@@ -273,17 +288,18 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn cancel_user_management_form(&mut self) {
-        if self.user_management_mode != UserManagementMode::Browse {
-            self.user_management_mode = UserManagementMode::Browse;
-            self.user_management_message =
+        if self.pages.user_management.user_management_mode != UserManagementMode::Browse {
+            self.pages.user_management.user_management_mode = UserManagementMode::Browse;
+            self.pages.user_management.user_management_message =
                 Some(i18n::LocalizedText::from(i18n::msg!("shell-cancelled")));
-            self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
+            self.pages.user_management.user_management_feedback_tone =
+                UserManagementFeedbackTone::Info;
             self.ensure_user_management_selection_visible();
         }
     }
 
     pub(in crate::session) fn user_management_form_field(&self) -> Option<UserManagementFormField> {
-        match &self.user_management_mode {
+        match &self.pages.user_management.user_management_mode {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(form) => Some(form.focused_field),
             UserManagementMode::EditInfo(form) => Some(form.focused_field),
@@ -294,7 +310,7 @@ impl ShellSession {
         &mut self,
         field: UserManagementFormField,
     ) {
-        match &mut self.user_management_mode {
+        match &mut self.pages.user_management.user_management_mode {
             UserManagementMode::Browse => {}
             UserManagementMode::Create(form) => form.focused_field = field,
             UserManagementMode::EditInfo(form) => form.focused_field = field,
@@ -306,7 +322,7 @@ impl ShellSession {
         field: ui::UserManagementField,
     ) {
         let field = from_ui_user_management_field(field);
-        let valid = match self.user_management_mode {
+        let valid = match self.pages.user_management.user_management_mode {
             UserManagementMode::Browse => false,
             UserManagementMode::Create(_) => true,
             UserManagementMode::EditInfo(_) => matches!(
@@ -322,7 +338,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn toggle_user_management_form_role(&mut self) {
-        if let UserManagementMode::Create(form) = &mut self.user_management_mode {
+        if let UserManagementMode::Create(form) =
+            &mut self.pages.user_management.user_management_mode
+        {
             form.role = if form.role == UserRole::Admin {
                 UserRole::User
             } else {
@@ -334,15 +352,15 @@ impl ShellSession {
     pub(in crate::session) fn move_user_management_page_focus(&mut self, direction: i8) {
         let order = self.user_management_focus_order();
         if order.is_empty() {
-            self.user_management_focus = UserManagementPageFocus::UserList;
+            self.pages.user_management.user_management_focus = UserManagementPageFocus::UserList;
             return;
         }
         let current = order
             .iter()
-            .position(|focus| *focus == self.user_management_focus)
+            .position(|focus| *focus == self.pages.user_management.user_management_focus)
             .unwrap_or(0);
         let next = (current as isize + direction as isize).rem_euclid(order.len() as isize);
-        self.user_management_focus = order[next as usize];
+        self.pages.user_management.user_management_focus = order[next as usize];
     }
 
     pub(in crate::session) fn user_management_focus_order(&self) -> Vec<UserManagementPageFocus> {
@@ -359,9 +377,9 @@ impl ShellSession {
     pub(in crate::session) fn normalize_user_management_focus(&mut self) {
         if !self
             .user_management_focus_order()
-            .contains(&self.user_management_focus)
+            .contains(&self.pages.user_management.user_management_focus)
         {
-            self.user_management_focus = UserManagementPageFocus::UserList;
+            self.pages.user_management.user_management_focus = UserManagementPageFocus::UserList;
         }
     }
 
@@ -370,7 +388,8 @@ impl ShellSession {
         action: ui::UserManagementAction,
     ) {
         if self.user_management_action_enabled(action) {
-            self.user_management_focus = UserManagementPageFocus::Action(action);
+            self.pages.user_management.user_management_focus =
+                UserManagementPageFocus::Action(action);
         }
     }
 
@@ -385,7 +404,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn activate_focused_user_management_control(&mut self) {
-        match self.user_management_focus {
+        match self.pages.user_management.user_management_focus {
             UserManagementPageFocus::UserList => {}
             UserManagementPageFocus::Action(action) => {
                 self.activate_user_management_action(action);
@@ -408,8 +427,9 @@ impl ShellSession {
         };
         if !action_model.enabled {
             if let Some(reason) = self.user_management_disabled_reason(action) {
-                self.user_management_message = Some(reason);
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
+                self.pages.user_management.user_management_message = Some(reason);
+                self.pages.user_management.user_management_feedback_tone =
+                    UserManagementFeedbackTone::Error;
                 self.ensure_user_management_selection_visible();
             }
             return;
@@ -423,7 +443,7 @@ impl ShellSession {
                 let should_disable = self
                     .app
                     .managed_users()
-                    .get(self.user_management_selected)
+                    .get(self.pages.user_management.user_management_selected)
                     .is_some_and(|user| user.enabled && !user_is_locked(user));
                 if should_disable {
                     self.disable_selected_user();
@@ -442,7 +462,7 @@ impl ShellSession {
         action: ui::UserManagementAction,
     ) -> Option<i18n::LocalizedText> {
         use ui::UserManagementAction as Action;
-        if self.user_management_job.is_some() {
+        if self.pages.user_management.user_management_job.is_some() {
             return Some(i18n::msg!("shell-linux-accounts-working").into());
         }
         if self.identity_backend == identity::IdentityBackend::Linux
@@ -459,7 +479,11 @@ impl ShellSession {
         if action == Action::NewUser {
             return None;
         }
-        let Some(selected) = self.app.managed_users().get(self.user_management_selected) else {
+        let Some(selected) = self
+            .app
+            .managed_users()
+            .get(self.pages.user_management.user_management_selected)
+        else {
             return Some(i18n::msg!("shell-no-user-selected").into());
         };
         if self.selected_is_last_enabled_admin()
@@ -482,7 +506,11 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn selected_is_last_enabled_admin(&self) -> bool {
-        let Some(selected) = self.app.managed_users().get(self.user_management_selected) else {
+        let Some(selected) = self
+            .app
+            .managed_users()
+            .get(self.pages.user_management.user_management_selected)
+        else {
             return false;
         };
         selected.enabled
@@ -505,24 +533,41 @@ impl ShellSession {
     pub(in crate::session) fn ensure_user_management_selection_visible(&mut self) {
         let count = self.app.managed_users().len();
         if count == 0 {
-            self.user_management_selected = 0;
-            self.user_management_window_start = 0;
+            self.pages.user_management.user_management_selected = 0;
+            self.pages.user_management.user_management_window_start = 0;
             return;
         }
-        self.user_management_selected = self.user_management_selected.min(count - 1);
+        self.pages.user_management.user_management_selected = self
+            .pages
+            .user_management
+            .user_management_selected
+            .min(count - 1);
         let capacity = self.user_management_visible_row_count().min(count);
         if capacity == 0 {
-            self.user_management_window_start = 0;
+            self.pages.user_management.user_management_window_start = 0;
             return;
         }
         let max_start = count.saturating_sub(capacity);
-        self.user_management_window_start = self.user_management_window_start.min(max_start);
-        if self.user_management_selected < self.user_management_window_start {
-            self.user_management_window_start = self.user_management_selected;
-        } else if self.user_management_selected
-            >= self.user_management_window_start.saturating_add(capacity)
+        self.pages.user_management.user_management_window_start = self
+            .pages
+            .user_management
+            .user_management_window_start
+            .min(max_start);
+        if self.pages.user_management.user_management_selected
+            < self.pages.user_management.user_management_window_start
         {
-            self.user_management_window_start = self
+            self.pages.user_management.user_management_window_start =
+                self.pages.user_management.user_management_selected;
+        } else if self.pages.user_management.user_management_selected
+            >= self
+                .pages
+                .user_management
+                .user_management_window_start
+                .saturating_add(capacity)
+        {
+            self.pages.user_management.user_management_window_start = self
+                .pages
+                .user_management
                 .user_management_selected
                 .saturating_add(1)
                 .saturating_sub(capacity);
@@ -541,15 +586,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn close_user_management(&mut self) {
-        self.user_management_mode = UserManagementMode::Browse;
-        self.resolve_user_management_refresh_alert();
         self.return_from_screen(ShellScreen::UserManagement);
     }
 
     pub(in crate::session) fn selected_managed_username(&self) -> Option<String> {
         self.app
             .managed_users()
-            .get(self.user_management_selected)
+            .get(self.pages.user_management.user_management_selected)
             .map(|user| user.username.clone())
     }
 
@@ -558,7 +601,7 @@ impl ShellSession {
             self.identity_backend
                 .usernames_match(&user.username, username)
         }) {
-            self.user_management_selected = index;
+            self.pages.user_management.user_management_selected = index;
         }
     }
 

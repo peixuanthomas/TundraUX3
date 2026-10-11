@@ -1,13 +1,63 @@
 use std::fmt;
-use std::fs;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use platform::{AppPaths, PlatformError, atomic_write_document, read_document_bytes};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::editor::rich_document::{RichDocument, RichPosition, RichRange};
+
+/// Identifies one editor draft for its entire lifetime, independently of its
+/// source path, page index, or the account's other open editor windows.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RecoveryId(String);
+
+impl Default for RecoveryId {
+    fn default() -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        Self(format!(
+            "{:x}-{nanos:x}-{:x}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+}
+
+/// An owned draft and its operating-system lock. Cloning rendering state
+/// shares ownership; only dropping the last clone releases the lock. A crash
+/// releases it automatically, allowing a later editor to recover the draft.
+#[derive(Debug, Clone)]
+pub struct EditorRecoveryLease {
+    id: RecoveryId,
+    path: PathBuf,
+    lock: Arc<File>,
+}
+
+impl EditorRecoveryLease {
+    pub fn id(&self) -> &RecoveryId {
+        &self.id
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl PartialEq for EditorRecoveryLease {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.path == other.path && Arc::ptr_eq(&self.lock, &other.lock)
+    }
+}
+
+impl Eq for EditorRecoveryLease {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorRecoveryRecord {
@@ -186,35 +236,189 @@ pub fn editor_recovery_path(app_paths: &AppPaths, user_key: &str) -> PathBuf {
         ))
 }
 
-pub fn write_editor_recovery(
+fn recovery_directory(app_paths: &AppPaths, user_key: &str) -> PathBuf {
+    editor_recovery_path(app_paths, user_key).with_extension("")
+}
+
+fn recovery_io_error(
+    operation: &'static str,
+    path: &Path,
+    error: std::io::Error,
+) -> EditorRecoveryError {
+    EditorRecoveryError::Platform(PlatformError::Io {
+        operation,
+        path: Some(path.to_owned()),
+        message: error.to_string(),
+    })
+}
+
+fn try_lease(
+    id: RecoveryId,
+    path: PathBuf,
+) -> Result<Option<EditorRecoveryLease>, EditorRecoveryError> {
+    let lock_path = path.with_extension("lock");
+    let parent = lock_path.parent().ok_or_else(|| {
+        EditorRecoveryError::Invalid("editor recovery has no parent directory".into())
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|error| recovery_io_error("create editor recovery directory", parent, error))?;
+    if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+        && !metadata.is_file()
+    {
+        return Err(EditorRecoveryError::Invalid(
+            "editor recovery lock is not a regular file".into(),
+        ));
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| recovery_io_error("open editor recovery lock", &lock_path, error))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(EditorRecoveryLease {
+            id,
+            path,
+            lock: Arc::new(file),
+        })),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(error)) => {
+            Err(recovery_io_error("lock editor recovery", &lock_path, error))
+        }
+    }
+    // Never unlink the lock file: another process may already have opened it.
+    // Replacing it would give that process and a new opener different locks.
+}
+
+/// Reserves a new instance's path. Existing drafts can only be opened through
+/// `claim_next_editor_recovery`, never silently overwritten by a new editor.
+pub fn acquire_editor_recovery(
     app_paths: &AppPaths,
     user_key: &str,
-    record: &EditorRecoveryRecord,
-) -> Result<(), EditorRecoveryError> {
-    let path = editor_recovery_path(app_paths, user_key);
-    let value = json!({
-        "schema": 1,
-        "source": record.source,
-        "path": record.path.as_ref().map(|path| path.to_string_lossy()),
-        "markdown": record.markdown,
-        "source_mode": record.source_mode,
-        "cursor": record.cursor,
-        "saved_content_hash": record.saved_content_hash,
-        "updated_at_epoch_ms": record.updated_at_epoch_ms,
-    });
-    let mut bytes = serde_json::to_vec_pretty(&value)
-        .map_err(|error| EditorRecoveryError::Invalid(error.to_string()))?;
-    bytes.push(b'\n');
-    atomic_write_document(&path, &bytes)?;
-    Ok(())
+    id: &RecoveryId,
+) -> Result<EditorRecoveryLease, EditorRecoveryError> {
+    if id.0 == "legacy" {
+        return Err(EditorRecoveryError::Invalid(
+            "legacy editor recovery must be claimed before writing".into(),
+        ));
+    }
+    let path = recovery_directory(app_paths, user_key).join(format!("{}.json", id.0));
+    let lease = try_lease(id.clone(), path.clone())?.ok_or_else(|| {
+        EditorRecoveryError::Invalid("editor recovery is already owned by an active editor".into())
+    })?;
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(lease),
+        Err(error) => Err(recovery_io_error("inspect editor recovery", &path, error)),
+        Ok(_) => Err(EditorRecoveryError::Invalid(
+            "editor recovery already exists; claim it before writing".into(),
+        )),
+    }
+}
+
+fn recovery_paths(
+    app_paths: &AppPaths,
+    user_key: &str,
+) -> Result<Vec<(RecoveryId, PathBuf)>, EditorRecoveryError> {
+    let mut paths = Vec::new();
+    let legacy = editor_recovery_path(app_paths, user_key);
+    match fs::symlink_metadata(&legacy) {
+        Ok(_) => paths.push((RecoveryId("legacy".into()), legacy)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(recovery_io_error("inspect editor recovery", &legacy, error)),
+    }
+    let directory = recovery_directory(app_paths, user_key);
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+        Err(error) => return Err(recovery_io_error("list editor recovery", &directory, error)),
+    };
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| recovery_io_error("list editor recovery", &directory, error))?;
+        let path = entry.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+        {
+            continue;
+        }
+        paths.push((RecoveryId(name.into()), path));
+    }
+    paths.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(paths)
+}
+
+fn recovery_updated_at(record: &VersionedEditorRecovery) -> u64 {
+    match record {
+        VersionedEditorRecovery::V1(record) => record.updated_at_epoch_ms,
+        VersionedEditorRecovery::V2(record)
+        | VersionedEditorRecovery::V2Fallback { record, .. } => record.updated_at_epoch_ms,
+    }
+}
+
+/// Reads an account's drafts without claiming them. Active drafts are included;
+/// callers wishing to restore a draft must use `claim_next_editor_recovery`.
+pub fn read_editor_recoveries(
+    app_paths: &AppPaths,
+    user_key: &str,
+) -> Result<Vec<(RecoveryId, VersionedEditorRecovery)>, EditorRecoveryError> {
+    let mut records = Vec::new();
+    for (id, path) in recovery_paths(app_paths, user_key)? {
+        if let Some(record) = read_versioned_recovery_path(&path)? {
+            records.push((id, record));
+        }
+    }
+    records.sort_by_key(|(_, record)| std::cmp::Reverse(recovery_updated_at(record)));
+    Ok(records)
+}
+
+/// Claims just the most recently updated inactive draft. Locks held by other
+/// pages or processes are skipped, and malformed files are left untouched.
+pub fn claim_next_editor_recovery(
+    app_paths: &AppPaths,
+    user_key: &str,
+) -> Result<Option<(EditorRecoveryLease, VersionedEditorRecovery)>, EditorRecoveryError> {
+    let mut newest: Option<(EditorRecoveryLease, VersionedEditorRecovery)> = None;
+    let mut first_error = None;
+    for (id, path) in recovery_paths(app_paths, user_key)? {
+        let candidate = try_lease(id, path).and_then(|lease| {
+            let Some(lease) = lease else { return Ok(None) };
+            Ok(read_versioned_recovery_path(lease.path())?.map(|record| (lease, record)))
+        });
+        match candidate {
+            Ok(Some(candidate)) => {
+                if newest.as_ref().is_none_or(|(_, record)| {
+                    recovery_updated_at(&candidate.1) > recovery_updated_at(record)
+                }) {
+                    newest = Some(candidate);
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    if newest.is_none()
+        && let Some(error) = first_error
+    {
+        return Err(error);
+    }
+    Ok(newest)
 }
 
 pub fn write_editor_recovery_v2(
-    app_paths: &AppPaths,
-    user_key: &str,
+    lease: &EditorRecoveryLease,
     record: &EditorRecoveryRecordV2,
 ) -> Result<(), EditorRecoveryError> {
-    let path = editor_recovery_path(app_paths, user_key);
     let mut value = serde_json::to_value(record)
         .map_err(|error| EditorRecoveryError::Invalid(error.to_string()))?;
     let object = value.as_object_mut().ok_or_else(|| {
@@ -224,7 +428,7 @@ pub fn write_editor_recovery_v2(
     let mut bytes = serde_json::to_vec_pretty(&value)
         .map_err(|error| EditorRecoveryError::Invalid(error.to_string()))?;
     bytes.push(b'\n');
-    atomic_write_document(&path, &bytes)?;
+    atomic_write_document(lease.path(), &bytes)?;
     Ok(())
 }
 
@@ -255,13 +459,19 @@ pub fn read_versioned_editor_recovery(
     user_key: &str,
 ) -> Result<Option<VersionedEditorRecovery>, EditorRecoveryError> {
     let path = editor_recovery_path(app_paths, user_key);
+    read_versioned_recovery_path(&path)
+}
+
+fn read_versioned_recovery_path(
+    path: &Path,
+) -> Result<Option<VersionedEditorRecovery>, EditorRecoveryError> {
     match fs::symlink_metadata(&path) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(EditorRecoveryError::Platform(PlatformError::Io {
                 operation: "inspect editor recovery",
-                path: Some(path),
+                path: Some(path.to_owned()),
                 message: error.to_string(),
             }));
         }
@@ -378,17 +588,14 @@ fn legacy_record_from_value(value: &Value) -> Result<EditorRecoveryRecord, Edito
     })
 }
 
-pub fn clear_editor_recovery(
-    app_paths: &AppPaths,
-    user_key: &str,
-) -> Result<(), EditorRecoveryError> {
-    let path = editor_recovery_path(app_paths, user_key);
+pub fn clear_editor_recovery(lease: &EditorRecoveryLease) -> Result<(), EditorRecoveryError> {
+    let path = lease.path();
     match fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(EditorRecoveryError::Platform(PlatformError::Io {
             operation: "remove editor recovery",
-            path: Some(path),
+            path: Some(path.to_owned()),
             message: error.to_string(),
         })),
     }

@@ -6,6 +6,117 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 #[test]
+fn cleanup_error_prevents_a_successful_session_outcome() {
+    let result = finish_session_execution(
+        Ok(Ok(FullscreenShellSessionOutcome::RestartRequested)),
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "terminal child could not be stopped",
+        )),
+    );
+    let error = result.unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(error.to_string(), "terminal child could not be stopped");
+}
+
+#[test]
+fn session_failure_waits_for_the_aa_worker_before_returning_or_resuming_panic() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use watchdog::{WatchdogConfig, WatchdogRuntime};
+
+    for panic_requested in [false, true] {
+        let root = std::env::temp_dir().join(format!(
+            "tundra-session-cleanup-{}-{}-{}",
+            std::process::id(),
+            PageInstanceId::new().get(),
+            panic_requested
+        ));
+        let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("data"),
+            "session-cleanup-test",
+            "test",
+        ))
+        .unwrap();
+        let watchdog = process.register_app(shell_watchdog_descriptor()).unwrap();
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+        let (responses, inputs) = mpsc::channel();
+        let job = state
+            .begin_auto_admin("Cleanup test".into(), false, responses)
+            .unwrap();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let worker_stopped = stopped.clone();
+        let (started_sender, started_receiver) = mpsc::sync_channel(1);
+        let group = watchdog
+            .child_component(ComponentId::from_static("cleanup-test"))
+            .task_group("operation");
+        let worker = ::auto_admin::spawn_task(
+            &group,
+            TaskId::from_static("wait-for-cancel"),
+            state.language.clone(),
+            Some(&job),
+            move || {
+                started_sender.send(()).unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    match inputs
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .expect("the session must cancel its running AA task")
+                    {
+                        // Opening AA sizes its terminal before cancellation is sent.
+                        platform::management::OperationInput::Resize { .. } => {}
+                        platform::management::OperationInput::Cancel => break,
+                        _ => panic!("unexpected input in the AA cleanup test"),
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(20));
+                worker_stopped.store(true, Ordering::Release);
+            },
+        )
+        .unwrap();
+        job.retain_worker(worker);
+        started_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the worker must be running before cleanup starts");
+        assert!(state.tasks.has_running());
+        let mut hosts = CommandLineHosts::new(watchdog.clone());
+        let execution = std::panic::catch_unwind(AssertUnwindSafe(|| -> io::Result<()> {
+            if panic_requested {
+                std::panic::panic_any("original session panic");
+            }
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "terminal write"))
+        }));
+        let cleanup = stop_fullscreen_session_tasks(
+            &mut state,
+            &mut hosts,
+            platform::native_platform().as_ref(),
+            &watchdog,
+            false,
+        );
+        assert!(stopped.load(Ordering::Acquire));
+        assert!(job.task_finished());
+        assert!(!state.tasks.has_running());
+        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            finish_session_execution(execution, cleanup)
+        }));
+        if panic_requested {
+            assert_eq!(
+                outcome.unwrap_err().downcast_ref::<&str>(),
+                Some(&"original session panic")
+            );
+        } else {
+            assert_eq!(
+                outcome.unwrap().unwrap_err().kind(),
+                io::ErrorKind::BrokenPipe
+            );
+        }
+        runtime.shutdown().unwrap();
+        platform::cleanup_temp_path(&root).unwrap();
+    }
+}
+
+#[test]
 fn panic_screen_waits_for_explicit_restart_or_exit() {
     let mut screen = ui::PanicScreen::new("test error");
     for event in [
@@ -299,14 +410,8 @@ fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
         ui::MouseButton::Left,
         (back_area.x, back_area.y),
     ));
-    assert_eq!(
-        back_input,
-        InputEvent::Key(KeyInput::with_modifiers(
-            InputKey::Char('x'),
-            InputModifiers::CTRL_SHIFT,
-        ))
-    );
-    assert!(command_line_captures_input(&state, &back_input));
+    assert!(matches!(back_input, InputEvent::Mouse(_)));
+    assert!(!command_line_captures_input(&state, &back_input));
 
     let clock_area = state
         .hit_map()
@@ -355,6 +460,25 @@ fn command_line_runtime_keeps_notification_keys_and_mouse_out_of_the_child() {
         &state,
         &InputEvent::key(InputKey::Enter)
     ));
+}
+
+#[test]
+fn command_line_runtime_yields_to_time_sync_dialog_but_not_to_toasts() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::CommandLine]);
+    state.notify_toast("Terminal still accepts input");
+    assert!(command_line_captures_input(
+        &state,
+        &InputEvent::key(InputKey::Escape)
+    ));
+    state.time_sync_dialog_visible = true;
+    for input in [
+        InputEvent::key(InputKey::Escape),
+        InputEvent::paste("keep this out of the terminal"),
+        InputEvent::mouse_down(PointerButton::Left, (50, 20)),
+    ] {
+        assert!(!command_line_captures_input(&state, &input));
+    }
 }
 
 #[test]

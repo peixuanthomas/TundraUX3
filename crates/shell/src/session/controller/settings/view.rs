@@ -4,7 +4,7 @@ use crate::session::*;
 impl ShellSession {
     pub fn to_settings_view_model(&self) -> Option<ui::SettingsViewModel> {
         let _language = i18n::enter_snapshot(self.language.clone());
-        let state = self.settings_state.as_ref()?;
+        let state = self.pages.settings.settings_state.as_ref()?;
         let config = self.app.storage_config();
         let appearance = self.app.active_appearance()?;
         let global_enabled = self.can_change_global_settings();

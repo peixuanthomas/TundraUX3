@@ -50,7 +50,7 @@ impl ShellSession {
     }
 
     pub fn shutdown_requested(&self) -> bool {
-        self.shutdown_requested
+        self.shutdown_requested || self.update_restart_requested
     }
 
     pub fn restart_requested(&self) -> bool {
@@ -80,7 +80,7 @@ impl ShellSession {
     }
 
     pub fn focused_component(&self) -> ShellComponent {
-        self.focused_component
+        self.pages.common.focused_component
     }
 
     pub fn selected_home_entry_index(&self) -> usize {
@@ -88,7 +88,7 @@ impl ShellSession {
         if count == 0 {
             0
         } else {
-            self.selected_home_entry_index.min(count - 1)
+            self.pages.home.selected_home_entry_index.min(count - 1)
         }
     }
 
@@ -97,7 +97,7 @@ impl ShellSession {
     }
 
     pub fn active_popup(&self) -> Option<ShellPopup> {
-        self.active_popup
+        self.pages.common.active_popup
     }
 
     pub fn hit_map(&self) -> &ShellHitMap {
@@ -140,12 +140,12 @@ impl ShellSession {
 
     #[doc(hidden)]
     pub fn login_idle_deadline_for_test(&self) -> Instant {
-        self.login_idle_deadline
+        self.pages.login.login_idle_deadline
     }
 
     #[doc(hidden)]
     pub fn login_password_visible_until_for_test(&self) -> Option<Instant> {
-        self.login_password_visible_until
+        self.pages.login.login_password_visible_until
     }
 
     pub(in crate::session) fn return_to_lockscreen_requested(&self) -> bool {

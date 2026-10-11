@@ -25,10 +25,12 @@ impl ShellSession {
         let cursor_direction = editor_cursor_direction(&key);
         if key.phase == InputPhase::Release {
             if self
+                .pages
+                .editor
                 .editor_cursor_acceleration
                 .is_some_and(|state| Some(state.direction) == cursor_direction)
             {
-                self.editor_cursor_acceleration = None;
+                self.pages.editor.editor_cursor_acceleration = None;
             }
             return;
         }
@@ -36,18 +38,21 @@ impl ShellSession {
             return;
         }
         let repeated = key.phase == InputPhase::Repeat;
-        if self.editor_settings_dialog.is_some() {
-            self.editor_cursor_acceleration = None;
+        if self.pages.editor.editor_settings_dialog.is_some() {
+            self.pages.editor.editor_cursor_acceleration = None;
             self.handle_editor_settings_key(&key, repeated);
             return;
         }
         if cursor_direction.is_none() {
-            self.editor_cursor_acceleration = None;
+            self.pages.editor.editor_cursor_acceleration = None;
         }
-        if self.editor_save_state.is_some() {
+        if self.pages.editor.editor_save_state.is_some() {
+            if key.key == InputKey::Escape && !repeated {
+                self.request_editor_close(platform);
+            }
             return;
         }
-        if self.editor_load_state.is_some() {
+        if self.pages.editor.editor_load_state.is_some() {
             if key.key == InputKey::Escape && !repeated {
                 self.cancel_editor_load();
             }
@@ -56,6 +61,8 @@ impl ShellSession {
         if matches!(key.key, InputKey::Char('r' | 'R'))
             && key.modifiers == InputModifiers::none()
             && self
+                .pages
+                .editor
                 .editor_read_session
                 .as_ref()
                 .is_some_and(|session| matches!(session.reload, EditorReloadPolicy::Log { .. }))
@@ -69,22 +76,27 @@ impl ShellSession {
             if repeated {
                 return;
             }
-            if self.editor_quick_menu_anchor.take().is_some() {
-                self.editor_focus = ui::EditorFocus::Canvas;
+            if self.pages.editor.editor_quick_menu_anchor.take().is_some() {
+                self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                 return;
             }
-            if self.editor_open_menu.take().is_some()
-                || self.editor_selected_toolbar_action.take().is_some()
+            if self.pages.editor.editor_open_menu.take().is_some()
+                || self
+                    .pages
+                    .editor
+                    .editor_selected_toolbar_action
+                    .take()
+                    .is_some()
             {
-                self.editor_focus = ui::EditorFocus::Canvas;
+                self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                 return;
             }
         }
-        self.editor_open_menu = None;
-        self.editor_selected_toolbar_action = None;
-        self.editor_quick_menu_anchor = None;
+        self.pages.editor.editor_open_menu = None;
+        self.pages.editor.editor_selected_toolbar_action = None;
+        self.pages.editor.editor_quick_menu_anchor = None;
         if key.key == InputKey::F(6) {
-            self.editor_focus = match self.editor_focus {
+            self.pages.editor.editor_focus = match self.pages.editor.editor_focus {
                 ui::EditorFocus::MenuBar => ui::EditorFocus::Toolbar,
                 ui::EditorFocus::Toolbar => ui::EditorFocus::Canvas,
                 ui::EditorFocus::Canvas => ui::EditorFocus::StatusBar,
@@ -94,7 +106,7 @@ impl ShellSession {
         }
         // Keyboard editing always returns the live caret to the document after
         // a pointer interaction with a menu or toolbar.
-        self.editor_focus = ui::EditorFocus::Canvas;
+        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
         let command_key = key.modifiers.control
             || (platform.kind() == PlatformKind::Macos && key.modifiers.super_key);
         if command_key {
@@ -137,28 +149,29 @@ impl ShellSession {
                         .editor_state()
                         .is_some_and(EditorState::is_read_only)
                     {
-                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                            "shell-this-document-is-read-only"
-                        )));
+                        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
+                            i18n::msg!("shell-this-document-is-read-only"),
+                        ));
                         return;
                     }
                     if self.app.editor_state().is_some_and(EditorState::is_dirty) {
-                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                            "shell-save-or-close-the-current-document-before-creating-a-new-one"
-                        )));
+                        self.pages.editor.editor_message =
+                            Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-save-or-close-the-current-document-before-creating-a-new-one"
+                            )));
                     } else {
                         self.advance_editor_document_generation();
                         self.app.dispatch_at(
                             app::AppCommand::SetEditorState(Some(EditorState::new())),
                             Instant::now(),
                         );
-                        self.editor_quick_menu_anchor = None;
-                        self.editor_table_column_widths.clear();
-                        self.editor_table_resize = None;
-                        self.editor_fingerprint = None;
-                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                            "shell-new-text-document"
-                        )));
+                        self.pages.editor.editor_quick_menu_anchor = None;
+                        self.pages.editor.editor_table_column_widths.clear();
+                        self.pages.editor.editor_table_resize = None;
+                        self.pages.editor.editor_fingerprint = None;
+                        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
+                            i18n::msg!("shell-new-text-document"),
+                        ));
                         self.rebuild_editor_rich_render_cache();
                     }
                     return;
@@ -178,7 +191,7 @@ impl ShellSession {
                     return;
                 }
                 ('h', _) => {
-                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-replace-is-not-available-in-this-build"
                     )));
                     return;
@@ -216,7 +229,7 @@ impl ShellSession {
             InputKey::Delete => app::editor::EditorCommand::DeleteForward,
             InputKey::Tab => app::editor::EditorCommand::InsertText("    ".to_string()),
             InputKey::BackTab => {
-                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-outdent-is-not-available-for-this-block"
                 )));
                 return;
@@ -261,18 +274,22 @@ impl ShellSession {
     ) -> u8 {
         let config = self.current_editor_config();
         if !config.cursor_acceleration_enabled {
-            self.editor_cursor_acceleration = None;
+            self.pages.editor.editor_cursor_acceleration = None;
             return 1;
         }
-        let starts_new_hold = self.editor_cursor_acceleration.is_none_or(|state| {
-            state.direction != direction
-                || (phase == InputPhase::Press
-                    && (state.reports_repeat
-                        || received_at.saturating_duration_since(state.last_event_at)
-                            > EDITOR_CURSOR_LEGACY_REPEAT_GAP))
-        });
+        let starts_new_hold = self
+            .pages
+            .editor
+            .editor_cursor_acceleration
+            .is_none_or(|state| {
+                state.direction != direction
+                    || (phase == InputPhase::Press
+                        && (state.reports_repeat
+                            || received_at.saturating_duration_since(state.last_event_at)
+                                > EDITOR_CURSOR_LEGACY_REPEAT_GAP))
+            });
         if starts_new_hold {
-            self.editor_cursor_acceleration = Some(EditorCursorAccelerationState {
+            self.pages.editor.editor_cursor_acceleration = Some(EditorCursorAccelerationState {
                 direction,
                 started_at: received_at,
                 last_event_at: received_at,
@@ -280,7 +297,7 @@ impl ShellSession {
             });
             return 1;
         }
-        let Some(state) = self.editor_cursor_acceleration.as_mut() else {
+        let Some(state) = self.pages.editor.editor_cursor_acceleration.as_mut() else {
             return 1;
         };
         state.last_event_at = received_at;
@@ -316,8 +333,8 @@ impl ShellSession {
             self.handle_management_paste(&value);
             return;
         }
-        self.editor_cursor_acceleration = None;
-        self.editor_quick_menu_anchor = None;
+        self.pages.editor.editor_cursor_acceleration = None;
+        self.pages.editor.editor_quick_menu_anchor = None;
         let platform = platform::native_platform();
         self.apply_editor_command(app::editor::EditorCommand::Paste(value), platform.as_ref());
     }
@@ -340,9 +357,9 @@ impl ShellSession {
                 ..
             }
         ) {
-            self.editor_cursor_acceleration = None;
+            self.pages.editor.editor_cursor_acceleration = None;
         }
-        if self.editor_settings_dialog.is_some() {
+        if self.pages.editor.editor_settings_dialog.is_some() {
             match mouse {
                 MouseInput {
                     kind: ui::MouseEventKind::Moved,
@@ -368,6 +385,8 @@ impl ShellSession {
                 } => match direction {
                     ScrollDirection::Up | ScrollDirection::Left => {
                         if let Some(selected) = self
+                            .pages
+                            .editor
                             .editor_settings_dialog
                             .as_ref()
                             .map(|dialog| dialog.selected)
@@ -377,6 +396,8 @@ impl ShellSession {
                     }
                     ScrollDirection::Down | ScrollDirection::Right => {
                         if let Some(selected) = self
+                            .pages
+                            .editor
                             .editor_settings_dialog
                             .as_ref()
                             .map(|dialog| dialog.selected)
@@ -419,7 +440,7 @@ impl ShellSession {
                 kind: ui::MouseEventKind::Scroll(direction),
                 ..
             } => {
-                self.editor_quick_menu_anchor = None;
+                self.pages.editor.editor_quick_menu_anchor = None;
                 if let Some(mut viewport) = self.app.editor_state().map(|state| state.viewport) {
                     match direction {
                         ScrollDirection::Up => {
@@ -445,26 +466,26 @@ impl ShellSession {
                 ..
             } => {
                 if !matches!(hit, Some(ui::EditorHitTarget::QuickMenuPopup)) {
-                    self.editor_quick_menu_anchor = None;
+                    self.pages.editor.editor_quick_menu_anchor = None;
                 }
                 match hit {
                     Some(ui::EditorHitTarget::QuickMenuAction(action)) => {
                         self.activate_editor_quick_action(action, platform);
-                        self.editor_focus = ui::EditorFocus::Canvas;
+                        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                     }
                     Some(ui::EditorHitTarget::QuickMenuPopup) => {}
                     Some(ui::EditorHitTarget::Menu(menu)) => {
                         if menu == ui::EditorMenu::Settings {
                             self.open_editor_settings();
                         } else {
-                            self.editor_focus = ui::EditorFocus::MenuBar;
-                            self.editor_open_menu =
-                                (self.editor_open_menu != Some(menu)).then_some(menu);
+                            self.pages.editor.editor_focus = ui::EditorFocus::MenuBar;
+                            self.pages.editor.editor_open_menu =
+                                (self.pages.editor.editor_open_menu != Some(menu)).then_some(menu);
                         }
                     }
                     Some(ui::EditorHitTarget::MenuAction(action)) => {
-                        self.editor_open_menu = None;
-                        self.editor_selected_toolbar_action = None;
+                        self.pages.editor.editor_open_menu = None;
+                        self.pages.editor.editor_selected_toolbar_action = None;
                         match action {
                             ui::EditorMenuAction::Config(action) => {
                                 self.config_editor_action(action)
@@ -477,28 +498,28 @@ impl ShellSession {
                                 platform,
                             ),
                         }
-                        self.editor_focus = ui::EditorFocus::Canvas;
+                        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                     }
                     Some(ui::EditorHitTarget::MenuPopup) => {}
                     Some(ui::EditorHitTarget::Toolbar(action)) => {
-                        self.editor_open_menu = None;
-                        self.editor_selected_toolbar_action = Some(action);
+                        self.pages.editor.editor_open_menu = None;
+                        self.pages.editor.editor_selected_toolbar_action = Some(action);
                         self.activate_editor_toolbar(action, platform);
-                        self.editor_selected_toolbar_action = None;
-                        self.editor_focus = ui::EditorFocus::Canvas;
+                        self.pages.editor.editor_selected_toolbar_action = None;
+                        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                     }
                     Some(ui::EditorHitTarget::Mode(mode)) => {
-                        self.editor_open_menu = None;
+                        self.pages.editor.editor_open_menu = None;
                         self.apply_editor_command(
                             app::editor::EditorCommand::SetMode(mode),
                             platform,
                         );
-                        self.editor_focus = ui::EditorFocus::Canvas;
+                        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                     }
                     Some(ui::EditorHitTarget::TableEdge { .. }) => {
-                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                            "shell-switch-to-rich-mode-to-edit-table-structure"
-                        )));
+                        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
+                            i18n::msg!("shell-switch-to-rich-mode-to-edit-table-structure"),
+                        ));
                     }
                     Some(ui::EditorHitTarget::RichTableEdge { table_id, edge }) => {
                         self.edit_editor_table_edge(
@@ -509,33 +530,34 @@ impl ShellSession {
                         );
                     }
                     Some(ui::EditorHitTarget::TableResize { .. }) => {
-                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                            "shell-switch-to-rich-mode-to-resize-table-columns"
-                        )));
+                        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
+                            i18n::msg!("shell-switch-to-rich-mode-to-resize-table-columns"),
+                        ));
                     }
                     Some(ui::EditorHitTarget::RichTableResize {
                         table_id,
                         column_index,
                         width,
                     }) => {
-                        self.editor_open_menu = None;
-                        self.editor_focus = ui::EditorFocus::Canvas;
-                        self.editor_drag_anchor = None;
-                        self.editor_table_resize = Some(EditorTableResizeState {
+                        self.pages.editor.editor_open_menu = None;
+                        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+                        self.pages.editor.editor_drag_anchor = None;
+                        self.pages.editor.editor_table_resize = Some(EditorTableResizeState {
                             table_id,
                             column_index,
                             start_x: coordinates.0,
                             start_width: width,
                         });
-                        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                            "shell-resizing-table-column-arg1-width-cells",
-                            arg1 = column_index + 1,
-                            width = width
-                        )));
+                        self.pages.editor.editor_message =
+                            Some(i18n::LocalizedText::from(i18n::msg!(
+                                "shell-resizing-table-column-arg1-width-cells",
+                                arg1 = column_index + 1,
+                                width = width
+                            )));
                     }
                     Some(ui::EditorHitTarget::Canvas(position)) => {
-                        self.editor_open_menu = None;
-                        self.editor_focus = ui::EditorFocus::Canvas;
+                        self.pages.editor.editor_open_menu = None;
+                        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                         let rich_mode = self
                             .app
                             .editor_state()
@@ -550,15 +572,18 @@ impl ShellSession {
                                 }
                             },
                             Some(_) => {
-                                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                                    "shell-this-rich-decoration-is-not-directly-editable-click-its-text"
-                                )));
+                                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
+                                    i18n::msg!(
+                                        "shell-this-rich-decoration-is-not-directly-editable-click-its-text"
+                                    ),
+                                ));
                                 return;
                             }
                             None if rich_mode => {
-                                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                                    "shell-this-rich-cell-has-no-editable-text-position"
-                                )));
+                                self.pages.editor.editor_message =
+                                    Some(i18n::LocalizedText::from(i18n::msg!(
+                                        "shell-this-rich-cell-has-no-editable-text-position"
+                                    )));
                                 return;
                             }
                             None => self
@@ -570,7 +595,7 @@ impl ShellSession {
                                 .map(app::editor::EditorPosition::Source)
                                 .unwrap_or(app::editor::EditorPosition::Source(0)),
                         };
-                        self.editor_drag_anchor = Some(position);
+                        self.pages.editor.editor_drag_anchor = Some(position);
                         self.apply_editor_command(
                             app::editor::EditorCommand::MoveTo {
                                 position,
@@ -580,28 +605,28 @@ impl ShellSession {
                         );
                     }
                     Some(ui::EditorHitTarget::StatusBar) => {
-                        self.editor_open_menu = None;
-                        self.editor_focus = ui::EditorFocus::StatusBar;
+                        self.pages.editor.editor_open_menu = None;
+                        self.pages.editor.editor_focus = ui::EditorFocus::StatusBar;
                     }
                     Some(ui::EditorHitTarget::VerticalScrollbar) => {
-                        self.editor_open_menu = None;
+                        self.pages.editor.editor_open_menu = None;
                         self.begin_editor_scrollbar_drag(coordinates, ScrollbarAxis::Vertical);
                     }
                     Some(ui::EditorHitTarget::HorizontalScrollbar) => {
-                        self.editor_open_menu = None;
+                        self.pages.editor.editor_open_menu = None;
                         self.begin_editor_scrollbar_drag(coordinates, ScrollbarAxis::Horizontal);
                     }
                     Some(ui::EditorHitTarget::SettingsControl(_))
                     | Some(ui::EditorHitTarget::SettingsField(_))
                     | Some(ui::EditorHitTarget::SettingsDialog) => {}
-                    None => self.editor_open_menu = None,
+                    None => self.pages.editor.editor_open_menu = None,
                 }
             }
             MouseInput {
                 kind: ui::MouseEventKind::Down(PointerButton::Right),
                 ..
             } => {
-                self.editor_quick_menu_anchor = None;
+                self.pages.editor.editor_quick_menu_anchor = None;
                 if let Some(ui::EditorHitTarget::RichTableEdge { table_id, edge }) = hit {
                     self.edit_editor_table_edge(
                         table_id,
@@ -614,22 +639,22 @@ impl ShellSession {
                 if matches!(hit, Some(ui::EditorHitTarget::Canvas(_)))
                     && self.editor_quick_menu_is_available()
                 {
-                    self.editor_open_menu = None;
-                    self.editor_selected_toolbar_action = None;
-                    self.editor_focus = ui::EditorFocus::Canvas;
-                    self.editor_quick_menu_anchor = Some(coordinates);
+                    self.pages.editor.editor_open_menu = None;
+                    self.pages.editor.editor_selected_toolbar_action = None;
+                    self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+                    self.pages.editor.editor_quick_menu_anchor = Some(coordinates);
                 }
             }
             MouseInput {
                 kind: ui::MouseEventKind::Drag(PointerButton::Left),
                 ..
             } => {
-                self.editor_quick_menu_anchor = None;
+                self.pages.editor.editor_quick_menu_anchor = None;
                 if matches!(self.scrollbar_drag, Some(ScrollbarDragState::Editor { .. })) {
                     self.drag_editor_scrollbar(coordinates);
                     return;
                 }
-                if self.editor_table_resize.is_some() {
+                if self.pages.editor.editor_table_resize.is_some() {
                     self.resize_editor_table_column(coordinates.0);
                     return;
                 }
@@ -648,15 +673,15 @@ impl ShellSession {
                             }
                         },
                         Some(_) => {
-                            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                                "shell-rich-selection-can-only-start-on-editable-text"
-                            )));
+                            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
+                                i18n::msg!("shell-rich-selection-can-only-start-on-editable-text"),
+                            ));
                             return;
                         }
                         None if rich_mode => {
-                            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                                "shell-this-rich-cell-has-no-editable-text-position"
-                            )));
+                            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
+                                i18n::msg!("shell-this-rich-cell-has-no-editable-text-position"),
+                            ));
                             return;
                         }
                         None => self
@@ -680,8 +705,8 @@ impl ShellSession {
                 ..
             } => {
                 self.clear_editor_scrollbar_drag();
-                self.editor_drag_anchor = None;
-                self.editor_table_resize = None;
+                self.pages.editor.editor_drag_anchor = None;
+                self.pages.editor.editor_table_resize = None;
             }
             MouseInput {
                 kind: ui::MouseEventKind::Down(_),
@@ -707,12 +732,14 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn resize_editor_table_column(&mut self, x: u16) {
-        let Some(resize) = self.editor_table_resize else {
+        let Some(resize) = self.pages.editor.editor_table_resize else {
             return;
         };
         let delta = i32::from(x) - i32::from(resize.start_x);
         let width = (resize.start_width as i32 + delta).clamp(1, 120) as usize;
         let columns = self
+            .pages
+            .editor
             .editor_table_column_widths
             .entry(resize.table_id)
             .or_default();
@@ -720,7 +747,7 @@ impl ShellSession {
             columns.resize(resize.column_index + 1, 0);
         }
         columns[resize.column_index] = width;
-        self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
             "shell-table-column-arg1-width-width",
             arg1 = resize.column_index + 1,
             width = width
@@ -749,7 +776,12 @@ impl ShellSession {
         );
         let changed = before != self.app.editor_state().map(EditorState::revision);
         if changed {
-            if let Some(widths) = self.editor_table_column_widths.get_mut(&table_id) {
+            if let Some(widths) = self
+                .pages
+                .editor
+                .editor_table_column_widths
+                .get_mut(&table_id)
+            {
                 widths.clear();
             }
             let action = match edit {
@@ -764,20 +796,20 @@ impl ShellSession {
                 ui::EditorTableEdge::Left => i18n::LocalizedText::from(i18n::msg!("shell-left")),
                 ui::EditorTableEdge::Right => i18n::LocalizedText::from(i18n::msg!("shell-right")),
             };
-            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-table-column-action-on-the-side",
                 action = action,
                 side = side
             )));
         } else if edit == app::editor::TableColumnEdit::Remove {
-            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-a-table-must-keep-at-least-one-column"
             )));
         }
-        self.editor_open_menu = None;
-        self.editor_focus = ui::EditorFocus::Canvas;
-        self.editor_drag_anchor = None;
-        self.editor_table_resize = None;
+        self.pages.editor.editor_open_menu = None;
+        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+        self.pages.editor.editor_drag_anchor = None;
+        self.pages.editor.editor_table_resize = None;
     }
 
     pub(in crate::session) fn editor_quick_menu_is_available(&self) -> bool {
@@ -839,7 +871,7 @@ impl ShellSession {
                 ui::EditorToolbarAction::Find | ui::EditorToolbarAction::More
             )
         {
-            self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+            self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                 "shell-this-document-is-read-only"
             )));
             return;
@@ -851,18 +883,21 @@ impl ShellSession {
                     .editor_state()
                     .is_none_or(|state| !state.is_dirty())
                 {
+                    if !self.reset_editor_recovery_identity() {
+                        return;
+                    }
                     self.advance_editor_document_generation();
                     self.app.dispatch_at(
                         app::AppCommand::SetEditorState(Some(EditorState::new())),
                         Instant::now(),
                     );
-                    self.editor_quick_menu_anchor = None;
-                    self.editor_table_column_widths.clear();
-                    self.editor_table_resize = None;
-                    self.editor_fingerprint = None;
+                    self.pages.editor.editor_quick_menu_anchor = None;
+                    self.pages.editor.editor_table_column_widths.clear();
+                    self.pages.editor.editor_table_resize = None;
+                    self.pages.editor.editor_fingerprint = None;
                     self.rebuild_editor_rich_render_cache();
                 } else {
-                    self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-save-or-close-the-current-document-first"
                     )));
                 }
@@ -895,7 +930,7 @@ impl ShellSession {
                 rows: 2,
             }),
             ui::EditorToolbarAction::Link => {
-                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-inserted-a-link-placeholder-edit-its-url-in-source-mode"
                 )));
                 EditorCommand::ApplyFormat(FormatCommand::Link {
@@ -910,7 +945,7 @@ impl ShellSession {
                     .and_then(EditorState::selected_text)
                     .filter(|text| !text.is_empty())
                     .unwrap_or_else(|| "image".to_string());
-                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-inserted-an-image-placeholder-edit-its-path-in-source-mode"
                 )));
                 EditorCommand::ApplyFormat(FormatCommand::Image {
@@ -924,7 +959,7 @@ impl ShellSession {
                 return;
             }
             ui::EditorToolbarAction::More => {
-                self.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
                     "shell-use-source-mode-for-this-operation"
                 )));
                 return;
@@ -975,8 +1010,8 @@ impl ShellSession {
             ScrollbarAxis::Vertical => coordinates.1.saturating_sub(scrollbar.thumb.y),
             ScrollbarAxis::Horizontal => coordinates.0.saturating_sub(scrollbar.thumb.x),
         };
-        self.editor_drag_anchor = None;
-        self.editor_table_resize = None;
+        self.pages.editor.editor_drag_anchor = None;
+        self.pages.editor.editor_table_resize = None;
         self.scrollbar_drag = Some(ScrollbarDragState::Editor { axis, grab_offset });
     }
 

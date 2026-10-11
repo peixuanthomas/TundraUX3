@@ -25,7 +25,7 @@ fn prepared_update_waits_for_auto_admin_completion_or_rejection() {
         // Draining the prepared result must keep it while AA is still waiting.
         for _ in 0..2 {
             state.poll_settings_background_tasks();
-            assert!(!state.shutdown_requested);
+            assert!(!state.shutdown_requested());
             assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
             assert_eq!(
                 state.settings_update_state.phase,
@@ -57,14 +57,14 @@ fn prepared_update_waits_for_auto_admin_completion_or_rejection() {
             assert!(state.auto_admin_running());
             assert!(!state.auto_admin_view().unwrap().confirming);
             state.poll_settings_background_tasks();
-            assert!(!state.shutdown_requested);
+            assert!(!state.shutdown_requested());
             assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
             job.finish(Ok("Done".into()));
         }
 
         assert!(!state.auto_admin_running());
         state.poll_settings_background_tasks();
-        assert!(state.shutdown_requested);
+        assert!(state.shutdown_requested());
         assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
         assert_eq!(
             state.settings_update_state.status,
@@ -90,7 +90,7 @@ fn prepared_update_without_auto_admin_still_restarts_immediately() {
         )))
         .unwrap();
     state.poll_settings_background_tasks();
-    assert!(state.shutdown_requested);
+    assert!(state.shutdown_requested());
     assert_eq!(state.update_apply_manifest.as_ref(), Some(&manifest));
 }
 

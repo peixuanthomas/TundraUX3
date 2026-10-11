@@ -3,7 +3,7 @@ use crate::session::*;
 
 impl ShellSession {
     pub(in crate::session) fn handle_management_paste(&mut self, value: &str) {
-        if let Some(form) = &mut self.management_state.form {
+        if let Some(form) = &mut self.pages.management.management_state.form {
             if let Some(field) = form.fields.get_mut(form.selected) {
                 if field.choices.is_empty() && field.value.len() + value.len() <= 16 * 1024 {
                     field
@@ -11,14 +11,19 @@ impl ShellSession {
                         .extend(value.chars().filter(|c| !c.is_control()));
                 }
             }
-        } else if self.management_state.filtering {
-            if self.management_state.filter_input.len() + value.len() <= 16 * 1024 {
-                self.management_state
+        } else if self.pages.management.management_state.filtering {
+            if self.pages.management.management_state.filter_input.len() + value.len() <= 16 * 1024
+            {
+                self.pages
+                    .management
+                    .management_state
                     .filter_input
                     .extend(value.chars().filter(|c| !c.is_control()));
             }
-        } else if self.management_state.terminal_mode {
+        } else if self.pages.management.management_state.terminal_mode {
             let bracketed = self
+                .pages
+                .management
                 .management_state
                 .parser
                 .as_ref()
@@ -36,24 +41,37 @@ impl ShellSession {
 
     pub(in crate::session) fn handle_management_key(&mut self, key: &KeyInput) {
         if key.phase == InputPhase::Release {
-            if self.management_state.shortcut_repeat_guard.as_ref() == Some(&key.key) {
-                self.management_state.shortcut_repeat_guard = None;
+            if self
+                .pages
+                .management
+                .management_state
+                .shortcut_repeat_guard
+                .as_ref()
+                == Some(&key.key)
+            {
+                self.pages.management.management_state.shortcut_repeat_guard = None;
             }
             return;
         }
         if self.notification_has_active_modal()
             || self.time_sync_dialog_visible
-            || self.active_popup.is_some()
+            || self.pages.common.active_popup.is_some()
         {
             return;
         }
         if key.phase == InputPhase::Repeat
-            && self.management_state.shortcut_repeat_guard.as_ref() == Some(&key.key)
+            && self
+                .pages
+                .management
+                .management_state
+                .shortcut_repeat_guard
+                .as_ref()
+                == Some(&key.key)
         {
             return;
         }
         if key.phase == InputPhase::Press {
-            self.management_state.shortcut_repeat_guard = None;
+            self.pages.management.management_state.shortcut_repeat_guard = None;
         }
         if key.phase == InputPhase::Repeat && matches!(key.key, InputKey::Enter | InputKey::Escape)
         {
@@ -73,16 +91,16 @@ impl ShellSession {
                 | InputKey::PageUp
                 | InputKey::PageDown
         ) {
-            self.management_state.list_scroll_explicit = false;
-            self.management_state.action_scroll = None;
+            self.pages.management.management_state.list_scroll_explicit = false;
+            self.pages.management.management_state.action_scroll = None;
             if !matches!(key.key, InputKey::PageUp | InputKey::PageDown) {
-                self.management_state.form_field_scroll = None;
+                self.pages.management.management_state.form_field_scroll = None;
             }
         }
         if key.key == InputKey::Escape {
             self.cancel_management_pointer_gesture();
         }
-        if key.is_ctrl_c() && !self.management_state.terminal_mode {
+        if key.is_ctrl_c() && !self.pages.management.management_state.terminal_mode {
             return;
         }
         if management_control_modifier(key) && matches!(key.key, InputKey::Char('t' | 'T')) {
@@ -91,13 +109,15 @@ impl ShellSession {
             }
             return;
         }
-        if self.management_state.terminal_mode && self.management_state.form.is_some() {
+        if self.pages.management.management_state.terminal_mode
+            && self.pages.management.management_state.form.is_some()
+        {
             if matches!(key.key, InputKey::PageUp | InputKey::PageDown) {
                 self.scroll_management_terminal(if key.key == InputKey::PageUp { 10 } else { -10 });
             }
             return;
         }
-        if self.management_state.form.is_some()
+        if self.pages.management.management_state.form.is_some()
             && management_control_modifier(key)
             && key.key == InputKey::Enter
         {
@@ -106,7 +126,7 @@ impl ShellSession {
             }
             return;
         }
-        if let Some(form) = &mut self.management_state.form {
+        if let Some(form) = &mut self.pages.management.management_state.form {
             if management_control_modifier(key) && matches!(key.key, InputKey::Char('u' | 'U')) {
                 if let Some(field) = form.fields.get_mut(form.selected) {
                     if field.choices.is_empty() {
@@ -193,7 +213,7 @@ impl ShellSession {
             }
             return;
         }
-        if self.management_state.filtering {
+        if self.pages.management.management_state.filtering {
             if management_control_modifier(key) && key.key == InputKey::Enter {
                 self.apply_management_filter();
                 return;
@@ -208,7 +228,7 @@ impl ShellSession {
                 return;
             }
             match key.key {
-                InputKey::Escape => self.management_state.filtering = false,
+                InputKey::Escape => self.pages.management.management_state.filtering = false,
                 InputKey::Enter => {
                     self.apply_management_filter();
                 }
@@ -216,12 +236,17 @@ impl ShellSession {
                     self.management_touch_control(ui::ManagementControl::Refresh);
                 }
                 InputKey::Backspace => {
-                    self.management_state.filter_input.pop();
+                    self.pages.management.management_state.filter_input.pop();
                 }
-                InputKey::Space => self.management_state.filter_input.push(' '),
+                InputKey::Space => self
+                    .pages
+                    .management
+                    .management_state
+                    .filter_input
+                    .push(' '),
                 InputKey::Char(c) => {
                     if !c.is_control() {
-                        self.management_state.filter_input.push(c);
+                        self.pages.management.management_state.filter_input.push(c);
                     }
                 }
                 _ => {}
@@ -229,14 +254,22 @@ impl ShellSession {
             return;
         }
         if key.modifiers.alt && matches!(key.key, InputKey::PageUp | InputKey::PageDown) {
-            self.management_state.details_scroll = if key.key == InputKey::PageUp {
-                self.management_state.details_scroll.saturating_sub(5)
+            self.pages.management.management_state.details_scroll = if key.key == InputKey::PageUp {
+                self.pages
+                    .management
+                    .management_state
+                    .details_scroll
+                    .saturating_sub(5)
             } else {
-                self.management_state.details_scroll.saturating_add(5)
+                self.pages
+                    .management
+                    .management_state
+                    .details_scroll
+                    .saturating_add(5)
             };
             return;
         }
-        if self.management_state.terminal_mode {
+        if self.pages.management.management_state.terminal_mode {
             if key.modifiers.shift && matches!(key.key, InputKey::PageUp | InputKey::PageDown) {
                 self.scroll_management_terminal(if key.key == InputKey::PageUp { 10 } else { -10 });
                 return;
@@ -265,7 +298,9 @@ impl ShellSession {
             self.management_send(OperationInput::Terminal {
                 bytes: encode_terminal_input(
                     &input,
-                    self.management_state
+                    self.pages
+                        .management
+                        .management_state
                         .parser
                         .as_ref()
                         .and_then(|p| p.0.lock().ok().map(|p| p.screen().application_cursor()))
@@ -282,12 +317,24 @@ impl ShellSession {
             && key.key == InputKey::F(6)
         {
             if key.phase == InputPhase::Press {
-                let count = self.management_state.snapshot.columns.len();
+                let count = self
+                    .pages
+                    .management
+                    .management_state
+                    .snapshot
+                    .columns
+                    .len();
                 if count > 0 {
                     let column = if key.modifiers.shift {
-                        self.management_state.sort.map_or(0, |sort| sort.column)
+                        self.pages
+                            .management
+                            .management_state
+                            .sort
+                            .map_or(0, |sort| sort.column)
                     } else {
-                        self.management_state
+                        self.pages
+                            .management
+                            .management_state
                             .sort
                             .map_or(0, |sort| (sort.column + 1) % count)
                     };
@@ -335,13 +382,17 @@ impl ShellSession {
             self.all_management_actions()
                 .into_iter()
                 .find(|(action, _)| {
-                    management_action_shortcut(self.management_state.kind, &action.id)
-                        .is_some_and(|(_, shortcut)| shortcut == action_key)
+                    management_action_shortcut(
+                        self.pages.management.management_state.kind,
+                        &action.id,
+                    )
+                    .is_some_and(|(_, shortcut)| shortcut == action_key)
                 })
         {
             if key.phase == InputPhase::Press {
                 self.activate_management_item(action, row);
-                self.management_state.shortcut_repeat_guard = Some(key.key.clone());
+                self.pages.management.management_state.shortcut_repeat_guard =
+                    Some(key.key.clone());
             }
             return;
         }
@@ -357,12 +408,13 @@ impl ShellSession {
             key.key,
             InputKey::Char('0'..='9' | '/' | 'r' | 'R' | 's' | 'S') | InputKey::F(4 | 5)
         ) {
-            self.management_state.shortcut_repeat_guard = Some(key.key.clone());
+            self.pages.management.management_state.shortcut_repeat_guard = Some(key.key.clone());
         }
         match key.key {
             InputKey::Escape
-                if self.management_state.kind == Some(ManagementKind::Packages)
-                    && self.management_state.details_only =>
+                if self.pages.management.management_state.kind
+                    == Some(ManagementKind::Packages)
+                    && self.pages.management.management_state.details_only =>
             {
                 self.toggle_management_details();
             }
@@ -377,25 +429,31 @@ impl ShellSession {
             }
             InputKey::F(4) => self.management_touch_control(ui::ManagementControl::Details),
             InputKey::Tab | InputKey::BackTab => {
-                self.management_state.actions_focused = !self.management_state.actions_focused
+                self.pages.management.management_state.actions_focused =
+                    !self.pages.management.management_state.actions_focused
             }
             InputKey::Enter => {
-                if self.management_state.actions_focused {
-                    self.activate_management_action(self.management_state.selected_action);
+                if self.pages.management.management_state.actions_focused {
+                    self.activate_management_action(
+                        self.pages.management.management_state.selected_action,
+                    );
                 } else {
-                    if self.management_state.kind == Some(ManagementKind::Packages) {
+                    if self.pages.management.management_state.kind == Some(ManagementKind::Packages)
+                    {
                         self.toggle_management_details();
                         return;
                     }
-                    self.management_state.actions_focused = true;
+                    self.pages.management.management_state.actions_focused = true;
                     if let Some(id) = self
+                        .pages
+                        .management
                         .management_state
                         .snapshot
                         .rows
-                        .get(self.management_state.selected)
+                        .get(self.pages.management.management_state.selected)
                         .map(|r| r.id.clone())
                     {
-                        if let Some(query) = &mut self.management_state.query {
+                        if let Some(query) = &mut self.pages.management.management_state.query {
                             query.target = Some(id);
                         }
                         self.refresh_management();
@@ -413,11 +471,17 @@ impl ShellSession {
             | InputKey::Home
             | InputKey::End => {
                 let actions = self.management_actions();
-                let rows_count = self.management_state.snapshot.rows.len();
-                let (selected, count) = if self.management_state.actions_focused {
-                    (&mut self.management_state.selected_action, actions.len())
+                let rows_count = self.pages.management.management_state.snapshot.rows.len();
+                let (selected, count) = if self.pages.management.management_state.actions_focused {
+                    (
+                        &mut self.pages.management.management_state.selected_action,
+                        actions.len(),
+                    )
                 } else {
-                    (&mut self.management_state.selected, rows_count)
+                    (
+                        &mut self.pages.management.management_state.selected,
+                        rows_count,
+                    )
                 };
                 *selected = match key.key {
                     InputKey::Up => selected.saturating_sub(1),
@@ -431,9 +495,9 @@ impl ShellSession {
             }
             _ => {}
         }
-        if self.management_state.kind == Some(ManagementKind::Packages)
-            && self.management_state.details_only
-            && !self.management_state.actions_focused
+        if self.pages.management.management_state.kind == Some(ManagementKind::Packages)
+            && self.pages.management.management_state.details_only
+            && !self.pages.management.management_state.actions_focused
             && matches!(
                 key.key,
                 InputKey::Up
@@ -445,19 +509,21 @@ impl ShellSession {
             )
         {
             let target = self
+                .pages
+                .management
                 .management_state
                 .snapshot
                 .rows
-                .get(self.management_state.selected)
+                .get(self.pages.management.management_state.selected)
                 .map(|row| row.id.clone());
-            if let Some(query) = &mut self.management_state.query {
+            if let Some(query) = &mut self.pages.management.management_state.query {
                 if matches!(
                     query.scope.as_str(),
                     "" | "search" | "installed" | "updates"
                 ) && query.target != target
                 {
                     query.target = target;
-                    self.management_state.details_scroll = 0;
+                    self.pages.management.management_state.details_scroll = 0;
                     self.refresh_management();
                 }
             }
@@ -466,21 +532,33 @@ impl ShellSession {
     }
 
     pub(super) fn toggle_management_details(&mut self) {
-        if self.management_state.snapshot.rows.is_empty() && !self.management_state.details_only {
-            return;
-        }
-        self.management_state.details_only = !self.management_state.details_only;
-        self.management_state.details_scroll = 0;
-        let package_view = self.management_state.kind == Some(ManagementKind::Packages);
-        self.management_state.actions_focused = !package_view;
-        let target = self
+        if self
+            .pages
+            .management
             .management_state
             .snapshot
             .rows
-            .get(self.management_state.selected)
+            .is_empty()
+            && !self.pages.management.management_state.details_only
+        {
+            return;
+        }
+        self.pages.management.management_state.details_only =
+            !self.pages.management.management_state.details_only;
+        self.pages.management.management_state.details_scroll = 0;
+        let package_view =
+            self.pages.management.management_state.kind == Some(ManagementKind::Packages);
+        self.pages.management.management_state.actions_focused = !package_view;
+        let target = self
+            .pages
+            .management
+            .management_state
+            .snapshot
+            .rows
+            .get(self.pages.management.management_state.selected)
             .map(|row| row.id.clone());
-        let details_only = self.management_state.details_only;
-        if let Some(query) = &mut self.management_state.query {
+        let details_only = self.pages.management.management_state.details_only;
+        if let Some(query) = &mut self.pages.management.management_state.query {
             query.target = if package_view
                 && (!details_only
                     || !matches!(
@@ -496,7 +574,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn sort_management(&mut self, column: usize) {
-        let state = &mut self.management_state;
+        let state = &mut self.pages.management.management_state;
         if column >= state.snapshot.columns.len() {
             return;
         }
@@ -524,13 +602,15 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn scroll_management_terminal(&mut self, delta: isize) {
-        if let Some(parser) = &self.management_state.parser {
+        if let Some(parser) = &self.pages.management.management_state.parser {
             if let Ok(mut parser) = parser.0.lock() {
                 let position = parser.screen().scrollback().saturating_add_signed(delta);
                 parser.set_scrollback(position);
             }
         } else {
-            self.management_state.output_scroll = self
+            self.pages.management.management_state.output_scroll = self
+                .pages
+                .management
                 .management_state
                 .output_scroll
                 .saturating_add_signed((-delta).clamp(i16::MIN as isize, i16::MAX as isize) as i16);

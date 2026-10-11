@@ -1,6 +1,7 @@
 use crate::session::*;
 
 use platform::management::{OperationEvent, OperationInput};
+use std::sync::atomic::{AtomicBool, Ordering};
 use zeroize::Zeroizing;
 
 pub(in crate::session) enum UserManagementOperation {
@@ -191,6 +192,9 @@ fn read_confirmed_password(
 #[derive(Clone)]
 pub(in crate::session) struct UserManagementJob(Arc<Job>);
 struct Job {
+    id: u64,
+    cancelled: AtomicBool,
+    auto_admin: Option<AutoAdminJob>,
     result: Mutex<Option<Outcome>>,
     worker: Mutex<Option<ManagedThreadHandle<()>>>,
     session_id: String,
@@ -213,13 +217,33 @@ impl PartialEq for UserManagementJob {
     }
 }
 impl Eq for UserManagementJob {}
+impl UserManagementJob {
+    fn finished(&self) -> bool {
+        self.0
+            .worker
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .is_none_or(ManagedThreadHandle::is_finished)
+    }
+    fn cancel(&self) {
+        self.0.cancelled.store(true, Ordering::Relaxed);
+        if let Some(job) = &self.0.auto_admin {
+            if job.phase() == ::auto_admin::JobPhase::Running {
+                job.request_stop(false);
+            } else {
+                job.cancel();
+            }
+        }
+    }
+}
 
 impl ShellSession {
     pub(in crate::session) fn start_user_management_task(
         &mut self,
         operation: Option<UserManagementOperation>,
     ) -> bool {
-        if self.user_management_job.is_some() {
+        if self.pages.user_management.user_management_job.is_some() {
             return false;
         }
         let Some(storage) = self.storage_manager.clone() else {
@@ -311,6 +335,9 @@ impl ShellSession {
         #[cfg(target_os = "linux")]
         let authority = self.privilege_session.clone();
         let shared = Arc::new(Job {
+            id: PageInstanceId::new().get(),
+            cancelled: AtomicBool::new(false),
+            auto_admin: aa.clone(),
             result: Mutex::new(None),
             worker: Mutex::new(None),
             session_id: actor.session_id.clone(),
@@ -319,7 +346,7 @@ impl ShellSession {
         let output = Arc::downgrade(&shared);
         match crate::session::controller::auto_admin::spawn_task(
             &group,
-            TaskId::from_static("user-management"),
+            TaskId::new(format!("user-management-{}", shared.id)).expect("unique account task id"),
             self.language.clone(),
             aa.as_ref(),
             move || {
@@ -361,6 +388,7 @@ impl ShellSession {
                 }
                 let users = service.list_accessible_users(&actor);
                 if let Some(output) = output.upgrade()
+                    && (!output.cancelled.load(Ordering::Relaxed) || output.auto_admin.is_some())
                     && let Ok(mut slot) = output.result.lock()
                 {
                     *slot = Some(Outcome {
@@ -377,10 +405,13 @@ impl ShellSession {
                     .worker
                     .lock()
                     .unwrap_or_else(|error| error.into_inner()) = Some(worker);
-                self.user_management_job = Some(UserManagementJob(shared));
-                self.user_management_message =
+                let job = UserManagementJob(shared);
+                self.register_user_management_job(&job);
+                self.pages.user_management.user_management_job = Some(job);
+                self.pages.user_management.user_management_message =
                     Some(i18n::msg!("shell-linux-accounts-working").into());
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Info;
+                self.pages.user_management.user_management_feedback_tone =
+                    UserManagementFeedbackTone::Info;
                 true
             }
             Err(error) => {
@@ -391,9 +422,123 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn poll_user_management_task(&mut self) {
-        let Some(job) = self.user_management_job.clone() else {
+        for id in self.pages.user_management.ids() {
+            self.with_page_context(id, |session| session.poll_user_management_page());
+        }
+        self.poll_detached_user_management_jobs();
+    }
+
+    fn register_user_management_job(&mut self, job: &UserManagementJob) {
+        let cancel = job.clone();
+        let finished = job.clone();
+        self.register_page_task(
+            TaskDomain::UserManagement,
+            job.0.id,
+            if job.0.auto_admin.is_some() {
+                TaskClass::Operation
+            } else {
+                TaskClass::Query
+            },
+            TaskControl::new(move || cancel.cancel(), move || finished.finished()),
+        );
+    }
+
+    pub(in crate::session) fn detach_user_management_page(&mut self, id: PageInstanceId) {
+        if let Some(page) = self.pages.user_management.get_mut(id)
+            && let Some(job) = page.user_management_job.take()
+            && self.tasks.owner(TaskDomain::UserManagement, job.0.id) == Some(TaskOwner::Session)
+        {
+            self.detached_user_management_jobs.push(job);
+        }
+    }
+
+    fn poll_detached_user_management_jobs(&mut self) {
+        for job in std::mem::take(&mut self.detached_user_management_jobs) {
+            if self.tasks.owner(TaskDomain::UserManagement, job.0.id) != Some(TaskOwner::Session) {
+                continue;
+            }
+            let finished = job.finished();
+            let outcome = job
+                .0
+                .result
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            if let Some(outcome) = outcome {
+                self.tasks.complete(TaskDomain::UserManagement, job.0.id);
+                if self
+                    .app
+                    .auth_session()
+                    .is_none_or(|actor| actor.session_id != job.0.session_id)
+                {
+                    continue;
+                }
+                if outcome.result.is_ok()
+                    && self.apply_user_management_completion(&job.0.completion)
+                {
+                    return;
+                }
+                if let Some(message) = match outcome.result {
+                    Ok(()) => outcome.message,
+                    Err(error) => Some(format_core_error(&error)),
+                } {
+                    self.notify_status(message);
+                }
+            } else if finished {
+                self.tasks.complete(TaskDomain::UserManagement, job.0.id);
+                self.notify_status(platform::service::ServiceError::Unknown.to_string());
+            } else {
+                self.detached_user_management_jobs.push(job);
+            }
+        }
+    }
+
+    fn apply_user_management_completion(&mut self, completion: &Completion) -> bool {
+        let logout: Option<i18n::LocalizedText> = match completion {
+            Completion::None => None,
+            Completion::DisableCurrent => Some(i18n::msg!("shell-account-disabled").into()),
+            Completion::DeleteLocal { user_id, current } => {
+                if let Some(user_id) = user_id
+                    && let Some(storage) = &self.storage_manager
+                {
+                    let result = storage.load_clock().and_then(|mut document| {
+                        document.profiles.remove(user_id);
+                        storage.save_clock(&document)
+                    });
+                    if let Err(error) = result {
+                        self.report_clock_storage_error(error.to_string());
+                    }
+                }
+                current.then(|| i18n::msg!("shell-account-deleted").into())
+            }
+        };
+        if let Some(message) = logout {
+            self.return_to_login(message);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn poll_user_management_page(&mut self) {
+        let Some(job) = self.pages.user_management.user_management_job.clone() else {
             return;
         };
+        if self.tasks.owner(TaskDomain::UserManagement, job.0.id)
+            != self
+                .pages
+                .user_management
+                .selected_id()
+                .map(TaskOwner::Page)
+        {
+            self.pages.user_management.user_management_job = None;
+            return;
+        }
+        let stopped = job.0.worker.lock().ok().is_some_and(|worker| {
+            worker
+                .as_ref()
+                .is_some_and(ManagedThreadHandle::is_finished)
+        });
         let result = job
             .0
             .result
@@ -401,14 +546,9 @@ impl ShellSession {
             .ok()
             .and_then(|mut result| result.take());
         let Some(outcome) = result else {
-            if job
-                .0
-                .worker
-                .lock()
-                .ok()
-                .is_some_and(|worker| worker.as_ref().is_some_and(|worker| worker.is_finished()))
-            {
-                self.user_management_job = None;
+            if stopped {
+                self.pages.user_management.user_management_job = None;
+                self.tasks.complete(TaskDomain::UserManagement, job.0.id);
                 self.report_user_management_refresh_error(
                     platform::service::ServiceError::Unknown.to_string(),
                 );
@@ -416,7 +556,8 @@ impl ShellSession {
             return;
         };
         let session_id = job.0.session_id.clone();
-        self.user_management_job = None;
+        self.pages.user_management.user_management_job = None;
+        self.tasks.complete(TaskDomain::UserManagement, job.0.id);
         if self
             .app
             .auth_session()
@@ -424,41 +565,23 @@ impl ShellSession {
         {
             return;
         }
-        if outcome.result.is_ok() {
-            let logout: Option<i18n::LocalizedText> = match &job.0.completion {
-                Completion::None => None,
-                Completion::DisableCurrent => Some(i18n::msg!("shell-account-disabled").into()),
-                Completion::DeleteLocal { user_id, current } => {
-                    if let Some(user_id) = user_id
-                        && let Some(storage) = &self.storage_manager
-                    {
-                        let result = storage.load_clock().and_then(|mut document| {
-                            document.profiles.remove(user_id);
-                            storage.save_clock(&document)
-                        });
-                        if let Err(error) = result {
-                            self.report_clock_storage_error(error.to_string());
-                        }
-                    }
-                    current.then(|| i18n::msg!("shell-account-deleted").into())
-                }
-            };
-            if let Some(message) = logout {
-                self.return_to_login(message);
-                return;
-            }
+        if outcome.result.is_ok() && self.apply_user_management_completion(&job.0.completion) {
+            return;
         }
         match outcome.result {
             Ok(()) => {
                 if outcome.message.is_some() {
-                    self.user_management_mode = UserManagementMode::Browse;
+                    self.pages.user_management.user_management_mode = UserManagementMode::Browse;
                 }
-                self.user_management_message = outcome.message;
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Success;
+                self.pages.user_management.user_management_message = outcome.message;
+                self.pages.user_management.user_management_feedback_tone =
+                    UserManagementFeedbackTone::Success;
             }
             Err(error) => {
-                self.user_management_message = Some(format_core_error(&error));
-                self.user_management_feedback_tone = UserManagementFeedbackTone::Error;
+                self.pages.user_management.user_management_message =
+                    Some(format_core_error(&error));
+                self.pages.user_management.user_management_feedback_tone =
+                    UserManagementFeedbackTone::Error;
             }
         }
         match outcome.users {
@@ -483,7 +606,9 @@ impl ShellSession {
                         .dispatch_at(app::AppCommand::SetManagedUsers(Vec::new()), Instant::now());
                 }
                 let error = format_core_error(&error);
-                let feedback = if let Some(operation) = self.user_management_message.clone() {
+                let feedback = if let Some(operation) =
+                    self.pages.user_management.user_management_message.clone()
+                {
                     i18n::msg!(
                         "shell-linux-account-refresh-error",
                         operation = operation,

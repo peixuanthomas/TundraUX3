@@ -140,9 +140,9 @@ impl ShellSession {
             );
         }
 
-        let created_at = Instant::now();
-        let setup_appearance = storage::AppearanceConfig::default();
         let ui = UiSessionState {
+            pages: ShellPages::default(),
+            command_line_close_request: None,
             language,
             language_catalog,
             repaired_resource_paths: Vec::new(),
@@ -153,9 +153,7 @@ impl ShellSession {
             storage_manager: startup.storage_manager.clone(),
             last_time_sync_utc: None,
             clock_scheduler: None,
-            clock_selected_entry_id: None,
-            clock_entry_window_start: 0,
-            clock_create_state: None,
+
             clock_persist_pending: false,
             clock_pending_due_summary: None,
             clock_profile_pending_sync: None,
@@ -166,42 +164,9 @@ impl ShellSession {
             debug_policy: startup.debug_policy,
             identity_backend: startup.identity_backend,
             login_users,
-            login_selected_user,
-            login_user_window_start: 0,
-            login_username,
-            login_password: String::new(),
-            login_idle_deadline: created_at + LOGIN_IDLE_TIMEOUT,
-            login_password_visible_until: None,
-            setup_step: ui::SetupStep::Language,
+
             pending_personalization_session: None,
-            setup_selected_language_index: 0,
-            setup_selected_timezone_index: 0,
-            setup_admin_username: String::new(),
-            setup_admin_password: String::new(),
-            setup_admin_password_confirm: String::new(),
-            setup_admin_password_hint: String::new(),
-            setup_focused_field: ui::SetupField::LanguageList,
-            setup_timezone_window_start: 0,
-            setup_border_shape: setup_appearance.border_shape,
-            setup_theme_color: setup_appearance.border_color,
-            setup_accent_color: setup_appearance.accent_color,
-            setup_custom_color_target: None,
-            setup_custom_color_input: String::new(),
-            setup_custom_color_error: None,
-            bootstrap_username: String::new(),
-            bootstrap_password: String::new(),
-            table_sorts: Default::default(),
-            user_management_selected: 0,
-            user_management_window_start: 0,
-            user_management_focus: UserManagementPageFocus::UserList,
-            user_management_message: None,
-            user_management_feedback_tone: UserManagementFeedbackTone::Info,
-            user_management_mode: UserManagementMode::Browse,
-            user_management_job: None,
-            selected_home_entry_index: 0,
-            home_viewport_offset: 0,
-            page_touch: PageTouchState::default(),
-            settings_state: None,
+
             system_settings_backend: app::system_settings::UnavailableSystemSettingsBackend {
                 reason: if startup.platform_kind == PlatformKind::Linux {
                     app::system_settings::UnavailableReason::NotIntegrated
@@ -209,110 +174,52 @@ impl ShellSession {
                     app::system_settings::UnavailableReason::UnsupportedPlatform
                 },
             },
+            tasks: ShellTasks::default(),
+            pending_page_closes: HashSet::new(),
+            pending_login_reset: None,
+            pending_lockscreen_after_logout: false,
+            pending_session_exit: None,
+            approved_editor_closes: BTreeMap::new(),
+            settings_update_request: None,
             settings_task_runtime: runtime_services.settings,
             settings_update_state: SettingsUpdateState::default(),
             update_apply_manifest: None,
-            system_status_route: ui::SystemStatusRoute::Dashboard,
-            system_status_tab: ui::SystemStatusTab::Overview,
-            system_status_selected_widget: None,
-            system_status_dashboard_focus: ui::SystemStatusDashboardFocus::default(),
-            system_status_dashboard_scroll_row: 0,
-            system_status_dashboard_draft: None,
-            system_status_add_picker: None,
-            system_status_size_picker: None,
-            system_status_discard_dialog: false,
-            system_status_discard_confirm_selected: true,
-            system_status_dashboard_feedback: None,
-            system_status_widget_drag: None,
+            update_restart_requested: false,
+
             system_status_history: SystemStatusMetricHistory::default(),
-            system_status_process_sort: ui::SystemStatusProcessSort::default(),
-            system_status_selected_row: 0,
-            system_status_scroll_offset: 0,
-            system_status_refresh_requested_revision: None,
+
             system_status_storage_alerts: BTreeMap::new(),
             system_status_network_baseline: None,
             system_status_disconnected_notified: false,
-            launcher_selected_index: 0,
-            launcher_view_mode: app::launcher::LauncherViewMode::LargeIcons,
-            launcher_viewport_offset: 0,
-            launcher_pending_confirmation: None,
-            launcher_confirm_selected: true,
-            launcher_drag: None,
+
             launcher_task_runtime: None,
-            launcher_refresh_request: None,
-            command_line_start_directory: None,
-            explorer_input_mode: ExplorerInputMode::Browse,
-            explorer_search_shortcut_held: None,
-            explorer_input: String::new(),
-            explorer_input_replace_all: false,
-            explorer_address_cursor: 0,
-            explorer_address_selection_anchor: None,
-            explorer_overlay_mode: None,
-            explorer_overlay_selection: 0,
-            explorer_conflict_apply_to_remaining: false,
-            explorer_purpose: ExplorerPurpose::Browse,
-            explorer_locations_scroll: None,
+
             explorer_task_runtime: runtime_services.explorer,
             editor_task_runtime: runtime_services.editor,
-            editor_load_state: None,
-            editor_save_state: None,
-            editor_document_generation: 0,
-            editor_rich_render_cache: None,
-            editor_cursor_acceleration: None,
-            editor_settings_dialog: None,
-            editor_focus: ui::EditorFocus::Canvas,
-            editor_open_menu: None,
-            editor_selected_toolbar_action: None,
-            editor_quick_menu_anchor: None,
-            editor_drag_anchor: None,
-            editor_table_column_widths: std::collections::BTreeMap::new(),
-            editor_table_resize: None,
-            editor_fingerprint: None,
-            editor_close_after_save: false,
-            editor_open_after_save: false,
-            editor_discard_for_open: false,
-            editor_message: None,
-            editor_recovery_dirty_since: None,
-            editor_last_recovery_write: None,
-            editor_read_session: None,
-            editor_config: ConfigEditorState::default(),
+
             diagnostics_task_runtime: runtime_services.diagnostics,
-            logs_state: LogsUiState::default(),
-            management_state: ManagementState::default(),
+
             auto_admin: AutoAdminState::default(),
             #[cfg(target_os = "linux")]
             privilege_session: Default::default(),
-            management_background: HashMap::new(),
-            diagnostics_tab: ui::DiagnosticsTab::Health,
-            diagnostics_selected_check: 0,
-            diagnostics_selected_log: 0,
-            diagnostics_selected_incident: 0,
-            diagnostics_list_window_start: 0,
-            diagnostics_list_window_is_explicit: false,
-            diagnostics_scanning: false,
-            diagnostics_rescan_pending: false,
-            diagnostics_repair_preview: Vec::new(),
-            diagnostics_repair_selected: 0,
-            diagnostics_repair_log_context: None,
-            diagnostics_repair_scroll_offset: 0,
-            diagnostics_repair_confirm_selected: true,
-            diagnostics_feedback: None,
+            detached_management_operations: Vec::new(),
+            detached_user_management_jobs: Vec::new(),
+
             diagnostics_restart_required,
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
             terminal_image_support: false,
             terminal_text_sizing_support: false,
             pending_default_ascii_icon_fallback: false,
-            focused_component: initial_focus,
+
             keyboard_focus_visible: true,
             button_hover_suppressed: false,
             button_regions: Vec::new(),
             button_pointer_capture: None,
             notification_scrollbar_drag: None,
-            diagnostics_detail_scroll: 0,
-            diagnostics_detail_drag: None,
+
             hovered_component: None,
-            active_popup: None,
+
             frame_layout: None,
             displayed_status: None,
             hit_map: ShellHitMap::empty(terminal_size),
@@ -320,11 +227,9 @@ impl ShellSession {
             overlay_interaction_ready: true,
             tick_count: 0,
             notification_bindings: NotificationBindings::default(),
-            overlay_manager: ShellOverlayManager::default(),
             notification_pointer_capture: None,
-            notification_message_scroll: 0,
             pending_notification_commands: VecDeque::new(),
-            error_message: None,
+
             latest_watchdog_report: None,
             latest_watchdog_summary: None,
             shutdown_requested: false,
@@ -347,7 +252,11 @@ impl ShellSession {
             scrollbar_drag: None,
         };
         let mut state = Self { app, ui };
-        state.setup_selected_language_index = state
+        state.initialize_root_page();
+        state.pages.common.focused_component = initial_focus;
+        state.pages.login.login_selected_user = login_selected_user;
+        state.pages.login.login_username = login_username;
+        state.pages.setup.setup_selected_language_index = state
             .language_catalog
             .options()
             .iter()
@@ -379,7 +288,7 @@ impl ShellSession {
                 {
                     Ok(session) => state.complete_login(session),
                     Err(error) => {
-                        state.error_message = Some(format_core_error(&error));
+                        state.pages.common.error_message = Some(format_core_error(&error));
                         state.shutdown_requested = true;
                     }
                 }
@@ -393,7 +302,8 @@ impl ShellSession {
     }
 
     pub fn sanitized_session_state(&self) -> ShellRestoredSession {
-        let (focus_manager, focus_order) = self.focus_manager(Some(self.focused_component));
+        let (focus_manager, focus_order) =
+            self.focus_manager(Some(self.pages.common.focused_component));
         let focused_component = self
             .focused_component_from_manager(&focus_manager, &focus_order)
             .unwrap_or(ShellComponent::Home);

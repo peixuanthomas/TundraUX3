@@ -7,6 +7,7 @@ pub(in crate::session) struct ShellDiagnosticsTaskRuntime {
 
 pub(in crate::session) struct ShellDiagnosticsTaskShared {
     pub(in crate::session) engine: Mutex<Option<app::diagnostics::DiagnosticsTaskRuntime>>,
+    repair_contexts: Mutex<BTreeMap<u64, runtime_log::LogContext>>,
     pub(in crate::session) terminal_graphics: Mutex<Option<ui::TerminalGraphicsProbeStatus>>,
     pub(in crate::session) storage: StorageManager,
     pub(in crate::session) process: Option<ProcessWatchdog>,
@@ -56,6 +57,7 @@ impl ShellDiagnosticsTaskRuntime {
         Self {
             shared: Arc::new(ShellDiagnosticsTaskShared {
                 engine: Mutex::new(None),
+                repair_contexts: Mutex::new(BTreeMap::new()),
                 terminal_graphics: Mutex::new(None),
                 storage,
                 process,
@@ -98,7 +100,9 @@ impl ShellDiagnosticsTaskRuntime {
         Ok(engine)
     }
 
-    pub(in crate::session) fn request_scan(&self) -> Result<(), DiagnosticsRequestError> {
+    pub(in crate::session) fn request_scan(
+        &self,
+    ) -> Result<app::diagnostics::DiagnosticsTaskHandle, DiagnosticsRequestError> {
         let engine = self.ensure_engine()?;
         engine
             .as_ref()
@@ -113,7 +117,7 @@ impl ShellDiagnosticsTaskRuntime {
     pub(in crate::session) fn request_repair(
         &self,
         actions: Vec<app::diagnostics::DiagnosticsRepairAction>,
-    ) -> Result<(), DiagnosticsRequestError> {
+    ) -> Result<app::diagnostics::DiagnosticsTaskHandle, DiagnosticsRequestError> {
         let engine = self.ensure_engine()?;
         engine
             .as_ref()
@@ -143,7 +147,9 @@ impl ShellDiagnosticsTaskRuntime {
         }
     }
 
-    pub(in crate::session) fn drain_events(&self) -> Vec<app::diagnostics::DiagnosticsTaskEvent> {
+    pub(in crate::session) fn drain_events(
+        &self,
+    ) -> Vec<app::diagnostics::DiagnosticsTaskEnvelope> {
         let Ok(engine) = self.shared.engine.lock() else {
             return Vec::new();
         };
@@ -158,7 +164,7 @@ impl ShellDiagnosticsTaskRuntime {
             .ok()
             .and_then(|check| check.clone());
         for event in &mut events {
-            match event {
+            match &mut event.event {
                 app::diagnostics::DiagnosticsTaskEvent::ScanCompleted(Ok(snapshot)) => {
                     apply_terminal_graphics_check(snapshot, terminal_graphics.as_ref());
                 }
@@ -236,11 +242,11 @@ impl ShellSession {
             self.active_screen(),
             ShellScreen::Diagnostics | ShellScreen::SystemStatus
         ) {
-            self.diagnostics_detail_drag = None;
+            self.pages.diagnostics.diagnostics_detail_drag = None;
             return false;
         }
-        if !self.diagnostics_repair_preview.is_empty() {
-            self.diagnostics_detail_drag = None;
+        if !self.pages.diagnostics.diagnostics_repair_preview.is_empty() {
+            self.pages.diagnostics.diagnostics_detail_drag = None;
             return false;
         }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
@@ -256,32 +262,47 @@ impl ShellSession {
                 };
                 let layout = ui::system_status_layout(main, &status_model);
                 let Some(content) = layout.diagnostics_content else {
-                    self.diagnostics_detail_drag = None;
+                    self.pages.diagnostics.diagnostics_detail_drag = None;
                     return false;
                 };
                 content.detail_panel
             }
             _ => {
-                self.diagnostics_detail_drag = None;
+                self.pages.diagnostics.diagnostics_detail_drag = None;
                 return false;
             }
         };
         let (track, count, viewport) = ui::diagnostics_detail_scroll_metrics(panel, &model);
         let max = count.saturating_sub(viewport);
-        let (start, thumb) =
-            ui::components::Scrollbar::new(count, viewport, self.diagnostics_detail_scroll)
-                .thumb_range(track);
+        let (start, thumb) = ui::components::Scrollbar::new(
+            count,
+            viewport,
+            self.pages.diagnostics.diagnostics_detail_scroll,
+        )
+        .thumb_range(track);
         match mouse.kind {
             ui::MouseEventKind::Up(PointerButton::Left) => {
-                return self.diagnostics_detail_drag.take().is_some();
+                return self
+                    .pages
+                    .diagnostics
+                    .diagnostics_detail_drag
+                    .take()
+                    .is_some();
             }
             ui::MouseEventKind::Scroll(direction) if rect_contains(panel, mouse.coordinates()) => {
-                self.diagnostics_detail_scroll = match direction {
-                    ScrollDirection::Up => self.diagnostics_detail_scroll.saturating_sub(3),
-                    ScrollDirection::Down => {
-                        self.diagnostics_detail_scroll.saturating_add(3).min(max)
-                    }
-                    _ => self.diagnostics_detail_scroll,
+                self.pages.diagnostics.diagnostics_detail_scroll = match direction {
+                    ScrollDirection::Up => self
+                        .pages
+                        .diagnostics
+                        .diagnostics_detail_scroll
+                        .saturating_sub(3),
+                    ScrollDirection::Down => self
+                        .pages
+                        .diagnostics
+                        .diagnostics_detail_scroll
+                        .saturating_add(3)
+                        .min(max),
+                    _ => self.pages.diagnostics.diagnostics_detail_scroll,
                 };
                 return true;
             }
@@ -289,19 +310,20 @@ impl ShellSession {
                 if max > 0 && rect_contains(track, mouse.coordinates()) =>
             {
                 let pos = mouse.row().saturating_sub(track.y);
-                self.diagnostics_detail_drag = Some(if (start..start + thumb).contains(&pos) {
-                    pos - start
-                } else {
-                    thumb / 2
-                });
+                self.pages.diagnostics.diagnostics_detail_drag =
+                    Some(if (start..start + thumb).contains(&pos) {
+                        pos - start
+                    } else {
+                        thumb / 2
+                    });
             }
             ui::MouseEventKind::Drag(PointerButton::Left)
-                if self.diagnostics_detail_drag.is_some() => {}
+                if self.pages.diagnostics.diagnostics_detail_drag.is_some() => {}
             _ => return false,
         }
-        self.diagnostics_detail_scroll = scrollbar_window_start(
+        self.pages.diagnostics.diagnostics_detail_scroll = scrollbar_window_start(
             mouse.row(),
-            self.diagnostics_detail_drag.unwrap(),
+            self.pages.diagnostics.diagnostics_detail_drag.unwrap(),
             track.y,
             track.height,
             thumb,
@@ -362,7 +384,7 @@ impl ShellSession {
             .and_then(|users| {
                 users
                     .into_iter()
-                    .find(|user| user.username == self.login_username)
+                    .find(|user| user.username == self.pages.login.login_username)
             })
             .map(|user| user.appearance.icon_display_mode)
             .unwrap_or_default()
@@ -381,36 +403,29 @@ impl ShellSession {
         }
         self.diagnostics_restart_required = self.diagnostics_restart_is_required();
         self.set_system_status_tab(ui::SystemStatusTab::Health);
-        self.focused_component = ShellComponent::SystemStatus;
+        self.pages.common.focused_component = ShellComponent::SystemStatus;
         self.clear_diagnostics_scrollbar_drag();
-        self.diagnostics_feedback = None;
+        self.pages.diagnostics.diagnostics_feedback = None;
         if self.diagnostics_task_runtime.is_some() {
             self.request_diagnostics_scan();
         } else if self.app.diagnostics_snapshot().is_none() {
-            self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
-                "shell-diagnostics-runtime-is-unavailable"
-            )));
+            self.pages.diagnostics.diagnostics_feedback = Some(i18n::LocalizedText::from(
+                i18n::msg!("shell-diagnostics-runtime-is-unavailable"),
+            ));
         }
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_diagnostics(&mut self) {
-        self.clear_diagnostics_scrollbar_drag();
         if self.active_screen() == ShellScreen::SystemStatus {
+            self.clear_diagnostics_scrollbar_drag();
             self.cancel_diagnostics_repair_preview();
             self.set_system_status_tab(ui::SystemStatusTab::Overview);
-            self.focused_component = ShellComponent::SystemStatus;
+            self.pages.common.focused_component = ShellComponent::SystemStatus;
             self.refresh_hit_map();
             return;
         }
-        self.diagnostics_repair_preview.clear();
-        self.diagnostics_repair_selected = 0;
-        self.diagnostics_repair_scroll_offset = 0;
-        self.diagnostics_repair_confirm_selected = true;
         self.return_from_screen(ShellScreen::Diagnostics);
-        if self.active_screen() != ShellScreen::SystemStatus {
-            let _ = self.settings_task_runtime.set_system_status_active(false);
-        }
     }
 
     pub(in crate::session) fn request_diagnostics_scan(&mut self) {
@@ -424,17 +439,12 @@ impl ShellSession {
             );
             return;
         }
-        if self.diagnostics_scanning
-            || self
-                .diagnostics_task_runtime
-                .as_ref()
-                .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
-        {
-            self.diagnostics_scanning = true;
-            self.diagnostics_rescan_pending = true;
-            self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
-                "shell-diagnostics-task-in-progress"
-            )));
+        if self.pages.diagnostics.diagnostics_scanning {
+            self.pages.diagnostics.diagnostics_scanning = true;
+            self.pages.diagnostics.diagnostics_rescan_pending = true;
+            self.pages.diagnostics.diagnostics_feedback = Some(i18n::LocalizedText::from(
+                i18n::msg!("shell-diagnostics-task-in-progress"),
+            ));
             return;
         }
         let result = self
@@ -446,17 +456,40 @@ impl ShellSession {
             })
             .and_then(ShellDiagnosticsTaskRuntime::request_scan);
         match result {
-            Ok(()) => {
-                self.diagnostics_scanning = true;
-                self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-scanning-system-health"
-                )));
+            Ok(task) => {
+                self.register_diagnostics_task(task, TaskClass::Query);
+                self.pages.diagnostics.diagnostics_scanning = true;
+                self.pages.diagnostics.diagnostics_feedback = Some(i18n::LocalizedText::from(
+                    i18n::msg!("shell-scanning-system-health"),
+                ));
             }
             Err(error) => {
-                self.diagnostics_scanning = false;
-                self.diagnostics_feedback = Some(error.message.clone());
+                self.pages.diagnostics.diagnostics_scanning = false;
+                self.pages.diagnostics.diagnostics_feedback = Some(error.message.clone());
                 self.notify_alert_with_tone(error.message, ui::NotificationTone::Critical);
             }
+        }
+    }
+
+    fn register_diagnostics_task(
+        &mut self,
+        task: app::diagnostics::DiagnosticsTaskHandle,
+        class: TaskClass,
+    ) {
+        let cancel = task.clone();
+        let finished = task.clone();
+        self.register_page_task(
+            TaskDomain::Diagnostics,
+            task.request_id,
+            class,
+            TaskControl::new(move || cancel.cancel(), move || finished.is_finished()),
+        );
+    }
+
+    pub(in crate::session) fn detach_diagnostics_page(&mut self, id: PageInstanceId) {
+        // Repair logs already belong to the runtime request; discard view-only state.
+        if let Some(page) = self.pages.diagnostics.get_mut(id) {
+            page.diagnostics_repair_log_context = None;
         }
     }
 
@@ -466,89 +499,203 @@ impl ShellSession {
             .as_ref()
             .map(ShellDiagnosticsTaskRuntime::drain_events)
             .unwrap_or_default();
-        for event in events {
-            match event {
-                app::diagnostics::DiagnosticsTaskEvent::ScanCompleted(result) => {
-                    self.diagnostics_scanning = false;
-                    match result {
-                        Ok(snapshot) => {
-                            self.install_diagnostics_snapshot(snapshot);
-                            self.diagnostics_feedback =
-                                Some(i18n::LocalizedText::from(i18n::msg!("shell-scan-complete")));
-                        }
-                        Err(error) => {
-                            let message = if self.diagnostics_can_view_details() {
-                                i18n::LocalizedText::from(i18n::msg!(
-                                    "shell-diagnostics-scan-failed-error",
-                                    error = error.to_string()
-                                ))
-                            } else {
-                                i18n::LocalizedText::from(i18n::msg!(
-                                    "shell-diagnostics-scan-failed-ask-an-administrator-to-review-the-details"
-                                ))
-                            };
-                            self.diagnostics_feedback = Some(message.clone());
-                            self.notify_alert_with_tone(message, ui::NotificationTone::Critical);
-                        }
+        for envelope in events {
+            self.deliver_diagnostics_event(envelope);
+        }
+    }
+
+    fn deliver_diagnostics_event(&mut self, envelope: app::diagnostics::DiagnosticsTaskEnvelope) {
+        let owner = self
+            .tasks
+            .owner(TaskDomain::Diagnostics, envelope.request_id);
+        if envelope.event.is_terminal() {
+            self.tasks
+                .complete(TaskDomain::Diagnostics, envelope.request_id);
+        }
+        self.record_diagnostics_completion(envelope.request_id, &envelope.event);
+        match owner {
+            Some(TaskOwner::Page(id)) => {
+                self.with_page_context(id, |session| {
+                    session.apply_diagnostics_event(envelope.event)
+                });
+            }
+            Some(TaskOwner::Session) => self.apply_background_diagnostics_event(envelope.event),
+            None => {}
+        }
+    }
+
+    fn record_diagnostics_completion(
+        &mut self,
+        request_id: u64,
+        event: &app::diagnostics::DiagnosticsTaskEvent,
+    ) {
+        if !event.is_terminal() {
+            return;
+        }
+        let context = self.diagnostics_task_runtime.as_ref().and_then(|runtime| {
+            runtime
+                .shared
+                .repair_contexts
+                .lock()
+                .ok()?
+                .remove(&request_id)
+        });
+        let Some(context) = context else {
+            return;
+        };
+        match event {
+            app::diagnostics::DiagnosticsTaskEvent::RepairCompleted {
+                results, cancelled, ..
+            } => {
+                for result in results {
+                    let mut event = runtime_log::RuntimeLogEvent::new(
+                        context.clone(),
+                        if result.success {
+                            runtime_log::LogLevel::Info
+                        } else {
+                            runtime_log::LogLevel::Error
+                        },
+                        if result.success {
+                            runtime_log::LogPhase::Recovered
+                        } else {
+                            runtime_log::LogPhase::Failed
+                        },
+                        result.action.label(),
+                    );
+                    if matches!(
+                        result.action,
+                        app::diagnostics::DiagnosticsRepairAction::RestoreDefaultThemeFile { .. }
+                    ) {
+                        event.context.module = "ux.assets".into();
                     }
-                    if self.diagnostics_rescan_pending && !self.diagnostics_restart_is_required() {
-                        self.diagnostics_rescan_pending = false;
-                        self.request_diagnostics_scan();
+                    if !result.success {
+                        event.error_code = Some("UX_DIAGNOSTICS_REPAIR_FAILED".into());
+                        event.error_chain.push(result.message.clone());
+                    }
+                    record_shell_runtime_event(event);
+                }
+                if *cancelled {
+                    record_shell_runtime_event(runtime_log::RuntimeLogEvent::new(
+                        context,
+                        runtime_log::LogLevel::Info,
+                        runtime_log::LogPhase::Cancelled,
+                        "Diagnostic repair cancelled after the current action finished",
+                    ));
+                }
+            }
+            app::diagnostics::DiagnosticsTaskEvent::Failed(error) => {
+                let mut event = runtime_log::RuntimeLogEvent::new(
+                    context,
+                    runtime_log::LogLevel::Error,
+                    runtime_log::LogPhase::Failed,
+                    "Diagnostic repair failed",
+                );
+                event.error_chain.push(error.clone());
+                record_shell_runtime_event(event);
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_background_diagnostics_event(
+        &mut self,
+        event: app::diagnostics::DiagnosticsTaskEvent,
+    ) {
+        match event {
+            app::diagnostics::DiagnosticsTaskEvent::RepairCompleted {
+                results,
+                restart_required,
+                cancelled,
+                ..
+            } => {
+                self.diagnostics_restart_required |= restart_required;
+                if restart_required {
+                    self.notify_alert_with_tone(i18n::msg!("shell-storage-was-repaired-and-the-current-in-memory-session-is-stale-restart-tundraux-before-continuing"), ui::NotificationTone::Warning);
+                } else if results.iter().any(|result| !result.success) {
+                    self.notify_alert_with_tone(
+                        i18n::msg!(
+                            "shell-failed-diagnostics-repair-action-s-failed",
+                            failed = results.iter().filter(|result| !result.success).count()
+                        ),
+                        ui::NotificationTone::Warning,
+                    );
+                } else if cancelled {
+                    self.notify_status(i18n::msg!("shell-cancelled"));
+                } else {
+                    self.notify_toast(i18n::msg!("shell-diagnostics-repair-completed"));
+                }
+            }
+            app::diagnostics::DiagnosticsTaskEvent::Failed(error) => {
+                self.notify_alert_with_tone(error, ui::NotificationTone::Critical)
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_diagnostics_event(&mut self, event: app::diagnostics::DiagnosticsTaskEvent) {
+        match event {
+            app::diagnostics::DiagnosticsTaskEvent::ScanCompleted(result) => {
+                self.pages.diagnostics.diagnostics_scanning = false;
+                match result {
+                    Ok(snapshot) => {
+                        self.install_diagnostics_snapshot(snapshot);
+                        self.pages.diagnostics.diagnostics_feedback =
+                            Some(i18n::LocalizedText::from(i18n::msg!("shell-scan-complete")));
+                    }
+                    Err(error) => {
+                        let message = if self.diagnostics_can_view_details() {
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-diagnostics-scan-failed-error",
+                                error = error.to_string()
+                            ))
+                        } else {
+                            i18n::LocalizedText::from(i18n::msg!(
+                                "shell-diagnostics-scan-failed-ask-an-administrator-to-review-the-details"
+                            ))
+                        };
+                        self.pages.diagnostics.diagnostics_feedback = Some(message.clone());
+                        self.notify_alert_with_tone(message, ui::NotificationTone::Critical);
                     }
                 }
-                app::diagnostics::DiagnosticsTaskEvent::RepairProgress {
-                    completed,
-                    total,
-                    label,
-                } => {
-                    self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+                if self.pages.diagnostics.diagnostics_rescan_pending
+                    && !self.diagnostics_restart_is_required()
+                {
+                    self.pages.diagnostics.diagnostics_rescan_pending = false;
+                    self.request_diagnostics_scan();
+                }
+            }
+            app::diagnostics::DiagnosticsTaskEvent::RepairProgress {
+                completed,
+                total,
+                label,
+            } => {
+                self.pages.diagnostics.diagnostics_feedback =
+                    Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-repairing-arg1-arg2-label",
                         arg1 = completed.saturating_add(1),
                         arg2 = total,
                         label = label
                     )));
-                }
-                app::diagnostics::DiagnosticsTaskEvent::RepairCompleted {
-                    results,
-                    snapshot,
-                    restart_required,
-                } => {
-                    if let Some(context) = self.diagnostics_repair_log_context.take() {
-                        for result in &results {
-                            let mut event = runtime_log::RuntimeLogEvent::new(
-                                context.clone(),
-                                if result.success {
-                                    runtime_log::LogLevel::Info
-                                } else {
-                                    runtime_log::LogLevel::Error
-                                },
-                                if result.success {
-                                    runtime_log::LogPhase::Recovered
-                                } else {
-                                    runtime_log::LogPhase::Failed
-                                },
-                                result.action.label(),
-                            );
-                            if matches!(result.action, app::diagnostics::DiagnosticsRepairAction::RestoreDefaultThemeFile { .. }) { event.context.module = "ux.assets".into(); }
-                            if !result.success {
-                                event.error_code = Some("UX_DIAGNOSTICS_REPAIR_FAILED".into());
-                                event.error_chain.push(result.message.clone());
-                            }
-                            record_shell_runtime_event(event);
-                        }
-                    }
-                    self.diagnostics_scanning = false;
-                    self.diagnostics_repair_preview.clear();
-                    self.diagnostics_repair_selected = 0;
-                    self.diagnostics_repair_scroll_offset = 0;
-                    self.diagnostics_repair_confirm_selected = true;
-                    let succeeded = results.iter().filter(|result| result.success).count();
-                    let failed = results.len().saturating_sub(succeeded);
-                    let backups = results
-                        .iter()
-                        .filter(|result| result.backup_path.is_some())
-                        .count();
-                    self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
+            }
+            app::diagnostics::DiagnosticsTaskEvent::RepairCompleted {
+                results,
+                snapshot,
+                restart_required,
+                cancelled,
+            } => {
+                self.pages.diagnostics.diagnostics_scanning = false;
+                self.pages.diagnostics.diagnostics_repair_preview.clear();
+                self.pages.diagnostics.diagnostics_repair_selected = 0;
+                self.pages.diagnostics.diagnostics_repair_scroll_offset = 0;
+                self.pages.diagnostics.diagnostics_repair_confirm_selected = true;
+                let succeeded = results.iter().filter(|result| result.success).count();
+                let failed = results.len().saturating_sub(succeeded);
+                let backups = results
+                    .iter()
+                    .filter(|result| result.backup_path.is_some())
+                    .count();
+                self.pages.diagnostics.diagnostics_feedback =
+                    Some(i18n::LocalizedText::from(i18n::msg!(
                         "shell-repair-complete-succeeded-succeeded-failed-failedarg1",
                         succeeded = succeeded,
                         failed = failed,
@@ -561,12 +708,16 @@ impl ShellSession {
                             ))
                         }
                     )));
-                    if let Some(snapshot) = snapshot {
-                        self.install_diagnostics_snapshot(snapshot);
-                    }
-                    if restart_required && succeeded > 0 {
-                        self.diagnostics_restart_required = true;
-                        self.notify_modal(
+                if cancelled && failed == 0 {
+                    self.pages.diagnostics.diagnostics_feedback =
+                        Some(i18n::msg!("shell-cancelled").into());
+                }
+                if let Some(snapshot) = snapshot {
+                    self.install_diagnostics_snapshot(snapshot);
+                }
+                if restart_required && succeeded > 0 {
+                    self.diagnostics_restart_required = true;
+                    self.notify_modal(
                             i18n::LocalizedText::from(i18n::msg!("shell-restart-required")),
                             i18n::LocalizedText::from(i18n::msg!("shell-storage-was-repaired-and-the-current-in-memory-session-is-stale-restart-tundraux-before-continuing")),
                             ui::NotificationTone::Warning,
@@ -580,24 +731,38 @@ impl ShellSession {
                                 ShellNotificationAction::new("review", i18n::LocalizedText::from(i18n::msg!("shell-review-results"))).cancel(),
                             ],
                         );
-                    } else if failed > 0 {
-                        self.notify_alert_with_tone(
-                            i18n::LocalizedText::from(i18n::msg!(
-                                "shell-failed-diagnostics-repair-action-s-failed",
-                                failed = failed
-                            )),
-                            ui::NotificationTone::Warning,
-                        );
-                    } else {
-                        self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
-                            "shell-diagnostics-repair-completed"
-                        )));
-                    }
-                    let rescan_pending = std::mem::take(&mut self.diagnostics_rescan_pending);
-                    if rescan_pending && !self.diagnostics_restart_is_required() {
-                        self.request_diagnostics_scan();
-                    }
+                } else if failed > 0 {
+                    self.notify_alert_with_tone(
+                        i18n::LocalizedText::from(i18n::msg!(
+                            "shell-failed-diagnostics-repair-action-s-failed",
+                            failed = failed
+                        )),
+                        ui::NotificationTone::Warning,
+                    );
+                } else if cancelled {
+                    self.notify_status(i18n::msg!("shell-cancelled"));
+                } else {
+                    self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
+                        "shell-diagnostics-repair-completed"
+                    )));
                 }
+                let rescan_pending =
+                    std::mem::take(&mut self.pages.diagnostics.diagnostics_rescan_pending);
+                if rescan_pending && !cancelled && !self.diagnostics_restart_is_required() {
+                    self.request_diagnostics_scan();
+                }
+            }
+            app::diagnostics::DiagnosticsTaskEvent::Cancelled => {
+                self.pages.diagnostics.diagnostics_scanning = false;
+                self.pages.diagnostics.diagnostics_rescan_pending = false;
+                self.pages.diagnostics.diagnostics_feedback =
+                    Some(i18n::msg!("shell-cancelled").into());
+            }
+            app::diagnostics::DiagnosticsTaskEvent::Failed(error) => {
+                self.pages.diagnostics.diagnostics_scanning = false;
+                self.pages.diagnostics.diagnostics_rescan_pending = false;
+                self.pages.diagnostics.diagnostics_feedback = Some(error.clone().into());
+                self.notify_alert_with_tone(error, ui::NotificationTone::Critical);
             }
         }
     }
@@ -613,16 +778,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn diagnostics_is_busy(&self) -> bool {
-        self.diagnostics_scanning
-            || self
-                .diagnostics_task_runtime
-                .as_ref()
-                .is_some_and(ShellDiagnosticsTaskRuntime::is_busy)
+        self.pages.diagnostics.diagnostics_scanning
     }
 
     pub(in crate::session) fn diagnostics_can_repair(&self) -> bool {
         !self.diagnostics_restart_is_required()
-            && !self.diagnostics_scanning
+            && !self.pages.diagnostics.diagnostics_scanning
             && !self
                 .diagnostics_task_runtime
                 .as_ref()
@@ -648,7 +809,7 @@ impl ShellSession {
         let Some(snapshot) = self.app.diagnostics_snapshot() else {
             return 0;
         };
-        match self.diagnostics_tab {
+        match self.pages.diagnostics.diagnostics_tab {
             ui::DiagnosticsTab::Health => snapshot.checks.len(),
             ui::DiagnosticsTab::Logs => snapshot.logs.len(),
             ui::DiagnosticsTab::Incidents => snapshot.incidents.len(),
@@ -661,30 +822,39 @@ impl ShellSession {
             .diagnostics_snapshot()
             .map(|snapshot| snapshot.checks.len())
             .unwrap_or(0);
-        self.diagnostics_selected_check = if check_count == 0 {
+        self.pages.diagnostics.diagnostics_selected_check = if check_count == 0 {
             0
         } else {
-            self.diagnostics_selected_check.min(check_count - 1)
+            self.pages
+                .diagnostics
+                .diagnostics_selected_check
+                .min(check_count - 1)
         };
         let log_count = self
             .app
             .diagnostics_snapshot()
             .map(|snapshot| snapshot.logs.len())
             .unwrap_or(0);
-        self.diagnostics_selected_log = if log_count == 0 {
+        self.pages.diagnostics.diagnostics_selected_log = if log_count == 0 {
             0
         } else {
-            self.diagnostics_selected_log.min(log_count - 1)
+            self.pages
+                .diagnostics
+                .diagnostics_selected_log
+                .min(log_count - 1)
         };
         let incident_count = self
             .app
             .diagnostics_snapshot()
             .map(|snapshot| snapshot.incidents.len())
             .unwrap_or(0);
-        self.diagnostics_selected_incident = if incident_count == 0 {
+        self.pages.diagnostics.diagnostics_selected_incident = if incident_count == 0 {
             0
         } else {
-            self.diagnostics_selected_incident.min(incident_count - 1)
+            self.pages
+                .diagnostics
+                .diagnostics_selected_incident
+                .min(incident_count - 1)
         };
     }
 
@@ -695,17 +865,27 @@ impl ShellSession {
         let selected_check_id = self
             .app
             .diagnostics_snapshot()
-            .and_then(|s| s.checks.get(self.diagnostics_selected_check))
+            .and_then(|s| {
+                s.checks
+                    .get(self.pages.diagnostics.diagnostics_selected_check)
+            })
             .map(|c| c.id.clone());
         let selected_incident_id = self
             .app
             .diagnostics_snapshot()
-            .and_then(|s| s.incidents.get(self.diagnostics_selected_incident))
+            .and_then(|s| {
+                s.incidents
+                    .get(self.pages.diagnostics.diagnostics_selected_incident)
+            })
             .map(|c| c.incident_id.clone());
         let selected_log_path = self
             .app
             .diagnostics_snapshot()
-            .and_then(|current| current.logs.get(self.diagnostics_selected_log))
+            .and_then(|current| {
+                current
+                    .logs
+                    .get(self.pages.diagnostics.diagnostics_selected_log)
+            })
             .map(|log| log.relative_path.clone());
         self.app.dispatch_at(
             app::AppCommand::SetDiagnosticsSnapshot(Some(snapshot)),
@@ -719,7 +899,7 @@ impl ShellSession {
                     .position(|log| log.relative_path == relative_path)
             })
         {
-            self.diagnostics_selected_log = index;
+            self.pages.diagnostics.diagnostics_selected_log = index;
         }
         let (check_index, incident_index) = self
             .app
@@ -734,36 +914,38 @@ impl ShellSession {
             })
             .unwrap_or_default();
         if let Some(index) = check_index {
-            self.diagnostics_selected_check = index;
+            self.pages.diagnostics.diagnostics_selected_check = index;
         }
         if let Some(index) = incident_index {
-            self.diagnostics_selected_incident = index;
+            self.pages.diagnostics.diagnostics_selected_incident = index;
         }
         self.apply_diagnostics_table_sorts();
         self.clamp_diagnostics_selection();
     }
 
     pub(in crate::session) fn move_diagnostics_selection(&mut self, delta: isize) {
-        self.diagnostics_detail_scroll = 0;
-        self.diagnostics_detail_drag = None;
+        self.pages.diagnostics.diagnostics_detail_scroll = 0;
+        self.pages.diagnostics.diagnostics_detail_drag = None;
         let count = self.diagnostics_item_count();
         if count == 0 {
             return;
         }
-        let selected = match self.diagnostics_tab {
-            ui::DiagnosticsTab::Health => &mut self.diagnostics_selected_check,
-            ui::DiagnosticsTab::Logs => &mut self.diagnostics_selected_log,
-            ui::DiagnosticsTab::Incidents => &mut self.diagnostics_selected_incident,
+        let selected = match self.pages.diagnostics.diagnostics_tab {
+            ui::DiagnosticsTab::Health => &mut self.pages.diagnostics.diagnostics_selected_check,
+            ui::DiagnosticsTab::Logs => &mut self.pages.diagnostics.diagnostics_selected_log,
+            ui::DiagnosticsTab::Incidents => {
+                &mut self.pages.diagnostics.diagnostics_selected_incident
+            }
         };
         *selected =
             ((*selected as isize) + delta).clamp(0, count.saturating_sub(1) as isize) as usize;
-        self.diagnostics_list_window_is_explicit = false;
+        self.pages.diagnostics.diagnostics_list_window_is_explicit = false;
     }
 
     pub(in crate::session) fn set_diagnostics_tab(&mut self, tab: ui::DiagnosticsTab) {
-        self.diagnostics_detail_scroll = 0;
-        self.diagnostics_detail_drag = None;
-        self.diagnostics_tab = tab;
+        self.pages.diagnostics.diagnostics_detail_scroll = 0;
+        self.pages.diagnostics.diagnostics_detail_drag = None;
+        self.pages.diagnostics.diagnostics_tab = tab;
         if self.active_screen() == ShellScreen::SystemStatus {
             self.set_system_status_tab(match tab {
                 ui::DiagnosticsTab::Health => ui::SystemStatusTab::Health,
@@ -772,26 +954,28 @@ impl ShellSession {
             });
             return;
         }
-        self.diagnostics_list_window_start = 0;
-        self.diagnostics_list_window_is_explicit = false;
+        self.pages.diagnostics.diagnostics_list_window_start = 0;
+        self.pages.diagnostics.diagnostics_list_window_is_explicit = false;
         self.clear_diagnostics_scrollbar_drag();
         self.clamp_diagnostics_selection();
     }
 
     pub(in crate::session) fn select_diagnostics_index(&mut self, index: usize) {
-        self.diagnostics_detail_scroll = 0;
-        self.diagnostics_detail_drag = None;
+        self.pages.diagnostics.diagnostics_detail_scroll = 0;
+        self.pages.diagnostics.diagnostics_detail_drag = None;
         let count = self.diagnostics_item_count();
         if count == 0 {
             return;
         }
         let index = index.min(count - 1);
-        match self.diagnostics_tab {
-            ui::DiagnosticsTab::Health => self.diagnostics_selected_check = index,
-            ui::DiagnosticsTab::Logs => self.diagnostics_selected_log = index,
-            ui::DiagnosticsTab::Incidents => self.diagnostics_selected_incident = index,
+        match self.pages.diagnostics.diagnostics_tab {
+            ui::DiagnosticsTab::Health => self.pages.diagnostics.diagnostics_selected_check = index,
+            ui::DiagnosticsTab::Logs => self.pages.diagnostics.diagnostics_selected_log = index,
+            ui::DiagnosticsTab::Incidents => {
+                self.pages.diagnostics.diagnostics_selected_incident = index
+            }
         }
-        self.diagnostics_list_window_is_explicit = false;
+        self.pages.diagnostics.diagnostics_list_window_is_explicit = false;
     }
 
     pub(in crate::session) fn begin_diagnostics_scrollbar_drag(
@@ -824,7 +1008,7 @@ impl ShellSession {
             self.clear_diagnostics_scrollbar_drag();
             return;
         };
-        self.diagnostics_list_window_start = scrollbar_window_start(
+        self.pages.diagnostics.diagnostics_list_window_start = scrollbar_window_start(
             coordinates.1,
             grab_offset,
             scrollbar.track.y,
@@ -833,7 +1017,7 @@ impl ShellSession {
             model.item_count(),
             layout.visible_capacity,
         );
-        self.diagnostics_list_window_is_explicit = true;
+        self.pages.diagnostics.diagnostics_list_window_is_explicit = true;
     }
 
     pub(in crate::session) fn clear_diagnostics_scrollbar_drag(&mut self) -> bool {
@@ -868,11 +1052,15 @@ impl ShellSession {
         let repair = self
             .app
             .diagnostics_snapshot()
-            .and_then(|snapshot| snapshot.checks.get(self.diagnostics_selected_check))
+            .and_then(|snapshot| {
+                snapshot
+                    .checks
+                    .get(self.pages.diagnostics.diagnostics_selected_check)
+            })
             .and_then(|check| check.repair.clone());
         match repair {
             Some(repair) => {
-                self.diagnostics_repair_preview = vec![repair];
+                self.pages.diagnostics.diagnostics_repair_preview = vec![repair];
                 self.reset_diagnostics_repair_dialog_selection();
             }
             None => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
@@ -896,61 +1084,63 @@ impl ShellSession {
                 "shell-no-automatic-repairs-are-available"
             )));
         } else {
-            self.diagnostics_repair_preview = plan;
+            self.pages.diagnostics.diagnostics_repair_preview = plan;
             self.reset_diagnostics_repair_dialog_selection();
         }
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn cancel_diagnostics_repair_preview(&mut self) {
-        self.diagnostics_repair_preview.clear();
+        self.pages.diagnostics.diagnostics_repair_preview.clear();
         self.reset_diagnostics_repair_dialog_selection();
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn reset_diagnostics_repair_dialog_selection(&mut self) {
-        self.diagnostics_repair_selected = 0;
-        self.diagnostics_repair_scroll_offset = 0;
-        self.diagnostics_repair_confirm_selected = true;
+        self.pages.diagnostics.diagnostics_repair_selected = 0;
+        self.pages.diagnostics.diagnostics_repair_scroll_offset = 0;
+        self.pages.diagnostics.diagnostics_repair_confirm_selected = true;
     }
 
     pub(in crate::session) fn move_diagnostics_repair_selection(&mut self, delta: isize) {
-        if self.diagnostics_repair_preview.is_empty() {
+        if self.pages.diagnostics.diagnostics_repair_preview.is_empty() {
             return;
         }
-        self.diagnostics_repair_selected = ((self.diagnostics_repair_selected as isize) + delta)
-            .clamp(
+        self.pages.diagnostics.diagnostics_repair_selected =
+            ((self.pages.diagnostics.diagnostics_repair_selected as isize) + delta).clamp(
                 0,
-                self.diagnostics_repair_preview.len().saturating_sub(1) as isize,
+                self.pages
+                    .diagnostics
+                    .diagnostics_repair_preview
+                    .len()
+                    .saturating_sub(1) as isize,
             ) as usize;
     }
 
     pub(in crate::session) fn select_diagnostics_repair_item(&mut self, index: usize) {
-        if self.diagnostics_repair_preview.is_empty() {
+        if self.pages.diagnostics.diagnostics_repair_preview.is_empty() {
             return;
         }
-        self.diagnostics_repair_selected =
-            index.min(self.diagnostics_repair_preview.len().saturating_sub(1));
+        self.pages.diagnostics.diagnostics_repair_selected = index.min(
+            self.pages
+                .diagnostics
+                .diagnostics_repair_preview
+                .len()
+                .saturating_sub(1),
+        );
     }
 
     pub(in crate::session) fn confirm_diagnostics_repair(&mut self) {
         if !self.ensure_diagnostics_repair_authorized() {
             return;
         }
-        let actions = std::mem::take(&mut self.diagnostics_repair_preview);
+        let actions = std::mem::take(&mut self.pages.diagnostics.diagnostics_repair_preview);
         self.reset_diagnostics_repair_dialog_selection();
         if actions.is_empty() {
             return;
         }
         let mut context = self.operation_log_context("ux.diagnostics", "repair");
-        context.task_id = Some("event-loop".into());
-        self.diagnostics_repair_log_context = Some(context.clone());
-        record_shell_runtime_event(runtime_log::RuntimeLogEvent::new(
-            context.clone(),
-            runtime_log::LogLevel::Info,
-            runtime_log::LogPhase::Started,
-            "Starting diagnostic repair",
-        ));
+
         let result = self
             .diagnostics_task_runtime
             .as_ref()
@@ -960,15 +1150,30 @@ impl ShellSession {
             })
             .and_then(|runtime| runtime.request_repair(actions.clone()));
         match result {
-            Ok(()) => {
-                self.diagnostics_scanning = true;
-                self.diagnostics_feedback = Some(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-starting-arg1-repair-action-s",
-                    arg1 = actions.len()
-                )));
+            Ok(task) => {
+                context.task_id = Some(format!("diagnostics-{}", task.request_id));
+                if let Some(runtime) = &self.diagnostics_task_runtime {
+                    runtime
+                        .shared
+                        .repair_contexts
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(task.request_id, context.clone());
+                }
+                record_shell_runtime_event(runtime_log::RuntimeLogEvent::new(
+                    context.clone(),
+                    runtime_log::LogLevel::Info,
+                    runtime_log::LogPhase::Started,
+                    "Starting diagnostic repair",
+                ));
+                self.register_diagnostics_task(task, TaskClass::Operation);
+                self.pages.diagnostics.diagnostics_scanning = true;
+                self.pages.diagnostics.diagnostics_feedback = Some(i18n::LocalizedText::from(
+                    i18n::msg!("shell-starting-arg1-repair-action-s", arg1 = actions.len()),
+                ));
             }
             Err(error) => {
-                self.diagnostics_repair_log_context = None;
+                self.pages.diagnostics.diagnostics_repair_log_context = None;
                 let mut event = runtime_log::RuntimeLogEvent::new(
                     context,
                     runtime_log::LogLevel::Error,
@@ -978,7 +1183,7 @@ impl ShellSession {
                 event.error_code = Some("UX_DIAGNOSTICS_SUBMIT_FAILED".into());
                 event.error_chain.push(error.diagnostic);
                 record_shell_runtime_event(event);
-                self.diagnostics_repair_preview = actions;
+                self.pages.diagnostics.diagnostics_repair_preview = actions;
                 self.notify_alert_with_tone(error.message, ui::NotificationTone::Critical);
             }
         }
@@ -993,7 +1198,7 @@ impl ShellSession {
         );
         if permission.allowed
             && !self.diagnostics_restart_is_required()
-            && !self.diagnostics_scanning
+            && !self.pages.diagnostics.diagnostics_scanning
             && !self
                 .diagnostics_task_runtime
                 .as_ref()
@@ -1132,7 +1337,7 @@ impl ShellSession {
         &mut self,
         _platform: &dyn Platform,
     ) {
-        if self.diagnostics_tab == ui::DiagnosticsTab::Health {
+        if self.pages.diagnostics.diagnostics_tab == ui::DiagnosticsTab::Health {
             self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                 "shell-open-logs-from-system-status"
             )));
@@ -1148,12 +1353,17 @@ impl ShellSession {
             return;
         }
 
-        let (reload, missing_message, opened_message) = match self.diagnostics_tab {
+        let (reload, missing_message, opened_message) = match self.pages.diagnostics.diagnostics_tab
+        {
             ui::DiagnosticsTab::Logs => {
                 let path = self
                     .app
                     .diagnostics_snapshot()
-                    .and_then(|snapshot| snapshot.logs.get(self.diagnostics_selected_log))
+                    .and_then(|snapshot| {
+                        snapshot
+                            .logs
+                            .get(self.pages.diagnostics.diagnostics_selected_log)
+                    })
                     .map(|log| log.path.clone());
                 let Some(path) = path else {
                     self.notify_status(i18n::LocalizedText::from(i18n::msg!(
@@ -1171,7 +1381,11 @@ impl ShellSession {
                 let path = self
                     .app
                     .diagnostics_snapshot()
-                    .and_then(|snapshot| snapshot.incidents.get(self.diagnostics_selected_incident))
+                    .and_then(|snapshot| {
+                        snapshot
+                            .incidents
+                            .get(self.pages.diagnostics.diagnostics_selected_incident)
+                    })
                     .map(|incident| {
                         incident
                             .text_report_path
@@ -1234,3 +1448,7 @@ impl From<String> for DiagnosticsRequestError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/session/controller/diagnostics/task_owner_tests.rs"]
+mod task_owner_tests;

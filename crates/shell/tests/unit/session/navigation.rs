@@ -31,7 +31,7 @@ fn prepare_page(state: &mut ShellSession, screen: ShellScreen) {
         );
     }
     if screen == ShellScreen::Settings {
-        state.settings_state = Some(SettingsState {
+        state.pages.settings.settings_state = Some(SettingsState {
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
             status: i18n::msg!("settings-ready").into(),
@@ -79,7 +79,7 @@ fn every_page_returns_to_actual_caller_for_escape_and_back_button() {
                     &[ShellScreen::Home, parent],
                     "{parent:?} -> {page:?}, pointer={pointer}"
                 );
-                assert_eq!(state.focused_component, screen_focus(parent));
+                assert_eq!(state.pages.common.focused_component, screen_focus(parent));
             }
         }
     }
@@ -107,13 +107,16 @@ fn reset_discards_old_paths_and_wrong_page_close_is_ignored() {
 #[test]
 fn nested_visits_restore_each_callers_focus_and_ignore_held_escape() {
     let mut state = state();
-    state.focused_component = ShellComponent::StatusBar;
+    state.pages.common.focused_component = ShellComponent::StatusBar;
     state.open_clock();
-    state.focused_component = ShellComponent::ClockNewButton;
+    state.pages.common.focused_component = ShellComponent::ClockNewButton;
     prepare_page(&mut state, ShellScreen::UserManagement);
     back(&mut state, false);
     assert_eq!(state.active_screen(), ShellScreen::Clock);
-    assert_eq!(state.focused_component, ShellComponent::ClockNewButton);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::ClockNewButton
+    );
     for phase in [InputPhase::Repeat, InputPhase::Release] {
         state.apply_input(InputEvent::Key(KeyInput::with_phase(
             InputKey::Escape,
@@ -124,7 +127,10 @@ fn nested_visits_restore_each_callers_focus_and_ignore_held_escape() {
     }
     back(&mut state, true);
     assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(state.focused_component, ShellComponent::StatusBar);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::StatusBar
+    );
 }
 
 #[test]
@@ -133,13 +139,14 @@ fn notification_and_form_close_before_leaving_the_page() {
         let mut state = state();
         state.enter_screen(ShellScreen::Launcher);
         prepare_page(&mut state, ShellScreen::UserManagement);
-        state.user_management_mode = UserManagementMode::Create(UserManagementCreateForm {
-            username: "draft".into(),
-            display_name: String::new(),
-            password: String::new(),
-            role: UserRole::User,
-            focused_field: UserManagementFormField::Username,
-        });
+        state.pages.user_management.user_management_mode =
+            UserManagementMode::Create(UserManagementCreateForm {
+                username: "draft".into(),
+                display_name: String::new(),
+                password: String::new(),
+                role: UserRole::User,
+                focused_field: UserManagementFormField::Username,
+            });
         state.notify_modal(
             "Notice",
             "Close this first",
@@ -149,11 +156,14 @@ fn notification_and_form_close_before_leaving_the_page() {
         back(&mut state, pointer);
         assert!(!state.notification_has_active_modal());
         assert!(matches!(
-            state.user_management_mode,
+            state.pages.user_management.user_management_mode,
             UserManagementMode::Create(_)
         ));
         back(&mut state, pointer);
-        assert_eq!(state.user_management_mode, UserManagementMode::Browse);
+        assert_eq!(
+            state.pages.user_management.user_management_mode,
+            UserManagementMode::Browse
+        );
         assert_eq!(state.active_screen(), ShellScreen::UserManagement);
         back(&mut state, pointer);
         assert_eq!(state.active_screen(), ShellScreen::Launcher);
@@ -209,7 +219,10 @@ fn editor_rollback_restores_picker_beneath_overlay_and_rejects_stale_results() {
     );
     state.close_clock();
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
-    assert_eq!(state.focused_component, ShellComponent::Explorer);
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::Explorer
+    );
 
     state.return_from_screen(ShellScreen::Explorer);
     state.return_from_screen(ShellScreen::Editor);
@@ -226,7 +239,7 @@ fn editor_rollback_restores_picker_beneath_overlay_and_rejects_stale_results() {
 }
 
 #[test]
-fn command_line_escape_is_forwarded_and_back_requests_emergency_exit() {
+fn command_line_terminal_keys_are_forwarded_and_back_requests_close_confirmation() {
     let mut state = state();
     state.enter_screen(ShellScreen::Explorer);
     state.enter_screen(ShellScreen::CommandLine);
@@ -236,11 +249,13 @@ fn command_line_escape_is_forwarded_and_back_requests_emergency_exit() {
         state.normalize_shell_navigation_input(escape.clone()),
         escape
     );
-    let (_, command) = state.route_key_input(&KeyInput::from_label("Esc"));
-    assert_eq!(
-        command,
-        ShellCommand::CommandLineKey(KeyInput::from_label("Esc"))
-    );
+    for key in [
+        KeyInput::from_label("Esc"),
+        KeyInput::with_modifiers(InputKey::Char('x'), InputModifiers::CTRL_SHIFT),
+    ] {
+        let (_, command) = state.route_key_input(&key);
+        assert_eq!(command, ShellCommand::CommandLineKey(key));
+    }
     let area = state
         .hit_map()
         .regions()
@@ -249,13 +264,22 @@ fn command_line_escape_is_forwarded_and_back_requests_emergency_exit() {
         .unwrap()
         .area;
     let input = InputEvent::mouse_down(PointerButton::Left, (area.x, area.y));
+    assert_eq!(state.normalize_shell_navigation_input(input.clone()), input);
     assert_eq!(
-        state.normalize_shell_navigation_input(input),
-        InputEvent::Key(KeyInput::with_modifiers(
-            InputKey::Char('x'),
-            InputModifiers::CTRL_SHIFT
-        ))
+        state.route_input_at(input, Instant::now()).command,
+        ShellCommand::RequestCommandLineClose
     );
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (area.x, area.y),
+    ));
+    assert!(state.command_line_close_request.is_none());
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)));
+    assert_eq!(
+        state.command_line_close_request,
+        Some((state.active_page_id(), false))
+    );
+    assert_eq!(state.active_screen(), ShellScreen::CommandLine);
     state.close_command_line();
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
 }

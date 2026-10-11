@@ -11,18 +11,20 @@ mod tests;
 
 impl ShellSession {
     pub(super) fn handle_management_choice_key(&mut self, key: &KeyInput) -> bool {
-        let Some(index) = self.management_state.choice_field else {
+        let Some(index) = self.pages.management.management_state.choice_field else {
             return false;
         };
         if key.has_non_shift_modifier() {
             return true;
         }
-        let selected = self.management_state.choice_selected;
+        let selected = self.pages.management.management_state.choice_selected;
         let page = ui::management_layout(self.management_main(), &self.to_management_view_model())
             .choice_rows
             .len()
             .max(1);
         let count = self
+            .pages
+            .management
             .management_state
             .form
             .as_ref()
@@ -32,15 +34,24 @@ impl ShellSession {
             InputKey::Char(c) => InputKey::Char(c.to_ascii_lowercase()),
             _ => key.key.clone(),
         };
-        let shortcut = self.management_state.form.as_ref().and_then(|form| {
-            let FormPurpose::Menu(items) = &form.purpose else {
-                return None;
-            };
-            items.iter().position(|(action, _)| {
-                management_action_shortcut(self.management_state.kind, &action.id)
+        let shortcut = self
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .and_then(|form| {
+                let FormPurpose::Menu(items) = &form.purpose else {
+                    return None;
+                };
+                items.iter().position(|(action, _)| {
+                    management_action_shortcut(
+                        self.pages.management.management_state.kind,
+                        &action.id,
+                    )
                     .is_some_and(|(_, shortcut)| shortcut == shortcut_key)
-            })
-        });
+                })
+            });
         if let Some(selected) = shortcut {
             if key.phase != InputPhase::Press {
                 return true;
@@ -57,6 +68,8 @@ impl ShellSession {
                 return true;
             }
             if let Some(field) = self
+                .pages
+                .management
                 .management_state
                 .form
                 .as_mut()
@@ -64,45 +77,60 @@ impl ShellSession {
             {
                 field.value = field.choices[selected].clone();
             }
-            self.management_state.choice_selected = selected;
-            self.management_state.choice_field = None;
+            self.pages.management.management_state.choice_selected = selected;
+            self.pages.management.management_state.choice_field = None;
             self.submit_management_form();
-            self.management_state.shortcut_repeat_guard = Some(key.key.clone());
+            self.pages.management.management_state.shortcut_repeat_guard = Some(key.key.clone());
             return true;
         }
         match key.key {
             InputKey::Escape => {
                 if self
+                    .pages
+                    .management
                     .management_state
                     .form
                     .as_ref()
                     .is_some_and(management_form_is_menu)
                 {
-                    self.management_state.form = None;
+                    self.pages.management.management_state.form = None;
                 }
-                self.management_state.choice_field = None;
+                self.pages.management.management_state.choice_field = None;
             }
             InputKey::Up => {
-                self.management_state.choice_selected =
-                    self.management_state.choice_selected.saturating_sub(1)
+                self.pages.management.management_state.choice_selected = self
+                    .pages
+                    .management
+                    .management_state
+                    .choice_selected
+                    .saturating_sub(1)
             }
             InputKey::Down => {
-                self.management_state.choice_selected =
-                    (self.management_state.choice_selected + 1).min(count.saturating_sub(1))
+                self.pages.management.management_state.choice_selected =
+                    (self.pages.management.management_state.choice_selected + 1)
+                        .min(count.saturating_sub(1))
             }
             InputKey::PageUp => {
-                self.management_state.choice_selected =
-                    self.management_state.choice_selected.saturating_sub(page)
+                self.pages.management.management_state.choice_selected = self
+                    .pages
+                    .management
+                    .management_state
+                    .choice_selected
+                    .saturating_sub(page)
             }
             InputKey::PageDown => {
-                self.management_state.choice_selected = self
+                self.pages.management.management_state.choice_selected = self
+                    .pages
+                    .management
                     .management_state
                     .choice_selected
                     .saturating_add(page)
                     .min(count.saturating_sub(1))
             }
-            InputKey::Home => self.management_state.choice_selected = 0,
-            InputKey::End => self.management_state.choice_selected = count.saturating_sub(1),
+            InputKey::Home => self.pages.management.management_state.choice_selected = 0,
+            InputKey::End => {
+                self.pages.management.management_state.choice_selected = count.saturating_sub(1)
+            }
             InputKey::Enter | InputKey::Space if key.phase != InputPhase::Repeat => {
                 if self
                     .to_management_view_model()
@@ -115,15 +143,17 @@ impl ShellSession {
                 {
                     return true;
                 }
-                if let Some(form) = &mut self.management_state.form {
+                if let Some(form) = &mut self.pages.management.management_state.form {
                     if let Some(field) = form.fields.get_mut(index) {
                         if let Some(value) = field.choices.get(selected) {
                             field.value = value.clone();
                         }
                     }
                 }
-                self.management_state.choice_field = None;
+                self.pages.management.management_state.choice_field = None;
                 if self
+                    .pages
+                    .management
                     .management_state
                     .form
                     .as_ref()
@@ -138,7 +168,13 @@ impl ShellSession {
         true
     }
     fn keep_management_choice_visible(&mut self) {
-        if self.management_state.choice_field.is_none() {
+        if self
+            .pages
+            .management
+            .management_state
+            .choice_field
+            .is_none()
+        {
             return;
         }
         let model = self.to_management_view_model();
@@ -149,7 +185,7 @@ impl ShellSession {
         let page = layout.choice_rows.len().max(1);
         let start = layout.choice_rows.first().map_or(0, |(index, _)| *index);
         let selected = choice.selected.min(choice.values.len().saturating_sub(1));
-        self.management_state.choice_scroll = if selected < start {
+        self.pages.management.management_state.choice_scroll = if selected < start {
             selected
         } else if selected >= start.saturating_add(page) {
             selected.saturating_add(1).saturating_sub(page)
@@ -159,6 +195,8 @@ impl ShellSession {
     }
     pub(super) fn open_management_choice_field(&mut self, index: usize) {
         let Some(field) = self
+            .pages
+            .management
             .management_state
             .form
             .as_ref()
@@ -174,39 +212,52 @@ impl ShellSession {
             .iter()
             .position(|value| value == &field.value)
             .unwrap_or(0);
-        self.management_state.choice_field = Some(index);
-        self.management_state.choice_selected = selected;
-        self.management_state.choice_scroll = 0;
-        self.management_state.choice_columns = 0;
+        self.pages.management.management_state.choice_field = Some(index);
+        self.pages.management.management_state.choice_selected = selected;
+        self.pages.management.management_state.choice_scroll = 0;
+        self.pages.management.management_state.choice_columns = 0;
         self.keep_management_choice_visible();
     }
     pub(in crate::session) fn cancel_management_pointer_gesture(&mut self) {
-        self.management_state.scrollbar_grab = None;
+        self.pages.management.management_state.scrollbar_grab = None;
     }
     pub(in crate::session) fn management_pointer_drag_active(&self) -> bool {
         (self.active_screen() == ShellScreen::Management || self.config_editor_form_visible())
-            && self.management_state.scrollbar_grab.is_some()
+            && self
+                .pages
+                .management
+                .management_state
+                .scrollbar_grab
+                .is_some()
     }
     pub(in crate::session) fn management_overlay_contains(&self, point: CellPosition) -> bool {
         (self.active_screen() == ShellScreen::Management || self.config_editor_form_visible())
-            && self.management_state.form.is_some()
-            && !self.management_state.terminal_mode
+            && self.pages.management.management_state.form.is_some()
+            && !self.pages.management.management_state.terminal_mode
             && rect_contains(self.management_main(), point)
     }
     pub(in crate::session) fn management_overlay_id(&self) -> Option<&'static str> {
-        if self.management_state.terminal_mode || self.management_state.form.is_none() {
+        if self.pages.management.management_state.terminal_mode
+            || self.pages.management.management_state.form.is_none()
+        {
             None
-        } else if self.management_state.choice_field.is_some() {
+        } else if self
+            .pages
+            .management
+            .management_state
+            .choice_field
+            .is_some()
+        {
             Some("management-choice")
         } else {
             Some("management-form")
         }
     }
     pub(super) fn reset_management_form_view(&mut self) {
-        self.management_state.form_field_scroll = None;
-        self.management_state.choice_field = None;
-        self.management_state.choice_scroll = 0;
-        self.management_state.choice_columns = 0;
+        self.pages.management.management_state.form_field_scroll = None;
+        self.pages.management.management_state.choice_field = None;
+        self.pages.management.management_state.choice_scroll = 0;
+        self.pages.management.management_state.choice_columns = 0;
         self.cancel_management_pointer_gesture();
     }
     pub(in crate::session) fn management_button_at(
@@ -215,7 +266,7 @@ impl ShellSession {
     ) -> Option<ui::components::ButtonRegion> {
         if self.notification_has_active_modal()
             || self.time_sync_dialog_visible
-            || self.active_popup.is_some()
+            || self.pages.common.active_popup.is_some()
         {
             return None;
         }
@@ -227,46 +278,55 @@ impl ShellSession {
             .find(|button| rect_contains(button.area, point))
     }
     fn sync_management_filter(&mut self) {
-        let filter = self.management_state.filter_input.clone();
-        if let Some(query) = &mut self.management_state.query {
+        let filter = self.pages.management.management_state.filter_input.clone();
+        if let Some(query) = &mut self.pages.management.management_state.query {
             if query.filter != filter {
                 query.filter = filter;
                 query.target = None;
-                self.management_state.list_scroll_explicit = false;
+                self.pages.management.management_state.list_scroll_explicit = false;
             }
         }
     }
     pub(super) fn apply_management_filter(&mut self) {
         self.sync_management_filter();
-        if let Some(query) = &mut self.management_state.query {
+        if let Some(query) = &mut self.pages.management.management_state.query {
             query.target = None;
         }
-        self.management_state.filtering = false;
-        self.management_state.list_scroll_explicit = false;
+        self.pages.management.management_state.filtering = false;
+        self.pages.management.management_state.list_scroll_explicit = false;
         self.refresh_management();
     }
     pub(super) fn management_touch_control(&mut self, control: ui::ManagementControl) {
         match control {
             ui::ManagementControl::Refresh => {
-                self.management_state.outcome = None;
+                self.pages.management.management_state.outcome = None;
                 self.sync_management_filter();
                 self.refresh_management();
             }
-            ui::ManagementControl::Search => self.management_state.filtering = true,
+            ui::ManagementControl::Search => {
+                self.pages.management.management_state.filtering = true
+            }
             ui::ManagementControl::ApplySearch => self.apply_management_filter(),
             ui::ManagementControl::ClearSearch => {
-                self.management_state.filter_input.clear();
+                self.pages.management.management_state.filter_input.clear();
                 self.apply_management_filter();
             }
             ui::ManagementControl::Details => {
                 self.toggle_management_details();
             }
             ui::ManagementControl::Terminal => {
-                if let Some(job) = self.management_state.auto_admin_job.clone() {
+                if let Some(job) = self
+                    .pages
+                    .management
+                    .management_state
+                    .auto_admin_job
+                    .clone()
+                {
                     self.show_auto_admin_job(job);
                     return;
                 }
-                self.management_state.terminal_mode = !self.management_state.terminal_mode;
+                self.pages.management.management_state.terminal_mode =
+                    !self.pages.management.management_state.terminal_mode;
                 self.resize_management_terminal();
             }
         }
@@ -286,7 +346,7 @@ impl ShellSession {
             return;
         }
         let end = model.actions.len().saturating_sub(layout.actions.len());
-        self.management_state.action_scroll = Some(
+        self.pages.management.management_state.action_scroll = Some(
             layout
                 .action_start
                 .saturating_add_signed(if next { 1 } else { -1 })
@@ -302,28 +362,34 @@ impl ShellSession {
         let short = offset.min(u16::MAX as usize) as u16;
         match target {
             ui::ManagementScrollTarget::Rows => {
-                self.management_state.scroll = offset;
-                self.management_state.list_scroll_explicit = true;
+                self.pages.management.management_state.scroll = offset;
+                self.pages.management.management_state.list_scroll_explicit = true;
             }
-            ui::ManagementScrollTarget::Columns => self.management_state.table_scroll = offset,
-            ui::ManagementScrollTarget::Details => self.management_state.details_scroll = short,
+            ui::ManagementScrollTarget::Columns => {
+                self.pages.management.management_state.table_scroll = offset
+            }
+            ui::ManagementScrollTarget::Details => {
+                self.pages.management.management_state.details_scroll = short
+            }
             ui::ManagementScrollTarget::Actions => {
-                self.management_state.action_scroll = Some(offset)
+                self.pages.management.management_state.action_scroll = Some(offset)
             }
             ui::ManagementScrollTarget::FormMessage => {
-                if let Some(form) = &mut self.management_state.form {
+                if let Some(form) = &mut self.pages.management.management_state.form {
                     form.message_scroll = short;
                 }
             }
             ui::ManagementScrollTarget::FormFields => {
-                self.management_state.form_field_scroll = Some(offset)
+                self.pages.management.management_state.form_field_scroll = Some(offset)
             }
-            ui::ManagementScrollTarget::Choices => self.management_state.choice_scroll = offset,
+            ui::ManagementScrollTarget::Choices => {
+                self.pages.management.management_state.choice_scroll = offset
+            }
             ui::ManagementScrollTarget::ChoiceColumns => {
-                self.management_state.choice_columns = offset
+                self.pages.management.management_state.choice_columns = offset
             }
             ui::ManagementScrollTarget::Output => {
-                if let Some(parser) = &self.management_state.parser {
+                if let Some(parser) = &self.pages.management.management_state.parser {
                     if let Ok(mut parser) = parser.0.lock() {
                         parser.set_scrollback(
                             bar.content_len
@@ -332,13 +398,13 @@ impl ShellSession {
                         );
                     }
                 } else {
-                    self.management_state.output_scroll = short;
+                    self.pages.management.management_state.output_scroll = short;
                 }
             }
         }
     }
     fn drag_management_scrollbar(&mut self, point: CellPosition) {
-        let Some((target, grab)) = self.management_state.scrollbar_grab else {
+        let Some((target, grab)) = self.pages.management.management_state.scrollbar_grab else {
             return;
         };
         let layout =
@@ -363,21 +429,27 @@ impl ShellSession {
             .iter()
             .copied()
             .filter(|bar| {
-                if self.management_state.choice_field.is_some() {
+                if self
+                    .pages
+                    .management
+                    .management_state
+                    .choice_field
+                    .is_some()
+                {
                     matches!(
                         bar.target,
                         ui::ManagementScrollTarget::Choices
                             | ui::ManagementScrollTarget::ChoiceColumns
                     )
-                } else if self.management_state.form.is_some()
-                    && !self.management_state.terminal_mode
+                } else if self.pages.management.management_state.form.is_some()
+                    && !self.pages.management.management_state.terminal_mode
                 {
                     matches!(
                         bar.target,
                         ui::ManagementScrollTarget::FormMessage
                             | ui::ManagementScrollTarget::FormFields
                     )
-                } else if self.management_state.terminal_mode {
+                } else if self.pages.management.management_state.terminal_mode {
                     bar.target == ui::ManagementScrollTarget::Output
                 } else {
                     matches!(
@@ -392,31 +464,48 @@ impl ShellSession {
             .collect()
     }
     pub(super) fn clamp_management_scroll(&mut self) {
-        let count = self.management_state.snapshot.rows.len();
-        self.management_state.selected =
-            self.management_state.selected.min(count.saturating_sub(1));
+        let count = self.pages.management.management_state.snapshot.rows.len();
+        self.pages.management.management_state.selected = self
+            .pages
+            .management
+            .management_state
+            .selected
+            .min(count.saturating_sub(1));
         let layout =
             ui::management_layout(self.management_main(), &self.to_management_view_model());
         let page = layout.list_capacity.max(1);
-        self.management_state.scroll = self.management_state.scroll.min(count.saturating_sub(page));
-        if !self.management_state.list_scroll_explicit {
-            if self.management_state.selected < self.management_state.scroll {
-                self.management_state.scroll = self.management_state.selected;
+        self.pages.management.management_state.scroll = self
+            .pages
+            .management
+            .management_state
+            .scroll
+            .min(count.saturating_sub(page));
+        if !self.pages.management.management_state.list_scroll_explicit {
+            if self.pages.management.management_state.selected
+                < self.pages.management.management_state.scroll
+            {
+                self.pages.management.management_state.scroll =
+                    self.pages.management.management_state.selected;
             }
-            if self.management_state.selected >= self.management_state.scroll + page {
-                self.management_state.scroll = self.management_state.selected + 1 - page;
+            if self.pages.management.management_state.selected
+                >= self.pages.management.management_state.scroll + page
+            {
+                self.pages.management.management_state.scroll =
+                    self.pages.management.management_state.selected + 1 - page;
             }
         }
-        self.management_state.selected_action = self
+        self.pages.management.management_state.selected_action = self
+            .pages
+            .management
             .management_state
             .selected_action
             .min(self.management_actions().len().saturating_sub(1));
-        self.management_state.details_scroll = layout
+        self.pages.management.management_state.details_scroll = layout
             .scrollbars
             .iter()
             .find(|bar| bar.target == ui::ManagementScrollTarget::Details)
             .map_or(0, |bar| bar.offset.min(u16::MAX as usize) as u16);
-        if let Some(form) = &mut self.management_state.form {
+        if let Some(form) = &mut self.pages.management.management_state.form {
             form.message_scroll = layout
                 .scrollbars
                 .iter()
@@ -448,15 +537,23 @@ impl ShellSession {
             } else {
                 0
             };
-            let target = if self.management_state.choice_field.is_some() {
+            let target = if self
+                .pages
+                .management
+                .management_state
+                .choice_field
+                .is_some()
+            {
                 ui::ManagementScrollTarget::Choices
-            } else if self.management_state.form.is_some() && !self.management_state.terminal_mode {
+            } else if self.pages.management.management_state.form.is_some()
+                && !self.pages.management.management_state.terminal_mode
+            {
                 if layout.fields_area.contains(position) {
                     ui::ManagementScrollTarget::FormFields
                 } else {
                     ui::ManagementScrollTarget::FormMessage
                 }
-            } else if self.management_state.terminal_mode {
+            } else if self.pages.management.management_state.terminal_mode {
                 ui::ManagementScrollTarget::Output
             } else if layout.details.contains(position) {
                 ui::ManagementScrollTarget::Details
@@ -486,21 +583,30 @@ impl ShellSession {
             .find(|bar| bar.track.contains(position))
             .copied()
         {
-            self.management_state.scrollbar_grab = Some((bar.target, bar.grab_at(point)));
+            self.pages.management.management_state.scrollbar_grab =
+                Some((bar.target, bar.grab_at(point)));
             self.drag_management_scrollbar(point);
             return;
         }
-        if self.management_state.choice_field.is_some() {
+        if self
+            .pages
+            .management
+            .management_state
+            .choice_field
+            .is_some()
+        {
             if layout.choice_cancel.contains(position) {
                 if self
+                    .pages
+                    .management
                     .management_state
                     .form
                     .as_ref()
                     .is_some_and(management_form_is_menu)
                 {
-                    self.management_state.form = None;
+                    self.pages.management.management_state.form = None;
                 }
-                self.management_state.choice_field = None;
+                self.pages.management.management_state.choice_field = None;
                 return;
             }
             if let Some((index, _)) = layout
@@ -518,15 +624,17 @@ impl ShellSession {
                 {
                     return;
                 }
-                let field_index = self.management_state.choice_field;
-                if let Some(form) = &mut self.management_state.form {
+                let field_index = self.pages.management.management_state.choice_field;
+                if let Some(form) = &mut self.pages.management.management_state.form {
                     if let Some(field) = field_index.and_then(|field| form.fields.get_mut(field)) {
                         field.value = field.choices[*index].clone();
                     }
                 }
-                self.management_state.choice_field = None;
-                self.management_state.choice_selected = *index;
+                self.pages.management.management_state.choice_field = None;
+                self.pages.management.management_state.choice_selected = *index;
                 if self
+                    .pages
+                    .management
                     .management_state
                     .form
                     .as_ref()
@@ -537,7 +645,9 @@ impl ShellSession {
             }
             return;
         }
-        if self.management_state.form.is_some() && !self.management_state.terminal_mode {
+        if self.pages.management.management_state.form.is_some()
+            && !self.pages.management.management_state.terminal_mode
+        {
             if layout.submit.contains(position) {
                 if model.form.as_ref().is_some_and(|form| form.submit_disabled) {
                     return;
@@ -552,7 +662,7 @@ impl ShellSession {
                 .iter()
                 .find(|(_, area)| area.contains(position))
             {
-                let choice = if let Some(form) = &mut self.management_state.form {
+                let choice = if let Some(form) = &mut self.pages.management.management_state.form {
                     form.selected = *index;
                     if !form.fields[*index].choices.is_empty() {
                         Some(
@@ -569,10 +679,10 @@ impl ShellSession {
                     None
                 };
                 if let Some(selected) = choice {
-                    self.management_state.choice_field = Some(*index);
-                    self.management_state.choice_selected = selected;
-                    self.management_state.choice_scroll = 0;
-                    self.management_state.choice_columns = 0;
+                    self.pages.management.management_state.choice_field = Some(*index);
+                    self.pages.management.management_state.choice_selected = selected;
+                    self.pages.management.management_state.choice_scroll = 0;
+                    self.pages.management.management_state.choice_columns = 0;
                     self.keep_management_choice_visible();
                 }
             }
@@ -587,10 +697,10 @@ impl ShellSession {
             return;
         }
         if layout.filter.contains(position) {
-            self.management_state.filtering = true;
+            self.pages.management.management_state.filtering = true;
             return;
         }
-        if self.management_state.terminal_mode {
+        if self.pages.management.management_state.terminal_mode {
             return;
         }
         if let Some((column, _)) = layout
@@ -612,12 +722,21 @@ impl ShellSession {
         {
             self.activate_management_action(layout.action_start + index);
         } else if layout.list_rows.contains(position) {
-            self.management_state.selected = (self.management_state.scroll
-                + usize::from(point.1 - layout.list_rows.y))
-            .min(self.management_state.snapshot.rows.len().saturating_sub(1));
-            self.management_state.actions_focused = false;
-            self.management_state.details_scroll = 0;
-            self.management_state.action_scroll = None;
+            self.pages.management.management_state.selected =
+                (self.pages.management.management_state.scroll
+                    + usize::from(point.1 - layout.list_rows.y))
+                .min(
+                    self.pages
+                        .management
+                        .management_state
+                        .snapshot
+                        .rows
+                        .len()
+                        .saturating_sub(1),
+                );
+            self.pages.management.management_state.actions_focused = false;
+            self.pages.management.management_state.details_scroll = 0;
+            self.pages.management.management_state.action_scroll = None;
         }
         self.clamp_management_scroll();
     }

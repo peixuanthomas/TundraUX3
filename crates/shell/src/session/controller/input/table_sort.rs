@@ -35,7 +35,7 @@ impl ShellSession {
     pub(in crate::session) fn logs_sort_key(&self) -> String {
         format!(
             "logs.{:?}.{:?}",
-            self.logs_state.category, self.logs_state.section
+            self.pages.logs.logs_state.category, self.pages.logs.logs_state.section
         )
     }
 
@@ -44,15 +44,24 @@ impl ShellSession {
             return None;
         }
         match self.active_screen() {
-            ShellScreen::Launcher if self.launcher_pending_confirmation.is_none() => {
+            ShellScreen::Launcher
+                if self.pages.launcher.launcher_pending_confirmation.is_none() =>
+            {
                 Some(("launcher".into(), 4))
             }
-            ShellScreen::Clock if self.clock_create_state.is_none() => Some(("clock".into(), 2)),
+            ShellScreen::Clock if self.pages.clock.clock_create_state.is_none() => {
+                Some(("clock".into(), 2))
+            }
             ShellScreen::UserManagement if self.to_user_management_view_model().form.is_none() => {
                 Some(("users".into(), 4))
             }
-            ShellScreen::Diagnostics if self.diagnostics_repair_preview.is_empty() => {
-                Some((format!("diagnostics.{:?}", self.diagnostics_tab), 3))
+            ShellScreen::Diagnostics
+                if self.pages.diagnostics.diagnostics_repair_preview.is_empty() =>
+            {
+                Some((
+                    format!("diagnostics.{:?}", self.pages.diagnostics.diagnostics_tab),
+                    3,
+                ))
             }
             ShellScreen::Logs if !self.logs_has_active_overlay() => Some((
                 self.logs_sort_key(),
@@ -61,8 +70,12 @@ impl ShellSession {
                     .0
                     .len(),
             )),
-            ShellScreen::SystemStatus if self.diagnostics_repair_preview.is_empty() => {
-                let ui::SystemStatusRoute::Detail(detail) = self.system_status_route else {
+            ShellScreen::SystemStatus
+                if self.pages.diagnostics.diagnostics_repair_preview.is_empty() =>
+            {
+                let ui::SystemStatusRoute::Detail(detail) =
+                    self.pages.system_status.system_status_route
+                else {
                     return None;
                 };
                 if let Some(tab) = detail.diagnostics_tab() {
@@ -71,7 +84,10 @@ impl ShellSession {
                     Some(("processes".into(), 4))
                 } else {
                     Some((
-                        format!("system-status.{:?}", self.system_status_route),
+                        format!(
+                            "system-status.{:?}",
+                            self.pages.system_status.system_status_route
+                        ),
                         self.to_system_status_view_model()?.table_data().0.len(),
                     ))
                 }
@@ -86,18 +102,22 @@ impl ShellSession {
             return None;
         }
         let process_sort = ui::TableSort {
-            column: match self.system_status_process_sort.column {
+            column: match self.pages.system_status.system_status_process_sort.column {
                 ui::SystemStatusProcessSortColumn::Pid => 0,
                 ui::SystemStatusProcessSortColumn::Name => 1,
                 ui::SystemStatusProcessSortColumn::Cpu => 2,
                 ui::SystemStatusProcessSortColumn::Memory => 3,
             },
-            descending: self.system_status_process_sort.descending,
+            descending: self
+                .pages
+                .system_status
+                .system_status_process_sort
+                .descending,
         };
         let sort = if key == "processes" {
             Some(&process_sort)
         } else {
-            self.table_sorts.get(&key)
+            self.pages.common.table_sorts.get(&key)
         };
         Some(if reverse {
             sort.map_or(0, |sort| sort.column)
@@ -124,14 +144,17 @@ impl ShellSession {
                 if column == 0 { "alarm" } else { "countdown" }
             ),
             ShellScreen::SystemStatus
-                if self.system_status_route
+                if self.pages.system_status.system_status_route
                     == ui::SystemStatusRoute::Detail(ui::SystemStatusDetail::Processes) =>
             {
                 format!("system-status.process.sort.{}", [0, 3, 1, 2][column])
             }
-            ShellScreen::SystemStatus if matches!(self.system_status_route, ui::SystemStatusRoute::Detail(d) if d.diagnostics_tab().is_none()) =>
+            ShellScreen::SystemStatus if matches!(self.pages.system_status.system_status_route, ui::SystemStatusRoute::Detail(d) if d.diagnostics_tab().is_none()) =>
             {
-                format!("system-status.{:?}.sort.{column}", self.system_status_route)
+                format!(
+                    "system-status.{:?}.sort.{column}",
+                    self.pages.system_status.system_status_route
+                )
             }
             _ => format!("diagnostics.table.sort.{column}"),
         };
@@ -217,9 +240,9 @@ impl ShellSession {
         }
         if key == "clock" {
             let group = format!("clock.{column}");
-            let sort = ui::TableSort::toggle(self.table_sorts.get(&group).copied(), 0);
-            self.table_sorts.insert(group, sort);
-            self.table_sorts.insert(
+            let sort = ui::TableSort::toggle(self.pages.common.table_sorts.get(&group).copied(), 0);
+            self.pages.common.table_sorts.insert(group, sort);
+            self.pages.common.table_sorts.insert(
                 key,
                 ui::TableSort {
                     column,
@@ -234,23 +257,23 @@ impl ShellSession {
             .and_then(|m| {
                 m.table_data()
                     .1
-                    .get(self.system_status_selected_row)
+                    .get(self.pages.system_status.system_status_selected_row)
                     .cloned()
             })
             .and_then(|row| row.first().cloned());
-        let sort = ui::TableSort::toggle(self.table_sorts.get(&key).copied(), column);
-        self.table_sorts.insert(key, sort);
+        let sort = ui::TableSort::toggle(self.pages.common.table_sorts.get(&key).copied(), column);
+        self.pages.common.table_sorts.insert(key, sort);
         match self.active_screen() {
             ShellScreen::Launcher => {
-                self.launcher_viewport_offset = 0;
-                self.launcher_drag = None;
+                self.pages.launcher.launcher_viewport_offset = 0;
+                self.pages.launcher.launcher_drag = None;
             }
             ShellScreen::UserManagement => self.apply_user_table_sort(),
             ShellScreen::Diagnostics => self.apply_diagnostics_table_sorts(),
             ShellScreen::SystemStatus => {
                 self.apply_diagnostics_table_sorts();
                 if let Some(id) = previous_system_row {
-                    self.system_status_selected_row = self
+                    self.pages.system_status.system_status_selected_row = self
                         .to_system_status_view_model()
                         .and_then(|m| {
                             m.table_data()
@@ -260,13 +283,13 @@ impl ShellSession {
                         })
                         .unwrap_or(0);
                 }
-                self.system_status_scroll_offset = 0;
+                self.pages.system_status.system_status_scroll_offset = 0;
             }
             ShellScreen::Logs => {
-                self.logs_state.paused = true;
+                self.pages.logs.logs_state.paused = true;
                 self.apply_logs_sort();
-                self.logs_state.scroll = self.logs_state.selected;
-                self.logs_state.explicit_scroll = false;
+                self.pages.logs.logs_state.scroll = self.pages.logs.logs_state.selected;
+                self.pages.logs.logs_state.explicit_scroll = false;
             }
             _ => {}
         }
@@ -281,18 +304,21 @@ impl ShellSession {
             .and_then(|m| {
                 m.table_data()
                     .1
-                    .get(self.system_status_selected_row)
+                    .get(self.pages.system_status.system_status_selected_row)
                     .cloned()
             })
             .and_then(|row| row.first().cloned());
-        self.system_status_process_sort.toggle(column);
-        self.system_status_selected_row = selected
+        self.pages
+            .system_status
+            .system_status_process_sort
+            .toggle(column);
+        self.pages.system_status.system_status_selected_row = selected
             .and_then(|id| {
                 self.to_system_status_view_model()
                     .and_then(|m| m.table_data().1.iter().position(|r| r.first() == Some(&id)))
             })
             .unwrap_or(0);
-        self.system_status_scroll_offset = 0;
+        self.pages.system_status.system_status_scroll_offset = 0;
     }
 
     pub(in crate::session) fn sort_system_status_view_model(
@@ -336,7 +362,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn apply_user_table_sort(&mut self) {
-        let Some(sort) = self.table_sorts.get("users").copied() else {
+        let Some(sort) = self.pages.common.table_sorts.get("users").copied() else {
             return;
         };
         let mut users = self.app.managed_users().to_vec();
@@ -356,22 +382,28 @@ impl ShellSession {
                 ]
             })
             .collect::<Vec<_>>();
-        let mut selected = self.user_management_selected;
+        let mut selected = self.pages.user_management.user_management_selected;
         reorder(&mut users, &cells, sort, &mut selected);
         self.app
             .dispatch_at(app::AppCommand::SetManagedUsers(users), Instant::now());
-        self.user_management_selected = selected;
-        self.user_management_window_start = selected;
+        self.pages.user_management.user_management_selected = selected;
+        self.pages.user_management.user_management_window_start = selected;
     }
 
     pub(in crate::session) fn apply_logs_sort(&mut self) {
-        let Some(sort) = self.table_sorts.get(&self.logs_sort_key()).copied() else {
+        let Some(sort) = self
+            .pages
+            .common
+            .table_sorts
+            .get(&self.logs_sort_key())
+            .copied()
+        else {
             return;
         };
         let cells = ui::logs_content_model(&self.to_logs_view_model())
             .table_data()
             .1;
-        let state = &mut self.logs_state;
+        let state = &mut self.pages.logs.logs_state;
         if state.category == ui::LogsCategory::Linux || state.section == ui::LogsSection::Events {
             reorder(
                 &mut state.snapshot.result.events,
@@ -399,6 +431,8 @@ impl ShellSession {
         let mut model = self.to_diagnostics_view_model();
         for tab in ui::DiagnosticsTab::ALL {
             let Some(sort) = self
+                .pages
+                .common
                 .table_sorts
                 .get(&format!("diagnostics.{tab:?}"))
                 .copied()
@@ -408,22 +442,24 @@ impl ShellSession {
             model.tab = tab;
             let cells = model.table_data().1;
             let mut selected = match tab {
-                ui::DiagnosticsTab::Health => self.diagnostics_selected_check,
-                ui::DiagnosticsTab::Logs => self.diagnostics_selected_log,
-                ui::DiagnosticsTab::Incidents => self.diagnostics_selected_incident,
+                ui::DiagnosticsTab::Health => self.pages.diagnostics.diagnostics_selected_check,
+                ui::DiagnosticsTab::Logs => self.pages.diagnostics.diagnostics_selected_log,
+                ui::DiagnosticsTab::Incidents => {
+                    self.pages.diagnostics.diagnostics_selected_incident
+                }
             };
             match tab {
                 ui::DiagnosticsTab::Health => {
                     reorder(&mut snapshot.checks, &cells, sort, &mut selected);
-                    self.diagnostics_selected_check = selected;
+                    self.pages.diagnostics.diagnostics_selected_check = selected;
                 }
                 ui::DiagnosticsTab::Logs => {
                     reorder(&mut snapshot.logs, &cells, sort, &mut selected);
-                    self.diagnostics_selected_log = selected;
+                    self.pages.diagnostics.diagnostics_selected_log = selected;
                 }
                 ui::DiagnosticsTab::Incidents => {
                     reorder(&mut snapshot.incidents, &cells, sort, &mut selected);
-                    self.diagnostics_selected_incident = selected;
+                    self.pages.diagnostics.diagnostics_selected_incident = selected;
                 }
             }
         }
@@ -431,6 +467,6 @@ impl ShellSession {
             app::AppCommand::SetDiagnosticsSnapshot(Some(snapshot)),
             Instant::now(),
         );
-        self.diagnostics_list_window_is_explicit = false;
+        self.pages.diagnostics.diagnostics_list_window_is_explicit = false;
     }
 }

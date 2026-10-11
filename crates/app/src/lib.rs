@@ -1,4 +1,5 @@
 pub mod application;
+pub use application::pages::{AppPageKind, PageInstanceId, PageInstances};
 pub mod clock;
 pub mod diagnostics;
 pub mod editor;

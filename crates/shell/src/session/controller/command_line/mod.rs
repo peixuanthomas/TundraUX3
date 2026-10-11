@@ -20,7 +20,7 @@ impl ShellSession {
                     "shell-only-administrators-can-use-command-line"
                 )),
             };
-            self.error_message = Some(message.clone());
+            self.pages.common.error_message = Some(message.clone());
             self.notify_alert_with_tone(message, ui::NotificationTone::Error);
             return;
         }
@@ -42,18 +42,51 @@ impl ShellSession {
         }
 
         if self.active_screen() != ShellScreen::CommandLine {
-            self.command_line_start_directory = directory;
             self.enter_screen(ShellScreen::CommandLine);
+            self.pages.command_line.command_line_start_directory = directory;
         }
-        self.focused_component = ShellComponent::CommandLine;
-        self.launcher_pending_confirmation = None;
-        self.launcher_drag = None;
+        self.pages.common.focused_component = ShellComponent::CommandLine;
+        self.pages.launcher.launcher_pending_confirmation = None;
+        self.pages.launcher.launcher_drag = None;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-command-line")));
         self.refresh_hit_map();
     }
 
     pub(in crate::session) fn close_command_line(&mut self) {
-        self.command_line_start_directory = None;
         self.return_from_screen(ShellScreen::CommandLine);
+    }
+
+    pub(in crate::session) fn request_command_line_close(&mut self) {
+        if self.active_screen() == ShellScreen::CommandLine
+            && self.interactive_overlays().is_empty()
+        {
+            self.command_line_close_request = Some((self.active_page_id(), false));
+        }
+    }
+
+    pub(in crate::session) fn confirm_command_line_close(&mut self, id: PageInstanceId) {
+        if self.active_screen() == ShellScreen::CommandLine && self.active_page_id() == id {
+            self.command_line_close_request = Some((id, true));
+        }
+    }
+
+    pub(in crate::session) fn show_command_line_close_confirmation(&mut self, id: PageInstanceId) {
+        self.notify_modal(
+            i18n::msg!("shell-command-line-close-title"),
+            i18n::msg!("shell-command-line-close-message"),
+            ui::NotificationTone::Warning,
+            vec![
+                ShellNotificationAction::new(
+                    "continue-command-line",
+                    i18n::msg!("shell-command-line-close-continue"),
+                )
+                .cancel(),
+                ShellNotificationAction::new(
+                    "terminate-command-line",
+                    i18n::msg!("shell-command-line-close-confirm"),
+                )
+                .with_follow_up(ShellCommand::ConfirmCommandLineClose(id)),
+            ],
+        );
     }
 }

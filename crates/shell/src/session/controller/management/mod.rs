@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Clone)]
 pub(in crate::session) struct ManagementJob(Arc<ManagementJobShared>);
 struct ManagementJobShared {
+    id: u64,
     cancelled: Arc<AtomicBool>,
+    discard_output: AtomicBool,
     snapshot: Mutex<Option<Result<ManagementSnapshot, ManagementError>>>,
     draft: Mutex<Option<Result<ConfigDraft, ManagementError>>>,
     events: Mutex<VecDeque<OperationEvent>>,
@@ -25,6 +27,35 @@ impl PartialEq for ManagementJob {
     }
 }
 impl Eq for ManagementJob {}
+impl ManagementJob {
+    fn stopped(&self) -> bool {
+        self.0
+            .worker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(ManagedThreadHandle::is_finished)
+    }
+    fn finished(&self) -> bool {
+        self.0
+            .worker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_none_or(ManagedThreadHandle::is_finished)
+    }
+    fn cancel(&self) {
+        self.0.cancelled.store(true, Ordering::Relaxed);
+        let _ = self.0.responses.send(OperationInput::Cancel);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::session) struct DetachedManagementOperation {
+    job: ManagementJob,
+    auto_admin_job: Option<AutoAdminJob>,
+    kind: Option<ManagementKind>,
+}
 impl Drop for ManagementJobShared {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::Relaxed);
@@ -310,29 +341,38 @@ fn merge_package_details(
 }
 
 impl ShellSession {
+    fn management_alert_key(&self) -> String {
+        format!(
+            "management.page.{}",
+            self.pages
+                .management
+                .selected_id()
+                .unwrap_or_else(|| self.active_page_id())
+                .get()
+        )
+    }
     pub(in crate::session) fn open_management(&mut self, kind: ManagementKind) {
         if !cfg!(target_os = "linux") || self.app.auth_session().is_none() || self.is_strict_guest()
         {
             return;
         }
-        self.enter_screen(ShellScreen::Management);
-        if self.management_state.kind != Some(kind) {
-            let next =
-                self.management_background
-                    .remove(&kind)
-                    .unwrap_or_else(|| ManagementState {
-                        kind: Some(kind),
-                        query: Some(ManagementQuery::new(kind)),
-                        ..Default::default()
-                    });
-            let previous = std::mem::replace(&mut self.management_state, next);
-            if let Some(previous_kind) = previous.kind {
-                self.management_background.insert(previous_kind, previous);
-            }
+        self.enter_new_page(ShellScreen::Management);
+        if self.pages.management.management_state.kind != Some(kind) {
+            self.pages.management.management_state = ManagementState {
+                kind: Some(kind),
+                query: Some(ManagementQuery::new(kind)),
+                ..Default::default()
+            };
         }
-        self.focused_component = ShellComponent::Management;
-        self.resolve_notification_alert(&format!("management.{}", kind.id()));
-        if self.management_state.operation_job.is_none() && !self.management_state.received_snapshot
+        self.pages.common.focused_component = ShellComponent::Management;
+        self.resolve_notification_alert(&self.management_alert_key());
+        if self
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .is_none()
+            && !self.pages.management.management_state.received_snapshot
         {
             self.refresh_management();
         }
@@ -342,7 +382,9 @@ impl ShellSession {
         let (tx, rx) = mpsc::channel();
         (
             ManagementJob(Arc::new(ManagementJobShared {
+                id: PageInstanceId::new().get(),
                 cancelled: Arc::new(AtomicBool::new(false)),
+                discard_output: AtomicBool::new(false),
                 snapshot: Mutex::new(None),
                 draft: Mutex::new(None),
                 events: Mutex::new(VecDeque::new()),
@@ -352,27 +394,84 @@ impl ShellSession {
             rx,
         )
     }
+
+    fn register_management_job(
+        &mut self,
+        job: &ManagementJob,
+        domain: TaskDomain,
+        class: TaskClass,
+    ) {
+        let cancel = job.clone();
+        let finished = job.clone();
+        let auto_admin = (domain == TaskDomain::ManagementOperation)
+            .then(|| {
+                self.pages
+                    .management
+                    .management_state
+                    .auto_admin_job
+                    .clone()
+            })
+            .flatten();
+        self.register_page_task(
+            domain,
+            job.0.id,
+            class,
+            TaskControl::new(
+                move || {
+                    if let Some(aa) = &auto_admin {
+                        if aa.phase() == ::auto_admin::JobPhase::Running {
+                            cancel.0.discard_output.store(true, Ordering::Relaxed);
+                            aa.request_stop(false);
+                            // The client must keep reading until the helper reports
+                            // completion. Its cancelled flag means detach, not stop.
+                            if class == TaskClass::Operation {
+                                return;
+                            }
+                        } else {
+                            aa.cancel();
+                        }
+                    }
+                    cancel.cancel();
+                },
+                move || finished.finished(),
+            ),
+        );
+    }
+
+    fn management_job_belongs_here(&self, domain: TaskDomain, job: &ManagementJob) -> bool {
+        self.tasks.owner(domain, job.0.id) == self.pages.common.selected_id().map(TaskOwner::Page)
+    }
+
+    fn cancel_management_query(&mut self) {
+        if let Some(job) = self.pages.management.management_state.query_job.take() {
+            job.cancel();
+            self.tasks.cancel(TaskDomain::ManagementQuery, job.0.id);
+            self.tasks.complete(TaskDomain::ManagementQuery, job.0.id);
+        }
+    }
     pub(in crate::session) fn refresh_management(&mut self) {
-        let Some(query) = self.management_state.query.clone() else {
+        let Some(query) = self.pages.management.management_state.query.clone() else {
             return;
         };
         // A requested refresh replaces the previous query, including when a new
         // worker cannot be started. Its late result must not restore an old filter.
-        self.management_state.query_job = None;
+        self.cancel_management_query();
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
-            self.management_state.status = i18n::tr!("management-worker-unavailable");
+            self.pages.management.management_state.status =
+                i18n::tr!("management-worker-unavailable");
             return;
         };
         let (job, _) = self.management_job();
         let output = Arc::downgrade(&job.0);
         let cancelled = job.0.cancelled.clone();
-        self.management_state.revision = self.management_state.revision.wrapping_add(1);
-        let task = TaskId::new(format!(
-            "management-query-{}-{}",
-            query.kind.id(),
-            self.management_state.revision % 64
-        ))
-        .expect("bounded task identifier");
+        self.pages.management.management_state.revision = self
+            .pages
+            .management
+            .management_state
+            .revision
+            .wrapping_add(1);
+        let task = TaskId::new(format!("management-query-{}-{}", query.kind.id(), job.0.id))
+            .expect("bounded task identifier");
         match group.spawn_thread(TaskSpec::one_shot(task), move || {
             let result = query_management_snapshot(&query, &cancelled);
             if let Some(output) = output.upgrade() {
@@ -381,53 +480,210 @@ impl ShellSession {
         }) {
             Ok(worker) => {
                 *job.0.worker.lock().unwrap_or_else(|e| e.into_inner()) = Some(worker);
-                self.management_state.query_job = Some(job);
-                self.management_state.status = i18n::tr!("management-loading");
+                self.register_management_job(&job, TaskDomain::ManagementQuery, TaskClass::Query);
+                self.pages.management.management_state.query_job = Some(job);
+                self.pages.management.management_state.status = i18n::tr!("management-loading");
             }
             Err(e) => {
-                self.management_state.status = i18n::tr!("management-worker-unavailable");
-                self.management_state.output = e.to_string();
+                self.pages.management.management_state.status =
+                    i18n::tr!("management-worker-unavailable");
+                self.pages.management.management_state.output = e.to_string();
             }
         }
     }
 
     pub(in crate::session) fn poll_management(&mut self) {
-        let visible = self.active_screen() == ShellScreen::Management;
-        self.poll_management_page(visible);
-        let kinds = self
-            .management_background
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
-        for kind in kinds {
-            if let Some(background) = self.management_background.remove(&kind) {
-                let active = std::mem::replace(&mut self.management_state, background);
-                self.poll_management_page(false);
-                let background = std::mem::replace(&mut self.management_state, active);
-                self.management_background.insert(kind, background);
+        for id in self.pages.management.ids() {
+            let visible = self.active_page_id() == id
+                && matches!(
+                    self.active_screen(),
+                    ShellScreen::Management | ShellScreen::Editor
+                );
+            self.with_page_context(id, |session| session.poll_management_page(visible));
+        }
+        self.poll_detached_management_operations();
+    }
+
+    pub(in crate::session) fn drain_management_for_shutdown(&mut self) {
+        for id in self.pages.management.ids() {
+            if let Some(page) = self.pages.management.get(id)
+                && let Some(job) = &page.management_state.operation_job
+            {
+                job.0
+                    .events
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clear();
             }
         }
+        for operation in &self.detached_management_operations {
+            operation
+                .job
+                .0
+                .events
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clear();
+        }
     }
+
+    pub(in crate::session) fn detach_management_page(&mut self, id: PageInstanceId) {
+        let Some(page) = self.pages.management.get_mut(id) else {
+            return;
+        };
+        let detached =
+            page.management_state
+                .operation_job
+                .take()
+                .map(|job| DetachedManagementOperation {
+                    job,
+                    auto_admin_job: page.management_state.auto_admin_job.take(),
+                    kind: page.management_state.kind,
+                });
+        if let Some(detached) = detached
+            && self
+                .tasks
+                .owner(TaskDomain::ManagementOperation, detached.job.0.id)
+                == Some(TaskOwner::Session)
+        {
+            self.detached_management_operations.push(detached);
+        }
+    }
+
+    fn poll_detached_management_operations(&mut self) {
+        let mut pending = Vec::new();
+        for operation in std::mem::take(&mut self.detached_management_operations) {
+            let finished = operation.job.finished();
+            let events = operation
+                .job
+                .0
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .drain(..)
+                .collect::<Vec<_>>();
+            let accepts_result = self
+                .tasks
+                .owner(TaskDomain::ManagementOperation, operation.job.0.id)
+                == Some(TaskOwner::Session);
+            let mut completed = false;
+            for event in events {
+                match event {
+                    OperationEvent::Completed { message }
+                    | OperationEvent::Failed { message }
+                    | OperationEvent::Disconnected { message } => {
+                        completed = true;
+                        if accepts_result {
+                            let title = operation
+                                .kind
+                                .map(management_title)
+                                .unwrap_or_else(|| i18n::tr!("management-system-config"));
+                            self.notify_toast(format!("{title}: {message}"));
+                        }
+                    }
+                    OperationEvent::Question { .. } if accepts_result => {
+                        if let Some(job) = &operation.auto_admin_job {
+                            self.show_auto_admin_job(job.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if completed || finished {
+                self.tasks
+                    .complete(TaskDomain::ManagementOperation, operation.job.0.id);
+            } else {
+                pending.push(operation);
+            }
+        }
+        self.detached_management_operations = pending;
+    }
+
     fn poll_management_page(&mut self, visible: bool) {
+        if let Some(job) = self.pages.management.management_state.query_job.clone()
+            && !self.management_job_belongs_here(TaskDomain::ManagementQuery, &job)
+        {
+            self.pages.management.management_state.query_job = None;
+        }
+        if let Some(job) = self.pages.management.management_state.draft_job.clone()
+            && !self.management_job_belongs_here(TaskDomain::ManagementDraft, &job)
+        {
+            self.pages.management.management_state.draft_job = None;
+        }
+        if let Some(job) = self.pages.management.management_state.operation_job.clone()
+            && !self.management_job_belongs_here(TaskDomain::ManagementOperation, &job)
+        {
+            self.pages.management.management_state.operation_job = None;
+        }
+        // Read completion before the result slot: a worker that finishes during
+        // this poll must still get a later chance to publish its final result.
+        if let Some(job) = &self.pages.management.management_state.query_job
+            && job.stopped()
+        {
+            job.0
+                .snapshot
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(|| {
+                    Err(ManagementError::Unavailable(i18n::tr!(
+                        "management-worker-unavailable"
+                    )))
+                });
+        }
+        if let Some(job) = &self.pages.management.management_state.draft_job
+            && job.stopped()
+        {
+            job.0
+                .draft
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(|| {
+                    Err(ManagementError::Unavailable(i18n::tr!(
+                        "management-worker-unavailable"
+                    )))
+                });
+        }
+        if let Some(job) = &self.pages.management.management_state.operation_job
+            && job.stopped()
+        {
+            let mut events = job.0.events.lock().unwrap_or_else(|e| e.into_inner());
+            if !events.iter().any(|event| {
+                matches!(
+                    event,
+                    OperationEvent::Completed { .. }
+                        | OperationEvent::Failed { .. }
+                        | OperationEvent::Disconnected { .. }
+                )
+            }) {
+                events.push_back(OperationEvent::Failed {
+                    message: i18n::tr!("management-worker-unavailable"),
+                });
+            }
+        }
         let draft_result = self
+            .pages
+            .management
             .management_state
             .draft_job
             .as_ref()
             .and_then(|job| job.0.draft.lock().ok()?.take());
         if let Some(result) = draft_result {
-            self.management_state.draft_job = None;
+            if let Some(job) = self.pages.management.management_state.draft_job.take() {
+                self.tasks.complete(TaskDomain::ManagementDraft, job.0.id);
+            }
             match result {
-                Ok(draft) => self.management_state.pending_draft = Some(draft),
+                Ok(draft) => self.pages.management.management_state.pending_draft = Some(draft),
                 Err(error) => {
                     let p = problem::OperationProblem::from_error(&error);
-                    self.management_state.status = i18n::tr!(p.summary_key.clone());
-                    self.management_state.output = p.detail.clone();
-                    self.management_state.problem = Some(p);
+                    self.pages.management.management_state.status =
+                        i18n::tr!(p.summary_key.clone());
+                    self.pages.management.management_state.output = p.detail.clone();
+                    self.pages.management.management_state.problem = Some(p);
                 }
             }
         }
         if visible {
-            if let Some(draft) = self.management_state.pending_draft.take() {
+            if let Some(draft) = self.pages.management.management_state.pending_draft.take() {
                 self.begin_config_editor(
                     draft.path.clone(),
                     Some(draft),
@@ -441,12 +697,16 @@ impl ShellSession {
             self.cancel_management_pointer_gesture();
         }
         let result = self
+            .pages
+            .management
             .management_state
             .query_job
             .as_ref()
             .and_then(|job| job.0.snapshot.lock().ok()?.take());
         if let Some(result) = result {
-            self.management_state.query_job = None;
+            if let Some(job) = self.pages.management.management_state.query_job.take() {
+                self.tasks.complete(TaskDomain::ManagementQuery, job.0.id);
+            }
             match result {
                 Ok(snapshot) => {
                     let mut snapshot = snapshot;
@@ -457,7 +717,7 @@ impl ShellSession {
                             .into_iter()
                             .filter(|socket| {
                                 platform::management::helper::operation_kind(socket)
-                                    == self.management_state.kind
+                                    == self.pages.management.management_state.kind
                             })
                             .collect::<Vec<_>>();
                         if !sockets.is_empty() {
@@ -479,38 +739,51 @@ impl ShellSession {
                             });
                         }
                     }
-                    self.management_state.sort_snapshot(&mut snapshot);
+                    self.pages
+                        .management
+                        .management_state
+                        .sort_snapshot(&mut snapshot);
                     let selected = self
+                        .pages
+                        .management
                         .management_state
                         .snapshot
                         .rows
-                        .get(self.management_state.selected)
+                        .get(self.pages.management.management_state.selected)
                         .map(|r| r.id.clone());
-                    self.management_state.selected = selected
+                    self.pages.management.management_state.selected = selected
                         .and_then(|id| snapshot.rows.iter().position(|r| r.id == id))
-                        .unwrap_or(self.management_state.selected)
+                        .unwrap_or(self.pages.management.management_state.selected)
                         .min(snapshot.rows.len().saturating_sub(1));
-                    self.management_state.status =
-                        self.management_state.outcome.clone().unwrap_or_else(|| {
+                    self.pages.management.management_state.status = self
+                        .pages
+                        .management
+                        .management_state
+                        .outcome
+                        .clone()
+                        .unwrap_or_else(|| {
                             if snapshot.notices.is_empty() {
                                 format!("{} · {}", snapshot.backend, snapshot.rows.len())
                             } else {
                                 snapshot.notices.join("; ")
                             }
                         });
-                    self.management_state.snapshot = snapshot;
-                    self.management_state.problem = None;
+                    self.pages.management.management_state.snapshot = snapshot;
+                    self.pages.management.management_state.problem = None;
                 }
                 Err(e) => {
                     let problem = problem::OperationProblem::from_error(&e);
-                    self.management_state.status = i18n::tr!(problem.summary_key.clone());
-                    self.management_state.output = problem.detail.clone();
-                    self.management_state.problem = Some(problem);
+                    self.pages.management.management_state.status =
+                        i18n::tr!(problem.summary_key.clone());
+                    self.pages.management.management_state.output = problem.detail.clone();
+                    self.pages.management.management_state.problem = Some(problem);
                 }
             }
-            self.management_state.refreshed = Some(Instant::now());
+            self.pages.management.management_state.refreshed = Some(Instant::now());
         }
         let events = self
+            .pages
+            .management
             .management_state
             .operation_job
             .as_ref()
@@ -524,14 +797,21 @@ impl ShellSession {
             .unwrap_or_default();
         let mut completed = false;
         for event in events {
-            self.management_state.revision = self.management_state.revision.wrapping_add(1);
+            self.pages.management.management_state.revision = self
+                .pages
+                .management
+                .management_state
+                .revision
+                .wrapping_add(1);
             match event {
                 OperationEvent::ConfigDocument { document } => {
-                    self.editor_config.received = Some(document)
+                    self.pages.editor.editor_config.received = Some(document)
                 }
                 OperationEvent::Connected { .. } => {}
                 OperationEvent::Problem { problem } => {
                     if self
+                        .pages
+                        .management
                         .management_state
                         .problem
                         .as_ref()
@@ -539,9 +819,14 @@ impl ShellSession {
                     {
                         continue;
                     }
-                    self.management_state.status = i18n::tr!(problem.summary_key.clone());
-                    self.management_state.output.push_str(&problem.detail);
-                    self.management_state.problem = Some(problem);
+                    self.pages.management.management_state.status =
+                        i18n::tr!(problem.summary_key.clone());
+                    self.pages
+                        .management
+                        .management_state
+                        .output
+                        .push_str(&problem.detail);
+                    self.pages.management.management_state.problem = Some(problem);
                 }
                 OperationEvent::Started {
                     kind,
@@ -549,53 +834,78 @@ impl ShellSession {
                     target,
                 } => {
                     if kind != ManagementKind::SystemConfig
-                        && self.management_state.kind != Some(kind)
+                        && self.pages.management.management_state.kind != Some(kind)
                     {
-                        self.management_state.kind = Some(kind);
-                        self.management_state.query = Some(ManagementQuery::new(kind));
-                        self.management_state.snapshot = ManagementSnapshot::default();
+                        self.pages.management.management_state.kind = Some(kind);
+                        self.pages.management.management_state.query =
+                            Some(ManagementQuery::new(kind));
+                        self.pages.management.management_state.snapshot =
+                            ManagementSnapshot::default();
                     }
-                    self.management_state.status = format!(
+                    self.pages.management.management_state.status = format!(
                         "{} {}",
                         management_label(&action, &action),
                         target.unwrap_or_default()
                     );
                 }
                 OperationEvent::Snapshot { snapshot } => {
-                    if self.management_state.configuration_operation {
-                        if self.editor_config.pending_action.as_deref() == Some("history") {
-                            self.editor_config.history = snapshot;
+                    if self
+                        .pages
+                        .management
+                        .management_state
+                        .configuration_operation
+                    {
+                        if self.pages.editor.editor_config.pending_action.as_deref()
+                            == Some("history")
+                        {
+                            self.pages.editor.editor_config.history = snapshot;
                         }
                         continue;
                     }
-                    self.management_state.query_job = None;
+                    self.cancel_management_query();
                     let mut snapshot = snapshot;
-                    self.management_state.sort_snapshot(&mut snapshot);
+                    self.pages
+                        .management
+                        .management_state
+                        .sort_snapshot(&mut snapshot);
                     let selected = self
+                        .pages
+                        .management
                         .management_state
                         .snapshot
                         .rows
-                        .get(self.management_state.selected)
+                        .get(self.pages.management.management_state.selected)
                         .map(|row| row.id.clone());
-                    self.management_state.selected = selected
+                    self.pages.management.management_state.selected = selected
                         .and_then(|id| snapshot.rows.iter().position(|row| row.id == id))
-                        .unwrap_or(self.management_state.selected)
+                        .unwrap_or(self.pages.management.management_state.selected)
                         .min(snapshot.rows.len().saturating_sub(1));
-                    self.management_state.snapshot = snapshot;
-                    self.management_state.received_snapshot = true;
+                    self.pages.management.management_state.snapshot = snapshot;
+                    self.pages.management.management_state.received_snapshot = true;
                 }
                 OperationEvent::Progress { message, percent } => {
-                    self.management_state.status =
+                    self.pages.management.management_state.status =
                         percent.map_or_else(|| message.clone(), |p| format!("{p}% {message}"))
                 }
                 OperationEvent::Output { text } => {
-                    self.management_state.output.push_str(&text);
-                    if self.management_state.output.len() > 256 * 1024 {
-                        let mut start = self.management_state.output.len() - 128 * 1024;
-                        while !self.management_state.output.is_char_boundary(start) {
+                    self.pages
+                        .management
+                        .management_state
+                        .output
+                        .push_str(&text);
+                    if self.pages.management.management_state.output.len() > 256 * 1024 {
+                        let mut start =
+                            self.pages.management.management_state.output.len() - 128 * 1024;
+                        while !self
+                            .pages
+                            .management
+                            .management_state
+                            .output
+                            .is_char_boundary(start)
+                        {
                             start += 1;
                         }
-                        self.management_state.output.drain(..start);
+                        self.pages.management.management_state.output.drain(..start);
                     }
                 }
                 OperationEvent::TerminalOutput { bytes } => {
@@ -605,6 +915,8 @@ impl ShellSession {
                     )
                     .output_text;
                     let parser = self
+                        .pages
+                        .management
                         .management_state
                         .parser
                         .get_or_insert_with(|| {
@@ -617,7 +929,7 @@ impl ShellSession {
                         .clone();
                     if let Ok(mut parser) = parser.0.lock() {
                         parser.process(&bytes);
-                        self.management_state.output = parser.screen().contents();
+                        self.pages.management.management_state.output = parser.screen().contents();
                     }
                 }
                 OperationEvent::Question {
@@ -626,19 +938,31 @@ impl ShellSession {
                     choices,
                     secret,
                 } => {
-                    if self.management_state.auto_admin_job.is_some() {
+                    if self
+                        .pages
+                        .management
+                        .management_state
+                        .auto_admin_job
+                        .is_some()
+                    {
                         // The same question is already displayed in AutoAdmin's terminal.
-                        if !self.auto_admin_visible() {
-                            self.notify_toast(i18n::msg!("aa-input-required"));
+                        if let Some(job) = self
+                            .pages
+                            .management
+                            .management_state
+                            .auto_admin_job
+                            .clone()
+                        {
+                            self.show_auto_admin_job(job);
                         }
                         continue;
                     }
                     self.reset_management_form_view();
-                    self.management_state.terminal_mode = false;
+                    self.pages.management.management_state.terminal_mode = false;
                     if !visible {
-                        if let Some(kind) = self.management_state.kind {
+                        if let Some(kind) = self.pages.management.management_state.kind {
                             self.notify_alert_with_key(
-                                format!("management.{}", kind.id()),
+                                self.management_alert_key(),
                                 i18n::msg!(
                                     "management-background-question",
                                     application = management_title(kind)
@@ -647,7 +971,7 @@ impl ShellSession {
                             );
                         }
                     }
-                    self.management_state.form = Some(ManagementEditor {
+                    self.pages.management.management_state.form = Some(ManagementEditor {
                         message_scroll: 0,
                         title: i18n::tr!("management-input-required"),
                         message: prompt,
@@ -669,68 +993,103 @@ impl ShellSession {
                     });
                 }
                 OperationEvent::Completed { message } | OperationEvent::Failed { message } => {
-                    self.management_state.status = self
+                    self.pages.management.management_state.status = self
+                        .pages
+                        .management
                         .management_state
                         .problem
                         .as_ref()
                         .map_or_else(|| message.clone(), |p| i18n::tr!(p.summary_key.clone()));
-                    self.management_state.outcome = Some(self.management_state.status.clone());
-                    self.management_state.form = None;
+                    self.pages.management.management_state.outcome =
+                        Some(self.pages.management.management_state.status.clone());
+                    self.pages.management.management_state.form = None;
                     self.reset_management_form_view();
                     completed = true;
                 }
                 OperationEvent::Disconnected { message } => {
                     let status = i18n::tr!("management-connection-lost");
-                    self.management_state.output.push_str(&message);
-                    self.management_state.status = status.clone();
-                    self.management_state.outcome = Some(status);
-                    self.management_state.form = None;
+                    self.pages
+                        .management
+                        .management_state
+                        .output
+                        .push_str(&message);
+                    self.pages.management.management_state.status = status.clone();
+                    self.pages.management.management_state.outcome = Some(status);
+                    self.pages.management.management_state.form = None;
                     self.reset_management_form_view();
                     completed = true;
                 }
             }
         }
         if completed {
-            self.management_state.operation_job = None;
-            self.management_state.terminal_mode = false;
-            if let Some(kind) = self.management_state.kind {
-                self.resolve_notification_alert(&format!("management.{}", kind.id()));
+            if let Some(job) = self.pages.management.management_state.operation_job.take() {
+                self.tasks
+                    .complete(TaskDomain::ManagementOperation, job.0.id);
+            }
+            self.pages.management.management_state.terminal_mode = false;
+            if let Some(kind) = self.pages.management.management_state.kind {
+                self.resolve_notification_alert(&self.management_alert_key());
                 if !visible {
                     self.notify_toast(format!(
                         "{}: {}",
                         management_title(kind),
-                        self.management_state.status
+                        self.pages.management.management_state.status
                     ));
                 }
             }
-            let config_operation = self.management_state.configuration_operation;
-            self.management_state.configuration_operation = false;
+            let config_operation = self
+                .pages
+                .management
+                .management_state
+                .configuration_operation;
+            self.pages
+                .management
+                .management_state
+                .configuration_operation = false;
             if config_operation {
                 self.finish_config_operation();
-                if self.editor_config.pending_action.is_none() {
-                    self.management_state.outcome = None;
-                    self.management_state.status =
-                        if self.management_state.snapshot.notices.is_empty() {
-                            format!(
-                                "{} · {}",
-                                self.management_state.snapshot.backend,
-                                self.management_state.snapshot.rows.len()
-                            )
-                        } else {
-                            self.management_state.snapshot.notices.join("; ")
-                        };
+                if self.pages.editor.editor_config.pending_action.is_none() {
+                    self.pages.management.management_state.outcome = None;
+                    self.pages.management.management_state.status = if self
+                        .pages
+                        .management
+                        .management_state
+                        .snapshot
+                        .notices
+                        .is_empty()
+                    {
+                        format!(
+                            "{} · {}",
+                            self.pages.management.management_state.snapshot.backend,
+                            self.pages.management.management_state.snapshot.rows.len()
+                        )
+                    } else {
+                        self.pages
+                            .management
+                            .management_state
+                            .snapshot
+                            .notices
+                            .join("; ")
+                    };
                 }
             }
-            if !config_operation && !self.management_state.received_snapshot {
+            if !config_operation && !self.pages.management.management_state.received_snapshot {
                 self.refresh_management();
             }
         }
         if visible
-            && self.management_state.kind == Some(ManagementKind::Processes)
-            && self.management_state.query_job.is_none()
-            && self.management_state.operation_job.is_none()
-            && self.management_state.form.is_none()
+            && self.pages.management.management_state.kind == Some(ManagementKind::Processes)
+            && self.pages.management.management_state.query_job.is_none()
             && self
+                .pages
+                .management
+                .management_state
+                .operation_job
+                .is_none()
+            && self.pages.management.management_state.form.is_none()
+            && self
+                .pages
+                .management
                 .management_state
                 .refreshed
                 .is_some_and(|t| t.elapsed() > Duration::from_secs(5))
@@ -740,20 +1099,27 @@ impl ShellSession {
         self.clamp_management_scroll();
         if visible
             && matches!(
-                self.management_state.kind,
+                self.pages.management.management_state.kind,
                 Some(ManagementKind::Services | ManagementKind::Processes | ManagementKind::Users)
             )
-            && self.management_state.query_job.is_none()
-            && self.management_state.operation_job.is_none()
-            && self.management_state.form.is_none()
+            && self.pages.management.management_state.query_job.is_none()
+            && self
+                .pages
+                .management
+                .management_state
+                .operation_job
+                .is_none()
+            && self.pages.management.management_state.form.is_none()
         {
             let selected = self
+                .pages
+                .management
                 .management_state
                 .snapshot
                 .rows
-                .get(self.management_state.selected)
+                .get(self.pages.management.management_state.selected)
                 .map(|r| r.id.clone());
-            if let Some(query) = &mut self.management_state.query {
+            if let Some(query) = &mut self.pages.management.management_state.query {
                 if selected.is_some() && query.target != selected {
                     query.target = selected;
                     self.refresh_management();
@@ -769,7 +1135,13 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn resize_management_terminal(&mut self) {
-        if self.management_state.auto_admin_job.is_some() {
+        if self
+            .pages
+            .management
+            .management_state
+            .auto_admin_job
+            .is_some()
+        {
             self.resize_auto_admin();
             return;
         }
@@ -777,7 +1149,7 @@ impl ShellSession {
             .output_text;
         let rows = area.height.max(1);
         let columns = area.width.max(1);
-        if let Some(parser) = &self.management_state.parser {
+        if let Some(parser) = &self.pages.management.management_state.parser {
             if let Ok(mut parser) = parser.0.lock() {
                 parser.set_size(rows, columns);
             }
@@ -785,12 +1157,24 @@ impl ShellSession {
         self.management_send(OperationInput::Resize { columns, rows });
     }
     pub(in crate::session) fn open_management_directory(&mut self, platform: &dyn Platform) {
-        if let Some(path) = self.management_state.pending_directory.take() {
+        if let Some(path) = self
+            .pages
+            .management
+            .management_state
+            .pending_directory
+            .take()
+        {
             if let Some(storage) = self.storage_manager.clone() {
                 self.open_explorer_at(platform, &storage, path, ExplorerPurpose::Browse);
             }
         }
-        if let Some(path) = self.management_state.pending_select.clone() {
+        if let Some(path) = self
+            .pages
+            .management
+            .management_state
+            .pending_select
+            .clone()
+        {
             if let Some(state) = self.app.explorer_state() {
                 if let Some(index) = state.entries.iter().position(|e| e.path == path) {
                     let mut state = state.clone();
@@ -799,13 +1183,13 @@ impl ShellSession {
                         app::AppCommand::SetExplorerState(Some(state)),
                         Instant::now(),
                     );
-                    self.management_state.pending_select = None;
+                    self.pages.management.management_state.pending_select = None;
                 }
             }
         }
     }
     pub(in crate::session) fn to_management_view_model(&self) -> ui::ManagementViewModel {
-        let s = &self.management_state;
+        let s = &self.pages.management.management_state;
         let actions = self.management_actions();
         ui::ManagementViewModel {
             scope_id: format!("{:?}", s.kind),
