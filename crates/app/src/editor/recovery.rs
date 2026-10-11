@@ -425,6 +425,10 @@ pub fn write_editor_recovery_v2(
         EditorRecoveryError::Invalid("recovery payload is not an object".to_string())
     })?;
     object.insert("schema".to_string(), Value::from(2_u64));
+    object.insert(
+        "saved_content_hash_algorithm".into(),
+        Value::from(platform::DOCUMENT_CONTENT_HASH_ALGORITHM),
+    );
     let mut bytes = serde_json::to_vec_pretty(&value)
         .map_err(|error| EditorRecoveryError::Invalid(error.to_string()))?;
     bytes.push(b'\n');
@@ -484,7 +488,10 @@ fn read_versioned_recovery_path(
             .map(VersionedEditorRecovery::V1)
             .map(Some),
         Some(2) => match serde_json::from_value::<EditorRecoveryRecordV2>(value.clone()) {
-            Ok(record) => Ok(Some(VersionedEditorRecovery::V2(record))),
+            Ok(mut record) => {
+                record.saved_content_hash = recovery_content_hash(&value);
+                Ok(Some(VersionedEditorRecovery::V2(record)))
+            }
             Err(error) => {
                 recover_v2_markdown_fallback(&value, error.to_string()).map(|(record, warning)| {
                     Some(VersionedEditorRecovery::V2Fallback { record, warning })
@@ -535,7 +542,7 @@ fn recover_v2_markdown_fallback(
             path,
             document_kind,
             metadata,
-            saved_content_hash: value.get("saved_content_hash").and_then(Value::as_u64),
+            saved_content_hash: recovery_content_hash(value),
             updated_at_epoch_ms: value
                 .get("updated_at_epoch_ms")
                 .and_then(Value::as_u64)
@@ -550,6 +557,17 @@ fn recover_v2_markdown_fallback(
             "The structured Rich recovery was damaged and was restored in Source mode: {warning}"
         ),
     ))
+}
+
+fn recovery_content_hash(value: &Value) -> Option<u64> {
+    // Preserve the draft, but do not bind an old/unknown hash to a disk file:
+    // restoring it as an unbound draft retains the existing Save As protection.
+    (value
+        .get("saved_content_hash_algorithm")
+        .and_then(Value::as_str)
+        == Some(platform::DOCUMENT_CONTENT_HASH_ALGORITHM))
+    .then(|| value.get("saved_content_hash").and_then(Value::as_u64))
+    .flatten()
 }
 
 fn legacy_record_from_value(value: &Value) -> Result<EditorRecoveryRecord, EditorRecoveryError> {
@@ -580,7 +598,7 @@ fn legacy_record_from_value(value: &Value) -> Result<EditorRecoveryRecord, Edito
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(0),
-        saved_content_hash: value.get("saved_content_hash").and_then(Value::as_u64),
+        saved_content_hash: recovery_content_hash(value),
         updated_at_epoch_ms: value
             .get("updated_at_epoch_ms")
             .and_then(Value::as_u64)

@@ -29,6 +29,45 @@ fn atomically_round_trips_document_and_fingerprint() {
 }
 
 #[test]
+fn fingerprint_is_independent_of_write_chunk_boundaries() {
+    let directory = unique_temp_dir();
+    let path = directory.join("chunks.bin");
+    let bytes = (0..200_000).map(|n| (n % 251) as u8).collect::<Vec<_>>();
+    for size in [1, 63, 1024, 65535, 65536, 65537, bytes.len()] {
+        let saved = atomic_write_document_with(&path, |writer| {
+            for chunk in bytes.chunks(size) {
+                writer.write_all(chunk)?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(saved.content_hash, xxhash_rust::xxh3::xxh3_64(&bytes));
+        assert_eq!(saved, document_fingerprint(&path).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+    assert_eq!(
+        atomic_write_document(&path, b"").unwrap().content_hash,
+        xxhash_rust::xxh3::xxh3_64(b"")
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn buffered_write_failure_leaves_original_and_removes_temporary_file() {
+    let directory = unique_temp_dir();
+    let path = directory.join("original.txt");
+    fs::write(&path, b"original").unwrap();
+    let result = atomic_write_document_with(&path, |writer| {
+        writer.write_all(b"unflushed replacement")?;
+        Err(io::Error::other("cancelled by writer"))
+    });
+    assert!(result.is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn limited_read_accepts_a_document_at_the_limit() {
     let directory = unique_temp_dir();
     let path = directory.join("bounded.log");

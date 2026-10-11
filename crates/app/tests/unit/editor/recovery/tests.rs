@@ -229,6 +229,39 @@ fn old_schema_two_file_can_be_claimed_and_cleared_separately() {
 }
 
 #[test]
+fn unknown_or_legacy_fingerprint_keeps_the_draft_without_binding_to_disk() {
+    let fixture = RecoveryFixture::new("hash-version");
+    let paths = fixture.paths();
+    let mut record = draft("unsaved text must survive", 10);
+    record.path = Some(fixture.0.join("source.txt"));
+    record.saved_content_hash = Some(42);
+    for algorithm in [Value::Null, Value::from("future-hash")] {
+        let mut value = serde_json::to_value(&record).unwrap();
+        value["schema"] = Value::from(2);
+        value["saved_content_hash_algorithm"] = algorithm;
+        let path = editor_recovery_path(&paths, "alice");
+        atomic_write_document(&path, &serde_json::to_vec(&value).unwrap()).unwrap();
+        let Some(VersionedEditorRecovery::V2(restored)) =
+            read_versioned_recovery_path(&path).unwrap()
+        else {
+            panic!("draft must remain readable")
+        };
+        assert_eq!(restored.saved_content_hash, None);
+        assert_eq!(restored.payload, record.payload);
+        assert_eq!(restored.path, record.path);
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            serde_json::to_vec(&value).unwrap()
+        );
+    }
+    let mut legacy = EditorRecoveryRecord::new("legacy unsaved text");
+    legacy.saved_content_hash = Some(42);
+    write_legacy(&paths, &legacy);
+    legacy.saved_content_hash = None;
+    assert_eq!(read_editor_recovery(&paths, "alice").unwrap(), Some(legacy));
+}
+
+#[test]
 fn damaged_rich_payload_recovers_the_private_markdown_fallback_as_source() {
     let fixture = RecoveryFixture::new("fallback");
     let paths = fixture.paths();

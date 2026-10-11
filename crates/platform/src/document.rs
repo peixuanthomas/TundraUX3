@@ -20,6 +20,10 @@ pub const MAX_DOCUMENT_BYTES: u64 = 1024 * 1024 * 1024;
 
 const DOCUMENT_READ_CHUNK_BYTES: usize = 64 * 1024;
 
+/// Persist this identifier alongside content_hash. It is a change detector,
+/// not an authenticity or security checksum.
+pub const DOCUMENT_CONTENT_HASH_ALGORITHM: &str = "xxh3-64-v1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DocumentFingerprint {
     pub len: u64,
@@ -989,7 +993,7 @@ impl Drop for TemporaryDocument {
 }
 
 struct FingerprintingWriter<'a> {
-    inner: &'a mut File,
+    inner: io::BufWriter<&'a mut File>,
     hasher: StableHasher,
     len: u64,
 }
@@ -997,7 +1001,7 @@ struct FingerprintingWriter<'a> {
 impl<'a> FingerprintingWriter<'a> {
     fn new(inner: &'a mut File) -> Self {
         Self {
-            inner,
+            inner: io::BufWriter::with_capacity(DOCUMENT_READ_CHUNK_BYTES, inner),
             hasher: StableHasher::new(),
             len: 0,
         }
@@ -1055,24 +1059,19 @@ fn fingerprint_installed_document(
     })
 }
 
-struct StableHasher(u64);
+struct StableHasher(xxhash_rust::xxh3::Xxh3);
 
 impl StableHasher {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-
     fn new() -> Self {
-        Self(Self::OFFSET)
+        Self(xxhash_rust::xxh3::Xxh3::new())
     }
 
     fn write(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(Self::PRIME);
-        }
+        self.0.update(bytes);
     }
 
     fn finish(self) -> u64 {
-        self.0
+        self.0.digest()
     }
 }
 
