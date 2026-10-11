@@ -156,6 +156,7 @@ fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion(
             assert!(state.auto_admin_visible());
             assert_eq!(job.phase(), RUNNING);
             state.toggle_input_keyboard();
+            state.advance_input_keyboard(ui::MotionFrame::reduced(std::time::Duration::ZERO));
             let area = ui::auto_admin_layout_in(
                 state.auto_admin_available_area(),
                 &state.auto_admin_view().unwrap(),

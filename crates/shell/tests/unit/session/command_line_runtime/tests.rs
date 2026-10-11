@@ -680,6 +680,7 @@ fn live_keyboard_types_into_child_pty_and_resize_reaches_the_child() {
     state.enter_screen(crate::ShellScreen::CommandLine);
     let original = state.command_line_input_area().unwrap();
     state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(std::time::Duration::ZERO));
     let area = state.command_line_input_area().unwrap();
     assert!(area.height < original.height);
     host.resize_to_area(area);
@@ -746,6 +747,7 @@ fn live_keyboard_types_into_child_pty_and_resize_reaches_the_child() {
         std::thread::sleep(Duration::from_millis(10));
     }
     state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(std::time::Duration::ZERO));
     host.resize_to_area(state.command_line_input_area().unwrap());
     assert_eq!(state.command_line_input_area(), Some(original));
     host.try_terminate().unwrap();

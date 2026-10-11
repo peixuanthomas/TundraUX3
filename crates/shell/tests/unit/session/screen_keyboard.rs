@@ -11,6 +11,45 @@ fn session() -> ShellSession {
     state
 }
 
+#[test]
+fn keyboard_animation_reverses_without_jumping_and_honors_speed_and_reduced_motion() {
+    let frame = |millis, speed| ui::MotionFrame {
+        now: Duration::from_millis(millis),
+        animation_speed_percent: speed,
+        ..Default::default()
+    };
+    for speed in [50, 100, 200] {
+        let mut state = session();
+        let original = state.command_line_input_area();
+        state.toggle_input_keyboard();
+        assert!(state.advance_input_keyboard(frame(0, speed)));
+        assert_eq!(state.screen_keyboard.visibility, 0);
+        let halfway = 110 * 100 / u64::from(speed);
+        assert!(state.advance_input_keyboard(frame(halfway, speed)));
+        let opening = state.screen_keyboard.visibility;
+        assert!(opening > 0 && opening < 1_000);
+        let area = state.input_keyboard_layout().buttons[0].region();
+        state.toggle_input_keyboard();
+        state.advance_input_keyboard(frame(halfway, speed));
+        assert_eq!(state.screen_keyboard.visibility, opening);
+        state.screen_keyboard.pressed = Some((area, Instant::now()));
+        assert!(state.advance_input_keyboard(frame(halfway * 2, speed)));
+        let closing = state.screen_keyboard.visibility;
+        assert!(closing > 0 && closing < opening);
+        assert!(state.screen_keyboard.pressed.is_none());
+        state.toggle_input_keyboard();
+        state.advance_input_keyboard(frame(halfway * 2, speed));
+        assert_eq!(state.screen_keyboard.visibility, closing);
+        assert!(!state.advance_input_keyboard(frame(halfway * 4, speed)));
+        assert_eq!(state.screen_keyboard.visibility, 1_000);
+        state.toggle_input_keyboard();
+        assert!(!state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::from_secs(2))));
+        assert_eq!(state.screen_keyboard.visibility, 0);
+        assert_eq!(state.command_line_input_area(), original);
+        assert!(!state.advance_input_keyboard(frame(2_001, speed)));
+    }
+}
+
 fn route(state: &mut ShellSession, input: InputEvent) -> Option<InputEvent> {
     state.route_screen_keyboard_input(input, platform::native_platform().as_ref(), Instant::now())
 }
@@ -56,6 +95,7 @@ fn command_line_launcher_resizes_content_and_generates_real_modified_keys() {
         &mut state,
         InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)),
     );
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
     let smaller = state.command_line_input_area().unwrap();
     assert!(smaller.height < original.height);
     assert!(smaller.bottom() <= state.input_keyboard_layout().keyboard.y);
@@ -84,6 +124,7 @@ fn command_line_launcher_resizes_content_and_generates_real_modified_keys() {
         )))
     );
     click(&mut state, Action::ToggleKeyboard);
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
     assert!(!state.input_keyboard_open());
     assert_eq!(state.command_line_input_area().unwrap(), original);
     assert_eq!(
@@ -97,6 +138,7 @@ fn keyboard_cancels_clicks_on_drag_resize_focus_loss_timeout_and_page_change() {
     for cancel in 0..5 {
         let mut state = session();
         state.toggle_input_keyboard();
+        state.advance_input_keyboard(ui::MotionFrame::reduced(std::time::Duration::ZERO));
         let layout = state.input_keyboard_layout();
         let area = layout
             .buttons
@@ -145,6 +187,7 @@ fn keyboard_cancels_clicks_on_drag_resize_focus_loss_timeout_and_page_change() {
 fn keyboard_closes_for_an_overlay_and_never_reappears_for_a_different_page() {
     let mut state = session();
     state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(std::time::Duration::ZERO));
     state.show_command_line_close_confirmation(state.active_page_id());
     state.sync_input_keyboard();
     assert!(!state.input_keyboard_open());
@@ -152,6 +195,7 @@ fn keyboard_closes_for_an_overlay_and_never_reappears_for_a_different_page() {
     state.sync_input_keyboard();
     assert!(!state.input_keyboard_open());
     state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(std::time::Duration::ZERO));
     state.enter_new_page(ShellScreen::CommandLine);
     state.sync_input_keyboard();
     assert!(!state.input_keyboard_open());

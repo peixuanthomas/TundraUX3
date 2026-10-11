@@ -316,6 +316,7 @@ fn running_buttons_are_keyboard_accessible_without_stealing_terminal_tab() {
     assert_eq!(state.auto_admin_view().unwrap().button_focus, Some(0));
     state.apply_input(InputEvent::key(InputKey::Enter));
     assert!(state.input_keyboard_open());
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
     assert_eq!(state.auto_admin.button_focus, None);
     for action in [
         ui::ScreenKeyboardAction::Letter('y'),

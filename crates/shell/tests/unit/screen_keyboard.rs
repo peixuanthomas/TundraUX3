@@ -477,17 +477,19 @@ fn screen_keyboard_actual_colors_follow_input_and_theme_in_rgb_and_ansi() {
         (
             RenderCapabilities::default(),
             Color::Rgb(32, 64, 96),
-            Color::Rgb(110, 130, 151),
-            Color::Rgb(230, 241, 244),
+            Color::Rgb(32, 64, 96),
+            Color::Rgb(140, 160, 180),
         ),
         (
             RenderCapabilities::ansi(),
             Color::Cyan,
-            Color::LightCyan,
-            Color::White,
+            Color::Cyan,
+            Color::Gray,
         ),
     ] {
-        let theme = TundraTheme::default_dark().with_accent_color(accent);
+        let theme = TundraTheme::default_dark()
+            .with_accent_color(accent)
+            .with_border_color(normal);
         let context = RenderContext::from_theme(&theme, Default::default(), capabilities);
         let mut state = ScreenKeyboardState::default();
         assert_eq!(
@@ -696,12 +698,12 @@ fn physical_feedback_uses_pressed_colors_then_returns_to_normal() {
         );
         assert_eq!(
             key_colors(&state, &layout, context.clone(), 'a').0,
-            context.compatibility_theme().button_pressed_color()
+            context.theme.accent
         );
         state.physical.expire(now + Duration::from_millis(250));
         assert_eq!(
             key_colors(&state, &layout, context.clone(), 'a').0,
-            context.compatibility_theme().foreground
+            context.theme.border
         );
     }
 }

@@ -125,22 +125,22 @@ impl ScreenKeyboardAction {
         }
     }
 
-    fn label(self, modifiers: ScreenKeyboardModifiers, collapsed: bool) -> String {
+    pub fn label(self, modifiers: ScreenKeyboardModifiers, collapsed: bool) -> String {
         match self {
             Self::Letter(_) | Self::Character(_) => {
                 return self.character(modifiers).unwrap().to_string();
             }
-            Self::Function(number) => return format!("F{number}"),
-            Self::Escape => "Esc".to_owned(),
-            Self::Tab => "Tab".to_owned(),
-            Self::CapsLock => "CapsLock".to_owned(),
+            Self::Function(number) => i18n::tr!("screen-keyboard-function", number = number),
+            Self::Escape => i18n::tr!("screen-keyboard-escape"),
+            Self::Tab => i18n::tr!("screen-keyboard-tab"),
+            Self::CapsLock => i18n::tr!("screen-keyboard-caps-lock"),
             Self::Backspace => i18n::tr!("screen-keyboard-backspace"),
-            Self::Enter => "Enter".to_owned(),
-            Self::Shift => "Shift".to_owned(),
+            Self::Enter => i18n::tr!("screen-keyboard-enter"),
+            Self::Shift => i18n::tr!("screen-keyboard-shift"),
             Self::Space => i18n::tr!("screen-keyboard-space"),
-            Self::LeftCtrl => "Ctrl".to_owned(),
-            Self::RightCtrl => "RCtrl".to_owned(),
-            Self::Alt => "Alt".to_owned(),
+            Self::LeftCtrl => i18n::tr!("screen-keyboard-left-ctrl"),
+            Self::RightCtrl => i18n::tr!("screen-keyboard-right-ctrl"),
+            Self::Alt => i18n::tr!("screen-keyboard-alt"),
             Self::TestAutoAdmin => i18n::tr!("screen-keyboard-test-aa"),
             Self::ToggleKeyboard => i18n::tr!(if collapsed {
                 "screen-keyboard-show"
@@ -362,19 +362,33 @@ pub fn screen_keyboard_input_layout(
     open: bool,
     auto_admin: bool,
 ) -> ScreenKeyboardLayout {
+    screen_keyboard_input_layout_with_visibility(
+        bounds,
+        open,
+        if open { 1_000 } else { 0 },
+        auto_admin,
+    )
+}
+
+pub fn screen_keyboard_input_layout_with_visibility(
+    bounds: Rect,
+    open: bool,
+    visibility: u16,
+    auto_admin: bool,
+) -> ScreenKeyboardLayout {
     let reserved = if auto_admin { 16 } else { 8 };
     let height = (bounds.height / 2).min(bounds.height.saturating_sub(reserved));
     let usable = bounds.width >= 60 && height >= 7;
-    let visible = open && usable;
+    let visible = visibility > 0 && usable;
     let mut layout = keyboard_layout(
         bounds,
         !open,
-        if visible { 1_000 } else { 0 },
+        if visible { visibility } else { 0 },
         bounds.height.saturating_sub(height),
         usable,
     );
     layout.buttons.retain(|button| !button.action.is_toolbar());
-    if !open || !usable {
+    if !visible {
         layout.keyboard = Rect::new(bounds.x, bounds.bottom(), bounds.width, 0);
         layout.buttons.clear();
     } else {
@@ -737,7 +751,17 @@ fn render_screen_keyboard_keys(
     model: &ScreenKeyboardViewModel<'_>,
     context: &RenderContext,
 ) {
-    let theme = context.compatibility_theme();
+    // Keycaps share Button hit regions and configured corner shapes. Their
+    // neutral frames and border-colored legends are distinct from page buttons.
+    let mut theme = context.compatibility_theme();
+    theme.foreground = theme.border_color;
+    theme.border_color = ratatui::style::Color::DarkGray;
+    if let Some(buttons) = &mut theme.buttons {
+        buttons.pressed_color = buttons.accent;
+    } else {
+        theme.buttons = Some(crate::components::ButtonFrame::new(None, None, &theme));
+        theme.buttons.as_mut().unwrap().pressed_color = theme.accent_color;
+    }
     for target in &layout.buttons {
         if !layout.aa_dialog.is_empty()
             && !layout
@@ -748,7 +772,16 @@ fn render_screen_keyboard_keys(
         }
         let mut button = Button::new(
             target.action.button_id(),
-            target.action.label(model.modifiers, layout.collapsed),
+            if target.action == ScreenKeyboardAction::Paste
+                && !layout
+                    .buttons
+                    .iter()
+                    .any(|key| key.action == ScreenKeyboardAction::Copy)
+            {
+                i18n::tr!("screen-keyboard-input-paste")
+            } else {
+                target.action.label(model.modifiers, layout.collapsed)
+            },
         )
         .with_bracketed_label(false)
         .with_centered_label(true)

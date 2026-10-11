@@ -22,3 +22,14 @@ screen-keyboard-aa-hint = 点击展开键盘测试输入 · Esc 返回演示
 screen-keyboard-aa-small = 请将窗口扩大至至少 60 × 18，以完整显示 AA 和屏幕键盘。
 
 screen-keyboard-input-small = 请扩大窗口以显示完整键盘。
+screen-keyboard-function = F{ $number }
+screen-keyboard-escape = Esc
+screen-keyboard-tab = 制表
+screen-keyboard-caps-lock = 大写
+screen-keyboard-enter = 回车
+screen-keyboard-shift = 上档
+screen-keyboard-left-ctrl = 左Ctrl
+screen-keyboard-right-ctrl = 右Ctrl
+screen-keyboard-alt = Alt
+screen-keyboard-input-paste = 粘贴
+screen-keyboard-terminal-required = 屏幕键盘需要交互式终端（标准输入和标准输出）。

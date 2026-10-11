@@ -21,6 +21,105 @@ fn view(text: &str) -> ScreenKeyboardViewModel<'_> {
 }
 
 #[test]
+fn keycap_frames_follow_corner_preferences_and_legends_use_border_color() {
+    for (shape, corner) in [
+        (ui::BorderShape::Rounded, "╭"),
+        (ui::BorderShape::Square, "┌"),
+    ] {
+        for capabilities in [
+            ui::RenderCapabilities::default(),
+            ui::RenderCapabilities::ansi(),
+        ] {
+            let theme = TundraTheme::default_dark()
+                .with_border_shape(shape)
+                .with_border_color(Color::Rgb(140, 160, 180))
+                .with_accent_color(Color::Rgb(220, 100, 40));
+            let mut context = RenderContext::from_theme(&theme, Default::default(), capabilities);
+            let bounds = Rect::new(0, 0, 120, 48);
+            let layout = screen_keyboard_layout(bounds, false);
+            let key = layout
+                .buttons
+                .iter()
+                .find(|key| key.action == ScreenKeyboardAction::Letter('q'))
+                .unwrap();
+            for pressed in [false, true, false] {
+                let mut buttons = ButtonFrame::new(
+                    pressed.then(|| key.region()),
+                    pressed.then(|| key.region()),
+                    &context.compatibility_theme(),
+                );
+                buttons.keyboard_focus_visible = false;
+                context.buttons = Some(buttons);
+                let (_, buffer) = draw(bounds, false, &view(""), &context);
+                assert_eq!(buffer[(key.area.x, key.area.y)].symbol(), corner);
+                assert_eq!(
+                    buffer[(key.area.x, key.area.y)].fg,
+                    if pressed {
+                        context.theme.accent
+                    } else {
+                        Color::DarkGray
+                    }
+                );
+                let legend = (
+                    key.area.x + (key.area.width - 1) / 2,
+                    key.area.y + (key.area.height - 1) / 2,
+                );
+                assert_eq!(buffer[legend].symbol(), "q");
+                assert_eq!(
+                    buffer[legend].fg,
+                    if pressed {
+                        context.theme.accent
+                    } else {
+                        context.theme.border
+                    }
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn function_key_names_and_live_toolbar_follow_language_packages() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for (language, enter, caps, paste) in [
+        ("zh-CN", "回车", "大写", "粘贴"),
+        ("en-US", "Enter", "CapsLock", "Paste"),
+    ] {
+        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        let bounds = Rect::new(0, 0, 120, 48);
+        let layout = ui::screen_keyboard_input_layout(bounds, true, false);
+        let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+        terminal
+            .draw(|frame| {
+                ui::render_screen_keyboard_panel(
+                    frame,
+                    &layout,
+                    &view(""),
+                    &RenderContext::default(),
+                )
+            })
+            .unwrap();
+        for (action, label) in [
+            (ScreenKeyboardAction::Enter, enter),
+            (ScreenKeyboardAction::CapsLock, caps),
+            (ScreenKeyboardAction::Paste, paste),
+        ] {
+            let area = key_area(&layout, action);
+            assert!(
+                (area.y..area.bottom())
+                    .any(|y| row_text(terminal.backend().buffer(), area, y).contains(label)),
+                "{language}: {label}"
+            );
+        }
+        let area = key_area(&layout, ScreenKeyboardAction::Paste);
+        assert!(!row_text(terminal.backend().buffer(), area, area.y).contains("Ctrl+V"));
+    }
+}
+
+#[test]
 fn aa_dialog_stays_inside_screen_and_above_every_animation_frame() {
     let context = RenderContext::default();
     for width in [0, 1, 12, 40, 59, 60, 80, 120, 160] {
@@ -115,7 +214,7 @@ fn physical_presses_and_virtual_latches_share_themed_keycap_colors() {
             model.physical_pressed = &physical;
             model.modifiers.shift = true;
             let (layout, buffer) = draw(bounds, false, &model, &context);
-            let expected = context.compatibility_theme().button_pressed_color();
+            let expected = context.theme.accent;
             for action in physical.into_iter().chain([Shift]) {
                 let area = key_area(&layout, action);
                 assert_eq!(buffer[(area.x, area.y)].fg, expected, "{action:?}");
@@ -499,9 +598,9 @@ fn keycaps_are_literal_and_latches_stay_bright_without_pointer_or_keyboard_focus
                 assert_eq!(
                     buffer[(x, row)].fg,
                     if action.is_latched(model.modifiers) {
-                        context.compatibility_theme().button_pressed_color()
+                        context.theme.accent
                     } else {
-                        context.theme.text
+                        context.theme.border
                     }
                 );
             }
@@ -567,7 +666,7 @@ fn keys_show_only_the_current_character_with_shift_and_caps_lock() {
                     let center_y = inner.y + inner.height.saturating_sub(1) / 2;
                     assert_eq!(row_text(&buffer, inner, center_y).trim(), expected);
                     for x in inner.x..inner.right() {
-                        assert_eq!(buffer[(x, center_y)].fg, context.theme.text);
+                        assert_eq!(buffer[(x, center_y)].fg, context.theme.border);
                     }
                     assert_eq!(
                         action.character(model.modifiers).unwrap().to_string(),

@@ -8,7 +8,7 @@ impl ShellSession {
         &self,
         point: CellPosition,
     ) -> Option<ui::components::ButtonRegion> {
-        if self.input_keyboard_open() {
+        if self.screen_keyboard.visibility > 0 {
             if let Some(button) = self
                 .input_keyboard_layout()
                 .buttons

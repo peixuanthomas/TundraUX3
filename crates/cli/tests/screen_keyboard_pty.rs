@@ -19,9 +19,12 @@ const RESTORED_MARKER: &str = "SCREEN_KEYBOARD_TERMINAL_RESTORED";
 const ROWS: u16 = 24;
 const COLS: u16 = 80;
 const ACCENT: vt100::Color = vt100::Color::Rgb(12, 34, 56);
-// Each channel moves 35% toward white, as required for a held button.
-const PRESSED: vt100::Color = vt100::Color::Rgb(97, 111, 125);
-const TEXT: vt100::Color = vt100::Color::Rgb(230, 241, 244);
+// Keycaps use the configured accent on press and border color for legends.
+const PRESSED: vt100::Color = ACCENT;
+const TEXT: vt100::Color = vt100::Color::Rgb(140, 160, 180);
+// The demo's surrounding AA controls retain ordinary page button colors.
+const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 241, 244);
+const PAGE_PRESSED: vt100::Color = vt100::Color::Rgb(97, 111, 125);
 const SEEDED_CLIPBOARD: &str = "Seed中文\nλZ\u{1}";
 const COPIED_TEXT: &str = "Seed中文\nλZ\nΩ\nTail\nPaste汉!";
 
@@ -88,7 +91,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         color_at(screen, q) == ACCENT
     });
     terminal.mouse(0, q, false);
-    terminal.wait_for("held letter lighter accent", |screen| {
+    terminal.wait_for("held letter accent", |screen| {
         color_at(screen, q) == PRESSED && typed_text(screen, false) == "aBc"
     });
     terminal.mouse(0, q, true);
@@ -702,7 +705,7 @@ fn screen_keyboard_tracks_enhanced_physical_presses_and_restores_reporting() {
         true,
     );
     terminal.wait_for("enhanced keyboard", |screen| {
-        screen.contents().contains("F12")
+        visible_button_position(screen, false, ScreenKeyboardAction::RightCtrl).is_some()
     });
     let a = button_position(
         terminal.parser.screen(),
@@ -776,6 +779,71 @@ fn screen_keyboard_tracks_enhanced_physical_presses_and_restores_reporting() {
 
 struct Fixture(PathBuf);
 
+#[test]
+fn screen_keyboard_localized_keycaps_use_configured_colors_and_corner_shapes() {
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        let platform = fixture_platform(Path::new(&root));
+        let code = cli::run_with_platform(
+            ["debug", "screen-keyboard"],
+            &platform,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        );
+        std::process::exit(code);
+    }
+    let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    let language = i18n::LanguageSnapshot::load(&asset_root, "zh-CN", 1)
+        .unwrap()
+        .snapshot;
+    let _language = i18n::enter_snapshot(std::sync::Arc::new(language));
+    for (shape, corner) in [
+        (storage::BorderShape::Rounded, "╭"),
+        (storage::BorderShape::Square, "┌"),
+    ] {
+        let fixture = Fixture::new();
+        let platform = fixture_platform(&fixture.0);
+        let storage = storage::StorageManager::from_layout(storage::StorageLayout::from_app_paths(
+            &platform.app_paths().unwrap(),
+        ));
+        let mut config = storage.load_config().unwrap();
+        config.language = "zh-CN".into();
+        config.appearance.border_shape = shape;
+        storage.save_config(&config).unwrap();
+        let mut terminal = PtySession::start_with(
+            &fixture.0,
+            "screen_keyboard_localized_keycaps_use_configured_colors_and_corner_shapes",
+            false,
+        );
+        terminal.wait_for("Chinese keyboard labels", |screen| {
+            screen.contents().contains("回车") && screen.contents().contains("收起键盘")
+        });
+        terminal.resize(48, 120);
+        terminal.wait_for("configured keycap frame", |screen| {
+            let area = button_area(screen, false, ScreenKeyboardAction::Letter('a'));
+            screen.cell(area.y, area.x).is_some_and(|cell| {
+                cell.contents() == corner && cell.fgcolor() == vt100::Color::Idx(8)
+            }) && visible_button_position(screen, false, ScreenKeyboardAction::Letter('a'))
+                .is_some_and(|position| color_at(screen, position) == TEXT)
+        });
+        let position = button_position(
+            terminal.parser.screen(),
+            false,
+            ScreenKeyboardAction::Letter('a'),
+        );
+        assert_eq!(color_at(terminal.parser.screen(), position), TEXT);
+        terminal.mouse(0, position, false);
+        terminal.wait_for("configured keycap press accent", |screen| {
+            color_at(screen, position) == ACCENT
+        });
+        terminal.mouse(0, position, true);
+        terminal.wait_for("keycap release and real text input", |screen| {
+            color_at(screen, position) == TEXT && typed_text(screen, false) == "a"
+        });
+        terminal.send(b"\x1b");
+        terminal.finish();
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         let nonce = SystemTime::now()
@@ -794,6 +862,7 @@ impl Fixture {
         ));
         let mut config = storage::StorageConfig::default();
         config.appearance.accent_color = storage::BorderColor::Rgb(12, 34, 56);
+        config.appearance.border_color = storage::BorderColor::Rgb(140, 160, 180);
         config.appearance.motion_preference = storage::MotionPreference::Full;
         config.appearance.animation_speed_percent = 50;
         storage.save_config(&config).unwrap();
@@ -892,8 +961,14 @@ impl PtySession {
         expected: impl Fn(&vt100::Screen) -> bool,
     ) {
         let position = button_position(self.parser.screen(), collapsed, action);
+        let layout = layout(self.parser.screen(), collapsed);
+        let pressed = if layout.aa_dialog.contains((position.1, position.0).into()) {
+            PAGE_PRESSED
+        } else {
+            PRESSED
+        };
         self.mouse(0, position, false);
-        self.wait_for(description, |screen| color_at(screen, position) == PRESSED);
+        self.wait_for(description, |screen| color_at(screen, position) == pressed);
         self.mouse(0, position, true);
         // A modifier can change labels after release. Consume that redraw before
         // locating the next button, even when its resulting state is checked later.
@@ -906,7 +981,7 @@ impl PtySession {
                 ScreenKeyboardAction::Alt => Some("Alt"),
                 _ => None,
             };
-            (color_at(screen, position) != PRESSED
+            (color_at(screen, position) != pressed
                 || modifier.is_some_and(|name| last_key(screen, collapsed).contains(name)))
                 && expected(screen)
         });
@@ -1040,21 +1115,33 @@ fn button_position(
     collapsed: bool,
     action: ScreenKeyboardAction,
 ) -> (u16, u16) {
+    visible_button_position(screen, collapsed, action).unwrap_or_else(|| {
+        panic!(
+            "button {action:?} has no visible label in {:?}",
+            screen.contents()
+        )
+    })
+}
+
+// PTYs can split one frame into several reads; observing an earlier row does
+// not mean the target key's label has arrived yet.
+fn visible_button_position(
+    screen: &vt100::Screen,
+    collapsed: bool,
+    action: ScreenKeyboardAction,
+) -> Option<(u16, u16)> {
     let area = button_area(screen, collapsed, action);
     for row in area.y..area.bottom() {
         for col in area.x..area.right() {
             let cell = screen.cell(row, col).unwrap();
             if !cell.contents().trim().is_empty()
-                && matches!(cell.fgcolor(), TEXT | ACCENT | PRESSED)
+                && matches!(cell.fgcolor(), TEXT | ACCENT | PAGE_TEXT | PAGE_PRESSED)
             {
-                return (row, col);
+                return Some((row, col));
             }
         }
     }
-    panic!(
-        "button {action:?} has no visible label in {:?}",
-        screen.contents()
-    );
+    None
 }
 
 fn button_area(screen: &vt100::Screen, collapsed: bool, action: ScreenKeyboardAction) -> Rect {

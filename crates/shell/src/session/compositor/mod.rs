@@ -175,11 +175,15 @@ impl ScreenCompositor {
         }
         state.terminal_size = (bounds.width, bounds.height);
         state.sync_input_keyboard();
+        let previous_keyboard = state.input_keyboard_layout().keyboard;
+        let keyboard_animating = state.advance_input_keyboard(prepared.context.motion);
         if self.keyboard_open != state.input_keyboard_open() {
             self.keyboard_open = state.input_keyboard_open();
             self.motion.cancel_for_bounds_change();
         }
-        state.resize_auto_admin();
+        if previous_keyboard != state.input_keyboard_layout().keyboard {
+            self.motion.cancel_for_bounds_change();
+        }
         let mut frame_context = prepared.context.clone();
         let hovered = state
             .mouse_coordinates
@@ -298,6 +302,7 @@ impl ScreenCompositor {
         self.render_input_keyboard(frame, state, context);
         state.button_regions = buttons.regions();
         prepared.progress_running
+            || keyboard_animating
             || self.motion.is_running()
             || self
                 .toast

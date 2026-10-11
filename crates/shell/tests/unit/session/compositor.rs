@@ -172,10 +172,7 @@ fn live_aa_keyboard_keeps_dialog_buttons_visible_and_uses_one_layout_for_input()
             state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
             draw(&mut compositor, &mut terminal, &mut state, &prepared);
             let theme = prepared.context.compatibility_theme();
-            assert_eq!(
-                terminal.backend().buffer()[point].fg,
-                theme.button_pressed_color()
-            );
+            assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
             state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
             assert!(inputs.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"y")));
         } else {
@@ -201,7 +198,7 @@ fn command_line_keyboard_render_and_pty_viewport_agree_and_restore() {
             terminal.backend().buffer(),
             terminal.backend().buffer().area
         )
-        .contains("Screen keyboard")
+        .contains(&i18n::tr!("screen-keyboard-show"))
     );
     state.toggle_input_keyboard();
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
@@ -227,6 +224,121 @@ fn command_line_keyboard_render_and_pty_viewport_agree_and_restore() {
         )
         .contains("CapsLock")
     );
+}
+
+#[test]
+fn live_keyboard_animation_keeps_aa_and_cli_content_above_visible_keys() {
+    for aa in [false, true] {
+        let mut state = session();
+        if aa {
+            let (tx, _rx) = mpsc::channel();
+            state
+                .begin_auto_admin("Keyboard animation".into(), false, tx)
+                .unwrap();
+        } else {
+            state.enter_screen(ShellScreen::CommandLine);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut compositor = ScreenCompositor::default();
+        let original = state.command_line_input_area();
+        state.toggle_input_keyboard();
+        for millis in [0, 1, 55, 110, 220, 300, 355, 410, 510, 520] {
+            if millis == 300 {
+                state.toggle_input_keyboard();
+            }
+            let mut prepared = home_frame(&state, millis, false);
+            if !aa {
+                prepared.page = ScreenViewModel::CommandLine(Box::new(
+                    ui::CommandLineViewModel::new(ui::CommandLineTerminalSnapshot::blank(120, 40)),
+                ));
+            }
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            let keyboard = state.input_keyboard_layout();
+            if aa {
+                let shell_main = ui::ShellFrameLayout::new(
+                    terminal.backend().buffer().area,
+                    None,
+                    &prepared.context,
+                )
+                .main;
+                assert!(state.auto_admin_available_area().bottom() <= shell_main.bottom());
+                let dialog = ui::auto_admin_layout_in(
+                    state.auto_admin_available_area(),
+                    &state.auto_admin_view().unwrap(),
+                )
+                .dialog;
+                assert_eq!(
+                    dialog.intersection(terminal.backend().buffer().area),
+                    dialog
+                );
+                assert!(dialog.intersection(keyboard.keyboard).is_empty());
+            } else {
+                assert!(
+                    state.command_line_input_area().unwrap().height <= original.unwrap().height
+                );
+                assert_eq!(
+                    ui::command_line_terminal_area_in(&state.frame_layout.unwrap()),
+                    state.command_line_input_area()
+                );
+                if !keyboard.keyboard.is_empty() {
+                    assert!(
+                        state.command_line_input_area().unwrap().bottom() <= keyboard.keyboard.y
+                    );
+                }
+            }
+            for key in &keyboard.buttons {
+                assert_eq!(key.area.intersection(keyboard.keyboard), key.area);
+                assert!(state.button_regions.contains(&key.region()));
+            }
+            if millis == 355 {
+                assert!(!state.input_keyboard_open());
+                assert!(
+                    state.screen_keyboard.visibility > 0
+                        && state.screen_keyboard.visibility < 1_000
+                );
+                assert!(
+                    !keyboard.keyboard.is_empty(),
+                    "closing panel must remain visible"
+                );
+            }
+        }
+        assert!(state.input_keyboard_layout().keyboard.is_empty());
+        assert_eq!(state.command_line_input_area(), original);
+    }
+}
+
+#[test]
+fn command_line_keyboard_launcher_uses_the_selected_language() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for (language, show, hide) in [
+        ("zh-CN", "展开键盘", "收起键盘"),
+        ("en-US", "Show keyboard", "Hide keyboard"),
+    ] {
+        let snapshot = Arc::new(
+            i18n::LanguageSnapshot::load(&root, language, 1)
+                .unwrap()
+                .snapshot,
+        );
+        let _language = i18n::enter_snapshot(snapshot.clone());
+        let mut state = session();
+        state.language = snapshot;
+        state.enter_screen(ShellScreen::CommandLine);
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut compositor = ScreenCompositor::default();
+        for expected in [show, hide] {
+            let prepared = home_frame(&state, 0, true);
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            assert!(
+                text(
+                    terminal.backend().buffer(),
+                    state.keyboard_launcher_area().unwrap()
+                )
+                .replace(' ', "")
+                .contains(&expected.replace(' ', ""))
+            );
+            state.toggle_input_keyboard();
+        }
+    }
 }
 
 #[test]
@@ -1204,26 +1316,23 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
     state.apply_input_at(InputEvent::mouse_moved(point), now);
     state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[point].fg,
-        theme.button_pressed_color()
-    );
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
     state.apply_input_at(
         InputEvent::mouse_up(PointerButton::Left, point),
         now + Duration::from_millis(50),
     );
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.foreground);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.border_color);
     assert!(rx.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"\r")));
     state.apply_input(InputEvent::mouse_moved(point));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.foreground);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.border_color);
     state.apply_input(InputEvent::mouse_moved((point.0 + 1, point.1)));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
     assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
     state.apply_input(InputEvent::key(InputKey::F(6)));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.foreground);
+    assert_eq!(terminal.backend().buffer()[point].fg, theme.border_color);
     let first = state
         .button_regions
         .iter()

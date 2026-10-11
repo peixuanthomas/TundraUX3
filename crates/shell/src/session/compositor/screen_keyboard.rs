@@ -14,14 +14,14 @@ impl ScreenCompositor {
             ui::components::Button::new(
                 "command-line.keyboard",
                 if state.input_keyboard_open() {
-                    "Hide screen keyboard"
+                    i18n::tr!("screen-keyboard-hide")
                 } else {
-                    "Screen keyboard"
+                    i18n::tr!("screen-keyboard-show")
                 },
             )
             .render_borderless_frame(frame, area, &context.compatibility_theme());
         }
-        if !state.input_keyboard_open() {
+        if !state.input_keyboard_open() && state.screen_keyboard.visibility == 0 {
             return;
         }
         let layout = state.input_keyboard_layout();
@@ -52,11 +52,7 @@ impl ScreenCompositor {
                 area.width = area.width.saturating_sub(30);
                 area
             };
-            let message = if state.auto_admin_visible() {
-                i18n::tr!("screen-keyboard-input-small")
-            } else {
-                "Enlarge the window to show the keyboard".into()
-            };
+            let message = i18n::tr!("screen-keyboard-input-small");
             frame.render_widget(ratatui::widgets::Paragraph::new(message), area);
         }
     }

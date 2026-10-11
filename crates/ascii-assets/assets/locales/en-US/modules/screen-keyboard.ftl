@@ -22,3 +22,14 @@ screen-keyboard-aa-hint = Show keyboard to test input · Esc: back to demo
 screen-keyboard-aa-small = Enlarge to at least 60 × 18 to show the keyboard without covering AA.
 
 screen-keyboard-input-small = Enlarge the window to show the keyboard.
+screen-keyboard-function = F{ $number }
+screen-keyboard-escape = Esc
+screen-keyboard-tab = Tab
+screen-keyboard-caps-lock = CapsLock
+screen-keyboard-enter = Enter
+screen-keyboard-shift = Shift
+screen-keyboard-left-ctrl = Ctrl
+screen-keyboard-right-ctrl = RCtrl
+screen-keyboard-alt = Alt
+screen-keyboard-input-paste = Paste
+screen-keyboard-terminal-required = Screen keyboard requires an interactive terminal (stdin and stdout).

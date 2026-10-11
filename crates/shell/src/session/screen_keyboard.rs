@@ -13,12 +13,49 @@ enum KeyboardOwner {
 pub(super) struct InputKeyboard {
     owner: Option<KeyboardOwner>,
     pub open: bool,
+    pub visibility: u16,
+    motion: ui::FrostMotion,
+    motion_start: u16,
+    motion_target: u16,
     pub modifiers: ScreenKeyboardModifiers,
     pub physical: PhysicalKeyboard,
     pub pressed: Option<(ui::components::ButtonRegion, Instant)>,
 }
 
 impl ShellSession {
+    /// Advance once per rendered frame. Input uses the last painted geometry.
+    pub(super) fn advance_input_keyboard(&mut self, frame: ui::MotionFrame) -> bool {
+        let target = if self.input_keyboard_open() { 1_000 } else { 0 };
+        let keyboard = &mut self.screen_keyboard;
+        if keyboard.motion_target != target {
+            keyboard.motion_start = keyboard.visibility;
+            keyboard.motion_target = target;
+            keyboard.motion.begin(frame, ui::MotionTimings::PAGE);
+        }
+        let progress = i32::from(keyboard.motion.progress(frame, true));
+        let visibility = if frame.reduced_motion {
+            keyboard.motion.cancel();
+            keyboard.motion_start = target;
+            target
+        } else {
+            (i32::from(keyboard.motion_start)
+                + (i32::from(target) - i32::from(keyboard.motion_start)) * progress / 1_000)
+                as u16
+        };
+        let moved = keyboard.visibility != visibility;
+        if moved {
+            // A moving key must not finish a press at its former position.
+            keyboard.pressed = None;
+        }
+        keyboard.visibility = visibility;
+        let animating = keyboard.motion.requests_redraw(frame);
+        if moved {
+            self.cancel_auto_admin_pointer();
+        }
+        self.resize_auto_admin();
+        animating
+    }
+
     pub(super) fn poll_input_keyboard(&mut self, now: Instant) -> bool {
         let mut changed = self.sync_input_keyboard();
         changed |= self.screen_keyboard.physical.expire(now);
@@ -50,7 +87,7 @@ impl ShellSession {
         if self.screen_keyboard.owner == owner {
             return false;
         }
-        let was_open = self.screen_keyboard.open;
+        let was_open = self.screen_keyboard.visibility > 0;
         self.screen_keyboard = InputKeyboard {
             owner,
             ..Default::default()
@@ -70,9 +107,14 @@ impl ShellSession {
     }
 
     pub(super) fn input_keyboard_layout(&self) -> ScreenKeyboardLayout {
-        ui::screen_keyboard_input_layout(
+        ui::screen_keyboard_input_layout_with_visibility(
             Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
             self.input_keyboard_open(),
+            if self.screen_keyboard.owner == self.input_keyboard_owner() {
+                self.screen_keyboard.visibility
+            } else {
+                0
+            },
             self.auto_admin_visible(),
         )
     }
@@ -88,7 +130,10 @@ impl ShellSession {
                 bounds.x,
                 shell.main.y,
                 bounds.width,
-                keyboard.keyboard.y.saturating_sub(shell.main.y),
+                shell
+                    .main
+                    .height
+                    .min(keyboard.keyboard.y.saturating_sub(shell.main.y)),
             )
         }
     }
@@ -99,7 +144,10 @@ impl ShellSession {
     ) -> (ui::ShellFrameLayout, Rect) {
         let keyboard = self.input_keyboard_layout();
         if !self.auto_admin_visible() && !keyboard.keyboard.is_empty() {
-            layout.main.height = keyboard.keyboard.y.saturating_sub(layout.main.y);
+            layout.main.height = layout
+                .main
+                .height
+                .min(keyboard.keyboard.y.saturating_sub(layout.main.y));
         }
         let footer = Rect::new(
             layout.main.x,

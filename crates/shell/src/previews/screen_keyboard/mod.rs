@@ -74,9 +74,9 @@ pub fn run_screen_keyboard(
     platform: &dyn platform::Platform,
 ) -> io::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Err(io::Error::other(
-            "screen-keyboard requires an interactive terminal (stdin and stdout)",
-        ));
+        return Err(io::Error::other(i18n::tr!(
+            "screen-keyboard-terminal-required"
+        )));
     }
     let config = ShellAppConfig::from_appearance(appearance);
     let theme = TundraTheme::default_dark()
@@ -351,16 +351,16 @@ impl ScreenKeyboardState {
         self.message.clear();
         let mut parts = Vec::new();
         if modifiers.left_ctrl {
-            parts.push("Ctrl".to_owned());
+            parts.push(i18n::tr!("screen-keyboard-left-ctrl"));
         }
         if modifiers.right_ctrl {
-            parts.push("RCtrl".to_owned());
+            parts.push(i18n::tr!("screen-keyboard-right-ctrl"));
         }
         if modifiers.alt {
-            parts.push("Alt".to_owned());
+            parts.push(i18n::tr!("screen-keyboard-alt"));
         }
         if modifiers.shift {
-            parts.push("Shift".to_owned());
+            parts.push(i18n::tr!("screen-keyboard-shift"));
         }
         parts.push(key_name(action, character));
         self.last_key = parts.join("+");
@@ -664,7 +664,7 @@ impl ScreenKeyboardState {
             InputEvent::Paste(text) => {
                 self.use_keyboard();
                 self.append_paste(&text);
-                self.last_key = "Paste".to_owned();
+                self.last_key = i18n::tr!("screen-keyboard-input-paste");
                 self.message = i18n::tr!("screen-keyboard-pasted");
             }
             _ => {}
@@ -687,28 +687,12 @@ fn character_action(character: char) -> ScreenKeyboardAction {
 }
 
 fn key_name(action: ScreenKeyboardAction, character: Option<char>) -> String {
-    use ScreenKeyboardAction::*;
     match action {
-        Letter(c) | Character(c) => return character.unwrap_or(c).to_ascii_uppercase().to_string(),
-        Function(number) => return format!("F{number}"),
-        Backspace => "Backspace",
-        Clear => "Clear",
-        Exit => "Exit",
-        Escape => "Esc",
-        Tab => "Tab",
-        CapsLock => "CapsLock",
-        Enter => "Enter",
-        Shift => "Shift",
-        Space => "Space",
-        LeftCtrl => "Ctrl",
-        RightCtrl => "RCtrl",
-        Alt => "Alt",
-        ToggleKeyboard => "Keyboard",
-        TestAutoAdmin => "Test AA",
-        Copy => "Copy",
-        Paste => "Paste",
+        ScreenKeyboardAction::Letter(c) | ScreenKeyboardAction::Character(c) => {
+            character.unwrap_or(c).to_ascii_uppercase().to_string()
+        }
+        _ => action.label(Default::default(), false),
     }
-    .to_owned()
 }
 
 #[cfg(test)]
