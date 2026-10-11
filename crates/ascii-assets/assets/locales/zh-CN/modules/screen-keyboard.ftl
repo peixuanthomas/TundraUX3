@@ -12,6 +12,7 @@ screen-keyboard-exit = Esc 退出
 screen-keyboard-last-key = 最近按键
 screen-keyboard-copied = 已复制文本
 screen-keyboard-pasted = 已粘贴文本
+screen-keyboard-clipboard-empty = 剪贴板中没有可粘贴的文字
 screen-keyboard-clipboard-error = 剪贴板不可用：{ $error }
 screen-keyboard-hint = 直接输入 · Tab/方向键选择 · Enter/空格按键 · Ctrl+C/V · Esc退出
 screen-keyboard-small = 完整键盘需要至少 60 × 14。可以直接输入或使用工具按钮。Esc退出。

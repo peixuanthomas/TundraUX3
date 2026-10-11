@@ -35,6 +35,26 @@ fn crash_page_shows_hardcoded_art_and_error_without_assets() {
     assert!(rendered.contains("R: Restart | Q: Exit"));
     assert!(!rendered.contains("has stopped"));
     assert!(!rendered.contains("Scroll"));
+    assert!(rendered.find("Intentional panic:") < rendered.find("X               X"));
+}
+
+#[test]
+fn small_crash_page_prioritizes_details_and_filters_terminal_controls() {
+    let mut screen = PanicScreen::new(
+        "Reason: index out of bounds\nTask: pty-reader-1\nLocation: row.rs:99:28\nFull report: /tmp/crash.txt\x07",
+    );
+    let rendered = draw(&mut screen, 60, 8);
+    for detail in [
+        "index out of bounds",
+        "pty-reader-1",
+        "row.rs:99:28",
+        "/tmp/crash.txt",
+    ] {
+        assert!(rendered.contains(detail));
+    }
+    assert!(!rendered.contains("X               X"));
+    assert!(!screen.text.contains('\x07'));
+    assert_eq!(screen.max_scroll, 0);
 }
 
 #[test]

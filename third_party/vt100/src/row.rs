@@ -74,13 +74,20 @@ impl Row {
     pub fn truncate(&mut self, len: u16) {
         self.cells.truncate(usize::from(len));
         self.wrapped = false;
-        let last_cell = &mut self.cells[usize::from(len) - 1];
-        if last_cell.is_wide() {
-            last_cell.clear(*last_cell.attrs());
+        if let Some(last_cell) = self.cells.last_mut() {
+            if last_cell.is_wide() {
+                last_cell.clear(*last_cell.attrs());
+            }
         }
     }
 
     pub fn resize(&mut self, len: u16, cell: crate::cell::Cell) {
+        // Shrinking can cut a wide character in half. Reuse truncation's
+        // cleanup so a later erase/write cannot access a missing second cell.
+        if len < self.cols() {
+            self.truncate(len);
+            return;
+        }
         self.cells.resize(usize::from(len), cell);
         self.wrapped = false;
     }

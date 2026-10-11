@@ -35,7 +35,7 @@ impl PanicScreen {
             .filter(|ch| *ch == '\n' || *ch == '\t' || !ch.is_control())
             .collect();
         Self {
-            text: format!("{DEAD_PROGRAM}\n\n{}", message.replace('\t', "    ")),
+            text: message.replace('\t', "    "),
             scroll: 0,
             max_scroll: 0,
             page_height: 1,
@@ -81,7 +81,14 @@ impl PanicScreen {
             area.width,
             area.height.saturating_sub(2),
         );
-        let lines = wrap_lines(&self.text, body.width);
+        let mut lines = wrap_lines(&self.text, body.width);
+        // Always show the reason first. Decoration must not push useful
+        // details off a small terminal or add unnecessary scrolling.
+        let art = wrap_lines(DEAD_PROGRAM, body.width);
+        if lines.len() + art.len() + 1 <= usize::from(body.height) {
+            lines.push(String::new());
+            lines.extend(art);
+        }
         self.page_height = usize::from(body.height).max(1);
         self.max_scroll = lines.len().saturating_sub(self.page_height);
         self.scroll = self.scroll.min(self.max_scroll);

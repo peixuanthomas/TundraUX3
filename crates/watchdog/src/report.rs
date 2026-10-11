@@ -147,6 +147,14 @@ impl IncidentRecord {
             recovery_handler_version: self.recovery_handler_version.clone(),
             restart_attempt: self.restart_attempt,
             summary: self.summary(),
+            source_location: self.panic.as_ref().and_then(|panic| {
+                let file = panic.source_file.as_ref()?;
+                Some(match (panic.source_line, panic.source_column) {
+                    (Some(line), Some(column)) => format!("{file}:{line}:{column}"),
+                    (Some(line), None) => format!("{file}:{line}"),
+                    _ => file.clone(),
+                })
+            }),
             recovery: self.recovery.clone(),
             json_report_path,
             text_report_path,

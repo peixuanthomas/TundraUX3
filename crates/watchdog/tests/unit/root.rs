@@ -599,6 +599,18 @@ fn global_install_child() {
         serde_json::from_slice(&fs::read(receipt.json_report_path.as_ref().unwrap()).unwrap())
             .unwrap();
     assert!(report["panic"]["source_file"].as_str().is_some());
+    assert_eq!(
+        receipt.source_location.as_deref(),
+        Some(
+            format!(
+                "{}:{}:{}",
+                report["panic"]["source_file"].as_str().unwrap(),
+                report["panic"]["source_line"],
+                report["panic"]["source_column"],
+            )
+            .as_str()
+        ),
+    );
     assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
 
     second_runtime.shutdown().unwrap();

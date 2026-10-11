@@ -40,3 +40,9 @@ and `crates/ui/tests/command_line.rs`, with real PTY coverage in
 `scripts/tests/command-line-input.py`.
 `crates/cli/tests/repl_cursor.rs` checks actual cursor positions and editing
 through native PTYs on Windows and Unix.
+
+`src/row.rs` also clears a wide character cut in half when a row shrinks.
+Without this cleanup, clearing or overwriting the last column can access a
+missing continuation cell and crash the PTY reader. Regression coverage for
+erase/write operations after resizing is in
+`crates/terminal-runtime/tests/unit/pty.rs`.

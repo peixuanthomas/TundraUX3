@@ -46,9 +46,13 @@ Linux 的自动测试不触碰用户真实 Trash。发布候选可在 GNOME/KDE 
 cargo test --locked -p platform --test native_trash_smoke -- --ignored --nocapture
 cargo build --locked -p shell -p cli
 python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
+# 加测屏幕键盘粘贴失败、崩溃详情、报告保存和 Q 退出。
+TUNDRA_PTY_CHECK_CRASH=1 python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
 ```
 
 PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。它依次经过语言、时区页面（跳过创建用户），打开已有 Appearance 颜色输入框，默认注入 64 个 SGR 全移动鼠标事件（可通过 `TUNDRA_PTY_MOUSE_EVENT_COUNT` 调整），随后发送单字符哨兵，在 250 毫秒门限内验证鼠标洪峰后的普通字符输入响应；Ratatui 增量绘制不保证重发完整多字符字符串。测试再取消临时颜色、完成当前 Linux 用户的 Appearance 设置并进入 Home，从 Launcher 打开 Command Line，验证初始绝对路径以及切换到含空格和中文的目录后的提示符。最后发送 `SIGTERM`，检查终端属性、raw mode、鼠标捕获、备用屏幕和光标均得到恢复。
+
+设置 `TUNDRA_PTY_CHECK_CRASH=1` 时，测试子进程不连接桌面剪贴板，连续点击三次粘贴后检查提示并执行一条命令。最后主动触发一次崩溃，检查简短详情与保存的报告，再按 Q 退出并检查终端恢复；不会清空用户剪贴板。
 
 root 启动确认在可丢弃的 Linux 测试环境验证；下列脚本使用临时 XDG 目录，不修改系统配置。
 第一项覆盖 Shell/CLI 的 `y` 确认、其他按键取消、终端模式恢复、管道拒绝、普通用户免确认和 set-ID 拒绝；

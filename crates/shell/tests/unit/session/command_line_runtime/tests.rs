@@ -74,17 +74,20 @@ fn embedded_panic_exit_enters_fullscreen_panic_without_login_or_dialog() {
         .expect_err("the Shell must really unwind");
     let id = caught.incident_id().to_string();
     let message = crate::session::runtime::finalize_session_panic(caught, "Shell UI");
-    assert_eq!(
-        message,
-        "Shell UI: Intentional watchdog panic test requested from Command Line"
+    assert!(
+        message.contains("Reason: Intentional watchdog panic test requested from Command Line")
     );
+    assert!(message.contains("Version:"));
+    assert!(message.contains("Component:"));
+    assert!(message.contains("Full report:"));
+    assert!(message.contains(&id));
     let mut state = crate::ShellSession::new(crate::ShellLaunchConfig::default(), (120, 40));
     let screen_before = state.active_screen();
     let message = crate::session::runtime::drain_watchdog_incidents(&mut state, &process)
         .expect("panic must request a standalone crash page even without login");
     assert!(message.contains("Intentional watchdog panic"));
-    assert!(!message.contains(&id));
-    assert!(!message.contains("Report:"));
+    assert!(message.contains(&id));
+    assert!(message.contains("Full report:"));
     assert!(!message.contains("Recovery:"));
     assert!(state.to_notification_view_model().is_none());
     assert_eq!(state.active_screen(), screen_before);
@@ -138,7 +141,7 @@ fn embedded_panic_exit_enters_fullscreen_panic_without_login_or_dialog() {
             .expect("every account must see background panic details");
         assert!(message.contains("background worker failed to read a file"));
         assert!(!message.contains("Incident:"));
-        assert!(!message.contains("Report:"));
+        assert!(message.contains("Full report:"));
         assert!(!message.contains("Recovery:"));
         assert!(state.to_notification_view_model().is_none());
         assert_eq!(state.active_screen(), screen_before);

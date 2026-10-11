@@ -12,6 +12,7 @@ screen-keyboard-exit = Esc Exit
 screen-keyboard-last-key = Last key
 screen-keyboard-copied = Text copied
 screen-keyboard-pasted = Text pasted
+screen-keyboard-clipboard-empty = No text to paste in the clipboard
 screen-keyboard-clipboard-error = Clipboard unavailable: { $error }
 screen-keyboard-hint = Type text · Tab/arrows: select · Enter/Space: press · Ctrl+C/V · Esc: exit
 screen-keyboard-small = Full keyboard needs 60 × 14. Type text or use the toolbar. Esc: exit.

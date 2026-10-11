@@ -45,6 +45,7 @@ KEYBOARD_SENTINEL_TIMEOUT = float(
 SHELL_READY_TIMEOUT = 20.0
 MAX_CAPTURED_OUTPUT_BYTES = 16 * 1024 * 1024
 DIAGNOSTIC_OUTPUT_BYTES = 64 * 1024
+CHECK_CRASH_SCREEN = os.environ.get("TUNDRA_PTY_CHECK_CRASH") == "1"
 
 
 def append_output(output: bytearray, chunk: bytes) -> None:
@@ -395,6 +396,67 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     print("PASS: all six package views, detail return, visible log filters, and log menu keyboard/outside-click dismissal")
 
 
+def check_keyboard_paste(master: int, output: bytearray, child: subprocess.Popen, start: int) -> None:
+    """The isolated child has no desktop clipboard; failed reads must be harmless."""
+    def click(label: str) -> None:
+        x, y = painted_label_position(bytes(output[start:]), label, 140, 40)
+        os.write(master, f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode())
+        deadline = time.monotonic() + 0.7
+        while time.monotonic() < deadline:
+            read_available(master, output, 0.05)
+
+    click("Show keyboard")
+    for _ in range(3):
+        click("Paste")
+    click("Hide keyboard")
+    if not wait_for_output(master, output, b"Clipboard unavailable", child, 5.0, start, ignore_spaces=True):
+        raise SystemExit("failed paste did not show a clipboard message:\n" + output_diagnostic(output[start:]))
+    offset = len(output)
+    os.write(master, b"printf 'PASTE_%s\\n' ALIVE\r")
+    if not wait_for_output(master, output, b"PASTE_ALIVE", child, 5.0, offset):
+        raise SystemExit("terminal stopped accepting commands after Paste")
+    if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("command after Paste did not complete")
+    print("PASS: repeated unavailable-clipboard clicks and subsequent terminal command")
+
+
+def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, isolated: Path) -> None:
+    # The existing final check leaves the power dialog open on Home.
+    os.write(master, b"\x1b")
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    offset = len(output)
+    os.write(master, b"a")
+    if not wait_for_output(master, output, b"Command Line", child, 5.0, offset):
+        raise SystemExit("could not open Launcher for crash-page test")
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    offset = len(output)
+    os.write(master, b"\r")
+    if not wait_for_output(master, output, b" >>", child, 10.0, offset, ignore_spaces=True):
+        raise SystemExit("embedded CLI did not start for crash-page test")
+    offset = len(output)
+    os.write(master, b"/debug test-watchdog-panic\r")
+    for marker in (b"PANIC", b"Reason:", b"Version:", b"Component:", b"Location:", b"Full report:", b"R: Restart | Q: Exit"):
+        if not wait_for_output(master, output, marker, child, 8.0, offset, ignore_spaces=True):
+            raise SystemExit(f"crash page omitted {marker!r}:\n" + output_diagnostic(output[offset:]))
+    reports = list(isolated.rglob("crash-*.json"))
+    if len(reports) != 1:
+        raise SystemExit(f"expected one intentional crash report, got {reports}")
+    report = json.loads(reports[0].read_text())
+    if report.get("panic", {}).get("payload") != "Intentional watchdog panic test requested from Command Line":
+        raise SystemExit(f"unexpected crash: {report}")
+    if not report["panic"]["source_line"] or not reports[0].with_suffix(".txt").is_file():
+        raise SystemExit("crash page had no saved source location/text report")
+    if b"Backtrace:" in output[offset:]:
+        raise SystemExit("crash page displayed the full backtrace")
+    os.write(master, b"q")
+    deadline = time.monotonic() + 5.0
+    while child.poll() is None and time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    if child.poll() is None:
+        raise SystemExit("Q did not exit the crash page")
+    print("PASS: crash reason/version/component/location/report, Q exit and saved report")
+
+
 def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) == 2 else "target/debug/tundra-shell")
     if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -402,6 +464,10 @@ def main() -> int:
 
     isolated = Path(tempfile.mkdtemp(prefix="tundraux3-pty-"))
     env = os.environ.copy()
+    if CHECK_CRASH_SCREEN:
+        # Exercise a failed clipboard read without touching the user's clipboard.
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
     for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"):
         directory = isolated / name.lower()
         directory.mkdir(mode=0o700)
@@ -582,6 +648,8 @@ def main() -> int:
             read_available(master, output, 0.1)
         if "○".encode() not in output[prompt_offset:]:
             raise SystemExit("embedded CLI did not render a pending command marker")
+        if CHECK_CRASH_SCREEN:
+            check_keyboard_paste(master, output, child, prompt_offset)
         check_status_details(master, output, child)
         command_directory = isolated / "command path 中文 $; ' [x]"
         command_directory.mkdir()
@@ -756,6 +824,9 @@ def main() -> int:
         if not wait_for_output(master, output, b"Exit TundraUX", child, 5.0, pointer_offset):
             raise SystemExit("releasing Back did not open the power dialog")
 
+        if CHECK_CRASH_SCREEN:
+            check_crash_screen(master, output, child, isolated)
+
         if child.poll() is None:
             signal_process_group(child, signal.SIGTERM)
 
@@ -774,7 +845,7 @@ def main() -> int:
             )
 
         incidents = list(isolated.rglob("crash-*.json"))
-        if incidents:
+        if incidents and not CHECK_CRASH_SCREEN:
             raise SystemExit(
                 "normal startup/shutdown generated watchdog incidents:\n"
                 + "\n".join(path.read_text() for path in incidents)

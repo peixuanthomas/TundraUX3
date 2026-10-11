@@ -5701,6 +5701,7 @@ fn watchdog_incident_shows_details_and_view_actions_to_standard_users() {
             recovery_handler_version: None,
             restart_attempt: 0,
             summary: "SECRET watchdog summary".to_string(),
+            source_location: None,
             recovery: RecoveryOutcome::Recovered("SECRET recovery detail".to_string()),
             json_report_path: Some(std::path::PathBuf::from(
                 "/private/reports/SECRET-INCIDENT-ID.json",
@@ -5754,6 +5755,7 @@ fn previous_unclean_exit_does_not_interrupt_the_login_screen() {
             recovery_handler_version: None,
             restart_attempt: 0,
             summary: "previous run ended without a clean shutdown".to_string(),
+            source_location: None,
             recovery: RecoveryOutcome::Unrecoverable(
                 "the previous process had already terminated".to_string(),
             ),

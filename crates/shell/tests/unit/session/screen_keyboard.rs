@@ -55,6 +55,14 @@ fn route(state: &mut ShellSession, input: InputEvent) -> Option<InputEvent> {
 }
 
 fn click(state: &mut ShellSession, action: Action) -> Option<InputEvent> {
+    click_with_platform(state, action, platform::native_platform().as_ref())
+}
+
+fn click_with_platform(
+    state: &mut ShellSession,
+    action: Action,
+    platform: &dyn platform::Platform,
+) -> Option<InputEvent> {
     let layout = state.input_keyboard_layout();
     let area = layout
         .buttons
@@ -63,16 +71,68 @@ fn click(state: &mut ShellSession, action: Action) -> Option<InputEvent> {
         .unwrap()
         .area;
     assert!(
-        route(
-            state,
-            InputEvent::mouse_down(PointerButton::Left, (area.x, area.y))
-        )
-        .is_none()
+        state
+            .route_screen_keyboard_input(
+                InputEvent::mouse_down(PointerButton::Left, (area.x, area.y)),
+                platform,
+                Instant::now(),
+            )
+            .is_none()
     );
-    route(
-        state,
+    state.route_screen_keyboard_input(
         InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)),
+        platform,
+        Instant::now(),
     )
+}
+
+#[test]
+fn keyboard_paste_handles_empty_unavailable_and_nonempty_clipboards() {
+    let root = std::env::temp_dir().join("tundra-keyboard-paste-test");
+    let dirs = platform::UserDirs::new(
+        root.join("Desktop"),
+        root.join("Documents"),
+        root.join("Downloads"),
+        root.join("Pictures"),
+        root.join("Videos"),
+        root.join("Music"),
+        root.join("Data"),
+    )
+    .unwrap();
+    let platform = platform::mock::MockPlatform::new(
+        dirs,
+        platform::build_binary_dir_app_paths(root).unwrap(),
+    );
+    let mut state = session();
+    state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    for _ in 0..3 {
+        assert_eq!(
+            click_with_platform(&mut state, Action::Paste, &platform),
+            None
+        );
+        assert!(state.status().contains("No text to paste"));
+        assert!(state.input_keyboard_open());
+    }
+    assert_eq!(
+        click_with_platform(
+            &mut state,
+            Action::Paste,
+            &platform::mock::UnsupportedPlatform
+        ),
+        None,
+    );
+    assert!(state.status().contains("Clipboard unavailable"));
+    assert!(state.input_keyboard_open());
+    platform.set_clipboard_text("中文\nnormal text");
+    assert_eq!(
+        click_with_platform(&mut state, Action::Paste, &platform),
+        Some(InputEvent::Paste("中文\nnormal text".into())),
+    );
+    assert!(matches!(
+        click(&mut state, Action::Letter('a')),
+        Some(InputEvent::Key(_))
+    ));
 }
 
 #[test]

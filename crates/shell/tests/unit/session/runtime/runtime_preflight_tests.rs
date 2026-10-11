@@ -6,6 +6,54 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 #[test]
+fn panic_details_show_location_and_handle_missing_reports_and_writer_failure() {
+    let root = std::env::temp_dir().join(format!("tundra-panic-details-{}", std::process::id()));
+    let (runtime, process) =
+        watchdog::WatchdogRuntime::start_isolated(watchdog::WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("data"),
+            "test",
+            "test",
+        ))
+        .unwrap();
+    let app = process.register_app(shell_watchdog_descriptor()).unwrap();
+    let caught = app
+        .run_boundary(
+            BoundarySpec::new("test-ui", BoundaryKind::UiSession),
+            || panic!("example failure"),
+        )
+        .unwrap_err();
+    let mut receipt = caught
+        .finalize(RecoveryOutcome::Unrecoverable("stopped".into()))
+        .unwrap();
+    receipt.source_location = Some("third_party/vt100/src/row.rs:99:28".into());
+    receipt.task_id = Some(watchdog::TaskId::from_static("pty-reader-1"));
+    let details = panic_incident_message(&receipt);
+    assert!(details.contains("Location: third_party/vt100/src/row.rs:99:28"));
+    assert!(details.contains("Task: pty-reader-1"));
+    assert!(details.contains(receipt.text_report_path.as_ref().unwrap().to_str().unwrap()));
+    receipt.text_report_path = None;
+    let details = panic_incident_message(&receipt);
+    assert!(details.contains(receipt.json_report_path.as_ref().unwrap().to_str().unwrap()));
+    receipt.json_report_path = None;
+    assert!(panic_incident_message(&receipt).contains("Full report: unavailable"));
+    assert!(!details.contains("Backtrace"));
+
+    let caught = app
+        .run_boundary(
+            BoundarySpec::new("test-ui", BoundaryKind::UiSession),
+            || panic!("original failure"),
+        )
+        .unwrap_err();
+    runtime.shutdown().unwrap();
+    let details = finalize_session_panic(caught, "Shell UI");
+    assert!(details.contains("Reason: Shell UI: original failure"));
+    assert!(details.contains("Full report: unavailable"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cleanup_error_prevents_a_successful_session_outcome() {
     let result = finish_session_execution(
         Ok(Ok(FullscreenShellSessionOutcome::RestartRequested)),

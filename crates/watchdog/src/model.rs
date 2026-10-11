@@ -207,6 +207,9 @@ pub struct IncidentReceipt {
     pub recovery_handler_version: Option<String>,
     pub restart_attempt: usize,
     pub summary: String,
+    /// Panic source file and line, when captured by the panic hook.
+    #[serde(default)]
+    pub source_location: Option<String>,
     pub recovery: RecoveryOutcome,
     pub json_report_path: Option<PathBuf>,
     pub text_report_path: Option<PathBuf>,

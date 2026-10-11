@@ -303,6 +303,10 @@ impl ShellSession {
             _ => {
                 let event = if action == Action::Paste {
                     match platform.read_clipboard_text() {
+                        Ok(text) if text.is_empty() => {
+                            self.notify_status(i18n::msg!("screen-keyboard-clipboard-empty"));
+                            return None;
+                        }
                         Ok(text) => InputEvent::Paste(text),
                         Err(error) => {
                             self.notify_status(i18n::msg!(

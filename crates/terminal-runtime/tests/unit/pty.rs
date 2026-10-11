@@ -42,6 +42,36 @@ fn parsed_pty_output_marks_the_terminal_frame_dirty() {
     assert!(lock_io(&captured).expect("terminal response").is_empty());
 }
 
+#[test]
+fn clearing_a_resized_row_does_not_leave_half_a_wide_character_or_stop_the_reader() {
+    // The reported crash erased column 173 in a 174-column terminal: resizing
+    // had removed the second cell of a wide character at the right edge.
+    for columns in [1, 8, 174] {
+        for erase in ["\x1b[K", "\x1b[1K", "\x1b[J", "\x1b[1J", "\x1b[X", "Z"] {
+            let mut parser = vt100::Parser::new(3, columns + 1, 0);
+            parser.process(format!("\x1b[1;{columns}H\x1b[44m中").as_bytes());
+            parser.set_size(2, columns);
+            let parser = Arc::new(Mutex::new(parser));
+            let revision = Arc::new(AtomicU64::new(0));
+            let captured = Arc::new(Mutex::new(Vec::new()));
+            let writer: Arc<Mutex<Box<dyn Write + Send>>> =
+                Arc::new(Mutex::new(Box::new(CollectingWriter(captured))));
+            read_pty_output(
+                Box::new(io::Cursor::new(format!("{erase}\r\nALIVE").into_bytes())),
+                Arc::clone(&parser),
+                Arc::clone(&revision),
+                writer,
+            );
+            assert_eq!(revision.load(Ordering::Acquire), 1);
+            let parser = lock_io(&parser).expect("terminal reader must not poison the parser");
+            assert!(!parser.screen().cell(0, columns - 1).unwrap().is_wide());
+            if columns > 1 {
+                assert!(parser.screen().contents().contains("ALIVE"));
+            }
+        }
+    }
+}
+
 #[cfg(any(windows, unix))]
 #[test]
 fn pty_rejects_invalid_start_directories_before_running_the_child() {

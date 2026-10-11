@@ -1692,11 +1692,48 @@ pub(super) fn trigger_command_line_panic() -> ! {
 
 pub(super) fn finalize_session_panic(caught: CaughtPanic, session_name: &str) -> String {
     let reason = caught.payload().to_string();
-    // Persist the full report, but keep the crash page focused on the error.
-    let _ = caught.finalize(RecoveryOutcome::Unrecoverable(format!(
+    // Use the receipt from the writer: it contains the hook's source location
+    // and the actual report path, including when the fallback directory is used.
+    match caught.finalize(RecoveryOutcome::Unrecoverable(format!(
         "the {session_name} stopped; waiting for the user to restart or exit"
-    )));
-    format!("{session_name}: {reason}")
+    ))) {
+        Ok(incident) => panic_incident_message(&incident),
+        Err(_) => format!(
+            "{}\n{}\n{}",
+            i18n::tr!(
+                "ui-panic-reason",
+                reason = format!("{session_name}: {reason}")
+            ),
+            i18n::tr!("ui-panic-version", version = env!("CARGO_PKG_VERSION")),
+            i18n::tr!("ui-panic-report-unavailable"),
+        ),
+    }
+}
+
+fn panic_incident_message(incident: &IncidentReceipt) -> String {
+    let mut lines = vec![
+        i18n::tr!("ui-panic-reason", reason = &incident.summary),
+        i18n::tr!("ui-panic-version", version = env!("CARGO_PKG_VERSION")),
+        i18n::tr!(
+            "ui-panic-component",
+            component = incident.component.as_deref().unwrap_or(&incident.boundary)
+        ),
+    ];
+    if let Some(task) = &incident.task_id {
+        lines.push(i18n::tr!("ui-panic-task", task = task.to_string()));
+    }
+    if let Some(location) = &incident.source_location {
+        lines.push(i18n::tr!("ui-panic-location", location = location));
+    }
+    lines.push(
+        incident
+            .text_report_path
+            .as_ref()
+            .or(incident.json_report_path.as_ref())
+            .map(|path| i18n::tr!("ui-panic-report", path = path.display().to_string()))
+            .unwrap_or_else(|| i18n::tr!("ui-panic-report-unavailable")),
+    );
+    lines.join("\n")
 }
 
 fn run_panic_screen(
@@ -1992,7 +2029,7 @@ pub(super) fn drain_watchdog_incidents(
     let mut panic_messages = Vec::new();
     for incident in watchdog.drain_incidents() {
         if incident.kind == IncidentKind::Panic {
-            panic_messages.push(incident.summary);
+            panic_messages.push(panic_incident_message(&incident));
         } else {
             show_watchdog_incident(state, incident);
         }
