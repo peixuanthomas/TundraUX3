@@ -251,6 +251,57 @@ fn linux_executable_content_still_requires_launcher_even_with_text_extension() {
     fs::remove_dir_all(base).unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_batched_listing_matches_individual_checks_including_short_headers_and_links() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let root = tempfile::tempdir().unwrap();
+    let native = platform::linux::LinuxPlatform;
+    for (name, data, mode) in [
+        ("short", b"#!".as_slice(), 0o644),
+        ("truncated-elf", b"\x7fEL".as_slice(), 0o755),
+        ("elf", b"\x7fELF".as_slice(), 0o644),
+        ("script.sh", b"echo ok".as_slice(), 0o755),
+        ("text.sh", b"echo ok".as_slice(), 0o644),
+        ("normal.txt", b"hi".as_slice(), 0o755),
+    ] {
+        let path = root.path().join(name);
+        fs::write(&path, data).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+    fs::create_dir(root.path().join("folder.exe")).unwrap();
+    symlink("elf", root.path().join("link")).unwrap();
+    symlink("missing", root.path().join("dangling")).unwrap();
+    let listing = native.read_directory(root.path()).unwrap();
+    assert_eq!(listing.entries.len(), 9);
+    assert_eq!(listing.warnings.len(), 1);
+    for entry in listing.entries {
+        match native.file_attributes(&entry.path) {
+            Ok(attributes) => {
+                assert_eq!(entry.attributes.as_ref(), Some(&attributes));
+                assert_eq!(
+                    entry.open_policy,
+                    native.file_open_policy(&entry.path, &attributes)
+                );
+            }
+            Err(_) => {
+                assert_eq!(entry.name, "dangling");
+                assert!(entry.attributes.is_none());
+                assert!(matches!(entry.open_policy, FileOpenPolicy::Blocked { .. }));
+            }
+        }
+        if entry.name == "short" {
+            assert!(matches!(
+                entry.open_policy,
+                FileOpenPolicy::LauncherRequired {
+                    kind: ExecutableKind::Script,
+                    ..
+                }
+            ));
+        }
+    }
+}
+
 #[test]
 fn macos_classifies_bundles_installers_and_mach_o_files() {
     let base = unique_temp_root("mach-o-policy");

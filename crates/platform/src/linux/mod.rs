@@ -266,6 +266,10 @@ impl Platform for LinuxPlatform {
         crate::default_file_open_policy(PlatformKind::Linux, path, attributes)
     }
 
+    fn read_directory(&self, path: &Path) -> Result<crate::DirectoryListing, PlatformError> {
+        crate::platform::linux_read_directory(path)
+    }
+
     fn show_critical_error(&self, title: &str, body: &str) -> Result<(), PlatformError> {
         // The notification service is session D-Bus based, so it is available
         // without adding a `notify-send` package dependency. Watchdog/stderr

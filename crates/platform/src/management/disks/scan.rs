@@ -2,8 +2,8 @@ use super::*;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap, HashSet};
 use std::fs::File;
-use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::ffi::OsStrExt;
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Component;
 use std::time::{Duration, Instant};
 
@@ -46,7 +46,11 @@ fn open_directory(path: &Path) -> Result<File, ManagementError> {
     Ok(file)
 }
 
-fn open_child(parent: &File, name: &std::ffi::OsStr, flags: i32) -> Result<File, ManagementError> {
+fn open_child(
+    parent: &impl AsRawFd,
+    name: &std::ffi::OsStr,
+    flags: i32,
+) -> Result<File, ManagementError> {
     let name = CString::new(name.as_bytes())
         .map_err(|_| ManagementError::InvalidInput("Entry contains NUL".into()))?;
     let fd = unsafe {
@@ -62,15 +66,32 @@ fn open_child(parent: &File, name: &std::ffi::OsStr, flags: i32) -> Result<File,
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-fn mount_id(file: &File) -> Result<u64, ManagementError> {
-    let empty = CString::new("").unwrap();
+/// A single descriptor query supplies both accounting data and mount identity.
+struct ScanMetadata(libc::statx);
+
+impl ScanMetadata {
+    fn device(&self) -> u64 {
+        libc::makedev(self.0.stx_dev_major, self.0.stx_dev_minor)
+    }
+    fn inode(&self) -> u64 {
+        self.0.stx_ino
+    }
+    fn mount(&self) -> u64 {
+        self.0.stx_mnt_id
+    }
+    fn is_type(&self, kind: u32) -> bool {
+        u32::from(self.0.stx_mode) & libc::S_IFMT == kind
+    }
+}
+
+fn scan_metadata(file: &File) -> Result<ScanMetadata, ManagementError> {
     let mut result = std::mem::MaybeUninit::<libc::statx>::zeroed();
     let status = unsafe {
         libc::statx(
             file.as_raw_fd(),
-            empty.as_ptr(),
+            c"".as_ptr(),
             libc::AT_EMPTY_PATH | libc::AT_SYMLINK_NOFOLLOW,
-            libc::STATX_MNT_ID,
+            libc::STATX_BASIC_STATS | libc::STATX_MNT_ID,
             result.as_mut_ptr(),
         )
     };
@@ -81,13 +102,95 @@ fn mount_id(file: &File) -> Result<u64, ManagementError> {
         )));
     }
     let result = unsafe { result.assume_init() };
-    if result.stx_mask & libc::STATX_MNT_ID == 0 {
+    const REQUIRED: u32 = libc::STATX_TYPE
+        | libc::STATX_INO
+        | libc::STATX_SIZE
+        | libc::STATX_BLOCKS
+        | libc::STATX_MNT_ID;
+    if result.stx_mask & REQUIRED != REQUIRED {
         return Err(ManagementError::Unavailable(
-            "This kernel does not expose mount IDs; Tundra cannot promise to skip bind mounts"
+            "This filesystem does not expose scan metadata and mount IDs; safe accounting is unavailable"
                 .into(),
         ));
     }
-    Ok(result.stx_mnt_id)
+    Ok(ScanMetadata(result))
+}
+
+/// Own the directory cursor and its descriptor together. Unlike read_dir on
+/// /proc/self/fd, fdopendir consumes the existing descriptor instead of opening
+/// a second one. Only active ancestors are retained during depth-first scans.
+struct ScanDirectory(std::ptr::NonNull<libc::DIR>);
+
+impl ScanDirectory {
+    fn new(file: File) -> Result<Self, ManagementError> {
+        let fd = file.into_raw_fd();
+        // On success DIR owns fd; on failure the caller still owns it.
+        match std::ptr::NonNull::new(unsafe { libc::fdopendir(fd) }) {
+            Some(directory) => Ok(Self(directory)),
+            None => {
+                let error = std::io::Error::last_os_error();
+                drop(unsafe { File::from_raw_fd(fd) });
+                Err(io_error(error))
+            }
+        }
+    }
+
+    fn next_name(&mut self) -> Result<Option<std::ffi::OsString>, ManagementError> {
+        loop {
+            // readdir returns null for both EOF and failure; errno distinguishes
+            // them. This stream is used by exactly one worker at a time.
+            unsafe {
+                *libc::__errno_location() = 0;
+            }
+            let entry = unsafe { libc::readdir(self.0.as_ptr()) };
+            if entry.is_null() {
+                let error = std::io::Error::last_os_error();
+                return if error.raw_os_error() == Some(0) {
+                    Ok(None)
+                } else {
+                    Err(io_error(error))
+                };
+            }
+            // d_name is NUL-terminated and valid until the next readdir call.
+            let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if name != b"." && name != b".." {
+                return Ok(Some(std::ffi::OsString::from_vec(name.to_vec())));
+            }
+        }
+    }
+}
+
+impl AsRawFd for ScanDirectory {
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        unsafe { libc::dirfd(self.0.as_ptr()) }
+    }
+}
+
+impl Drop for ScanDirectory {
+    fn drop(&mut self) {
+        unsafe {
+            libc::closedir(self.0.as_ptr());
+        }
+    }
+}
+
+struct ScanFrame {
+    directory: ScanDirectory,
+    path: PathBuf,
+    category: Option<String>,
+}
+
+fn directory_handle_limit() -> Result<usize, ManagementError> {
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) } != 0 {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    // Reserve room for the host, child probes, and diagnostics. Stop explicitly
+    // at excessive depth rather than quietly losing arbitrary sibling trees.
+    Ok(unsafe { limit.assume_init() }
+        .rlim_cur
+        .saturating_sub(32)
+        .clamp(1, 256) as usize)
 }
 
 #[cfg(test)]
@@ -112,15 +215,20 @@ pub(super) fn scan_sorted(
     }
     check_cancelled(cancelled)?;
     let root = open_directory(path)?;
-    let root_metadata = root.metadata().map_err(io_error)?;
-    let root_mount = mount_id(&root)?;
-    let mut queue = vec![(root, path.to_path_buf(), None::<String>)];
+    let root_metadata = scan_metadata(&root)?;
+    let root_mount = root_metadata.mount();
+    let handle_limit = directory_handle_limit()?;
+    let mut stack = vec![ScanFrame {
+        directory: ScanDirectory::new(root)?,
+        path: path.to_path_buf(),
+        category: None,
+    }];
     let mut directories = BTreeMap::<String, Totals>::new();
     let mut top_entries = BTreeMap::<String, (u64, u64, bool)>::new();
     let mut total = Totals::default();
     let mut hardlinks = HashSet::new();
     let mut directory_ids = HashSet::new();
-    directory_ids.insert((root_metadata.dev(), root_metadata.ino()));
+    directory_ids.insert((root_metadata.device(), root_metadata.inode()));
     let mut largest = BinaryHeap::<Reverse<(u64, u64, String, u64, u64)>>::new();
     let mut errors = Vec::new();
     let mut unavailable = 0_u64;
@@ -128,138 +236,142 @@ pub(super) fn scan_sorted(
     let mut skipped_mounts = 0_u64;
     let mut entries_seen = 0_u64;
     let mut progress = Instant::now();
-    while let Some((directory, display_path, category)) = queue.pop() {
+    while let Some(frame) = stack.last_mut() {
         check_cancelled(cancelled)?;
-        let entries = match fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd())) {
-            Ok(e) => e,
+        let name = match frame.directory.next_name() {
+            Ok(Some(name)) => name,
+            Ok(None) => {
+                stack.pop();
+                continue;
+            }
             Err(e) => {
                 unavailable += 1;
                 if errors.len() < 20 {
-                    errors.push(format!("{}: {e}", display_path.display()));
+                    errors.push(format!("{}: {e}", frame.path.display()));
+                }
+                stack.pop();
+                continue;
+            }
+        };
+        entries_seen += 1;
+        if entries_seen > 2_000_000 {
+            return Err(ManagementError::Unavailable(
+                "Scan exceeded two million entries; choose a smaller directory".into(),
+            ));
+        }
+        let child_path = frame.path.join(&name);
+        let child = match open_child(&frame.directory, &name, libc::O_PATH) {
+            Ok(c) => c,
+            Err(e) => {
+                unavailable += 1;
+                if errors.len() < 20 {
+                    errors.push(format!("{}: {e}", child_path.display()));
                 }
                 continue;
             }
         };
-        for entry in entries {
-            check_cancelled(cancelled)?;
-            entries_seen += 1;
-            if entries_seen > 2_000_000 {
-                return Err(ManagementError::Unavailable(
-                    "Scan exceeded two million entries; choose a smaller directory".into(),
-                ));
-            }
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    unavailable += 1;
-                    if errors.len() < 20 {
-                        errors.push(format!("{}: {e}", display_path.display()));
-                    }
-                    continue;
-                }
-            };
-            let name = entry.file_name();
-            let child_path = display_path.join(&name);
-            let child = match open_child(&directory, &name, libc::O_PATH) {
-                Ok(c) => c,
-                Err(e) => {
-                    unavailable += 1;
-                    if errors.len() < 20 {
-                        errors.push(format!("{}: {e}", child_path.display()));
-                    }
-                    continue;
-                }
-            };
-            let metadata = match child.metadata() {
-                Ok(m) => m,
-                Err(e) => {
-                    unavailable += 1;
-                    if errors.len() < 20 {
-                        errors.push(format!("{}: {e}", child_path.display()));
-                    }
-                    continue;
-                }
-            };
-            if metadata.file_type().is_symlink() {
-                skipped_links += 1;
+        let metadata = scan_metadata(&child)?;
+        if metadata.is_type(libc::S_IFLNK) {
+            skipped_links += 1;
+            continue;
+        }
+        if metadata.mount() != root_mount || metadata.device() != root_metadata.device() {
+            skipped_mounts += 1;
+            continue;
+        }
+        let top_level = frame
+            .category
+            .as_deref()
+            .map(std::borrow::Cow::Borrowed)
+            .unwrap_or_else(|| name.to_string_lossy());
+        if frame.category.is_none() {
+            top_entries.insert(
+                top_level.to_string(),
+                (
+                    metadata.device(),
+                    metadata.inode(),
+                    metadata.is_type(libc::S_IFDIR),
+                ),
+            );
+        }
+        if metadata.is_type(libc::S_IFDIR) {
+            if !directory_ids.insert((metadata.device(), metadata.inode())) {
                 continue;
             }
-            if mount_id(&child)? != root_mount || metadata.dev() != root_metadata.dev() {
-                skipped_mounts += 1;
-                continue;
-            }
-            let top_level = category
-                .clone()
-                .unwrap_or_else(|| name.to_string_lossy().into_owned());
-            if category.is_none() {
-                top_entries.insert(
-                    top_level.clone(),
-                    (metadata.dev(), metadata.ino(), metadata.is_dir()),
-                );
-            }
-            if metadata.is_dir() {
-                if !directory_ids.insert((metadata.dev(), metadata.ino())) {
-                    continue;
-                }
-                match open_child(&directory, &name, libc::O_RDONLY | libc::O_DIRECTORY) {
-                    Ok(child) => {
-                        let current = child.metadata().map_err(io_error)?;
-                        if current.ino() != metadata.ino()
-                            || current.dev() != metadata.dev()
-                            || mount_id(&child)? != root_mount
-                        {
-                            unavailable += 1;
-                            if errors.len() < 20 {
-                                errors.push(format!(
-                                    "{} changed during the scan",
-                                    child_path.display()
-                                ));
-                            }
-                            continue;
-                        }
-                        if queue.len() >= 100_000 {
-                            return Err(ManagementError::Unavailable(
-                                "Too many pending directories; choose a smaller directory".into(),
-                            ));
-                        }
-                        queue.push((child, child_path, Some(top_level)));
-                    }
-                    Err(e) => {
+            match open_child(&frame.directory, &name, libc::O_RDONLY | libc::O_DIRECTORY) {
+                Ok(child) => {
+                    let current = scan_metadata(&child)?;
+                    if current.inode() != metadata.inode()
+                        || current.device() != metadata.device()
+                        || current.mount() != root_mount
+                    {
                         unavailable += 1;
                         if errors.len() < 20 {
-                            errors.push(format!("{}: {e}", child_path.display()));
+                            errors
+                                .push(format!("{} changed during the scan", child_path.display()));
                         }
+                        continue;
+                    }
+                    let category = Some(top_level.into_owned());
+                    if stack.len() >= handle_limit {
+                        return Err(ManagementError::Unavailable(format!(
+                            "Scan reached its {handle_limit}-directory handle limit; choose a less deeply nested directory"
+                        )));
+                    }
+                    stack.push(ScanFrame {
+                        directory: ScanDirectory::new(child)?,
+                        path: child_path,
+                        category,
+                    });
+                }
+                Err(e) => {
+                    unavailable += 1;
+                    if errors.len() < 20 {
+                        errors.push(format!("{}: {e}", child_path.display()));
                     }
                 }
-            } else if metadata.is_file() {
-                if !hardlinks.insert((metadata.dev(), metadata.ino())) {
-                    continue;
-                }
-                // This accounts for readable metadata and never opens file contents.
-                let logical = metadata.len();
-                let allocated = metadata.blocks().saturating_mul(512);
-                total.logical = total.logical.saturating_add(logical);
-                total.allocated = total.allocated.saturating_add(allocated);
-                total.files += 1;
-                let directory = directories.entry(top_level).or_default();
-                directory.logical = directory.logical.saturating_add(logical);
-                directory.allocated = directory.allocated.saturating_add(allocated);
-                directory.files += 1;
+            }
+        } else if metadata.is_type(libc::S_IFREG) {
+            if !hardlinks.insert((metadata.device(), metadata.inode())) {
+                continue;
+            }
+            // This accounts for readable metadata and never opens file contents.
+            let logical = metadata.0.stx_size;
+            let allocated = metadata.0.stx_blocks.saturating_mul(512);
+            total.logical = total.logical.saturating_add(logical);
+            total.allocated = total.allocated.saturating_add(allocated);
+            total.files += 1;
+            let directory = if let Some(directory) = directories.get_mut(top_level.as_ref()) {
+                directory
+            } else {
+                directories.entry(top_level.into_owned()).or_default()
+            };
+            directory.logical = directory.logical.saturating_add(logical);
+            directory.allocated = directory.allocated.saturating_add(allocated);
+            directory.files += 1;
+            // Avoid allocating a display string or touching the heap for
+            // files smaller than its current minimum. Equal sizes still
+            // use the full tuple so tie-breaking remains deterministic.
+            if largest.len() < 100
+                || largest
+                    .peek()
+                    .is_some_and(|Reverse(min)| (allocated, logical) >= (min.0, min.1))
+            {
                 largest.push(Reverse((
                     allocated,
                     logical,
                     child_path.display().to_string(),
-                    metadata.dev(),
-                    metadata.ino(),
+                    metadata.device(),
+                    metadata.inode(),
                 )));
                 if largest.len() > 100 {
                     largest.pop();
                 }
             }
-            if progress.elapsed() > Duration::from_millis(250) {
-                interaction.emit(OperationEvent::Progress { message: format!("Scanned {entries_seen} entries; {} unique files, {} on-disk bytes; {unavailable} unavailable entries", total.files, total.allocated), percent: None });
-                progress = Instant::now();
-            }
+        }
+        if progress.elapsed() > Duration::from_millis(250) {
+            interaction.emit(OperationEvent::Progress { message: format!("Scanned {entries_seen} entries; {} unique files, {} on-disk bytes; {unavailable} unavailable entries", total.files, total.allocated), percent: None });
+            progress = Instant::now();
         }
     }
     let mut snapshot = ManagementSnapshot {
@@ -462,6 +574,164 @@ mod tests {
             scan(&fixture.0, &mut Interaction, &AtomicBool::new(true)),
             Err(ManagementError::Cancelled)
         );
+    }
+
+    #[test]
+    fn descriptor_cursor_stays_on_the_opened_directory_after_path_replacement() {
+        // DrvFS/9p can reject openat on a renamed directory with ENXIO.
+        // Exercise descriptor identity on the native Linux filesystem here;
+        // the scan reports failed shared-filesystem entries as unavailable.
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        fs::create_dir(root.join("original")).unwrap();
+        fs::create_dir(root.join("outside")).unwrap();
+        fs::write(root.join("original/inside"), b"safe").unwrap();
+        fs::write(root.join("outside/inside"), b"must not read this").unwrap();
+        let mut cursor =
+            ScanDirectory::new(open_directory(&root.join("original")).unwrap()).unwrap();
+        fs::rename(root.join("original"), root.join("moved")).unwrap();
+        std::os::unix::fs::symlink(root.join("outside"), root.join("original")).unwrap();
+        let name = cursor.next_name().unwrap().unwrap();
+        assert_eq!(name, "inside");
+        let metadata = scan_metadata(&open_child(&cursor, &name, libc::O_PATH).unwrap()).unwrap();
+        assert_eq!(metadata.0.stx_size, 4);
+        assert!(cursor.next_name().unwrap().is_none());
+    }
+
+    #[test]
+    fn wide_scans_work_with_a_small_descriptor_budget() {
+        // RLIMIT_NOFILE is process-wide: change it only in an isolated child.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "management::disks::scan::tests::descriptor_budget_fixture",
+                "--nocapture",
+            ])
+            .env("TUNDRA_SCAN_FD_FIXTURE", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn descriptor_budget_fixture() {
+        if std::env::var_os("TUNDRA_SCAN_FD_FIXTURE").is_none() {
+            return;
+        }
+        let fixture = Fixture::new();
+        for index in 0..320 {
+            let directory = fixture.0.join(index.to_string());
+            fs::create_dir(&directory).unwrap();
+            fs::write(directory.join("file"), b"x").unwrap();
+        }
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+            0
+        );
+        let original_limit = limit;
+        limit.rlim_cur = limit.rlim_cur.min(128);
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+        let fd_count = || fs::read_dir("/proc/self/fd").unwrap().count();
+        let before = fd_count();
+        for _ in 0..3 {
+            let snapshot = scan(&fixture.0, &mut Interaction, &AtomicBool::new(false)).unwrap();
+            assert!(snapshot.notices[0].contains("320 unique files; 320 logical bytes"));
+            assert!(snapshot.notices[1].contains("0 entries could not be read"));
+            assert_eq!(fd_count(), before);
+        }
+        let deep = Fixture::new();
+        let mut path = deep.0.clone();
+        for _ in 0..directory_handle_limit().unwrap() + 2 {
+            path.push("d");
+            fs::create_dir(&path).unwrap();
+        }
+        let error = scan(&deep.0, &mut Interaction, &AtomicBool::new(false)).unwrap_err();
+        assert!(
+            error.to_string().contains("directory handle limit"),
+            "{error}"
+        );
+        assert_eq!(fd_count(), before);
+        assert_eq!(
+            unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &original_limit) },
+            0
+        );
+    }
+
+    #[test]
+    #[ignore = "requires unshare user/mount namespaces; mounts only inside an isolated child"]
+    fn scan_skips_bind_mounts_in_private_namespace() {
+        let output = std::process::Command::new("unshare")
+            .args(["--user", "--map-root-user", "--mount", "--fork"])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "management::disks::scan::tests::bind_mount_fixture",
+                "--nocapture",
+            ])
+            .env(
+                "TUNDRA_SCAN_PARENT_MOUNT_NS",
+                fs::read_link("/proc/self/ns/mnt").unwrap(),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn bind_mount_fixture() {
+        let Some(parent_namespace) = std::env::var_os("TUNDRA_SCAN_PARENT_MOUNT_NS") else {
+            return;
+        };
+        assert_ne!(
+            fs::read_link("/proc/self/ns/mnt").unwrap().as_os_str(),
+            parent_namespace
+        );
+        // Use native /tmp: network/shared filesystems may forbid bind mounts
+        // in a user namespace. The fixture and its mount die with this child.
+        let fixture = tempfile::tempdir().unwrap();
+        let source = fixture.path().join("source");
+        let root = fixture.path().join("root");
+        let target = root.join("bound");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&target).unwrap();
+        fs::write(source.join("outside"), b"must not count").unwrap();
+        fs::write(root.join("inside"), b"x").unwrap();
+        let source_c = CString::new(source.as_os_str().as_bytes()).unwrap();
+        let target_c = CString::new(target.as_os_str().as_bytes()).unwrap();
+        assert_eq!(
+            unsafe {
+                libc::mount(
+                    source_c.as_ptr(),
+                    target_c.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_BIND,
+                    std::ptr::null(),
+                )
+            },
+            0,
+            "{}",
+            std::io::Error::last_os_error()
+        );
+        let result = scan(&root, &mut Interaction, &AtomicBool::new(false));
+        assert_eq!(unsafe { libc::umount2(target_c.as_ptr(), 0) }, 0);
+        let snapshot = result.unwrap();
+        assert!(snapshot.notices[0].contains("1 unique files; 1 logical bytes"));
+        assert!(snapshot.notices[1].contains("and 1 other mounts"));
     }
     #[test]
     fn count_sort_and_file_actions_preserve_scan_identity() {

@@ -924,14 +924,23 @@ impl From<PathResolutionError> for PlatformError {
 }
 
 pub fn default_file_attributes(path: &Path) -> Result<FileAttributes, PlatformError> {
-    let metadata = fs::metadata(path).map_err(|error| {
-        PlatformError::from_io("read file attributes", Some(path.to_path_buf()), &error)
-    })?;
+    inspect_file_attributes(path).map(|(attributes, _)| attributes)
+}
+
+fn inspect_file_attributes(path: &Path) -> Result<(FileAttributes, fs::Metadata), PlatformError> {
     let link_metadata = fs::symlink_metadata(path).map_err(|error| {
         PlatformError::from_io("read file attributes", Some(path.to_path_buf()), &error)
     })?;
+    let symlink = link_metadata.file_type().is_symlink();
+    let metadata = if symlink || cfg!(windows) {
+        fs::metadata(path).map_err(|error| {
+            PlatformError::from_io("read file attributes", Some(path.to_path_buf()), &error)
+        })?
+    } else {
+        link_metadata
+    };
 
-    Ok(FileAttributes {
+    let attributes = FileAttributes {
         path: path.to_path_buf(),
         is_file: metadata.is_file(),
         is_dir: metadata.is_dir(),
@@ -941,16 +950,40 @@ pub fn default_file_attributes(path: &Path) -> Result<FileAttributes, PlatformEr
         hidden: is_dotfile(path),
         system: false,
         archive: false,
-        symlink: link_metadata.file_type().is_symlink(),
+        symlink,
         junction: false,
         reparse_point: false,
         shortcut: false,
-    })
+    };
+    Ok((attributes, metadata))
 }
 
 pub fn default_read_directory<P: Platform + ?Sized>(
     platform: &P,
     path: &Path,
+) -> Result<DirectoryListing, PlatformError> {
+    read_directory_with(path, |entry_path| {
+        let attributes = platform.file_attributes(entry_path)?;
+        let policy = platform.file_open_policy(entry_path, &attributes);
+        Ok((attributes, policy))
+    })
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_read_directory(path: &Path) -> Result<DirectoryListing, PlatformError> {
+    use std::os::unix::fs::PermissionsExt;
+    read_directory_with(path, |entry_path| {
+        let (attributes, metadata) = inspect_file_attributes(entry_path)?;
+        let policy = file_open_policy_with(PlatformKind::Linux, entry_path, &attributes, || {
+            metadata.permissions().mode() & 0o111 != 0
+        });
+        Ok((attributes, policy))
+    })
+}
+
+fn read_directory_with(
+    path: &Path,
+    mut inspect: impl FnMut(&Path) -> Result<(FileAttributes, FileOpenPolicy), PlatformError>,
 ) -> Result<DirectoryListing, PlatformError> {
     let directory = fs::read_dir(path).map_err(|error| {
         PlatformError::from_io("read directory", Some(path.to_path_buf()), &error)
@@ -971,9 +1004,8 @@ pub fn default_read_directory<P: Platform + ?Sized>(
         };
         let entry_path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        match platform.file_attributes(&entry_path) {
-            Ok(attributes) => {
-                let open_policy = platform.file_open_policy(&entry_path, &attributes);
+        match inspect(&entry_path) {
+            Ok((attributes, open_policy)) => {
                 entries.push(DirectoryEntryMetadata {
                     path: entry_path,
                     name,
@@ -1086,6 +1118,15 @@ pub fn default_file_open_policy(
     path: &Path,
     attributes: &FileAttributes,
 ) -> FileOpenPolicy {
+    file_open_policy_with(kind, path, attributes, || native_executable_bit(path))
+}
+
+fn file_open_policy_with(
+    kind: PlatformKind,
+    path: &Path,
+    attributes: &FileAttributes,
+    executable: impl FnOnce() -> bool,
+) -> FileOpenPolicy {
     if attributes.symlink || attributes.junction || attributes.reparse_point {
         return FileOpenPolicy::blocked(
             "symbolic links and reparse points are blocked until safe path traversal is available",
@@ -1103,7 +1144,7 @@ pub fn default_file_open_policy(
         PlatformKind::Windows => windows_file_open_policy(path, attributes),
         PlatformKind::Macos => macos_file_open_policy(path, attributes),
         PlatformKind::Linux | PlatformKind::Unsupported => {
-            unix_like_file_open_policy(kind, path, attributes)
+            unix_like_file_open_policy(kind, path, attributes, executable)
         }
     }
 }
@@ -1187,10 +1228,11 @@ pub(crate) fn macos_file_open_policy(path: &Path, attributes: &FileAttributes) -
     FileOpenPolicy::system_default()
 }
 
-pub(crate) fn unix_like_file_open_policy(
+fn unix_like_file_open_policy(
     kind: PlatformKind,
     path: &Path,
     attributes: &FileAttributes,
+    executable: impl FnOnce() -> bool,
 ) -> FileOpenPolicy {
     if !attributes.is_file {
         return FileOpenPolicy::system_default();
@@ -1203,20 +1245,27 @@ pub(crate) fn unix_like_file_open_policy(
         );
     }
 
-    if extension_is(path, &["appimage"]) || is_elf(path) {
+    if extension_is(path, &["appimage"]) {
+        return FileOpenPolicy::launcher_required(
+            ExecutableKind::NativeBinary,
+            "native executable files must be opened through Launcher",
+        );
+    }
+    let magic = executable_magic(path);
+    if magic.starts_with(b"\x7fELF") {
         return FileOpenPolicy::launcher_required(
             ExecutableKind::NativeBinary,
             "native executable files must be opened through Launcher",
         );
     }
 
-    if has_shebang(path)
-        || (native_executable_bit(path)
-            && extension_is(
-                path,
-                &["run", "sh", "bash", "zsh", "fish", "py", "rb", "pl"],
-            ))
-    {
+    let script_extension = extension_is(
+        path,
+        &["run", "sh", "bash", "zsh", "fish", "py", "rb", "pl"],
+    );
+    // Ordinary Linux documents do not need another metadata lookup at all.
+    let executable = (script_extension || kind != PlatformKind::Linux) && executable();
+    if magic.starts_with(b"#!") || (executable && script_extension) {
         return FileOpenPolicy::launcher_required(
             ExecutableKind::Script,
             "executable scripts must be opened through Launcher",
@@ -1225,7 +1274,7 @@ pub(crate) fn unix_like_file_open_policy(
 
     // Execute bits alone do not identify a Linux program: shared filesystems
     // and copied files can give ordinary documents the same permissions.
-    if kind != PlatformKind::Linux && native_executable_bit(path) {
+    if kind != PlatformKind::Linux && executable {
         return FileOpenPolicy::launcher_required(
             ExecutableKind::NativeBinary,
             "executable files must be opened through Launcher",
@@ -1321,18 +1370,28 @@ pub fn native_platform() -> Box<dyn Platform> {
     }
 }
 
-fn is_elf(path: &Path) -> bool {
+fn executable_magic(path: &Path) -> [u8; 4] {
     let mut magic = [0_u8; 4];
-    fs::File::open(path)
-        .and_then(|mut file| file.read_exact(&mut magic))
-        .is_ok()
-        && magic == *b"\x7fELF"
-}
-
-fn has_shebang(path: &Path) -> bool {
-    let mut magic = [0_u8; 2];
-    fs::File::open(path)
-        .and_then(|mut file| file.read_exact(&mut magic))
-        .is_ok()
-        && magic == *b"#!"
+    // One open/read handles both ELF and shebang, including a two-byte file.
+    // Nonblocking + no-follow also avoid hanging if an entry is replaced by
+    // a FIFO or following a final symlink between enumeration and this read.
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    }
+    if let Ok(mut file) = options.open(path) {
+        let mut count = 0;
+        while count < magic.len() {
+            match file.read(&mut magic[count..]) {
+                Ok(0) => break,
+                Ok(read) => count += read,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+    }
+    magic
 }
