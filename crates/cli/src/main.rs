@@ -5,6 +5,9 @@ use watchdog::{
     RecoveryOutcome, WatchdogConfig, WatchdogRuntime,
 };
 
+#[cfg(target_os = "linux")]
+mod embedded_children_linux;
+
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     #[cfg(target_os = "linux")]
@@ -82,6 +85,11 @@ fn main() {
         std::process::exit(exit_code);
     }
     let parent_managed = is_parent_managed_command_line(&args);
+    #[cfg(target_os = "linux")]
+    if parent_managed && let Err(error) = embedded_children_linux::enable() {
+        eprintln!("tundra-cli could not contain embedded commands: {error}");
+        std::process::exit(3);
+    }
     let (watchdog_runtime, process_watchdog) = match start_watchdog(parent_managed) {
         Ok(value) => value,
         Err(error) => {
@@ -141,7 +149,17 @@ fn main() {
         }
     };
 
-    let _ = watchdog_runtime.shutdown();
+    let shutdown = || {
+        let _ = watchdog_runtime.shutdown();
+    };
+    #[cfg(target_os = "linux")]
+    if parent_managed {
+        embedded_children_linux::finish(shutdown);
+    } else {
+        shutdown();
+    }
+    #[cfg(not(target_os = "linux"))]
+    shutdown();
     std::process::exit(exit_code);
 }
 

@@ -13,6 +13,8 @@
 
 普通输入交给系统命令解释器，UX 命令必须加 `/`。命令行保留当前会话的目录和已导出环境变量，不改变主进程或系统配置。
 
+Linux 内建 Command Line 会继续管理脱离终端会话的后代进程；正常 `exit` 先请求它们结束并等清理完成，忽略 TERM 的进程需要通过右上角按钮确认终止。
+
 - [命令、配置与 REPL](docs/commands.md)
 - [运维命令、系统授权和退出码](docs/operations.md)
 - [日志查询、跟随和导出](../runtime-log/docs/logs.md)

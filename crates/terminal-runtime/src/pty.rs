@@ -15,6 +15,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use watchdog::{ManagedTaskGroup, ManagedThreadHandle, TaskId, TaskSpec};
+#[cfg(target_os = "linux")]
+#[path = "process_tree_linux.rs"]
+mod process_tree_linux;
 
 #[cfg(test)]
 use ui::KeyModifiers as InputModifiers;
@@ -309,18 +312,24 @@ impl CommandLinePty {
         self.write(&[0x03])
     }
 
-    /// Terminates the platform containment boundary first, then the direct
-    /// PTY child as a fallback if the boundary is already gone.
+    /// Terminates all processes belonging to this terminal. On Linux a tree
+    /// inspection or permission failure is reported instead of silently killing
+    /// only the direct child and leaving its other jobs behind.
     pub fn force_terminate(&self) -> io::Result<()> {
         match self.process_tree.terminate() {
             Ok(()) => Ok(()),
             Err(containment_error) => {
-                let mut child = lock_io(&self.child)?;
-                child.kill().map_err(|child_error| {
+                #[cfg(target_os = "linux")]
+                return Err(containment_error);
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let mut child = lock_io(&self.child)?;
+                    child.kill().map_err(|child_error| {
                     io::Error::other(format!(
                         "process-tree termination failed ({containment_error}); direct child termination also failed ({child_error})"
                     ))
                 })
+                }
             }
         }
     }
@@ -384,7 +393,7 @@ fn next_reader_task_spec() -> io::Result<TaskSpec> {
 }
 
 /// Keeps all descendants of the embedded CLI in a platform containment
-/// boundary so the emergency shortcut cannot leave `/` commands behind.
+/// boundary so closing a terminal cannot leave commands running behind it.
 #[cfg(windows)]
 struct ProcessTreeGuard {
     job: windows_sys::Win32::Foundation::HANDLE,
@@ -450,7 +459,10 @@ impl Drop for ProcessTreeGuard {
 
 #[cfg(unix)]
 struct ProcessTreeGuard {
+    #[cfg(not(target_os = "linux"))]
     process_group: Option<libc::pid_t>,
+    #[cfg(target_os = "linux")]
+    linux: process_tree_linux::LinuxProcessTree,
 }
 
 #[cfg(unix)]
@@ -472,23 +484,31 @@ impl ProcessTreeGuard {
             ));
         }
         Ok(Self {
+            #[cfg(not(target_os = "linux"))]
             process_group: Some(process_group),
+            #[cfg(target_os = "linux")]
+            linux: process_tree_linux::LinuxProcessTree::attach(process_group)?,
         })
     }
 
     fn terminate(&self) -> io::Result<()> {
-        let Some(process_group) = self.process_group else {
-            return Err(io::Error::other("child process group is unavailable"));
-        };
-        // A broken PTY backend must never cause the Shell to kill its own
-        // foreground group.
-        if process_group <= 0 || process_group == std::process::id() as libc::pid_t {
-            return Err(io::Error::other("child process group is unsafe"));
-        }
-        if unsafe { libc::kill(-process_group, libc::SIGKILL) } == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
+        #[cfg(target_os = "linux")]
+        return self.linux.terminate();
+        #[cfg(not(target_os = "linux"))]
+        {
+            let Some(process_group) = self.process_group else {
+                return Err(io::Error::other("child process group is unavailable"));
+            };
+            // A broken PTY backend must never cause the Shell to kill its own
+            // foreground group.
+            if process_group <= 0 || process_group == std::process::id() as libc::pid_t {
+                return Err(io::Error::other("child process group is unsafe"));
+            }
+            if unsafe { libc::kill(-process_group, libc::SIGKILL) } == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
         }
     }
 }
