@@ -577,6 +577,39 @@ pub trait Platform: Send + Sync {
         }
         Ok(exit)
     }
+    /// Waits for an isolated child tree and reaps it before returning on cancellation.
+    fn spawn_wait_cancellable(
+        &self,
+        spec: &ProcessSpec,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<ProcessExit, PlatformError> {
+        if cancelled() {
+            return Err(crate::process::cancelled_process(spec));
+        }
+        Err(PlatformError::Unsupported {
+            capability: "spawn_wait_cancellable",
+        })
+    }
+
+    /// Streams output without blocking cancellation on a quiet or inherited pipe.
+    fn spawn_streaming_cancellable(
+        &self,
+        spec: &ProcessSpec,
+        cancelled: &dyn Fn() -> bool,
+        report: &mut dyn FnMut(crate::ProcessOutput),
+    ) -> Result<ProcessExit, PlatformError> {
+        let exit = self.spawn_wait_cancellable(spec, cancelled)?;
+        for (stderr, output) in [(false, &exit.stdout), (true, &exit.stderr)] {
+            for text in output.utf8_lossy().lines() {
+                report(crate::ProcessOutput {
+                    stderr,
+                    text: text.to_owned(),
+                });
+            }
+        }
+        Ok(exit)
+    }
+
     fn read_clipboard_text(&self) -> Result<String, PlatformError>;
     fn write_clipboard_text(&self, text: &str) -> Result<(), PlatformError>;
 

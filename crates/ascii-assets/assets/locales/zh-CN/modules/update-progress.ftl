@@ -11,3 +11,6 @@ progress-phase-staging = 正在暂存更新
 progress-phase-replacing = 正在准备替换
 progress-phase-restart = 等待重新启动
 progress-phase-failed = 更新失败
+progress-phase-cancelling = 正在取消更新
+progress-phase-cancelled = 更新已取消
+settings-update-cancelling = 正在取消更新并清理临时文件

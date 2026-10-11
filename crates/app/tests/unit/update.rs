@@ -4,6 +4,10 @@ use platform::ProcessStream;
 use std::cell::Cell;
 use std::io::Write;
 
+#[cfg(any(windows, target_os = "linux"))]
+#[path = "update_marker_failure.rs"]
+mod marker_write_failure;
+
 fn mark_portable_fixture(install: &Path) {
     #[cfg(target_os = "linux")]
     {
@@ -79,7 +83,8 @@ fn update_zip_rejects_parent_traversal() {
         writer.finish().unwrap();
     }
     let root = std::env::temp_dir().join(format!("tundra-update-zip-{}", std::process::id()));
-    let error = extract_archive(cursor.get_ref(), &root).unwrap_err();
+    let error =
+        extract_archive(cursor.get_ref(), &root, &UpdateCancellation::default()).unwrap_err();
     assert!(error.to_string().contains("unsafe path"));
     let _ = fs::remove_dir_all(root);
 }
@@ -282,9 +287,12 @@ fn update_source_download_uses_codeload_pinned_to_a_full_sha() {
 fn update_download_reports_known_unknown_and_truncated_lengths() {
     for total in [Some(6), None] {
         let mut events = Vec::new();
-        let bytes = download_source(Cursor::new(b"source"), total, &mut |event| {
-            events.push(event)
-        })
+        let bytes = download_source(
+            Cursor::new(b"source"),
+            total,
+            &mut |event| events.push(event),
+            &UpdateCancellation::default(),
+        )
         .unwrap();
         assert_eq!(bytes, b"source");
         assert_eq!(
@@ -298,8 +306,12 @@ fn update_download_reports_known_unknown_and_truncated_lengths() {
     }
     let mut events = Vec::new();
     assert!(
-        download_source(Cursor::new(b"short"), Some(9), &mut |event| events
-            .push(event))
+        download_source(
+            Cursor::new(b"short"),
+            Some(9),
+            &mut |event| events.push(event),
+            &UpdateCancellation::default()
+        )
         .is_err()
     );
     assert!(!events.iter().any(|event| matches!(
@@ -339,10 +351,15 @@ fn update_preparation_uses_disk_cache_and_cleans_failed_work() {
         commits: Vec::new(),
     };
     assert!(
-        prepare_portable_update(&platform, &check, &mut |_| {})
-            .unwrap_err()
-            .to_string()
-            .contains("invalid source commit")
+        prepare_portable_update(
+            &platform,
+            &check,
+            &mut |_| {},
+            &UpdateCancellation::default()
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("invalid source commit")
     );
     assert!(!root.join("runtime-tmpfs").exists());
     let updates = paths.cache_path().join("updates");
@@ -734,5 +751,92 @@ fn unrecognized_installation_cannot_stage_or_recover_portable_replacement() {
     assert!(!root.join(".tundra-update").exists());
     // Test binaries have no official portable marker or tundraux3 RPM ownership.
     assert!(check_for_updates(&current_build_identity()).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_cancelled_staging_cannot_be_applied_after_cleanup_failure() {
+    let (root, path, manifest) = transaction_fixture("cancel-cleanup-failure");
+    write_manifest(&path, &manifest).unwrap();
+    let error = cancellation::discard_staged_update_with_cleanup(&path, &|retained| {
+        Err(UpdateError::new(format!(
+            "Injected cleanup failure; retained {}",
+            retained.display()
+        )))
+    })
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains(&manifest.transaction_dir.display().to_string())
+    );
+    assert_eq!(
+        load_manifest(&path).unwrap().state,
+        TransactionState::Cancelled
+    );
+    assert!(
+        !scan_update_recovery(&manifest.install_dir, 42, &|_, _, _| {
+            panic!("a cancelled transaction must never launch its helper")
+        })
+        .unwrap()
+    );
+    assert_old_install_preserved(&manifest);
+    assert!(!manifest.transaction_dir.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_cancel_only_discards_unapplied_transactions() {
+    let (root, path, mut manifest) = transaction_fixture("cancel-after-handoff");
+    manifest.state = TransactionState::Applying;
+    write_manifest(&path, &manifest).unwrap();
+    assert!(discard_staged_update(&path).is_err());
+    assert_eq!(
+        load_manifest(&path).unwrap().state,
+        TransactionState::Applying
+    );
+    assert!(manifest.transaction_dir.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn update_stage_cancellation_retains_typed_manifest_when_marker_write_fails() {
+    let (root, path, manifest) = transaction_fixture("cancel-marker-write-failure");
+    let mut owned = WorkDirectory::new(manifest.transaction_dir.clone());
+    let error = marker_write_failure::with_blocked_write(&root, &path, || {
+        finish_staged_update(&mut owned, Err(UpdateError::cancelled())).unwrap_err()
+    });
+    drop(owned);
+    assert!(
+        error
+            .to_string()
+            .contains("could not save update transaction")
+    );
+    assert_eq!(error.retained_staging(), Some(path.as_path()));
+    assert!(!error.is_cancelled());
+    assert_eq!(
+        load_manifest(&path).unwrap().state,
+        TransactionState::Prepared
+    );
+    assert_old_install_preserved(&manifest);
+    // Both directions of cleanup-error merging, and added context, retain the
+    // path instead of turning it into a display-only error.
+    let error = error
+        .context("prepare failed")
+        .with_cleanup_failure(UpdateError::new("source cleanup failed"));
+    assert_eq!(error.retained_staging(), Some(path.as_path()));
+    let error = UpdateError::new("source cleanup failed").with_cleanup_failure(error);
+    assert_eq!(error.retained_staging(), Some(path.as_path()));
+    mark_staged_update_cancelled(error.retained_staging().unwrap()).unwrap();
+    assert!(
+        !scan_update_recovery(&manifest.install_dir, 42, &|_, _, _| {
+            panic!("retry-cancelled staging must never launch the helper")
+        })
+        .unwrap()
+    );
+    assert!(!manifest.transaction_dir.exists());
     fs::remove_dir_all(root).unwrap();
 }

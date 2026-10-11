@@ -6,6 +6,7 @@ fn update_git_reads_history_without_a_checkout_or_api() {
     fs::create_dir_all(&root).unwrap();
     let git = Git {
         work: root.clone(),
+        cancel: UpdateCancellation::default(),
         deadline: Instant::now() + Duration::from_secs(60),
     };
     git.run(&["init", "--bare", "--initial-branch=master", "history"])
@@ -62,6 +63,7 @@ fn update_git_reads_history_without_a_checkout_or_api() {
             },
             remote.as_str(),
             &work,
+            &UpdateCancellation::default(),
         )
         .unwrap();
         assert_eq!(result.default_branch, "master");
@@ -80,6 +82,7 @@ fn update_git_reads_history_without_a_checkout_or_api() {
 fn update_git_expired_deadline_does_not_launch_a_command() {
     let git = Git {
         work: PathBuf::new(),
+        cancel: UpdateCancellation::default(),
         deadline: Instant::now(),
     };
     assert!(
@@ -88,4 +91,27 @@ fn update_git_expired_deadline_does_not_launch_a_command() {
             .to_string()
             .contains("timed out")
     );
+}
+
+#[test]
+fn update_git_fallback_cancels_its_shell_and_descendants() {
+    let root = super::super::tests::update_test_root("git-cancel");
+    fs::create_dir_all(&root).unwrap();
+    let cancel = UpdateCancellation::default();
+    let worker_cancel = cancel.clone();
+    let git = Git {
+        work: root.clone(),
+        deadline: Instant::now() + Duration::from_secs(60),
+        cancel,
+    };
+    let request = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        worker_cancel.cancel();
+    });
+    let started = Instant::now();
+    let result = git.run(&["-c", "alias.wait-update=!sleep 30", "wait-update"]);
+    request.join().unwrap();
+    assert!(result.unwrap_err().is_cancelled());
+    assert!(started.elapsed() < Duration::from_secs(3));
+    fs::remove_dir_all(root).unwrap();
 }

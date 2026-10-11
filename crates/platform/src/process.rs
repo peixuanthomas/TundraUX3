@@ -17,6 +17,7 @@ pub struct ProcessSpec {
     args: Vec<String>,
     current_dir: Option<PathBuf>,
     env: BTreeMap<String, String>,
+    removed_env: Vec<String>,
 }
 
 impl ProcessSpec {
@@ -26,6 +27,7 @@ impl ProcessSpec {
             args: Vec::new(),
             current_dir: None,
             env: BTreeMap::new(),
+            removed_env: Vec::new(),
         }
     }
 
@@ -50,6 +52,11 @@ impl ProcessSpec {
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn env_remove(mut self, key: impl Into<String>) -> Self {
+        self.removed_env.push(key.into());
         self
     }
 
@@ -166,6 +173,9 @@ fn command_from_spec(spec: &ProcessSpec) -> Result<Command, PlatformError> {
         command.current_dir(current_dir);
     }
 
+    for key in &spec.removed_env {
+        command.env_remove(key);
+    }
     for (key, value) in &spec.env {
         command.env(key, value);
     }
@@ -188,102 +198,7 @@ pub(crate) fn spawn_streaming_impl(
     reject_windows_scripts: bool,
     report: &mut dyn FnMut(ProcessOutput),
 ) -> Result<ProcessExit, PlatformError> {
-    use std::io::Read;
-    validate_process_spec(spec, reject_windows_scripts)?;
-    let error = |error: std::io::Error| PlatformError::Io {
-        operation: "stream process output",
-        path: Some(spec.program.clone()),
-        message: error.to_string(),
-    };
-    let mut child = command_from_spec(spec)?
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(error)?;
-    let stdout = child.stdout.take().expect("piped stdout");
-    let stderr = child.stderr.take().expect("piped stderr");
-    let (tx, rx) = std::sync::mpsc::sync_channel(128);
-    let read_stream =
-        |mut stream: Box<dyn Read + Send>,
-         is_stderr,
-         tx: std::sync::mpsc::SyncSender<Result<ProcessOutput, std::io::Error>>| {
-            let mut pending = Vec::new();
-            let mut buffer = [0u8; 4096];
-            loop {
-                match stream.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(count) => {
-                        for byte in &buffer[..count] {
-                            if matches!(*byte, b'\r' | b'\n') || pending.len() >= 8192 {
-                                if !pending.is_empty() {
-                                    let event = ProcessOutput {
-                                        stderr: is_stderr,
-                                        text: String::from_utf8_lossy(&pending).into_owned(),
-                                    };
-                                    if tx.send(Ok(event)).is_err() {
-                                        return;
-                                    }
-                                    pending.clear();
-                                }
-                                if matches!(*byte, b'\r' | b'\n') {
-                                    continue;
-                                }
-                            }
-                            pending.push(*byte);
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                    Err(error) => {
-                        let _ = tx.send(Err(error));
-                        break;
-                    }
-                }
-            }
-            if !pending.is_empty() {
-                let _ = tx.send(Ok(ProcessOutput {
-                    stderr: is_stderr,
-                    text: String::from_utf8_lossy(&pending).into_owned(),
-                }));
-            }
-        };
-    let result = std::thread::scope(|scope| {
-        let out_tx = tx.clone();
-        let err_tx = tx.clone();
-        scope.spawn(move || read_stream(Box::new(stdout), false, out_tx));
-        scope.spawn(move || read_stream(Box::new(stderr), true, err_tx));
-        drop(tx);
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let mut read_error = None;
-        for event in rx {
-            match event {
-                Ok(event) => {
-                    let tail = if event.stderr { &mut err } else { &mut out };
-                    tail.extend_from_slice(event.text.as_bytes());
-                    tail.push(b'\n');
-                    if tail.len() > 65536 {
-                        tail.drain(..tail.len() - 65536);
-                    }
-                    report(event);
-                }
-                Err(error) => {
-                    read_error = Some(error);
-                    let _ = child.kill();
-                }
-            }
-        }
-        (out, err, read_error)
-    });
-    let status = child.wait().map_err(error)?;
-    if let Some(read_error) = result.2 {
-        return Err(error(read_error));
-    }
-    Ok(ProcessExit {
-        code: status.code(),
-        stdout: ProcessStream::from_bytes(result.0),
-        stderr: ProcessStream::from_bytes(result.1),
-    })
+    spawn_cancellable_impl(spec, reject_windows_scripts, &|| false, Some(report))
 }
 
 fn is_blocked_windows_script(program: &Path) -> bool {
@@ -299,6 +214,373 @@ fn is_blocked_windows_script(program: &Path) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn cancelled_process(spec: &ProcessSpec) -> PlatformError {
+    PlatformError::Interrupted {
+        operation: "run process",
+        path: Some(spec.program.clone()),
+        message: "process cancelled; child tree stopped".into(),
+    }
+}
+
+/// Both pipes are polled by the owning managed worker. No reader thread can
+/// survive cancellation or hang on a descriptor inherited by a grandchild.
+pub(crate) fn spawn_cancellable_impl(
+    spec: &ProcessSpec,
+    reject_windows_scripts: bool,
+    cancelled: &dyn Fn() -> bool,
+    mut report: Option<&mut dyn FnMut(ProcessOutput)>,
+) -> Result<ProcessExit, PlatformError> {
+    validate_process_spec(spec, reject_windows_scripts)?;
+    if cancelled() {
+        return Err(cancelled_process(spec));
+    }
+    let error = |error: std::io::Error| PlatformError::Io {
+        operation: "run cancellable process",
+        path: Some(spec.program.clone()),
+        message: error.to_string(),
+    };
+    let mut command = command_from_spec(spec)?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(
+            windows_sys::Win32::System::Threading::CREATE_SUSPENDED
+                | windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
+        );
+    }
+    let child = command.spawn().map_err(error)?;
+    let mut tree = ChildTree::new(child).map_err(error)?;
+    let mut stdout = tree.child.stdout.take().expect("piped stdout");
+    let mut stderr = tree.child.stderr.take().expect("piped stderr");
+    make_nonblocking(&stdout).map_err(error)?;
+    make_nonblocking(&stderr).map_err(error)?;
+    let streaming = report.is_some();
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut out_pending = Vec::new();
+    let mut err_pending = Vec::new();
+    let mut buffer = [0; 16 * 1024];
+    loop {
+        if cancelled() {
+            tree.stop().map_err(error)?;
+            return Err(cancelled_process(spec));
+        }
+        // Bound work per iteration even when a process continuously fills a pipe.
+        for (is_stderr, pipe, bytes, pending) in [
+            (
+                false,
+                &mut stdout as &mut dyn PollPipe,
+                &mut out,
+                &mut out_pending,
+            ),
+            (
+                true,
+                &mut stderr as &mut dyn PollPipe,
+                &mut err,
+                &mut err_pending,
+            ),
+        ] {
+            for _ in 0..16 {
+                if !pipe.readable().map_err(error)? {
+                    break;
+                }
+                let count = match pipe.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => count,
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        break;
+                    }
+                    Err(e) => return Err(error(e)),
+                };
+                bytes.extend_from_slice(&buffer[..count]);
+                if streaming && bytes.len() > 65536 {
+                    bytes.drain(..bytes.len() - 65536);
+                }
+                if let Some(report) = report.as_mut() {
+                    for byte in &buffer[..count] {
+                        if matches!(*byte, b'\r' | b'\n') || pending.len() >= 8192 {
+                            emit_pending(pending, is_stderr, *report);
+                            if matches!(*byte, b'\r' | b'\n') {
+                                continue;
+                            }
+                        }
+                        pending.push(*byte);
+                    }
+                }
+            }
+        }
+        if let Some(status) = tree.child.try_wait().map_err(error)? {
+            // Stop any descendants retaining pipes before the last drain.
+            tree.stop_descendants().map_err(error)?;
+            for (is_stderr, pipe, bytes, pending) in [
+                (
+                    false,
+                    &mut stdout as &mut dyn PollPipe,
+                    &mut out,
+                    &mut out_pending,
+                ),
+                (
+                    true,
+                    &mut stderr as &mut dyn PollPipe,
+                    &mut err,
+                    &mut err_pending,
+                ),
+            ] {
+                while pipe.readable().map_err(error)? {
+                    match pipe.read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(count) => {
+                            bytes.extend_from_slice(&buffer[..count]);
+                            pending.extend_from_slice(&buffer[..count]);
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(e) => return Err(error(e)),
+                    }
+                }
+                if let Some(report) = report.as_mut() {
+                    emit_pending(pending, is_stderr, *report);
+                }
+                if streaming && bytes.len() > 65536 {
+                    bytes.drain(..bytes.len() - 65536);
+                }
+            }
+            tree.finished = true;
+            if cancelled() {
+                return Err(cancelled_process(spec));
+            }
+            return Ok(ProcessExit {
+                code: status.code(),
+                stdout: ProcessStream::from_bytes(out),
+                stderr: ProcessStream::from_bytes(err),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn emit_pending(pending: &mut Vec<u8>, stderr: bool, report: &mut dyn FnMut(ProcessOutput)) {
+    if !pending.is_empty() {
+        report(ProcessOutput {
+            stderr,
+            text: String::from_utf8_lossy(pending).into_owned(),
+        });
+        pending.clear();
+    }
+}
+
+trait PollPipe: std::io::Read {
+    fn readable(&self) -> std::io::Result<bool>;
+}
+
+#[cfg(unix)]
+fn make_nonblocking(pipe: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
+    let fd = pipe.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+impl<T: std::io::Read> PollPipe for T {
+    fn readable(&self) -> std::io::Result<bool> {
+        Ok(true)
+    }
+}
+
+#[cfg(windows)]
+fn make_nonblocking(_pipe: &impl std::os::windows::io::AsRawHandle) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
+impl<T: std::io::Read + std::os::windows::io::AsRawHandle> PollPipe for T {
+    fn readable(&self) -> std::io::Result<bool> {
+        let mut available = 0;
+        if unsafe {
+            windows_sys::Win32::System::Pipes::PeekNamedPipe(
+                self.as_raw_handle(),
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error()
+                == Some(windows_sys::Win32::Foundation::ERROR_BROKEN_PIPE as i32)
+            {
+                return Ok(false);
+            }
+            return Err(error);
+        }
+        Ok(available > 0)
+    }
+}
+
+struct ChildTree {
+    child: std::process::Child,
+    finished: bool,
+    #[cfg(windows)]
+    job: windows_sys::Win32::Foundation::HANDLE,
+}
+
+impl ChildTree {
+    fn new(mut child: std::process::Child) -> std::io::Result<Self> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::System::JobObjects::*;
+            // The process has not executed any user code yet, so no descendant
+            // can escape job assignment between spawn and assignment.
+            let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            let result = (|| {
+                if job.is_null() {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                    unsafe { std::mem::zeroed() };
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                if unsafe {
+                    SetInformationJobObject(
+                        job,
+                        JobObjectExtendedLimitInformation,
+                        &limits as *const _ as _,
+                        std::mem::size_of_val(&limits) as _,
+                    )
+                } == 0
+                    || unsafe { AssignProcessToJobObject(job, child.as_raw_handle()) } == 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                #[link(name = "ntdll")]
+                unsafe extern "system" {
+                    fn NtResumeProcess(process: windows_sys::Win32::Foundation::HANDLE) -> i32;
+                }
+                if unsafe { NtResumeProcess(child.as_raw_handle()) } < 0 {
+                    return Err(std::io::Error::other(
+                        "could not resume isolated child process",
+                    ));
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                let _ = child.kill();
+                let _ = child.wait();
+                if !job.is_null() {
+                    unsafe {
+                        windows_sys::Win32::Foundation::CloseHandle(job);
+                    }
+                }
+                return Err(error);
+            }
+            Ok(Self {
+                child,
+                finished: false,
+                job,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = &mut child;
+            Ok(Self {
+                child,
+                finished: false,
+            })
+        }
+    }
+
+    fn stop_descendants(&self) -> std::io::Result<()> {
+        #[cfg(unix)]
+        if unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) } < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error);
+            }
+        }
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::System::JobObjects::*;
+            if unsafe { TerminateJobObject(self.job, 1) } == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // TerminateJobObject is asynchronous. Keep the worker registered
+            // until descendants release executable and output file handles.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION =
+                    unsafe { std::mem::zeroed() };
+                if unsafe {
+                    QueryInformationJobObject(
+                        self.job,
+                        JobObjectBasicAccountingInformation,
+                        &mut accounting as *mut _ as _,
+                        std::mem::size_of_val(&accounting) as _,
+                        std::ptr::null_mut(),
+                    )
+                } == 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if accounting.ActiveProcesses == 0 {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(std::io::Error::other(
+                        "child job did not finish stopping within 10 seconds",
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self) -> std::io::Result<()> {
+        let stopped = self.stop_descendants();
+        if stopped.is_err() {
+            let _ = self.child.kill();
+        }
+        self.child.wait()?;
+        stopped?;
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for ChildTree {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self.stop();
+        }
+        #[cfg(windows)]
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.job);
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 #[path = "../tests/unit/process/streaming_tests.rs"]
 mod streaming_tests;
+
+#[cfg(test)]
+#[path = "../tests/unit/process/cancellation_tests.rs"]
+mod cancellation_tests;

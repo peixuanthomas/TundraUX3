@@ -4,8 +4,14 @@ use std::io::{self, Cursor, Read};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
+use http::{Client, Response};
 use platform::{Platform, PlatformKind, ProcessExit, ProcessSpec};
-use reqwest::blocking::{Client, Response};
+mod cancellation;
+mod http;
+pub use cancellation::{
+    UpdateCancellation, cleanup_update_work, discard_staged_update, mark_staged_update_cancelled,
+};
+use cancellation::{WorkDirectory, copy_file, copy_stream};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -111,6 +117,8 @@ pub enum UpdatePhase {
     Staging,
     PreparingReplacement,
     WaitingForRestart,
+    Cancelling,
+    Cancelled,
     Failed,
 }
 
@@ -149,13 +157,47 @@ pub struct PreparedUpdate {
 pub struct UpdateError {
     message: String,
     http_status: Option<u16>,
+    cancelled: bool,
+    retained_staging: Option<PathBuf>,
 }
 
 impl UpdateError {
+    pub fn with_cleanup_failure(self, cleanup: Self) -> Self {
+        let mut combined = Self::new(format!("{self}; {cleanup}"));
+        combined.retained_staging = self.retained_staging.or(cleanup.retained_staging);
+        combined
+    }
+    /// This manifest could not be safely marked cancelled. Keep it registered
+    /// and retry cancellation before allowing a new update or session exit.
+    pub fn retained_staging(&self) -> Option<&Path> {
+        self.retained_staging.as_deref()
+    }
+    fn with_retained_staging(mut self, path: &Path) -> Self {
+        self.retained_staging = Some(path.to_owned());
+        self
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
+    pub fn cancelled() -> Self {
+        Self {
+            message: "Update cancelled".into(),
+            http_status: None,
+            cancelled: true,
+            retained_staging: None,
+        }
+    }
+    fn context(mut self, context: &str) -> Self {
+        self.message = format!("{context}: {}", self.message);
+        self
+    }
+
     fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             http_status: None,
+            cancelled: false,
+            retained_staging: None,
         }
     }
 
@@ -163,6 +205,8 @@ impl UpdateError {
         Self {
             message: message.into(),
             http_status: Some(status),
+            cancelled: false,
+            retained_staging: None,
         }
     }
 }
@@ -174,7 +218,15 @@ impl fmt::Display for UpdateError {
 impl std::error::Error for UpdateError {}
 impl From<io::Error> for UpdateError {
     fn from(value: io::Error) -> Self {
-        Self::new(value.to_string())
+        if value
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<UpdateError>())
+            .is_some_and(UpdateError::is_cancelled)
+        {
+            Self::cancelled()
+        } else {
+            Self::new(value.to_string())
+        }
     }
 }
 
@@ -192,6 +244,7 @@ enum TransactionState {
     RollingBack,
     Committed,
     RolledBack,
+    Cancelled,
     Failed,
 }
 
@@ -243,36 +296,46 @@ pub fn check_for_updates_in_mode(
     identity: &BuildIdentity,
     mode: storage::LinuxUpdateMode,
 ) -> Result<UpdateCheckResult, UpdateError> {
+    check_for_updates_in_mode_cancellable(identity, mode, &UpdateCancellation::default())
+}
+
+pub fn check_for_updates_in_mode_cancellable(
+    identity: &BuildIdentity,
+    mode: storage::LinuxUpdateMode,
+    cancel: &UpdateCancellation,
+) -> Result<UpdateCheckResult, UpdateError> {
+    cancel.check()?;
     require_current_portable_installation()?;
     #[cfg(target_os = "linux")]
     if mode == storage::LinuxUpdateMode::Release {
-        return release::check(identity, API_ROOT);
+        return release::check(identity, API_ROOT, cancel);
     }
     let _ = mode;
-    check_with_fallback(identity, API_ROOT, || git::check(identity))
+    check_with_fallback(identity, API_ROOT, || git::check(identity, cancel), cancel)
 }
 
 fn check_with_fallback(
     identity: &BuildIdentity,
     api_root: &str,
     fallback: impl FnOnce() -> Result<UpdateCheckResult, UpdateError>,
+    cancel: &UpdateCancellation,
 ) -> Result<UpdateCheckResult, UpdateError> {
-    check_using_api(identity, api_root).or_else(|api_error| {
-        fallback().map_err(|git_error| {
-            UpdateError::new(format!("{api_error}; Git fallback failed: {git_error}"))
-        })
+    check_using_api(identity, api_root, cancel).or_else(|api_error| {
+        cancel.check()?;
+        if api_error.is_cancelled() {
+            return Err(api_error);
+        }
+        fallback()
+            .map_err(|git_error| git_error.context(&format!("{api_error}; Git fallback failed")))
     })
 }
 
 fn check_using_api(
     identity: &BuildIdentity,
     api_root: &str,
+    cancel: &UpdateCancellation,
 ) -> Result<UpdateCheckResult, UpdateError> {
-    let client = Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| UpdateError::new(format!("could not create GitHub client: {e}")))?;
+    let client = Client::new(Duration::from_secs(20), cancel)?;
     #[cfg(not(target_os = "linux"))]
     let repository: Repository = get_json(
         &client,
@@ -388,10 +451,10 @@ fn get_json<T: serde::de::DeserializeOwned>(client: &Client, url: &str) -> Resul
         client
             .get(url)
             .send()
-            .map_err(|e| UpdateError::new(format!("GitHub request failed: {e}")))?,
+            .map_err(|e| e.context("GitHub request failed"))?,
     )?
     .json()
-    .map_err(|e| UpdateError::new(format!("GitHub returned invalid JSON: {e}")))
+    .map_err(|e| e.context("GitHub returned invalid JSON"))
 }
 
 fn checked(response: Response) -> Result<Response, UpdateError> {
@@ -404,7 +467,7 @@ fn checked(response: Response) -> Result<Response, UpdateError> {
             .headers()
             .get("x-ratelimit-remaining")
             .is_some_and(|v| v == "0");
-    let body = response.text().unwrap_or_default();
+    let body = response.text()?;
     if limited {
         Err(UpdateError::http(
             status.as_u16(),
@@ -432,6 +495,16 @@ pub fn prepare_update(
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
 ) -> Result<PreparedUpdate, UpdateError> {
+    prepare_update_cancellable(platform, check, progress, &UpdateCancellation::default())
+}
+
+pub fn prepare_update_cancellable(
+    platform: &dyn Platform,
+    check: &UpdateCheckResult,
+    progress: &mut dyn FnMut(UpdateProgress),
+    cancel: &UpdateCancellation,
+) -> Result<PreparedUpdate, UpdateError> {
+    cancel.check()?;
     require_current_portable_installation()?;
     if !supports_updates(platform.kind()) {
         return Err(UpdateError::new(
@@ -440,9 +513,9 @@ pub fn prepare_update(
     }
     #[cfg(target_os = "linux")]
     if check.release.is_some() {
-        return release::prepare(platform, check, progress);
+        return release::prepare(platform, check, progress, cancel);
     }
-    prepare_portable_update(platform, check, progress)
+    prepare_portable_update(platform, check, progress, cancel)
 }
 
 // Called only after installation provenance is checked at the public boundary.
@@ -450,7 +523,9 @@ fn prepare_portable_update(
     platform: &dyn Platform,
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
+    cancel: &UpdateCancellation,
 ) -> Result<PreparedUpdate, UpdateError> {
+    cancel.check()?;
     notify(
         progress,
         UpdatePhase::Downloading,
@@ -463,12 +538,9 @@ fn prepare_portable_update(
         .map_err(|error| UpdateError::new(format!("could not resolve update cache: {error}")))?;
     let work_dir = platform::create_temp_dir(&cache.cache_path().join("updates"), "update")
         .map_err(|e| UpdateError::new(format!("could not create private update directory: {e}")))?;
-    let result = prepare_in(platform, check, progress, &work_dir);
-    if let Err(error) = &result {
-        notify(progress, UpdatePhase::Failed, &error.to_string());
-        let _ = platform.cleanup_temp_path(&work_dir);
-    }
-    result
+    let mut owned = WorkDirectory::new(work_dir.clone());
+    let result = prepare_in(platform, check, progress, &work_dir, cancel);
+    owned.finish(result)
 }
 
 fn prepare_in(
@@ -476,23 +548,21 @@ fn prepare_in(
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
     work_dir: &Path,
+    cancel: &UpdateCancellation,
 ) -> Result<PreparedUpdate, UpdateError> {
-    let client = Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|e| UpdateError::new(e.to_string()))?;
+    cancel.check()?;
+    let client = Client::new(Duration::from_secs(120), cancel)?;
     let url = source_archive_url(&check.head_sha)?;
     let response = checked(
         client
             .get(url)
             .send()
-            .map_err(|e| UpdateError::new(format!("source download failed: {e}")))?,
+            .map_err(|e| e.context("source download failed"))?,
     )?;
     let total = response.content_length();
-    let bytes = download_source(response, total, progress)?;
-    let source_root = extract_archive(bytes.as_ref(), &work_dir.join("source"))?;
-    prepare_extracted(platform, check, progress, work_dir, &source_root)
+    let bytes = download_source(response, total, progress, cancel)?;
+    let source_root = extract_archive(bytes.as_ref(), &work_dir.join("source"), cancel)?;
+    prepare_extracted(platform, check, progress, work_dir, &source_root, cancel)
 }
 
 trait PreparationOperations {
@@ -514,15 +584,16 @@ trait PreparationOperations {
 struct PlatformPreparationOperations<'a> {
     platform: &'a dyn Platform,
     toolchain: toolchain::Toolchain,
+    cancel: &'a UpdateCancellation,
 }
 
 impl PreparationOperations for PlatformPreparationOperations<'_> {
     fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError> {
-        run_checked(self.platform, spec.clone(), name)
+        run_checked(self.platform, spec.clone(), name, self.cancel)
     }
 
     fn probe(&self, executable: &Path, expected_sha: &str) -> Result<(), UpdateError> {
-        validate_update_probe(executable, expected_sha)
+        validate_update_probe(executable, expected_sha, self.cancel)
     }
 
     fn tool(&self, name: &str) -> ProcessSpec {
@@ -537,7 +608,7 @@ impl PreparationOperations for PlatformPreparationOperations<'_> {
     ) -> Result<ProcessExit, UpdateError> {
         let exit = self
             .platform
-            .spawn_streaming(spec, &mut |output| {
+            .spawn_streaming_cancellable(spec, &|| self.cancel.is_cancelled(), &mut |output| {
                 let line = clean_output(&output.text);
                 if let Some((completed, total)) = cargo_progress(&line) {
                     progress(UpdateProgress {
@@ -557,7 +628,7 @@ impl PreparationOperations for PlatformPreparationOperations<'_> {
                     });
                 }
             })
-            .map_err(|error| UpdateError::new(format!("could not run {name}: {error}")))?;
+            .map_err(|error| process_error(error, name, self.cancel))?;
         checked_exit(exit, name)
     }
 }
@@ -568,7 +639,9 @@ fn prepare_extracted(
     progress: &mut dyn FnMut(UpdateProgress),
     work_dir: &Path,
     source_root: &Path,
+    cancel: &UpdateCancellation,
 ) -> Result<PreparedUpdate, UpdateError> {
+    cancel.check()?;
     prepare_extracted_with_operations(
         check,
         progress,
@@ -576,6 +649,7 @@ fn prepare_extracted(
         source_root,
         &PlatformPreparationOperations {
             platform,
+            cancel,
             toolchain: toolchain::Toolchain::discover()?,
         },
     )
@@ -667,14 +741,16 @@ fn download_source(
     mut reader: impl Read,
     total: Option<u64>,
     progress: &mut dyn FnMut(UpdateProgress),
+    cancel: &UpdateCancellation,
 ) -> Result<Vec<u8>, UpdateError> {
     let mut bytes = Vec::new();
     let mut buffer = [0u8; 65536];
     let mut last = std::time::Instant::now();
     loop {
+        cancel.check()?;
         let count = reader
             .read(&mut buffer)
-            .map_err(|error| UpdateError::new(format!("source download failed: {error}")))?;
+            .map_err(|error| UpdateError::from(error).context("source download failed"))?;
         bytes.extend_from_slice(&buffer[..count]);
         if count == 0 || last.elapsed() >= Duration::from_millis(100) {
             let received = bytes.len() as u64;
@@ -756,10 +832,11 @@ fn run_checked(
     platform: &dyn Platform,
     spec: ProcessSpec,
     name: &str,
+    cancel: &UpdateCancellation,
 ) -> Result<ProcessExit, UpdateError> {
     let exit = platform
-        .spawn_wait(&spec)
-        .map_err(|e| UpdateError::new(format!("could not run {name}: {e}")))?;
+        .spawn_wait_cancellable(&spec, &|| cancel.is_cancelled())
+        .map_err(|e| process_error(e, name, cancel))?;
     checked_exit(exit, name)
 }
 
@@ -811,14 +888,32 @@ fn parse_version(value: &str) -> Result<Version, semver::Error> {
     }
 }
 
-fn extract_archive(bytes: &[u8], destination: &Path) -> Result<PathBuf, UpdateError> {
+fn extract_archive(
+    bytes: &[u8],
+    destination: &Path,
+    cancel: &UpdateCancellation,
+) -> Result<PathBuf, UpdateError> {
+    cancel.check()?;
     fs::create_dir_all(destination)?;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
-        .map_err(|e| UpdateError::new(format!("invalid source ZIP: {e}")))?;
+    let mut archive =
+        zip::ZipArchive::new(cancellation::CancellableReader(Cursor::new(bytes), cancel)).map_err(
+            |e| {
+                if cancel.is_cancelled() {
+                    UpdateError::cancelled()
+                } else {
+                    UpdateError::new(format!("invalid source ZIP: {e}"))
+                }
+            },
+        )?;
     for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|e| UpdateError::new(e.to_string()))?;
+        cancel.check()?;
+        let mut entry = archive.by_index(index).map_err(|e| {
+            if cancel.is_cancelled() {
+                UpdateError::cancelled()
+            } else {
+                UpdateError::new(e.to_string())
+            }
+        })?;
         let name = Path::new(entry.name());
         if name.is_absolute()
             || name.components().any(|c| {
@@ -850,7 +945,7 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<PathBuf, UpdateEr
                 fs::create_dir_all(parent)?;
             }
             let mut file = File::create(output)?;
-            io::copy(&mut entry, &mut file)?;
+            copy_stream(&mut entry, &mut file, cancel)?;
         }
     }
     let roots: Vec<PathBuf> = fs::read_dir(destination)?
@@ -921,6 +1016,15 @@ pub fn stage_update_for_apply(
     prepared: &PreparedUpdate,
     install_dir: &Path,
 ) -> Result<StagedUpdate, UpdateError> {
+    stage_update_for_apply_cancellable(prepared, install_dir, &UpdateCancellation::default())
+}
+
+pub fn stage_update_for_apply_cancellable(
+    prepared: &PreparedUpdate,
+    install_dir: &Path,
+    cancel: &UpdateCancellation,
+) -> Result<StagedUpdate, UpdateError> {
+    cancel.check()?;
     #[cfg(target_os = "linux")]
     platform::linux::installation::require_portable_directory(install_dir)
         .map_err(|error| UpdateError::new(error.to_string()))?;
@@ -934,7 +1038,7 @@ pub fn stage_update_for_apply(
 
     #[cfg(any(windows, target_os = "linux"))]
     {
-        validate_update_probe(&prepared.cli_exe, &prepared.target_sha)?;
+        validate_update_probe(&prepared.cli_exe, &prepared.target_sha, cancel)?;
         let install_dir = fs::canonicalize(install_dir).map_err(|error| {
             UpdateError::new(format!("could not resolve installation directory: {error}"))
         })?;
@@ -972,27 +1076,58 @@ pub fn stage_update_for_apply(
             })?;
         }
         let transaction_dir = update_root.join(id);
-        let new_dir = transaction_dir.join("new");
-        let backup_dir = transaction_dir.join("backup");
-        fs::create_dir_all(&new_dir)?;
-        fs::create_dir_all(&backup_dir)?;
-        fs::copy(&prepared.shell_exe, new_dir.join(SHELL_FILE))?;
-        fs::copy(&prepared.cli_exe, new_dir.join(CLI_FILE))?;
-        // Run the validated new helper: an installed older CLI may still expect assets.
-        fs::copy(&prepared.cli_exe, transaction_dir.join(HELPER_FILE))?;
+        cancel.check()?;
+        fs::create_dir(&transaction_dir)?;
+        let mut owned = WorkDirectory::new(transaction_dir.clone());
+        let result = (|| {
+            let new_dir = transaction_dir.join("new");
+            let backup_dir = transaction_dir.join("backup");
+            fs::create_dir_all(&new_dir)?;
+            fs::create_dir_all(&backup_dir)?;
+            copy_file(&prepared.shell_exe, &new_dir.join(SHELL_FILE), cancel)?;
+            copy_file(&prepared.cli_exe, &new_dir.join(CLI_FILE), cancel)?;
+            // Run the validated new helper: an installed older CLI may still expect assets.
+            copy_file(
+                &prepared.cli_exe,
+                &transaction_dir.join(HELPER_FILE),
+                cancel,
+            )?;
 
-        let manifest_path = transaction_dir.join("transaction.json");
-        let manifest = TransactionManifest {
-            protocol: UPDATE_PROTOCOL_VERSION,
-            target_sha: prepared.target_sha.clone(),
-            install_dir,
-            transaction_dir,
-            state: TransactionState::Prepared,
-            cli_replaced: false,
-            shell_replaced: false,
-        };
-        write_manifest(&manifest_path, &manifest)?;
-        Ok(StagedUpdate { manifest_path })
+            let manifest_path = transaction_dir.join("transaction.json");
+            let manifest = TransactionManifest {
+                protocol: UPDATE_PROTOCOL_VERSION,
+                target_sha: prepared.target_sha.clone(),
+                install_dir,
+                transaction_dir,
+                state: TransactionState::Prepared,
+                cli_replaced: false,
+                shell_replaced: false,
+            };
+            write_manifest(&manifest_path, &manifest)?;
+            cancel.check()?;
+            Ok(StagedUpdate { manifest_path })
+        })();
+        finish_staged_update(&mut owned, result)
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn finish_staged_update(
+    owned: &mut WorkDirectory,
+    result: Result<StagedUpdate, UpdateError>,
+) -> Result<StagedUpdate, UpdateError> {
+    // A failed cancellation journal must remain tracked by the caller. Deleting
+    // files or forgetting the manifest would let startup apply a cancelled update.
+    if let Err(error) = result {
+        if owned.path.join("transaction.json").exists()
+            && let Err(cleanup) = discard_staged_update(&owned.path.join("transaction.json"))
+        {
+            owned.retain();
+            return Err(error.with_cleanup_failure(cleanup));
+        }
+        owned.finish(Err(error))
+    } else {
+        owned.finish(result)
     }
 }
 
@@ -1066,7 +1201,9 @@ fn scan_update_recovery(
     for manifest_path in manifests {
         let manifest = load_manifest(&manifest_path)?;
         match manifest.state {
-            TransactionState::Committed | TransactionState::RolledBack => {
+            TransactionState::Committed
+            | TransactionState::RolledBack
+            | TransactionState::Cancelled => {
                 let _ = fs::remove_dir_all(&manifest.transaction_dir);
             }
             TransactionState::Prepared => {
@@ -1525,19 +1662,18 @@ fn launch_helper_mode(
         .map_err(|error| UpdateError::new(format!("could not launch update helper: {error}")))
 }
 
-fn validate_update_probe(executable: &Path, expected_sha: &str) -> Result<(), UpdateError> {
-    let output = std::process::Command::new(executable)
-        .arg("__update-probe")
-        .output()
-        .map_err(|error| UpdateError::new(format!("could not probe compiled CLI: {error}")))?;
-    if !output.status.success() {
-        return Err(UpdateError::new(format!(
-            "compiled update probe failed for {}: {}",
-            executable.display(),
-            tail(&String::from_utf8_lossy(&output.stderr), 1000)
-        )));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+fn validate_update_probe(
+    executable: &Path,
+    expected_sha: &str,
+    cancel: &UpdateCancellation,
+) -> Result<(), UpdateError> {
+    let output = run_checked(
+        platform::native_platform().as_ref(),
+        ProcessSpec::new(executable).arg("__update-probe"),
+        "update probe",
+        cancel,
+    )?;
+    let stdout = output.stdout.utf8_lossy();
     let protocol = format!("protocol={UPDATE_PROTOCOL_VERSION}");
     let commit = format!("commit={expected_sha}");
     if !stdout.lines().any(|line| line == protocol) || !stdout.lines().any(|line| line == commit) {
@@ -1632,3 +1768,19 @@ fn transaction_paths(manifest: &TransactionManifest) -> TransactionPaths {
 #[cfg(test)]
 #[path = "../../tests/unit/update.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/update_cancellation.rs"]
+mod cancellation_tests;
+
+fn process_error(
+    error: platform::PlatformError,
+    name: &str,
+    cancel: &UpdateCancellation,
+) -> UpdateError {
+    if cancel.is_cancelled() && matches!(error, platform::PlatformError::Interrupted { .. }) {
+        UpdateError::cancelled()
+    } else {
+        UpdateError::new(format!("could not run {name}: {error}"))
+    }
+}

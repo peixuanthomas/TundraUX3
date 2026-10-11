@@ -42,7 +42,7 @@ fn release_check_resolves_the_tag_and_uses_release_notes() {
         commit_sha: Some("a".repeat(40)),
         dirty: false,
     };
-    let result = check(&identity, &api_root).unwrap();
+    let result = check(&identity, &api_root, &UpdateCancellation::default()).unwrap();
     server.join().unwrap();
     assert_eq!(result.head_sha, sha);
     assert_eq!(result.default_branch, "v1.3.2");
@@ -128,9 +128,27 @@ fn checksums_reject_wrong_file_duplicate_and_corrupt_download() {
         .is_err()
     );
     let mut output = Vec::new();
-    download_archive(&b"archive"[..], &mut output, Some(7), &hash, &mut |_| {}).unwrap();
+    download_archive(
+        &b"archive"[..],
+        &mut output,
+        Some(7),
+        &hash,
+        &mut |_| {},
+        &UpdateCancellation::default(),
+    )
+    .unwrap();
     assert_eq!(output, b"archive");
-    assert!(download_archive(&b"corrupt"[..], Vec::new(), None, &hash, &mut |_| {}).is_err());
+    assert!(
+        download_archive(
+            &b"corrupt"[..],
+            Vec::new(),
+            None,
+            &hash,
+            &mut |_| {},
+            &UpdateCancellation::default()
+        )
+        .is_err()
+    );
 }
 
 fn archive(files: &[(&str, tar::EntryType)]) -> Vec<u8> {
@@ -182,7 +200,8 @@ fn extracts_only_binaries_and_rejects_missing_duplicate_or_linked_binary() {
         let root = super::super::tests::update_test_root("release-archive");
         fs::create_dir_all(&root).unwrap();
         assert_eq!(
-            extract_executables(&archive(&files)[..], &root).is_ok(),
+            extract_executables(&archive(&files)[..], &root, &UpdateCancellation::default())
+                .is_ok(),
             success
         );
         assert!(!root.join("assets").exists());

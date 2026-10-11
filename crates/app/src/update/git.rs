@@ -1,28 +1,37 @@
 //! Read public commit metadata when the REST API is unavailable or rate limited.
 use super::{
-    BuildIdentity, GITHUB_OWNER, GITHUB_REPO, UpdateCheckResult, UpdateCommit, UpdateError,
-    UpdateRelation,
+    BuildIdentity, GITHUB_OWNER, GITHUB_REPO, UpdateCancellation, UpdateCheckResult, UpdateCommit,
+    UpdateError, UpdateRelation, WorkDirectory,
 };
-use std::fs::{self, File};
+use platform::ProcessSpec;
+#[cfg(test)]
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(super) fn is_commit_sha(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-pub(super) fn check(identity: &BuildIdentity) -> Result<UpdateCheckResult, UpdateError> {
+pub(super) fn check(
+    identity: &BuildIdentity,
+    cancel: &UpdateCancellation,
+) -> Result<UpdateCheckResult, UpdateError> {
     let platform = platform::native_platform();
     let work = platform.create_temp_dir("update-check").map_err(|error| {
         UpdateError::new(format!("could not create Git check directory: {error}"))
     })?;
+    let mut owned = WorkDirectory::new(work.clone());
+    cancel.check()?;
     let result = check_in(
         identity,
         &format!("https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}.git"),
         &work,
+        cancel,
     );
-    let _ = platform.cleanup_temp_path(&work);
+    // A check never retains its scratch repository, even when it succeeds.
+    super::cleanup_update_work(&work)?;
+    owned.retain();
     result
 }
 
@@ -30,10 +39,12 @@ fn check_in(
     identity: &BuildIdentity,
     remote: &str,
     work: &Path,
+    cancel: &UpdateCancellation,
 ) -> Result<UpdateCheckResult, UpdateError> {
     let git = Git {
         work: work.to_owned(),
         deadline: Instant::now() + Duration::from_secs(60),
+        cancel: cancel.clone(),
     };
     // No checkout, hooks or source files are needed. Fetch complete commit history
     // so an old installed build cannot be mistaken for an unrelated shallow tip.
@@ -128,6 +139,7 @@ fn parse_commits(output: &str) -> Result<Vec<UpdateCommit>, UpdateError> {
 struct Git {
     work: PathBuf,
     deadline: Instant,
+    cancel: UpdateCancellation,
 }
 
 impl Git {
@@ -141,10 +153,8 @@ impl Git {
         if Instant::now() >= self.deadline {
             return Err(UpdateError::new("Git update check timed out"));
         }
-        // Files avoid pipe backpressure while polling the process deadline.
-        let stdout = self.work.join("git.stdout");
-        let stderr = self.work.join("git.stderr");
-        let mut child = Command::new("git")
+        self.cancel.check()?;
+        let spec = ProcessSpec::new("git")
             .args([
                 "-c",
                 "credential.helper=",
@@ -153,47 +163,27 @@ impl Git {
                 "-c",
                 "http.lowSpeedTime=20",
             ])
-            .args(args)
+            .args(args.iter().copied())
             .current_dir(&self.work)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GIT_NO_LAZY_FETCH", "1")
             .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .stdin(Stdio::null())
-            .stdout(File::create(&stdout)?)
-            .stderr(File::create(&stderr)?)
-            .spawn()
-            .map_err(|error| {
-                UpdateError::new(format!(
-                    "could not run git (install Git to enable the fallback): {error}"
-                ))
-            })?;
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    if !status.success() {
-                        return Err(UpdateError::new(format!(
-                            "git failed: {}",
-                            super::tail(&fs::read_to_string(stderr).unwrap_or_default(), 1000)
-                        )));
-                    }
-                    return Ok(String::from_utf8_lossy(&fs::read(stdout)?)
-                        .trim_end_matches(['\r', '\n'])
-                        .to_owned());
-                }
-                Ok(None) if Instant::now() < self.deadline => {
-                    std::thread::sleep(Duration::from_millis(20))
-                }
-                result => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(UpdateError::new(match result {
-                        Err(error) => format!("could not wait for git: {error}"),
-                        _ => "Git update check timed out".to_owned(),
-                    }));
-                }
-            }
+            .env_remove("GIT_WORK_TREE");
+        let result = platform::native_platform().spawn_wait_cancellable(&spec, &|| {
+            self.cancel.is_cancelled() || Instant::now() >= self.deadline
+        });
+        self.cancel.check()?;
+        if Instant::now() >= self.deadline {
+            return Err(UpdateError::new("Git update check timed out"));
         }
+        let output = result
+            .map_err(|error| UpdateError::new(format!("could not run Git fallback: {error}")))?;
+        super::checked_exit(output, "git").map(|exit| {
+            exit.stdout
+                .utf8_lossy()
+                .trim_end_matches(['\r', '\n'])
+                .to_owned()
+        })
     }
 }
 

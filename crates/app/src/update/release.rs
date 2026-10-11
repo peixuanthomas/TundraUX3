@@ -23,17 +23,15 @@ struct Asset {
 pub(super) fn check(
     identity: &BuildIdentity,
     api_root: &str,
+    cancel: &UpdateCancellation,
 ) -> Result<UpdateCheckResult, UpdateError> {
+    cancel.check()?;
     if std::env::consts::ARCH != "x86_64" {
         return Err(UpdateError::new(
             "No Linux release archive is available for this architecture",
         ));
     }
-    let client = Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| UpdateError::new(e.to_string()))?;
+    let client = Client::new(Duration::from_secs(30), cancel)?;
     let base = format!("{api_root}/repos/{GITHUB_OWNER}/{GITHUB_REPO}");
     let release: Release = get_json(&client, &format!("{base}/releases/latest"))?;
     let payload = select_payload(&release)?;
@@ -157,57 +155,44 @@ pub(super) fn prepare(
     platform: &dyn Platform,
     check: &UpdateCheckResult,
     progress: &mut dyn FnMut(UpdateProgress),
+    cancel: &UpdateCancellation,
 ) -> Result<PreparedUpdate, UpdateError> {
+    cancel.check()?;
     let paths = platform
         .app_paths()
         .map_err(|e| UpdateError::new(e.to_string()))?;
     let work = platform::create_temp_dir(&paths.cache_path().join("updates"), "release")
         .map_err(|e| UpdateError::new(e.to_string()))?;
-    let result = prepare_in(check, &work, progress);
-    if let Err(error) = &result {
-        notify(progress, UpdatePhase::Failed, &error.to_string());
-        let _ = platform.cleanup_temp_path(&work);
-    }
-    result
+    let mut owned = WorkDirectory::new(work.clone());
+    let result = prepare_in(check, &work, progress, cancel);
+    owned.finish(result)
 }
 
 fn prepare_in(
     check: &UpdateCheckResult,
     work: &Path,
     progress: &mut dyn FnMut(UpdateProgress),
+    cancel: &UpdateCancellation,
 ) -> Result<PreparedUpdate, UpdateError> {
+    cancel.check()?;
     let release = check
         .release
         .as_ref()
         .ok_or_else(|| UpdateError::new("Missing release target"))?;
     validate_asset_url(&release.archive_url)?;
     validate_asset_url(&release.checksum_url)?;
-    let client = Client::builder()
-        .user_agent(USER_AGENT)
-        .timeout(Duration::from_secs(600))
-        .build()
-        .map_err(|e| UpdateError::new(e.to_string()))?;
+    let client = Client::new(Duration::from_secs(600), cancel)?;
     let mut checksum = String::new();
-    checked(
-        client
-            .get(&release.checksum_url)
-            .send()
-            .map_err(|e| UpdateError::new(e.to_string()))?,
-    )?
-    .take(64 * 1024)
-    .read_to_string(&mut checksum)?;
+    checked(client.get(&release.checksum_url).send()?)?
+        .take(64 * 1024)
+        .read_to_string(&mut checksum)?;
     let expected = checksum_for(&checksum, &release.archive_name)?;
     notify(
         progress,
         UpdatePhase::Downloading,
         "Downloading Linux release archive",
     );
-    let response = checked(
-        client
-            .get(&release.archive_url)
-            .send()
-            .map_err(|e| UpdateError::new(e.to_string()))?,
-    )?;
+    let response = checked(client.get(&release.archive_url).send()?)?;
     let total = response.content_length();
     let archive = work.join("release.tar.gz");
     download_archive(
@@ -216,13 +201,14 @@ fn prepare_in(
         total,
         &expected,
         progress,
+        cancel,
     )?;
     notify(
         progress,
         UpdatePhase::Staging,
         "Verifying release executables",
     );
-    extract_executables(File::open(archive)?, work)?;
+    extract_executables(File::open(archive)?, work, cancel)?;
     let prepared = PreparedUpdate {
         work_dir: work.to_owned(),
         target_sha: check.head_sha.clone(),
@@ -230,7 +216,7 @@ fn prepare_in(
         cli_exe: work.join(CLI_FILE),
     };
     for path in [&prepared.shell_exe, &prepared.cli_exe] {
-        validate_update_probe(path, &check.head_sha)?;
+        validate_update_probe(path, &check.head_sha, cancel)?;
     }
     Ok(prepared)
 }
@@ -250,17 +236,20 @@ fn checksum_for(text: &str, name: &str) -> Result<String, UpdateError> {
     Ok(hash.to_ascii_lowercase())
 }
 
-fn download_archive(
+pub(super) fn download_archive(
     mut input: impl Read,
     mut output: impl Write,
     total: Option<u64>,
     expected: &str,
     progress: &mut dyn FnMut(UpdateProgress),
+    cancel: &UpdateCancellation,
 ) -> Result<(), UpdateError> {
+    cancel.check()?;
     let mut hash = Sha256::new();
     let mut buffer = [0; 64 * 1024];
     let mut received = 0;
     loop {
+        cancel.check()?;
         let size = input.read(&mut buffer)?;
         if size == 0 {
             break;
@@ -300,12 +289,20 @@ fn download_archive(
     Ok(())
 }
 
-fn extract_executables(input: impl Read, destination: &Path) -> Result<(), UpdateError> {
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(input));
+fn extract_executables(
+    input: impl Read,
+    destination: &Path,
+    cancel: &UpdateCancellation,
+) -> Result<(), UpdateError> {
+    cancel.check()?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(
+        cancellation::CancellableReader(input, cancel),
+    ));
     let mut found = std::collections::BTreeSet::new();
     let mut root = None;
     let mut expanded = 0u64;
     for entry in archive.entries()? {
+        cancel.check()?;
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
         if path
@@ -322,6 +319,7 @@ fn extract_executables(input: impl Read, destination: &Path) -> Result<(), Updat
         }
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if ![SHELL_FILE, CLI_FILE].contains(&name) {
+            copy_stream(&mut entry, &mut io::sink(), cancel)?;
             continue;
         }
         if path.components().count() != 2
@@ -342,7 +340,7 @@ fn extract_executables(input: impl Read, destination: &Path) -> Result<(), Updat
             .write(true)
             .create_new(true)
             .open(&output)?;
-        io::copy(&mut entry, &mut file)?;
+        copy_stream(&mut entry, &mut file, cancel)?;
         file.sync_all()?;
         fs::set_permissions(output, fs::Permissions::from_mode(0o755))?;
     }

@@ -11,3 +11,6 @@ progress-phase-staging = Staging update
 progress-phase-replacing = Preparing replacement
 progress-phase-restart = Waiting for restart
 progress-phase-failed = Update failed
+progress-phase-cancelling = Cancelling update
+progress-phase-cancelled = Update cancelled
+settings-update-cancelling = Cancelling update and cleaning up temporary files

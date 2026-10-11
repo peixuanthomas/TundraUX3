@@ -218,6 +218,23 @@ impl Platform for MacosPlatform {
         crate::process::spawn_streaming_impl(spec, false, report)
     }
 
+    fn spawn_wait_cancellable(
+        &self,
+        spec: &ProcessSpec,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<ProcessExit, PlatformError> {
+        crate::process::spawn_cancellable_impl(spec, false, cancelled, None)
+    }
+
+    fn spawn_streaming_cancellable(
+        &self,
+        spec: &ProcessSpec,
+        cancelled: &dyn Fn() -> bool,
+        report: &mut dyn FnMut(crate::ProcessOutput),
+    ) -> Result<ProcessExit, PlatformError> {
+        crate::process::spawn_cancellable_impl(spec, false, cancelled, Some(report))
+    }
+
     fn spawn_wait(&self, spec: &ProcessSpec) -> Result<ProcessExit, PlatformError> {
         crate::process::spawn_wait_impl(spec, false)
     }
