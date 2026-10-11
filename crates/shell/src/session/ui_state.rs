@@ -589,6 +589,7 @@ pub struct UiSessionState {
     pub(super) diagnostics_task_runtime: Option<ShellDiagnosticsTaskRuntime>,
 
     pub(super) auto_admin: AutoAdminState,
+    pub(super) screen_keyboard: super::screen_keyboard::InputKeyboard,
     #[cfg(target_os = "linux")]
     pub(super) privilege_session: super::controller::privilege_session::PrivilegeSession,
     pub(super) detached_management_operations: Vec<DetachedManagementOperation>,

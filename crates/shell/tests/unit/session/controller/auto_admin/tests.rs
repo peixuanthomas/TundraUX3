@@ -315,46 +315,45 @@ fn running_buttons_are_keyboard_accessible_without_stealing_terminal_tab() {
     state.apply_input(InputEvent::key(InputKey::F(6)));
     assert_eq!(state.auto_admin_view().unwrap().button_focus, Some(0));
     state.apply_input(InputEvent::key(InputKey::Enter));
-    state.apply_input(InputEvent::key(InputKey::Tab));
-    state.apply_input(InputEvent::key(InputKey::Space));
-    state.apply_input(InputEvent::key(InputKey::Right));
-    state.apply_input(InputEvent::key(InputKey::Enter));
+    assert!(state.input_keyboard_open());
+    assert_eq!(state.auto_admin.button_focus, None);
+    for action in [
+        ui::ScreenKeyboardAction::Letter('y'),
+        ui::ScreenKeyboardAction::Letter('n'),
+        ui::ScreenKeyboardAction::Enter,
+    ] {
+        let layout = state.input_keyboard_layout();
+        let area = layout
+            .buttons
+            .iter()
+            .find(|b| b.action == action)
+            .unwrap()
+            .area;
+        state.apply_input(InputEvent::mouse_down(
+            PointerButton::Left,
+            (area.x, area.y),
+        ));
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)));
+    }
     let bytes = rx
         .try_iter()
         .flat_map(|input| match input {
             OperationInput::Terminal { bytes } => bytes,
-            _ => panic!("unexpected input"),
+            OperationInput::Resize { .. } => vec![],
+            other => panic!("unexpected input: {other:?}"),
         })
         .collect::<Vec<_>>();
     assert_eq!(bytes, b"yn\r");
-    state.apply_input(InputEvent::key(InputKey::BackTab));
-    assert_eq!(state.auto_admin.button_focus, Some(1));
-    state.apply_input(InputEvent::Key(KeyInput::with_modifiers(
-        InputKey::Tab,
-        InputModifiers::SHIFT,
-    )));
-    assert_eq!(state.auto_admin.button_focus, Some(0));
-    state.apply_input(InputEvent::key(InputKey::Escape));
-    state.apply_input(InputEvent::key(InputKey::Escape));
-    assert!(rx.try_recv().is_err());
-    assert_eq!(state.auto_admin.button_focus, None);
     state.apply_input(InputEvent::key(InputKey::F(6)));
-    state.apply_input(InputEvent::key(InputKey::Left));
-    let last = if cfg!(target_os = "linux") { 3 } else { 2 };
+    state.apply_input(InputEvent::key(InputKey::BackTab));
+    let last = if cfg!(target_os = "linux") { 1 } else { 0 };
     assert_eq!(state.auto_admin.button_focus, Some(last));
     state.apply_input(InputEvent::key(InputKey::Right));
     assert_eq!(state.auto_admin.button_focus, Some(0));
-    state.apply_input(InputEvent::key(InputKey::BackTab));
-    assert_eq!(state.auto_admin.button_focus, Some(last));
-    if cfg!(target_os = "linux") {
-        state.apply_input(InputEvent::key(InputKey::Left));
-    }
-    assert_eq!(state.auto_admin.button_focus, Some(2));
     state.apply_input(InputEvent::key(InputKey::Enter));
+    assert!(!state.input_keyboard_open());
     assert!(state.auto_admin_visible());
     assert_eq!(job.phase(), RUNNING);
-    assert!(matches!(rx.try_recv().unwrap(), OperationInput::Terminal { bytes } if bytes == b"\r"));
-    assert!(rx.try_recv().is_err());
     job.finish(Ok("Done".into()));
     state.apply_input(InputEvent::key(InputKey::Space));
     assert!(!state.auto_admin_visible());

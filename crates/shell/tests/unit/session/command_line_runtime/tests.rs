@@ -667,6 +667,90 @@ fn snapshot_text(snapshot: &TerminalSnapshot) -> String {
         .collect()
 }
 
+#[test]
+fn live_keyboard_types_into_child_pty_and_resize_reaches_the_child() {
+    let fixture = PtyFixture::new("live-keyboard");
+    let mut host = fixture.shell();
+    let mut state = crate::ShellSession::new_for_home_mode(
+        crate::ShellLaunchConfig::default(),
+        (120, 40),
+        crate::ShellHomeMode::User,
+    );
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.enter_screen(crate::ShellScreen::CommandLine);
+    let original = state.command_line_input_area().unwrap();
+    state.toggle_input_keyboard();
+    let area = state.command_line_input_area().unwrap();
+    assert!(area.height < original.height);
+    host.resize_to_area(area);
+    let platform = platform::native_platform();
+    let command = if cfg!(unix) {
+        "echo KEYBOARDOK; stty size"
+    } else {
+        "echo KEYBOARDOK"
+    };
+    for ch in command.chars().chain(std::iter::once('\n')) {
+        use ui::ScreenKeyboardAction as A;
+        let action = match ch {
+            '\n' => A::Enter,
+            ' ' => A::Space,
+            ch if ch.is_ascii_alphabetic() => A::Letter(ch.to_ascii_lowercase()),
+            ch => A::Character(ch),
+        };
+        state.screen_keyboard.modifiers.shift = ch.is_ascii_uppercase();
+        let layout = state.input_keyboard_layout();
+        let key = layout
+            .buttons
+            .iter()
+            .find(|button| button.action == action)
+            .unwrap()
+            .area;
+        let point = (key.x, key.y);
+        assert!(
+            state
+                .route_screen_keyboard_input(
+                    InputEvent::mouse_down(ui::MouseButton::Left, point),
+                    platform.as_ref(),
+                    std::time::Instant::now()
+                )
+                .is_none()
+        );
+        let event = state
+            .route_screen_keyboard_input(
+                InputEvent::mouse_up(ui::MouseButton::Left, point),
+                platform.as_ref(),
+                std::time::Instant::now(),
+            )
+            .unwrap();
+        host.handle_input(&event, Some(area));
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    loop {
+        host.poll();
+        let output = host
+            .view_model()
+            .terminal
+            .cells
+            .iter()
+            .map(|c| c.symbol.as_str())
+            .collect::<String>();
+        let marker_count = output.matches("KEYBOARDOK").count();
+        let sized = !cfg!(unix) || output.contains(&format!("{} {}", area.height, area.width));
+        if marker_count >= 2 && sized {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "live keyboard output/resize missing: {output}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    state.toggle_input_keyboard();
+    host.resize_to_area(state.command_line_input_area().unwrap());
+    assert_eq!(state.command_line_input_area(), Some(original));
+    host.try_terminate().unwrap();
+}
+
 struct PtyFixture {
     root: PathBuf,
     runtime: Option<watchdog::WatchdogRuntime>,

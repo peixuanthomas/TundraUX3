@@ -20,3 +20,5 @@ screen-keyboard-aa-back = Esc 返回演示
 screen-keyboard-aa-safe = AA 输入测试 · 不执行命令或申请授权
 screen-keyboard-aa-hint = 点击展开键盘测试输入 · Esc 返回演示
 screen-keyboard-aa-small = 请将窗口扩大至至少 60 × 18，以完整显示 AA 和屏幕键盘。
+
+screen-keyboard-input-small = 请扩大窗口以显示完整键盘。

@@ -9,6 +9,7 @@ use super::character_action;
 const FLASH: Duration = Duration::from_millis(200);
 const MINIMUM_FLASH: Duration = Duration::from_millis(100);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Press {
     code: KeyCode,
     action: ScreenKeyboardAction,
@@ -17,8 +18,8 @@ struct Press {
     inferred: bool,
 }
 
-#[derive(Default)]
-pub(super) struct PhysicalKeyboard {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PhysicalKeyboard {
     pub reports_release: bool,
     presses: Vec<Press>,
 }

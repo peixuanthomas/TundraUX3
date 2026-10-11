@@ -1125,8 +1125,7 @@ fn overlay_area(state: &ShellSession) -> Option<Rect> {
     // AA handles its own input rather than registering a page hit region. Use
     // its real dialog bounds so it shares the global dialog enter/exit effects.
     if let Some(model) = state.auto_admin_view() {
-        let (width, height) = state.terminal_size();
-        return Some(ui::auto_admin_layout(Rect::new(0, 0, width, height), &model).dialog);
+        return Some(ui::auto_admin_layout_in(state.auto_admin_available_area(), &model).dialog);
     }
     bounds_for_regions(
         state

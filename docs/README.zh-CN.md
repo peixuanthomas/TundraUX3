@@ -40,7 +40,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 | **仅用鼠标** | 通过可见的按钮、菜单、选择框和滚动条操作，不依赖键盘快捷键。 |
 | **仅用触摸屏** | 通过点按控件和拖动滚动条操作，无需实体键盘或鼠标。 |
 
-各页面的支持仍在完善。鼠标和触摸操作需要终端转发相应事件；应用表单仍需要实体键盘或终端、系统提供的输入工具。外部终端可运行 `tundra-cli debug screen-keyboard` 体验英文 QWERTY 键盘和 AA 输入演示，但它尚未接入应用表单和内嵌 Command Line。详细操作见[调试预览](../crates/shell/docs/previews.md)。
+各页面的支持仍在完善。鼠标和触摸操作需要终端转发相应事件。运行中的 AA 弹窗和内嵌 Command Line 提供屏幕键盘按钮，点击即可展开或收起，展开时会重新分配上方内容区的大小。其他应用表单仍需要实体键盘或终端、系统提供的输入工具。外部终端的 `tundra-cli debug screen-keyboard` 仍是独立的 QWERTY 和 AA 输入演示。详细操作见[键盘输入](../crates/shell/docs/session.md#aa-与命令行的屏幕键盘)和[调试预览](../crates/shell/docs/previews.md)。
 
 点击底部状态栏的消息区域，可在弹窗中阅读完整文本。长消息会换行，并支持滚动；时钟仍保留独立的点击操作。
 

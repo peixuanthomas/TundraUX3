@@ -355,6 +355,42 @@ pub fn screen_keyboard_layout_with_visibility(
     )
 }
 
+/// Keyboard for live terminal input. Reserve readable content above it and omit
+/// demo actions (clear/copy/exit) that have no safe meaning for a running program.
+pub fn screen_keyboard_input_layout(
+    bounds: Rect,
+    open: bool,
+    auto_admin: bool,
+) -> ScreenKeyboardLayout {
+    let reserved = if auto_admin { 16 } else { 8 };
+    let height = (bounds.height / 2).min(bounds.height.saturating_sub(reserved));
+    let usable = bounds.width >= 60 && height >= 7;
+    let visible = open && usable;
+    let mut layout = keyboard_layout(
+        bounds,
+        !open,
+        if visible { 1_000 } else { 0 },
+        bounds.height.saturating_sub(height),
+        usable,
+    );
+    layout.buttons.retain(|button| !button.action.is_toolbar());
+    if !open || !usable {
+        layout.keyboard = Rect::new(bounds.x, bounds.bottom(), bounds.width, 0);
+        layout.buttons.clear();
+    } else {
+        append_row(
+            &mut layout.buttons,
+            Rect::new(bounds.x, bounds.bottom() - 1, bounds.width, 1),
+            &[
+                (ScreenKeyboardAction::ToggleKeyboard, 1),
+                (ScreenKeyboardAction::Paste, 1),
+            ],
+            false,
+        );
+    }
+    layout
+}
+
 fn keyboard_layout(
     bounds: Rect,
     collapsed: bool,

@@ -39,7 +39,7 @@ Independent use of all three input methods is a core design requirement:
 | **Mouse alone** | Use visible buttons, menus, selectors, and scrollbars without depending on keyboard shortcuts. |
 | **Touchscreen alone** | Tap controls and drag scrollbars without needing a physical keyboard or mouse. |
 
-Support is still being improved. Mouse and touch need a terminal that forwards pointer events. Application forms need a physical keyboard or an input method supplied by the terminal/system. The external-terminal `tundra-cli debug screen-keyboard` command offers a QWERTY and AA input demo, but is not connected to application forms or embedded Command Line. See [preview details](crates/shell/docs/previews.md).
+Support is still being improved. Mouse and touch need a terminal that forwards pointer events. Running AA dialogs and embedded Command Line provide buttons to show and hide the screen keyboard; opening it resizes the content above it. Other application forms need a physical keyboard or an input method supplied by the terminal/system. The external-terminal `tundra-cli debug screen-keyboard` command remains a standalone QWERTY and AA input demo. See [keyboard input](crates/shell/docs/session.md#aa-与命令行的屏幕键盘) and [preview details](crates/shell/docs/previews.md).
 
 Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action.
 

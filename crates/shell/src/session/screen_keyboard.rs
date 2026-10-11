@@ -1,0 +1,305 @@
+//! Live keyboard input stays attached to one AA job or Command Line page.
+use super::*;
+use crate::previews::screen_keyboard::physical::PhysicalKeyboard;
+use ui::{ScreenKeyboardAction as Action, ScreenKeyboardLayout, ScreenKeyboardModifiers};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum KeyboardOwner {
+    AutoAdmin(AutoAdminJob),
+    CommandLine(PageInstanceId),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct InputKeyboard {
+    owner: Option<KeyboardOwner>,
+    pub open: bool,
+    pub modifiers: ScreenKeyboardModifiers,
+    pub physical: PhysicalKeyboard,
+    pub pressed: Option<(ui::components::ButtonRegion, Instant)>,
+}
+
+impl ShellSession {
+    pub(super) fn poll_input_keyboard(&mut self, now: Instant) -> bool {
+        let mut changed = self.sync_input_keyboard();
+        changed |= self.screen_keyboard.physical.expire(now);
+        if self
+            .screen_keyboard
+            .pressed
+            .as_ref()
+            .is_some_and(|(_, at)| now.saturating_duration_since(*at) > Duration::from_millis(500))
+        {
+            self.screen_keyboard.pressed = None;
+            changed = true;
+        }
+        changed
+    }
+    fn input_keyboard_owner(&self) -> Option<KeyboardOwner> {
+        if self.auto_admin_visible() {
+            self.auto_admin_keyboard_job().map(KeyboardOwner::AutoAdmin)
+        } else if self.active_screen() == ShellScreen::CommandLine
+            && self.interactive_overlays().is_empty()
+        {
+            Some(KeyboardOwner::CommandLine(self.active_page_id()))
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn sync_input_keyboard(&mut self) -> bool {
+        let owner = self.input_keyboard_owner();
+        if self.screen_keyboard.owner == owner {
+            return false;
+        }
+        let was_open = self.screen_keyboard.open;
+        self.screen_keyboard = InputKeyboard {
+            owner,
+            ..Default::default()
+        };
+        self.screen_keyboard.physical.reports_release = cfg!(windows);
+        self.cancel_auto_admin_pointer();
+        if was_open {
+            self.resize_auto_admin();
+        }
+        true
+    }
+
+    pub(super) fn input_keyboard_open(&self) -> bool {
+        self.screen_keyboard.open
+            && self.screen_keyboard.owner == self.input_keyboard_owner()
+            && self.screen_keyboard.owner.is_some()
+    }
+
+    pub(super) fn input_keyboard_layout(&self) -> ScreenKeyboardLayout {
+        ui::screen_keyboard_input_layout(
+            Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
+            self.input_keyboard_open(),
+            self.auto_admin_visible(),
+        )
+    }
+
+    pub(super) fn auto_admin_available_area(&self) -> Rect {
+        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let shell = ui::ShellFrameLayout::new(bounds, None, &ui::RenderContext::default());
+        let keyboard = self.input_keyboard_layout();
+        if !self.auto_admin_visible() || keyboard.keyboard.is_empty() {
+            shell.main
+        } else {
+            Rect::new(
+                bounds.x,
+                shell.main.y,
+                bounds.width,
+                keyboard.keyboard.y.saturating_sub(shell.main.y),
+            )
+        }
+    }
+
+    pub(super) fn command_line_keyboard_layout(
+        &self,
+        mut layout: ui::ShellFrameLayout,
+    ) -> (ui::ShellFrameLayout, Rect) {
+        let keyboard = self.input_keyboard_layout();
+        if !self.auto_admin_visible() && !keyboard.keyboard.is_empty() {
+            layout.main.height = keyboard.keyboard.y.saturating_sub(layout.main.y);
+        }
+        let footer = Rect::new(
+            layout.main.x,
+            layout.main.bottom().saturating_sub(1),
+            layout.main.width,
+            u16::from(layout.main.height > 0),
+        );
+        layout.main.height = layout.main.height.saturating_sub(footer.height);
+        (layout, footer)
+    }
+
+    pub(super) fn command_line_input_area(&self) -> Option<Rect> {
+        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let (layout, _) = self.command_line_keyboard_layout(ui::ShellFrameLayout::new(
+            bounds,
+            None,
+            &ui::RenderContext::default(),
+        ));
+        ui::command_line_terminal_area_in(&layout)
+    }
+
+    pub(super) fn keyboard_launcher_area(&self) -> Option<Rect> {
+        if !matches!(
+            self.input_keyboard_owner(),
+            Some(KeyboardOwner::CommandLine(_))
+        ) {
+            return None;
+        }
+        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let (_, footer) = self.command_line_keyboard_layout(ui::ShellFrameLayout::new(
+            bounds,
+            None,
+            &ui::RenderContext::default(),
+        ));
+        let width = footer.width.min(30);
+        Some(Rect::new(
+            footer.right().saturating_sub(width),
+            footer.y,
+            width,
+            footer.height,
+        ))
+    }
+
+    pub(super) fn toggle_input_keyboard(&mut self) {
+        self.sync_input_keyboard();
+        if self.screen_keyboard.owner.is_none() {
+            return;
+        }
+        self.screen_keyboard.open = !self.screen_keyboard.open;
+        self.screen_keyboard.modifiers = Default::default();
+        self.screen_keyboard.physical.clear();
+        self.screen_keyboard.pressed = None;
+        self.button_pointer_capture = None;
+        self.cancel_auto_admin_pointer();
+        self.resize_auto_admin();
+    }
+
+    /// Returns a real key/paste event, or consumes a keyboard panel click.
+    pub(super) fn route_screen_keyboard_input(
+        &mut self,
+        input: InputEvent,
+        platform: &dyn Platform,
+        at: Instant,
+    ) -> Option<InputEvent> {
+        self.sync_input_keyboard();
+        if matches!(input, InputEvent::Key(_) | InputEvent::Paste(_)) {
+            self.screen_keyboard.pressed = None;
+        }
+        if matches!(input, InputEvent::Resize { .. } | InputEvent::FocusLost) {
+            self.screen_keyboard.pressed = None;
+            self.screen_keyboard.physical.clear();
+        }
+        let InputEvent::Mouse(mouse) = &input else {
+            return Some(input);
+        };
+        let layout = self.input_keyboard_layout();
+        let point = ratatui::layout::Position::from(mouse.coordinates());
+        let key = layout
+            .buttons
+            .iter()
+            .find(|button| button.area.contains(point));
+        let launcher = self
+            .keyboard_launcher_area()
+            .filter(|area| area.contains(point));
+        let region = key.map(|button| button.region()).or_else(|| {
+            launcher.map(|area| ui::components::ButtonRegion {
+                id: "command-line.keyboard".into(),
+                area,
+                disabled: false,
+            })
+        });
+        if region.is_none()
+            && !layout.keyboard.contains(point)
+            && self.screen_keyboard.pressed.is_none()
+        {
+            return Some(input);
+        }
+        self.update_button_input_mode(&input);
+        // Crossing into the panel cannot finish a press started in the AA/page.
+        self.cancel_auto_admin_pointer();
+        self.button_pointer_capture = None;
+        let activated = match mouse.kind {
+            ui::MouseEventKind::Down(ui::MouseButton::Left) => {
+                self.screen_keyboard.pressed = region.clone().map(|region| (region, at));
+                false
+            }
+            ui::MouseEventKind::Up(ui::MouseButton::Left) => self
+                .screen_keyboard
+                .pressed
+                .take()
+                .is_some_and(|(pressed, start)| {
+                    Some(&pressed) == region.as_ref()
+                        && at.saturating_duration_since(start) <= Duration::from_millis(500)
+                }),
+            ui::MouseEventKind::Click(ui::MouseButton::Left) => true,
+            ui::MouseEventKind::Drag(_) => {
+                self.screen_keyboard.pressed = None;
+                false
+            }
+            ui::MouseEventKind::Move => {
+                if self
+                    .screen_keyboard
+                    .pressed
+                    .as_ref()
+                    .is_some_and(|(pressed, _)| Some(pressed) != region.as_ref())
+                {
+                    self.screen_keyboard.pressed = None;
+                }
+                false
+            }
+            _ => false,
+        };
+        if !activated {
+            return None;
+        }
+        self.screen_keyboard.pressed = None;
+        if launcher.is_some() {
+            self.toggle_input_keyboard();
+            return None;
+        }
+        let action = key?.action;
+        let modifiers = &mut self.screen_keyboard.modifiers;
+        match action {
+            Action::ToggleKeyboard => {
+                self.toggle_input_keyboard();
+                return None;
+            }
+            Action::Shift => modifiers.shift = !modifiers.shift,
+            Action::CapsLock => modifiers.caps_lock = !modifiers.caps_lock,
+            Action::LeftCtrl => modifiers.left_ctrl = !modifiers.left_ctrl,
+            Action::RightCtrl => modifiers.right_ctrl = !modifiers.right_ctrl,
+            Action::Alt => modifiers.alt = !modifiers.alt,
+            _ => {
+                let event = if action == Action::Paste {
+                    match platform.read_clipboard_text() {
+                        Ok(text) => InputEvent::Paste(text),
+                        Err(error) => {
+                            self.notify_status(i18n::msg!(
+                                "screen-keyboard-clipboard-error",
+                                error = error.to_string()
+                            ));
+                            return None;
+                        }
+                    }
+                } else {
+                    InputEvent::Key(keyboard_key(action, *modifiers)?)
+                };
+                if self.auto_admin_visible() {
+                    self.send_auto_admin_keyboard_input(&event);
+                    return None;
+                }
+                return Some(event);
+            }
+        }
+        None
+    }
+}
+
+fn keyboard_key(action: Action, modifiers: ScreenKeyboardModifiers) -> Option<KeyInput> {
+    let key = match action {
+        Action::Escape => InputKey::Escape,
+        Action::Tab if modifiers.shift => InputKey::BackTab,
+        Action::Tab => InputKey::Tab,
+        Action::Backspace => InputKey::Backspace,
+        Action::Enter => InputKey::Enter,
+        Action::Space => InputKey::Space,
+        Action::Function(number) => InputKey::F(number),
+        Action::Letter(_) | Action::Character(_) => InputKey::Char(action.character(modifiers)?),
+        _ => return None,
+    };
+    Some(KeyInput::with_modifiers(
+        key,
+        ui::KeyModifiers::new(
+            modifiers.left_ctrl || modifiers.right_ctrl,
+            modifiers.alt,
+            modifiers.shift,
+        ),
+    ))
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/session/screen_keyboard.rs"]
+mod tests;

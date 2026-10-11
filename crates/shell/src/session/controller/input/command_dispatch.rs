@@ -27,6 +27,9 @@ impl ShellSession {
     ) -> ShellAction {
         let _language = i18n::enter_snapshot(self.language.clone());
         self.synchronize_overlay_focus();
+        let Some(input) = self.route_screen_keyboard_input(input, platform, received_at) else {
+            return ShellAction::Redraw;
+        };
         if self.handle_auto_admin_input_at(&input, received_at) {
             return ShellAction::Redraw;
         }

@@ -33,7 +33,7 @@ fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
                 assert_eq!(area.intersection(bounds), area);
             }
             for (a, left) in layout.buttons.iter().enumerate() {
-                if a < if confirming { 2 } else { 3 } {
+                if a < if confirming { 2 } else { 1 } {
                     assert!(left.width > 0 && left.height > 0);
                 }
                 for right in layout.buttons.iter().skip(a + 1) {
@@ -204,7 +204,7 @@ fn stop_controls_fit_and_the_warning_explains_damage_in_both_languages() {
             let mut model = model(false, false);
             model.can_stop = true;
             model.can_kill = true;
-            model.button_focus = Some(3);
+            model.button_focus = Some(1);
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal
                 .draw(|frame| {
@@ -212,10 +212,10 @@ fn stop_controls_fit_and_the_warning_explains_damage_in_both_languages() {
                 })
                 .unwrap();
             let layout = ui::auto_admin_layout(bounds, &model);
-            assert!(layout.buttons[3].width >= 8);
+            assert!(layout.buttons[1].width >= 8);
             let theme = TundraTheme::default();
             assert_eq!(
-                terminal.backend().buffer()[(layout.buttons[3].x, layout.buttons[3].y)].fg,
+                terminal.backend().buffer()[(layout.buttons[1].x, layout.buttons[1].y)].fg,
                 theme.accent_color
             );
             model.stop = AutoAdminStopState::Warning;
@@ -282,7 +282,7 @@ fn auto_admin_and_previews_show_close_only_after_the_task_ends() {
         assert!(!i18n::tr!("aa-input-required").contains("F12"));
         for (confirming, finished, expected) in [
             (true, false, &["aa.approve", "aa.deny"][..]),
-            (false, false, &["aa.y", "aa.n", "aa.enter"][..]),
+            (false, false, &["aa.keyboard"][..]),
             (false, true, &["aa.close"][..]),
         ] {
             let model = model(confirming, finished);
@@ -441,7 +441,7 @@ fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
                         } else if finished {
                             1
                         } else {
-                            3
+                            1
                         }) {
                             assert!(area.width > 0 && area.height > 0);
                             assert!(
@@ -472,7 +472,7 @@ fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
 #[test]
 fn confirmation_and_empty_results_are_compact_with_actions_centered_in_content() {
     let bounds = Rect::new(0, 0, 208, 55);
-    for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 3)] {
+    for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 1)] {
         let model = model(confirming, finished);
         let layout = ui::auto_admin_layout(bounds, &model);
         let first = layout.buttons[0];

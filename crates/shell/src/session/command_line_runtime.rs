@@ -535,9 +535,8 @@ impl CommandLineHosts {
         self.process_close_request(state);
         self.sync_tasks(state);
         if state.content_screen() == crate::ShellScreen::CommandLine {
-            let (width, height) = state.terminal_size();
             if let Some(host) = self.hosts.get_mut(&state.content_page_id())
-                && let Some(area) = ui::command_line_terminal_area(Rect::new(0, 0, width, height))
+                && let Some(area) = state.command_line_input_area()
             {
                 host.resize_to_area(area);
             }

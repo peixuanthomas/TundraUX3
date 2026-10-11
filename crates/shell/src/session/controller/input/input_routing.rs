@@ -8,6 +8,16 @@ impl ShellSession {
         &self,
         point: CellPosition,
     ) -> Option<ui::components::ButtonRegion> {
+        if self.input_keyboard_open() {
+            if let Some(button) = self
+                .input_keyboard_layout()
+                .buttons
+                .iter()
+                .find(|button| rect_contains(button.area, point))
+            {
+                return Some(button.region());
+            }
+        }
         if self.hit_map.target_at(point) == Some(ShellComponent::BackButton)
             && let Some(area) = self.frame_layout.and_then(|layout| layout.back_button)
         {

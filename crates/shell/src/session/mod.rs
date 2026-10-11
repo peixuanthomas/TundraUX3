@@ -77,6 +77,7 @@ mod presentation;
 mod queries;
 mod redraw;
 mod runtime;
+mod screen_keyboard;
 mod spring_progress;
 #[cfg(test)]
 #[path = "../../tests/unit/session/tests.rs"]

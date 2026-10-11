@@ -4,7 +4,7 @@
 
 ## 屏幕键盘
 
-外部终端运行 `tundra-cli debug screen-keyboard`。此演示尚未接入应用表单，也不能在内嵌 Command Line 运行；“测试 AA”仅保留本次输入，不执行命令或申请授权。
+外部终端运行 `tundra-cli debug screen-keyboard`。此独立演示只操作本次演示文本，不能在内嵌 Command Line 运行；“测试 AA”不执行命令或申请授权。实际 AA 弹窗和命令行页面已有独立的[屏幕键盘入口](session.md#aa-与命令行的屏幕键盘)。
 
 | 部分 | 行为 |
 | --- | --- |

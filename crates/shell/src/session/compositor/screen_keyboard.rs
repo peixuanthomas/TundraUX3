@@ -1,9 +1,66 @@
 //! The debug keyboard uses the same final frame owner as normal Shell pages.
-use super::ScreenCompositor;
+use super::{ScreenCompositor, ShellSession};
 use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 use ui::{RenderContext, ScreenKeyboardLayout, ScreenKeyboardViewModel};
 
 impl ScreenCompositor {
+    pub(super) fn render_input_keyboard(
+        &self,
+        frame: &mut Frame<'_>,
+        state: &ShellSession,
+        context: &RenderContext,
+    ) {
+        if let Some(area) = state.keyboard_launcher_area() {
+            ui::components::Button::new(
+                "command-line.keyboard",
+                if state.input_keyboard_open() {
+                    "Hide screen keyboard"
+                } else {
+                    "Screen keyboard"
+                },
+            )
+            .render_borderless_frame(frame, area, &context.compatibility_theme());
+        }
+        if !state.input_keyboard_open() {
+            return;
+        }
+        let layout = state.input_keyboard_layout();
+        let mut keyboard_context = context.clone();
+        if let Some(buttons) = &mut keyboard_context.buttons {
+            buttons.keyboard_focus_visible = false;
+        }
+        ui::render_screen_keyboard_panel(
+            frame,
+            &layout,
+            &ScreenKeyboardViewModel {
+                text: "",
+                focus: ui::ScreenKeyboardAction::ToggleKeyboard,
+                modifiers: state.screen_keyboard.modifiers,
+                physical_pressed: &state.screen_keyboard.physical.pressed_actions(),
+                last_key: "",
+                message: "",
+            },
+            &keyboard_context,
+        );
+        if !layout.usable {
+            let area = if let Some(model) = state.auto_admin_view() {
+                ui::auto_admin_layout_in(state.auto_admin_available_area(), &model).input
+            } else {
+                let bounds = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
+                let (_, mut area) = state
+                    .command_line_keyboard_layout(ui::ShellFrameLayout::new(bounds, None, context));
+                area.width = area.width.saturating_sub(30);
+                area
+            };
+            let message = if state.auto_admin_visible() {
+                i18n::tr!("screen-keyboard-input-small")
+            } else {
+                "Enlarge the window to show the keyboard".into()
+            };
+            frame.render_widget(ratatui::widgets::Paragraph::new(message), area);
+        }
+    }
+
     pub(crate) fn keyboard_demo_layout(
         bounds: Rect,
         collapsed: bool,

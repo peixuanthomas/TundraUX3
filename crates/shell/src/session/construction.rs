@@ -200,6 +200,7 @@ impl ShellSession {
             diagnostics_task_runtime: runtime_services.diagnostics,
 
             auto_admin: AutoAdminState::default(),
+            screen_keyboard: Default::default(),
             #[cfg(target_os = "linux")]
             privilege_session: Default::default(),
             detached_management_operations: Vec::new(),

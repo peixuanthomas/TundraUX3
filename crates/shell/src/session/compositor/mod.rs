@@ -103,6 +103,7 @@ pub(crate) struct ScreenCompositor {
     progress: SpringProgress,
     toast: Option<ui::components::Toast>,
     appearance: Option<(ui::ThemeTokens, u64)>,
+    keyboard_open: bool,
 }
 
 impl ScreenCompositor {
@@ -168,12 +169,25 @@ impl ScreenCompositor {
         icons: Option<&LauncherIconRuntime>,
     ) -> bool {
         let bounds = frame.area();
+        if state.terminal_size != (bounds.width, bounds.height) {
+            state.screen_keyboard.pressed = None;
+            state.screen_keyboard.physical.clear();
+        }
+        state.terminal_size = (bounds.width, bounds.height);
+        state.sync_input_keyboard();
+        if self.keyboard_open != state.input_keyboard_open() {
+            self.keyboard_open = state.input_keyboard_open();
+            self.motion.cancel_for_bounds_change();
+        }
+        state.resize_auto_admin();
         let mut frame_context = prepared.context.clone();
         let hovered = state
             .mouse_coordinates
             .filter(|_| !state.keyboard_focus_visible && !state.button_hover_suppressed)
             .and_then(|point| state.button_at(point));
-        let pressed = if state.auto_admin_visible() {
+        let pressed = if let Some((region, _)) = &state.screen_keyboard.pressed {
+            Some(region.clone())
+        } else if state.auto_admin_visible() {
             state.auto_admin_pressed_button()
         } else {
             state
@@ -194,6 +208,11 @@ impl ScreenCompositor {
         let layout =
             ui::ShellFrameLayout::new(bounds, chrome.status.time_button_label.as_deref(), context)
                 .with_back_shortcut(chrome.back_shortcut);
+        let layout = if state.content_screen() == ShellScreen::CommandLine {
+            state.command_line_keyboard_layout(layout).0
+        } else {
+            layout
+        };
         // Use the actual frame bounds, including a resize arriving just before draw.
         state.terminal_size = (bounds.width, bounds.height);
         state.refresh_hit_map_with_frame_layout(context.transitions, layout);
@@ -265,12 +284,19 @@ impl ScreenCompositor {
             );
         }
         if let Some(auto_admin) = state.auto_admin_view() {
-            ui::render_auto_admin(frame, bounds, &auto_admin, context);
+            ui::render_auto_admin_in(
+                frame,
+                bounds,
+                state.auto_admin_available_area(),
+                &auto_admin,
+                context,
+            );
         }
-        state.button_regions = buttons.regions();
         self.motion.capture_overlay(frame.buffer_mut(), state);
         self.motion
             .process(context.motion.scaled_delta(), frame.buffer_mut(), state);
+        self.render_input_keyboard(frame, state, context);
+        state.button_regions = buttons.regions();
         prepared.progress_running
             || self.motion.is_running()
             || self
@@ -325,8 +351,16 @@ impl ScreenCompositor {
             &context,
         )
         .with_back_shortcut(chrome.back_shortcut);
-        self.motion
-            .update_layout(state, &layout, context.theme, context.motion.reduced_motion);
+        self.motion.update_layout(
+            state,
+            &if state.content_screen() == ShellScreen::CommandLine {
+                state.command_line_keyboard_layout(layout).0
+            } else {
+                layout
+            },
+            context.theme,
+            context.motion.reduced_motion,
+        );
     }
     pub(super) fn cancel_for_suspend(&mut self, state: &ShellSession) -> Option<RoutedEvent> {
         self.motion.cancel_for_suspend(state)

@@ -61,7 +61,7 @@ fn aa_stop_and_confirmed_kill_reach_a_real_stubborn_pty_process() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    state.activate_auto_admin_button(&job, 3);
+    state.activate_auto_admin_button(&job, 1);
     std::thread::sleep(Duration::from_millis(50));
     assert!(
         child.try_wait().unwrap().is_none(),
@@ -145,6 +145,7 @@ fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion(
     }
     let mut child = command.spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(6);
+    let mut expected_size = String::new();
     let mut sent_password = false;
     let mut sent_yes = false;
     loop {
@@ -154,17 +155,32 @@ fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion(
             state.apply_input(InputEvent::key(InputKey::F(12)));
             assert!(state.auto_admin_visible());
             assert_eq!(job.phase(), RUNNING);
-            job.resize(Rect::new(0, 0, 82, 19));
-            state.apply_input(InputEvent::Paste("test-secret".into()));
-            state.apply_input(InputEvent::key(InputKey::Enter));
+            state.toggle_input_keyboard();
+            let area = ui::auto_admin_layout_in(
+                state.auto_admin_available_area(),
+                &state.auto_admin_view().unwrap(),
+            )
+            .terminal;
+            expected_size = format!("{} {}", area.height, area.width);
+            for ch in "test-secret".chars() {
+                click_live_key(
+                    &mut state,
+                    if ch.is_ascii_alphabetic() {
+                        ui::ScreenKeyboardAction::Letter(ch)
+                    } else {
+                        ui::ScreenKeyboardAction::Character(ch)
+                    },
+                );
+            }
+            click_live_key(&mut state, ui::ScreenKeyboardAction::Enter);
             sent_password = true;
         }
         if output.contains("[y/n]") && !sent_yes {
             state.apply_input(InputEvent::key(InputKey::F(12)));
             assert!(state.auto_admin_visible());
             assert_eq!(job.phase(), RUNNING);
-            state.apply_input(InputEvent::key(InputKey::Char('y')));
-            state.apply_input(InputEvent::key(InputKey::Enter));
+            click_live_key(&mut state, ui::ScreenKeyboardAction::Letter('y'));
+            click_live_key(&mut state, ui::ScreenKeyboardAction::Enter);
             sent_yes = true;
         }
         assert!(state.auto_admin_visible());
@@ -183,11 +199,26 @@ fn foreground_auth_pty_accepts_password_and_yn_and_closes_only_after_completion(
     job.poll_terminal();
     let output = terminal_text(&job);
     assert!(output.contains("DONE"), "{output}");
-    assert!(output.contains("19 82"), "{output}");
+    assert!(output.contains(&expected_size), "{output}");
     assert!(!output.contains("test-secret"));
     assert!(sent_password && sent_yes);
     assert!(state.auto_admin_visible());
     assert!(state.auto_admin_view().unwrap().finished);
     state.apply_input(InputEvent::key(InputKey::Escape));
     assert!(!state.auto_admin_visible());
+}
+
+fn click_live_key(state: &mut ShellSession, action: ui::ScreenKeyboardAction) {
+    let layout = state.input_keyboard_layout();
+    let area = layout
+        .buttons
+        .iter()
+        .find(|button| button.action == action)
+        .unwrap()
+        .area;
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (area.x, area.y),
+    ));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)));
 }

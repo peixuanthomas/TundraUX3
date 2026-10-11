@@ -201,3 +201,5 @@ aa-new-password = 输入新密码后按 Enter。Ctrl+C 取消。
 aa-confirm-password = 再次输入新密码后按 Enter。Ctrl+C 取消。
 
 management-action-not-available = 当前所选项目或后端不支持此操作。
+
+aa-screen-keyboard = 屏幕键盘

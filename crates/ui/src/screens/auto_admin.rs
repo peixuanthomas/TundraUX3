@@ -44,7 +44,15 @@ pub struct AutoAdminLayout {
 /// Receives the full Shell bounds so drawing, hit testing and PTY sizing all
 /// reserve the same fixed title/status bars, even immediately after a resize.
 pub fn auto_admin_layout(bounds: Rect, model: &AutoAdminViewModel) -> AutoAdminLayout {
-    authorization_layout(bounds, model).0
+    auto_admin_layout_in(
+        crate::ShellFrameLayout::new(bounds, None, &RenderContext::default()).main,
+        model,
+    )
+}
+
+/// The compositor reserves the keyboard before laying out the real AA dialog.
+pub fn auto_admin_layout_in(main: Rect, model: &AutoAdminViewModel) -> AutoAdminLayout {
+    authorization_layout(main, model).0
 }
 
 pub fn auto_admin_max_scroll(bounds: Rect, model: &AutoAdminViewModel) -> u16 {
@@ -55,16 +63,14 @@ pub fn auto_admin_max_scroll(bounds: Rect, model: &AutoAdminViewModel) -> u16 {
         .min(u16::MAX as usize) as u16
 }
 
-fn authorization_layout(bounds: Rect, model: &AutoAdminViewModel) -> (AutoAdminLayout, Rect) {
+fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLayout, Rect) {
     let stopping = model.stop == AutoAdminStopState::Warning;
-    let main = match crate::compute_shell_layout(bounds) {
-        crate::ShellLayout::Full { main, .. } | crate::ShellLayout::Compact(main) => main,
-    };
     let width = main
         .width
         .saturating_sub(u16::from(main.width >= 50) * 4)
         .min(100);
-    let roomy = main.height >= 16 && width >= 40;
+    // Compact decoration leaves several live output rows when a keyboard is open.
+    let roomy = main.height >= 20 && width >= 40;
     let padding = Margin::new(if width >= 50 { 3 } else { 1 }, 1);
     let badge_width = if width >= 70 && !stopping { 18 } else { 0 };
     let content_width = width.saturating_sub(padding.horizontal * 2 + badge_width);
@@ -75,7 +81,13 @@ fn authorization_layout(bounds: Rect, model: &AutoAdminViewModel) -> (AutoAdminL
     } else {
         1
     };
-    let stop_row = model.can_stop && !model.confirming && !model.finished && !stopping;
+    let stop_row = model.can_stop
+        && !model.confirming
+        && !model.finished
+        && !stopping
+        && content_width
+            < (crate::components::terminal_width(&i18n::tr!("aa-screen-keyboard")) as u16 + 2) * 2
+                + 2;
     let stacked_warning = stopping && content_width < 36;
     let action_height = if stop_row || stacked_warning { 2 } else { 1 };
     let lines = |text: &str| {
@@ -174,15 +186,15 @@ fn authorization_layout(bounds: Rect, model: &AutoAdminViewModel) -> (AutoAdminL
     } else if model.finished {
         1
     } else if model.can_stop {
-        4
+        2
     } else {
-        3
+        1
     };
     let button_gap = if inner.width >= 40 { 2 } else { 0 };
-    let row_count = if stop_row { 3 } else { count };
+    let row_count = if stop_row { 1 } else { count };
     let button_width = inner.width.saturating_sub(button_gap * (row_count - 1)) / row_count;
     let button_areas = Layout::horizontal(vec![
-        Constraint::Length(button_width.min(18));
+        Constraint::Length(button_width.min(34));
         row_count as usize
     ])
     .flex(Flex::Center)
@@ -201,7 +213,7 @@ fn authorization_layout(bounds: Rect, model: &AutoAdminViewModel) -> (AutoAdminL
             1.min(areas[6].height),
         );
         if stop_row {
-            buttons[3] = Rect {
+            buttons[1] = Rect {
                 y: area.y + u16::from(areas[6].height > 1),
                 ..area
             };
@@ -271,7 +283,18 @@ pub fn render_auto_admin(
     model: &AutoAdminViewModel,
     context: &RenderContext,
 ) {
-    let (layout, warning) = authorization_layout(bounds, model);
+    let main = crate::ShellFrameLayout::new(bounds, None, context).main;
+    render_auto_admin_in(frame, bounds, main, model, context);
+}
+
+pub fn render_auto_admin_in(
+    frame: &mut Frame<'_>,
+    bounds: Rect,
+    main: Rect,
+    model: &AutoAdminViewModel,
+    context: &RenderContext,
+) {
+    let (layout, warning) = authorization_layout(main, model);
     super::auto_admin_preview::render_auto_admin_frame(
         frame,
         bounds,
@@ -346,16 +369,16 @@ pub(super) fn render_auto_admin_contents(
     } else if model.finished {
         vec![("aa.close", i18n::tr!("aa-close"), true)]
     } else {
-        let mut labels = vec![
-            ("aa.y", "y".into(), model.button_focus == Some(0)),
-            ("aa.n", "n".into(), model.button_focus == Some(1)),
-            ("aa.enter", "Enter".into(), model.button_focus == Some(2)),
-        ];
+        let mut labels = vec![(
+            "aa.keyboard",
+            i18n::tr!("aa-screen-keyboard"),
+            model.button_focus == Some(0),
+        )];
         if model.can_stop {
             labels.push((
                 "aa.stop",
                 i18n::tr!("aa-stop"),
-                model.button_focus == Some(3),
+                model.button_focus == Some(1),
             ));
         }
         labels
@@ -366,7 +389,7 @@ pub(super) fn render_auto_admin_contents(
         button.set_disabled(!match id {
             "aa.kill" => model.can_kill,
             "aa.stop" => model.stop == AutoAdminStopState::None,
-            "aa.y" | "aa.n" | "aa.enter" => model.stop == AutoAdminStopState::None,
+            "aa.keyboard" => model.stop == AutoAdminStopState::None,
             _ => true,
         });
         button.set_focused(focused);

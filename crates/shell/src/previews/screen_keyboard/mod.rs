@@ -17,7 +17,7 @@ use ui::{
 use crate::session::ScreenCompositor;
 use crate::{ShellAppConfig, TerminalGuard, crossterm_event_to_input};
 
-mod physical;
+pub(crate) mod physical;
 use physical::PhysicalKeyboard;
 
 const BUTTON_MAX_PRESS: Duration = Duration::from_millis(500);

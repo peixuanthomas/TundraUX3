@@ -1056,6 +1056,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 .tokens()
                 .for_capability(shell_render_capabilities(terminal_graphics_probe).color)
                 .accent;
+            if state.poll_input_keyboard(Instant::now()) {
+                redraw.request_redraw();
+            }
             let (terminal_changed, command_line_event) =
                 command_line_hosts.poll(&mut state, platform.as_ref(), accent);
             match command_line_event {
@@ -1208,8 +1211,20 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     if boundary_changed {
                         compositor.cancel_for_bounds_change();
                     }
-                    let input = crossterm_event_to_input(terminal_event);
                     let received_at = Instant::now();
+                    if let event::Event::Key(key) = &terminal_event
+                        && state.input_keyboard_open()
+                    {
+                        state.screen_keyboard.physical.observe(*key, received_at);
+                    }
+                    let input = crossterm_event_to_input(terminal_event);
+                    let Some(input) =
+                        state.route_screen_keyboard_input(input, platform.as_ref(), received_at)
+                    else {
+                        action = Some(ShellAction::Redraw);
+                        redraw.request_redraw();
+                        continue;
+                    };
                     if state.handle_auto_admin_input_at(&input, received_at) {
                         action = Some(ShellAction::Redraw);
                         redraw.request_redraw();
@@ -1222,9 +1237,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     let input = state.normalize_shell_navigation_input(input);
                     let command_line_captures = command_line_captures_input(&state, &input);
                     if command_line_captures {
-                        let (width, height) = state.terminal_size();
-                        let terminal_area =
-                            ui::command_line_terminal_area(Rect::new(0, 0, width, height));
+                        let terminal_area = state.command_line_input_area();
                         match command_line_hosts.handle_input(&state, &input, terminal_area) {
                             CommandLineHostEvent::None => {}
                             CommandLineHostEvent::PanicRequested => trigger_command_line_panic(),

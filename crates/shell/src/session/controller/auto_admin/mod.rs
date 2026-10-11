@@ -69,6 +69,28 @@ impl AutoAdminState {
 }
 
 impl ShellSession {
+    pub(in crate::session) fn auto_admin_keyboard_job(&self) -> Option<AutoAdminJob> {
+        self.auto_admin
+            .job
+            .as_ref()
+            .filter(|job| job.accepts_input())
+            .cloned()
+    }
+
+    pub(in crate::session) fn send_auto_admin_keyboard_input(&mut self, input: &InputEvent) {
+        if let Some(job) = self.auto_admin_keyboard_job() {
+            self.auto_admin.button_focus = None;
+            self.auto_admin.action_key = None;
+            match input {
+                InputEvent::Key(key) => {
+                    job.key(key);
+                }
+                InputEvent::Paste(text) => job.paste(text),
+                _ => {}
+            }
+        }
+    }
+
     pub(in crate::session) fn stop_auto_admin(&self) {
         #[cfg(target_os = "linux")]
         self.privilege_session.revoke();
@@ -305,13 +327,7 @@ impl ShellSession {
             model.confirming = false;
             model.finished = false;
             model.stop = ui::AutoAdminStopState::None;
-            job.resize(
-                ui::auto_admin_layout(
-                    Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
-                    &model,
-                )
-                .terminal,
-            );
+            job.resize(ui::auto_admin_layout_in(self.auto_admin_available_area(), &model).terminal);
         }
     }
     pub(in crate::session) fn poll_auto_admin(&mut self) -> bool {
@@ -611,7 +627,7 @@ impl ShellSession {
                 if job.phase() == RUNNING && self.auto_admin.button_focus.is_some() =>
             {
                 let index = self.auto_admin.button_focus.unwrap();
-                let count = if cfg!(target_os = "linux") { 4 } else { 3 };
+                let count = if cfg!(target_os = "linux") { 2 } else { 1 };
                 if key.phase.is_press_like() {
                     match key.key {
                         InputKey::BackTab | InputKey::Left | InputKey::Up => {
@@ -655,8 +671,8 @@ impl ShellSession {
                 }
             }
             InputEvent::Mouse(mouse) => {
-                let layout = ui::auto_admin_layout(
-                    Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
+                let layout = ui::auto_admin_layout_in(
+                    self.auto_admin_available_area(),
                     &self.auto_admin_model().unwrap(),
                 );
                 let hit = layout
@@ -741,12 +757,11 @@ impl ShellSession {
             WAITING if index == 1 => self.close_auto_admin(),
             DENIED | FINISHED if index == 0 => self.close_auto_admin(),
             RUNNING => match index {
-                0 => job.paste("y"),
-                1 => job.paste("n"),
-                2 => {
-                    job.key(&KeyInput::new(InputKey::Enter));
+                0 if self.auto_admin_keyboard_job().is_some() => {
+                    self.auto_admin.button_focus = None;
+                    self.toggle_input_keyboard();
                 }
-                3 if cfg!(target_os = "linux") => {
+                1 if cfg!(target_os = "linux") => {
                     job.request_stop(false);
                     self.auto_admin.button_focus = None;
                     self.auto_admin.pointer = None;

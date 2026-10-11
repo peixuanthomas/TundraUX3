@@ -201,3 +201,5 @@ aa-new-password = Enter the new password, then press Enter. Ctrl+C cancels.
 aa-confirm-password = Enter the new password again, then press Enter. Ctrl+C cancels.
 
 management-action-not-available = This action is unavailable for the selected item or backend.
+
+aa-screen-keyboard = Screen keyboard

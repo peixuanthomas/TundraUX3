@@ -133,6 +133,103 @@ fn auto_admin_keeps_shell_title_and_status_visible_after_resize() {
 }
 
 #[test]
+fn live_aa_keyboard_keeps_dialog_buttons_visible_and_uses_one_layout_for_input() {
+    for (width, height) in [(120, 40), (108, 24), (80, 24), (60, 23), (49, 11), (20, 8)] {
+        let mut state = session();
+        state.terminal_size = (width, height);
+        let (responses, inputs) = mpsc::channel();
+        state
+            .begin_auto_admin("Live input".into(), false, responses)
+            .unwrap();
+        state.toggle_input_keyboard();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut compositor = ScreenCompositor::default();
+        let prepared = home_frame(&state, 0, true);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let model = state.auto_admin_view().unwrap();
+        let aa = ui::auto_admin_layout_in(state.auto_admin_available_area(), &model);
+        let keyboard = state.input_keyboard_layout();
+        let bounds = Rect::new(0, 0, width, height);
+        assert_eq!(aa.dialog.intersection(bounds), aa.dialog);
+        assert!(aa.dialog.intersection(keyboard.keyboard).is_empty());
+        assert!(!aa.buttons[0].is_empty());
+        assert!(
+            state
+                .button_regions
+                .iter()
+                .any(|button| button.id.as_str() == "aa.keyboard" && button.area == aa.buttons[0])
+        );
+        if keyboard.usable {
+            assert!(text(terminal.backend().buffer(), keyboard.keyboard).contains("CapsLock"));
+            assert!(text(terminal.backend().buffer(), aa.dialog).contains("AutoAdmin"));
+            let region = keyboard
+                .buttons
+                .iter()
+                .find(|b| b.action == ui::ScreenKeyboardAction::Letter('y'))
+                .unwrap()
+                .region();
+            let point = (region.area.x, region.area.y);
+            state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            let theme = prepared.context.compatibility_theme();
+            assert_eq!(
+                terminal.backend().buffer()[point].fg,
+                theme.button_pressed_color()
+            );
+            state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+            assert!(inputs.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"y")));
+        } else {
+            assert!(keyboard.keyboard.is_empty());
+        }
+    }
+}
+
+#[test]
+fn command_line_keyboard_render_and_pty_viewport_agree_and_restore() {
+    let mut state = session();
+    state.enter_screen(ShellScreen::CommandLine);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut compositor = ScreenCompositor::default();
+    let mut prepared = home_frame(&state, 0, true);
+    prepared.page = ScreenViewModel::CommandLine(Box::new(ui::CommandLineViewModel::new(
+        ui::CommandLineTerminalSnapshot::blank(120, 40),
+    )));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let original = state.command_line_input_area().unwrap();
+    assert!(
+        text(
+            terminal.backend().buffer(),
+            terminal.backend().buffer().area
+        )
+        .contains("Screen keyboard")
+    );
+    state.toggle_input_keyboard();
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(
+        ui::command_line_terminal_area_in(&state.frame_layout.unwrap()),
+        state.command_line_input_area()
+    );
+    assert!(state.command_line_input_area().unwrap().height < original.height);
+    assert!(
+        text(
+            terminal.backend().buffer(),
+            state.input_keyboard_layout().keyboard
+        )
+        .contains("CapsLock")
+    );
+    state.toggle_input_keyboard();
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert_eq!(state.command_line_input_area(), Some(original));
+    assert!(
+        !text(
+            terminal.backend().buffer(),
+            terminal.backend().buffer().area
+        )
+        .contains("CapsLock")
+    );
+}
+
+#[test]
 fn auto_admin_shares_dialog_motion_speed_reduced_motion_and_exit() {
     for (speed, reduced) in [(50, false), (100, false), (200, false), (100, true)] {
         let mut state = session();
@@ -1090,6 +1187,7 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
     state
         .begin_auto_admin("Read fixture output".into(), false, tx)
         .unwrap();
+    state.toggle_input_keyboard();
     let mut compositor = ScreenCompositor::default();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let prepared = home_frame(&state, 0, true);
@@ -1098,10 +1196,10 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
     let area = state
         .button_regions
         .iter()
-        .find(|r| r.id.as_str() == "aa.enter")
+        .find(|r| r.id.as_str() == "screen-keyboard.enter")
         .unwrap()
         .area;
-    let point = (area.x + area.width / 2, area.y);
+    let point = (area.x + area.width / 2, area.y + area.height / 2);
     let now = Instant::now();
     state.apply_input_at(InputEvent::mouse_moved(point), now);
     state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
@@ -1129,7 +1227,7 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
     let first = state
         .button_regions
         .iter()
-        .find(|r| r.id.as_str() == "aa.y")
+        .find(|r| r.id.as_str() == "aa.keyboard")
         .unwrap()
         .area;
     assert_eq!(
