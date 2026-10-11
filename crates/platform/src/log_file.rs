@@ -97,17 +97,39 @@ pub fn query_log_file(query: &LogQuery, cancelled: &AtomicBool) -> LogQueryResul
             result.events.clear();
             return result;
         }
+        // Keep byte spans until the tail is selected. Most scanned records
+        // will never be returned and need no owned text or event metadata.
+        let decoded = String::from_utf8_lossy(line);
+        let text = decoded.trim_end_matches(['\r', '\n']);
+        if line.len() > 8192 {
+            result.truncated = true;
+        }
+        if text.chars().take(8192).any(|ch| ch == '\u{fffd}') {
+            result.damaged_records += 1;
+        }
+        if !text.is_empty() {
+            if lines.len() == limit {
+                lines.pop_front();
+                result.truncated = true;
+            }
+            if limit != 0 {
+                lines.push_back((offset, line));
+            }
+        }
+        offset += line.len() as u64;
+    }
+    result.events.reserve(lines.len());
+    for (offset, line) in lines.into_iter().rev() {
+        if cancelled.load(Ordering::Relaxed) {
+            result.state = LogSourceState::Cancelled;
+            result.events.clear();
+            return result;
+        }
         let text = String::from_utf8_lossy(line)
             .trim_end_matches(['\r', '\n'])
             .chars()
             .take(8192)
             .collect::<String>();
-        if line.len() > 8192 {
-            result.truncated = true;
-        }
-        if text.contains('\u{fffd}') {
-            result.damaged_records += 1;
-        }
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         line.hash(&mut hash);
         let mut event = RuntimeLogEvent::new(
@@ -129,17 +151,9 @@ pub fn query_log_file(query: &LogQuery, cancelled: &AtomicBool) -> LogQueryResul
         event.timestamp_note = Some(
             "File modification time; individual event time and severity were not parsed".into(),
         );
-        offset += line.len() as u64;
-        if !text.is_empty() {
-            lines.push_back(event);
-            if lines.len() > limit {
-                lines.pop_front();
-                result.truncated = true;
-            }
-        }
+        result.events.push(event);
     }
-    result.truncated = result.truncated || start > 0 || lines.len() > limit;
-    result.events = lines.into_iter().rev().take(limit).collect();
+    result.truncated = result.truncated || start > 0;
     if query.since.is_some()
         || query.until.is_some()
         || query.min_level.is_some()
@@ -209,6 +223,61 @@ fn identity(metadata: &fs::Metadata) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn tail_keeps_offsets_and_counts_damage_even_in_discarded_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tail.log");
+        let bytes = b"bad\xff\n\r\nold\nlast\r\n";
+        fs::write(&path, bytes).unwrap();
+        for limit in [0, 1, 2, 200] {
+            let query = LogQuery {
+                file_path: Some(path.clone()),
+                limit,
+                ..Default::default()
+            };
+            let result = query_log_file(&query, &AtomicBool::new(false));
+            assert_eq!(result.damaged_records, 1);
+            assert_eq!(result.events.len(), limit.min(3));
+            assert_eq!(result.truncated, limit < 3);
+            if limit > 0 {
+                assert_eq!(result.events[0].message, "last");
+                assert_eq!(
+                    result.events[0].native_source.as_deref(),
+                    Some("file; offset=11")
+                );
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                bytes[11..].hash(&mut hash);
+                assert!(
+                    result.events[0]
+                        .event_id
+                        .ends_with(&format!(":11:{:x}", hash.finish()))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn damage_and_text_limits_count_characters_not_utf8_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("unicode.log");
+        let mut bytes = "中".repeat(8192).into_bytes();
+        bytes.extend_from_slice(b"\xff\n");
+        bytes.extend_from_slice("replacement: \u{fffd}\n".as_bytes());
+        fs::write(&path, bytes).unwrap();
+        let result = query_log_file(
+            &LogQuery {
+                file_path: Some(path),
+                limit: 2,
+                ..Default::default()
+            },
+            &AtomicBool::new(false),
+        );
+        assert_eq!(result.damaged_records, 1);
+        assert!(result.truncated);
+        assert_eq!(result.events.len(), 2);
+        assert!(!result.events[1].message.contains('\u{fffd}'));
+    }
+
     #[test]
     fn file_tail_is_bounded_and_detects_rotation_and_truncation() {
         let directory = tempfile::tempdir().unwrap();
