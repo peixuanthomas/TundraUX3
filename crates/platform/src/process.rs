@@ -263,6 +263,9 @@ pub(crate) fn spawn_cancellable_impl(
     let mut stderr = tree.child.stderr.take().expect("piped stderr");
     make_nonblocking(&stdout).map_err(error)?;
     make_nonblocking(&stderr).map_err(error)?;
+    let waiter = ProcessWaiter::new(&tree.child);
+    let mut stdout_eof = false;
+    let mut stderr_eof = false;
     let streaming = report.is_some();
     let mut out = Vec::new();
     let mut err = Vec::new();
@@ -275,26 +278,35 @@ pub(crate) fn spawn_cancellable_impl(
             return Err(cancelled_process(spec));
         }
         // Bound work per iteration even when a process continuously fills a pipe.
-        for (is_stderr, pipe, bytes, pending) in [
+        let mut made_progress = false;
+        for (is_stderr, pipe, bytes, pending, eof) in [
             (
                 false,
                 &mut stdout as &mut dyn PollPipe,
                 &mut out,
                 &mut out_pending,
+                &mut stdout_eof,
             ),
             (
                 true,
                 &mut stderr as &mut dyn PollPipe,
                 &mut err,
                 &mut err_pending,
+                &mut stderr_eof,
             ),
         ] {
+            if *eof {
+                continue;
+            }
             for _ in 0..16 {
                 if !pipe.readable().map_err(error)? {
                     break;
                 }
                 let count = match pipe.read(&mut buffer) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        *eof = true;
+                        break;
+                    }
                     Ok(count) => count,
                     Err(e)
                         if matches!(
@@ -306,6 +318,7 @@ pub(crate) fn spawn_cancellable_impl(
                     }
                     Err(e) => return Err(error(e)),
                 };
+                made_progress = true;
                 bytes.extend_from_slice(&buffer[..count]);
                 if streaming && bytes.len() > 65536 {
                     bytes.drain(..bytes.len() - 65536);
@@ -368,7 +381,101 @@ pub(crate) fn spawn_cancellable_impl(
                 stderr: ProcessStream::from_bytes(err),
             });
         }
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        waiter
+            .wait(&stdout, &stderr, stdout_eof, stderr_eof, made_progress)
+            .map_err(error)?;
+    }
+}
+
+/// Readiness wakes output immediately. The timeout bounds cancellation latency
+/// because the caller supplies a predicate rather than a waitable event.
+struct ProcessWaiter {
+    #[cfg(target_os = "linux")]
+    exit: Option<std::os::fd::OwnedFd>,
+    #[cfg(windows)]
+    process: windows_sys::Win32::Foundation::HANDLE,
+}
+
+impl ProcessWaiter {
+    fn new(child: &std::process::Child) -> Self {
+        let _ = child;
+        Self {
+            #[cfg(target_os = "linux")]
+            exit: {
+                use std::os::fd::FromRawFd;
+                // Older kernels or restricted hosts can reject pidfd_open;
+                // pipe readiness and the bounded timeout still work there.
+                let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id(), 0u32) };
+                (fd >= 0).then(|| unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) })
+            },
+            #[cfg(windows)]
+            process: {
+                use std::os::windows::io::AsRawHandle;
+                child.as_raw_handle()
+            },
+        }
+    }
+
+    #[cfg(unix)]
+    fn wait(
+        &self,
+        stdout: &std::process::ChildStdout,
+        stderr: &std::process::ChildStderr,
+        stdout_eof: bool,
+        stderr_eof: bool,
+        _made_progress: bool,
+    ) -> std::io::Result<()> {
+        use std::os::fd::AsRawFd;
+        #[cfg(not(target_os = "linux"))]
+        let exit_fd = -1;
+        #[cfg(target_os = "linux")]
+        let exit_fd = self.exit.as_ref().map_or(-1, AsRawFd::as_raw_fd);
+        let mut descriptors = [
+            libc::pollfd {
+                fd: if stdout_eof { -1 } else { stdout.as_raw_fd() },
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: if stderr_eof { -1 } else { stderr.as_raw_fd() },
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: exit_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        // Exclude EOF pipes: POLLHUP remains ready and would otherwise spin.
+        if unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as _, 20) } < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn wait(
+        &self,
+        _stdout: &std::process::ChildStdout,
+        _stderr: &std::process::ChildStderr,
+        _stdout_eof: bool,
+        _stderr_eof: bool,
+        made_progress: bool,
+    ) -> std::io::Result<()> {
+        // Anonymous Windows pipes cannot be waited on for readiness. Drain
+        // active producers without sleeping; an idle child exit wakes early.
+        if !made_progress
+            && unsafe {
+                windows_sys::Win32::System::Threading::WaitForSingleObject(self.process, 20)
+            } == windows_sys::Win32::Foundation::WAIT_FAILED
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 }
 
