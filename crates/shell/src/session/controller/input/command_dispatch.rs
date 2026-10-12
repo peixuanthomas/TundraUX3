@@ -390,6 +390,10 @@ impl ShellSession {
             }
             ShellCommand::RefreshHitMap { width, height } => {
                 self.terminal_size = (width, height);
+                if self.active_screen() == ShellScreen::Editor && self.pages.editor.editor_soft_wrap
+                {
+                    self.reveal_source_caret();
+                }
                 self.resize_management_terminal();
                 if self.active_screen() == ShellScreen::SystemStatus {
                     self.clamp_system_status_dashboard_scroll();

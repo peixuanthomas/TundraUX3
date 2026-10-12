@@ -80,3 +80,24 @@ ui-editor-status = { $mode }  行 { $line }，列 { $column }  { $count } 个词
 ui-editor-read-only-title = { $title } [只读]
 
 ui-editor-tail-title = { $title } [跟踪末尾]
+
+ui-editor-replace = 替换
+ui-editor-wrap = 切换软换行
+ui-editor-format-json = 格式化 JSON
+editor-search-stale-preview = 文档已更改，请重新生成替换预览。
+editor-search-invalid-range = 替换范围无效或与当前文档不一致。
+config-editor-replace = 查找与替换
+config-editor-replace-apply = 应用替换预览
+editor-search-text = 查找文本
+editor-search-regex = 正则表达式
+editor-search-case_sensitive = 区分大小写
+editor-search-whole_word = 整词匹配
+editor-search-backwards = 向前查找
+editor-search-replacement = 替换为（留空删除匹配内容）
+editor-search-scope = 替换范围
+editor-search-all = 全部匹配
+editor-search-current = 当前／下一个匹配
+editor-search-help = F3：下一个 · Shift+F3：上一个。正则替换支持 $1 和 ${ "{" }name{ "}" }。匹配保留完整字素边界。
+editor-search-preview-count = { $count } 处替换。提交应用，Esc 取消；一次撤销可还原整批修改。
+editor-search-preview-truncated = 仅显示前 40 处预览，应用将处理全部匹配。
+editor-search-count = 匹配 { $current } / { $count } · F3 / Shift+F3

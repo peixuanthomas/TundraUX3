@@ -453,9 +453,14 @@ fn render_canvas(
         if layout.gutter.width >= 2 {
             use app::editor::line_changes::LineChange;
             use ratatui::style::Color;
+            let wrapped = model
+                .wrap_layout
+                .as_ref()
+                .and_then(|layout| layout.rows.get(line_layout.document_line));
+            let logical_line = wrapped.map_or(line_layout.document_line, |row| row.logical_line);
             let marker = model
                 .line_markers
-                .get(line_layout.document_line)
+                .get(logical_line)
                 .copied()
                 .unwrap_or_default();
             let color = match marker.change {
@@ -464,7 +469,11 @@ fn render_canvas(
                 LineChange::Modified => Color::Yellow,
             };
             let number_width = usize::from(layout.gutter.width.saturating_sub(2));
-            let number = format!("{:>number_width$}", line_layout.document_line + 1);
+            let number = if wrapped.is_some_and(|row| row.continuation) {
+                format!("{:>number_width$}", "↪")
+            } else {
+                format!("{:>number_width$}", logical_line + 1)
+            };
             let deletion = match (marker.deleted_before > 0, marker.deleted_after > 0) {
                 (true, true) => "↕",
                 (true, false) => "▔",
@@ -563,7 +572,7 @@ fn render_canvas(
         let horizontal_scroll = layout
             .prepared_lines
             .get(cursor.line.saturating_sub(layout.prepared_start))
-            .filter(|line| model.mode == EditorMode::Source || line.no_wrap)
+            .filter(|line| (model.mode == EditorMode::Source && !model.soft_wrap) || line.no_wrap)
             .map_or(0, |_| layout.horizontal_scroll);
         if cursor.column >= horizontal_scroll
             && cursor.column.saturating_sub(horizontal_scroll) < usize::from(layout.canvas.width)
@@ -589,7 +598,12 @@ fn render_status_bar(
     if layout.status_bar.is_empty() {
         return;
     }
-    let cursor = effective_cursor(layout, model).unwrap_or_default();
+    let cursor = if model.soft_wrap {
+        model.cursor
+    } else {
+        effective_cursor(layout, model)
+    }
+    .unwrap_or_default();
     let image = match model.image_protocol {
         EditorImageProtocolStatus::Detecting => i18n::tr!("ui-editor-image-detecting"),
         EditorImageProtocolStatus::Unsupported => i18n::tr!("ui-editor-image-fallback"),
@@ -669,7 +683,7 @@ fn styled_line(
     theme: &TundraTheme,
     width: usize,
 ) -> Line<'static> {
-    let scroll = if model.mode == EditorMode::Source || line.no_wrap {
+    let scroll = if (model.mode == EditorMode::Source && !model.soft_wrap) || line.no_wrap {
         layout.horizontal_scroll
     } else {
         0
@@ -706,7 +720,7 @@ fn styled_line(
                 break;
             }
             let position = EditorTextPosition::new(document_line, start);
-            let base_style = c_syntax_style(base_style, grapheme_source, model, theme);
+            let base_style = syntax_style(base_style, grapheme_source, model, theme);
             let selected = match model.mode {
                 EditorMode::Rich => model.rich_selection.map_or_else(
                     || {
@@ -750,38 +764,39 @@ fn styled_line(
     Line::from(output)
 }
 
-fn c_syntax_style(
+fn syntax_style(
     style: Style,
     source: DisplaySource,
     model: &EditorViewModel,
     theme: &TundraTheme,
 ) -> Style {
-    use app::editor::c_syntax::{CTokenKind, is_c_file};
-
-    if model.mode != EditorMode::Source || !is_c_file(&model.file_name) {
+    if model.mode != EditorMode::Source {
         return style;
     }
     let DisplaySource::Range(range) = source else {
         return style;
     };
     let index = model
-        .c_highlights
+        .syntax_highlights
         .partition_point(|token| token.range.end <= range.start);
-    let Some(token) = model
-        .c_highlights
+    let mut style = model
+        .syntax_highlights
         .get(index)
         .filter(|token| token.range.start <= range.start)
-    else {
-        return style;
-    };
-    let color = match token.kind {
-        CTokenKind::Keyword => theme.accent_color,
-        CTokenKind::String => ratatui::style::Color::Green,
-        CTokenKind::Number => ratatui::style::Color::Yellow,
-        CTokenKind::Comment => theme.muted,
-        CTokenKind::Preprocessor => ratatui::style::Color::LightMagenta,
-    };
-    style.fg(color)
+        .map_or(style, |token| style.patch(theme.syntax_style(token.kind)));
+    let index = model
+        .search_matches
+        .partition_point(|matched| matched.end <= range.start);
+    if model
+        .search_matches
+        .get(index)
+        .is_some_and(|matched| matched.start < range.end && matched.end > range.start)
+    {
+        style = style
+            .bg(theme.tokens().accent_soft)
+            .add_modifier(Modifier::UNDERLINED);
+    }
+    style
 }
 
 fn effective_cursor(layout: &EditorLayout, model: &EditorViewModel) -> Option<EditorTextPosition> {
@@ -798,6 +813,15 @@ fn effective_cursor(layout: &EditorLayout, model: &EditorViewModel) -> Option<Ed
                     .then_some(model.cursor_offset)
                     .flatten()
                     .and_then(|offset| layout.visual_position_for_source(offset))
+            })
+            .or(model.cursor),
+        EditorMode::Source if model.soft_wrap => model
+            .cursor_offset
+            .and_then(|offset| {
+                model.wrap_layout.as_ref().map(|layout| {
+                    let (line, column) = layout.position(offset);
+                    EditorTextPosition::new(line, column)
+                })
             })
             .or(model.cursor),
         EditorMode::Source => model

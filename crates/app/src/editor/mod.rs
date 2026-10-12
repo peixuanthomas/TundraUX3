@@ -4,11 +4,15 @@
 //! files use the same text buffer as every other supported file.
 
 pub mod c_syntax;
+pub mod json_format;
 pub mod line_changes;
 pub mod markdown_codec;
 pub mod recovery;
 pub mod rich_document;
 pub mod rich_edit;
+pub mod search;
+pub mod soft_wrap;
+pub mod syntax;
 
 mod source_buffer;
 
@@ -367,6 +371,24 @@ pub enum EditorPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorCommand {
+    Find {
+        query: String,
+        options: search::SearchOptions,
+        backwards: bool,
+    },
+    FindNext {
+        backwards: bool,
+    },
+    ReplaceMatches {
+        revision: u64,
+        replacements: Vec<search::Replacement>,
+    },
+    FormatJson,
+    MoveVisual {
+        width: usize,
+        down: bool,
+        extend_selection: bool,
+    },
     InsertText(String),
     InsertNewline,
     Paste(String),
@@ -414,7 +436,10 @@ impl EditorCommand {
     pub const fn is_allowed_in_read_only(&self) -> bool {
         matches!(
             self,
-            Self::MoveCursor { .. }
+            Self::Find { .. }
+                | Self::FindNext { .. }
+                | Self::MoveVisual { .. }
+                | Self::MoveCursor { .. }
                 | Self::MoveTo { .. }
                 | Self::SelectAll
                 | Self::ClearSelection
@@ -575,6 +600,7 @@ impl SaveSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorEffect {
+    Message(String),
     OpenFilePicker,
     SaveFile {
         path: PathBuf,
@@ -609,6 +635,8 @@ pub struct SourceBuffer {
     non_ascii_bytes: usize,
     display_widths: SourceDisplayWidthCache,
     c_highlights: c_syntax::Cache,
+    syntax: syntax::Cache,
+    wrapped: soft_wrap::Cache,
 }
 
 /// Derived Source-line metrics. The histogram makes the global maximum an
@@ -995,6 +1023,15 @@ struct SourceSession {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchSession {
+    pub query: String,
+    pub options: search::SearchOptions,
+    pub revision: u64,
+    pub matches: Arc<[Range<usize>]>,
+    pub current: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorState {
     pub document: EditorDocument,
     pub mode: EditorMode,
@@ -1004,6 +1041,7 @@ pub struct EditorState {
     pub cursor: Cursor,
     pub selection: Option<Selection>,
     pub viewport: EditorViewport,
+    pub search: Option<SearchSession>,
     buffer: EditorBuffer,
     undo_stack: Vec<EditTransaction>,
     redo_stack: Vec<EditTransaction>,

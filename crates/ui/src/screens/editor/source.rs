@@ -47,6 +47,9 @@ pub(super) fn is_unsafe_format_character(character: char) -> bool {
 }
 
 pub(super) fn source_document_line_count(model: &EditorViewModel) -> usize {
+    if let Some(layout) = &model.wrap_layout {
+        return layout.rows.last().map_or(1, |r| r.logical_line + 1);
+    }
     if let Some(window) = &model.source_window {
         return window.total_line_count.max(1);
     }
@@ -65,6 +68,23 @@ pub(super) fn source_display_lines_for_viewport(
     start: usize,
     end: usize,
 ) -> Vec<DisplayLine> {
+    if let Some(layout) = &model.wrap_layout {
+        return (start..end.min(layout.rows.len()))
+            .map(|index| {
+                let row = &layout.rows[index];
+                DisplayLine {
+                    runs: vec![DisplayRun::shared_source(
+                        Arc::from(layout.text(index)),
+                        EditorSourceRange::new(row.range.start, row.range.end),
+                    )],
+                    block_index: None,
+                    no_wrap: false,
+                    column_start: 0,
+                    role: DisplayLineRole::Normal,
+                }
+            })
+            .collect();
+    }
     if let Some(window) = &model.source_window {
         return (start..end)
             .map(|document_line| {

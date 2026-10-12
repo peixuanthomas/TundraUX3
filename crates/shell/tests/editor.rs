@@ -25,6 +25,116 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn soft_wrap_keyboard_navigation_resize_and_save_keep_source_unchanged() {
+    let fixture = FixtureRoot::new("soft-wrap-navigation");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents").join("notes.txt");
+    let source = "中文e\u{301}👩‍💻 abc ".repeat(60);
+    fs::write(&path, &source).unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    let toggle = InputEvent::Key(KeyInput::with_phase(
+        InputKey::Char('z'),
+        InputModifiers {
+            alt: true,
+            ..InputModifiers::none()
+        },
+        InputPhase::Press,
+    ));
+    state.apply_input_with_platform(toggle.clone(), &platform);
+    let model = state.to_editor_view_model();
+    assert!(model.soft_wrap);
+    assert!(!model.dirty);
+    let wrapped = model.wrap_layout.unwrap();
+    state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    assert_eq!(
+        state.to_editor_view_model().cursor_offset,
+        Some(wrapped.rows[1].range.start)
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Up"), &platform);
+    assert_eq!(state.to_editor_view_model().cursor_offset, Some(0));
+    state.apply_input_with_platform(
+        InputEvent::Resize {
+            width: 64,
+            height: 22,
+        },
+        &platform,
+    );
+    let resized = state.to_editor_view_model();
+    assert!(resized.wrap_layout.unwrap().width < wrapped.width);
+    assert_eq!(resized.horizontal_scroll, 0);
+    state.apply_input_with_platform(toggle, &platform);
+    assert!(!state.to_editor_view_model().soft_wrap);
+    state.apply_input_with_platform(ctrl('s'), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
+    assert_eq!(fs::read_to_string(path).unwrap(), source);
+}
+
+#[test]
+fn json_shortcut_is_reachable_and_undo_restores_compact_source() {
+    let fixture = FixtureRoot::new("json-format-shortcut");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents").join("data.json");
+    fs::write(&path, "{\"a\":1,\"b\":{\"c\":2}}").unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    state.apply_input_with_platform(ctrl_shift('j'), &platform);
+    let model = state.to_editor_view_model();
+    assert!(model.dirty);
+    assert!(model.source_lines.iter().any(|line| line == "  \"a\": 1,"));
+    assert!(model.source_lines.iter().any(|line| line == "    \"c\": 2"));
+    state.apply_input_with_platform(ctrl('z'), &platform);
+    assert!(!state.to_editor_view_model().dirty);
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["{\"a\":1,\"b\":{\"c\":2}}"]
+    );
+}
+
+#[test]
+fn find_and_replace_dialogs_work_from_keyboard_with_preview_and_cancel() {
+    let fixture = FixtureRoot::new("search-keyboard");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(fixture.path().join("Documents/notes.txt"), "cat cat").unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    let submit = InputEvent::Key(KeyInput::with_phase(
+        InputKey::Enter,
+        InputModifiers {
+            control: true,
+            ..InputModifiers::none()
+        },
+        InputPhase::Press,
+    ));
+    state.apply_input_with_platform(ctrl('f'), &platform);
+    type_text(&mut state, &platform, "cat");
+    state.apply_input_with_platform(submit.clone(), &platform);
+    assert_eq!(&*state.to_editor_view_model().search_matches, &[0..3, 4..7]);
+    assert_eq!(state.to_editor_view_model().cursor_offset, Some(3));
+    state.apply_input_with_platform(InputEvent::from_key_label("F3"), &platform);
+    assert_eq!(state.to_editor_view_model().cursor_offset, Some(7));
+    state.apply_input_with_platform(ctrl('h'), &platform);
+    for _ in 0..5 {
+        state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    }
+    type_text(&mut state, &platform, "dog");
+    state.apply_input_with_platform(submit.clone(), &platform);
+    assert_eq!(state.to_editor_view_model().source_lines, vec!["cat cat"]);
+    assert!(state.to_editor_view_model().config_form.is_some());
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert_eq!(state.to_editor_view_model().source_lines, vec!["cat cat"]);
+    state.apply_input_with_platform(ctrl('h'), &platform);
+    state.apply_input_with_platform(submit.clone(), &platform);
+    state.apply_input_with_platform(submit, &platform);
+    assert_eq!(state.to_editor_view_model().source_lines, vec!["dog dog"]);
+    state.apply_input_with_platform(ctrl('z'), &platform);
+    assert_eq!(state.to_editor_view_model().source_lines, vec!["cat cat"]);
+}
+
+#[test]
 fn launcher_editor_entry_opens_a_plain_text_document() {
     let fixture = FixtureRoot::new("home-open");
     let platform = mock_platform(fixture.path());
@@ -65,12 +175,12 @@ fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
         "the shell still sends only a viewport"
     );
     assert_eq!(
-        model.c_highlights[0].kind,
-        app::editor::c_syntax::CTokenKind::Keyword
+        model.syntax_highlights[0].kind,
+        app::editor::syntax::HighlightKind::StorageType
     );
     assert!(std::sync::Arc::ptr_eq(
-        &model.c_highlights,
-        &state.to_editor_view_model().c_highlights
+        &model.syntax_highlights,
+        &state.to_editor_view_model().syntax_highlights
     ));
     type_text(&mut state, &platform, "/*");
     let edited = state.to_editor_view_model();
@@ -78,10 +188,10 @@ fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
         edited.line_markers[0].change,
         app::editor::line_changes::LineChange::Modified
     );
-    assert_eq!(edited.c_highlights.len(), 1);
+    assert_eq!(edited.syntax_highlights.len(), 1);
     assert_eq!(
-        edited.c_highlights[0].kind,
-        app::editor::c_syntax::CTokenKind::Comment
+        edited.syntax_highlights[0].kind,
+        app::editor::syntax::HighlightKind::Comment
     );
     assert_eq!(
         fs::read_to_string(fixture.path().join("Documents/main.c")).unwrap(),

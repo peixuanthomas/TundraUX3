@@ -6,6 +6,67 @@ impl EditorController {
             return Vec::new();
         }
         match command {
+            EditorCommand::Find {
+                query,
+                options,
+                backwards,
+            } => {
+                return find(state, query, options, backwards, false);
+            }
+            EditorCommand::FindNext { backwards } => {
+                if let Some(search) = &state.search {
+                    return find(state, search.query.clone(), search.options, backwards, true);
+                }
+                Vec::new()
+            }
+            EditorCommand::ReplaceMatches {
+                revision,
+                replacements,
+            } => {
+                return replace_matches(state, revision, replacements);
+            }
+            EditorCommand::FormatJson => {
+                if state.mode != EditorMode::Source {
+                    return Vec::new();
+                }
+                match json_format::format_json(
+                    &state.source(),
+                    state.document.metadata.preferred_line_ending.as_str(),
+                ) {
+                    Ok(formatted) => {
+                        let end = state.source().len();
+                        state.commit_source_edit(
+                            0..end,
+                            &formatted,
+                            Cursor::default(),
+                            None,
+                            EditKind::Format,
+                        );
+                    }
+                    Err(error) => return vec![EditorEffect::Message(error.to_string())],
+                }
+                Vec::new()
+            }
+            EditorCommand::MoveVisual {
+                width,
+                down,
+                extend_selection,
+            } => {
+                if let Some(layout) = state.source_wrap_layout(width) {
+                    let (line, column) = layout.position(state.cursor.byte_offset);
+                    let desired = state.cursor.preferred_column.unwrap_or(column);
+                    let target = if down {
+                        (line + 1).min(layout.rows.len() - 1)
+                    } else {
+                        line.saturating_sub(1)
+                    };
+                    if target != line {
+                        move_to(state, layout.offset(target, desired), extend_selection);
+                        state.cursor.preferred_column = Some(desired);
+                    }
+                }
+                Vec::new()
+            }
             EditorCommand::InsertText(text) | EditorCommand::Paste(text) => {
                 apply_insert_text(state, &text);
                 Vec::new()
@@ -179,4 +240,137 @@ impl EditorController {
             }
         }
     }
+}
+
+fn find(
+    state: &mut EditorState,
+    query: String,
+    options: search::SearchOptions,
+    backwards: bool,
+    advance: bool,
+) -> Vec<EditorEffect> {
+    if state.mode != EditorMode::Source {
+        return Vec::new();
+    }
+    let engine = match search::SearchEngine::new(&query, options) {
+        Ok(engine) => engine,
+        Err(error) => return vec![EditorEffect::Message(error.to_string())],
+    };
+    let matches: Arc<[Range<usize>]> = state
+        .search
+        .as_ref()
+        .filter(|s| s.query == query && s.options == options && s.revision == state.revision())
+        .map_or_else(
+            || engine.find_all(&state.source()).into(),
+            |s| Arc::clone(&s.matches),
+        );
+    let previous = state
+        .search
+        .as_ref()
+        .filter(|s| s.query == query && s.options == options && s.revision == state.revision())
+        .and_then(|s| s.current)
+        .filter(|&i| {
+            matches
+                .get(i)
+                .is_some_and(|r| r.end == state.cursor.byte_offset)
+        });
+    let current = if matches.is_empty() {
+        None
+    } else if advance && let Some(previous) = previous {
+        Some(if backwards {
+            (previous + matches.len() - 1) % matches.len()
+        } else {
+            (previous + 1) % matches.len()
+        })
+    } else if backwards {
+        Some(
+            matches
+                .iter()
+                .rposition(|r| r.start < state.cursor.byte_offset)
+                .unwrap_or(matches.len() - 1),
+        )
+    } else {
+        Some(
+            matches
+                .iter()
+                .position(|r| r.start >= state.cursor.byte_offset)
+                .unwrap_or(0),
+        )
+    };
+    if let Some(index) = current {
+        move_to(state, matches[index].start, false);
+        move_to(state, matches[index].end, true);
+    }
+    state.search = Some(SearchSession {
+        query,
+        options,
+        revision: state.revision(),
+        matches: matches.into(),
+        current,
+    });
+    Vec::new()
+}
+
+fn replace_matches(
+    state: &mut EditorState,
+    revision: u64,
+    replacements: Vec<search::Replacement>,
+) -> Vec<EditorEffect> {
+    if state.mode != EditorMode::Source || replacements.is_empty() {
+        return Vec::new();
+    }
+    if revision != state.revision() {
+        return vec![EditorEffect::Message(i18n::tr!(
+            "editor-search-stale-preview"
+        ))];
+    }
+    let source = state.source();
+    let boundaries = search::grapheme_boundaries(&source);
+    let mut end = 0;
+    for (index, edit) in replacements.iter().enumerate() {
+        if !search::valid_range(&boundaries, &edit.range)
+            || edit.range.start < end
+            || (index > 0 && edit.range.start == replacements[index - 1].range.start)
+            || source.get(edit.range.clone()) != Some(edit.original.as_str())
+        {
+            return vec![EditorEffect::Message(i18n::tr!(
+                "editor-search-invalid-range"
+            ))];
+        }
+        end = edit.range.end;
+    }
+    // One existing Source transaction covers the affected span, so a batch is
+    // atomic and a single Undo restores the original text and selection.
+    let start = replacements[0].range.start;
+    let mut output = String::new();
+    let mut offset = start;
+    for edit in replacements {
+        output.push_str(&source[offset..edit.range.start]);
+        output.push_str(&edit.replacement);
+        offset = edit.range.end;
+    }
+    drop(source);
+    let changed = state.commit_source_edit(
+        start..end,
+        &output,
+        Cursor {
+            byte_offset: start + output.len(),
+            preferred_column: None,
+        },
+        None,
+        EditKind::Format,
+    );
+    // A replacement may join with a following combining character.
+    state.clamp_positions();
+    if changed
+        && let Some(EditTransaction::Source {
+            after_cursor,
+            after_selection,
+            ..
+        }) = state.undo_stack.last_mut()
+    {
+        *after_cursor = state.cursor;
+        *after_selection = state.selection;
+    }
+    Vec::new()
 }

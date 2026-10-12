@@ -18,7 +18,7 @@ members = [
     "crates/weathr",
 ]
 resolver = "3"
-exclude = ["third_party/crossterm"]
+exclude = ["third_party/crossterm", "third_party/lsh"]
 
 [workspace.package]
 version = "1.3.4"

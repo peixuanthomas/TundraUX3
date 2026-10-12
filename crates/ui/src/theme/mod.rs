@@ -783,6 +783,38 @@ pub struct TundraTheme {
 }
 
 impl TundraTheme {
+    /// Semantic LSH roles resolve through the active theme on every frame.
+    pub fn syntax_style(&self, kind: app::editor::syntax::HighlightKind) -> Style {
+        use app::editor::syntax::HighlightKind as K;
+        let tokens = self.tokens();
+        match kind {
+            K::Other => self.body_style(),
+            K::Comment => self.muted_style().add_modifier(Modifier::ITALIC),
+            K::String | K::MarkupInserted => Style::default().fg(tokens.success),
+            K::ConstantLanguage | K::ConstantNumeric | K::MarkupChanged => {
+                Style::default().fg(tokens.warning)
+            }
+            K::KeywordControl | K::KeywordOther | K::StorageType => Style::default()
+                .fg(self.accent_color)
+                .add_modifier(Modifier::BOLD),
+            K::KeywordPreprocessor | K::StorageAnnotation | K::MetaHeader => {
+                Style::default().fg(tokens.accent_strong)
+            }
+            K::Variable => self.body_style(),
+            K::Method | K::MarkupList => Style::default().fg(self.accent_color),
+            K::MarkupDeleted => self.error_style(),
+            K::MarkupHeading => Style::default()
+                .fg(self.accent_color)
+                .add_modifier(Modifier::BOLD),
+            K::MarkupBold => self.body_style().add_modifier(Modifier::BOLD),
+            K::MarkupItalic => self.body_style().add_modifier(Modifier::ITALIC),
+            K::MarkupStrikethrough => self.body_style().add_modifier(Modifier::CROSSED_OUT),
+            K::MarkupLink => Style::default()
+                .fg(self.accent_color)
+                .add_modifier(Modifier::UNDERLINED),
+        }
+    }
+
     pub fn default_dark() -> Self {
         let tokens = ThemeTokens::glacier_night();
         Self {

@@ -231,6 +231,7 @@ pub struct EditorSourceLineMap {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorLayout {
+    pub wrap_layout: Option<Arc<app::editor::soft_wrap::WrapLayout>>,
     pub mode: EditorMode,
     pub area: Rect,
     pub menu_bar: Rect,
@@ -418,6 +419,10 @@ impl EditorLayout {
     }
 
     pub fn visual_position_for_source(&self, byte_offset: usize) -> Option<EditorTextPosition> {
+        if let Some(layout) = &self.wrap_layout {
+            let (line, column) = layout.position(byte_offset);
+            return Some(EditorTextPosition::new(line, column));
+        }
         nearest_visual_position(&self.source_line_maps, byte_offset)
     }
 
@@ -533,6 +538,19 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     let mut canvas = base_canvas;
     let requested_horizontal_scroll = model.horizontal_scroll;
     let (document_line_count, rich_lines, horizontal_content_width) = match model.mode {
+        EditorMode::Source if model.soft_wrap => {
+            // A stable scrollbar lane keeps the wrap width independent of the
+            // number of display rows and prevents resize feedback loops.
+            canvas.width = canvas.width.saturating_sub(u16::from(canvas.width > 1));
+            (
+                model
+                    .wrap_layout
+                    .as_ref()
+                    .map_or_else(|| source_document_line_count(model), |l| l.rows.len()),
+                None,
+                usize::from(canvas.width),
+            )
+        }
         EditorMode::Source => {
             let line_count = source_document_line_count(model);
             // Horizontal and vertical scrollbars affect one another: adding a
@@ -596,7 +614,9 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             (lines.len().max(1), Some(lines), content_width)
         }
     };
-    let horizontal_scroll = if model.mode == EditorMode::Rich {
+    let horizontal_scroll = if model.soft_wrap {
+        0
+    } else if model.mode == EditorMode::Rich {
         requested_horizontal_scroll
             .min(horizontal_content_width.saturating_sub(usize::from(canvas.width)))
     } else {
@@ -624,7 +644,9 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
                 .and_then(|line| line.block_index),
             horizontally_scrollable: prepared_lines
                 .get(document_line.saturating_sub(visible_start))
-                .is_some_and(|line| model.mode == EditorMode::Source || line.no_wrap),
+                .is_some_and(|line| {
+                    (model.mode == EditorMode::Source && !model.soft_wrap) || line.no_wrap
+                }),
             area: Rect::new(
                 canvas.x,
                 canvas
@@ -740,9 +762,10 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             .iter()
             .enumerate()
             .filter_map(|(relative_line, line)| {
-                let horizontal_start =
-                    usize::from(model.mode == EditorMode::Source || line.no_wrap)
-                        .saturating_mul(horizontal_scroll);
+                let horizontal_start = usize::from(
+                    (model.mode == EditorMode::Source && !model.soft_wrap) || line.no_wrap,
+                )
+                .saturating_mul(horizontal_scroll);
                 let boundaries = display_line_source_boundaries(
                     line,
                     model.source.as_deref(),
@@ -761,6 +784,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
 
     gutter.height = canvas.height;
     EditorLayout {
+        wrap_layout: model.wrap_layout.clone(),
         mode: model.mode,
         area,
         menu_bar,
@@ -869,6 +893,11 @@ pub(super) fn menu_popup_layout(
                         .is_enabled(action, model.read_only, model.mode)
                 }
                 EditorMenuAction::Mode(_) => true,
+                EditorMenuAction::ToggleWrap => model.mode == EditorMode::Source,
+                EditorMenuAction::Replace => !model.read_only,
+                EditorMenuAction::FormatJson => {
+                    !model.read_only && model.mode == EditorMode::Source
+                }
                 EditorMenuAction::Config(action) => {
                     matches!(action, EditorConfigAction::Menu | EditorConfigAction::Open)
                         || model.configuration
@@ -1098,6 +1127,7 @@ pub(super) fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             Toolbar(ToolbarAction::Undo),
             Toolbar(ToolbarAction::Redo),
             Toolbar(ToolbarAction::Find),
+            EditorMenuAction::Replace,
         ],
         EditorMenu::Insert => vec![
             Toolbar(ToolbarAction::Link),
@@ -1105,6 +1135,7 @@ pub(super) fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             Toolbar(ToolbarAction::Table),
         ],
         EditorMenu::Format => vec![
+            EditorMenuAction::FormatJson,
             Toolbar(ToolbarAction::ParagraphStyle),
             Toolbar(ToolbarAction::Bold),
             Toolbar(ToolbarAction::Italic),
@@ -1114,7 +1145,11 @@ pub(super) fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             Toolbar(ToolbarAction::OrderedList),
             Toolbar(ToolbarAction::Quote),
         ],
-        EditorMenu::View => vec![Mode(EditorMode::Rich), Mode(EditorMode::Source)],
+        EditorMenu::View => vec![
+            Mode(EditorMode::Rich),
+            Mode(EditorMode::Source),
+            EditorMenuAction::ToggleWrap,
+        ],
         EditorMenu::Settings => Vec::new(),
     }
 }
@@ -1249,6 +1284,9 @@ pub(super) fn menu_label(menu: EditorMenu) -> String {
 
 pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
     let label = match action {
+        EditorMenuAction::Replace => i18n::tr!("ui-editor-replace"),
+        EditorMenuAction::ToggleWrap => i18n::tr!("ui-editor-wrap"),
+        EditorMenuAction::FormatJson => i18n::tr!("ui-editor-format-json"),
         EditorMenuAction::Config(action) => i18n::tr!(format!(
             "config-editor-{}",
             match action {
@@ -1294,6 +1332,9 @@ pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
         EditorMenuAction::Mode(EditorMode::Source) => i18n::tr!("ui-editor-source-view"),
     };
     let shortcut = match action {
+        EditorMenuAction::Replace => Some("Ctrl+H"),
+        EditorMenuAction::ToggleWrap => Some("Alt+Z"),
+        EditorMenuAction::FormatJson => Some("Ctrl+Shift+J"),
         EditorMenuAction::Toolbar(action) => toolbar_shortcut(action),
         EditorMenuAction::Config(EditorConfigAction::Menu) if cfg!(target_os = "linux") => {
             Some("F10")

@@ -89,3 +89,24 @@ ui-editor-status = { $mode }  Ln { $line }, Col { $column }  { $count ->
 ui-editor-read-only-title = { $title } [read-only]
 
 ui-editor-tail-title = { $title } [tail]
+
+ui-editor-replace = Replace
+ui-editor-wrap = Toggle soft wrap
+ui-editor-format-json = Format JSON
+editor-search-stale-preview = The document changed. Create a new replacement preview.
+editor-search-invalid-range = Replacement ranges are invalid or no longer match the document.
+config-editor-replace = Find and replace
+config-editor-replace-apply = Apply replacement preview
+editor-search-text = Find
+editor-search-regex = Regular expression
+editor-search-case_sensitive = Case sensitive
+editor-search-whole_word = Whole word
+editor-search-backwards = Search backwards
+editor-search-replacement = Replace with (empty deletes matches)
+editor-search-scope = Replace scope
+editor-search-all = All matches
+editor-search-current = Current / next match
+editor-search-help = F3: next · Shift+F3: previous. Regex replacements support $1 and ${ "{" }name{ "}" }. Matches respect grapheme boundaries.
+editor-search-preview-count = { $count } replacements. Submit to apply; Escape to cancel. One Undo restores the batch.
+editor-search-preview-truncated = Showing the first 40 replacements. Apply includes all matches.
+editor-search-count = Match { $current } / { $count } · F3 / Shift+F3
