@@ -81,15 +81,6 @@ windows = [
 name = "crossterm"
 path = "src/lib.rs"
 
-[[test]]
-name = "no_color"
-path = "tests/no_color.rs"
-
-[[test]]
-name = "terminal_queries"
-path = "tests/terminal_queries.rs"
-required-features = ["events"]
-
 [[example]]
 name = "copy-to-clipboard"
 path = "examples/copy-to-clipboard.rs"
@@ -207,11 +198,6 @@ features = ["full"]
 [target."cfg(unix)".dependencies.filedescriptor]
 version = "0.8"
 optional = true
-
-[target."cfg(unix)".dev-dependencies.rustix]
-version = "1"
-default-features = false
-features = ["pty", "process"]
 
 [target."cfg(unix)".dependencies.libc]
 version = "0.2"

@@ -145,7 +145,7 @@ fn get_char_for_key(key_event: &KeyEventRecord) -> Option<char> {
     let virtual_key_code = key_event.virtual_key_code as u32;
     let virtual_scan_code = key_event.virtual_scan_code as u32;
     let key_state = [0u8; 256];
-    let mut utf16_buf = [0u16; 16];
+    let mut utf16_buf = [0u16, 16];
     let dont_change_kernel_keyboard_state = 0x4;
 
     // Best-effort attempt at determining the currently active keyboard layout.
@@ -289,11 +289,6 @@ fn parse_key_event_record(key_event: &KeyEventRecord) -> Option<WindowsKeyEvent>
                     get_char_for_key(key_event).map(KeyCode::Char)
                 }
                 surrogate @ 0xD800..=0xDFFF => {
-                    // Emoji input sends down/up for each UTF-16 code unit. A release
-                    // must not pair with (or clear) the pending high surrogate.
-                    if !key_event.key_down {
-                        return None;
-                    }
                     return Some(WindowsKeyEvent::Surrogate(surrogate));
                 }
                 unicode_scalar_value => {
@@ -409,48 +404,6 @@ mod physical_modifier_tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn emoji_surrogate_releases_do_not_break_pairing() {
-        let mut pending = None;
-        let high = 0xd83d;
-        let low = 0xde00;
-        for (unit, down, expected) in [
-            (high, true, None),
-            (high, false, None),
-            (
-                low,
-                true,
-                Some(Event::Key(KeyEvent::new(
-                    KeyCode::Char('😀'),
-                    KeyModifiers::NONE,
-                ))),
-            ),
-            (low, false, None),
-        ] {
-            assert_eq!(
-                handle_key_event(record(0, 0, 0, down, unit), &mut pending),
-                expected
-            );
-        }
-        assert_eq!(pending, None);
-    }
-
-    #[test]
-    fn alt_code_surrogate_release_still_completes_the_character() {
-        let mut pending = None;
-        assert_eq!(
-            handle_key_event(record(VK_MENU, 0x38, 0, false, 0xd83d), &mut pending),
-            None
-        );
-        assert_eq!(
-            handle_key_event(record(VK_MENU, 0x38, 0, false, 0xde00), &mut pending),
-            Some(Event::Key(KeyEvent::new(
-                KeyCode::Char('😀'),
-                KeyModifiers::NONE,
-            )))
-        );
     }
 
     #[test]

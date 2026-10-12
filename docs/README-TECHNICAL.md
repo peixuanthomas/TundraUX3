@@ -127,7 +127,7 @@ bash scripts/package-linux.sh
 
 ## 第三方代码和许可证
 
-`[patch.crates-io]` 使用仓库内的 crossterm 和 vt100。修改时一并核对补丁说明、测试与许可：
+第三方依赖以正式发布版为基线，不引入尚未发布的上游提交或 PR 实现。`[patch.crates-io]` 保留仓库内基于发布版的 crossterm 和 vt100，以及由 Tundra 自行维护的补丁。修改时一并核对补丁说明、测试与许可：
 
 - [crossterm 补丁](../third_party/crossterm/TUNDRA_PATCH.md)：报文边界、超时、输入限制和警告。
 - [vt100 补丁](../third_party/vt100/TUNDRA_PATCH.md)：终端滚动历史和 `CSI 3 J`。
