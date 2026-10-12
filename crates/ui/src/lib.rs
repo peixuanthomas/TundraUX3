@@ -34,8 +34,8 @@ pub use theme::{
     BorderShape, ColorCapability, ComponentVisualState, FrostMotion, MotionDirection, MotionFrame,
     MotionIdentity, MotionOverlayIdentity, MotionOverlayKind, MotionSchedule, MotionTimings,
     MotionTransition, MotionTransitionKind, MotionTransitions, RenderCapabilities, RenderContext,
-    SpringStyle, ThemeTokens, TundraTheme, ease_in_cubic, ease_out_cubic, schedule_motion,
-    schedule_motion_range,
+    SpringStyle, TerminalColors, ThemeTokens, TundraTheme, ease_in_cubic, ease_out_cubic,
+    schedule_motion, schedule_motion_range,
 };
 
 pub use screens::launcher::launcher_sort_headers;

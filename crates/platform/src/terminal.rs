@@ -7,6 +7,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::PlatformKind;
 use crate::diagnostics::{CheckStatus, EnvironmentCheck};
 
+mod colors;
+pub use colors::TerminalColors;
+
+static TERMINAL_COLORS: std::sync::RwLock<Option<TerminalColors>> = std::sync::RwLock::new(None);
+
+/// Last startup handshake result. Reading it never reads terminal input.
+pub fn terminal_colors() -> TerminalColors {
+    TERMINAL_COLORS
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .unwrap_or_default()
+}
+
+/// Shared, nonblocking color-depth decision for Shell and Weathr.
+pub fn terminal_supports_true_color() -> bool {
+    colors::supports_true_color(terminal_colors(), |name| std::env::var(name).ok())
+}
+
 pub const ENTER_FULLSCREEN_SEQUENCE: &str = "\x1B[?1049h\x1B[?25l\x1B[2J\x1B[H";
 pub const EXIT_FULLSCREEN_SEQUENCE: &str = "\x1B[?25h\x1B[?1049l";
 
@@ -264,6 +282,7 @@ pub struct TerminalGraphicsCapabilities {
     pub cell_size: Option<TerminalCellSize>,
     pub is_tmux: bool,
     pub text_sizing_protocol: bool,
+    pub colors: TerminalColors,
 }
 
 /// Performs the terminal graphics handshake and maps all parser-specific
@@ -277,7 +296,12 @@ pub fn probe_terminal_graphics_capabilities() -> TerminalGraphicsCapabilities {
             );
         }
         match query_terminal_capabilities(TERMINAL_CAPABILITY_QUERY_TIMEOUT) {
-            Ok(query) => terminal_probe_from_query(query),
+            Ok(query) => {
+                *TERMINAL_COLORS
+                    .write()
+                    .unwrap_or_else(|error| error.into_inner()) = Some(query.colors);
+                terminal_probe_from_query(query)
+            }
             Err(error) => no_response_capabilities(error.to_string()),
         }
     }
@@ -288,6 +312,7 @@ pub fn probe_terminal_graphics_capabilities() -> TerminalGraphicsCapabilities {
             cell_size: None,
             is_tmux: false,
             text_sizing_protocol: false,
+            colors: TerminalColors::default(),
         }
     }
 }
@@ -300,6 +325,7 @@ fn no_response_capabilities(reason: impl Into<String>) -> TerminalGraphicsCapabi
         cell_size: None,
         is_tmux: false,
         text_sizing_protocol: false,
+        colors: TerminalColors::default(),
     }
 }
 
@@ -311,6 +337,7 @@ struct TerminalCapabilityQuery {
     complete: bool,
     had_unverified_graphics_hint: bool,
     text_sizing_protocol: bool,
+    colors: TerminalColors,
 }
 
 #[cfg(any(unix, windows))]
@@ -715,6 +742,7 @@ fn interpret_terminal_capability_responses(
         complete: responses.complete,
         had_unverified_graphics_hint,
         text_sizing_protocol: responses_support_text_sizing_protocol(&responses.responses),
+        colors: colors::parse_responses(&responses.raw),
     }
 }
 
@@ -749,6 +777,7 @@ fn terminal_probe_from_query(query: TerminalCapabilityQuery) -> TerminalGraphics
         }),
         is_tmux: query.is_tmux,
         text_sizing_protocol: query.text_sizing_protocol,
+        colors: query.colors,
     }
 }
 
@@ -777,7 +806,18 @@ fn terminal_capability_query(
         .strip_suffix(&final_status_query)
         .expect("ratatui-image capability query ends with a status query");
     debug_assert!(standard_commands.starts_with(start));
-    format!("{standard_commands}{escape}]1337;Capabilities{escape}\\{final_status_query}")
+    // Edit queries the actual ANSI palette and default foreground/background.
+    // Send all queries before the existing final status marker, with the same
+    // tmux escaping, so only this startup reader consumes their replies.
+    let mut colors = String::new();
+    for index in 0..16 {
+        colors.push_str(&format!("{escape}]4;{index};?{escape}\\"));
+    }
+    colors.push_str(&format!("{escape}]10;?{escape}\\{escape}]11;?{escape}\\"));
+    // XTGETTCAP RGB is independent of OSC palette reporting. A palette reply
+    // alone says nothing about support for direct RGB output.
+    colors.push_str(&format!("{escape}P+q524742{escape}\\"));
+    format!("{standard_commands}{colors}{escape}]1337;Capabilities{escape}\\{final_status_query}")
 }
 
 #[cfg(any(unix, windows))]

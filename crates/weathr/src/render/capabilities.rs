@@ -42,12 +42,8 @@ impl TerminalCapabilities {
             };
         }
 
-        let color_support = if let Ok(colorterm) = env::var("COLORTERM") {
-            if colorterm == "truecolor" || colorterm == "24bit" {
-                ColorSupport::TrueColor
-            } else {
-                check_term_for_256()
-            }
+        let color_support = if platform::terminal_supports_true_color() {
+            ColorSupport::TrueColor
         } else {
             check_term_for_256()
         };

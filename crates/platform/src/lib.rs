@@ -59,10 +59,11 @@ pub use system_monitor::{
     SystemIdentitySample, SystemMonitor, ThermalSensorSample,
 };
 pub use terminal::{
-    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalCellSize, TerminalControlHandler,
-    TerminalGraphicsCapabilities, TerminalGraphicsProbeStatus, TerminalGraphicsProtocol,
-    is_windows_terminal_session, probe_terminal_graphics_capabilities, terminal_environment_check,
-    terminal_environment_check_with, terminal_environment_check_with_graphics_protocol,
+    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, TerminalCellSize, TerminalColors,
+    TerminalControlHandler, TerminalGraphicsCapabilities, TerminalGraphicsProbeStatus,
+    TerminalGraphicsProtocol, is_windows_terminal_session, probe_terminal_graphics_capabilities,
+    terminal_colors, terminal_environment_check, terminal_environment_check_with,
+    terminal_environment_check_with_graphics_protocol, terminal_supports_true_color,
     with_terminal_fullscreen,
 };
 

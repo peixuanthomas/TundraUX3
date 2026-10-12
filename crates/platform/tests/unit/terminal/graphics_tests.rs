@@ -8,6 +8,7 @@ fn query(protocol_type: ProtocolType, complete: bool, hinted: bool) -> TerminalC
         complete,
         had_unverified_graphics_hint: hinted,
         text_sizing_protocol: false,
+        colors: TerminalColors::default(),
     }
 }
 
@@ -25,6 +26,10 @@ fn capability_query_orders_confirmations_before_one_final_terminator() {
             let terminator = query.rfind(&status).expect("final status query");
 
             assert!(iterm < terminator);
+            assert!(query.find("]4;0;?").unwrap() < terminator);
+            assert!(query.find("]10;?").unwrap() < terminator);
+            assert!(query.find("]11;?").unwrap() < terminator);
+            assert!(query.find("P+q524742").unwrap() < terminator);
             assert_eq!(query.matches(&status).count(), 1);
             assert!(query.ends_with(&format!("{status}{end}")));
             assert_eq!(query.contains("_Gi=31"), expects_standard_queries);
@@ -181,6 +186,37 @@ fn response_collection_stops_at_status_and_preserves_geometry() {
     ));
     assert_eq!(
         capabilities.cell_size,
+        Some(TerminalCellSize {
+            width: 17,
+            height: 9
+        })
+    );
+}
+
+#[test]
+fn fragmented_colors_share_the_graphics_handshake_without_confusing_its_terminator() {
+    let mut responses = TerminalResponseCollector::new();
+    for part in [
+        &b"\x1b]4;1;rgb:12"[..],
+        &b"34/abcd/ffff\x1b"[..],
+        &b"\\\x1b]10;rgb:aa/bb/cc\x07\x1b]11;rgb:00/00/00\x1b\\"[..],
+        &b"\x1bP1+r524742=38\x1b\\\x1b[6;9;17t\x1b[0n"[..],
+    ] {
+        responses.push_bytes(part);
+    }
+    assert!(responses.complete);
+    let detected = terminal_probe_from_query(interpret_terminal_capability_responses(
+        responses,
+        false,
+        None,
+        TerminalGraphicsCompatibility::Standard,
+    ));
+    assert_eq!(detected.colors.palette[1], Some([18, 171, 255]));
+    assert_eq!(detected.colors.foreground, Some([170, 187, 204]));
+    assert_eq!(detected.colors.background, Some([0, 0, 0]));
+    assert_eq!(detected.colors.true_color, Some(true));
+    assert_eq!(
+        detected.cell_size,
         Some(TerminalCellSize {
             width: 17,
             height: 9

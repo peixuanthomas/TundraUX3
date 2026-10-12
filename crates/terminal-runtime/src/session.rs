@@ -23,12 +23,8 @@ const WIN32_MODE: u8 = 4;
 
 /// Shared text-only capability detection; image protocol probing is opt-in.
 pub fn text_render_capabilities() -> ui::RenderCapabilities {
-    let true_color = std::env::var("COLORTERM").is_ok_and(|value| {
-        value.eq_ignore_ascii_case("truecolor") || value.eq_ignore_ascii_case("24bit")
-    }) || std::env::var("TERM").is_ok_and(|value| {
-        let value = value.to_ascii_lowercase();
-        value.contains("truecolor") || value.contains("direct")
-    }) || std::env::var_os("WT_SESSION").is_some();
+    let colors = platform::terminal_colors();
+    let true_color = platform::terminal_supports_true_color();
     ui::RenderCapabilities {
         color: if true_color {
             ui::ColorCapability::TrueColor
@@ -36,6 +32,11 @@ pub fn text_render_capabilities() -> ui::RenderCapabilities {
             ui::ColorCapability::Ansi
         },
         image_protocol: false,
+        terminal_colors: ui::TerminalColors {
+            palette: colors.palette,
+            foreground: colors.foreground,
+            background: colors.background,
+        },
     }
 }
 

@@ -144,3 +144,98 @@ impl Drop for KillOnDrop {
         let _ = self.0.wait();
     }
 }
+
+#[test]
+fn startup_color_queries_round_trip_without_leaking_into_keyboard_input() {
+    const COLOR_CHILD: &str = "TUNDRA_TEST_COLOR_QUERY_CHILD";
+    const COLOR_TEST: &str = "session::terminal_keyboard_pty_tests::startup_color_queries_round_trip_without_leaking_into_keyboard_input";
+    if std::env::var_os(COLOR_CHILD).is_some() {
+        let mut raw = TemporaryRawMode::enter().unwrap();
+        let probe = platform::probe_terminal_graphics_capabilities();
+        assert_eq!(probe.colors.palette[1], Some([18, 171, 255]));
+        assert_eq!(probe.colors.background, Some([10, 20, 30]));
+        let capabilities = text_render_capabilities();
+        assert_eq!(capabilities.color, ui::ColorCapability::TrueColor);
+        assert_eq!(
+            capabilities.terminal_colors.palette[1],
+            Some([18, 171, 255])
+        );
+        println!("COLOR_QUERY_COMPLETE");
+        std::io::stdout().flush().unwrap();
+        assert!(crossterm::event::poll(Duration::from_secs(5)).unwrap());
+        assert_eq!(
+            crossterm::event::read().unwrap(),
+            Event::Key(KeyCode::Char('z').into())
+        );
+        raw.restore().unwrap();
+        println!("COLOR_INPUT_COMPLETE");
+        return;
+    }
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 24,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
+    command.args(["--exact", COLOR_TEST, "--nocapture", "--test-threads=1"]);
+    command.env(COLOR_CHILD, "1");
+    command.env("TERM", "xterm-256color");
+    for name in [
+        "COLORTERM",
+        "WT_SESSION",
+        "TMUX",
+        "STY",
+        "TERM_PROGRAM",
+        "WEZTERM_EXECUTABLE",
+    ] {
+        command.env_remove(name);
+    }
+    let child = pair.slave.spawn_command(command).unwrap();
+    drop(pair.slave);
+    let mut child = KillOnDrop(child);
+    let mut writer = pair.master.take_writer().unwrap();
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reading = std::thread::spawn(move || {
+        let mut bytes = [0; 8192];
+        while let Ok(n) = reader.read(&mut bytes) {
+            if n == 0 || tx.send(bytes[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut output = Vec::new();
+    receive_until(&rx, &mut output, &mut writer, b"\x1b[5n");
+    for request in [
+        b"\x1b]4;0;?".as_slice(),
+        b"\x1b]4;15;?",
+        b"\x1b]10;?",
+        b"\x1b]11;?",
+        b"\x1bP+q524742",
+    ] {
+        assert!(output.windows(request.len()).any(|w| w == request));
+    }
+    for response in [
+        &b"\x1b]4;1;rgb:1234/abcd/ffff\x1b"[..],
+        &b"\\\x1b]10;rgb:aa/bb/cc\x07\x1b]11;rgb:0a/14/1e\x1b\\"[..],
+        &b"\x1bP1+r524742=38\x1b\\\x1b[0n"[..],
+    ] {
+        writer.write_all(response).unwrap();
+        writer.flush().unwrap();
+    }
+    receive_until(&rx, &mut output, &mut writer, b"COLOR_QUERY_COMPLETE");
+    writer.write_all(b"z").unwrap();
+    writer.flush().unwrap();
+    receive_until(&rx, &mut output, &mut writer, b"COLOR_INPUT_COMPLETE");
+    assert!(
+        child.0.wait().unwrap().success(),
+        "{}",
+        String::from_utf8_lossy(&output)
+    );
+    drop(pair.master);
+    drop(writer);
+    reading.join().unwrap();
+}

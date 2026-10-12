@@ -179,6 +179,7 @@ fn back_button_uses_the_active_theme_and_hover_accent() {
                 RenderCapabilities {
                     color: capability,
                     image_protocol: false,
+                    ..Default::default()
                 },
             );
             let mut model = chrome(80, 24);

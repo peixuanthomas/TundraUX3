@@ -12,6 +12,8 @@
 
 Shell 决定何时进入或交还终端，本 crate 执行具体设置；UI 只绘制快照。正常退出、临时交还终端和可捕获的异常均恢复由本程序开启的模式。
 
+启动时借鉴 [Microsoft Edit 的颜色查询](https://github.com/microsoft/edit/blob/1be69c85a63bcd475a0b397196d0be3dbed60023/crates/edit/src/bin/edit/main.rs)，在已有图形探测中一并发送 OSC 4、10、11，读取终端的 16 个基础色及默认文字、背景色。另用 XTGETTCAP RGB 查询真彩色支持；能报告色表不等于能显示真彩色。没有回复或不支持查询时，保留环境变量判断及默认颜色。回复支持分段到达、BEL/ST 两种结束符和 1 至 4 位十六进制通道；错误条目不会覆盖已读到的有效颜色。渲染只读取缓存，不与输入线程争抢终端数据。真彩色模式下，主题先把命名色解析成终端实际颜色，再计算派生颜色。
+
 Command Line 的输出先进入内存终端，不直接写入宿主；OSC 控制串（包括剪贴板请求）被过滤。强制退出需要清理子进程树，不能只隐藏页面。
 
 Windows Terminal 下的 WSL 优先使用 win32-input-mode 区分 Ctrl+Enter 与 Ctrl+J；tmux/screen 中不启用该模式。其他 Linux 终端尝试 Kitty 报告，再尝试 xterm modifyOtherKeys。不支持的终端按实际事件处理，不能猜测组合键。

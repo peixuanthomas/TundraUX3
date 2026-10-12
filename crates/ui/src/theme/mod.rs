@@ -29,6 +29,57 @@ pub enum ColorCapability {
 pub struct RenderCapabilities {
     pub color: ColorCapability,
     pub image_protocol: bool,
+    pub terminal_colors: TerminalColors,
+}
+
+/// Host-reported ANSI palette and defaults; missing entries retain fallbacks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TerminalColors {
+    pub palette: [Option<[u8; 3]>; 16],
+    pub foreground: Option<[u8; 3]>,
+    pub background: Option<[u8; 3]>,
+}
+
+impl TerminalColors {
+    pub const fn unknown() -> Self {
+        Self {
+            palette: [None; 16],
+            foreground: None,
+            background: None,
+        }
+    }
+
+    fn resolve(self, color: Color, foreground: bool) -> Color {
+        let index = match color {
+            Color::Reset => {
+                return (if foreground {
+                    self.foreground
+                } else {
+                    self.background
+                })
+                .map_or(color, |[r, g, b]| Color::Rgb(r, g, b));
+            }
+            Color::Indexed(index @ 0..=15) => index,
+            Color::Black => 0,
+            Color::Red => 1,
+            Color::Green => 2,
+            Color::Yellow => 3,
+            Color::Blue => 4,
+            Color::Magenta => 5,
+            Color::Cyan => 6,
+            Color::Gray => 7,
+            Color::DarkGray => 8,
+            Color::LightRed => 9,
+            Color::LightGreen => 10,
+            Color::LightYellow => 11,
+            Color::LightBlue => 12,
+            Color::LightMagenta => 13,
+            Color::LightCyan => 14,
+            Color::White => 15,
+            _ => return color,
+        };
+        self.palette[usize::from(index)].map_or(color, |[r, g, b]| Color::Rgb(r, g, b))
+    }
 }
 
 impl RenderCapabilities {
@@ -36,6 +87,7 @@ impl RenderCapabilities {
         Self {
             color: ColorCapability::Ansi,
             image_protocol: false,
+            terminal_colors: TerminalColors::unknown(),
         }
     }
 }
@@ -534,6 +586,18 @@ impl RenderContext {
         motion: MotionFrame,
         capabilities: RenderCapabilities,
     ) -> Self {
+        let mut theme = theme.clone();
+        if capabilities.color == ColorCapability::TrueColor {
+            // Resolve before deriving soft accents, pressed colors and text
+            // contrast, so customized terminal palettes participate in them.
+            let colors = capabilities.terminal_colors;
+            theme.background = colors.resolve(theme.background, false);
+            theme.foreground = colors.resolve(theme.foreground, true);
+            theme.accent_color = colors.resolve(theme.accent_color, true);
+            theme.muted = colors.resolve(theme.muted, true);
+            theme.error = colors.resolve(theme.error, true);
+            theme.border_color = colors.resolve(theme.border_color, true);
+        }
         Self {
             theme: theme.tokens().for_capability(capabilities.color),
             buttons: theme.buttons.clone(),

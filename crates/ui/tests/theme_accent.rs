@@ -24,6 +24,55 @@ const ANSI_ACCENTS: [(Color, Color); 16] = [
 ];
 
 #[test]
+fn reported_palette_drives_accents_pressed_color_and_default_colors() {
+    let mut colors = ui::TerminalColors::default();
+    colors.palette[1] = Some([240, 245, 250]);
+    colors.foreground = Some([200, 210, 220]);
+    colors.background = Some([10, 20, 30]);
+    let theme = TundraTheme {
+        accent_color: Color::Red,
+        foreground: Color::Reset,
+        background: Color::Reset,
+        ..Default::default()
+    };
+    let context = RenderContext::from_theme(
+        &theme,
+        MotionFrame::default(),
+        RenderCapabilities {
+            terminal_colors: colors,
+            ..Default::default()
+        },
+    );
+    assert_eq!(context.theme.accent, Color::Rgb(240, 245, 250));
+    assert_eq!(context.theme.canvas, Color::Rgb(10, 20, 30));
+    assert_eq!(context.theme.text, Color::Rgb(200, 210, 220));
+    assert_eq!(
+        context.theme.filled_style(context.theme.accent).fg,
+        Some(Color::Black)
+    );
+    assert_eq!(
+        context.compatibility_theme().button_pressed_color(),
+        Color::Rgb(245, 248, 251)
+    );
+    let area = Rect::new(0, 0, 12, 3);
+    let mut buffer = Buffer::empty(area);
+    let mut button = Button::new("save", "Save");
+    button.state.selected = true;
+    button.render_surface(area, &mut buffer, &context.compatibility_theme());
+    assert_eq!(buffer[(0, 1)].fg, Color::Rgb(240, 245, 250));
+    // Without RGB output support, the renderer still emits named ANSI colors.
+    let ansi = RenderContext::from_theme(
+        &theme,
+        MotionFrame::default(),
+        RenderCapabilities {
+            terminal_colors: colors,
+            ..RenderCapabilities::ansi()
+        },
+    );
+    assert_eq!(ansi.theme.accent, Color::Red);
+}
+
+#[test]
 fn named_accents_survive_terminal_capability_and_legacy_theme_resolution() {
     for capabilities in [RenderCapabilities::ansi(), RenderCapabilities::default()] {
         for (accent, focus) in ANSI_ACCENTS {
