@@ -518,6 +518,7 @@ pub(super) struct TimedClick {
     pub(super) target: Option<ShellComponent>,
     pub(super) coordinates: CellPosition,
     pub(super) at: Instant,
+    pub(super) released: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

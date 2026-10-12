@@ -1305,6 +1305,38 @@ fn notification_button_release_after_focus_loss_does_not_activate() {
 }
 
 #[test]
+fn scrolling_or_leaving_a_pressed_modal_button_cancels_the_click() {
+    for wheel in [false, true] {
+        let mut state = session();
+        state.apply_input(InputEvent::key(InputKey::Escape));
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut prepared = home_frame(&state, 0, true);
+        prepared.notification = state.to_notification_view_model();
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let area = state
+            .button_regions
+            .iter()
+            .find(|region| region.id.as_str().ends_with(".action.restore-terminal"))
+            .unwrap()
+            .area;
+        let point = (area.x, area.y);
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        assert!(state.interaction.button_capture.is_some());
+        state.apply_input(if wheel {
+            InputEvent::mouse_scroll(ScrollDirection::Down, point)
+        } else {
+            InputEvent::mouse_moved((0, 0))
+        });
+        state.apply_input(InputEvent::mouse_moved(point));
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        assert!(!state.shutdown_requested());
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        assert!(state.interaction.button_capture.is_none());
+    }
+}
+
+#[test]
 fn aa_keyboard_focus_hover_and_press_render_the_requested_accent_colors() {
     let mut state = session();
     let (tx, _rx) = mpsc::channel();

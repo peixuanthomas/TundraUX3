@@ -86,6 +86,42 @@ impl ShellSession {
     pub fn route_input_at(&mut self, input: InputEvent, received_at: Instant) -> RoutedEvent {
         let _language = i18n::enter_snapshot(self.language.clone());
         self.synchronize_overlay_focus();
+        // Like Edit, count clicks only while the pointer stays on the same
+        // cell. Wheel/drag/key input must not turn the next press into a double
+        // click, even if scrolling put a different item under that cell.
+        match &input {
+            InputEvent::Mouse(mouse) => match mouse.kind {
+                ui::MouseEventKind::Up(PointerButton::Left) => {
+                    if let Some(last) = &mut self.last_click {
+                        if !last.released && last.coordinates == mouse.coordinates() {
+                            last.at = received_at;
+                            last.released = true;
+                        } else if last.coordinates != mouse.coordinates() {
+                            self.last_click = None;
+                        }
+                    }
+                }
+                ui::MouseEventKind::Moved => {
+                    if self
+                        .last_click
+                        .is_some_and(|last| last.coordinates != mouse.coordinates())
+                    {
+                        self.last_click = None;
+                    }
+                }
+                ui::MouseEventKind::Scroll(_)
+                | ui::MouseEventKind::Drag(_)
+                | ui::MouseEventKind::Down(PointerButton::Right | PointerButton::Middle) => {
+                    self.last_click = None;
+                }
+                _ => {}
+            },
+            InputEvent::Key(_)
+            | InputEvent::Paste(_)
+            | InputEvent::Resize { .. }
+            | InputEvent::FocusLost => self.last_click = None,
+            _ => {}
+        }
         let input = self.normalize_shell_navigation_input(input);
         let (target, command) = match &input {
             InputEvent::Shutdown => (RoutedTarget::Global, ShellCommand::Shutdown),

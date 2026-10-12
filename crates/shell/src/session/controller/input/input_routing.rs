@@ -713,8 +713,9 @@ impl ShellSession {
         let is_double_click = self
             .last_click
             .map(|last_click| {
-                last_click.target == target
-                    && coordinates_within_tolerance(last_click.coordinates, coordinates)
+                last_click.released
+                    && last_click.target == target
+                    && last_click.coordinates == coordinates
                     && received_at
                         .checked_duration_since(last_click.at)
                         .map(|elapsed| elapsed <= DOUBLE_CLICK_INTERVAL)
@@ -730,6 +731,7 @@ impl ShellSession {
                 target,
                 coordinates,
                 at: received_at,
+                released: self.interaction.completed_button_click_at.take() == Some(received_at),
             });
             ClickKind::Single
         }

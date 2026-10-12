@@ -789,14 +789,6 @@ pub(in crate::session) fn rect_contains(rect: Rect, coordinates: CellPosition) -
         && y < rect.y.saturating_add(rect.height)
 }
 
-pub(in crate::session) fn coordinates_within_tolerance(
-    first: CellPosition,
-    second: CellPosition,
-) -> bool {
-    first.0.abs_diff(second.0) <= DOUBLE_CLICK_CELL_TOLERANCE
-        && first.1.abs_diff(second.1) <= DOUBLE_CLICK_CELL_TOLERANCE
-}
-
 pub(in crate::session) fn drag_direction_between(
     previous: CellPosition,
     current: CellPosition,

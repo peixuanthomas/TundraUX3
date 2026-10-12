@@ -494,6 +494,10 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
         Some("alpha.txt")
     );
     state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, first_entry),
+        &platform,
+    );
+    state.apply_input_with_platform(
         InputEvent::mouse_down(PointerButton::Left, first_entry),
         &platform,
     );
@@ -553,6 +557,10 @@ fn mouse_double_click_on_first_rendered_row_does_not_open_second_entry() {
 
     state.apply_input_with_platform(
         InputEvent::mouse_down(PointerButton::Left, first_entry),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, first_entry),
         &platform,
     );
     state.apply_input_with_platform(

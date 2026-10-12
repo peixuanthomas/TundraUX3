@@ -237,13 +237,17 @@ fn modal_captures_mouse_without_closing_or_activating_home() {
 }
 
 #[test]
-fn double_click_is_detected_for_same_component_and_nearby_cell() {
+fn adjacent_cells_in_same_component_are_separate_clicks() {
     let mut state = ShellSession::new(debug_config(), (120, 40));
     let started_at = Instant::now();
 
     state.route_input_at(
         InputEvent::mouse_down(PointerButton::Left, (10, 5)),
         started_at,
+    );
+    state.route_input_at(
+        InputEvent::mouse_up(PointerButton::Left, (10, 5)),
+        started_at + Duration::from_millis(50),
     );
 
     let routed = state.route_input_at(
@@ -253,7 +257,64 @@ fn double_click_is_detected_for_same_component_and_nearby_cell() {
 
     assert_eq!(
         routed.command,
-        ShellCommand::ActivateHomeEntryAt((11, 6), ClickKind::Double)
+        ShellCommand::ActivateHomeEntryAt((11, 6), ClickKind::Single)
+    );
+}
+
+#[test]
+fn double_click_uses_release_time_and_is_cancelled_by_other_input() {
+    let point = (10, 5);
+    let start = Instant::now();
+    for interruption in [
+        InputEvent::Tick,
+        InputEvent::mouse_moved((11, 5)),
+        InputEvent::mouse_scroll(ui::ScrollDirection::Down, point),
+        InputEvent::FocusLost,
+        InputEvent::Resize {
+            width: 120,
+            height: 40,
+        },
+        InputEvent::key(InputKey::Tab),
+    ] {
+        let keeps_click = interruption == InputEvent::Tick;
+        let mut state = ShellSession::new(debug_config(), (120, 40));
+        state.route_input_at(InputEvent::mouse_down(PointerButton::Left, point), start);
+        state.route_input_at(
+            InputEvent::mouse_up(PointerButton::Left, point),
+            start + Duration::from_millis(450),
+        );
+        state.route_input_at(interruption, start + Duration::from_millis(500));
+        let routed = state.route_input_at(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            start + Duration::from_millis(700),
+        );
+        assert_eq!(
+            routed.command,
+            ShellCommand::ActivateHomeEntryAt(
+                point,
+                if keeps_click {
+                    ClickKind::Double
+                } else {
+                    ClickKind::Single
+                }
+            )
+        );
+    }
+}
+
+#[test]
+fn two_presses_without_release_do_not_form_a_double_click() {
+    let mut state = ShellSession::new(debug_config(), (120, 40));
+    let point = (10, 5);
+    let start = Instant::now();
+    state.route_input_at(InputEvent::mouse_down(PointerButton::Left, point), start);
+    let routed = state.route_input_at(
+        InputEvent::mouse_down(PointerButton::Left, point),
+        start + Duration::from_millis(100),
+    );
+    assert_eq!(
+        routed.command,
+        ShellCommand::ActivateHomeEntryAt(point, ClickKind::Single)
     );
 }
 
@@ -1098,6 +1159,7 @@ fn mouse_double_click_on_launcher_without_authentication_stays_on_home() {
     let launcher = home_entry_coordinates(&state, 1);
 
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, launcher));
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
 
     assert_eq!(state.selected_home_entry_index(), 1);

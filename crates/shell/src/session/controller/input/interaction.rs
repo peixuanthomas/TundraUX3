@@ -27,6 +27,7 @@ pub(in crate::session) struct InteractionState {
     opening_key: Option<InputKey>,
     pub pointer_position: Option<CellPosition>,
     pub button_capture: Option<ButtonPointerCapture>,
+    pub completed_button_click_at: Option<Instant>,
 }
 
 impl InteractionState {

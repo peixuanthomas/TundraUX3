@@ -135,6 +135,7 @@ impl ShellSession {
         received_at: Instant,
     ) -> Option<InputEvent> {
         self.synchronize_overlay_focus();
+        self.interaction.completed_button_click_at = None;
         if self.interaction.consumes_opening_repeat(&input) {
             return None;
         }
@@ -148,6 +149,7 @@ impl ShellSession {
                     | InputEvent::Paste(_)
             ) {
                 self.cancel_pointer_gestures_for_modal();
+                self.last_click = None;
             }
             if matches!(input, InputEvent::FocusLost) {
                 self.interaction.pointer_position = None;
@@ -160,6 +162,22 @@ impl ShellSession {
             return Some(input);
         };
         self.interaction.pointer_position = Some(mouse.coordinates());
+        // Wheel reports are not button releases. A wheel or a move outside
+        // the captured button cancels its pending action permanently.
+        if matches!(mouse.kind, ui::MouseEventKind::Scroll(_))
+            || (matches!(mouse.kind, ui::MouseEventKind::Moved)
+                && self
+                    .interaction
+                    .button_capture
+                    .as_ref()
+                    .is_some_and(|capture| {
+                        !rect_contains(capture.region.area, mouse.coordinates())
+                    }))
+        {
+            self.interaction.button_capture = None;
+            self.notification_pointer_capture = None;
+            self.last_click = None;
+        }
         if self.notification_has_active_modal() && self.handle_notification_scrollbar(mouse) {
             self.interaction.button_capture = None;
             return None;
@@ -225,6 +243,7 @@ impl ShellSession {
                         return Some(input);
                     }
                     if matches_button {
+                        self.interaction.completed_button_click_at = Some(received_at);
                         return Some(InputEvent::Mouse(MouseInput {
                             position: mouse.position,
                             ..capture.input
@@ -238,6 +257,7 @@ impl ShellSession {
                 self.notification_pointer_capture = None;
             }
             ui::MouseEventKind::Drag(PointerButton::Left) => {
+                self.last_click = None;
                 if self
                     .interaction
                     .button_capture

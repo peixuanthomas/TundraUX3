@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 pub const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
-pub(crate) const DOUBLE_CLICK_CELL_TOLERANCE: u16 = 1;
 
 pub type CellPosition = (u16, u16);
 pub type ShellInput = ui::InputEvent;
