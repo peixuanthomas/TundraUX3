@@ -8,6 +8,38 @@ permissions:
   contents: read
 
 jobs:
+  msrv:
+    name: Minimum Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read minimum Rust version
+        id: msrv
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import tomllib
+          from pathlib import Path
+
+          manifest = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))
+          version = manifest["workspace"]["package"]["rust-version"]
+          if version.count(".") == 1:
+              version += ".0"
+          print(f"toolchain={version}")
+          PY
+      - name: Install minimum Rust
+        shell: bash
+        env:
+          MSRV_TOOLCHAIN: ${{ steps.msrv.outputs.toolchain }}
+        run: rustup toolchain install "$MSRV_TOOLCHAIN" --profile minimal && rustup default "$MSRV_TOOLCHAIN"
+      - name: Check all workspace targets and features
+        shell: bash
+        run: cargo check --workspace --all-targets --all-features --locked
+
   compile:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
