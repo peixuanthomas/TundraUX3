@@ -14,9 +14,11 @@
 | `src/session/runtime.rs` | 事件循环、刷新和退出处理 |
 | `src/startup/` | 启动检查、首次设置和启动画面 |
 | `src/previews/` | 样式、AA 和屏幕键盘演示 |
-| `src/input/` | 终端事件转换和 Shell 输入类型 |
+| `src/input/` | Crossterm 事件批处理、终端事件转换和 Shell 输入类型 |
 
 `controller/` 按 account、auto_admin、clock、command_line、diagnostics、editor、explorer、launcher、logs、management、notifications、settings、system_status 分组。页面专用输入放回对应分组，通常使用 `input.rs`；公共路由、焦点和命中逻辑留在 `controller/input/`。
+
+输入入口统一为 `controller/input/preparation.rs::prepare_input`，运行时和无终端测试共用。`interaction.rs` 保存跨帧的输入方式、悬停抑制、按钮捕获和快捷键重复保护；`pointer.rs` 处理共享按钮的命中与松开确认；`input_routing.rs` 决定事件目标和语义命令。页面控制器只保留其业务操作、文本编辑和专用拖动语义。Crossterm 继续负责底层事件解析，Ratatui 继续作为唯一界面与渲染系统。
 
 较大的控制器再按实际工作拆分：editor 分为 view/input/settings/files/recovery/tasks；settings 分为 forms/background/view/devices/tasks；management 分为 actions/input/touch/config_editor。入口文件负责连接这些步骤。
 

@@ -123,7 +123,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn cancel_pointer_gestures_for_modal(&mut self) {
-        self.button_pointer_capture = None;
+        self.interaction.button_capture = None;
         self.notification_pointer_capture = None;
         self.notification_scrollbar_drag = None;
         self.pages.diagnostics.diagnostics_detail_drag = None;

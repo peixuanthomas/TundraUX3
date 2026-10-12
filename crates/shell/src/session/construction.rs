@@ -213,10 +213,8 @@ impl ShellSession {
             terminal_text_sizing_support: false,
             pending_default_ascii_icon_fallback: false,
 
-            keyboard_focus_visible: true,
-            button_hover_suppressed: false,
+            interaction: Default::default(),
             button_regions: Vec::new(),
-            button_pointer_capture: None,
             notification_scrollbar_drag: None,
 
             hovered_component: None,
@@ -241,7 +239,6 @@ impl ShellSession {
             last_key_event: None,
             last_mouse_event: None,
             last_resize_event: None,
-            mouse_coordinates: None,
             mouse_scroll_direction: None,
             mouse_drag_direction: None,
             platform_capability_summary: platform_capability_summary(

@@ -558,7 +558,7 @@ impl ShellSession {
         match ui::launcher_layout(main, &model).hit_test(coordinates.0, coordinates.1) {
             Some(ui::LauncherHitTarget::Item(index)) => {
                 self.select_launcher_index(index);
-                if let Some(capture) = &mut self.button_pointer_capture {
+                if let Some(capture) = &mut self.interaction.button_capture {
                     capture.activate_on_release = true;
                 }
                 if self.pages.launcher.launcher_view_mode
@@ -641,7 +641,7 @@ impl ShellSession {
                 };
                 self.scrollbar_drag = Some(ScrollbarDragState::Launcher { grab_offset });
                 self.pages.launcher.launcher_drag = None;
-                self.button_pointer_capture = None;
+                self.interaction.button_capture = None;
                 self.drag_tracker = None;
                 self.drag_launcher_scrollbar(mouse.coordinates(), grab_offset);
                 true

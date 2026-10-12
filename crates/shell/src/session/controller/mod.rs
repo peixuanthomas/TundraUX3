@@ -27,4 +27,5 @@ pub(super) use logs::*;
 mod management;
 #[cfg(target_os = "linux")]
 pub(in crate::session) mod privilege_session;
+pub(super) use input::interaction::InteractionState;
 pub(super) use management::*;

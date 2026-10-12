@@ -33,10 +33,17 @@ flowchart TD
 
 Shell 会把 crossterm 事件规范化为 `ui::InputEvent`。键盘保留完整阶段 `Press`、`Repeat`、`Release`，以及 Shift、Control、Alt、Super、Hyper、Meta 修饰键；鼠标保留移动、按下、释放、点击、双击、拖拽与四向滚动，同时还处理 resize、paste 与 focus 事件。
 
+输入适配集中于 `src/input/`：`terminal_events.rs` 负责类型转换，`terminal_batch.rs` 负责有界采集与连续事件合并；二者不重新解析终端字节。`controller/input/preparation.rs` 为真实事件循环和 `apply_input*` 提供同一条预处理路径：同步模态焦点 → 屏幕键盘 → AA → 共享按钮捕获 → 导航规范化。消费后的事件不能再传到背景页面。运行时随后决定是否转发给子终端，普通 Shell 输入再交给语义路由和命令分发；低层 `route_input_at` 不代表完整的物理输入入口。
+
+`controller/input/interaction.rs` 将跨帧输入方式明确分为键盘、指针和失焦状态，独立于页面逻辑焦点。它保存指针位置、点击后悬停抑制、按钮捕获及打开文本输入的快捷键重复保护。`pointer.rs` 统一实现共享按钮的按下/松开配对，捕获绑定 `PageInstanceId`、弹层标识和布局区域；页面切换、失焦、缩放及模态变化取消旧手势。合成器只读取状态并使用 Ratatui 共享控件呈现反馈。
+
+状态管理参考 [Microsoft Edit 的 `Tui` 与 `create_context`](https://github.com/microsoft/edit/blob/1be69c85a63bcd475a0b397196d0be3dbed60023/crates/edit/src/tui.rs)：跨帧保留焦点与按下目标，按模态层级决定消费归属，按下/松开目标一致才激活。这里只借鉴这些原则，不引入 Edit 的解析器、UI 树或 framebuffer。交互行为以 [TundraUX3 UI 要求](../../../docs/UI-requirements.md)为准，特别是三种输入方式独立使用、点击后清除强调和静止指针不能抢回键盘焦点。
+
 ```mermaid
 flowchart LR
     A["Crossterm Event"] --> B["ui::InputEvent"]
-    B --> C["route_input_at<br/>焦点、模态与命中测试"]
+    B --> P["prepare_input<br/>输入方式、模态消费、按钮捕获"]
+    P --> C["route_input_at<br/>焦点、模态与命中测试"]
     C --> D["ShellCommand"]
     D --> E["apply_routed_event"]
     E --> F["AppCommand / AppState::dispatch_at"]

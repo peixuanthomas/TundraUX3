@@ -30,7 +30,7 @@ impl RedrawIdentity {
             language_generation: state.language.generation(),
             screen: format!("{:?}", state.active_screen()),
             focus: format!("{:?}", state.focused_component()),
-            keyboard_focus_visible: state.keyboard_focus_visible,
+            keyboard_focus_visible: state.interaction.keyboard_focus_visible(),
             overlay,
         }
     }

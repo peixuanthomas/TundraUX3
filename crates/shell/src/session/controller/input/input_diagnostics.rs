@@ -20,7 +20,7 @@ impl ShellSession {
                     summary = format!("Mouse DoubleClick {}", button.label());
                 }
                 self.last_mouse_event = Some(summary);
-                self.mouse_coordinates = Some(mouse.coordinates());
+                self.interaction.pointer_position = Some(mouse.coordinates());
                 self.mouse_scroll_direction =
                     mouse.scroll_direction().map(|direction| match direction {
                         ScrollDirection::Up => "Up".to_string(),

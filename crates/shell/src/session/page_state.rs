@@ -249,7 +249,6 @@ impl Default for CommandLinePageState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ExplorerPageState {
     pub(super) explorer_input_mode: ExplorerInputMode,
-    pub(super) explorer_search_shortcut_held: Option<InputKey>,
     pub(super) explorer_input: String,
     pub(super) explorer_address_cursor: usize,
     pub(super) explorer_address_selection_anchor: Option<usize>,
@@ -266,7 +265,6 @@ impl Default for ExplorerPageState {
     fn default() -> Self {
         Self {
             explorer_input_mode: ExplorerInputMode::Browse,
-            explorer_search_shortcut_held: None,
             explorer_input: String::new(),
             explorer_address_cursor: 0,
             explorer_address_selection_anchor: None,

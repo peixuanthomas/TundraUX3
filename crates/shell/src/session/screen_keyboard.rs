@@ -200,7 +200,7 @@ impl ShellSession {
         self.screen_keyboard.modifiers = Default::default();
         self.screen_keyboard.physical.clear();
         self.screen_keyboard.pressed = None;
-        self.button_pointer_capture = None;
+        self.interaction.button_capture = None;
         self.cancel_auto_admin_pointer();
         self.resize_auto_admin();
     }
@@ -248,7 +248,7 @@ impl ShellSession {
         self.update_button_input_mode(&input);
         // Crossing into the panel cannot finish a press started in the AA/page.
         self.cancel_auto_admin_pointer();
-        self.button_pointer_capture = None;
+        self.interaction.button_capture = None;
         let activated = match mouse.kind {
             ui::MouseEventKind::Down(ui::MouseButton::Left) => {
                 self.screen_keyboard.pressed = region.clone().map(|region| (region, at));

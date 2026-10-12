@@ -521,17 +521,6 @@ pub(super) struct TimedClick {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ButtonPointerCapture {
-    pub region: ui::components::ButtonRegion,
-    pub screen: ShellScreen,
-    pub overlay: Option<String>,
-    pub input: MouseInput,
-    pub pressed_at: Instant,
-    pub native_release: bool,
-    pub activate_on_release: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UiSessionState {
     pub(super) pages: ShellPages,
     pub(super) command_line_close_request: Option<(PageInstanceId, bool)>,
@@ -602,10 +591,8 @@ pub struct UiSessionState {
     pub(super) terminal_text_sizing_support: bool,
     pub(super) pending_default_ascii_icon_fallback: bool,
 
-    pub(super) keyboard_focus_visible: bool,
-    pub(super) button_hover_suppressed: bool,
+    pub(super) interaction: super::controller::InteractionState,
     pub(super) button_regions: Vec<ui::components::ButtonRegion>,
-    pub(super) button_pointer_capture: Option<ButtonPointerCapture>,
     pub(super) notification_scrollbar_drag: Option<(u64, u16)>,
 
     pub(super) hovered_component: Option<ShellComponent>,
@@ -631,7 +618,6 @@ pub struct UiSessionState {
     pub(super) last_key_event: Option<String>,
     pub(super) last_mouse_event: Option<String>,
     pub(super) last_resize_event: Option<String>,
-    pub(super) mouse_coordinates: Option<(u16, u16)>,
     pub(super) mouse_scroll_direction: Option<String>,
     pub(super) mouse_drag_direction: Option<String>,
     pub(super) platform_capability_summary: i18n::LocalizedText,
