@@ -15,7 +15,7 @@ impl ShellSession {
             self.auto_admin.scroll = 0;
             self.auto_admin.pointer = None;
             self.auto_admin.suppress_repeats = true;
-            self.button_pointer_capture = None;
+            self.interaction.button_capture = None;
             self.last_key_event = None;
         }
     }

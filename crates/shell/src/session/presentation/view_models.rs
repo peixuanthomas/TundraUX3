@@ -1190,7 +1190,7 @@ impl ShellSession {
                 last_key_event: self.last_key_event.clone(),
                 last_mouse_event: self.last_mouse_event.clone(),
                 last_resize_event: self.last_resize_event.clone(),
-                mouse_coordinates: self.mouse_coordinates,
+                mouse_coordinates: self.interaction.pointer_position,
                 scroll_direction: self.mouse_scroll_direction.clone(),
                 drag_direction: self.mouse_drag_direction.clone(),
                 terminal_flags: terminal_flag_labels(self.terminal_flags),
@@ -2236,7 +2236,8 @@ impl ShellSession {
         let _language = i18n::enter_snapshot(self.language.clone());
         let status = if cfg!(debug_assertions) && self.home_mode == ShellHomeMode::Debug {
             let mouse_position = self
-                .mouse_coordinates
+                .interaction
+                .pointer_position
                 .map(|(x, y)| format!("{x},{y}"))
                 .unwrap_or_else(|| "none".to_string());
             format!(

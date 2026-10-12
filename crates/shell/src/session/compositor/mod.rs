@@ -186,8 +186,8 @@ impl ScreenCompositor {
         }
         let mut frame_context = prepared.context.clone();
         let hovered = state
-            .mouse_coordinates
-            .filter(|_| !state.keyboard_focus_visible && !state.button_hover_suppressed)
+            .interaction
+            .hover_position()
             .and_then(|point| state.button_at(point));
         let pressed = if let Some((region, _)) = &state.screen_keyboard.pressed {
             Some(region.clone())
@@ -195,7 +195,8 @@ impl ScreenCompositor {
             state.auto_admin_pressed_button()
         } else {
             state
-                .button_pointer_capture
+                .interaction
+                .button_capture
                 .as_ref()
                 .map(|capture| capture.region.clone())
         };
@@ -204,7 +205,7 @@ impl ScreenCompositor {
             pressed,
             &frame_context.compatibility_theme(),
         );
-        buttons.keyboard_focus_visible = state.keyboard_focus_visible;
+        buttons.keyboard_focus_visible = state.interaction.keyboard_focus_visible();
         frame_context.buttons = Some(buttons.clone());
         let context = &frame_context;
         let mut chrome = prepared.chrome.clone();

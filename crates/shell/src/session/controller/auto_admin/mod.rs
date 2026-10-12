@@ -257,7 +257,7 @@ impl ShellSession {
             ..Default::default()
         };
         self.last_key_event = None;
-        self.button_pointer_capture = None;
+        self.interaction.button_capture = None;
         self.resize_auto_admin();
         self.synchronize_overlay_focus();
         Some(job)
@@ -348,7 +348,7 @@ impl ShellSession {
             self.auto_admin.visible = true;
             self.auto_admin.pointer = None;
             self.auto_admin.suppress_repeats = true;
-            self.button_pointer_capture = None;
+            self.interaction.button_capture = None;
             self.last_key_event = None;
             self.synchronize_overlay_focus();
         }
@@ -401,7 +401,7 @@ impl ShellSession {
         self.auto_admin.pointer = None;
         self.auto_admin.suppress_repeats = true;
         self.last_key_event = None;
-        self.button_pointer_capture = None;
+        self.interaction.button_capture = None;
         self.resize_auto_admin();
         self.synchronize_overlay_focus();
     }
@@ -463,7 +463,8 @@ impl ShellSession {
             && (matches!(input, InputEvent::Mouse(mouse)
                 if self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton))
                 || self
-                    .button_pointer_capture
+                    .interaction
+                    .button_capture
                     .as_ref()
                     .is_some_and(|capture| capture.region.id.as_str() == "shell.back"))
         {

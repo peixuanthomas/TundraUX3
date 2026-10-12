@@ -338,7 +338,7 @@ impl ShellSession {
                     height / 2
                 };
                 self.scrollbar_drag = Some(ScrollbarDragState::Home { grab_offset });
-                self.button_pointer_capture = None;
+                self.interaction.button_capture = None;
                 self.drag_tracker = None;
                 self.drag_home_scrollbar(mouse.coordinates(), grab_offset);
                 true

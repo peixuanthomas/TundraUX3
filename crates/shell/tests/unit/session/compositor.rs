@@ -432,9 +432,9 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
             draw(compositor, terminal, state, &prepared);
         };
         render(&mut state, &mut compositor, &mut terminal);
-        assert!(state.keyboard_focus_visible);
+        assert!(state.interaction.keyboard_focus_visible());
         state.apply_input(InputEvent::key(InputKey::Home));
-        assert!(state.keyboard_focus_visible);
+        assert!(state.interaction.keyboard_focus_visible());
         render(&mut state, &mut compositor, &mut terminal);
         let id = if launcher {
             format!("launcher.item.{}", app::EDITOR_APPLICATION.id)
@@ -468,7 +468,7 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
             InputEvent::mouse_down(PointerButton::Left, (0, 0)),
         ] {
             state.apply_input(pointer);
-            assert!(!state.keyboard_focus_visible);
+            assert!(!state.interaction.keyboard_focus_visible());
             render(&mut state, &mut compositor, &mut terminal);
             assert_ne!(terminal.backend().buffer()[border].fg, focused_color);
             assert_eq!(
@@ -486,14 +486,14 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
                 InputEvent::FocusGained,
             ] {
                 state.apply_input(ignored);
-                assert!(!state.keyboard_focus_visible);
+                assert!(!state.interaction.keyboard_focus_visible());
             }
             state.apply_input(InputEvent::key(InputKey::Home));
             render(&mut state, &mut compositor, &mut terminal);
             assert_eq!(terminal.backend().buffer()[border].fg, focused_color);
         }
         state.apply_input(InputEvent::FocusLost);
-        assert!(!state.keyboard_focus_visible);
+        assert!(!state.interaction.keyboard_focus_visible());
     }
 }
 
@@ -513,10 +513,10 @@ fn pointer_back_button_does_not_restore_keyboard_focus() {
         .area;
     let point = (area.x, area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert!(!state.keyboard_focus_visible);
+    assert!(!state.interaction.keyboard_focus_visible());
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
-    assert!(!state.keyboard_focus_visible);
+    assert!(!state.interaction.keyboard_focus_visible());
 }
 
 #[test]
@@ -727,6 +727,88 @@ fn global_notification_is_the_only_shell_modal_visual() {
 }
 
 #[test]
+fn exit_dialog_round_trip_with_keyboard_mouse_or_touch_alone() {
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+
+    // Touch uses the terminal's left-button stream with no hover event.
+    for input_mode in ["keyboard", "mouse", "touch"] {
+        let mut state = session();
+        let original_page = state.active_page_id();
+        let original_focus = state.focused_component();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let prepared = home_frame(&state, 0, true);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let tap = |state: &mut ShellSession, area: Rect| {
+            let point = (area.x + area.width / 2, area.y + area.height / 2);
+            let kinds = if input_mode == "mouse" {
+                vec![
+                    MouseEventKind::Moved,
+                    MouseEventKind::Down(MouseButton::Left),
+                    MouseEventKind::Up(MouseButton::Left),
+                ]
+            } else {
+                vec![
+                    MouseEventKind::Down(MouseButton::Left),
+                    MouseEventKind::Up(MouseButton::Left),
+                ]
+            };
+            let at = Instant::now();
+            for (index, kind) in kinds.into_iter().enumerate() {
+                state.apply_input_at(
+                    crossterm_event_to_input(Event::Mouse(MouseEvent {
+                        kind,
+                        column: point.0,
+                        row: point.1,
+                        modifiers: KeyModifiers::NONE,
+                    })),
+                    at + Duration::from_millis(index as u64 * 10),
+                );
+            }
+        };
+        if input_mode == "keyboard" {
+            state.apply_input(crossterm_event_to_input(Event::Key(KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::NONE,
+            ))));
+        } else {
+            let back = state.frame_layout.unwrap().back_button.unwrap();
+            tap(&mut state, back);
+        }
+        assert!(state.notification_has_active_modal(), "{input_mode}");
+        assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        let mut prepared = home_frame(&state, 50, true);
+        prepared.notification = state.to_notification_view_model();
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        if input_mode == "keyboard" {
+            state.apply_input(crossterm_event_to_input(Event::Key(KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::NONE,
+            ))));
+        } else {
+            let cancel = state
+                .button_regions
+                .iter()
+                .find(|region| region.id.as_str().ends_with(".action.cancel"))
+                .unwrap()
+                .area;
+            tap(&mut state, cancel);
+        }
+        assert!(!state.notification_has_active_modal(), "{input_mode}");
+        assert!(!state.shutdown_requested());
+        assert_eq!(state.active_page_id(), original_page);
+        assert_eq!(state.focused_component(), original_focus);
+        assert_eq!(
+            state.interaction.keyboard_focus_visible(),
+            input_mode == "keyboard"
+        );
+        assert!(state.interaction.button_capture.is_none());
+    }
+}
+
+#[test]
 fn rendered_chrome_buttons_hover_press_and_activate_only_on_release() {
     let mut state = session();
     let mut compositor = ScreenCompositor::default();
@@ -757,7 +839,7 @@ fn rendered_chrome_buttons_hover_press_and_activate_only_on_release() {
     );
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
-    assert!(state.button_pointer_capture.is_none());
+    assert!(state.interaction.button_capture.is_none());
 }
 
 #[test]
@@ -798,7 +880,7 @@ fn button_capture_cancels_outside_on_focus_loss_resize_and_page_change() {
         }
         state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
         assert_ne!(state.active_screen(), ShellScreen::ExitConfirm);
-        assert!(state.button_pointer_capture.is_none());
+        assert!(state.interaction.button_capture.is_none());
     }
 }
 
@@ -873,7 +955,7 @@ fn button_click_allows_short_presses_but_rejects_holds_over_500_ms() {
                 _ => state.notification_active_modal_id() != modal_before,
             };
             assert_eq!(activated, millis <= 500, "kind={kind}, millis={millis}");
-            assert!(state.button_pointer_capture.is_none());
+            assert!(state.interaction.button_capture.is_none());
             if millis > 500 {
                 // A late extra release must not resurrect a cancelled click.
                 state.apply_input_at(
@@ -1111,7 +1193,8 @@ fn home_entry_single_click_opens_on_first_release() {
     assert_eq!(state.active_screen(), ShellScreen::Home);
     assert_eq!(
         state
-            .button_pointer_capture
+            .interaction
+            .button_capture
             .as_ref()
             .map(|capture| capture.region.id.as_str()),
         Some(launcher_id.as_str()),

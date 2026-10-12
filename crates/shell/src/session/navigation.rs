@@ -157,46 +157,6 @@ impl ShellSession {
     /// button separately so it can ask before terminating its child processes.
     /// The shared pointer capture delivers this press only after release
     /// and leaves keyboard focus with the page being returned to.
-    pub(in crate::session) fn normalize_shell_navigation_input(
-        &self,
-        input: InputEvent,
-    ) -> InputEvent {
-        if let InputEvent::Mouse(mouse) = &input
-            && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
-            && !self.auto_admin_visible()
-            && !self.notification_has_active_modal()
-            && !self.time_sync_dialog_visible
-            && self.pages.common.active_popup.is_none()
-            && self.pages.diagnostics.diagnostics_repair_preview.is_empty()
-            && matches!(
-                self.active_screen(),
-                ShellScreen::Diagnostics | ShellScreen::SystemStatus
-            )
-            && let Some(button) = self.button_at(mouse.coordinates())
-            && let Some(code) = button
-                .id
-                .as_str()
-                .strip_prefix("diagnostics.toolbar.")
-                .and_then(|value| value.parse::<u32>().ok())
-                .and_then(char::from_u32)
-        {
-            return InputEvent::Key(KeyInput::new(InputKey::Char(code)));
-        }
-        if let InputEvent::Mouse(mouse) = &input
-            && mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
-            && self.hit_map.target_at(mouse.coordinates()) == Some(ShellComponent::BackButton)
-        {
-            if self.active_screen() == ShellScreen::CommandLine
-                && !self.notification_has_active_modal()
-                && !self.auto_admin_visible()
-            {
-                return input;
-            }
-            return InputEvent::Key(KeyInput::new(InputKey::Escape));
-        }
-        input
-    }
-
     pub(in crate::session) fn initialize_root_page(&mut self) {
         let id = self.active_page_id();
         let screen = self.active_screen();
@@ -488,7 +448,7 @@ impl ShellSession {
                         self.app.remove_page(id);
                     }
                 }
-                self.button_pointer_capture = None;
+                self.interaction.button_capture = None;
                 self.restore_navigation_page();
                 self.pages.common.focused_component = focus;
             }

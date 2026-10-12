@@ -74,6 +74,8 @@ sudo python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
 
 固定测试重点包括输入阶段/修饰键/paste/focus/双击/拖拽/滚动及高频鼠标事件合并、模态命中和焦点恢复、通知、Editor grapheme 与异步保存、Explorer/Launcher 后台操作、登录锁定与授权、时钟和 DST、storage schema/迁移/原子写入/损坏恢复，以及 watchdog 的 panic 边界、任务回收和事故报告。
 
+Shell 输入批处理回归位于 `tests/unit/input/terminal_batch.rs`；输入方式和快捷键重复保护位于 `tests/unit/session/controller/input_routing/interaction_tests.rs`。合成器的 `exit_dialog_round_trip_with_keyboard_mouse_or_touch_alone` 从 Crossterm 事件出发，分别用键盘、带移动的鼠标和无悬停点按完成打开/取消退出弹窗，并检查页面、焦点和捕获状态恢复。它验证终端事件模型中的三条独立路径；全部页面的设备验收仍按 [UI 要求](UI-requirements.md)执行。
+
 预览动画、可行性 POC、无断言在线探针、平凡 getter/cache，以及与上层工作流重复的逐字符或逐像素断言不进入固定 workspace 测试；只有对应明确用户可见回归时才应加入。
 
 业务实现与测试文件统一按以下目录分离：

@@ -1,4 +1,5 @@
 use super::*;
+use crate::input::terminal_batch::read_ready_terminal_event_batch;
 use std::panic::AssertUnwindSafe;
 use watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
@@ -6,7 +7,6 @@ use watchdog::{
     RecoveryOutcome, ReplaySafety, RestartPolicy, RuntimeSnapshot, TaskId, TaskKind, TaskSpec,
 };
 
-const MAX_READY_TERMINAL_EVENTS_PER_FRAME: usize = 4_096;
 const COMMAND_LINE_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 const BACKGROUND_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -1218,23 +1218,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         state.screen_keyboard.physical.observe(*key, received_at);
                     }
                     let input = crossterm_event_to_input(terminal_event);
-                    let Some(input) =
-                        state.route_screen_keyboard_input(input, platform.as_ref(), received_at)
+                    let Some(input) = state.prepare_input(input, platform.as_ref(), received_at)
                     else {
                         action = Some(ShellAction::Redraw);
                         redraw.request_redraw();
                         continue;
                     };
-                    if state.handle_auto_admin_input_at(&input, received_at) {
-                        action = Some(ShellAction::Redraw);
-                        redraw.request_redraw();
-                        continue;
-                    }
-                    let Some(input) = state.prepare_button_input(input, received_at) else {
-                        action = Some(ShellAction::Redraw);
-                        continue;
-                    };
-                    let input = state.normalize_shell_navigation_input(input);
                     let command_line_captures = command_line_captures_input(&state, &input);
                     if command_line_captures {
                         let terminal_area = state.command_line_input_area();
@@ -1485,10 +1474,6 @@ pub(in crate::session) fn apply_current_system_status_snapshot(
     state.apply_system_status_snapshot(snapshot);
 }
 
-fn read_ready_terminal_event_batch(first: event::Event) -> io::Result<Vec<event::Event>> {
-    collect_ready_terminal_event_batch(first, || event::poll(Duration::ZERO), event::read)
-}
-
 fn command_line_poll_timeout(
     command_line_active: bool,
     state_poll_timeout: Duration,
@@ -1595,74 +1580,6 @@ fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool
             continues_terminal_drag
                 || state.hit_map().layer_at(mouse.coordinates()) != Some(ShellHitLayer::ShellChrome)
         }
-        _ => false,
-    }
-}
-
-fn collect_ready_terminal_event_batch(
-    first: event::Event,
-    mut poll_ready: impl FnMut() -> io::Result<bool>,
-    mut read_ready: impl FnMut() -> io::Result<event::Event>,
-) -> io::Result<Vec<event::Event>> {
-    // Crossterm's all-motion mode can enqueue many coordinates while one
-    // Ratatui frame is being built, especially through a WSL ConPTY bridge.
-    // Drain that ready backlog before drawing again and retain only the newest
-    // point in each uninterrupted motion/resize run. Semantic boundaries such
-    // as clicks, releases, wheel steps, and focus stay ordered. A key or paste
-    // ends the batch immediately so a continuously-ready WSL mouse stream
-    // cannot delay keyboard input after Crossterm has already decoded it.
-    let mut events = Vec::new();
-    let first_requires_dispatch = terminal_event_requires_immediate_dispatch(&first);
-    push_coalesced_terminal_event(&mut events, first);
-    if first_requires_dispatch {
-        return Ok(events);
-    }
-
-    let mut raw_event_count = 1;
-    while raw_event_count < MAX_READY_TERMINAL_EVENTS_PER_FRAME && poll_ready()? {
-        let next = read_ready()?;
-        let requires_dispatch = terminal_event_requires_immediate_dispatch(&next);
-        push_coalesced_terminal_event(&mut events, next);
-        raw_event_count += 1;
-        if requires_dispatch {
-            break;
-        }
-    }
-    Ok(events)
-}
-
-fn terminal_event_requires_immediate_dispatch(event: &event::Event) -> bool {
-    matches!(event, event::Event::Key(_) | event::Event::Paste(_))
-}
-
-fn push_coalesced_terminal_event(events: &mut Vec<event::Event>, next: event::Event) {
-    if events
-        .last()
-        .is_some_and(|previous| terminal_event_can_replace(previous, &next))
-    {
-        *events
-            .last_mut()
-            .expect("the previous event was checked above") = next;
-    } else {
-        events.push(next);
-    }
-}
-
-fn terminal_event_can_replace(previous: &event::Event, next: &event::Event) -> bool {
-    match (previous, next) {
-        (event::Event::Mouse(previous), event::Event::Mouse(next))
-            if previous.modifiers == next.modifiers =>
-        {
-            match (&previous.kind, &next.kind) {
-                (event::MouseEventKind::Moved, event::MouseEventKind::Moved) => true,
-                (
-                    event::MouseEventKind::Drag(previous_button),
-                    event::MouseEventKind::Drag(next_button),
-                ) => previous_button == next_button,
-                _ => false,
-            }
-        }
-        (event::Event::Resize(_, _), event::Event::Resize(_, _)) => true,
         _ => false,
     }
 }

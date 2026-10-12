@@ -46,7 +46,7 @@ impl ShellSession {
     }
 
     pub fn mouse_coordinates(&self) -> Option<(u16, u16)> {
-        self.mouse_coordinates
+        self.interaction.pointer_position
     }
 
     pub fn shutdown_requested(&self) -> bool {
