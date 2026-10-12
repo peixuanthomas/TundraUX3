@@ -2,14 +2,11 @@
 
 #[cfg(feature = "events")]
 use crate::event::KeyboardEnhancementFlags;
-use crate::terminal::{
-    sys::file_descriptor::{tty_fd, FileDesc},
-    WindowSize,
-};
+use crate::terminal::{sys::file_descriptor::tty_fd, WindowSize};
 #[cfg(feature = "libc")]
 use libc::{
-    cfmakeraw, ioctl, tcgetattr, tcsetattr, termios as Termios, winsize, STDOUT_FILENO, TCSANOW,
-    TIOCGWINSZ,
+    cfmakeraw, ioctl, tcgetattr, tcsetattr, termios as Termios, winsize, STDERR_FILENO,
+    STDIN_FILENO, STDOUT_FILENO, TCSANOW, TIOCGWINSZ,
 };
 use parking_lot::Mutex;
 #[cfg(not(feature = "libc"))]
@@ -18,11 +15,11 @@ use rustix::{
     termios::{Termios, Winsize},
 };
 
-use std::{fs::File, io, process};
+use std::{fs::File, io};
 #[cfg(feature = "libc")]
 use std::{
     mem,
-    os::unix::io::{IntoRawFd, RawFd},
+    os::unix::io::{AsRawFd, RawFd},
 };
 
 // Some(Termios) -> we're in the raw mode and this is the previous mode
@@ -56,52 +53,43 @@ impl From<Winsize> for WindowSize {
     }
 }
 
-#[allow(clippy::useless_conversion)]
 #[cfg(feature = "libc")]
 pub(crate) fn window_size() -> io::Result<WindowSize> {
-    // http://rosettacode.org/wiki/Terminal_control/Dimensions#Library:_BSD_libc
-    let mut size = winsize {
-        ws_row: 0,
-        ws_col: 0,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
+    let query = |fd| {
+        let mut size: winsize = unsafe { mem::zeroed() };
+        wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ as _, &mut size) })?;
+        Ok::<_, io::Error>(WindowSize::from(size))
     };
-
-    let file = File::open("/dev/tty").map(|file| (FileDesc::new(file.into_raw_fd(), true)));
-    let fd = if let Ok(file) = &file {
-        file.raw_fd()
-    } else {
-        // Fallback to libc::STDOUT_FILENO if /dev/tty is missing
-        STDOUT_FILENO
-    };
-
-    if wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut size) }).is_ok() {
-        return Ok(size.into());
+    if let Ok(file) = File::open("/dev/tty") {
+        if let Ok(size) = query(file.as_raw_fd()) {
+            return Ok(size);
+        }
     }
-
-    Err(std::io::Error::last_os_error().into())
+    query(STDOUT_FILENO)
+        .or_else(|_| query(STDERR_FILENO))
+        .or_else(|_| query(STDIN_FILENO))
 }
 
 #[cfg(not(feature = "libc"))]
 pub(crate) fn window_size() -> io::Result<WindowSize> {
-    let file = File::open("/dev/tty").map(|file| FileDesc::Owned(file.into()));
-    let fd = if let Ok(file) = &file {
-        file.as_fd()
-    } else {
-        // Fallback to libc::STDOUT_FILENO if /dev/tty is missing
-        rustix::stdio::stdout()
+    use rustix::{
+        stdio::{stderr, stdin, stdout},
+        termios::tcgetwinsize,
     };
-    let size = rustix::termios::tcgetwinsize(fd)?;
-    Ok(size.into())
+    if let Ok(file) = File::open("/dev/tty") {
+        if let Ok(size) = tcgetwinsize(file.as_fd()) {
+            return Ok(size.into());
+        }
+    }
+    tcgetwinsize(stdout())
+        .or_else(|_| tcgetwinsize(stderr()))
+        .or_else(|_| tcgetwinsize(stdin()))
+        .map(WindowSize::from)
+        .map_err(io::Error::from)
 }
 
-#[allow(clippy::useless_conversion)]
 pub(crate) fn size() -> io::Result<(u16, u16)> {
-    if let Ok(window_size) = window_size() {
-        return Ok((window_size.columns, window_size.rows));
-    }
-
-    tput_size().ok_or_else(|| std::io::Error::last_os_error().into())
+    window_size().map(|size| (size.columns, size.rows))
 }
 
 #[cfg(feature = "libc")]
@@ -230,10 +218,13 @@ fn query_keyboard_enhancement_flags_raw() -> io::Result<Option<KeyboardEnhanceme
     // ESC [ c          Query primary device attributes.
     const QUERY: &[u8] = b"\x1B[?u\x1B[c";
 
-    let result = File::open("/dev/tty").and_then(|mut file| {
-        file.write_all(QUERY)?;
-        file.flush()
-    });
+    let result = File::options()
+        .write(true)
+        .open("/dev/tty")
+        .and_then(|mut file| {
+            file.write_all(QUERY)?;
+            file.flush()
+        });
     if result.is_err() {
         let mut stdout = io::stdout();
         stdout.write_all(QUERY)?;
@@ -266,36 +257,6 @@ fn query_keyboard_enhancement_flags_raw() -> io::Result<Option<KeyboardEnhanceme
     }
 }
 
-/// execute tput with the given argument and parse
-/// the output as a u16.
-///
-/// The arg should be "cols" or "lines"
-fn tput_value(arg: &str) -> Option<u16> {
-    let output = process::Command::new("tput").arg(arg).output().ok()?;
-    let value = output
-        .stdout
-        .into_iter()
-        .filter_map(|b| char::from(b).to_digit(10))
-        .fold(0, |v, n| v * 10 + n as u16);
-
-    if value > 0 {
-        Some(value)
-    } else {
-        None
-    }
-}
-
-/// Returns the size of the screen as determined by tput.
-///
-/// This alternate way of computing the size is useful
-/// when in a subshell.
-fn tput_size() -> Option<(u16, u16)> {
-    match (tput_value("cols"), tput_value("lines")) {
-        (Some(w), Some(h)) => Some((w, h)),
-        _ => None,
-    }
-}
-
 #[cfg(feature = "libc")]
 // Transform the given mode into an raw mode (non-canonical) mode.
 fn raw_terminal_attr(termios: &mut Termios) {
@@ -322,5 +283,270 @@ fn wrap_with_result(result: i32) -> io::Result<()> {
         Err(io::Error::last_os_error())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustix::{
+        process::setsid,
+        pty::{grantpt, openpt, ptsname, unlockpt, OpenptFlags},
+        termios::{tcsetwinsize, Winsize},
+    };
+    use std::{
+        ffi::OsStr,
+        fs::File,
+        os::unix::{ffi::OsStrExt, process::CommandExt},
+        path::Path,
+        process::{Command, Stdio},
+    };
+
+    // Test size lookup through /dev/tty, stdout, stderr, and stdin using private PTYs, without
+    // requiring an interactive terminal. Each parent configures a subprocess that runs an ignored
+    // assertion test. The standard-descriptor cases share the same child test; controlling-terminal
+    // setup and the error case have their own children. Subprocesses isolate descriptor and session
+    // changes from the other tests.
+    //
+    // The parent collects child failures through the test harness's stdout, except when stdout is
+    // the terminal under test: that case uses --nocapture and collects stderr. Each child prints a
+    // completion marker after its assertions. The parent checks it because an incorrect --exact
+    // test name can run zero tests and still exit successfully.
+
+    /// Verify /dev/tty lookup by giving the child a private controlling terminal while redirecting
+    /// all standard descriptors.
+    #[test]
+    fn size_uses_controlling_terminal() {
+        let (pty, _terminal) = terminal_with_size();
+        let test_name = "terminal::sys::unix::tests::check_controlling_terminal_size";
+        let mut child = child_test(test_name);
+        // Pass the endpoint path to the child so it can acquire a controlling terminal after exec.
+        // Every standard descriptor is redirected, requiring /dev/tty.
+        let name = ptsname(&pty, Vec::new()).unwrap();
+        let terminal_path = OsStr::from_bytes(name.to_bytes());
+        child
+            .arg("--show-output")
+            .env("CROSSTERM_TEST_TERMINAL_PATH", terminal_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        detach_controlling_terminal(&mut child);
+
+        let output = child.output().unwrap();
+        drop(pty);
+
+        let diagnostics = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.code(), Some(0), "{diagnostics}");
+        let child_ran = diagnostics.contains("terminal size checked");
+        assert!(child_ran, "missing completion marker:\n{diagnostics}");
+    }
+
+    /// Acquire the parent-provided terminal and check cell and pixel dimensions through both public
+    /// APIs. Runs only in the isolated child.
+    #[test]
+    #[ignore = "launched by size_uses_controlling_terminal with isolated descriptors"]
+    fn check_controlling_terminal_size() {
+        assert_no_controlling_terminal();
+
+        // Explicitly acquire this endpoint as the child's controlling terminal rather than relying
+        // on platform-specific open behavior. Close the setup handle so the API must reopen the
+        // terminal through /dev/tty.
+        let terminal_path = std::env::var_os("CROSSTERM_TEST_TERMINAL_PATH").unwrap();
+        let terminal = File::options()
+            .read(true)
+            .write(true)
+            .open(terminal_path)
+            .unwrap();
+        rustix::process::ioctl_tiocsctty(&terminal).unwrap();
+        drop(terminal);
+
+        assert!(
+            File::open("/dev/tty").is_ok(),
+            "check the controlling terminal setup"
+        );
+        assert_eq!(crate::terminal::size().unwrap(), (81, 23));
+        let window = crate::terminal::window_size().unwrap();
+        assert_eq!((window.columns, window.rows), (81, 23));
+        let pixel_size = (window.width, window.height);
+        assert_eq!(pixel_size, (810, 460), "preserve pixel dimensions");
+
+        println!("terminal size checked");
+    }
+
+    /// Verify stdout lookup with a PTY on stdout and no controlling terminal. Capture child
+    /// diagnostics on stderr so stdout remains the terminal under test.
+    #[test]
+    fn size_uses_stdout_terminal() {
+        let (pty, terminal) = terminal_with_size();
+        let test_name = "terminal::sys::unix::tests::check_terminal_size";
+        let mut child = child_test(test_name);
+        child
+            .arg("--nocapture")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(terminal))
+            .stderr(Stdio::piped());
+        // stdout must be the only usable terminal, so detach /dev/tty.
+        detach_controlling_terminal(&mut child);
+
+        let output = child.output().unwrap();
+        drop(pty);
+
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "{diagnostics}");
+        let child_ran = diagnostics.contains("terminal size checked");
+        assert!(child_ran, "missing completion marker:\n{diagnostics}");
+    }
+
+    /// Verify stderr fallback with stdout piped, stdin disconnected, and /dev/tty unavailable. The
+    /// shared child checks the private PTY dimensions.
+    #[test]
+    fn size_uses_stderr_when_stdout_is_redirected() {
+        let (pty, terminal) = terminal_with_size();
+        let test_name = "terminal::sys::unix::tests::check_terminal_size";
+        let mut child = child_test(test_name);
+        child
+            .arg("--show-output")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::from(terminal));
+        // Detach /dev/tty so the query must use the configured standard descriptor. Inheriting an
+        // already-open endpoint does not acquire a controlling terminal.
+        detach_controlling_terminal(&mut child);
+
+        let output = child.output().unwrap();
+        drop(pty);
+
+        let diagnostics = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.code(), Some(0), "{diagnostics}");
+        let child_ran = diagnostics.contains("terminal size checked");
+        assert!(child_ran, "missing completion marker:\n{diagnostics}");
+    }
+
+    /// Verify stdin fallback with stdout and stderr redirected and /dev/tty unavailable. The shared
+    /// child checks the private PTY dimensions.
+    #[test]
+    fn size_uses_stdin_when_stdout_and_stderr_are_redirected() {
+        let (pty, terminal) = terminal_with_size();
+        let test_name = "terminal::sys::unix::tests::check_terminal_size";
+        let mut child = child_test(test_name);
+        child
+            .arg("--show-output")
+            .stdin(Stdio::from(terminal))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        // Detach /dev/tty so the query must use the configured standard descriptor. Inheriting an
+        // already-open endpoint does not acquire a controlling terminal.
+        detach_controlling_terminal(&mut child);
+
+        let output = child.output().unwrap();
+        drop(pty);
+
+        let diagnostics = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.code(), Some(0), "{diagnostics}");
+        let child_ran = diagnostics.contains("terminal size checked");
+        assert!(child_ran, "missing completion marker:\n{diagnostics}");
+    }
+
+    /// Check both public APIs against the configured cell and pixel dimensions. The stdout, stderr,
+    /// and stdin parents each supply a single usable terminal.
+    #[test]
+    #[ignore = "launched by the stdout, stderr, and stdin tests with isolated descriptors"]
+    fn check_terminal_size() {
+        assert_no_controlling_terminal();
+
+        assert_eq!(crate::terminal::size().unwrap(), (81, 23));
+        let window = crate::terminal::window_size().unwrap();
+        assert_eq!((window.columns, window.rows), (81, 23));
+        let pixel_size = (window.width, window.height);
+        assert_eq!(pixel_size, (810, 460), "preserve pixel dimensions");
+
+        // The stdout scenario captures stderr with --nocapture; the other scenarios capture the
+        // harness output on stdout. Emit the marker on both streams.
+        println!("terminal size checked");
+        eprintln!("terminal size checked");
+    }
+
+    /// Verify failure when the child has no controlling terminal and all standard descriptors are
+    /// connected to pipes or /dev/null.
+    #[test]
+    fn size_returns_error_without_a_terminal() {
+        let test_name = "terminal::sys::unix::tests::check_no_terminal_size";
+        let mut child = child_test(test_name);
+        child
+            .arg("--show-output")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        // Detach /dev/tty so no terminal remains available to the child.
+        detach_controlling_terminal(&mut child);
+
+        let output = child.output().unwrap();
+
+        let diagnostics = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.code(), Some(0), "{diagnostics}");
+        let child_ran = diagnostics.contains("terminal size checked");
+        assert!(child_ran, "missing completion marker:\n{diagnostics}");
+    }
+
+    /// Check that both public APIs fail and size returns the final descriptor error. Runs only in
+    /// the child with no usable terminal.
+    #[test]
+    #[ignore = "launched by size_returns_error_without_a_terminal with isolated descriptors"]
+    fn check_no_terminal_size() {
+        assert_no_controlling_terminal();
+
+        // The errno for /dev/null varies by OS; compare with the final query directly.
+        let expected = rustix::termios::tcgetwinsize(rustix::stdio::stdin()).unwrap_err();
+        let error = crate::terminal::size().unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(expected.raw_os_error()));
+        assert!(crate::terminal::window_size().is_err());
+
+        println!("terminal size checked");
+    }
+
+    // Launch only the named assertion test in this same binary. It is ignored during normal runs
+    // because its parent must configure the child descriptors and session.
+    fn child_test(test_name: &str) -> Command {
+        let executable = std::env::current_exe().unwrap();
+        let mut child = Command::new(executable);
+        child.args(["--ignored", "--exact", test_name]);
+        child
+    }
+
+    // Verify that setsid detached the child from any controlling terminal. Otherwise /dev/tty could
+    // satisfy the size query and hide a broken standard-descriptor fallback. A failure here
+    // indicates subprocess setup failure, before testing size lookup.
+    fn assert_no_controlling_terminal() {
+        let tty = File::open("/dev/tty");
+        assert!(tty.is_err(), "setsid must detach the controlling terminal");
+    }
+
+    // Configure a pre-exec hook that starts the child in a new session without a controlling
+    // terminal. The parent session stays unchanged. The /dev/tty test explicitly acquires its
+    // private terminal in the child after exec.
+    fn detach_controlling_terminal(child: &mut Command) {
+        // SAFETY: The pre_exec hook only calls async-signal-safe setsid.
+        unsafe {
+            child.pre_exec(|| setsid().map(|_| ()).map_err(std::io::Error::from));
+        }
+    }
+
+    // Create a private terminal with known cell and pixel dimensions. The parent must keep the PTY
+    // open until the child exits. Opening the endpoint here lets descriptor tests inherit it
+    // without opening a terminal device in the child's new session.
+    fn terminal_with_size() -> (rustix::fd::OwnedFd, File) {
+        let pty = openpt(OpenptFlags::RDWR).unwrap();
+        grantpt(&pty).unwrap();
+        unlockpt(&pty).unwrap();
+        let name = ptsname(&pty, Vec::new()).unwrap();
+        let path = Path::new(OsStr::from_bytes(name.to_bytes()));
+        let terminal = File::options().read(true).write(true).open(path).unwrap();
+        let size = Winsize {
+            ws_col: 81,
+            ws_row: 23,
+            ws_xpixel: 810,
+            ws_ypixel: 460,
+        };
+        tcsetwinsize(&terminal, size).unwrap();
+        (pty, terminal)
     }
 }

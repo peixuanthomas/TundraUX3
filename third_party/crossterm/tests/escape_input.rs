@@ -206,6 +206,25 @@ fn timed_out_or_oversized_paste_is_never_replayed_as_shortcuts() {
 }
 
 #[test]
+fn unknown_private_csi_reports_do_not_swallow_following_keys() {
+    // Upstream #1106: a finished private report must not wait for more input.
+    for report in [&b"\x1b[?2026;2$y"[..], b"\x1b[?997;1n"] {
+        let mut input = report.to_vec();
+        input.push(b'x');
+        for split in 0..=input.len() {
+            let mut parser = Parser::default();
+            parser.advance(&input[..split], split < input.len());
+            parser.advance(&input[split..], false);
+            assert_eq!(
+                parser.collect::<Vec<_>>(),
+                vec![key(KeyCode::Char('x'))],
+                "report {report:?}, split {split}"
+            );
+        }
+    }
+}
+
+#[test]
 fn unsupported_control_strings_are_consumed_whole() {
     for report in [
         &b"\x1b]52;c;secret\x07"[..],
