@@ -175,12 +175,12 @@ fn c_source_colours_tokens_and_preserves_selection_and_text() {
     model.cursor = None;
     let terminal = render(&model, 80, 18);
     for (text, color) in [
-        ("#include", Color::LightMagenta),
-        ("<stdio.h>", Color::Green),
+        ("#include", theme.tokens().accent_strong),
+        ("<stdio.h>", theme.foreground),
         ("int main", theme.accent_color),
         ("// ", theme.muted),
-        ("\"hello\"", Color::Green),
-        ("42", Color::Yellow),
+        ("\"hello\"", theme.tokens().success),
+        ("42", theme.tokens().warning),
     ] {
         let position = find_text(&terminal, text);
         assert_eq!(terminal.backend().buffer()[position].fg, color, "{text}");
@@ -197,13 +197,95 @@ fn c_source_colours_tokens_and_preserves_selection_and_text() {
     assert_eq!(cell.bg, theme.accent_color);
     assert_eq!(cell.fg, Color::Black);
     assert_eq!(model.source.as_deref(), Some(source));
-    for name in ["main.cpp", "main.rs", "data.json", "Cargo.toml", "note.txt"] {
+    for name in ["note.txt", "unknown.extension"] {
         let model = EditorViewModel::source(name, "int x = 42;");
         assert!(model.c_highlights.is_empty());
         let terminal = render(&model, 80, 18);
         let position = find_text(&terminal, "int x");
         assert_eq!(terminal.backend().buffer()[position].fg, theme.foreground);
     }
+}
+
+#[test]
+fn lsh_keywords_follow_theme_and_search_selection_has_priority() {
+    let mut model = EditorViewModel::source("main.rs", "fn main() { let x = 42; }");
+    model.cursor = None;
+    model.search_matches = vec![0..2].into();
+    for accent in [Color::Cyan, Color::Magenta] {
+        let theme = TundraTheme::default_dark().with_accent_color(accent);
+        let mut terminal = Terminal::new(TestBackend::new(70, 15)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_editor(frame, frame.area(), &model, &theme);
+            })
+            .unwrap();
+        let position = find_text(&terminal, "fn main");
+        let cell = &terminal.backend().buffer()[position];
+        assert_eq!(cell.fg, accent);
+        assert_eq!(cell.bg, theme.tokens().accent_soft);
+        model.selection_offsets = Some(EditorSourceSelection::new(0, 2));
+        terminal
+            .draw(|frame| {
+                render_editor(frame, frame.area(), &model, &theme);
+            })
+            .unwrap();
+        assert_eq!(terminal.backend().buffer()[position].bg, accent);
+        model.selection_offsets = None;
+    }
+}
+
+#[test]
+fn wrapped_source_mouse_caret_and_selection_share_byte_mapping() {
+    let source = "中e\u{301}👩‍💻abc ".repeat(12) + "\r\nlast";
+    let state = app::editor::EditorState::open("note.txt", source.as_bytes()).unwrap();
+    let mut model = EditorViewModel::source("note.txt", &source);
+    model.soft_wrap = true;
+    model.cursor = None;
+    for width in [24, 47, 80] {
+        let area = Rect::new(0, 0, width, 20);
+        // Model production uses the same geometry pass as ShellSession.
+        model.wrap_layout = None;
+        let canvas_width = editor_layout(area, &model).canvas.width;
+        let wrapped = state.source_wrap_layout(canvas_width as usize).unwrap();
+        model.wrap_layout = Some(wrapped.clone());
+        let layout = editor_layout(area, &model);
+        assert!(layout.horizontal_scrollbar.is_none());
+        assert_eq!(layout.document_line_count, wrapped.rows.len());
+        for row in layout.visible_start
+            ..(layout.visible_start + layout.visible_capacity).min(wrapped.rows.len())
+        {
+            let range = wrapped.rows[row].range;
+            let hit = layout
+                .hit_test_source(
+                    layout.canvas.x,
+                    layout.canvas.y + (row - layout.visible_start) as u16,
+                )
+                .unwrap();
+            assert_eq!(hit.byte_offset, range.start);
+            assert_eq!(
+                layout.visual_position_for_source(range.start),
+                Some(EditorTextPosition::new(row, 0))
+            );
+        }
+        let row = 1;
+        let start = wrapped.rows[row].range.start;
+        model.cursor_offset = Some(start);
+        model.selection_offsets = Some(EditorSourceSelection::new(
+            start,
+            wrapped.rows[row].range.end,
+        ));
+        let mut terminal = render(&model, width, 20);
+        assert_eq!(
+            terminal.get_cursor_position().unwrap(),
+            Position::new(layout.canvas.x, layout.canvas.y + row as u16)
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(layout.canvas.x, layout.canvas.y + row as u16)].bg,
+            TundraTheme::default_dark().accent_color
+        );
+        assert!(terminal_output(&terminal).contains('↪'));
+    }
+    assert_eq!(state.to_bytes(), source.as_bytes());
 }
 
 #[test]
@@ -221,7 +303,7 @@ fn clipped_c_viewport_retains_comment_colours_and_source_hit_positions() {
             text,
         )],
     );
-    model.c_highlights = app::editor::c_syntax::highlight(source);
+    model.syntax_highlights = app::editor::syntax::highlight_text("api.h", source);
     model.horizontal_content_width = 100;
     model.horizontal_scroll = 11;
     model.cursor = None;

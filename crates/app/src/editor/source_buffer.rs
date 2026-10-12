@@ -10,6 +10,8 @@ impl SourceBuffer {
             non_ascii_bytes: non_ascii_byte_count(text),
             display_widths: SourceDisplayWidthCache::default(),
             c_highlights: c_syntax::Cache::default(),
+            syntax: syntax::Cache::default(),
+            wrapped: soft_wrap::Cache::default(),
         };
         buffer.rebuild_display_width_cache();
         buffer
@@ -23,9 +25,15 @@ impl SourceBuffer {
             non_ascii_bytes: text.chunks().map(non_ascii_byte_count).sum(),
             display_widths: SourceDisplayWidthCache::default(),
             c_highlights: c_syntax::Cache::default(),
+            syntax: syntax::Cache::default(),
+            wrapped: soft_wrap::Cache::default(),
         };
         buffer.rebuild_display_width_cache();
         buffer
+    }
+
+    pub fn rope_snapshot(&self) -> Rope {
+        self.text.clone()
     }
 
     pub fn len_bytes(&self) -> usize {
@@ -376,6 +384,8 @@ impl SourceBuffer {
         self.text.remove(start_char..end_char);
         self.text.insert(start_char, replacement);
         self.c_highlights.0.take();
+        self.syntax = syntax::Cache::default();
+        self.wrapped = soft_wrap::Cache::default();
         let new_end = range.start + replacement.len();
         let new_context_end = new_end
             .saturating_add(suffix_context_len)

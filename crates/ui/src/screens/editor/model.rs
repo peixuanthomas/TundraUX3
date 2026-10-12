@@ -44,6 +44,9 @@ pub enum EditorToolbarAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMenuAction {
+    Replace,
+    ToggleWrap,
+    FormatJson,
     Toolbar(EditorToolbarAction),
     Mode(EditorMode),
     Config(EditorConfigAction),
@@ -557,7 +560,12 @@ pub struct EditorViewModel {
     /// Optional viewport-only Source data. When present it is authoritative
     /// for layout and avoids materializing the full document in the UI model.
     pub source_window: Option<EditorSourceWindow>,
-    /// C-only token ranges in canonical source bytes, shared across frames.
+    /// LSH token ranges in canonical source bytes, shared across frames.
+    pub syntax_highlights: Arc<[app::editor::syntax::SyntaxToken]>,
+    pub search_matches: Arc<[std::ops::Range<usize>]>,
+    pub soft_wrap: bool,
+    pub wrap_layout: Option<Arc<app::editor::soft_wrap::WrapLayout>>,
+    /// Legacy projection retained for integrations; rendering uses `syntax_highlights`.
     pub c_highlights: Arc<[app::editor::c_syntax::CToken]>,
     /// Saved-text differences indexed by absolute source line; empty for clean files.
     pub line_markers: Arc<[app::editor::line_changes::LineMarker]>,
@@ -625,6 +633,10 @@ impl EditorViewModel {
             source_line_ranges: Vec::new(),
             source_window: None,
             c_highlights: Arc::from([]),
+            syntax_highlights: Arc::from([]),
+            search_matches: Arc::from([]),
+            soft_wrap: false,
+            wrap_layout: None,
             line_markers: Arc::from([]),
             scroll_line: 0,
             horizontal_scroll: 0,
@@ -654,9 +666,7 @@ impl EditorViewModel {
         let mut model = Self::new(file_name, Vec::new());
         model.mode = EditorMode::Source;
         model.source = Some(source.to_owned());
-        if app::editor::c_syntax::is_c_file(&model.file_name) {
-            model.c_highlights = app::editor::c_syntax::highlight(source);
-        }
+        model.syntax_highlights = app::editor::syntax::highlight_text(&model.file_name, source);
         model.source_line_ranges = source_display_line_ranges(source);
         model.horizontal_content_width =
             source_horizontal_content_width(source, &model.source_line_ranges);

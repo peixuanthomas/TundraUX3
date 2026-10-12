@@ -98,13 +98,231 @@ impl ShellSession {
         self.config_operation("read", Default::default());
     }
     pub(in crate::session) fn open_editor_find(&mut self) {
+        self.open_editor_search(false);
+    }
+
+    pub(in crate::session) fn open_editor_replace(&mut self) {
+        if self.app.editor_state().is_some_and(|s| s.is_read_only()) {
+            return;
+        }
+        self.open_editor_search(true);
+    }
+
+    fn open_editor_search(&mut self, replace: bool) {
         self.app.dispatch_at(
             app::AppCommand::Editor(app::editor::EditorCommand::SetMode(
                 app::editor::EditorMode::Source,
             )),
             Instant::now(),
         );
-        self.config_form("find", String::new(), vec![field("text", String::new())]);
+        let remembered = &self.pages.editor.editor_search_fields;
+        let selected = self
+            .app
+            .editor_state()
+            .and_then(|s| s.selected_text())
+            .unwrap_or_default();
+        let mut fields = Vec::new();
+        for (id, default) in [
+            ("text", selected.as_str()),
+            ("regex", "false"),
+            ("case_sensitive", "true"),
+            ("whole_word", "false"),
+            ("backwards", "false"),
+        ] {
+            let value = remembered
+                .iter()
+                .find(|f| f.id == id)
+                .map_or_else(|| default.to_owned(), |f| f.value.clone());
+            let mut input = field(id, value);
+            input.label = i18n::tr!(format!("editor-search-{id}"));
+            input.required = false;
+            if id != "text" {
+                input.choices = vec!["false".into(), "true".into()];
+            }
+            fields.push(input);
+        }
+        if replace {
+            let mut replacement = field(
+                "replacement",
+                remembered
+                    .iter()
+                    .find(|f| f.id == "replacement")
+                    .map_or_else(String::new, |f| f.value.clone()),
+            );
+            replacement.required = false;
+            replacement.label = i18n::tr!("editor-search-replacement");
+            fields.push(replacement);
+            fields.push(ManagementField {
+                id: "scope".into(),
+                label: i18n::tr!("editor-search-scope"),
+                value: i18n::tr!("editor-search-all"),
+                choices: vec![
+                    i18n::tr!("editor-search-all"),
+                    i18n::tr!("editor-search-current"),
+                ],
+                ..Default::default()
+            });
+        }
+        self.config_form(
+            if replace { "replace" } else { "find" },
+            i18n::tr!("editor-search-help"),
+            fields,
+        );
+    }
+
+    fn submit_editor_search(&mut self, action: &str, fields: Vec<ManagementField>) {
+        use app::editor::{
+            EditorCommand,
+            search::{SearchEngine, SearchOptions},
+        };
+        if self.pages.editor.editor_save_state.is_some()
+            || self.pages.editor.editor_load_state.is_some()
+            || self.pages.editor.editor_config.pending_action.is_some()
+        {
+            return;
+        }
+        let Some(state) = self.app.editor_state() else {
+            return;
+        };
+        if action == "replace-apply" {
+            let before = state.revision();
+            let Some((generation, revision, replacements)) =
+                self.pages.editor.editor_replace_preview.take()
+            else {
+                return;
+            };
+            if generation != self.pages.editor.editor_document_generation || revision != before {
+                self.pages.editor.editor_message =
+                    Some(i18n::msg!("editor-search-stale-preview").into());
+                return;
+            }
+            self.app.dispatch_at(
+                app::AppCommand::Editor(EditorCommand::ReplaceMatches {
+                    revision,
+                    replacements,
+                }),
+                Instant::now(),
+            );
+            if self
+                .app
+                .editor_state()
+                .is_some_and(|s| s.revision() != before)
+            {
+                self.pages.editor.editor_recovery_dirty_since = Some(Instant::now());
+                self.rebuild_editor_rich_render_cache();
+            }
+            for effect in self.app.take_editor_effects() {
+                if let app::editor::EditorEffect::Message(message) = effect {
+                    self.pages.editor.editor_message = Some(message.into());
+                }
+            }
+            self.reveal_source_caret();
+            return;
+        }
+        let value = |id: &str| {
+            fields
+                .iter()
+                .find(|f| f.id == id)
+                .map_or("", |f| f.value.as_str())
+        };
+        let query = value("text").to_owned();
+        let options = SearchOptions {
+            regex: value("regex") == "true",
+            case_sensitive: value("case_sensitive") != "false",
+            whole_word: value("whole_word") == "true",
+        };
+        let backwards = value("backwards") == "true";
+        let engine = match SearchEngine::new(&query, options) {
+            Ok(engine) => engine,
+            Err(error) => {
+                self.config_form(action, error.to_string(), fields);
+                return;
+            }
+        };
+        if action == "replace" {
+            if state.is_read_only() {
+                return;
+            }
+            let source = state.source();
+            let mut replacements = engine.preview(&source, value("replacement"));
+            if value("scope") == i18n::tr!("editor-search-current") {
+                let selected = state.selected_range().map(std::ops::Range::from);
+                let index = replacements
+                    .iter()
+                    .position(|r| Some(&r.range) == selected.as_ref())
+                    .or_else(|| {
+                        if backwards {
+                            replacements
+                                .iter()
+                                .rposition(|r| r.range.start < state.cursor.byte_offset)
+                        } else {
+                            replacements
+                                .iter()
+                                .position(|r| r.range.start >= state.cursor.byte_offset)
+                        }
+                    })
+                    .unwrap_or(if backwards {
+                        replacements.len().saturating_sub(1)
+                    } else {
+                        0
+                    });
+                replacements = replacements.get(index).cloned().into_iter().collect();
+            }
+            let mut message = i18n::tr!("editor-search-preview-count", count = replacements.len());
+            for edit in replacements.iter().take(40) {
+                let line = state
+                    .source_position(edit.range.start)
+                    .map_or(1, |(line, _)| line + 1);
+                let before: String = edit.original.chars().take(100).collect();
+                let after: String = edit.replacement.chars().take(100).collect();
+                message.push_str(&format!("\n{line}: {before:?} → {after:?}"));
+            }
+            if replacements.len() > 40 {
+                message.push_str(&format!(
+                    "\n{}",
+                    i18n::tr!("editor-search-preview-truncated")
+                ));
+            }
+            let revision = state.revision();
+            drop(source);
+            self.pages.editor.editor_search_fields = fields;
+            if replacements.is_empty() {
+                self.config_form(
+                    "replace",
+                    i18n::tr!("config-editor-not-found"),
+                    self.pages.editor.editor_search_fields.clone(),
+                );
+            } else {
+                self.pages.editor.editor_replace_preview = Some((
+                    self.pages.editor.editor_document_generation,
+                    revision,
+                    replacements,
+                ));
+                self.config_form("replace-apply", message, vec![]);
+            }
+        } else {
+            self.pages.editor.editor_search_fields = fields;
+            self.app.dispatch_at(
+                app::AppCommand::Editor(EditorCommand::Find {
+                    query,
+                    options,
+                    backwards,
+                }),
+                Instant::now(),
+            );
+            if self
+                .app
+                .editor_state()
+                .and_then(|s| s.search.as_ref())
+                .is_some_and(|s| s.matches.is_empty())
+            {
+                self.pages.editor.editor_message =
+                    Some(i18n::msg!("config-editor-not-found").into());
+            } else {
+                self.pages.editor.editor_message = None;
+            }
+            self.reveal_source_caret();
+        }
     }
     pub(in crate::session) fn config_editor_active(&self) -> bool {
         self.pages.editor.editor_config.path.is_some()
@@ -335,6 +553,10 @@ impl ShellSession {
     }
 
     pub(super) fn submit_config_form(&mut self, action: &str, fields: Vec<ManagementField>) {
+        if matches!(action, "find" | "replace" | "replace-apply") {
+            self.submit_editor_search(action, fields);
+            return;
+        }
         let values = fields
             .into_iter()
             .map(|f| (f.id, f.value))
@@ -367,38 +589,6 @@ impl ShellSession {
                             self.config_editor_action(action);
                             break;
                         }
-                    }
-                }
-            }
-            "find" => {
-                if let Some(needle) = values.get("text") {
-                    let text = self.config_text();
-                    let start = self
-                        .app
-                        .editor_state()
-                        .map(|s| s.cursor.byte_offset)
-                        .unwrap_or(0)
-                        .min(text.len());
-                    let found = text[start..]
-                        .find(needle)
-                        .map(|p| p + start)
-                        .or_else(|| text[..start].find(needle));
-                    if let Some(offset) = found {
-                        for (byte_offset, extend_selection) in
-                            [(offset, false), (offset + needle.len(), true)]
-                        {
-                            self.app.dispatch_at(
-                                app::AppCommand::Editor(app::editor::EditorCommand::MoveTo {
-                                    position: app::editor::EditorPosition::Source(byte_offset),
-                                    extend_selection,
-                                }),
-                                Instant::now(),
-                            );
-                        }
-                        self.reveal_source_caret();
-                    } else {
-                        self.pages.editor.editor_message =
-                            Some(i18n::msg!("config-editor-not-found").into());
                     }
                 }
             }
@@ -868,6 +1058,55 @@ impl ShellSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn advanced_search_previews_before_applying_and_undoes_as_one_batch() {
+        let mut s = loaded();
+        s.replace_config_text(&document("original\n"), "中=12\n中=34".into());
+        s.open_editor_replace();
+        let fields = vec![
+            field("text", "中=(\\d+)".into()),
+            field("regex", "true".into()),
+            field("replacement", "字段=$1".into()),
+        ];
+        s.submit_config_form("replace", fields);
+        assert_eq!(s.config_text(), "中=12\n中=34");
+        let preview = s.pages.management.management_state.form.as_ref().unwrap();
+        assert!(preview.message.contains("字段=12"));
+        assert!(preview.message.contains("字段=34"));
+        s.submit_management_form();
+        assert_eq!(s.config_text(), "字段=12\n字段=34");
+        s.app.dispatch_at(
+            app::AppCommand::Editor(app::editor::EditorCommand::Undo),
+            Instant::now(),
+        );
+        assert_eq!(s.config_text(), "中=12\n中=34");
+    }
+
+    #[test]
+    fn invalid_regex_preserves_form_and_stale_preview_cannot_edit_another_revision() {
+        let mut s = loaded();
+        s.submit_config_form(
+            "find",
+            vec![field("text", "[".into()), field("regex", "true".into())],
+        );
+        let form = s.pages.management.management_state.form.as_ref().unwrap();
+        assert_eq!(form.fields[0].value, "[");
+        assert!(!form.message.is_empty());
+        s.submit_config_form(
+            "replace",
+            vec![
+                field("text", "original".into()),
+                field("replacement", "changed".into()),
+            ],
+        );
+        s.app.dispatch_at(
+            app::AppCommand::Editor(app::editor::EditorCommand::InsertText("X".into())),
+            Instant::now(),
+        );
+        s.submit_config_form("replace-apply", vec![]);
+        assert_eq!(s.config_text(), "Xoriginal\n");
+    }
+
     fn session() -> ShellSession {
         let mut session = ShellSession::new_for_home_mode(
             ShellLaunchConfig::default(),

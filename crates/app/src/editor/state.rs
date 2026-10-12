@@ -75,6 +75,7 @@ impl EditorState {
             cursor: Cursor::default(),
             selection: None,
             viewport: EditorViewport::default(),
+            search: None,
             buffer,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -249,8 +250,29 @@ impl EditorState {
         }
     }
 
-    /// C token ranges are shared across viewport snapshots. Non-C documents
-    /// never build this cache, even if their content resembles C source.
+    /// LSH byte ranges are shared across viewport snapshots and invalidated on edits.
+    pub fn source_syntax_highlights(&self) -> Arc<[syntax::SyntaxToken]> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => buffer.syntax.get(
+                &self
+                    .document
+                    .path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| self.document.display_name()),
+                &buffer.text,
+            ),
+            _ => Arc::from([]),
+        }
+    }
+
+    pub fn source_wrap_layout(&self, width: usize) -> Option<Arc<soft_wrap::WrapLayout>> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => Some(buffer.wrapped.get(&buffer.text, width)),
+            _ => None,
+        }
+    }
+
     pub fn source_c_highlights(&self) -> Arc<[c_syntax::CToken]> {
         if !self.document.path.as_ref().is_some_and(c_syntax::is_c_file) {
             return Arc::from([]);

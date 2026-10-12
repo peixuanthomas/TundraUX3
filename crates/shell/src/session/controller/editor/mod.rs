@@ -94,6 +94,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn advance_editor_document_generation(&mut self) {
+        self.pages.editor.editor_replace_preview = None;
         self.pages.editor.editor_document_generation = self
             .pages
             .editor
@@ -555,9 +556,52 @@ impl ShellSession {
                 return;
             }
         }
+        let command = if self.pages.editor.editor_soft_wrap
+            && self
+                .app
+                .editor_state()
+                .is_some_and(|s| s.mode == app::editor::EditorMode::Source)
+        {
+            match command {
+                app::editor::EditorCommand::MoveCursor {
+                    movement: app::editor::CursorMove::Up,
+                    extend_selection,
+                } => {
+                    let width = self
+                        .to_editor_view_model()
+                        .wrap_layout
+                        .map_or(1, |l| l.width);
+                    app::editor::EditorCommand::MoveVisual {
+                        width,
+                        down: false,
+                        extend_selection,
+                    }
+                }
+                app::editor::EditorCommand::MoveCursor {
+                    movement: app::editor::CursorMove::Down,
+                    extend_selection,
+                } => {
+                    let width = self
+                        .to_editor_view_model()
+                        .wrap_layout
+                        .map_or(1, |l| l.width);
+                    app::editor::EditorCommand::MoveVisual {
+                        width,
+                        down: true,
+                        extend_selection,
+                    }
+                }
+                other => other,
+            }
+        } else {
+            command
+        };
         let caret_navigation = matches!(
             &command,
-            app::editor::EditorCommand::MoveCursor { .. }
+            app::editor::EditorCommand::MoveVisual { .. }
+                | app::editor::EditorCommand::Find { .. }
+                | app::editor::EditorCommand::FindNext { .. }
+                | app::editor::EditorCommand::MoveCursor { .. }
                 | app::editor::EditorCommand::MoveTo { .. }
                 | app::editor::EditorCommand::SelectAll
                 | app::editor::EditorCommand::SetMode(_)
@@ -636,7 +680,17 @@ impl ShellSession {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
-        let layout = ui::editor_layout(editor_area, &self.to_editor_view_model());
+        let model = self.to_editor_view_model();
+        let layout = ui::editor_layout(editor_area, &model);
+        let (cursor_line, cursor_column) = model
+            .wrap_layout
+            .as_ref()
+            .map_or((cursor_line, cursor_column), |wrapped| {
+                wrapped.position(model.cursor_offset.unwrap_or(0))
+            });
+        if model.soft_wrap {
+            viewport.left_column = 0;
+        }
         let visible_width = usize::from(layout.canvas.width);
         let visible_height = layout.visible_capacity;
         if visible_width == 0 || visible_height == 0 {
@@ -663,7 +717,7 @@ impl ShellSession {
         } else {
             left_column
         };
-        viewport.left_column = next_left;
+        viewport.left_column = if model.soft_wrap { 0 } else { next_left };
         self.app
             .dispatch_at(app::AppCommand::SetEditorViewport(viewport), Instant::now());
     }
@@ -673,6 +727,9 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         match effect {
+            app::editor::EditorEffect::Message(message) => {
+                self.pages.editor.editor_message = Some(message.into());
+            }
             app::editor::EditorEffect::WriteClipboard(text) => {
                 match platform.write_clipboard_text(&text) {
                     Ok(()) => {

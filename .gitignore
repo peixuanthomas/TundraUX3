@@ -12,6 +12,7 @@
 AGENTS.md
 temp.txt
 todo.md
-/third_party/
+/third_party/*
+!/third_party/lsh/
 /clear.bat
 temp.md

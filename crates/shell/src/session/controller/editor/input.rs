@@ -72,6 +72,28 @@ impl ShellSession {
             }
             return;
         }
+        if key.key == InputKey::F(3) {
+            self.apply_editor_command(
+                app::editor::EditorCommand::FindNext {
+                    backwards: key.modifiers.shift,
+                },
+                platform,
+            );
+            return;
+        }
+        if key.modifiers.alt && matches!(key.key, InputKey::Char('z' | 'Z')) {
+            if !repeated {
+                self.toggle_editor_wrap();
+            }
+            return;
+        }
+        if key.modifiers.control
+            && key.modifiers.shift
+            && matches!(key.key, InputKey::Char('j' | 'J'))
+        {
+            self.apply_editor_command(app::editor::EditorCommand::FormatJson, platform);
+            return;
+        }
         if key.key == InputKey::Escape {
             if repeated {
                 return;
@@ -191,9 +213,7 @@ impl ShellSession {
                     return;
                 }
                 ('h', _) => {
-                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                        "shell-replace-is-not-available-in-this-build"
-                    )));
+                    self.open_editor_replace();
                     return;
                 }
                 _ => return,
@@ -264,6 +284,17 @@ impl ShellSession {
             _ => return,
         };
         self.apply_editor_command(command, platform);
+    }
+
+    pub(in crate::session) fn toggle_editor_wrap(&mut self) {
+        self.pages.editor.editor_soft_wrap = !self.pages.editor.editor_soft_wrap;
+        if let Some(mut viewport) = self.app.editor_state().map(|s| s.viewport) {
+            viewport.top_line = 0;
+            viewport.left_column = 0;
+            self.app
+                .dispatch_at(app::AppCommand::SetEditorViewport(viewport), Instant::now());
+        }
+        self.reveal_source_caret();
     }
 
     pub(in crate::session) fn editor_cursor_step_count(
@@ -487,6 +518,12 @@ impl ShellSession {
                         self.pages.editor.editor_open_menu = None;
                         self.pages.editor.editor_selected_toolbar_action = None;
                         match action {
+                            ui::EditorMenuAction::Replace => self.open_editor_replace(),
+                            ui::EditorMenuAction::ToggleWrap => self.toggle_editor_wrap(),
+                            ui::EditorMenuAction::FormatJson => self.apply_editor_command(
+                                app::editor::EditorCommand::FormatJson,
+                                platform,
+                            ),
                             ui::EditorMenuAction::Config(action) => {
                                 self.config_editor_action(action)
                             }

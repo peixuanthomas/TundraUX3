@@ -103,7 +103,12 @@ impl ShellSession {
                     total_line_count,
                     lines,
                 );
-                model.c_highlights = state.source_c_highlights();
+                model.syntax_highlights = state.source_syntax_highlights();
+                if let Some(search) = &state.search
+                    && search.revision == state.revision()
+                {
+                    model.search_matches = std::sync::Arc::clone(&search.matches);
+                }
                 model.line_markers = state.source_line_markers();
                 model.cursor = state
                     .source_display_position(state.cursor.byte_offset)
@@ -218,6 +223,27 @@ impl ShellSession {
                     .as_ref()
                     .map(i18n::LocalizedText::render_current)
             });
+        if model.status_message.is_none()
+            && let Some(search) = &state.search
+            && search.revision == state.revision()
+        {
+            model.status_message = Some(i18n::tr!(
+                "editor-search-count",
+                current = search.current.map_or(0, |i| i + 1),
+                count = search.matches.len()
+            ));
+        }
+        if model.mode == app::editor::EditorMode::Source && self.pages.editor.editor_soft_wrap {
+            model.soft_wrap = true;
+            model.horizontal_scroll = 0;
+            let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+            let editor_area = match self.shell_layout_for(area) {
+                ui::ShellLayout::Compact(compact) => compact,
+                ui::ShellLayout::Full { main, .. } => main,
+            };
+            let layout = ui::editor_layout(editor_area, &model);
+            model.wrap_layout = state.source_wrap_layout(usize::from(layout.canvas.width));
+        }
         model
     }
 
