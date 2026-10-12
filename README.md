@@ -70,7 +70,7 @@ Linux releases use portable archives. In **Settings → Update**, **Release** do
 
 ### Build from source
 
-Install a current stable Rust toolchain with Cargo and the build tools required by your platform. From the repository root:
+Install Rust **1.95 or newer** with Cargo and the build tools required by your platform. From the repository root:
 
 ```sh
 cargo build --locked -p shell -p cli

@@ -2,6 +2,7 @@
 name = "weathr"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Dony Mulya <veirt@duck.com>"]
 description = "TundraUX-integrated terminal ASCII weather scene renderer"

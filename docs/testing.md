@@ -13,6 +13,14 @@ cargo build --locked -p shell -p cli -p weathr
 
 本地回环 HTTP 测试应直接连接测试服务器。受系统代理影响时，可仅为测试进程设置 `NO_PROXY=127.0.0.1,localhost,::1` 和小写 `no_proxy`，无需修改系统代理。资源紧张或排查并发时可使用 `cargo test --workspace --locked -- --test-threads=1`；串行仍执行全部用例，交付时应注明运行方式及默认并发结果。
 
+最低支持版本为 Rust 1.95；修改工具链或依赖后，还需验证最低版本：
+
+```console
+rustup toolchain install 1.95.0 --profile minimal
+cargo +1.95.0 check --workspace --all-targets --all-features --locked
+cargo +1.95.0 test --workspace --locked
+```
+
 定向测试：
 
 ```console
@@ -31,6 +39,7 @@ CI 配置以 [cross-platform.yml](../.github/workflows/cross-platform.yml)、[li
 
 | 常规工作流 | 当前检查 |
 | --- | --- |
+| 最低 Rust 版本（Linux / Windows / macOS） | 从根 `Cargo.toml` 读取最低版本，检查 workspace 全部 targets 和 features |
 | Windows / macOS | workspace 构建；文件安全、语言资源、日志和系统指标定向测试 |
 | Ubuntu | workspace 构建；身份、平台、语言资源、日志、系统指标与本地软件包构建测试 |
 | Fedora | 普通用户 workspace 构建；身份、平台、日志与系统指标定向测试 |

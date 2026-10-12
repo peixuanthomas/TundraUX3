@@ -4,7 +4,9 @@
 
 ## 构建和运行
 
-使用稳定版 Rust 和 Cargo，具体 edition、最低版本声明、功能与依赖以根目录及各 crate 的 `Cargo.toml` 为准。
+最低支持 **Rust 1.95**，使用 Rust 2024 edition。该版本满足 [Microsoft Edit 当前的 Rust 1.93 要求](https://github.com/microsoft/edit/blob/1be69c85a63bcd475a0b397196d0be3dbed60023/Cargo.toml)，为后续接入其组件准备，同时兼容现有 `sysinfo 0.39` 依赖。根目录 `Cargo.toml` 的 `workspace.package.rust-version` 是统一声明，所有项目 crate 显式继承该值；开发和发布可继续使用更新的稳定版工具链。
+
+更新依赖时同步检查最低版本构建与 `Cargo.lock`。
 
 ```sh
 cargo build --locked -p shell -p cli
