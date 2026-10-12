@@ -30,11 +30,6 @@ fn read_position() -> io::Result<(u16, u16)> {
 }
 
 fn read_position_raw() -> io::Result<(u16, u16)> {
-    // Discard replies to earlier cursor queries before issuing a fresh request.
-    while let Ok(true) = poll_internal(Some(Duration::ZERO), &CursorPositionFilter) {
-        let _ = read_internal(&CursorPositionFilter);
-    }
-
     // Use `ESC [ 6 n` to and retrieve the cursor position.
     let mut stdout = io::stdout();
     stdout.write_all(b"\x1B[6n")?;
