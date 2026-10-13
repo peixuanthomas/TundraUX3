@@ -8,10 +8,12 @@ use http::{Client, Response};
 use platform::{Platform, PlatformKind, ProcessExit, ProcessSpec};
 mod cancellation;
 mod http;
+#[cfg(any(windows, target_os = "linux"))]
+use cancellation::copy_file;
 pub use cancellation::{
     UpdateCancellation, cleanup_update_work, discard_staged_update, mark_staged_update_cancelled,
 };
-use cancellation::{WorkDirectory, copy_file, copy_stream};
+use cancellation::{WorkDirectory, copy_stream};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -1727,6 +1729,7 @@ fn write_manifest(path: &Path, manifest: &TransactionManifest) -> Result<(), Upd
         .map_err(|error| UpdateError::new(format!("could not save update transaction: {error}")))
 }
 
+#[cfg(any(test, windows, target_os = "linux"))]
 fn unix_millis() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

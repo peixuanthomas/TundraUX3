@@ -1,12 +1,4 @@
 //! Exercise public commands without changing any system configuration.
-use std::process::{Command, Output};
-
-fn command(arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
-        .args(arguments)
-        .output()
-        .unwrap()
-}
 
 #[test]
 fn formal_help_lists_operations_and_explains_authorization() {
@@ -75,12 +67,20 @@ fn secrets_and_missing_versions_are_rejected_before_running() {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::*;
     use std::{
         fs,
         path::PathBuf,
+        process::{Command, Output},
         sync::atomic::{AtomicU64, Ordering},
     };
+
+    fn command(arguments: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
+            .args(arguments)
+            .output()
+            .unwrap()
+    }
+
     static NEXT: AtomicU64 = AtomicU64::new(0);
     struct Directory(PathBuf);
     impl Directory {
