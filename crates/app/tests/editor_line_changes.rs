@@ -6,6 +6,13 @@ use app::editor::{EditorCommand, EditorEffect, EditorState, SourceRange};
 fn compare(old: &str, new: &str) -> Arc<[LineMarker]> {
     let mut editor = EditorState::open("note.txt", old.as_bytes()).unwrap();
     editor.replace_source_range(SourceRange::new(0, old.len()), new);
+    editor.source_line_markers();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while editor.has_background_work() {
+        editor.poll_background();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     editor.source_line_markers()
 }
 

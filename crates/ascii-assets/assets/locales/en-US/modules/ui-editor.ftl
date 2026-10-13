@@ -110,3 +110,7 @@ editor-search-help = F3: next · Shift+F3: previous. Regex replacements support 
 editor-search-preview-count = { $count } replacements. Submit to apply; Escape to cancel. One Undo restores the batch.
 editor-search-preview-truncated = Showing the first 40 replacements. Apply includes all matches.
 editor-search-count = Match { $current } / { $count } · F3 / Shift+F3
+
+editor-search-working = Searching…
+editor-search-preview-limit = The replacement preview exceeds 10,000 matches or 8 MiB. Narrow the query before applying.
+editor-wrap-working = Preparing wrapped lines…

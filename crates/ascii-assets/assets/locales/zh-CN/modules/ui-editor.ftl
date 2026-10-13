@@ -101,3 +101,7 @@ editor-search-help = F3：下一个 · Shift+F3：上一个。正则替换支持
 editor-search-preview-count = { $count } 处替换。提交应用，Esc 取消；一次撤销可还原整批修改。
 editor-search-preview-truncated = 仅显示前 40 处预览，应用将处理全部匹配。
 editor-search-count = 匹配 { $current } / { $count } · F3 / Shift+F3
+
+editor-search-working = 正在搜索…
+editor-search-preview-limit = 替换预览超过 10,000 处匹配或 8 MiB，请缩小搜索范围后再应用。
+editor-wrap-working = 正在计算软换行…

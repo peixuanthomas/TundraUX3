@@ -1530,6 +1530,11 @@ fn session_has_background_work(state: &ShellSession) -> bool {
         || state.pages.launcher.launcher_refresh_request.is_some()
         || state.pages.editor.editor_load_state.is_some()
         || state.pages.editor.editor_save_state.is_some()
+        || state.pages.editor.editor_preview_request.is_some()
+        || state
+            .app
+            .editor_state()
+            .is_some_and(app::editor::EditorState::has_background_work)
         || state.pages.diagnostics.diagnostics_scanning
         || state
             .pages

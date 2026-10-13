@@ -50,7 +50,7 @@ fn soft_wrap_keyboard_navigation_resize_and_save_keep_source_unchanged() {
     state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
     assert_eq!(
         state.to_editor_view_model().cursor_offset,
-        Some(wrapped.rows[1].range.start)
+        Some(wrapped.row(1).unwrap().range.start)
     );
     state.apply_input_with_platform(InputEvent::from_key_label("Up"), &platform);
     assert_eq!(state.to_editor_view_model().cursor_offset, Some(0));
@@ -69,6 +69,46 @@ fn soft_wrap_keyboard_navigation_resize_and_save_keep_source_unchanged() {
     state.apply_input_with_platform(ctrl('s'), &platform);
     wait_for_editor_background_tasks(&mut state, &platform);
     assert_eq!(fs::read_to_string(path).unwrap(), source);
+}
+
+#[test]
+fn completed_background_wrap_reveals_the_caret_in_a_large_file() {
+    let fixture = FixtureRoot::new("large-soft-wrap");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents").join("large.txt");
+    fs::write(&path, "a".repeat(100_000)).unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_phase(
+            InputKey::Char('z'),
+            InputModifiers {
+                alt: true,
+                ..InputModifiers::none()
+            },
+            InputPhase::Press,
+        )),
+        &platform,
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        state.apply_input_with_platform(InputEvent::Tick, &platform);
+        let model = state.to_editor_view_model();
+        if let Some(wrapped) = model.wrap_layout {
+            let (row, _) = wrapped.position(model.cursor_offset.unwrap());
+            let layout = current_editor_layout(&state);
+            assert!(
+                (layout.visible_start..layout.visible_start + layout.visible_capacity)
+                    .contains(&row)
+            );
+            assert!(!model.dirty);
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]

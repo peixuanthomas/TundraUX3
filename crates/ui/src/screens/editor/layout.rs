@@ -546,7 +546,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
                 model
                     .wrap_layout
                     .as_ref()
-                    .map_or_else(|| source_document_line_count(model), |l| l.rows.len()),
+                    .map_or_else(|| source_document_line_count(model), |l| l.row_count()),
                 None,
                 usize::from(canvas.width),
             )

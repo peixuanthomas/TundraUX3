@@ -456,8 +456,10 @@ fn render_canvas(
             let wrapped = model
                 .wrap_layout
                 .as_ref()
-                .and_then(|layout| layout.rows.get(line_layout.document_line));
-            let logical_line = wrapped.map_or(line_layout.document_line, |row| row.logical_line);
+                .and_then(|layout| layout.row(line_layout.document_line));
+            let logical_line = wrapped
+                .as_ref()
+                .map_or(line_layout.document_line, |row| row.logical_line);
             let marker = model
                 .line_markers
                 .get(logical_line)

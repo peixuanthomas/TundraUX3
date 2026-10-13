@@ -1,5 +1,6 @@
 //! Saved-text comparison for the source gutter. No repository or disk I/O.
 
+use super::background::Latest;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,14 +23,19 @@ pub struct LineMarker {
 type CachedMarkers = Option<((u64, u64), Arc<[LineMarker]>)>;
 
 #[derive(Debug, Default)]
-pub(super) struct Cache(Mutex<CachedMarkers>);
+pub(super) struct Cache(
+    Mutex<CachedMarkers>,
+    Latest<((u64, u64), Arc<[LineMarker]>)>,
+);
 
 impl Cache {
     pub fn get_or_compute(
         &self,
         key: (u64, u64),
-        compute: impl FnOnce() -> Arc<[LineMarker]>,
+        background: bool,
+        compute: impl FnOnce() -> Arc<[LineMarker]> + Send + 'static,
     ) -> Arc<[LineMarker]> {
+        self.poll();
         let mut value = self
             .0
             .lock()
@@ -39,20 +45,45 @@ impl Cache {
         {
             return Arc::clone(markers);
         }
-        let markers = compute();
-        *value = Some((key, Arc::clone(&markers)));
-        markers
+        self.1.cancel();
+        if background {
+            *value = Some((key, Arc::from([])));
+            self.1.submit(move |_| (key, compute()));
+            Arc::from([])
+        } else {
+            let markers = compute();
+            *value = Some((key, Arc::clone(&markers)));
+            markers
+        }
+    }
+    pub fn busy(&self) -> bool {
+        self.1.busy()
+    }
+    pub fn poll(&self) -> bool {
+        let mut value = self.0.lock().unwrap();
+        if let Some((key, markers)) = self.1.take()
+            && value
+                .as_ref()
+                .is_some_and(|(requested, _)| *requested == key)
+        {
+            *value = Some((key, markers));
+            true
+        } else {
+            false
+        }
     }
 }
 
 impl Clone for Cache {
     fn clone(&self) -> Self {
-        Self(Mutex::new(
-            self.0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone(),
-        ))
+        Self(
+            Mutex::new(if self.1.busy() {
+                None
+            } else {
+                self.0.lock().unwrap().clone()
+            }),
+            Latest::default(),
+        )
     }
 }
 
@@ -62,6 +93,57 @@ impl PartialEq for Cache {
     }
 }
 impl Eq for Cache {}
+
+/// Trim equal prefixes/suffixes while borrowing Rope lines. A local edit in a
+/// multi-million-line log must not allocate two full arrays of line strings.
+pub(super) fn compare_ropes(old: &ropey::Rope, new: &ropey::Rope) -> Arc<[LineMarker]> {
+    let old_count = if old.len_bytes() == 0 {
+        0
+    } else {
+        old.len_lines()
+    };
+    let new_count = if new.len_bytes() == 0 {
+        0
+    } else {
+        new.len_lines()
+    };
+    let prefix = old
+        .lines()
+        .take(old_count)
+        .zip(new.lines().take(new_count))
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut suffix = 0;
+    let mut old_lines = old.lines_at(old_count);
+    let mut new_lines = new.lines_at(new_count);
+    while suffix < old_count.min(new_count).saturating_sub(prefix) {
+        if old_lines.prev() != new_lines.prev() {
+            break;
+        }
+        suffix += 1;
+    }
+    // Keep adjacent unchanged lines so deletion markers still attach to the
+    // same neighbour as the whole-document diff.
+    let start = prefix.saturating_sub(1);
+    let old_end = (old_count - suffix).saturating_add(1).min(old_count);
+    let new_end = (new_count - suffix).saturating_add(1).min(new_count);
+    let old_window: Vec<_> = old
+        .lines_at(start)
+        .take(old_end - start)
+        .map(Cow::from)
+        .collect();
+    let new_window: Vec<_> = new
+        .lines_at(start)
+        .take(new_end - start)
+        .map(Cow::from)
+        .collect();
+    let changed = compare(&old_window, &new_window);
+    let mut markers = Vec::with_capacity(new_count.max(1));
+    markers.resize(start, LineMarker::default());
+    markers.extend_from_slice(&changed);
+    markers.resize(new_count.max(1), LineMarker::default());
+    markers.into()
+}
 
 pub(super) fn compare(old: &[Cow<'_, str>], new: &[Cow<'_, str>]) -> Arc<[LineMarker]> {
     let mut matches = Vec::new();
@@ -203,4 +285,43 @@ fn match_gap(
         }
     }
     matches.extend(suffix.into_iter().rev());
+}
+
+#[cfg(test)]
+mod rope_tests {
+    use super::*;
+    #[test]
+    fn trimmed_rope_diff_matches_whole_document_diff() {
+        let texts = [
+            "",
+            "a",
+            "a\n",
+            "a\nb\nc\n",
+            "x\nb\nc\n",
+            "a\nx\nb\nc\n",
+            "a\nc\n",
+            "a\nb\n",
+            "中\r\n中\r\n尾",
+        ];
+        for old in texts {
+            for new in texts {
+                let old = ropey::Rope::from_str(old);
+                let new = ropey::Rope::from_str(new);
+                let lines = |rope: &ropey::Rope| {
+                    if rope.len_bytes() == 0 {
+                        Vec::new()
+                    } else {
+                        rope.lines()
+                            .map(|line| Cow::Owned(line.to_string()))
+                            .collect::<Vec<_>>()
+                    }
+                };
+                assert_eq!(
+                    compare_ropes(&old, &new),
+                    compare(&lines(&old), &lines(&new)),
+                    "{old:?} -> {new:?}"
+                );
+            }
+        }
+    }
 }

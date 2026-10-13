@@ -76,6 +76,8 @@ impl EditorState {
             selection: None,
             viewport: EditorViewport::default(),
             search: None,
+            search_job: background::Latest::default(),
+            computation_generation: 0,
             buffer,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -111,30 +113,46 @@ impl EditorState {
         if !self.is_dirty() {
             return Arc::from([]);
         }
-        self.line_change_cache
-            .get_or_compute((self.revision, self.saved_revision), || {
-                fn lines(rope: &Rope) -> Vec<Cow<'_, str>> {
-                    rope.lines().map(Cow::from).collect()
-                }
+        let saved = self.document.saved_source.clone();
+        let current = buffer.text.clone();
+        self.line_change_cache.get_or_compute(
+            (self.revision, self.saved_revision),
+            current.len_bytes() > background::SYNC_BYTES,
+            move || {
                 let old_rope;
-                let old = if let Some((rope, _, _)) = self.document.saved_source.rope() {
+                let old = if let Some((rope, _, _)) = saved.rope() {
                     rope
                 } else {
-                    old_rope = Rope::from_str(&self.document.saved_source.text());
+                    old_rope = Rope::from_str(&saved.text());
                     &old_rope
                 };
-                let old_lines = if old.len_bytes() == 0 {
-                    Vec::new()
-                } else {
-                    lines(old)
-                };
-                let new_lines = if buffer.text.len_bytes() == 0 {
-                    Vec::new()
-                } else {
-                    lines(&buffer.text)
-                };
-                line_changes::compare(&old_lines, &new_lines)
-            })
+                // A common pathological log is one huge logical line, optionally
+                // followed by EOL. Compare borrowed Rope slices, without copying
+                // both versions just to mark that one line as modified.
+                fn single_content_line(rope: &Rope) -> bool {
+                    rope.len_lines() == 1
+                        || (rope.len_lines() == 2 && rope.line(1).len_bytes() == 0)
+                }
+                if single_content_line(old) && single_content_line(&current) {
+                    let same = old.line(0) == current.line(0);
+                    let summary = |rope: &Rope, token: &'static str| -> Vec<Cow<'static, str>> {
+                        if rope.len_bytes() == 0 {
+                            return Vec::new();
+                        }
+                        let mut lines = vec![Cow::Borrowed(token)];
+                        if rope.len_lines() == 2 {
+                            lines.push(Cow::Borrowed(""));
+                        }
+                        lines
+                    };
+                    return line_changes::compare(
+                        &summary(old, "old"),
+                        &summary(&current, if same { "old" } else { "new" }),
+                    );
+                }
+                line_changes::compare_ropes(old, &current)
+            },
+        )
     }
 
     /// Source-mode text, or the last boundary Markdown snapshot in Rich mode.
@@ -250,8 +268,46 @@ impl EditorState {
         }
     }
 
-    /// LSH byte ranges are shared across viewport snapshots and invalidated on edits.
+    /// Drain worker results without waiting; each job belongs to this document instance.
+    pub fn has_background_work(&self) -> bool {
+        self.search_job.busy()
+            || self.line_change_cache.busy()
+            || match &self.buffer {
+                EditorBuffer::Source(buffer) => buffer.syntax.busy() || buffer.wrapped.busy(),
+                _ => false,
+            }
+    }
+
+    pub fn poll_background(&mut self) -> BackgroundUpdate {
+        let mut changed = self.line_change_cache.poll();
+        let mut wrapped = false;
+        if let EditorBuffer::Source(buffer) = &self.buffer {
+            changed |= buffer.syntax.poll();
+            wrapped = buffer.wrapped.poll();
+            changed |= wrapped;
+        }
+        if let Some(result) = self.search_job.take() {
+            changed |= controller::finish_search(self, result);
+        }
+        if changed {
+            self.computation_generation = self.computation_generation.wrapping_add(1);
+        }
+        BackgroundUpdate { changed, wrapped }
+    }
+
+    pub fn source_rope_snapshot(&self) -> Option<Rope> {
+        match &self.buffer {
+            EditorBuffer::Source(buffer) => Some(buffer.rope_snapshot()),
+            _ => None,
+        }
+    }
+
+    /// Compatibility accessor; interactive views should request their logical lines.
     pub fn source_syntax_highlights(&self) -> Arc<[syntax::SyntaxToken]> {
+        self.source_syntax_highlights_in(0..self.source_line_count().unwrap_or(0))
+    }
+
+    pub fn source_syntax_highlights_in(&self, lines: Range<usize>) -> Arc<[syntax::SyntaxToken]> {
         match &self.buffer {
             EditorBuffer::Source(buffer) => buffer.syntax.get(
                 &self
@@ -261,6 +317,7 @@ impl EditorState {
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|| self.document.display_name()),
                 &buffer.text,
+                lines,
             ),
             _ => Arc::from([]),
         }
@@ -268,7 +325,7 @@ impl EditorState {
 
     pub fn source_wrap_layout(&self, width: usize) -> Option<Arc<soft_wrap::WrapLayout>> {
         match &self.buffer {
-            EditorBuffer::Source(buffer) => Some(buffer.wrapped.get(&buffer.text, width)),
+            EditorBuffer::Source(buffer) => buffer.wrapped.get(&buffer.text, width),
             _ => None,
         }
     }
@@ -618,6 +675,7 @@ impl EditorState {
         }) else {
             return false;
         };
+        self.search_job.cancel();
         self.cursor = after_cursor;
         self.selection = after_selection;
         if removed == replacement {

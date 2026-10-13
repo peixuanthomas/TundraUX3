@@ -56,7 +56,7 @@ impl EditorController {
                     let (line, column) = layout.position(state.cursor.byte_offset);
                     let desired = state.cursor.preferred_column.unwrap_or(column);
                     let target = if down {
-                        (line + 1).min(layout.rows.len() - 1)
+                        (line + 1).min(layout.row_count() - 1)
                     } else {
                         line.saturating_sub(1)
                     };
@@ -256,59 +256,108 @@ fn find(
         Ok(engine) => engine,
         Err(error) => return vec![EditorEffect::Message(error.to_string())],
     };
-    let matches: Arc<[Range<usize>]> = state
-        .search
-        .as_ref()
-        .filter(|s| s.query == query && s.options == options && s.revision == state.revision())
-        .map_or_else(
-            || engine.find_all(&state.source()).into(),
-            |s| Arc::clone(&s.matches),
-        );
-    let previous = state
-        .search
-        .as_ref()
-        .filter(|s| s.query == query && s.options == options && s.revision == state.revision())
-        .and_then(|s| s.current)
-        .filter(|&i| {
-            matches
-                .get(i)
+    let cached = state.search.as_ref().filter(|s| {
+        s.query == query && s.options == options && s.revision == state.revision() && !s.pending
+    });
+    let previous = cached
+        .and_then(|s| s.current.map(|i| (s, i)))
+        .filter(|(s, i)| {
+            s.matches
+                .get(*i)
                 .is_some_and(|r| r.end == state.cursor.byte_offset)
         });
-    let current = if matches.is_empty() {
-        None
-    } else if advance && let Some(previous) = previous {
-        Some(if backwards {
-            (previous + matches.len() - 1) % matches.len()
+    let target = if advance && let Some((session, previous)) = previous {
+        let index = if backwards {
+            (session.first_match + previous + session.total_matches - 1) % session.total_matches
         } else {
-            (previous + 1) % matches.len()
-        })
+            (session.first_match + previous + 1) % session.total_matches
+        };
+        if let Some(local) = index
+            .checked_sub(session.first_match)
+            .filter(|&i| i < session.matches.len())
+        {
+            let range = session.matches[local].clone();
+            move_to(state, range.start, false);
+            move_to(state, range.end, true);
+            state.search.as_mut().unwrap().current = Some(local);
+            return Vec::new();
+        }
+        search::Target::Index(index)
     } else if backwards {
-        Some(
-            matches
-                .iter()
-                .rposition(|r| r.start < state.cursor.byte_offset)
-                .unwrap_or(matches.len() - 1),
-        )
+        search::Target::Backward(state.cursor.byte_offset)
     } else {
-        Some(
-            matches
-                .iter()
-                .position(|r| r.start >= state.cursor.byte_offset)
-                .unwrap_or(0),
-        )
+        search::Target::Forward(state.cursor.byte_offset)
     };
+    let source = state.source_rope_snapshot().unwrap();
+    let revision = state.revision();
+    let cursor = state.cursor.byte_offset;
+    state.search_job.cancel();
+    state.search = Some(SearchSession {
+        query: query.clone(),
+        options,
+        revision,
+        matches: Arc::from([]),
+        current: None,
+        first_match: 0,
+        total_matches: 0,
+        pending: true,
+    });
+    if source.len_bytes() <= background::SYNC_BYTES {
+        let page = engine.page(&source, target, &std::sync::atomic::AtomicBool::new(false));
+        finish_search(
+            state,
+            search::Completion {
+                revision,
+                cursor,
+                query,
+                options,
+                page,
+            },
+        );
+    } else {
+        state.search_job.submit(move |cancel| {
+            let page = engine.page(&source, target, cancel);
+            search::Completion {
+                revision,
+                cursor,
+                query,
+                options,
+                page,
+            }
+        });
+    }
+    Vec::new()
+}
+
+pub(super) fn finish_search(state: &mut EditorState, result: search::Completion) -> bool {
+    if result.revision != state.revision()
+        || state.mode != EditorMode::Source
+        || !state
+            .search
+            .as_ref()
+            .is_some_and(|s| s.query == result.query && s.options == result.options)
+    {
+        return false;
+    }
+    let page = result.page;
+    let current = page
+        .current
+        .filter(|_| state.cursor.byte_offset == result.cursor);
     if let Some(index) = current {
-        move_to(state, matches[index].start, false);
-        move_to(state, matches[index].end, true);
+        move_to(state, page.matches[index].start, false);
+        move_to(state, page.matches[index].end, true);
     }
     state.search = Some(SearchSession {
-        query,
-        options,
-        revision: state.revision(),
-        matches: matches.into(),
+        query: result.query,
+        options: result.options,
+        revision: result.revision,
+        matches: page.matches,
         current,
+        first_match: page.first,
+        total_matches: page.total,
+        pending: false,
     });
-    Vec::new()
+    true
 }
 
 fn replace_matches(
@@ -324,14 +373,17 @@ fn replace_matches(
             "editor-search-stale-preview"
         ))];
     }
-    let source = state.source();
-    let boundaries = search::grapheme_boundaries(&source);
+    let source = state.source_rope_snapshot().unwrap();
+    let mut boundaries = search::Boundaries::new(source.len_bytes());
     let mut end = 0;
     for (index, edit) in replacements.iter().enumerate() {
-        if !search::valid_range(&boundaries, &edit.range)
+        if !boundaries.rope_range(&source, &edit.range)
             || edit.range.start < end
             || (index > 0 && edit.range.start == replacements[index - 1].range.start)
-            || source.get(edit.range.clone()) != Some(edit.original.as_str())
+            || !source
+                .byte_slice(edit.range.clone())
+                .chars()
+                .eq(edit.original.chars())
         {
             return vec![EditorEffect::Message(i18n::tr!(
                 "editor-search-invalid-range"
@@ -345,7 +397,9 @@ fn replace_matches(
     let mut output = String::new();
     let mut offset = start;
     for edit in replacements {
-        output.push_str(&source[offset..edit.range.start]);
+        for chunk in source.byte_slice(offset..edit.range.start).chunks() {
+            output.push_str(chunk);
+        }
         output.push_str(&edit.replacement);
         offset = edit.range.end;
     }
