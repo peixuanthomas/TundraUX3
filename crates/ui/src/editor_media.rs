@@ -212,7 +212,7 @@ impl EditorImagePicker {
 
 fn next_kitty_image_id() -> u32 {
     NEXT_KITTY_IMAGE_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
             Some(id.saturating_add(1))
         })
         .expect("atomic image id update is infallible")

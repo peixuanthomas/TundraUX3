@@ -545,7 +545,7 @@ pub(in crate::session) fn reserve_editor_load_bytes(
     bytes: u64,
 ) -> Result<EditorLoadBytePermit<'_>, String> {
     active
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             current
                 .checked_add(bytes)
                 .filter(|total| *total <= MAX_IN_FLIGHT_EDITOR_LOAD_BYTES)
@@ -744,7 +744,7 @@ pub(in crate::session) static NEXT_EDITOR_TASK_ID: AtomicU64 = AtomicU64::new(1)
 
 pub(in crate::session) fn next_editor_task_id() -> u64 {
     NEXT_EDITOR_TASK_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .expect("editor task identifiers exhausted")
 }
 

@@ -11,7 +11,7 @@ impl PageInstanceId {
     pub fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Self(
-            NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                 .expect("page instance identifiers exhausted"),
         )
     }
