@@ -103,7 +103,10 @@ impl ShellSession {
                     total_line_count,
                     lines,
                 );
-                model.syntax_highlights = state.source_syntax_highlights();
+                if !self.pages.editor.editor_soft_wrap {
+                    model.syntax_highlights =
+                        state.source_syntax_highlights_in(first_line..end_line);
+                }
                 if let Some(search) = &state.search
                     && search.revision == state.revision()
                 {
@@ -227,11 +230,15 @@ impl ShellSession {
             && let Some(search) = &state.search
             && search.revision == state.revision()
         {
-            model.status_message = Some(i18n::tr!(
-                "editor-search-count",
-                current = search.current.map_or(0, |i| i + 1),
-                count = search.matches.len()
-            ));
+            model.status_message = Some(if search.pending {
+                i18n::tr!("editor-search-working")
+            } else {
+                i18n::tr!(
+                    "editor-search-count",
+                    current = search.current.map_or(0, |i| search.first_match + i + 1),
+                    count = search.total_matches
+                )
+            });
         }
         if model.mode == app::editor::EditorMode::Source && self.pages.editor.editor_soft_wrap {
             model.soft_wrap = true;
@@ -243,6 +250,25 @@ impl ShellSession {
             };
             let layout = ui::editor_layout(editor_area, &model);
             model.wrap_layout = state.source_wrap_layout(usize::from(layout.canvas.width));
+            if let Some(wrapped) = &model.wrap_layout {
+                let first = model.scroll_line.min(wrapped.row_count() - 1);
+                let last =
+                    (first + usize::from(self.terminal_size.1) + 4).min(wrapped.row_count() - 1);
+                model.syntax_highlights = state.source_syntax_highlights_in(
+                    wrapped.row(first).unwrap().logical_line
+                        ..wrapped.row(last).unwrap().logical_line + 1,
+                );
+            } else {
+                model.soft_wrap = false;
+                if model.status_message.is_none() {
+                    model.status_message = Some(i18n::tr!("editor-wrap-working"));
+                }
+                if let Some(window) = &model.source_window {
+                    model.syntax_highlights = state.source_syntax_highlights_in(
+                        window.first_line..window.first_line + window.lines.len(),
+                    );
+                }
+            }
         }
         model
     }

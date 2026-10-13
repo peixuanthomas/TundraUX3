@@ -99,3 +99,7 @@ scripts/tests/                     打包、授权 PTY 和系统服务测试夹�
 Shell 的 `page_lifecycle`、`auto_admin` 和 `update_cancellation_tests` 覆盖三种关闭选择、等待实际收尾、AA 从关闭确认返回、后台输入自动显示，以及更新准备成功与取消同时发生。更新取消还测试取消记录写入失败、修复后重试和撤回自动重启请求。
 
 `command_line_runtime::tests` 在 Windows 使用真实 ConPTY，在 Linux 使用真实 PTY，检查两个页面的终端隔离、被覆盖时读取输出、Esc/Ctrl+Shift+X 字节转发、确认关闭以及子进程树退出。它们属于自动交互验证；桌面终端、触屏和真实系统授权仍需各自验收。
+
+## 编辑器大文件回归与基准
+
+运行方法、测量口径和 1/10/100 MiB 原始结果见 [Source 编辑器的大文件计算](editor-scalability.md)。

@@ -3,6 +3,7 @@
 //! The built-in editor edits the canonical document as plain text. Markdown
 //! files use the same text buffer as every other supported file.
 
+mod background;
 pub mod c_syntax;
 pub mod json_format;
 pub mod line_changes;
@@ -912,7 +913,24 @@ fn next_rope_grapheme_boundary(rope: &Rope, cursor: &mut GraphemeCursor) -> Opti
         let (chunk, chunk_start, _, _) = rope.chunk_at_byte(offset);
         match cursor.next_boundary(chunk, chunk_start) {
             Ok(boundary) => return boundary,
-            Err(GraphemeIncomplete::NextChunk) => continue,
+            Err(GraphemeIncomplete::NextChunk) => {
+                let at = cursor.cur_cursor();
+                *cursor = GraphemeCursor::new(at, rope.len_bytes(), true);
+                if at > offset {
+                    let (next, start, _, _) = rope.chunk_at_byte(at);
+                    loop {
+                        match cursor.is_boundary(next, start) {
+                            Ok(true) => return Some(at),
+                            Ok(false) => break,
+                            Err(GraphemeIncomplete::PreContext(end)) => {
+                                let (context, start, _, _) = rope.chunk_at_byte(end - 1);
+                                cursor.provide_context(&context[..end - start], start);
+                            }
+                            Err(_) => return None,
+                        }
+                    }
+                }
+            }
             Err(GraphemeIncomplete::PreContext(context_end)) => {
                 if context_end == 0 {
                     return None;
@@ -1022,6 +1040,12 @@ struct SourceSession {
     exported_source: String,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BackgroundUpdate {
+    pub changed: bool,
+    pub wrapped: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchSession {
     pub query: String,
@@ -1029,6 +1053,9 @@ pub struct SearchSession {
     pub revision: u64,
     pub matches: Arc<[Range<usize>]>,
     pub current: Option<usize>,
+    pub first_match: usize,
+    pub total_matches: usize,
+    pub pending: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1042,6 +1069,8 @@ pub struct EditorState {
     pub selection: Option<Selection>,
     pub viewport: EditorViewport,
     pub search: Option<SearchSession>,
+    search_job: background::Latest<search::Completion>,
+    computation_generation: u64,
     buffer: EditorBuffer,
     undo_stack: Vec<EditTransaction>,
     redo_stack: Vec<EditTransaction>,
@@ -1976,6 +2005,7 @@ fn undo(state: &mut EditorState) -> bool {
     if !mode_matches {
         return false;
     }
+    state.search_job.cancel();
     let transaction = state.undo_stack.pop().expect("last transaction exists");
     match &transaction {
         EditTransaction::Rich { before, .. } => state.restore_snapshot(before),
@@ -2014,6 +2044,7 @@ fn redo(state: &mut EditorState) -> bool {
     if !mode_matches {
         return false;
     }
+    state.search_job.cancel();
     let transaction = state.redo_stack.pop().expect("last transaction exists");
     match &transaction {
         EditTransaction::Rich { after, .. } => state.restore_snapshot(after),

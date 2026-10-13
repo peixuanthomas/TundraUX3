@@ -250,11 +250,11 @@ fn wrapped_source_mouse_caret_and_selection_share_byte_mapping() {
         model.wrap_layout = Some(wrapped.clone());
         let layout = editor_layout(area, &model);
         assert!(layout.horizontal_scrollbar.is_none());
-        assert_eq!(layout.document_line_count, wrapped.rows.len());
+        assert_eq!(layout.document_line_count, wrapped.row_count());
         for row in layout.visible_start
-            ..(layout.visible_start + layout.visible_capacity).min(wrapped.rows.len())
+            ..(layout.visible_start + layout.visible_capacity).min(wrapped.row_count())
         {
-            let range = wrapped.rows[row].range;
+            let range = wrapped.row(row).unwrap().range;
             let hit = layout
                 .hit_test_source(
                     layout.canvas.x,
@@ -268,11 +268,11 @@ fn wrapped_source_mouse_caret_and_selection_share_byte_mapping() {
             );
         }
         let row = 1;
-        let start = wrapped.rows[row].range.start;
+        let start = wrapped.row(row).unwrap().range.start;
         model.cursor_offset = Some(start);
         model.selection_offsets = Some(EditorSourceSelection::new(
             start,
-            wrapped.rows[row].range.end,
+            wrapped.row(row).unwrap().range.end,
         ));
         let mut terminal = render(&model, width, 20);
         assert_eq!(

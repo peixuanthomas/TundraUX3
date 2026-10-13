@@ -369,10 +369,23 @@ impl SourceBuffer {
         };
         let old_line_widths =
             self.line_display_widths(old_display_start_line..old_display_end_line);
-        let old_window_start = self.line_range(old_start_line.saturating_sub(1))?.start;
-        let old_window_end = self
-            .line_range((old_end_line + 1).min(self.line_count().saturating_sub(1)))?
-            .end;
+        // ASCII word rules have bounded lookaround (there are no ignored
+        // Extend/Format scalars). Keep ample unchanged context on both sides;
+        // even an unbroken 100 MiB ASCII word need not be copied to update its
+        // count. Unicode retains the conservative logical-line window.
+        let (old_window_start, old_window_end) =
+            if self.non_ascii_bytes == 0 && replacement.is_ascii() {
+                (
+                    range.start.saturating_sub(16),
+                    range.end.saturating_add(16).min(self.len_bytes()),
+                )
+            } else {
+                (
+                    self.line_range(old_start_line.saturating_sub(1))?.start,
+                    self.line_range((old_end_line + 1).min(self.line_count().saturating_sub(1)))?
+                        .end,
+                )
+            };
         let word_suffix_len = old_window_end.saturating_sub(range.end);
         let old_word_count = self
             .text
@@ -384,9 +397,17 @@ impl SourceBuffer {
         self.text.remove(start_char..end_char);
         self.text.insert(start_char, replacement);
         self.c_highlights.0.take();
-        self.syntax = syntax::Cache::default();
-        self.wrapped = soft_wrap::Cache::default();
         let new_end = range.start + replacement.len();
+        self.syntax.invalidate(old_display_start_line);
+        let new_display_end_line = self
+            .text
+            .byte_to_line(new_end)
+            .saturating_add(2)
+            .min(self.line_count());
+        self.wrapped.invalidate(
+            old_display_start_line..old_display_end_line,
+            old_display_start_line..new_display_end_line,
+        );
         let new_context_end = new_end
             .saturating_add(suffix_context_len)
             .min(self.len_bytes());

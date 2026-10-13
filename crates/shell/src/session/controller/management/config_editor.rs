@@ -243,62 +243,34 @@ impl ShellSession {
             if state.is_read_only() {
                 return;
             }
-            let source = state.source();
-            let mut replacements = engine.preview(&source, value("replacement"));
-            if value("scope") == i18n::tr!("editor-search-current") {
-                let selected = state.selected_range().map(std::ops::Range::from);
-                let index = replacements
-                    .iter()
-                    .position(|r| Some(&r.range) == selected.as_ref())
-                    .or_else(|| {
-                        if backwards {
-                            replacements
-                                .iter()
-                                .rposition(|r| r.range.start < state.cursor.byte_offset)
-                        } else {
-                            replacements
-                                .iter()
-                                .position(|r| r.range.start >= state.cursor.byte_offset)
-                        }
-                    })
-                    .unwrap_or(if backwards {
-                        replacements.len().saturating_sub(1)
-                    } else {
-                        0
-                    });
-                replacements = replacements.get(index).cloned().into_iter().collect();
-            }
-            let mut message = i18n::tr!("editor-search-preview-count", count = replacements.len());
-            for edit in replacements.iter().take(40) {
-                let line = state
-                    .source_position(edit.range.start)
-                    .map_or(1, |(line, _)| line + 1);
-                let before: String = edit.original.chars().take(100).collect();
-                let after: String = edit.replacement.chars().take(100).collect();
-                message.push_str(&format!("\n{line}: {before:?} → {after:?}"));
-            }
-            if replacements.len() > 40 {
-                message.push_str(&format!(
-                    "\n{}",
-                    i18n::tr!("editor-search-preview-truncated")
-                ));
-            }
+            let source = state.source_rope_snapshot().unwrap();
             let revision = state.revision();
-            drop(source);
-            self.pages.editor.editor_search_fields = fields;
-            if replacements.is_empty() {
-                self.config_form(
-                    "replace",
-                    i18n::tr!("config-editor-not-found"),
-                    self.pages.editor.editor_search_fields.clone(),
-                );
-            } else {
-                self.pages.editor.editor_replace_preview = Some((
+            let target = (value("scope") == i18n::tr!("editor-search-current")).then(|| {
+                app::editor::search::PreviewTarget {
+                    selection: state.selected_range().map(std::ops::Range::from),
+                    cursor: state.cursor.byte_offset,
+                    backwards,
+                }
+            });
+            self.pages.editor.editor_preview_task.cancel();
+            self.pages.editor.editor_preview_request = None;
+            self.pages.editor.editor_replace_preview = None;
+            if source.len_bytes() > 64 * 1024 {
+                self.pages.editor.editor_preview_request = Some((
                     self.pages.editor.editor_document_generation,
                     revision,
-                    replacements,
+                    fields.clone(),
                 ));
-                self.config_form("replace-apply", message, vec![]);
+                self.pages.editor.editor_preview_task.start(
+                    engine,
+                    source,
+                    value("replacement").to_owned(),
+                    target,
+                );
+                self.config_form("replace", i18n::tr!("editor-search-working"), fields);
+            } else {
+                let result = engine.preview_for(&source, value("replacement"), target);
+                self.finish_editor_preview(result, fields);
             }
         } else {
             self.pages.editor.editor_search_fields = fields;
@@ -314,7 +286,7 @@ impl ShellSession {
                 .app
                 .editor_state()
                 .and_then(|s| s.search.as_ref())
-                .is_some_and(|s| s.matches.is_empty())
+                .is_some_and(|s| !s.pending && s.total_matches == 0)
             {
                 self.pages.editor.editor_message =
                     Some(i18n::msg!("config-editor-not-found").into());
@@ -324,6 +296,96 @@ impl ShellSession {
             self.reveal_source_caret();
         }
     }
+    pub(in crate::session) fn poll_editor_preview(&mut self) {
+        if self.pages.editor.editor_preview_request.is_none() {
+            return;
+        }
+        let valid_form = self
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .is_some_and(|form| {
+                matches!(&form.purpose, FormPurpose::Configuration(action) if action == "replace")
+                    && self
+                        .pages
+                        .editor
+                        .editor_preview_request
+                        .as_ref()
+                        .is_some_and(|(_, _, fields)| *fields == form.fields)
+            });
+        let valid_revision = self
+            .pages
+            .editor
+            .editor_preview_request
+            .as_ref()
+            .is_some_and(|(generation, revision, _)| {
+                *generation == self.pages.editor.editor_document_generation
+                    && self
+                        .app
+                        .editor_state()
+                        .is_some_and(|s| s.revision() == *revision)
+            });
+        if !valid_form || !valid_revision {
+            self.pages.editor.editor_preview_task.cancel();
+            self.pages.editor.editor_preview_request = None;
+            return;
+        }
+        if let Some(result) = self.pages.editor.editor_preview_task.take() {
+            let (_, _, fields) = self.pages.editor.editor_preview_request.take().unwrap();
+            self.finish_editor_preview(result, fields);
+        }
+    }
+
+    fn finish_editor_preview(
+        &mut self,
+        result: Result<
+            Vec<app::editor::search::Replacement>,
+            app::editor::search::PreviewLimitExceeded,
+        >,
+        fields: Vec<ManagementField>,
+    ) {
+        let Ok(replacements) = result else {
+            self.config_form("replace", i18n::tr!("editor-search-preview-limit"), fields);
+            return;
+        };
+        let Some(state) = self.app.editor_state() else {
+            return;
+        };
+        let mut message = i18n::tr!("editor-search-preview-count", count = replacements.len());
+        for edit in replacements.iter().take(40) {
+            let line = state
+                .source_position(edit.range.start)
+                .map_or(1, |(line, _)| line + 1);
+            let before: String = edit.original.chars().take(100).collect();
+            let after: String = edit.replacement.chars().take(100).collect();
+            message.push_str(&format!("\n{line}: {before:?} → {after:?}"));
+        }
+        if replacements.len() > 40 {
+            message.push_str(&format!(
+                "\n{}",
+                i18n::tr!("editor-search-preview-truncated")
+            ));
+        }
+        let revision = state.revision();
+        self.pages.editor.editor_search_fields = fields;
+        if replacements.is_empty() {
+            self.config_form(
+                "replace",
+                i18n::tr!("config-editor-not-found"),
+                self.pages.editor.editor_search_fields.clone(),
+            );
+        } else {
+            self.pages.editor.editor_replace_preview = Some((
+                self.pages.editor.editor_document_generation,
+                revision,
+                replacements,
+            ));
+            self.config_form("replace-apply", message, vec![]);
+        }
+    }
+
     pub(in crate::session) fn config_editor_active(&self) -> bool {
         self.pages.editor.editor_config.path.is_some()
     }
@@ -1080,6 +1142,64 @@ mod tests {
             Instant::now(),
         );
         assert_eq!(s.config_text(), "中=12\n中=34");
+    }
+
+    #[test]
+    fn large_preview_is_async_and_dismissed_or_edited_forms_are_not_reopened() {
+        let mut s = loaded();
+        let source = format!("{}needle", "line\n".repeat(20_000));
+        s.replace_config_text(&document("original\n"), source.clone());
+        let fields = vec![
+            field("text", "needle".into()),
+            field("replacement", "changed".into()),
+        ];
+        s.submit_config_form("replace", fields.clone());
+        assert!(s.pages.editor.editor_preview_request.is_some());
+        assert!(s.pages.editor.editor_replace_preview.is_none());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while s.pages.editor.editor_preview_request.is_some() {
+            s.poll_editor_preview();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            s.pages
+                .editor
+                .editor_replace_preview
+                .as_ref()
+                .unwrap()
+                .2
+                .len(),
+            1
+        );
+        assert_eq!(s.config_text(), source);
+        s.submit_config_form("replace", fields.clone());
+        s.pages.management.management_state.form = None;
+        s.poll_editor_preview();
+        assert!(s.pages.editor.editor_preview_request.is_none());
+        assert!(s.pages.management.management_state.form.is_none());
+        s.submit_config_form("replace", fields);
+        s.pages
+            .management
+            .management_state
+            .form
+            .as_mut()
+            .unwrap()
+            .fields[0]
+            .value = "new query".into();
+        s.poll_editor_preview();
+        assert!(s.pages.editor.editor_preview_request.is_none());
+        assert_eq!(
+            s.pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .unwrap()
+                .fields[0]
+                .value,
+            "new query"
+        );
     }
 
     #[test]

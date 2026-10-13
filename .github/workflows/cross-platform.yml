@@ -66,6 +66,10 @@ jobs:
           cargo test --locked -p app --lib explorer::tasks::
           cargo test --locked -p app --test explorer_tasks
           cargo test --locked -p shell --test editor
+          cargo test --locked -p app --test editor_advanced --test editor_scalability --test editor_line_changes
+          cargo test --locked -p app --lib editor::background::
+          cargo test --locked -p shell --lib editor
+          cargo test --locked -p ui --test editor
       - name: Test localization and resource recovery
         shell: bash
         run: |

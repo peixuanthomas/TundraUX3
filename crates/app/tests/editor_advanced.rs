@@ -267,7 +267,10 @@ fn wrapping_round_trips_graphemes_and_preserves_original_bytes() {
             let (row, column) = layout.position(offset);
             assert_eq!(layout.offset(row, column), offset, "{width}: {offset}");
         }
-        assert_eq!(layout.rows.last().unwrap().range.end, source.len());
+        assert_eq!(
+            layout.row(layout.row_count() - 1).unwrap().range.end,
+            source.len()
+        );
     }
     assert_eq!(rope.to_string(), source);
 }
@@ -276,7 +279,7 @@ fn wrapping_round_trips_graphemes_and_preserves_original_bytes() {
 fn visual_navigation_keeps_column_across_short_rows_and_reflows_after_edit() {
     let mut state = EditorState::open("a.txt", b"abcdefghijk\nx\nabcdefghij").unwrap();
     let map = state.source_wrap_layout(6).unwrap();
-    assert_eq!(map.rows.len(), 6);
+    assert_eq!(map.row_count(), 6);
     state.apply(EditorCommand::MoveTo {
         position: EditorPosition::Source(3),
         extend_selection: false,

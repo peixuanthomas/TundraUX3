@@ -306,6 +306,9 @@ pub(super) struct EditorPageState {
     pub(super) editor_config: ConfigEditorState,
     pub(super) editor_soft_wrap: bool,
     pub(super) editor_search_fields: Vec<platform::management::ManagementField>,
+    pub(super) editor_preview_task: app::editor::search::PreviewTask,
+    pub(super) editor_preview_request:
+        Option<(u64, u64, Vec<platform::management::ManagementField>)>,
     pub(super) editor_replace_preview: Option<(u64, u64, Vec<app::editor::search::Replacement>)>,
     pub(super) editor_recovery_id: app::editor_recovery::RecoveryId,
     pub(super) editor_recovery_lease: Option<app::editor_recovery::EditorRecoveryLease>,
@@ -338,6 +341,8 @@ impl Default for EditorPageState {
             editor_soft_wrap: false,
             editor_search_fields: Vec::new(),
             editor_replace_preview: None,
+            editor_preview_task: Default::default(),
+            editor_preview_request: None,
             editor_recovery_id: Default::default(),
             editor_recovery_lease: None,
         }

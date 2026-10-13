@@ -209,6 +209,17 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn poll_editor_background_tasks(&mut self, platform: &dyn Platform) {
+        self.poll_editor_preview();
+        let cursor = self.app.editor_state().map(|s| s.cursor.byte_offset);
+        let computation = self.app.poll_editor_computations();
+        if computation.changed {
+            if cursor != self.app.editor_state().map(|s| s.cursor.byte_offset)
+                || (computation.wrapped && self.pages.editor.editor_soft_wrap)
+            {
+                self.reveal_source_caret();
+            }
+            self.refresh_hit_map();
+        }
         self.editor_task_runtime
             .retry_recovery_cleanup(Instant::now());
         let events = self.editor_task_runtime.drain_events();

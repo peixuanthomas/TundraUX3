@@ -434,6 +434,14 @@ impl AppState {
         self.page_models.editor.state.as_ref()
     }
 
+    pub fn poll_editor_computations(&mut self) -> crate::editor::BackgroundUpdate {
+        self.page_models
+            .editor
+            .state
+            .as_mut()
+            .map_or_else(Default::default, EditorState::poll_background)
+    }
+
     pub fn take_editor_effects(&mut self) -> Vec<EditorEffect> {
         self.page_models.editor.effects.drain(..).collect()
     }

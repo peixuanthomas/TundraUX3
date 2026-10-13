@@ -1,0 +1,11 @@
+fixture,mib,operation,request_ms,total_ms,extra_peak_heap_mib,peak_heap_mib
+dense,1,syntax-first,0.096,2.250,0.000,1.129
+dense,1,syntax-end,0.001,0.001,0.000,1.129
+dense,1,wrap,0.024,2.213,0.000,1.130
+dense,1,search,0.112,114.183,0.167,1.296
+dense,1,edit-reflow,0.197,2.343,0.006,1.143
+dense,10,syntax-first,0.107,2.264,0.000,11.262
+dense,10,syntax-end,0.001,0.001,0.000,11.263
+dense,10,wrap,0.022,2.166,0.000,11.263
+dense,10,search,0.110,1387.484,0.167,11.430
+dense,10,edit-reflow,0.460,2.629,0.007,11.278

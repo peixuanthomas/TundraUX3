@@ -1,0 +1,16 @@
+fixture,mib,peak_rss_kib
+ascii-single,1,5152
+ascii-single,10,24144
+ascii-single,100,221712
+ascii-lines,1,6916
+ascii-lines,10,34472
+ascii-lines,100,284456
+chinese,1,6304
+chinese,10,26796
+chinese,100,222224
+emoji,1,6740
+emoji,10,32824
+emoji,100,269972
+crlf,1,6852
+crlf,10,34016
+crlf,100,280528

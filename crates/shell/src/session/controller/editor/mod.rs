@@ -95,6 +95,8 @@ impl ShellSession {
 
     pub(in crate::session) fn advance_editor_document_generation(&mut self) {
         self.pages.editor.editor_replace_preview = None;
+        self.pages.editor.editor_preview_request = None;
+        self.pages.editor.editor_preview_task.cancel();
         self.pages.editor.editor_document_generation = self
             .pages
             .editor
@@ -566,31 +568,31 @@ impl ShellSession {
                 app::editor::EditorCommand::MoveCursor {
                     movement: app::editor::CursorMove::Up,
                     extend_selection,
-                } => {
-                    let width = self
-                        .to_editor_view_model()
-                        .wrap_layout
-                        .map_or(1, |l| l.width);
-                    app::editor::EditorCommand::MoveVisual {
-                        width,
+                } => match self.to_editor_view_model().wrap_layout {
+                    Some(layout) => app::editor::EditorCommand::MoveVisual {
+                        width: layout.width,
                         down: false,
                         extend_selection,
-                    }
-                }
+                    },
+                    None => app::editor::EditorCommand::MoveCursor {
+                        movement: app::editor::CursorMove::Up,
+                        extend_selection,
+                    },
+                },
                 app::editor::EditorCommand::MoveCursor {
                     movement: app::editor::CursorMove::Down,
                     extend_selection,
-                } => {
-                    let width = self
-                        .to_editor_view_model()
-                        .wrap_layout
-                        .map_or(1, |l| l.width);
-                    app::editor::EditorCommand::MoveVisual {
-                        width,
+                } => match self.to_editor_view_model().wrap_layout {
+                    Some(layout) => app::editor::EditorCommand::MoveVisual {
+                        width: layout.width,
                         down: true,
                         extend_selection,
-                    }
-                }
+                    },
+                    None => app::editor::EditorCommand::MoveCursor {
+                        movement: app::editor::CursorMove::Down,
+                        extend_selection,
+                    },
+                },
                 other => other,
             }
         } else {
