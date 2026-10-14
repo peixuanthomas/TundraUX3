@@ -145,6 +145,8 @@ pub struct EditorTableEdgeHandle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorHitTarget {
+    MenuScroll,
+    Search(EditorSearchControl),
     SettingsControl(EditorSettingsControl),
     SettingsField(EditorSettingsField),
     SettingsDialog,
@@ -231,6 +233,9 @@ pub struct EditorSourceLineMap {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorLayout {
+    pub menu_scrollbar: Option<Rect>,
+    pub search_items: Vec<(EditorSearchControl, Rect)>,
+    pub status_items: Vec<EditorMenuItemLayout>,
     pub wrap_layout: Option<Arc<app::editor::soft_wrap::WrapLayout>>,
     pub mode: EditorMode,
     pub area: Rect,
@@ -314,6 +319,9 @@ impl EditorLayout {
         if let Some(item) = self.menus.iter().find(|item| contains(item.area, x, y)) {
             return Some(EditorHitTarget::Menu(item.menu));
         }
+        if self.menu_scrollbar.is_some_and(|area| contains(area, x, y)) {
+            return Some(EditorHitTarget::MenuScroll);
+        }
         if let Some(item) = self
             .menu_items
             .iter()
@@ -323,6 +331,20 @@ impl EditorLayout {
         }
         if self.menu_popup.is_some_and(|area| contains(area, x, y)) {
             return Some(EditorHitTarget::MenuPopup);
+        }
+        if let Some((control, _)) = self
+            .search_items
+            .iter()
+            .find(|(_, area)| contains(*area, x, y))
+        {
+            return Some(EditorHitTarget::Search(*control));
+        }
+        if let Some(item) = self
+            .status_items
+            .iter()
+            .find(|item| item.enabled && contains(item.area, x, y))
+        {
+            return Some(EditorHitTarget::MenuAction(item.action));
         }
         if let Some(item) = self
             .toolbar_items
@@ -488,9 +510,23 @@ impl EditorLayout {
 
 pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     let menu_height = u16::from(area.height > 0);
-    let toolbar_height = u16::from(area.height >= 3);
-    let status_height = u16::from(area.height >= 4);
+    let toolbar_height = 0;
+    let status_height = u16::from(area.height >= 3);
     let menu_bar = Rect::new(area.x, area.y, area.width, menu_height);
+    let search_items = editor_search_layout(
+        Rect::new(
+            area.x,
+            area.y.saturating_add(menu_height),
+            area.width,
+            area.height.saturating_sub(menu_height + status_height),
+        ),
+        model.search_bar.as_ref(),
+    );
+    let search_height = search_items
+        .iter()
+        .map(|(_, rect)| rect.bottom().saturating_sub(menu_bar.bottom()))
+        .max()
+        .unwrap_or(0);
     let toolbar = Rect::new(
         area.x,
         area.y.saturating_add(menu_height),
@@ -500,10 +536,12 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     let canvas_panel_y = area
         .y
         .saturating_add(menu_height)
+        .saturating_add(search_height)
         .saturating_add(toolbar_height);
     let canvas_panel_height = area
         .height
         .saturating_sub(menu_height)
+        .saturating_sub(search_height)
         .saturating_sub(toolbar_height)
         .saturating_sub(status_height);
     let canvas_panel = Rect::new(area.x, canvas_panel_y, area.width, canvas_panel_height);
@@ -515,7 +553,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         status_height,
     );
 
-    let canvas_framed = canvas_panel.width >= 20 && canvas_panel.height >= 5;
+    let canvas_framed = false;
     let mut base_canvas = if canvas_framed {
         inset(canvas_panel, 1)
     } else {
@@ -783,7 +821,46 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     };
 
     gutter.height = canvas.height;
+    let mut status_x = status_bar.x;
+    let status_items = model
+        .status_actions
+        .iter()
+        .filter_map(|(action, label)| {
+            let width = to_u16(terminal_width(label).saturating_add(2));
+            if status_x.saturating_add(width) > status_bar.right() {
+                return None;
+            }
+            let item = EditorMenuItemLayout {
+                action: *action,
+                area: Rect::new(status_x, status_bar.y, width, status_bar.height),
+                enabled: (!model.read_only
+                    || !matches!(
+                        action,
+                        EditorMenuAction::LineEnding | EditorMenuAction::Encoding
+                    ))
+                    && !(model.configuration && *action == EditorMenuAction::Encoding),
+            };
+            status_x = status_x.saturating_add(width);
+            Some(item)
+        })
+        .collect();
     EditorLayout {
+        menu_scrollbar: menu_popup
+            .filter(|_| {
+                model
+                    .open_menu
+                    .is_some_and(|menu| editor_menu_actions(menu).len() > menu_items.len())
+            })
+            .map(|popup| {
+                Rect::new(
+                    popup.right().saturating_sub(2),
+                    popup.y.saturating_add(1),
+                    1,
+                    popup.height.saturating_sub(2),
+                )
+            }),
+        search_items,
+        status_items,
         wrap_layout: model.wrap_layout.clone(),
         mode: model.mode,
         area,
@@ -822,15 +899,75 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     }
 }
 
+pub fn editor_search_layout(
+    area: Rect,
+    search: Option<&EditorSearchBar>,
+) -> Vec<(EditorSearchControl, Rect)> {
+    use EditorSearchControl::*;
+    let Some(search) = search else {
+        return Vec::new();
+    };
+    if area.is_empty() {
+        return Vec::new();
+    }
+    let mut items = vec![(Query, Rect::new(area.x, area.y, area.width, 1))];
+    let mut y = area.y.saturating_add(1);
+    if search.replace && y < area.bottom() {
+        items.push((Replacement, Rect::new(area.x, y, area.width, 1)));
+        y += 1;
+    }
+    let mut x = area.x;
+    let mut placements = Vec::new();
+    for control in editor_search_controls(search.replace)
+        .into_iter()
+        .filter(|c| !matches!(c, Query | Replacement))
+    {
+        let checkbox = matches!(control, MatchCase | WholeWord | Regex);
+        let width =
+            to_u16(terminal_width(&editor_search_label(control)) + 2 + usize::from(checkbox) * 4)
+                .min(area.width);
+        if x.saturating_add(width) > area.right() {
+            x = area.x;
+            y += 1;
+        }
+        placements.push((control, Rect::new(x, y, width, 1)));
+        x = x.saturating_add(width);
+    }
+    let capacity = area
+        .bottom()
+        .saturating_sub(items.last().unwrap().1.bottom());
+    let controls_y = items.last().unwrap().1.bottom();
+    let first_row = placements
+        .iter()
+        .find(|(c, _)| Some(*c) == search.focus)
+        .map_or(0, |(_, r)| {
+            r.y.saturating_sub(items.last().unwrap().1.bottom())
+                .saturating_add(1)
+                .saturating_sub(capacity)
+        });
+    for (control, mut rect) in placements {
+        if rect.y < controls_y.saturating_add(first_row) {
+            continue;
+        }
+        rect.y = rect.y.saturating_sub(first_row);
+        if rect.y < area.bottom() {
+            items.push((control, rect));
+        }
+    }
+    items
+}
+
 pub(super) fn menu_layout(area: Rect) -> (Vec<EditorMenuLayout>, Vec<EditorModeLayout>) {
     if area.is_empty() {
         return (Vec::new(), Vec::new());
     }
     let menu_specs = [
-        (EditorMenu::File, 6u16),
-        (EditorMenu::Edit, 6u16),
-        (EditorMenu::Settings, 10u16),
-    ];
+        EditorMenu::File,
+        EditorMenu::Edit,
+        EditorMenu::View,
+        EditorMenu::Help,
+    ]
+    .map(|menu| (menu, to_u16(terminal_width(&menu_bar_label(menu)))));
     let mut menus = Vec::new();
     let mut x = area.x;
     for (menu, width) in menu_specs {
@@ -857,7 +994,7 @@ pub(super) fn menu_popup_layout(
     let Some(anchor) = menus.iter().find(|item| item.menu == menu) else {
         return (None, Vec::new());
     };
-    let actions = menu_actions(menu);
+    let actions = editor_menu_actions(menu);
     let desired_width = actions
         .iter()
         .map(|action| terminal_width(&menu_action_label(*action)))
@@ -874,8 +1011,13 @@ pub(super) fn menu_popup_layout(
     let x = anchor.area.x.min(area.right().saturating_sub(width));
     let popup = Rect::new(x, y, width, height);
     let visible_items = usize::from(height.saturating_sub(2)).min(actions.len());
+    let first = model
+        .selected_menu_action
+        .saturating_add(1)
+        .saturating_sub(visible_items);
     let items = actions
         .into_iter()
+        .skip(first)
         .take(visible_items)
         .enumerate()
         .map(|(index, action)| EditorMenuItemLayout {
@@ -883,7 +1025,9 @@ pub(super) fn menu_popup_layout(
             area: Rect::new(
                 popup.x.saturating_add(1),
                 popup.y.saturating_add(1).saturating_add(to_u16(index)),
-                popup.width.saturating_sub(2),
+                popup
+                    .width
+                    .saturating_sub(2 + u16::from(editor_menu_actions(menu).len() > visible_items)),
                 1,
             ),
             enabled: match action {
@@ -902,6 +1046,13 @@ pub(super) fn menu_popup_layout(
                     matches!(action, EditorConfigAction::Menu | EditorConfigAction::Open)
                         || model.configuration
                 }
+                EditorMenuAction::Cut => model.toolbar.can_cut && !model.read_only,
+                EditorMenuAction::Copy => model.toolbar.can_copy,
+                EditorMenuAction::Paste => model.toolbar.can_paste && !model.read_only,
+                EditorMenuAction::SaveAs
+                | EditorMenuAction::LineEnding
+                | EditorMenuAction::Encoding => !model.read_only,
+                _ => true,
             },
         })
         .collect();
@@ -1112,22 +1263,30 @@ pub(super) fn quick_menu_layout(
     (Some(popup), items)
 }
 
-pub(super) fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
-    use EditorMenuAction::{Mode, Toolbar};
+pub fn editor_menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
+    use EditorMenuAction::Toolbar;
     use EditorToolbarAction as ToolbarAction;
     match menu {
         EditorMenu::File => vec![
             Toolbar(ToolbarAction::New),
             Toolbar(ToolbarAction::Open),
             Toolbar(ToolbarAction::Save),
+            EditorMenuAction::SaveAs,
+            EditorMenuAction::Preferences,
+            EditorMenuAction::Close,
+            EditorMenuAction::Exit,
             #[cfg(target_os = "linux")]
             EditorMenuAction::Config(EditorConfigAction::Menu),
         ],
         EditorMenu::Edit => vec![
             Toolbar(ToolbarAction::Undo),
             Toolbar(ToolbarAction::Redo),
+            EditorMenuAction::Cut,
+            EditorMenuAction::Copy,
+            EditorMenuAction::Paste,
             Toolbar(ToolbarAction::Find),
             EditorMenuAction::Replace,
+            EditorMenuAction::SelectAll,
         ],
         EditorMenu::Insert => vec![
             Toolbar(ToolbarAction::Link),
@@ -1146,11 +1305,13 @@ pub(super) fn menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             Toolbar(ToolbarAction::Quote),
         ],
         EditorMenu::View => vec![
-            Mode(EditorMode::Rich),
-            Mode(EditorMode::Source),
+            EditorMenuAction::FocusStatus,
+            EditorMenuAction::GoToFile,
+            EditorMenuAction::GoToLine,
             EditorMenuAction::ToggleWrap,
         ],
         EditorMenu::Settings => Vec::new(),
+        EditorMenu::Help => vec![EditorMenuAction::About],
     }
 }
 
@@ -1279,11 +1440,39 @@ pub(super) fn menu_label(menu: EditorMenu) -> String {
         EditorMenu::Format => i18n::tr!("ui-editor-format"),
         EditorMenu::View => i18n::tr!("ui-editor-view"),
         EditorMenu::Settings => i18n::tr!("ui-editor-settings"),
+        EditorMenu::Help => i18n::tr!("ui-editor-help"),
     }
+}
+
+pub(super) fn menu_bar_label(menu: EditorMenu) -> String {
+    let key = match menu {
+        EditorMenu::File => "F",
+        EditorMenu::Edit => "E",
+        EditorMenu::View => "V",
+        EditorMenu::Help => "H",
+        _ => "",
+    };
+    format!(" {}({key}) ", menu_label(menu))
 }
 
 pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
     let label = match action {
+        EditorMenuAction::SaveAs => i18n::tr!("ui-editor-save-as"),
+        EditorMenuAction::Close => i18n::tr!("ui-editor-close"),
+        EditorMenuAction::Exit => i18n::tr!("ui-editor-exit"),
+        EditorMenuAction::Cut => i18n::tr!("ui-editor-cut"),
+        EditorMenuAction::Copy => i18n::tr!("ui-editor-copy"),
+        EditorMenuAction::Paste => i18n::tr!("ui-editor-paste"),
+        EditorMenuAction::SelectAll => i18n::tr!("ui-editor-select-all"),
+        EditorMenuAction::GoToLine => i18n::tr!("ui-editor-go-to-line"),
+        EditorMenuAction::GoToFile => i18n::tr!("ui-editor-go-to-file"),
+        EditorMenuAction::FocusStatus => i18n::tr!("ui-editor-focus-status"),
+        EditorMenuAction::Preferences => i18n::tr!("ui-editor-settings"),
+        EditorMenuAction::About => i18n::tr!("ui-editor-about"),
+        EditorMenuAction::Language => i18n::tr!("ui-editor-language"),
+        EditorMenuAction::LineEnding => i18n::tr!("ui-editor-line-ending"),
+        EditorMenuAction::Encoding => i18n::tr!("ui-editor-encoding"),
+        EditorMenuAction::Indentation => i18n::tr!("ui-editor-indentation"),
         EditorMenuAction::Replace => i18n::tr!("ui-editor-replace"),
         EditorMenuAction::ToggleWrap => i18n::tr!("ui-editor-wrap"),
         EditorMenuAction::FormatJson => i18n::tr!("ui-editor-format-json"),
@@ -1332,12 +1521,21 @@ pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
         EditorMenuAction::Mode(EditorMode::Source) => i18n::tr!("ui-editor-source-view"),
     };
     let shortcut = match action {
-        EditorMenuAction::Replace => Some("Ctrl+H"),
+        EditorMenuAction::SaveAs => Some("Ctrl+Shift+S"),
+        EditorMenuAction::Close => Some("Ctrl+W"),
+        EditorMenuAction::Exit => Some("Ctrl+Q"),
+        EditorMenuAction::Cut => Some("Ctrl+X"),
+        EditorMenuAction::Copy => Some("Ctrl+C"),
+        EditorMenuAction::Paste => Some("Ctrl+V"),
+        EditorMenuAction::SelectAll => Some("Ctrl+A"),
+        EditorMenuAction::GoToLine => Some("Ctrl+G"),
+        EditorMenuAction::GoToFile => Some("Ctrl+P"),
+        EditorMenuAction::Replace => Some("Ctrl+R"),
         EditorMenuAction::ToggleWrap => Some("Alt+Z"),
         EditorMenuAction::FormatJson => Some("Ctrl+Shift+J"),
         EditorMenuAction::Toolbar(action) => toolbar_shortcut(action),
         EditorMenuAction::Config(EditorConfigAction::Menu) if cfg!(target_os = "linux") => {
-            Some("F10")
+            Some("Ctrl+F10")
         }
         _ => None,
     };

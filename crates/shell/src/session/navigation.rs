@@ -153,6 +153,37 @@ impl ShellNavigation {
 }
 
 impl ShellSession {
+    /// Documents opened together share the same return destination. Keep their
+    /// page instances (including file tasks and recovery) intact when switching.
+    pub(in crate::session) fn editor_document_pages(&self) -> Vec<PageInstanceId> {
+        self.navigation
+            .path
+            .iter()
+            .zip(&self.navigation.entries)
+            .rev()
+            .take_while(|(screen, _)| **screen == ShellScreen::Editor)
+            .map(|(_, entry)| entry.id)
+            .collect()
+    }
+
+    pub(in crate::session) fn activate_editor_document_page(&mut self, id: PageInstanceId) {
+        if !self.editor_document_pages().contains(&id) {
+            return;
+        }
+        if let Some(index) = self
+            .navigation
+            .entries
+            .iter()
+            .position(|entry| entry.id == id)
+        {
+            self.cancel_pointer_gestures_for_modal();
+            let entry = self.navigation.entries.remove(index);
+            self.navigation.entries.push(entry);
+            self.restore_navigation_page();
+            self.pages.common.focused_component = ShellComponent::Editor;
+            self.refresh_hit_map();
+        }
+    }
     /// Ordinary pages map the Back button to Escape. Command Line routes the
     /// button separately so it can ask before terminating its child processes.
     /// The shared pointer capture delivers this press only after release
@@ -395,7 +426,16 @@ impl ShellSession {
                 self.restore_navigation_page();
             }
         }
-        self.enter_screen(ShellScreen::Editor);
+        if self.active_screen() == ShellScreen::Editor
+            && self
+                .app
+                .editor_state()
+                .is_some_and(|s| s.is_dirty() || s.document.path.is_some())
+        {
+            self.enter_new_page(ShellScreen::Editor);
+        } else {
+            self.enter_screen(ShellScreen::Editor);
+        }
         NavigationCheckpoint {
             operation: PageInstanceId::new().get(),
             before,

@@ -131,8 +131,59 @@ impl LineEnding {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TextEncoding {
+    #[default]
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+}
+
+impl TextEncoding {
+    pub fn label(self, bom: bool) -> &'static str {
+        match self {
+            Self::Utf8 if bom => "UTF-8 BOM",
+            Self::Utf8 => "UTF-8",
+            Self::Utf16Le => "UTF-16LE",
+            Self::Utf16Be => "UTF-16BE",
+        }
+    }
+}
+
+fn write_encoded_text(
+    writer: &mut dyn Write,
+    text: &str,
+    encoding: TextEncoding,
+) -> io::Result<()> {
+    if encoding == TextEncoding::Utf8 {
+        return writer.write_all(text.as_bytes());
+    }
+    let mut bytes = Vec::with_capacity(text.len().saturating_mul(2));
+    for unit in text.encode_utf16() {
+        bytes.extend_from_slice(&if encoding == TextEncoding::Utf16Le {
+            unit.to_le_bytes()
+        } else {
+            unit.to_be_bytes()
+        });
+    }
+    writer.write_all(&bytes)
+}
+
+fn encoded_bytes(text: &str, metadata: TextMetadata) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    match metadata.encoding {
+        TextEncoding::Utf8 if metadata.utf8_bom => bytes.extend_from_slice(UTF8_BOM),
+        TextEncoding::Utf16Le => bytes.extend_from_slice(&[0xff, 0xfe]),
+        TextEncoding::Utf16Be => bytes.extend_from_slice(&[0xfe, 0xff]),
+        _ => {}
+    }
+    write_encoded_text(&mut bytes, text, metadata.encoding).expect("writing to a Vec cannot fail");
+    bytes
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextMetadata {
+    pub encoding: TextEncoding,
     pub utf8_bom: bool,
     pub preferred_line_ending: LineEnding,
     pub mixed_line_endings: bool,
@@ -142,6 +193,7 @@ pub struct TextMetadata {
 impl Default for TextMetadata {
     fn default() -> Self {
         Self {
+            encoding: TextEncoding::Utf8,
             utf8_bom: false,
             preferred_line_ending: LineEnding::Lf,
             mixed_line_endings: false,
@@ -190,6 +242,7 @@ impl TextMetadata {
         .map(|(_, ending)| ending)
         .unwrap_or(fallback);
         Self {
+            encoding: TextEncoding::Utf8,
             utf8_bom,
             preferred_line_ending,
             mixed_line_endings: distinct > 1,
@@ -372,6 +425,20 @@ pub enum EditorPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorCommand {
+    SetEncoding {
+        encoding: TextEncoding,
+        utf8_bom: bool,
+    },
+    Indent {
+        width: usize,
+        tabs: bool,
+        outdent: bool,
+    },
+    DeleteWord {
+        backwards: bool,
+    },
+    NormalizeLineEndings(LineEnding),
+    SetUtf8Bom(bool),
     Find {
         query: String,
         options: search::SearchOptions,
@@ -447,6 +514,7 @@ impl EditorCommand {
                 | Self::SetMode(_)
                 | Self::ToggleMode
                 | Self::Copy
+                | Self::RequestOpen
                 | Self::RequestClose
         )
     }
@@ -471,6 +539,7 @@ impl Eq for SaveSnapshot {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SavePayload {
     Source {
+        encoding: TextEncoding,
         text: Rope,
         word_count: usize,
         line_endings: LineEndingStats,
@@ -496,10 +565,12 @@ impl SaveSnapshot {
         word_count: usize,
         line_endings: LineEndingStats,
         utf8_bom: bool,
+        encoding: TextEncoding,
     ) -> Self {
         Self {
             revision,
             payload: Arc::new(SavePayload::Source {
+                encoding,
                 text,
                 word_count,
                 line_endings,
@@ -526,12 +597,23 @@ impl SaveSnapshot {
     /// callers to invoke this method on a background worker.
     pub fn write_to(&self, writer: &mut dyn Write) -> io::Result<()> {
         match self.payload.as_ref() {
-            SavePayload::Source { text, utf8_bom, .. } => {
-                if *utf8_bom {
+            SavePayload::Source {
+                text,
+                utf8_bom,
+                encoding,
+                ..
+            } => {
+                if *encoding != TextEncoding::Utf8 {
+                    writer.write_all(if *encoding == TextEncoding::Utf16Le {
+                        &[0xff, 0xfe]
+                    } else {
+                        &[0xfe, 0xff]
+                    })?;
+                } else if *utf8_bom {
                     writer.write_all(UTF8_BOM)?;
                 }
                 for chunk in text.chunks() {
-                    writer.write_all(chunk.as_bytes())?;
+                    write_encoded_text(writer, chunk, *encoding)?;
                 }
                 let _ = self.prepared.set(PreparedSave {
                     source: None,
@@ -1012,6 +1094,12 @@ enum EditKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditTransaction {
+    Metadata {
+        before: TextMetadata,
+        after: TextMetadata,
+        before_revision: u64,
+        after_revision: u64,
+    },
     Rich {
         before: EditorSnapshot,
         after: EditorSnapshot,
@@ -1021,6 +1109,8 @@ enum EditTransaction {
         start: usize,
         removed: String,
         inserted: String,
+        before_metadata: TextMetadata,
+        after_metadata: TextMetadata,
         before_cursor: Cursor,
         before_selection: Option<Selection>,
         before_revision: u64,
@@ -1343,15 +1433,6 @@ const fn rich_line_ending(ending: LineEnding) -> RichLineEnding {
         LineEnding::CrLf => RichLineEnding::CrLf,
         LineEnding::Cr => RichLineEnding::Cr,
     }
-}
-
-fn bytes_with_bom(source: &str, utf8_bom: bool) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(source.len() + usize::from(utf8_bom) * UTF8_BOM.len());
-    if utf8_bom {
-        bytes.extend_from_slice(UTF8_BOM);
-    }
-    bytes.extend_from_slice(source.as_bytes());
-    bytes
 }
 
 fn rich_line_column(editor: &RichEditor) -> (usize, usize) {
@@ -2001,6 +2082,7 @@ fn undo(state: &mut EditorState) -> bool {
         (&state.buffer, transaction),
         (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
             | (EditorBuffer::Source(_), EditTransaction::Source { .. })
+            | (_, EditTransaction::Metadata { .. })
     );
     if !mode_matches {
         return false;
@@ -2008,6 +2090,14 @@ fn undo(state: &mut EditorState) -> bool {
     state.search_job.cancel();
     let transaction = state.undo_stack.pop().expect("last transaction exists");
     match &transaction {
+        EditTransaction::Metadata {
+            before,
+            before_revision,
+            ..
+        } => {
+            state.document.metadata = *before;
+            state.revision = *before_revision;
+        }
         EditTransaction::Rich { before, .. } => state.restore_snapshot(before),
         EditTransaction::Source {
             start,
@@ -2016,6 +2106,7 @@ fn undo(state: &mut EditorState) -> bool {
             before_cursor,
             before_selection,
             before_revision,
+            before_metadata,
             ..
         } => {
             let EditorBuffer::Source(buffer) = &mut state.buffer else {
@@ -2025,7 +2116,7 @@ fn undo(state: &mut EditorState) -> bool {
             state.cursor = *before_cursor;
             state.selection = *before_selection;
             state.revision = *before_revision;
-            state.refresh_metadata_from_active_source();
+            state.document.metadata = *before_metadata;
         }
     }
     state.redo_stack.push(transaction);
@@ -2040,6 +2131,7 @@ fn redo(state: &mut EditorState) -> bool {
         (&state.buffer, transaction),
         (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
             | (EditorBuffer::Source(_), EditTransaction::Source { .. })
+            | (_, EditTransaction::Metadata { .. })
     );
     if !mode_matches {
         return false;
@@ -2047,6 +2139,14 @@ fn redo(state: &mut EditorState) -> bool {
     state.search_job.cancel();
     let transaction = state.redo_stack.pop().expect("last transaction exists");
     match &transaction {
+        EditTransaction::Metadata {
+            after,
+            after_revision,
+            ..
+        } => {
+            state.document.metadata = *after;
+            state.revision = *after_revision;
+        }
         EditTransaction::Rich { after, .. } => state.restore_snapshot(after),
         EditTransaction::Source {
             start,
@@ -2055,6 +2155,7 @@ fn redo(state: &mut EditorState) -> bool {
             after_cursor,
             after_selection,
             after_revision,
+            after_metadata,
             ..
         } => {
             let EditorBuffer::Source(buffer) = &mut state.buffer else {
@@ -2064,7 +2165,7 @@ fn redo(state: &mut EditorState) -> bool {
             state.cursor = *after_cursor;
             state.selection = *after_selection;
             state.revision = *after_revision;
-            state.refresh_metadata_from_active_source();
+            state.document.metadata = *after_metadata;
         }
     }
     state.undo_stack.push(transaction);

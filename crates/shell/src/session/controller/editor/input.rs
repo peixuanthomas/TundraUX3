@@ -18,7 +18,7 @@ impl ShellSession {
             return;
         }
         #[cfg(target_os = "linux")]
-        if key.key == InputKey::F(10) && key.phase == InputPhase::Press {
+        if key.key == InputKey::F(10) && key.modifiers.control && key.phase == InputPhase::Press {
             self.config_editor_action(ui::EditorConfigAction::Menu);
             return;
         }
@@ -41,6 +41,12 @@ impl ShellSession {
         if self.pages.editor.editor_settings_dialog.is_some() {
             self.pages.editor.editor_cursor_acceleration = None;
             self.handle_editor_settings_key(&key, repeated);
+            return;
+        }
+        if self.handle_edit_menu_key(&key, platform) {
+            return;
+        }
+        if self.handle_edit_search_key(&key, platform) {
             return;
         }
         if cursor_direction.is_none() {
@@ -119,9 +125,9 @@ impl ShellSession {
         self.pages.editor.editor_quick_menu_anchor = None;
         if key.key == InputKey::F(6) {
             self.pages.editor.editor_focus = match self.pages.editor.editor_focus {
-                ui::EditorFocus::MenuBar => ui::EditorFocus::Toolbar,
+                ui::EditorFocus::MenuBar => ui::EditorFocus::Canvas,
                 ui::EditorFocus::Toolbar => ui::EditorFocus::Canvas,
-                ui::EditorFocus::Canvas => ui::EditorFocus::StatusBar,
+                ui::EditorFocus::Canvas => ui::EditorFocus::MenuBar,
                 ui::EditorFocus::StatusBar => ui::EditorFocus::MenuBar,
             };
             return;
@@ -132,6 +138,28 @@ impl ShellSession {
         let command_key = key.modifiers.control
             || (platform.kind() == PlatformKind::Macos && key.modifiers.super_key);
         if command_key {
+            if matches!(key.key, InputKey::Tab | InputKey::BackTab) {
+                let pages = self.editor_document_pages();
+                if pages.len() > 1 {
+                    self.activate_editor_document_page(
+                        pages[if key.modifiers.shift {
+                            pages.len() - 1
+                        } else {
+                            1
+                        }],
+                    );
+                }
+                return;
+            }
+            if matches!(key.key, InputKey::Backspace | InputKey::Delete) {
+                self.apply_editor_command(
+                    app::editor::EditorCommand::DeleteWord {
+                        backwards: key.key == InputKey::Backspace,
+                    },
+                    platform,
+                );
+                return;
+            }
             let navigation = match key.key {
                 InputKey::Left => Some(app::editor::CursorMove::WordLeft),
                 InputKey::Right => Some(app::editor::CursorMove::WordRight),
@@ -162,45 +190,28 @@ impl ShellSession {
             };
             let command = match (character, key.modifiers.shift) {
                 ('n', _) => {
-                    if self.config_editor_active() {
-                        self.notify_toast(i18n::msg!("config-editor-finish-document"));
-                        return;
-                    }
-                    if self
-                        .app
-                        .editor_state()
-                        .is_some_and(EditorState::is_read_only)
-                    {
-                        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
-                            i18n::msg!("shell-this-document-is-read-only"),
-                        ));
-                        return;
-                    }
-                    if self.app.editor_state().is_some_and(EditorState::is_dirty) {
-                        self.pages.editor.editor_message =
-                            Some(i18n::LocalizedText::from(i18n::msg!(
-                                "shell-save-or-close-the-current-document-before-creating-a-new-one"
-                            )));
-                    } else {
-                        self.advance_editor_document_generation();
-                        self.app.dispatch_at(
-                            app::AppCommand::SetEditorState(Some(EditorState::new())),
-                            Instant::now(),
-                        );
-                        self.pages.editor.editor_quick_menu_anchor = None;
-                        self.pages.editor.editor_table_column_widths.clear();
-                        self.pages.editor.editor_table_resize = None;
-                        self.pages.editor.editor_fingerprint = None;
-                        self.pages.editor.editor_message = Some(i18n::LocalizedText::from(
-                            i18n::msg!("shell-new-text-document"),
-                        ));
-                        self.rebuild_editor_rich_render_cache();
-                    }
+                    self.new_edit_document();
                     return;
                 }
                 ('o', _) => app::editor::EditorCommand::RequestOpen,
                 ('s', true) => app::editor::EditorCommand::RequestSaveAs,
                 ('s', false) => app::editor::EditorCommand::RequestSave,
+                ('g', _) => {
+                    self.activate_editor_menu_action(ui::EditorMenuAction::GoToLine, platform);
+                    return;
+                }
+                ('p', _) => {
+                    self.activate_editor_menu_action(ui::EditorMenuAction::GoToFile, platform);
+                    return;
+                }
+                ('r', _) => {
+                    self.open_editor_replace();
+                    return;
+                }
+                ('q', _) => {
+                    self.activate_editor_menu_action(ui::EditorMenuAction::Exit, platform);
+                    return;
+                }
                 ('w', _) => app::editor::EditorCommand::RequestClose,
                 ('z', false) => app::editor::EditorCommand::Undo,
                 ('y', _) | ('z', true) => app::editor::EditorCommand::Redo,
@@ -247,13 +258,11 @@ impl ShellSession {
             InputKey::Enter => app::editor::EditorCommand::InsertNewline,
             InputKey::Backspace => app::editor::EditorCommand::Backspace,
             InputKey::Delete => app::editor::EditorCommand::DeleteForward,
-            InputKey::Tab => app::editor::EditorCommand::InsertText("    ".to_string()),
-            InputKey::BackTab => {
-                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-outdent-is-not-available-for-this-block"
-                )));
-                return;
-            }
+            InputKey::Tab | InputKey::BackTab => app::editor::EditorCommand::Indent {
+                width: self.pages.editor.editor_indent_width,
+                tabs: self.pages.editor.editor_indent_tabs,
+                outdent: key.key == InputKey::BackTab || key.modifiers.shift,
+            },
             InputKey::Home => app::editor::EditorCommand::MoveCursor {
                 movement: app::editor::CursorMove::LineStart,
                 extend_selection: key.modifiers.shift,
@@ -262,19 +271,24 @@ impl ShellSession {
                 movement: app::editor::CursorMove::LineEnd,
                 extend_selection: key.modifiers.shift,
             },
-            InputKey::PageUp => {
-                if let Some(mut viewport) = self.app.editor_state().map(|state| state.viewport) {
-                    viewport.top_line = viewport.top_line.saturating_sub(10);
-                    self.app
-                        .dispatch_at(app::AppCommand::SetEditorViewport(viewport), Instant::now());
-                }
-                return;
-            }
-            InputKey::PageDown => {
-                if let Some(mut viewport) = self.app.editor_state().map(|state| state.viewport) {
-                    viewport.top_line = viewport.top_line.saturating_add(10);
-                    self.app
-                        .dispatch_at(app::AppCommand::SetEditorViewport(viewport), Instant::now());
+            InputKey::PageUp | InputKey::PageDown => {
+                let capacity = self
+                    .editor_current_layout()
+                    .visible_capacity
+                    .saturating_sub(2)
+                    .max(1);
+                for _ in 0..capacity {
+                    self.apply_editor_command(
+                        app::editor::EditorCommand::MoveCursor {
+                            movement: if key.key == InputKey::PageUp {
+                                app::editor::CursorMove::Up
+                            } else {
+                                app::editor::CursorMove::Down
+                            },
+                            extend_selection: key.modifiers.shift,
+                        },
+                        platform,
+                    );
                 }
                 return;
             }
@@ -364,6 +378,9 @@ impl ShellSession {
             self.handle_management_paste(&value);
             return;
         }
+        if self.handle_edit_search_paste(&value) {
+            return;
+        }
         self.pages.editor.editor_cursor_acceleration = None;
         self.pages.editor.editor_quick_menu_anchor = None;
         let platform = platform::native_platform();
@@ -381,6 +398,37 @@ impl ShellSession {
         }
         let coordinates = mouse.coordinates();
         let (hit, document_hit) = self.editor_hit_targets_at(coordinates);
+        if let Some(menu) = self.pages.editor.editor_open_menu {
+            let count = ui::editor_menu_actions(menu).len();
+            if let ui::MouseEventKind::Scroll(direction) = mouse.kind {
+                self.pages.editor.editor_menu_index =
+                    if matches!(direction, ScrollDirection::Up | ScrollDirection::Left) {
+                        self.pages.editor.editor_menu_index.saturating_sub(1)
+                    } else {
+                        self.pages
+                            .editor
+                            .editor_menu_index
+                            .saturating_add(1)
+                            .min(count.saturating_sub(1))
+                    };
+                return;
+            }
+            if hit == Some(ui::EditorHitTarget::MenuScroll)
+                && matches!(
+                    mouse.kind,
+                    ui::MouseEventKind::Down(PointerButton::Left)
+                        | ui::MouseEventKind::Drag(PointerButton::Left)
+                )
+            {
+                if let Some(track) = self.editor_current_layout().menu_scrollbar {
+                    self.pages.editor.editor_menu_index =
+                        usize::from(mouse.row().saturating_sub(track.y))
+                            .saturating_mul(count.saturating_sub(1))
+                            / usize::from(track.height.saturating_sub(1).max(1));
+                }
+                return;
+            }
+        }
         if !matches!(
             mouse,
             MouseInput {
@@ -500,6 +548,9 @@ impl ShellSession {
                     self.pages.editor.editor_quick_menu_anchor = None;
                 }
                 match hit {
+                    Some(ui::EditorHitTarget::Search(control)) => {
+                        self.focus_edit_search_pointer(control, mouse);
+                    }
                     Some(ui::EditorHitTarget::QuickMenuAction(action)) => {
                         self.activate_editor_quick_action(action, platform);
                         self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
@@ -509,6 +560,8 @@ impl ShellSession {
                         if menu == ui::EditorMenu::Settings {
                             self.open_editor_settings();
                         } else {
+                            self.pages.editor.editor_selected_menu = menu;
+                            self.pages.editor.editor_menu_index = 0;
                             self.pages.editor.editor_focus = ui::EditorFocus::MenuBar;
                             self.pages.editor.editor_open_menu =
                                 (self.pages.editor.editor_open_menu != Some(menu)).then_some(menu);
@@ -517,27 +570,10 @@ impl ShellSession {
                     Some(ui::EditorHitTarget::MenuAction(action)) => {
                         self.pages.editor.editor_open_menu = None;
                         self.pages.editor.editor_selected_toolbar_action = None;
-                        match action {
-                            ui::EditorMenuAction::Replace => self.open_editor_replace(),
-                            ui::EditorMenuAction::ToggleWrap => self.toggle_editor_wrap(),
-                            ui::EditorMenuAction::FormatJson => self.apply_editor_command(
-                                app::editor::EditorCommand::FormatJson,
-                                platform,
-                            ),
-                            ui::EditorMenuAction::Config(action) => {
-                                self.config_editor_action(action)
-                            }
-                            ui::EditorMenuAction::Toolbar(action) => {
-                                self.activate_editor_toolbar(action, platform);
-                            }
-                            ui::EditorMenuAction::Mode(mode) => self.apply_editor_command(
-                                app::editor::EditorCommand::SetMode(mode),
-                                platform,
-                            ),
-                        }
-                        self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+                        self.activate_editor_menu_action(action, platform);
                     }
                     Some(ui::EditorHitTarget::MenuPopup) => {}
+                    Some(ui::EditorHitTarget::MenuScroll) => {}
                     Some(ui::EditorHitTarget::Toolbar(action)) => {
                         self.pages.editor.editor_open_menu = None;
                         self.pages.editor.editor_selected_toolbar_action = Some(action);
@@ -593,6 +629,9 @@ impl ShellSession {
                             )));
                     }
                     Some(ui::EditorHitTarget::Canvas(position)) => {
+                        if let Some(search) = &mut self.pages.editor.editor_search_bar {
+                            search.focus = None;
+                        }
                         self.pages.editor.editor_open_menu = None;
                         self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                         let rich_mode = self
@@ -905,7 +944,10 @@ impl ShellSession {
             .is_some_and(EditorState::is_read_only)
             && !matches!(
                 action,
-                ui::EditorToolbarAction::Find | ui::EditorToolbarAction::More
+                ui::EditorToolbarAction::New
+                    | ui::EditorToolbarAction::Open
+                    | ui::EditorToolbarAction::Find
+                    | ui::EditorToolbarAction::More
             )
         {
             self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
@@ -915,29 +957,7 @@ impl ShellSession {
         }
         let command = match action {
             ui::EditorToolbarAction::New => {
-                if self
-                    .app
-                    .editor_state()
-                    .is_none_or(|state| !state.is_dirty())
-                {
-                    if !self.reset_editor_recovery_identity() {
-                        return;
-                    }
-                    self.advance_editor_document_generation();
-                    self.app.dispatch_at(
-                        app::AppCommand::SetEditorState(Some(EditorState::new())),
-                        Instant::now(),
-                    );
-                    self.pages.editor.editor_quick_menu_anchor = None;
-                    self.pages.editor.editor_table_column_widths.clear();
-                    self.pages.editor.editor_table_resize = None;
-                    self.pages.editor.editor_fingerprint = None;
-                    self.rebuild_editor_rich_render_cache();
-                } else {
-                    self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
-                        "shell-save-or-close-the-current-document-first"
-                    )));
-                }
+                self.new_edit_document();
                 return;
             }
             ui::EditorToolbarAction::Open => EditorCommand::RequestOpen,
@@ -1009,16 +1029,20 @@ impl ShellSession {
         &self,
         coordinates: CellPosition,
     ) -> (Option<ui::EditorHitTarget>, Option<ui::EditorDocumentHit>) {
+        let layout = self.editor_current_layout();
+        (
+            layout.hit_test(coordinates.0, coordinates.1),
+            layout.hit_test_document(coordinates.0, coordinates.1),
+        )
+    }
+
+    pub(in crate::session) fn editor_current_layout(&self) -> ui::EditorLayout {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
-        let layout = ui::editor_layout(editor_area, &self.to_editor_view_model());
-        (
-            layout.hit_test(coordinates.0, coordinates.1),
-            layout.hit_test_document(coordinates.0, coordinates.1),
-        )
+        ui::editor_layout(editor_area, &self.to_editor_view_model())
     }
 
     pub(in crate::session) fn begin_editor_scrollbar_drag(

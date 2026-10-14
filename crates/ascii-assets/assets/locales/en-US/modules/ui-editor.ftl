@@ -114,3 +114,32 @@ editor-search-count = Match { $current } / { $count } · F3 / Shift+F3
 editor-search-working = Searching…
 editor-search-preview-limit = The replacement preview exceeds 10,000 matches or 8 MiB. Narrow the query before applying.
 editor-wrap-working = Preparing wrapped lines…
+
+ui-editor-help = Help
+ui-editor-save-as = Save As
+ui-editor-close = Close File
+ui-editor-exit = Exit Editor
+ui-editor-cut = Cut
+ui-editor-copy = Copy
+ui-editor-paste = Paste
+ui-editor-select-all = Select All
+ui-editor-go-to-line = Go to Line
+ui-editor-go-to-file = Go to File
+ui-editor-focus-status = Focus Status Bar
+ui-editor-about = About
+ui-editor-language = Language
+ui-editor-line-ending = Line Ending
+ui-editor-encoding = Encoding
+ui-editor-indentation = Indentation
+
+ui-editor-goto-help = Enter a line number or line:column (starting at 1).
+ui-editor-about-text = Tundra Editor
+    Interface and controls based on Microsoft Edit (MIT).
+    Alt+F/E/V/H menus · F10 menu focus · Ctrl+G go to line
+    Ctrl+F find · Ctrl+R replace · Alt+Z word wrap
+
+ui-editor-search-previous = Shift+F3 Previous
+ui-editor-search-next = F3 Next
+ui-editor-search-replace = Enter Replace
+ui-editor-search-replace-all = Ctrl+Enter Replace All
+ui-editor-search-close = Esc Close

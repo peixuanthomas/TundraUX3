@@ -92,6 +92,7 @@ impl SourceBuffer {
         .map(|(_, ending)| ending)
         .unwrap_or(fallback);
         TextMetadata {
+            encoding: TextEncoding::Utf8,
             utf8_bom,
             preferred_line_ending,
             mixed_line_endings: distinct > 1,

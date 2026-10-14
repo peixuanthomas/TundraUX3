@@ -141,11 +141,11 @@ mod rich_layout_measurement_tests {
 
         let overflowing = EditorViewModel::new(
             "overflow.md",
-            vec![EditorRenderBlock::paragraph("x".repeat(21))],
+            vec![EditorRenderBlock::paragraph("x".repeat(41))],
         );
         let overflowing_layout = editor_layout(Rect::new(0, 0, 20, 4), &overflowing);
         assert_eq!(overflowing_layout.canvas.width, 19);
-        assert_eq!(overflowing_layout.document_line_count, 2);
+        assert_eq!(overflowing_layout.document_line_count, 3);
         assert!(overflowing_layout.vertical_scrollbar.is_some());
     }
 }

@@ -282,6 +282,15 @@ impl Default for ExplorerPageState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct EditorPageState {
+    pub(super) editor_selected_menu: ui::EditorMenu,
+    pub(super) editor_menu_index: usize,
+    pub(super) editor_indent_tabs: bool,
+    pub(super) editor_indent_width: usize,
+    pub(super) editor_language: Option<String>,
+    pub(super) editor_exit_group: bool,
+    pub(super) editor_search_bar: Option<ui::EditorSearchBar>,
+    pub(super) editor_search_memory: Option<ui::EditorSearchBar>,
+    pub(super) editor_inline_replace_request: Option<(u64, u64)>,
     pub(super) editor_load_state: Option<EditorLoadState>,
     pub(super) editor_save_state: Option<EditorSaveState>,
     pub(super) editor_document_generation: u64,
@@ -316,6 +325,15 @@ pub(super) struct EditorPageState {
 impl Default for EditorPageState {
     fn default() -> Self {
         Self {
+            editor_selected_menu: ui::EditorMenu::File,
+            editor_menu_index: 0,
+            editor_indent_tabs: false,
+            editor_indent_width: 4,
+            editor_language: None,
+            editor_exit_group: false,
+            editor_search_bar: None,
+            editor_search_memory: None,
+            editor_inline_replace_request: None,
             editor_load_state: None,
             editor_save_state: None,
             editor_document_generation: 0,

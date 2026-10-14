@@ -30,6 +30,34 @@ impl EditorDocument {
         kind: DocumentKind,
         bytes: &[u8],
     ) -> Result<Self, DocumentDecodeError> {
+        if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+            let little = bytes[0] == 0xff;
+            let body = &bytes[2..];
+            if body.len() % 2 != 0 {
+                return Err(DocumentDecodeError {
+                    valid_up_to: bytes.len() - 1,
+                });
+            }
+            let units = body
+                .chunks_exact(2)
+                .map(|b| {
+                    if little {
+                        u16::from_le_bytes([b[0], b[1]])
+                    } else {
+                        u16::from_be_bytes([b[0], b[1]])
+                    }
+                })
+                .collect::<Vec<_>>();
+            let source =
+                String::from_utf16(&units).map_err(|_| DocumentDecodeError { valid_up_to: 2 })?;
+            let mut document = Self::from_decoded_text(path, kind, source, false);
+            document.metadata.encoding = if little {
+                TextEncoding::Utf16Le
+            } else {
+                TextEncoding::Utf16Be
+            };
+            return Ok(document);
+        }
         let (utf8_bom, body) = if bytes.starts_with(UTF8_BOM) {
             (true, &bytes[UTF8_BOM.len()..])
         } else {
@@ -51,6 +79,9 @@ impl EditorDocument {
         kind: DocumentKind,
         mut bytes: Vec<u8>,
     ) -> Result<Self, DocumentDecodeError> {
+        if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+            return Self::from_bytes(path, kind, &bytes);
+        }
         let utf8_bom = bytes.starts_with(UTF8_BOM);
         if utf8_bom {
             bytes.drain(..UTF8_BOM.len());
@@ -98,6 +129,9 @@ impl EditorDocument {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
+        if self.metadata.encoding != TextEncoding::Utf8 {
+            return encoded_bytes(&self.source(), self.metadata);
+        }
         let source_len = match &self.source {
             DocumentText::Contiguous(source) => source.len(),
             DocumentText::Rope { text, .. } => text.len_bytes(),

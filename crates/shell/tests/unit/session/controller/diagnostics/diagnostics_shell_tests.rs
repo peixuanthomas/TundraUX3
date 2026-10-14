@@ -704,6 +704,13 @@ fn diagnostics_log_opens_read_only_in_editor_and_returns_to_logs() {
     assert_eq!(editor.source_buffer().as_deref(), Some("first\nsecond\n"));
     assert!(state.pages.editor.editor_read_session.is_some());
 
+    state.handle_editor_paste("mutating paste".to_string());
+    assert_eq!(
+        state.app.editor_state().unwrap().source_buffer().as_deref(),
+        Some("first\nsecond\n")
+    );
+    assert!(!state.app.editor_state().unwrap().is_dirty());
+    let log_page = state.active_page_id();
     state.handle_editor_key(
         KeyInput::with_phase(
             InputKey::Char('n'),
@@ -715,14 +722,15 @@ fn diagnostics_log_opens_read_only_in_editor_and_returns_to_logs() {
         ),
         &platform,
     );
-    state.handle_editor_paste("mutating paste".to_string());
-    state.activate_editor_toolbar(ui::EditorToolbarAction::Open, &platform);
-    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert_ne!(state.active_page_id(), log_page);
+    state.handle_editor_paste("new document".into());
+    assert_eq!(state.app.editor_state().unwrap().source(), "new document");
+    state.finish_editor_close(true);
+    assert_eq!(state.active_page_id(), log_page);
     assert_eq!(
-        state.app.editor_state().unwrap().source_buffer().as_deref(),
-        Some("first\nsecond\n")
+        state.app.editor_state().unwrap().source(),
+        "first\nsecond\n"
     );
-    assert!(!state.app.editor_state().unwrap().is_dirty());
 
     state.request_editor_close(&platform);
     assert_eq!(state.active_screen(), ShellScreen::Logs);

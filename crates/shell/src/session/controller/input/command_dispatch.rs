@@ -984,6 +984,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::EditorCancelClose => {
+                self.pages.editor.editor_exit_group = false;
                 if let Some(owner) = self.pages.editor.selected_id() {
                     self.stay_on_page(owner);
                 }

@@ -98,14 +98,22 @@ impl ShellSession {
         self.config_operation("read", Default::default());
     }
     pub(in crate::session) fn open_editor_find(&mut self) {
-        self.open_editor_search(false);
+        if self.config_editor_active() {
+            self.open_editor_search(false);
+        } else {
+            self.open_edit_search(false);
+        }
     }
 
     pub(in crate::session) fn open_editor_replace(&mut self) {
         if self.app.editor_state().is_some_and(|s| s.is_read_only()) {
             return;
         }
-        self.open_editor_search(true);
+        if self.config_editor_active() {
+            self.open_editor_search(true);
+        } else {
+            self.open_edit_search(true);
+        }
     }
 
     fn open_editor_search(&mut self, replace: bool) {
@@ -297,6 +305,7 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn poll_editor_preview(&mut self) {
+        self.poll_inline_replacement();
         if self.pages.editor.editor_preview_request.is_none() {
             return;
         }
@@ -406,7 +415,12 @@ impl ShellSession {
             .unwrap_or_default()
     }
 
-    fn config_form(&mut self, action: &str, message: String, mut fields: Vec<ManagementField>) {
+    pub(in crate::session) fn config_form(
+        &mut self,
+        action: &str,
+        message: String,
+        mut fields: Vec<ManagementField>,
+    ) {
         if action == "result" && self.pages.editor.editor_config.document.is_some() {
             let mut choices = vec![
                 i18n::tr!("config-editor-continue"),
@@ -427,7 +441,11 @@ impl ShellSession {
         self.reset_management_form_view();
         self.pages.management.management_state.terminal_mode = false;
         self.pages.management.management_state.form = Some(ManagementEditor {
-            title: i18n::tr!(format!("config-editor-{action}")),
+            title: if action.starts_with("edit-") {
+                i18n::tr!("shell-editor")
+            } else {
+                i18n::tr!(format!("config-editor-{action}"))
+            },
             message,
             message_scroll: 0,
             fields,
@@ -615,6 +633,10 @@ impl ShellSession {
     }
 
     pub(super) fn submit_config_form(&mut self, action: &str, fields: Vec<ManagementField>) {
+        if action.starts_with("edit-") {
+            self.submit_edit_dialog(action, fields);
+            return;
+        }
         if matches!(action, "find" | "replace" | "replace-apply") {
             self.submit_editor_search(action, fields);
             return;

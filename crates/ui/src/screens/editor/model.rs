@@ -18,6 +18,7 @@ pub enum EditorMenu {
     Format,
     View,
     Settings,
+    Help,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,12 +45,101 @@ pub enum EditorToolbarAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMenuAction {
+    SaveAs,
+    Close,
+    Exit,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    GoToLine,
+    GoToFile,
+    FocusStatus,
+    Preferences,
+    About,
+    Language,
+    LineEnding,
+    Encoding,
+    Indentation,
     Replace,
     ToggleWrap,
     FormatJson,
     Toolbar(EditorToolbarAction),
     Mode(EditorMode),
     Config(EditorConfigAction),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorSearchControl {
+    Query,
+    Replacement,
+    MatchCase,
+    WholeWord,
+    Regex,
+    Previous,
+    Next,
+    Replace,
+    ReplaceAll,
+    Close,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorSearchBar {
+    pub query: crate::components::TextInput,
+    pub replacement: crate::components::TextInput,
+    pub replace: bool,
+    pub focus: Option<EditorSearchControl>,
+    pub options: app::editor::search::SearchOptions,
+    pub message: Option<String>,
+}
+
+impl Default for EditorSearchBar {
+    fn default() -> Self {
+        Self {
+            query: crate::components::TextInput::new("editor.search.query")
+                .with_horizontal_scroll(true),
+            replacement: crate::components::TextInput::new("editor.search.replacement")
+                .with_horizontal_scroll(true),
+            replace: false,
+            focus: Some(EditorSearchControl::Query),
+            options: app::editor::search::SearchOptions {
+                case_sensitive: false,
+                ..Default::default()
+            },
+            message: None,
+        }
+    }
+}
+
+pub fn editor_search_controls(replace: bool) -> Vec<EditorSearchControl> {
+    use EditorSearchControl::*;
+    let mut controls = vec![Query];
+    if replace {
+        controls.push(Replacement);
+    }
+    controls.extend([MatchCase, WholeWord, Regex, Previous, Next]);
+    if replace {
+        controls.extend([Replace, ReplaceAll]);
+    }
+    controls.push(Close);
+    controls
+}
+
+pub fn editor_search_label(control: EditorSearchControl) -> String {
+    use EditorSearchControl::*;
+    let key = match control {
+        Query => "ui-editor-find",
+        Replacement => "ui-editor-replace",
+        MatchCase => "editor-search-case_sensitive",
+        WholeWord => "editor-search-whole_word",
+        Regex => "editor-search-regex",
+        Previous => "ui-editor-search-previous",
+        Next => "ui-editor-search-next",
+        Replace => "ui-editor-search-replace",
+        ReplaceAll => "ui-editor-search-replace-all",
+        Close => "ui-editor-search-close",
+    };
+    i18n::tr!(key)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -506,7 +596,10 @@ impl EditorToolbarState {
         if read_only {
             return matches!(
                 action,
-                EditorToolbarAction::Find | EditorToolbarAction::More
+                EditorToolbarAction::New
+                    | EditorToolbarAction::Open
+                    | EditorToolbarAction::Find
+                    | EditorToolbarAction::More
             );
         }
         match action {
@@ -531,6 +624,10 @@ impl EditorToolbarState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorViewModel {
+    pub search_bar: Option<EditorSearchBar>,
+    pub selected_menu: EditorMenu,
+    pub selected_menu_action: usize,
+    pub status_actions: Vec<(EditorMenuAction, String)>,
     pub configuration: bool,
     pub config_form: Option<Box<crate::ManagementViewModel>>,
     pub file_name: String,
@@ -613,6 +710,15 @@ pub struct EditorViewModel {
 impl EditorViewModel {
     pub fn new(file_name: impl Into<String>, blocks: Vec<EditorRenderBlock>) -> Self {
         Self {
+            search_bar: None,
+            selected_menu: EditorMenu::File,
+            selected_menu_action: 0,
+            status_actions: vec![
+                (EditorMenuAction::Language, "Text".into()),
+                (EditorMenuAction::LineEnding, "LF".into()),
+                (EditorMenuAction::Encoding, "UTF-8".into()),
+                (EditorMenuAction::Indentation, "Space:4".into()),
+            ],
             configuration: false,
             config_form: None,
             file_name: file_name.into(),

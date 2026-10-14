@@ -6,6 +6,99 @@ impl EditorController {
             return Vec::new();
         }
         match command {
+            EditorCommand::SetEncoding { encoding, utf8_bom } => {
+                let mut metadata = state.document.metadata;
+                metadata.encoding = encoding;
+                metadata.utf8_bom = encoding == TextEncoding::Utf8 && utf8_bom;
+                commit_metadata(state, metadata);
+                Vec::new()
+            }
+            EditorCommand::Indent {
+                width,
+                tabs,
+                outdent,
+            } => {
+                indent_source(state, width.clamp(1, 8), tabs, outdent);
+                Vec::new()
+            }
+            EditorCommand::DeleteWord { backwards } => {
+                if !state.has_selection() {
+                    move_cursor(
+                        state,
+                        if backwards {
+                            CursorMove::WordLeft
+                        } else {
+                            CursorMove::WordRight
+                        },
+                        true,
+                    );
+                }
+                apply_delete_selection(state);
+                Vec::new()
+            }
+            EditorCommand::SetUtf8Bom(bom) => {
+                let mut metadata = state.document.metadata;
+                metadata.utf8_bom = bom;
+                commit_metadata(state, metadata);
+                Vec::new()
+            }
+            EditorCommand::NormalizeLineEndings(ending) => {
+                if state.mode != EditorMode::Source {
+                    return Vec::new();
+                }
+                let position = state.source_display_position(state.cursor.byte_offset);
+                let selection = state.selection.and_then(|selection| {
+                    Some((
+                        state.source_display_position(selection.anchor)?,
+                        state.source_display_position(selection.focus)?,
+                    ))
+                });
+                let original = state.source();
+                let text = original
+                    .replace("\r\n", "\n")
+                    .replace('\r', "\n")
+                    .replace('\n', ending.as_str());
+                let changed = text != original;
+                let len = original.len();
+                drop(original);
+                if changed {
+                    state.commit_source_edit(
+                        0..len,
+                        &text,
+                        Cursor::default(),
+                        None,
+                        EditKind::Format,
+                    );
+                }
+                let mut metadata = state.document.metadata;
+                metadata.preferred_line_ending = ending;
+                if changed {
+                    state.document.metadata = metadata;
+                    if let Some((line, column)) = position {
+                        state.cursor.byte_offset = state.source_offset(line, column).unwrap_or(0);
+                    }
+                    state.selection = selection.and_then(|((al, ac), (fl, fc))| {
+                        Some(Selection::new(
+                            state.source_offset(al, ac)?,
+                            state.source_offset(fl, fc)?,
+                        ))
+                    });
+                    if let Some(EditTransaction::Source {
+                        after_metadata,
+                        after_cursor,
+                        after_selection,
+                        ..
+                    }) = state.undo_stack.last_mut()
+                    {
+                        *after_metadata = metadata;
+                        *after_cursor = state.cursor;
+                        *after_selection = state.selection;
+                    }
+                } else {
+                    commit_metadata(state, metadata);
+                }
+                Vec::new()
+            }
             EditorCommand::Find {
                 query,
                 options,
@@ -427,4 +520,99 @@ fn replace_matches(
         *after_selection = state.selection;
     }
     Vec::new()
+}
+
+fn indent_source(state: &mut EditorState, width: usize, tabs: bool, outdent: bool) {
+    let Some(source) = state.source_rope_snapshot() else {
+        return;
+    };
+    let selection = state.selected_range().map(std::ops::Range::from);
+    let range = selection
+        .clone()
+        .unwrap_or(state.cursor.byte_offset..state.cursor.byte_offset);
+    if selection.is_none() && !outdent {
+        let column = state
+            .source_display_position(range.start)
+            .map_or(0, |(_, column)| column);
+        apply_insert_text(
+            state,
+            &if tabs {
+                "\t".into()
+            } else {
+                " ".repeat(width - column % width)
+            },
+        );
+        return;
+    }
+    let first = source.byte_to_line(range.start);
+    let mut last = source.byte_to_line(range.end);
+    if last > first && source.line_to_byte(last) == range.end {
+        last -= 1;
+    }
+    let start = source.line_to_byte(first);
+    let end = if last + 1 < source.len_lines() {
+        source.line_to_byte(last + 1)
+    } else {
+        source.len_bytes()
+    };
+    let mut output = String::new();
+    let mut cursor_delta = 0usize;
+    for line in first..=last {
+        let text = source.line(line).to_string();
+        if outdent {
+            let remove = if text.starts_with('\t') {
+                1
+            } else {
+                text.bytes().take(width).take_while(|b| *b == b' ').count()
+            };
+            if line == first {
+                cursor_delta = remove;
+            }
+            output.push_str(&text[remove..]);
+        } else {
+            output.push_str(&if tabs { "\t".into() } else { " ".repeat(width) });
+            output.push_str(&text);
+        }
+    }
+    let after_cursor = if selection.is_some() {
+        start + output.len()
+    } else {
+        state
+            .cursor
+            .byte_offset
+            .saturating_sub(cursor_delta)
+            .max(start)
+    };
+    let after_selection = selection.map(|_| Selection::new(start, start + output.len()));
+    state.commit_source_edit(
+        start..end,
+        &output,
+        Cursor {
+            byte_offset: after_cursor,
+            preferred_column: None,
+        },
+        after_selection,
+        EditKind::Format,
+    );
+}
+
+fn commit_metadata(state: &mut EditorState, metadata: TextMetadata) {
+    let before = state.document.metadata;
+    if before == metadata {
+        return;
+    }
+    let before_revision = state.revision;
+    state.document.metadata = metadata;
+    state.revision = state.next_revision;
+    state.next_revision = state.next_revision.saturating_add(1).max(1);
+    state.undo_stack.push(EditTransaction::Metadata {
+        before,
+        after: metadata,
+        before_revision,
+        after_revision: state.revision,
+    });
+    if state.undo_stack.len() > state.history_limit {
+        state.undo_stack.remove(0);
+    }
+    state.redo_stack.clear();
 }

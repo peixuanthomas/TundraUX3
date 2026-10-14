@@ -16,6 +16,99 @@ use app::rich_document::{
 use app::rich_edit::RichSelection;
 use platform::FileAttributes;
 
+#[test]
+fn encoding_and_newline_changes_are_dirty_undoable_and_preserve_history() {
+    let mut editor = EditorState::open("note.txt", b"a\r\nb\nc\r").unwrap();
+    editor.apply(EditorCommand::NormalizeLineEndings(LineEnding::CrLf));
+    assert_eq!(editor.to_bytes(), b"a\r\nb\r\nc\r\n");
+    editor.apply(EditorCommand::SetUtf8Bom(true));
+    assert_eq!(editor.to_bytes(), b"\xef\xbb\xbfa\r\nb\r\nc\r\n");
+    editor.apply(EditorCommand::Undo);
+    assert!(!editor.document.metadata.utf8_bom);
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.to_bytes(), b"a\r\nb\nc\r");
+    assert!(!editor.is_dirty());
+    editor.apply(EditorCommand::Redo);
+    editor.apply(EditorCommand::Redo);
+    assert_eq!(editor.to_bytes(), b"\xef\xbb\xbfa\r\nb\r\nc\r\n");
+
+    let mut empty = EditorState::new();
+    empty.apply(EditorCommand::NormalizeLineEndings(LineEnding::CrLf));
+    assert!(empty.is_dirty());
+    empty.apply(EditorCommand::Undo);
+    assert_eq!(
+        empty.document.metadata.preferred_line_ending,
+        LineEnding::Lf
+    );
+    assert!(!empty.is_dirty());
+}
+
+#[test]
+fn block_indentation_and_word_deletion_each_undo_in_one_step() {
+    let mut editor = EditorState::open("code.rs", "中文\nsecond\n".as_bytes()).unwrap();
+    editor.apply(EditorCommand::SelectAll);
+    editor.apply(EditorCommand::Indent {
+        width: 2,
+        tabs: false,
+        outdent: false,
+    });
+    assert_eq!(editor.source(), "  中文\n  second\n");
+    editor.apply(EditorCommand::Indent {
+        width: 2,
+        tabs: false,
+        outdent: true,
+    });
+    assert_eq!(editor.source(), "中文\nsecond\n");
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source(), "  中文\n  second\n");
+    editor.apply(EditorCommand::Undo);
+    assert!(!editor.is_dirty());
+
+    let mut editor = EditorState::open("note.txt", b"first second").unwrap();
+    editor.apply(EditorCommand::MoveCursor {
+        movement: CursorMove::DocumentEnd,
+        extend_selection: false,
+    });
+    editor.apply(EditorCommand::DeleteWord { backwards: true });
+    assert_eq!(editor.source(), "first ");
+    editor.apply(EditorCommand::Undo);
+    assert_eq!(editor.source(), "first second");
+}
+
+#[test]
+fn utf16_documents_roundtrip_edit_stream_save_and_undo_encoding_conversion() {
+    use app::editor::TextEncoding;
+    for encoding in [TextEncoding::Utf16Le, TextEncoding::Utf16Be] {
+        let mut editor = EditorState::open("note.txt", "中文👩‍💻\r\n".as_bytes()).unwrap();
+        editor.apply(EditorCommand::SetEncoding {
+            encoding,
+            utf8_bom: false,
+        });
+        let bytes = editor.to_bytes();
+        let reopened = EditorState::open_owned("note.txt", bytes.clone()).unwrap();
+        assert_eq!(reopened.source(), "中文👩‍💻\r\n");
+        assert_eq!(reopened.document.metadata.encoding, encoding);
+        let snapshot = picker_snapshot(editor.apply(EditorCommand::RequestSaveAs));
+        let mut streamed = Vec::new();
+        snapshot.write_to(&mut streamed).unwrap();
+        assert_eq!(streamed, bytes);
+        editor.apply(EditorCommand::Undo);
+        assert_eq!(editor.document.metadata.encoding, TextEncoding::Utf8);
+        assert!(!editor.is_dirty());
+        editor.apply(EditorCommand::Redo);
+        editor.apply(EditorCommand::InsertText("🙂".into()));
+        assert_eq!(editor.document.metadata.encoding, encoding);
+        assert!(
+            EditorState::open("note.txt", &editor.to_bytes())
+                .unwrap()
+                .source()
+                .starts_with("🙂")
+        );
+    }
+    assert!(EditorState::open("bad.txt", &[0xff, 0xfe, 0]).is_err());
+    assert!(EditorState::open("bad.txt", &[0xff, 0xfe, 0x00, 0xd8]).is_err());
+}
+
 fn rich_container(editor: &EditorState) -> NodeId {
     editor
         .rich_cursor()
@@ -573,7 +666,6 @@ fn read_only_editor_blocks_mutating_commands_and_direct_source_replacement() {
         EditorCommand::Undo,
         EditorCommand::Redo,
         EditorCommand::RequestPaste,
-        EditorCommand::RequestOpen,
         EditorCommand::RequestSave,
         EditorCommand::RequestSaveAs,
         EditorCommand::ReplaceDocument(EditorDocument::from_text(

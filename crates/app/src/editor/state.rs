@@ -308,17 +308,22 @@ impl EditorState {
     }
 
     pub fn source_syntax_highlights_in(&self, lines: Range<usize>) -> Arc<[syntax::SyntaxToken]> {
+        let path = self
+            .document
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.document.display_name());
+        self.source_syntax_highlights_for_path(&path, lines)
+    }
+
+    pub fn source_syntax_highlights_for_path(
+        &self,
+        path: &str,
+        lines: Range<usize>,
+    ) -> Arc<[syntax::SyntaxToken]> {
         match &self.buffer {
-            EditorBuffer::Source(buffer) => buffer.syntax.get(
-                &self
-                    .document
-                    .path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| self.document.display_name()),
-                &buffer.text,
-                lines,
-            ),
+            EditorBuffer::Source(buffer) => buffer.syntax.get(path, &buffer.text, lines),
             _ => Arc::from([]),
         }
     }
@@ -487,7 +492,7 @@ impl EditorState {
                 .unwrap_or_else(|_| self.document.to_bytes()),
             EditorBuffer::Source(buffer) => {
                 let text = buffer.text();
-                bytes_with_bom(&text, self.document.metadata.utf8_bom)
+                encoded_bytes(&text, self.document.metadata)
             }
         }
     }
@@ -515,6 +520,7 @@ impl EditorState {
                 (&self.buffer, transaction),
                 (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
                     | (EditorBuffer::Source(_), EditTransaction::Source { .. })
+                    | (_, EditTransaction::Metadata { .. })
             )
         })
     }
@@ -525,6 +531,7 @@ impl EditorState {
                 (&self.buffer, transaction),
                 (EditorBuffer::Rich(_), EditTransaction::Rich { .. })
                     | (EditorBuffer::Source(_), EditTransaction::Source { .. })
+                    | (_, EditTransaction::Metadata { .. })
             )
         })
     }
@@ -666,6 +673,7 @@ impl EditorState {
         after_selection: Option<Selection>,
         kind: EditKind,
     ) -> bool {
+        let before_metadata = self.document.metadata;
         let before_cursor = self.cursor;
         let before_selection = self.selection;
         let before_revision = self.revision;
@@ -686,6 +694,8 @@ impl EditorState {
         self.revision = self.next_revision;
         self.next_revision = self.next_revision.saturating_add(1).max(1);
         self.undo_stack.push(EditTransaction::Source {
+            before_metadata,
+            after_metadata: self.document.metadata,
             start: range.start,
             removed,
             inserted: replacement.to_owned(),
@@ -730,6 +740,7 @@ impl EditorState {
     }
 
     pub(super) fn refresh_metadata_from_active_source(&mut self) {
+        let encoding = self.document.metadata.encoding;
         let fallback = self.document.metadata.preferred_line_ending;
         self.document.metadata = match &self.buffer {
             EditorBuffer::Source(buffer) => {
@@ -744,6 +755,7 @@ impl EditorState {
                 )
             }
         };
+        self.document.metadata.encoding = encoding;
     }
 
     pub(super) fn set_mode(&mut self, mode: EditorMode) {
@@ -863,6 +875,7 @@ impl EditorState {
                 buffer.word_count,
                 buffer.line_endings,
                 self.document.metadata.utf8_bom,
+                self.document.metadata.encoding,
             ),
         };
         self.pending_saves

@@ -674,14 +674,7 @@ impl ShellSession {
             self.begin_config_editor(path, None, None, None, "system".into());
             return self.config_editor_active();
         }
-        let replacing_dirty = self.editor_open_reuses_document()
-            && self.app.editor_state().is_some_and(EditorState::is_dirty);
-        if replacing_dirty && !self.pages.editor.editor_discard_for_open {
-            self.report_editor_error(
-                i18n::LocalizedText::from(i18n::msg!("shell-the-current-document-has-unsaved-changes-use-open-in-the-editor-and-choose-save-or-discard-first")),
-            );
-            return false;
-        }
+        let replacing_dirty = false;
         if !self.authorize_editor_file(PermissionAction::ReadFile, &path) {
             return false;
         }
@@ -712,38 +705,6 @@ impl ShellSession {
             self.pages.common.error_message = Some(message.clone());
             self.notify_page_alert_with_key(EDITOR_ALERT_KEY, message, ui::NotificationTone::Error);
         }
-    }
-
-    pub(in crate::session) fn confirm_editor_open(&mut self) {
-        self.notify_modal_with_options(
-            ShellNotification::modal(
-                i18n::LocalizedText::from(i18n::msg!("shell-unsaved-document")),
-                i18n::LocalizedText::from(i18n::msg!(
-                    "shell-save-your-changes-before-opening-another-document"
-                )),
-                ui::NotificationTone::Warning,
-                vec![
-                    ShellNotificationAction::new(
-                        "save",
-                        i18n::LocalizedText::from(i18n::msg!("shell-save")),
-                    )
-                    .with_follow_up(ShellCommand::EditorSaveAndOpen),
-                    ShellNotificationAction::new(
-                        "discard",
-                        i18n::LocalizedText::from(i18n::msg!("shell-discard")),
-                    )
-                    .with_follow_up(ShellCommand::EditorDiscardAndOpen),
-                    ShellNotificationAction::new(
-                        "cancel",
-                        i18n::LocalizedText::from(i18n::msg!("shell-cancel")),
-                    )
-                    .cancel()
-                    .with_follow_up(ShellCommand::EditorCancelOpen),
-                ],
-            )
-            .with_key(EDITOR_OPEN_NOTIFICATION_KEY)
-            .with_component(ShellComponent::NotificationDialog),
-        );
     }
 
     pub(in crate::session) fn open_editor_picker(&mut self, platform: &dyn Platform) {

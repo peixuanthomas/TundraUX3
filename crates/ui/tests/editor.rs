@@ -1,7 +1,130 @@
 mod support;
 
 #[test]
-fn toolbar_and_menu_shortcuts_fit_their_clickable_buttons() {
+fn inline_search_layout_and_hit_targets_stay_inside_resized_editor() {
+    use ui::{EditorSearchBar, EditorSearchControl};
+    let mut model = EditorViewModel::source("note.txt", "one\ntwo\nthree");
+    model.search_bar = Some(EditorSearchBar {
+        replace: true,
+        ..Default::default()
+    });
+    for width in [30, 50, 80, 140] {
+        for height in [6, 12, 30] {
+            for focus in ui::editor_search_controls(true) {
+                model.search_bar.as_mut().unwrap().focus = Some(focus);
+                let area = Rect::new(3, 4, width, height);
+                let layout = editor_layout(area, &model);
+                for (control, rect) in &layout.search_items {
+                    assert!(rect.x >= area.x && rect.right() <= area.right());
+                    assert!(rect.y >= area.y && rect.bottom() <= layout.status_bar.y);
+                    assert_eq!(
+                        layout.hit_test(rect.x, rect.y),
+                        Some(EditorHitTarget::Search(*control))
+                    );
+                }
+                assert!(
+                    layout
+                        .search_items
+                        .iter()
+                        .any(|(control, _)| *control == focus),
+                    "{width}x{height}: {focus:?}"
+                );
+                assert!(
+                    layout
+                        .search_items
+                        .iter()
+                        .all(|(_, r)| r.bottom() <= layout.canvas_panel.y)
+                );
+                assert!(
+                    layout
+                        .search_items
+                        .iter()
+                        .any(|(c, _)| *c == EditorSearchControl::Query)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn edit_menu_buttons_use_shared_hover_pressed_and_keyboard_colours() {
+    use ui::components::{ButtonFrame, ButtonRegion};
+    let mut model = EditorViewModel::source("note.txt", "hello");
+    model.focus = EditorFocus::MenuBar;
+    model.selected_menu = EditorMenu::Edit;
+    let layout = editor_layout(Rect::new(0, 0, 80, 20), &model);
+    let item = layout
+        .menus
+        .iter()
+        .find(|m| m.menu == EditorMenu::Edit)
+        .unwrap();
+    for accent in [Color::Cyan, Color::Rgb(170, 40, 120)] {
+        for (hovered, pressed, keyboard, expected) in [
+            (false, false, true, accent),
+            (true, false, false, accent),
+            (
+                true,
+                true,
+                false,
+                TundraTheme::default_dark()
+                    .with_accent_color(accent)
+                    .button_pressed_color(),
+            ),
+        ] {
+            let mut theme = TundraTheme::default_dark().with_accent_color(accent);
+            let region = ButtonRegion {
+                id: "editor.menu.Edit".into(),
+                area: item.area,
+                disabled: false,
+            };
+            let mut buttons = ButtonFrame::new(
+                hovered.then_some(region.clone()),
+                pressed.then_some(region),
+                &theme,
+            );
+            buttons.keyboard_focus_visible = keyboard;
+            theme.buttons = Some(buttons);
+            let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_editor(frame, frame.area(), &model, &theme);
+                })
+                .unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[(item.area.x + 1, item.area.y)].fg,
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn short_editor_menu_exposes_a_touch_scroll_track_and_keeps_last_action_visible() {
+    let mut model = EditorViewModel::source("note.txt", "text");
+    model.open_menu = Some(EditorMenu::File);
+    model.selected_menu_action = ui::editor_menu_actions(EditorMenu::File).len() - 1;
+    let layout = editor_layout(Rect::new(3, 4, 50, 6), &model);
+    let track = layout
+        .menu_scrollbar
+        .expect("scroll track for clipped menu");
+    assert_eq!(
+        layout.hit_test(track.x, track.y),
+        Some(EditorHitTarget::MenuScroll)
+    );
+    assert_eq!(
+        layout.menu_items.last().unwrap().action,
+        *ui::editor_menu_actions(EditorMenu::File).last().unwrap()
+    );
+    assert!(
+        layout
+            .menu_items
+            .iter()
+            .all(|item| item.area.right() <= track.x)
+    );
+}
+
+#[test]
+fn edit_menus_show_shortcuts_and_omit_the_toolbar() {
     for locale in ["en-US", "zh-CN"] {
         let assets =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
@@ -10,29 +133,36 @@ fn toolbar_and_menu_shortcuts_fit_their_clickable_buttons() {
             .snapshot;
         let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
         let mut model = sample_model();
+        model.open_menu = Some(EditorMenu::File);
         let layout = editor_layout(Rect::new(0, 0, 108, 24), &model);
-        let terminal = render(&model, 108, 24);
-        for (action, key) in [
-            (EditorToolbarAction::New, "Ctrl+N"),
-            (EditorToolbarAction::Open, "Ctrl+O"),
-            (EditorToolbarAction::Save, "Ctrl+S"),
-            (EditorToolbarAction::Undo, "Ctrl+Z"),
-            (EditorToolbarAction::Redo, "Ctrl+Y"),
-            (EditorToolbarAction::Find, "Ctrl+F"),
+        assert!(layout.toolbar.is_empty());
+        assert!(layout.toolbar_items.is_empty());
+        assert_eq!(
+            layout.menus.iter().map(|m| m.menu).collect::<Vec<_>>(),
+            vec![
+                EditorMenu::File,
+                EditorMenu::Edit,
+                EditorMenu::View,
+                EditorMenu::Help
+            ]
+        );
+        let output = terminal_output(&render(&model, 108, 24));
+        for key in [
+            "Ctrl+N",
+            "Ctrl+O",
+            "Ctrl+S",
+            "Ctrl+Shift+S",
+            "Ctrl+W",
+            "Ctrl+Q",
         ] {
-            let item = toolbar_item(&layout, action);
-            let text: String = (item.area.x..item.area.right())
-                .map(|x| terminal.backend().buffer()[(x, item.area.y)].symbol())
-                .collect();
-            assert!(text.contains(key) && text.contains(']'), "{text}");
+            assert!(output.contains(key), "{output}");
+        }
+        for item in layout.menu_items.iter().filter(|i| i.enabled) {
             assert_eq!(
                 layout.hit_test(item.area.x, item.area.y),
-                item.enabled.then_some(EditorHitTarget::Toolbar(action))
+                Some(EditorHitTarget::MenuAction(item.action))
             );
         }
-        model.open_menu = Some(EditorMenu::File);
-        let output = terminal_output(&render(&model, 108, 24));
-        assert!(output.contains("Ctrl+S"));
     }
 }
 
@@ -155,13 +285,16 @@ fn filled_editor_selection_and_status_follow_light_and_dark_accents() {
             assert_eq!(cell.fg, foreground);
             let status = editor_layout(Rect::new(0, 0, 80, 18), &model).status_bar;
             let cell = &terminal.backend().buffer()[(status.x, status.y)];
-            let background = if focus == EditorFocus::StatusBar {
-                accent
-            } else {
-                theme.muted
-            };
+            let background = theme.muted;
             assert_eq!(cell.bg, background);
-            assert_eq!(cell.fg, theme.tokens().filled_style(background).fg.unwrap());
+            assert_eq!(
+                cell.fg,
+                if focus == EditorFocus::StatusBar {
+                    accent
+                } else {
+                    theme.tokens().filled_style(background).fg.unwrap()
+                }
+            );
         }
     }
 }
@@ -329,23 +462,12 @@ fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available()
     let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
 
     assert_eq!(layout.menu_bar, Rect::new(0, 0, 50, 1));
-    assert_eq!(layout.toolbar, Rect::new(0, 1, 50, 1));
+    assert!(layout.toolbar.is_empty());
     assert_eq!(layout.status_bar, Rect::new(0, 11, 50, 1));
-    assert!(layout.canvas.height >= 7);
-    assert!(layout.toolbar_overflow);
-
-    let save = toolbar_item(&layout, EditorToolbarAction::Save);
-    assert_eq!(
-        layout.hit_test(save.area.x, save.area.y),
-        Some(EditorHitTarget::Toolbar(EditorToolbarAction::Save))
-    );
+    assert!(layout.canvas.height >= 9);
+    assert!(!layout.toolbar_overflow);
+    assert!(layout.toolbar_items.is_empty());
     assert!(layout.modes.is_empty());
-    assert!(
-        layout
-            .toolbar_items
-            .iter()
-            .any(|item| item.action == EditorToolbarAction::More)
-    );
 }
 
 #[test]
@@ -355,15 +477,10 @@ fn shell_minimum_main_height_degrades_without_losing_the_editing_canvas() {
 
     assert!(!layout.canvas_framed);
     assert_eq!(layout.menu_bar.height, 1);
-    assert_eq!(layout.toolbar.height, 1);
-    assert_eq!(layout.canvas.height, 3);
+    assert_eq!(layout.toolbar.height, 0);
+    assert_eq!(layout.canvas.height, 4);
     assert_eq!(layout.status_bar.height, 1);
-    assert!(
-        layout
-            .toolbar_items
-            .iter()
-            .any(|item| item.action == EditorToolbarAction::Save)
-    );
+    assert!(layout.toolbar_items.is_empty());
     assert!(layout.modes.is_empty());
 }
 
@@ -439,7 +556,7 @@ fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
         layout
             .menus
             .iter()
-            .any(|menu| menu.menu == EditorMenu::Settings)
+            .any(|menu| menu.menu == EditorMenu::File)
     );
     let settings = layout.settings.as_ref().expect("settings modal");
     let increase_delay = settings
@@ -720,12 +837,12 @@ fn wide_rich_no_wrap_line_exposes_and_renders_a_horizontal_scrollbar() {
 
 #[test]
 fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
-    // Three raw lines exactly fill the unreserved canvas. The wide first line
+    // Six raw lines exactly fill the unreserved canvas. The wide first line
     // adds a horizontal bar, whose row then makes a vertical bar necessary.
     let model = EditorViewModel::new(
         "both.md",
         vec![EditorRenderBlock::RawHtml(format!(
-            "{}\nsecond\nthird",
+            "{}\nsecond\nthird\nfourth\nfifth\nsixth",
             "x".repeat(50)
         ))],
     );
@@ -734,8 +851,8 @@ fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
     let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
     let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
 
-    assert_eq!(layout.canvas.width, 47);
-    assert_eq!(layout.canvas.height, 2);
+    assert_eq!(layout.canvas.width, 49);
+    assert_eq!(layout.canvas.height, 5);
     assert_eq!(vertical.track.height, layout.canvas.height);
     assert_eq!(horizontal.track.width, layout.canvas.width);
     assert_eq!(vertical.track.bottom(), horizontal.track.y);
@@ -744,18 +861,18 @@ fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
 
 #[test]
 fn source_scrollbars_reach_a_fixed_point_without_overlapping() {
-    // Four lines require a vertical bar. That column reduces an exactly
-    // fitting 44-cell line plus its caret cell to 44 cells, which then also
+    // Seven lines require a vertical bar. That column reduces an exactly
+    // fitting 47-cell line plus its caret cell to 46 cells, which then also
     // requires a horizontal bar; the new bottom row must keep the vertical
     // bar necessary.
-    let source = format!("{}\na\nb\nc", "x".repeat(44));
+    let source = format!("{}\na\nb\nc\nd\ne\nf", "x".repeat(47));
     let model = EditorViewModel::source("both.log", source);
     let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
     let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
     let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
 
-    assert_eq!(layout.canvas.width, 44);
-    assert_eq!(layout.canvas.height, 2);
+    assert_eq!(layout.canvas.width, 46);
+    assert_eq!(layout.canvas.height, 5);
     assert_eq!(vertical.track.height, layout.canvas.height);
     assert_eq!(horizontal.track.width, layout.canvas.width);
     assert_eq!(vertical.track.bottom(), horizontal.track.y);
@@ -820,13 +937,13 @@ fn source_horizontal_layout_handles_unicode_and_tiny_areas() {
 
 #[test]
 fn end_caret_on_an_exactly_fitting_source_line_remains_visible() {
-    let mut model = EditorViewModel::source("exact.log", "x".repeat(45));
+    let mut model = EditorViewModel::source("exact.log", "x".repeat(47));
     model.horizontal_scroll = 1;
-    model.cursor = Some(EditorTextPosition::new(0, 45));
+    model.cursor = Some(EditorTextPosition::new(0, 47));
     let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
     let mut terminal = render(&model, 50, 8);
 
-    assert_eq!(model.horizontal_content_width, 46);
+    assert_eq!(model.horizontal_content_width, 48);
     assert!(layout.horizontal_scrollbar.is_some());
     assert_eq!(layout.horizontal_scroll, 1);
     assert_eq!(
@@ -957,13 +1074,13 @@ fn wrapped_rich_lines_keep_exact_source_offsets() {
     let layout = editor_layout(Rect::new(0, 0, 20, 10), &model);
     let continuation = line_area(&layout, 1);
 
-    assert_eq!(layout.canvas.width, 18);
+    assert_eq!(layout.canvas.width, 20);
     assert_eq!(
         layout
             .hit_test_source(continuation.area.x, continuation.area.y)
             .expect("mapped continuation")
             .byte_offset,
-        18
+        20
     );
 }
 
@@ -1459,11 +1576,23 @@ fn overflowing_document_exposes_proportional_scrollbar_and_scrolled_hits() {
 fn read_only_editor_disables_mutating_toolbar_controls() {
     let mut model = EditorViewModel::source("diagnostics.log", "diagnostic output");
     model.read_only = true;
-    let layout = editor_layout(Rect::new(0, 0, 100, 24), &model);
-
-    assert!(!toolbar_item(&layout, EditorToolbarAction::Save).enabled);
-    assert!(!toolbar_item(&layout, EditorToolbarAction::Undo).enabled);
-    assert!(!toolbar_item(&layout, EditorToolbarAction::Open).enabled);
+    for (menu, action) in [
+        (EditorMenu::File, EditorToolbarAction::Save),
+        (EditorMenu::Edit, EditorToolbarAction::Undo),
+    ] {
+        model.open_menu = Some(menu);
+        let layout = editor_layout(Rect::new(0, 0, 100, 24), &model);
+        let item = layout
+            .menu_items
+            .iter()
+            .find(|i| i.action == EditorMenuAction::Toolbar(action))
+            .unwrap();
+        assert!(!item.enabled);
+        assert_eq!(
+            layout.hit_test(item.area.x, item.area.y),
+            Some(EditorHitTarget::MenuPopup)
+        );
+    }
 
     let mut rich = sample_model();
     rich.read_only = true;
@@ -1576,18 +1705,6 @@ fn render(model: &EditorViewModel, width: u16, height: u16) -> Terminal<TestBack
         })
         .expect("render editor");
     terminal
-}
-
-fn toolbar_item(
-    layout: &ui::EditorLayout,
-    action: EditorToolbarAction,
-) -> ui::EditorToolbarItemLayout {
-    layout
-        .toolbar_items
-        .iter()
-        .copied()
-        .find(|item| item.action == action)
-        .expect("toolbar item")
 }
 
 fn line_area(layout: &ui::EditorLayout, document_line: usize) -> ui::EditorLineLayout {

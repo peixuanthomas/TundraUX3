@@ -29,9 +29,68 @@ pub fn render_editor_contextual(
     Surface::new().render_frame(frame, area, context);
     render_menu_bar(frame, &layout, model, theme, context);
     render_toolbar(frame, &layout, model, theme, context);
+    render_search_bar(frame, &layout, model, theme);
     render_canvas(frame, &layout, model, theme, context);
     render_status_bar(frame, &layout, model, theme);
     layout
+}
+
+fn render_search_bar(
+    frame: &mut Frame<'_>,
+    layout: &EditorLayout,
+    model: &EditorViewModel,
+    theme: &TundraTheme,
+) {
+    use EditorSearchControl::*;
+    let Some(search) = &model.search_bar else {
+        return;
+    };
+    for (control, area) in &layout.search_items {
+        let focused = search.focus == Some(*control);
+        match control {
+            Query | Replacement => {
+                let mut input = if *control == Query {
+                    search.query.clone()
+                } else {
+                    search.replacement.clone()
+                };
+                input.set_focused(focused);
+                input.render_borderless_frame_with_prefix(
+                    frame,
+                    *area,
+                    theme,
+                    &format!(" {}: ", editor_search_label(*control)),
+                );
+            }
+            _ => {
+                let checked = match control {
+                    MatchCase => Some(search.options.case_sensitive),
+                    WholeWord => Some(search.options.whole_word),
+                    Regex => Some(search.options.regex),
+                    _ => None,
+                };
+                let label = format!(
+                    "{}{}",
+                    checked.map_or(String::new(), |checked| if checked {
+                        "[x] "
+                    } else {
+                        "[ ] "
+                    }
+                    .into()),
+                    editor_search_label(*control)
+                );
+                render_editor_button(
+                    frame,
+                    *area,
+                    format!("editor.search.{control:?}"),
+                    label,
+                    focused,
+                    model.read_only && matches!(control, Replace | ReplaceAll),
+                    theme,
+                );
+            }
+        }
+    }
 }
 
 pub fn render_editor_overlay(
@@ -64,19 +123,13 @@ fn render_menu_bar(
         .render_frame(frame, layout.menu_bar, context);
     for item in &layout.menus {
         let active = model.open_menu == Some(item.menu)
-            || (item.menu == EditorMenu::Settings && model.settings.is_some());
-        let mut item_theme = theme.clone();
-        if !active {
-            item_theme.background = theme.muted;
-            if model.focus == EditorFocus::MenuBar {
-                item_theme.foreground = theme.accent_color;
-            }
-        }
+            || (model.focus == EditorFocus::MenuBar && model.selected_menu == item.menu);
+        let item_theme = theme.clone();
         render_editor_button(
             frame,
             item.area,
             format!("editor.menu.{:?}", item.menu),
-            format!(" {} ", menu_label(item.menu)),
+            menu_bar_label(item.menu),
             active,
             false,
             &item_theme,
@@ -99,6 +152,37 @@ fn render_menu_bar(
             &item_theme,
         );
     }
+    let start = layout
+        .menus
+        .last()
+        .map_or(layout.menu_bar.x, |item| item.area.right());
+    let mut title = model
+        .status_message
+        .clone()
+        .unwrap_or_else(|| model.file_name.clone());
+    if model.read_only {
+        title = i18n::tr!("ui-editor-read-only-title", title = model.file_name.clone());
+        if model
+            .read_window
+            .is_some_and(|window| window.start_byte > 0)
+        {
+            title = i18n::tr!("ui-editor-tail-title", title = title);
+        }
+    }
+    if model.dirty {
+        title.push_str(" *");
+    }
+    frame.render_widget(
+        Paragraph::new(terminal_safe_text(&title).into_owned())
+            .alignment(HorizontalAlignment::Right)
+            .style(theme.body_style()),
+        Rect::new(
+            start,
+            layout.menu_bar.y,
+            layout.menu_bar.right().saturating_sub(start),
+            layout.menu_bar.height,
+        ),
+    );
 }
 
 fn render_menu_popup(
@@ -137,9 +221,23 @@ fn render_menu_popup(
         })
         .collect();
     let mut list = List::new("editor.menu.actions", items);
-    list.set_selected(None);
+    let first = model
+        .selected_menu_action
+        .saturating_add(1)
+        .saturating_sub(layout.menu_items.len());
+    list.set_selected(Some(model.selected_menu_action.saturating_sub(first)));
     list.set_focused(model.focus == EditorFocus::MenuBar);
     list.render_borderless_frame(frame, list_area, theme);
+    if let Some(track) = layout.menu_scrollbar
+        && let Some(menu) = model.open_menu
+    {
+        Scrollbar::new(
+            editor_menu_actions(menu).len(),
+            layout.menu_items.len(),
+            first,
+        )
+        .render_frame(frame, track, context);
+    }
 }
 
 fn render_quick_menu(
@@ -392,7 +490,7 @@ fn render_editor_button(
     disabled: bool,
     theme: &TundraTheme,
 ) {
-    let mut button = Button::new(id, label);
+    let mut button = Button::new(id, label).with_bracketed_label(false);
     button.state.selected = selected;
     button.set_disabled(disabled);
     button.render_borderless_frame(frame, area, theme);
@@ -606,74 +704,61 @@ fn render_status_bar(
         effective_cursor(layout, model)
     }
     .unwrap_or_default();
-    let image = match model.image_protocol {
-        EditorImageProtocolStatus::Detecting => i18n::tr!("ui-editor-image-detecting"),
-        EditorImageProtocolStatus::Unsupported => i18n::tr!("ui-editor-image-fallback"),
-        EditorImageProtocolStatus::Available => i18n::tr!("ui-editor-image-terminal"),
-    };
-    let mode = mode_label(model.mode);
-    let read_window = model.read_window.map(|window| {
-        if window.total_bytes == 0 {
-            i18n::tr!("ui-editor-bytes-0-of-0")
-        } else {
-            let start = window.start_byte.min(window.total_bytes.saturating_sub(1));
+    let style = theme.tokens().filled_style(theme.muted);
+    frame.render_widget(Paragraph::new("").style(style), layout.status_bar);
+    let mut status_theme = theme.clone();
+    status_theme.background = theme.muted;
+    status_theme.foreground = style.fg.unwrap_or(theme.foreground);
+    for (index, item) in layout.status_items.iter().enumerate() {
+        let label = model
+            .status_actions
+            .iter()
+            .find(|(action, _)| *action == item.action)
+            .map_or("", |(_, label)| label.as_str());
+        render_editor_button(
+            frame,
+            item.area,
+            format!("editor.status.{:?}", item.action),
+            format!(" {} ", terminal_safe_text(label)),
+            model.focus == EditorFocus::StatusBar && model.selected_menu_action == index,
+            !item.enabled,
+            &status_theme,
+        );
+    }
+    let start = layout
+        .status_items
+        .last()
+        .map_or(layout.status_bar.x, |item| item.area.right());
+    let remaining = layout.status_bar.right().saturating_sub(start);
+    let mut right = format!(
+        "{}:{} {}{}",
+        cursor.line + 1,
+        cursor.column + 1,
+        terminal_safe_text(&model.file_name),
+        if model.dirty { " *" } else { "" }
+    );
+    if model.reload_available {
+        right = i18n::tr!(
+            "ui-editor-reload-help",
+            left = i18n::tr!("ui-editor-read-only")
+        );
+    }
+    if let Some(window) = model.read_window {
+        right.push_str(&format!(
+            "  {}",
             i18n::tr!(
                 "ui-editor-byte-window",
-                start = start.saturating_add(1),
+                start = window.start_byte.saturating_add(1).min(window.total_bytes),
                 end = window.total_bytes,
                 total = window.total_bytes
             )
-        }
-    });
-    let left = model.status_message.clone().unwrap_or_else(|| {
-        if model.read_only {
-            i18n::tr!("ui-editor-read-only")
-        } else {
-            i18n::tr!("ui-editor-ready")
-        }
-    });
-    let left = if model.reload_available {
-        i18n::tr!("ui-editor-reload-help", left = left)
-    } else {
-        left.to_string()
-    };
-    let right = i18n::tr!(
-        "ui-editor-status",
-        mode = mode,
-        line = cursor.line.saturating_add(1),
-        column = cursor.column.saturating_add(1),
-        count = model.word_count.clone(),
-        encoding = model.encoding.clone(),
-        line_ending = model.line_ending.clone(),
-        protocol = image,
-        window = read_window.map_or_else(String::new, |window| format!("  {window}"))
-    );
-    let available = usize::from(layout.status_bar.width);
-    let left_width = terminal_width(&left);
-    let right_width = terminal_width(&right);
-    let text = if available == 0 {
-        String::new()
-    } else if left_width.saturating_add(right_width).saturating_add(2) <= available {
-        format!(
-            "{}{}{}",
-            left,
-            " ".repeat(available - left_width - right_width),
-            right
-        )
-    } else {
-        fit_text(&format!("{} | {}", left, right), available)
-    };
-    let text = terminal_safe_text(&text).into_owned();
-    let style = if model.focus == EditorFocus::StatusBar {
-        theme.tokens().filled_style(theme.accent_color)
-    } else {
-        theme.tokens().filled_style(theme.muted)
-    };
+        ));
+    }
     frame.render_widget(
-        Paragraph::new(text)
-            .alignment(HorizontalAlignment::Left)
+        Paragraph::new(fit_text(&right, usize::from(remaining)))
+            .alignment(HorizontalAlignment::Right)
             .style(style),
-        layout.status_bar,
+        Rect::new(start, layout.status_bar.y, remaining, 1),
     );
 }
 

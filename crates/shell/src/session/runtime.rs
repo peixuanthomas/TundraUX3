@@ -1531,6 +1531,7 @@ fn session_has_background_work(state: &ShellSession) -> bool {
         || state.pages.editor.editor_load_state.is_some()
         || state.pages.editor.editor_save_state.is_some()
         || state.pages.editor.editor_preview_request.is_some()
+        || state.pages.editor.editor_inline_replace_request.is_some()
         || state
             .app
             .editor_state()

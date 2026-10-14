@@ -434,6 +434,10 @@ impl AppState {
         self.page_models.editor.state.as_ref()
     }
 
+    pub fn editor_state_for_page(&self, id: PageInstanceId) -> Option<&EditorState> {
+        self.page_models.editor.get(id)?.state.as_ref()
+    }
+
     pub fn poll_editor_computations(&mut self) -> crate::editor::BackgroundUpdate {
         self.page_models
             .editor

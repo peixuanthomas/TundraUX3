@@ -146,10 +146,18 @@ fn editor_form_receives_paste_without_changing_the_document() {
     let before = state.app.editor_state().cloned();
     state.apply_input(InputEvent::Paste("search text".into()));
     assert_eq!(
-        state.to_management_view_model().form.unwrap().fields[0].value,
+        state
+            .to_editor_view_model()
+            .search_bar
+            .unwrap()
+            .query
+            .value(),
         "search text"
     );
-    assert_eq!(state.app.editor_state().cloned(), before);
+    assert_eq!(
+        state.app.editor_state().unwrap().source(),
+        before.unwrap().source()
+    );
 }
 
 #[test]

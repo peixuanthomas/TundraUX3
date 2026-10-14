@@ -28,6 +28,21 @@ impl ShellSession {
             model.text_sizing_protocol = self.terminal_text_sizing_support;
             return model;
         };
+        let language_path = self
+            .pages
+            .editor
+            .editor_language
+            .as_deref()
+            .map(editor_language_path)
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                state
+                    .document
+                    .path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| state.document.display_name())
+            });
         let mut model = match state.mode {
             app::editor::EditorMode::Rich => {
                 let mut model = if let Some(cache) = self
@@ -104,8 +119,8 @@ impl ShellSession {
                     lines,
                 );
                 if !self.pages.editor.editor_soft_wrap {
-                    model.syntax_highlights =
-                        state.source_syntax_highlights_in(first_line..end_line);
+                    model.syntax_highlights = state
+                        .source_syntax_highlights_for_path(&language_path, first_line..end_line);
                 }
                 if let Some(search) = &state.search
                     && search.revision == state.revision()
@@ -170,6 +185,73 @@ impl ShellSession {
         model.mode = state.mode;
         model.focus = self.pages.editor.editor_focus;
         model.open_menu = self.pages.editor.editor_open_menu;
+        model.search_bar = self.pages.editor.editor_search_bar.clone();
+        model.selected_menu = self.pages.editor.editor_selected_menu;
+        model.selected_menu_action = self.pages.editor.editor_menu_index;
+        model.status_actions = vec![
+            (
+                ui::EditorMenuAction::Language,
+                self.pages
+                    .editor
+                    .editor_language
+                    .clone()
+                    .unwrap_or_else(|| {
+                        state
+                            .document
+                            .path
+                            .as_ref()
+                            .and_then(|p| p.extension())
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Text")
+                            .to_owned()
+                    }),
+            ),
+            (
+                ui::EditorMenuAction::LineEnding,
+                editor_line_ending_label(state.document.metadata),
+            ),
+            (
+                ui::EditorMenuAction::Encoding,
+                state
+                    .document
+                    .metadata
+                    .encoding
+                    .label(state.document.metadata.utf8_bom)
+                    .into(),
+            ),
+            (
+                ui::EditorMenuAction::Indentation,
+                format!(
+                    "{}:{}",
+                    if self.pages.editor.editor_indent_tabs {
+                        "Tab"
+                    } else {
+                        "Space"
+                    },
+                    self.pages.editor.editor_indent_width
+                ),
+            ),
+        ];
+        model.status_actions.push((
+            ui::EditorMenuAction::GoToLine,
+            format!(
+                "Ctrl+G {}:{}",
+                model.cursor.unwrap_or_default().line + 1,
+                model.cursor.unwrap_or_default().column + 1
+            ),
+        ));
+        model.status_actions.push((
+            ui::EditorMenuAction::GoToFile,
+            format!(
+                "Ctrl+P {}{}",
+                state.document.display_name(),
+                if self.editor_document_pages().len() > 1 {
+                    format!(" +{}", self.editor_document_pages().len() - 1)
+                } else {
+                    String::new()
+                }
+            ),
+        ));
         model.settings = self.editor_settings_view_model();
         let has_selection = state.has_selection();
         model.quick_menu = self
@@ -198,11 +280,12 @@ impl ShellSession {
         model.toolbar.can_copy = has_selection;
         model.toolbar.can_paste = !state.is_read_only() && !saving;
         model.word_count = state.word_count();
-        model.encoding = if state.document.metadata.utf8_bom {
-            "UTF-8 BOM".to_string()
-        } else {
-            "UTF-8".to_string()
-        };
+        model.encoding = state
+            .document
+            .metadata
+            .encoding
+            .label(state.document.metadata.utf8_bom)
+            .into();
         model.line_ending = editor_line_ending_label(state.document.metadata);
         model.image_protocol = ui::EditorImageProtocolStatus::Unsupported;
         model.text_sizing_protocol = self.terminal_text_sizing_support;
@@ -254,7 +337,8 @@ impl ShellSession {
                 let first = model.scroll_line.min(wrapped.row_count() - 1);
                 let last =
                     (first + usize::from(self.terminal_size.1) + 4).min(wrapped.row_count() - 1);
-                model.syntax_highlights = state.source_syntax_highlights_in(
+                model.syntax_highlights = state.source_syntax_highlights_for_path(
+                    &language_path,
                     wrapped.row(first).unwrap().logical_line
                         ..wrapped.row(last).unwrap().logical_line + 1,
                 );
@@ -264,11 +348,19 @@ impl ShellSession {
                     model.status_message = Some(i18n::tr!("editor-wrap-working"));
                 }
                 if let Some(window) = &model.source_window {
-                    model.syntax_highlights = state.source_syntax_highlights_in(
+                    model.syntax_highlights = state.source_syntax_highlights_for_path(
+                        &language_path,
                         window.first_line..window.first_line + window.lines.len(),
                     );
                 }
             }
+        }
+        if let Some(error) = model
+            .search_bar
+            .as_ref()
+            .and_then(|search| search.message.as_ref())
+        {
+            model.status_message = Some(error.clone());
         }
         model
     }
@@ -289,5 +381,24 @@ impl ShellSession {
                 vertical_max_step: dialog.draft.cursor_vertical_max_step,
                 selected: dialog.selected,
             })
+    }
+}
+
+fn editor_language_path(language: &str) -> &'static str {
+    match language {
+        "Rust" => "file.rs",
+        "C" => "file.c",
+        "C++" => "file.cpp",
+        "JSON" => "file.json",
+        "Python" => "file.py",
+        "JavaScript" => "file.js",
+        "TypeScript" => "file.ts",
+        "Markdown" => "file.md",
+        "TOML" => "file.toml",
+        "YAML" => "file.yaml",
+        "HTML" => "file.html",
+        "CSS" => "file.css",
+        "Shell" => "file.sh",
+        _ => "file.txt",
     }
 }

@@ -1,6 +1,8 @@
 mod files;
 mod input;
+mod menus;
 mod recovery;
+mod search_bar;
 mod settings;
 pub(in crate::session) mod tasks;
 mod view;
@@ -226,6 +228,7 @@ pub(in crate::session) fn editor_recovery_metadata(
     metadata: app::editor::TextMetadata,
 ) -> app::editor_recovery::RecoveryTextMetadata {
     app::editor_recovery::RecoveryTextMetadata {
+        encoding: metadata.encoding,
         utf8_bom: metadata.utf8_bom,
         preferred_line_ending: match metadata.preferred_line_ending {
             app::editor::LineEnding::Lf => app::editor_recovery::RecoveryLineEnding::Lf,
@@ -241,6 +244,7 @@ pub(in crate::session) fn editor_metadata_from_recovery(
     metadata: app::editor_recovery::RecoveryTextMetadata,
 ) -> app::editor::TextMetadata {
     app::editor::TextMetadata {
+        encoding: metadata.encoding,
         utf8_bom: metadata.utf8_bom,
         preferred_line_ending: match metadata.preferred_line_ending {
             app::editor_recovery::RecoveryLineEnding::Lf => app::editor::LineEnding::Lf,
@@ -754,11 +758,7 @@ impl ShellSession {
                 ))),
             },
             app::editor::EditorEffect::OpenFilePicker => {
-                if self.app.editor_state().is_some_and(EditorState::is_dirty) {
-                    self.confirm_editor_open();
-                } else {
-                    self.open_editor_picker(platform);
-                }
+                self.open_editor_picker(platform);
             }
             app::editor::EditorEffect::SaveFile { path, snapshot } => {
                 self.save_editor_document(path, snapshot, platform);
@@ -812,7 +812,16 @@ impl ShellSession {
             return;
         };
         self.notification_dismiss_modal_by_key(EDITOR_CLOSE_NOTIFICATION_KEY);
+        let exit_group = self.pages.editor.editor_exit_group;
         self.request_page_close_after_editor_check(owner, discard);
+        if exit_group
+            && self.active_screen() == ShellScreen::Editor
+            && self.active_page_id() != owner
+        {
+            self.pages.editor.editor_exit_group = true;
+            let platform = platform::native_platform();
+            self.apply_editor_command(app::editor::EditorCommand::RequestClose, platform.as_ref());
+        }
     }
 
     pub(in crate::session) fn report_editor_error(

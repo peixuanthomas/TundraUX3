@@ -105,3 +105,32 @@ editor-search-count = 匹配 { $current } / { $count } · F3 / Shift+F3
 editor-search-working = 正在搜索…
 editor-search-preview-limit = 替换预览超过 10,000 处匹配或 8 MiB，请缩小搜索范围后再应用。
 editor-wrap-working = 正在计算软换行…
+
+ui-editor-help = 帮助
+ui-editor-save-as = 另存为
+ui-editor-close = 关闭文件
+ui-editor-exit = 退出编辑器
+ui-editor-cut = 剪切
+ui-editor-copy = 复制
+ui-editor-paste = 粘贴
+ui-editor-select-all = 全选
+ui-editor-go-to-line = 转到行
+ui-editor-go-to-file = 转到文件
+ui-editor-focus-status = 聚焦状态栏
+ui-editor-about = 关于
+ui-editor-language = 语言
+ui-editor-line-ending = 换行
+ui-editor-encoding = 编码
+ui-editor-indentation = 缩进
+
+ui-editor-goto-help = 输入行号，或行号:列号（从 1 开始）。
+ui-editor-about-text = Tundra 编辑器
+    界面与操作参考 Microsoft Edit（MIT）。
+    Alt+F/E/V/H 菜单 · F10 菜单焦点 · Ctrl+G 转到行
+    Ctrl+F 查找 · Ctrl+R 替换 · Alt+Z 软换行
+
+ui-editor-search-previous = Shift+F3 上一处
+ui-editor-search-next = F3 下一处
+ui-editor-search-replace = Enter 替换
+ui-editor-search-replace-all = Ctrl+Enter 全部替换
+ui-editor-search-close = Esc 关闭

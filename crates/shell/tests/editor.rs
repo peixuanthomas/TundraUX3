@@ -15,13 +15,111 @@ use shell::{
 };
 use ui::{
     EditorHitTarget, EditorMenu, EditorMode, EditorSettingsControl, EditorSettingsField,
-    EditorToolbarAction, ShellLayout,
+    ShellLayout,
 };
 
 fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
         home_mode_override: HomeModeOverride::BuildDefault,
     }
+}
+
+#[test]
+fn new_documents_keep_their_own_text_undo_and_close_confirmations() {
+    let fixture = FixtureRoot::new("multiple-documents");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    let first = state.active_page_id();
+    type_text(&mut state, &platform, "first draft");
+    state.apply_input_with_platform(ctrl('n'), &platform);
+    assert_ne!(state.active_page_id(), first);
+    type_text(&mut state, &platform, "second draft");
+    state.apply_input_with_platform(ctrl('w'), &platform);
+    assert!(state.to_notification_view_model().is_some());
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert_eq!(state.active_page_id(), first);
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["first draft"]
+    );
+    state.apply_input_with_platform(ctrl('z'), &platform);
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["first draf"]
+    );
+}
+
+#[test]
+fn f10_and_arrow_keys_operate_menus_without_typing_into_the_document() {
+    let fixture = FixtureRoot::new("keyboard-menu");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "draft");
+    state.apply_input_with_platform(InputEvent::from_key_label("F10"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
+    assert_eq!(
+        state.to_editor_view_model().open_menu,
+        Some(EditorMenu::Edit)
+    );
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert_eq!(state.to_editor_view_model().source_lines, vec!["draf"]);
+    assert!(state.to_editor_view_model().open_menu.is_none());
+}
+
+#[test]
+fn search_field_clipboard_and_word_keys_never_edit_the_document() {
+    let fixture = FixtureRoot::new("search-field-clipboard");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "original document");
+    state.apply_input_with_platform(ctrl('f'), &platform);
+    state.apply_input_with_platform(InputEvent::Paste("first second".into()), &platform);
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::Backspace,
+            InputModifiers::CTRL,
+        )),
+        &platform,
+    );
+    assert_eq!(
+        state
+            .to_editor_view_model()
+            .search_bar
+            .unwrap()
+            .query
+            .value(),
+        "first "
+    );
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    state.apply_input_with_platform(ctrl('x'), &platform);
+    assert_eq!(
+        state
+            .to_editor_view_model()
+            .search_bar
+            .unwrap()
+            .query
+            .value(),
+        ""
+    );
+    state.apply_input_with_platform(ctrl('v'), &platform);
+    assert_eq!(
+        state
+            .to_editor_view_model()
+            .search_bar
+            .unwrap()
+            .query
+            .value(),
+        "first "
+    );
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["original document"]
+    );
 }
 
 #[test]
@@ -134,42 +232,47 @@ fn json_shortcut_is_reachable_and_undo_restores_compact_source() {
 }
 
 #[test]
-fn find_and_replace_dialogs_work_from_keyboard_with_preview_and_cancel() {
+fn inline_find_replace_cancel_and_atomic_undo_work_from_keyboard() {
     let fixture = FixtureRoot::new("search-keyboard");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
     fs::write(fixture.path().join("Documents/notes.txt"), "cat cat").unwrap();
     let mut state = logged_in_state(&platform);
     open_only_document_in_editor(&mut state, &platform);
-    let submit = InputEvent::Key(KeyInput::with_phase(
-        InputKey::Enter,
-        InputModifiers {
-            control: true,
-            ..InputModifiers::none()
-        },
-        InputPhase::Press,
-    ));
     state.apply_input_with_platform(ctrl('f'), &platform);
     type_text(&mut state, &platform, "cat");
-    state.apply_input_with_platform(submit.clone(), &platform);
     assert_eq!(&*state.to_editor_view_model().search_matches, &[0..3, 4..7]);
     assert_eq!(state.to_editor_view_model().cursor_offset, Some(3));
     state.apply_input_with_platform(InputEvent::from_key_label("F3"), &platform);
     assert_eq!(state.to_editor_view_model().cursor_offset, Some(7));
-    state.apply_input_with_platform(ctrl('h'), &platform);
-    for _ in 0..5 {
-        state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
-    }
+    state.apply_input_with_platform(ctrl('r'), &platform);
     type_text(&mut state, &platform, "dog");
-    state.apply_input_with_platform(submit.clone(), &platform);
-    assert_eq!(state.to_editor_view_model().source_lines, vec!["cat cat"]);
-    assert!(state.to_editor_view_model().config_form.is_some());
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+    assert!(state.to_editor_view_model().search_bar.is_none());
     assert_eq!(state.to_editor_view_model().source_lines, vec!["cat cat"]);
-    state.apply_input_with_platform(ctrl('h'), &platform);
-    state.apply_input_with_platform(submit.clone(), &platform);
-    state.apply_input_with_platform(submit, &platform);
+    state.apply_input_with_platform(ctrl('r'), &platform);
+    // The selected match seeds the query; the remembered replacement is selected explicitly.
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    type_text(&mut state, &platform, "dog");
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_phase(
+            InputKey::Enter,
+            InputModifiers {
+                control: true,
+                ..InputModifiers::none()
+            },
+            InputPhase::Press,
+        )),
+        &platform,
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while state.to_editor_view_model().source_lines != vec!["dog dog"] && Instant::now() < deadline
+    {
+        state.apply_input_with_platform(InputEvent::Tick, &platform);
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert_eq!(state.to_editor_view_model().source_lines, vec!["dog dog"]);
+    state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     state.apply_input_with_platform(ctrl('z'), &platform);
     assert_eq!(state.to_editor_view_model().source_lines, vec!["cat cat"]);
 }
@@ -240,7 +343,7 @@ fn explorer_opens_c_with_cached_highlights_that_update_after_typing() {
 }
 
 #[test]
-fn editor_accepts_unicode_and_inserts_spaces_for_tab() {
+fn editor_accepts_unicode_and_inserts_spaces_to_the_next_tab_stop() {
     let fixture = FixtureRoot::new("unicode-tab");
     let platform = mock_platform(fixture.path());
     let mut state = new_user_home_state(&platform);
@@ -252,9 +355,9 @@ fn editor_accepts_unicode_and_inserts_spaces_for_tab() {
 
     let editor = state.to_editor_view_model();
     assert_eq!(editor.mode, EditorMode::Source);
-    assert_eq!(editor.source_lines.join("\n"), "你好🙂    ");
+    assert_eq!(editor.source_lines.join("\n"), "你好🙂  ");
     assert!(editor.dirty);
-    assert_eq!(editor.cursor.map(|cursor| cursor.column), Some(10));
+    assert_eq!(editor.cursor.map(|cursor| cursor.column), Some(8));
 }
 
 #[test]
@@ -582,23 +685,14 @@ fn plain_text_editor_omits_markdown_controls_and_preserves_markdown_syntax() {
             .iter()
             .map(|item| item.menu)
             .collect::<Vec<_>>(),
-        vec![EditorMenu::File, EditorMenu::Edit, EditorMenu::Settings]
-    );
-    assert_eq!(
-        layout
-            .toolbar_items
-            .iter()
-            .map(|item| item.action)
-            .collect::<Vec<_>>(),
         vec![
-            EditorToolbarAction::New,
-            EditorToolbarAction::Open,
-            EditorToolbarAction::Save,
-            EditorToolbarAction::Undo,
-            EditorToolbarAction::Redo,
-            EditorToolbarAction::Find,
+            EditorMenu::File,
+            EditorMenu::Edit,
+            EditorMenu::View,
+            EditorMenu::Help
         ]
     );
+    assert!(layout.toolbar_items.is_empty());
 
     let coordinates = editor_canvas_point(&state);
     state.apply_input_with_platform(
@@ -777,18 +871,7 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
     let mut state = logged_in_state(&platform);
     open_editor_from_home(&mut state, &platform);
 
-    let settings_menu = current_editor_layout(&state)
-        .menus
-        .into_iter()
-        .find(|menu| menu.menu == EditorMenu::Settings)
-        .expect("Settings menu button");
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(
-            PointerButton::Left,
-            (settings_menu.area.x, settings_menu.area.y),
-        ),
-        &platform,
-    );
+    open_editor_preferences(&mut state, &platform);
     let defaults = state
         .to_editor_view_model()
         .settings
@@ -832,18 +915,7 @@ fn editor_settings_restore_defaults_and_persist_saved_acceleration_values() {
 
     let mut reloaded = logged_in_state(&platform);
     open_editor_from_home(&mut reloaded, &platform);
-    let settings_menu = current_editor_layout(&reloaded)
-        .menus
-        .into_iter()
-        .find(|menu| menu.menu == EditorMenu::Settings)
-        .expect("Settings menu after restart");
-    reloaded.apply_input_with_platform(
-        InputEvent::mouse_down(
-            PointerButton::Left,
-            (settings_menu.area.x, settings_menu.area.y),
-        ),
-        &platform,
-    );
+    open_editor_preferences(&mut reloaded, &platform);
     let loaded = reloaded
         .to_editor_view_model()
         .settings
@@ -947,38 +1019,25 @@ fn dirty_editor_close_can_be_cancelled_or_discarded() {
 }
 
 #[test]
-fn dirty_editor_open_requires_a_decision_and_cancel_preserves_the_buffer() {
+fn opening_the_picker_keeps_the_dirty_document_and_cancel_returns_to_it() {
     let fixture = FixtureRoot::new("dirty-open-cancel");
     let platform = mock_platform(fixture.path());
     let mut state = new_user_home_state(&platform);
     open_editor_from_home(&mut state, &platform);
     type_text(&mut state, &platform, "keep this unsaved text");
-
+    let page = state.active_page_id();
     state.apply_input_with_platform(ctrl('o'), &platform);
-
-    let modal = state
-        .to_notification_view_model()
-        .expect("dirty-open modal");
-    assert_eq!(modal.title, "Unsaved document");
-    assert_eq!(
-        modal
-            .actions
-            .iter()
-            .map(|action| action.label.as_str())
-            .collect::<Vec<_>>(),
-        vec!["Save", "Discard", "Cancel"]
-    );
-    assert_eq!(state.active_screen(), ShellScreen::Editor);
-
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(state.to_notification_view_model().is_none());
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
-    state.apply_input_with_platform(ctrl_shift('m'), &platform);
+    assert_eq!(state.active_page_id(), page);
     let editor = state.to_editor_view_model();
     assert_eq!(editor.source_lines.join("\n"), "keep this unsaved text");
     assert!(editor.dirty);
 }
 
 #[test]
-fn discard_then_open_replaces_the_buffer_only_after_a_file_is_selected() {
+fn opening_another_file_keeps_the_original_buffer_and_recovery() {
     let fixture = FixtureRoot::new("dirty-open-discard");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
@@ -998,8 +1057,6 @@ fn discard_then_open_replaces_the_buffer_only_after_a_file_is_selected() {
     assert_eq!(original_recovery.len(), 1);
 
     state.apply_input_with_platform(ctrl('o'), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
 
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     assert_eq!(
@@ -1026,17 +1083,20 @@ fn discard_then_open_replaces_the_buffer_only_after_a_file_is_selected() {
     assert_eq!(editor.mode, EditorMode::Source);
     assert_eq!(editor.source_lines.join("\n"), "replacement");
     assert!(!editor.dirty);
-    assert!(
-        app::editor_recovery::read_editor_recoveries(&paths, &user_key)
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap(),
+        original_recovery
     );
     type_text(&mut state, &platform, "edited ");
     state.apply_input_at(InputEvent::Tick, Instant::now() + Duration::from_secs(3));
     let replacement_recovery =
         app::editor_recovery::read_editor_recoveries(&paths, &user_key).unwrap();
-    assert_eq!(replacement_recovery.len(), 1);
-    assert_ne!(replacement_recovery[0].0, original_recovery[0].0);
+    assert_eq!(replacement_recovery.len(), 2);
+    assert!(
+        replacement_recovery
+            .iter()
+            .any(|r| r.0 == original_recovery[0].0)
+    );
 }
 
 #[test]
@@ -1058,8 +1118,6 @@ fn failed_picker_replacement_keeps_the_original_document_and_recovery() {
     file.set_len(platform::MAX_DOCUMENT_BYTES + 1).unwrap();
     drop(file);
     state.apply_input_with_platform(ctrl('o'), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     let picker_page = state.active_page_id();
     let index = state
@@ -1091,7 +1149,7 @@ fn failed_picker_replacement_keeps_the_original_document_and_recovery() {
         .status_message
         .expect("failed replacement must finish the original editor's loading status");
     assert!(!status.starts_with("Loading"));
-    assert!(status.contains("z-too-large.txt"));
+    assert!(state.to_editor_view_model().dirty);
     assert!(
         app::editor_recovery::claim_next_editor_recovery(&paths, &user_key)
             .unwrap()
@@ -1113,9 +1171,9 @@ fn save_then_open_continues_to_the_picker_after_the_save_succeeds() {
     fs::write(&replacement, "replacement").expect("seed replacement document");
     type_text(&mut state, &platform, "saved ");
 
-    state.apply_input_with_platform(ctrl('o'), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    state.apply_input_with_platform(ctrl('s'), &platform);
     wait_for_editor_background_tasks(&mut state, &platform);
+    state.apply_input_with_platform(ctrl('o'), &platform);
 
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     assert_eq!(
@@ -1358,6 +1416,9 @@ fn nested_file_picker_returns_to_the_original_directory_and_selection() {
         wait_for_editor_background_tasks(&mut state, &platform);
         assert_eq!(state.active_screen(), ShellScreen::Editor);
         state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+        if select_file {
+            state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+        }
         assert_eq!(
             state.screen_stack(),
             &[ShellScreen::Home, ShellScreen::Explorer]
@@ -2267,4 +2328,27 @@ fn unix_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock after epoch")
         .as_millis()
+}
+
+fn open_editor_preferences(state: &mut ShellSession, platform: &MockPlatform) {
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_phase(
+            InputKey::Char('f'),
+            InputModifiers {
+                alt: true,
+                ..InputModifiers::none()
+            },
+            InputPhase::Press,
+        )),
+        platform,
+    );
+    let item = current_editor_layout(state)
+        .menu_items
+        .into_iter()
+        .find(|i| i.action == ui::EditorMenuAction::Preferences)
+        .unwrap();
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (item.area.x, item.area.y)),
+        platform,
+    );
 }

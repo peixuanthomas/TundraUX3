@@ -134,6 +134,8 @@ pub enum RecoveryLineEnding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecoveryTextMetadata {
+    #[serde(default)]
+    pub encoding: crate::editor::TextEncoding,
     pub utf8_bom: bool,
     pub preferred_line_ending: RecoveryLineEnding,
     pub mixed_line_endings: bool,
@@ -143,6 +145,7 @@ pub struct RecoveryTextMetadata {
 impl Default for RecoveryTextMetadata {
     fn default() -> Self {
         Self {
+            encoding: crate::editor::TextEncoding::Utf8,
             utf8_bom: false,
             preferred_line_ending: RecoveryLineEnding::Lf,
             mixed_line_endings: false,
