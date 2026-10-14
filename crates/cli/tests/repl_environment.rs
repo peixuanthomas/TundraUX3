@@ -102,6 +102,26 @@ fn repl_defaults_to_system_commands_and_hints_do_not_execute_alternatives() {
 }
 
 #[test]
+fn bare_help_is_passed_to_the_system_without_ux_interception() {
+    run_child_if_requested();
+    for embedded in [false, true] {
+        let output = run_repl(
+            "bare_help_is_passed_to_the_system_without_ux_interception",
+            "help\necho AFTER_SYSTEM_HELP\nexit\n",
+            embedded,
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stdout}\n{stderr}");
+        assert!(stdout.contains("/help: UX command help; help: system command help"));
+        assert!(stdout.contains("[system exit code:"), "{stdout}");
+        assert!(stdout.contains("AFTER_SYSTEM_HELP"), "{stdout}");
+        assert!(!stdout.contains("Usage: tundra-cli"), "{stdout}");
+        assert!(!stderr.contains("Prefix it with '/'"), "{stderr}");
+    }
+}
+
+#[test]
 fn repl_reuses_system_command_state_across_builtin_commands() {
     run_child_if_requested();
     let input = if cfg!(windows) {

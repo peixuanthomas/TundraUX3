@@ -147,6 +147,78 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
         }
     };
     wait_for(">>", 0);
+    for (input, rendered, suffix_length) in [("/he", "/help", 2), ("hel", "help", 1)] {
+        send(input.as_bytes());
+        wait_for(&format!(">> {rendered}"), suffix_length);
+        let parser = parser.lock().unwrap();
+        let screen = parser.screen();
+        let (row, col) = screen.cursor_position();
+        for column in col - 3..col {
+            assert_eq!(
+                screen.cell(row, column).unwrap().fgcolor(),
+                vt100::Color::Default
+            );
+        }
+        for column in col..col + suffix_length {
+            assert_eq!(
+                screen.cell(row, column).unwrap().fgcolor(),
+                vt100::Color::Idx(8)
+            );
+        }
+        drop(parser);
+        send(b"\x15");
+        wait_for(">>", 0);
+    }
+    // Corrections and multiple choices occupy the following row while the
+    // cursor stays in the input. Editing must clear that row on both platforms.
+    let wait_for_hint_row = |expected: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let parser = parser.lock().unwrap();
+            let screen = parser.screen();
+            let (row, _) = screen.cursor_position();
+            let hint = screen.rows(0, 160).nth(usize::from(row + 1)).unwrap();
+            if (expected.is_empty() && hint.trim().is_empty())
+                || (!expected.is_empty() && hint.starts_with(expected))
+            {
+                for column in 0..u16::try_from(expected.len()).unwrap() {
+                    assert_eq!(
+                        screen.cell(row + 1, column).unwrap().fgcolor(),
+                        vt100::Color::Idx(8)
+                    );
+                }
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "expected hint {expected:?}, got {hint:?}"
+            );
+            drop(parser);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    for (input, hint) in [
+        ("hell", "Did you mean: help"),
+        ("/hell", "Did you mean: /help"),
+        ("git statsu", "Did you mean: git status"),
+        ("/debug", "Suggestions: asset | clear-logs | doctor"),
+    ] {
+        send(input.as_bytes());
+        wait_for(&format!(">> {input}"), 0);
+        wait_for_hint_row(hint);
+        send(b"\x1b[C"); // Information is never appended by Right.
+        wait_for(&format!(">> {input}"), 0);
+        send(b"\x15");
+        wait_for(">>", 0);
+        wait_for_hint_row("");
+    }
+    send(b"/debug scr");
+    wait_for(">> /debug screen-keyboard", 12);
+    send(b"\x15/hell\t");
+    wait_for(">> /help", 0);
+    send(b"\x15");
+    wait_for(">>", 0);
+    wait_for_hint_row("");
     send(b"abc");
     wait_for(">> abc", 0);
     {
