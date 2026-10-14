@@ -40,6 +40,12 @@ pub type EmergencyCleanup = Arc<dyn Fn() + Send + Sync + 'static>;
 static GLOBAL_WATCHDOG: OnceLock<ProcessWatchdog> = OnceLock::new();
 static RUNTIME_STARTED: AtomicBool = AtomicBool::new(false);
 
+pub(crate) fn resource_process() -> Option<ProcessWatchdog> {
+    current_execution_context()
+        .and_then(|context| context.process)
+        .or_else(|| GLOBAL_WATCHDOG.get().cloned())
+}
+
 thread_local! {
     #[allow(clippy::missing_const_for_thread_local)]
     static THREAD_CONTEXT: RefCell<Vec<ExecutionContext>> = const { RefCell::new(Vec::new()) };
@@ -51,6 +57,7 @@ tokio::task_local! {
 }
 
 pub(crate) struct Shared {
+    pub(crate) resources: crate::resource::Resources,
     pub(crate) config: WatchdogConfig,
     pub(crate) run_id: String,
     runtime_log: Option<RuntimeLogHandle>,
@@ -187,6 +194,7 @@ impl WatchdogRuntime {
         };
         let log_handle = runtime_log.as_ref().map(RuntimeLogRuntime::handle);
         let shared = Arc::new(Shared {
+            resources: crate::resource::Resources::default(),
             config: config.clone(),
             run_id: run_id.clone(),
             runtime_log: log_handle.clone(),
@@ -271,6 +279,11 @@ impl WatchdogRuntime {
         for (_, group) in &groups {
             group.close_and_cancel();
         }
+        let mut failures = self.process.shared.resources.stop();
+        for failure in &failures {
+            self.process
+                .report_resource_failure("shutdown", &std::io::Error::other(failure.clone()));
+        }
         let can_block = {
             #[cfg(feature = "tokio")]
             {
@@ -281,15 +294,26 @@ impl WatchdogRuntime {
                 true
             }
         };
+        let wait_started = Instant::now();
         for (name, group) in groups {
             let counts = if can_block {
-                group.wait(self.process.shared.config.task_shutdown_timeout)
+                group.wait(
+                    self.process
+                        .shared
+                        .config
+                        .task_shutdown_timeout
+                        .saturating_sub(wait_started.elapsed()),
+                )
             } else {
                 group.counts()
             };
             if counts.still_running > 0 {
                 self.process
                     .report_shutdown_timeout(&name, &group.running_task_names());
+                failures.push(format!(
+                    "{name}: {} tasks still running",
+                    counts.still_running
+                ));
             }
         }
         let (tx, rx) = mpsc::channel();
@@ -312,7 +336,12 @@ impl WatchdogRuntime {
         if let Some(runtime) = self.runtime_log.take() {
             runtime.shutdown();
         }
-        shutdown_result
+        shutdown_result?;
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(WatchdogError::Shutdown(failures.join("; ")))
+        }
     }
 }
 
@@ -323,6 +352,60 @@ impl Drop for WatchdogRuntime {
 }
 
 impl ProcessWatchdog {
+    pub(crate) fn run_resource_cleanup(
+        &self,
+        cleanup: impl FnOnce() -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        // Cleanup also runs after registration is closed. Give it a worker
+        // boundary so a caught cleanup panic cannot restore the live terminal.
+        let app = AppWatchdog {
+            process: self.clone(),
+            descriptor: AppDescriptor::new(
+                AppId::from_static("watchdog-resources"),
+                "Resource cleanup",
+                env!("CARGO_PKG_VERSION"),
+                crate::AppCriticality::Optional,
+            ),
+            component: "watchdog-resources".into(),
+            owner_id: None,
+            log_task_id: None,
+            log_operation_id: None,
+        };
+        app.run_boundary(
+            BoundarySpec::new("resource-cleanup", BoundaryKind::Worker),
+            AssertUnwindSafe(cleanup),
+        )
+        .unwrap_or_else(|_| Err(std::io::Error::other("resource cleanup panicked")))
+    }
+
+    /// The owning runtime, including one already stopping. Use this when
+    /// attaching owned work so shutdown is rejected instead of bypassed.
+    pub fn current() -> Option<Self> {
+        resource_process()
+    }
+    /// Cancel owned work when its controlling connection disappears. Cleanup
+    /// callbacks are bounded by their resource owners; the runtime still owns
+    /// final task joins, reports, and writer shutdown.
+    pub fn cancel_owned_work(&self) -> Result<(), WatchdogError> {
+        self.shared.running.store(false, Ordering::Release);
+        let groups: Vec<_> = self
+            .shared
+            .groups
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        for group in groups {
+            group.close_and_cancel();
+        }
+        let failures = self.shared.resources.stop();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(WatchdogError::Shutdown(failures.join("; ")))
+        }
+    }
     pub fn run_id(&self) -> &str {
         &self.shared.run_id
     }
@@ -704,6 +787,26 @@ impl ProcessWatchdog {
         );
         incident.recovery = RecoveryOutcome::Unrecoverable(
             "the process is shutting down with managed tasks still running".to_string(),
+        );
+        let _ = self.shared.command_tx.send(WriterCommand::Record {
+            incident,
+            emit: true,
+        });
+    }
+
+    pub(crate) fn report_resource_failure(&self, name: &str, error: &std::io::Error) {
+        let context = ExecutionContext::process(self.next_incident_id(), self.clone());
+        let incident = self.incident_record(
+            &context,
+            IncidentKind::Error,
+            IncidentSeverity::Critical,
+            None,
+            Some(ErrorDetails {
+                os_error_code: error.raw_os_error().map(i64::from),
+                message: sanitize::text(format!("could not stop managed resource {name}: {error}")),
+                source_chain: Vec::new(),
+                backtrace: Backtrace::force_capture().to_string(),
+            }),
         );
         let _ = self.shared.command_tx.send(WriterCommand::Record {
             incident,

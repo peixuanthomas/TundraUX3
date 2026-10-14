@@ -1,4 +1,5 @@
 //! System text authentication agent, on the foreground TTY or AutoAdmin's private PTY.
+use crate::ManagedCommand;
 use crate::service::ServiceError;
 use std::{
     fs::{File, OpenOptions},
@@ -6,12 +7,12 @@ use std::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::process::CommandExt,
     },
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
 pub struct TextAgent {
-    child: Child,
+    child: crate::ManagedChild,
 }
 impl TextAgent {
     pub fn register() -> Result<Self, ServiceError> {
@@ -68,7 +69,7 @@ impl TextAgent {
         }
         let mut agent = Self {
             child: command
-                .spawn()
+                .spawn_managed_inherited()
                 .map_err(|_| ServiceError::ServiceUnavailable)?,
         };
         drop(writer);

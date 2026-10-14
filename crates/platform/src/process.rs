@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::PlatformError;
+use crate::{ManagedCommand, PlatformError};
 
 /// One stdout/stderr record, delivered while the child is still running.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +136,7 @@ pub(crate) fn spawn_detached_impl(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    command.spawn().map_err(|error| PlatformError::Io {
+    crate::managed_process::spawn_external(&mut command).map_err(|error| PlatformError::Io {
         operation: "spawn detached process",
         path: Some(spec.program.clone()),
         message: error.to_string(),
@@ -151,7 +151,7 @@ pub(crate) fn spawn_wait_impl(
 ) -> Result<ProcessExit, PlatformError> {
     validate_process_spec(spec, reject_windows_scripts)?;
     let output = command_from_spec(spec)?
-        .output()
+        .output_managed()
         .map_err(|error| PlatformError::Io {
             operation: "spawn process and wait",
             path: Some(spec.program.clone()),
@@ -257,13 +257,12 @@ pub(crate) fn spawn_cancellable_impl(
                 | windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
         );
     }
-    let child = command.spawn().map_err(error)?;
-    let mut tree = ChildTree::new(child).map_err(error)?;
-    let mut stdout = tree.child.stdout.take().expect("piped stdout");
-    let mut stderr = tree.child.stderr.take().expect("piped stderr");
+    let mut child = command.spawn_managed().map_err(error)?;
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
     make_nonblocking(&stdout).map_err(error)?;
     make_nonblocking(&stderr).map_err(error)?;
-    let waiter = ProcessWaiter::new(&tree.child);
+    let waiter = child.waiter();
     let mut stdout_eof = false;
     let mut stderr_eof = false;
     let streaming = report.is_some();
@@ -274,7 +273,7 @@ pub(crate) fn spawn_cancellable_impl(
     let mut buffer = [0; 16 * 1024];
     loop {
         if cancelled() {
-            tree.stop().map_err(error)?;
+            child.kill().map_err(error)?;
             return Err(cancelled_process(spec));
         }
         // Bound work per iteration even when a process continuously fills a pipe.
@@ -336,9 +335,9 @@ pub(crate) fn spawn_cancellable_impl(
                 }
             }
         }
-        if let Some(status) = tree.child.try_wait().map_err(error)? {
+        if let Some(status) = child.try_wait().map_err(error)? {
             // Stop any descendants retaining pipes before the last drain.
-            tree.stop_descendants().map_err(error)?;
+            child.kill().map_err(error)?;
             for (is_stderr, pipe, bytes, pending) in [
                 (
                     false,
@@ -371,7 +370,6 @@ pub(crate) fn spawn_cancellable_impl(
                     bytes.drain(..bytes.len() - 65536);
                 }
             }
-            tree.finished = true;
             if cancelled() {
                 return Err(cancelled_process(spec));
             }
@@ -389,7 +387,7 @@ pub(crate) fn spawn_cancellable_impl(
 
 /// Readiness wakes output immediately. The timeout bounds cancellation latency
 /// because the caller supplies a predicate rather than a waitable event.
-struct ProcessWaiter {
+pub(super) struct ProcessWaiter {
     #[cfg(target_os = "linux")]
     exit: Option<std::os::fd::OwnedFd>,
     #[cfg(windows)]
@@ -397,7 +395,7 @@ struct ProcessWaiter {
 }
 
 impl ProcessWaiter {
-    fn new(child: &std::process::Child) -> Self {
+    pub(super) fn new(child: &std::process::Child) -> Self {
         let _ = child;
         Self {
             #[cfg(target_os = "linux")]
@@ -489,12 +487,12 @@ fn emit_pending(pending: &mut Vec<u8>, stderr: bool, report: &mut dyn FnMut(Proc
     }
 }
 
-trait PollPipe: std::io::Read {
+pub(super) trait PollPipe: std::io::Read {
     fn readable(&self) -> std::io::Result<bool>;
 }
 
 #[cfg(unix)]
-fn make_nonblocking(pipe: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
+pub(super) fn make_nonblocking(pipe: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
     let fd = pipe.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
@@ -511,7 +509,9 @@ impl<T: std::io::Read> PollPipe for T {
 }
 
 #[cfg(windows)]
-fn make_nonblocking(_pipe: &impl std::os::windows::io::AsRawHandle) -> std::io::Result<()> {
+pub(super) fn make_nonblocking(
+    _pipe: &impl std::os::windows::io::AsRawHandle,
+) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -542,15 +542,43 @@ impl<T: std::io::Read + std::os::windows::io::AsRawHandle> PollPipe for T {
     }
 }
 
-struct ChildTree {
-    child: std::process::Child,
+pub(super) struct ChildTree {
+    pub(super) child: std::process::Child,
     finished: bool,
+    isolated: bool,
+    pub(super) shutdown_signal: Option<Box<dyn FnMut() -> std::io::Result<()> + Send>>,
+    #[cfg(target_os = "linux")]
+    pub(super) descendants: Option<crate::management::termination::ProcessTree>,
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
 }
 
 impl ChildTree {
-    fn new(mut child: std::process::Child) -> std::io::Result<Self> {
+    pub(super) fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        #[cfg(unix)]
+        if !self.finished {
+            // Observe exit without reaping first. While our child is unreaped,
+            // its process-group ID cannot be recycled for an unrelated process.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    self.child.id() as _,
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result == 0 && unsafe { info.si_pid() } != 0 {
+                self.stop()?;
+            } else if result != 0
+                && std::io::Error::last_os_error().raw_os_error() != Some(libc::ECHILD)
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        self.child.try_wait()
+    }
+    pub(super) fn new(mut child: std::process::Child, isolated: bool) -> std::io::Result<Self> {
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;
@@ -564,7 +592,8 @@ impl ChildTree {
                 }
                 let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
                     unsafe { std::mem::zeroed() };
-                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                limits.BasicLimitInformation.LimitFlags =
+                    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
                 if unsafe {
                     SetInformationJobObject(
                         job,
@@ -601,22 +630,38 @@ impl ChildTree {
             Ok(Self {
                 child,
                 finished: false,
+                isolated,
+                shutdown_signal: None,
                 job,
             })
         }
         #[cfg(not(windows))]
         {
             let _ = &mut child;
-            Ok(Self {
+            #[allow(unused_mut)]
+            let mut tree = Self {
+                #[cfg(target_os = "linux")]
+                descendants: None,
                 child,
                 finished: false,
-            })
+                isolated,
+                shutdown_signal: None,
+            };
+            #[cfg(target_os = "linux")]
+            {
+                // If a stable process handle cannot be opened, stop the child
+                // through the guard instead of publishing untracked work.
+                tree.descendants = Some(crate::management::termination::ProcessTree::child(
+                    tree.child.id(),
+                )?);
+            }
+            Ok(tree)
         }
     }
 
     fn stop_descendants(&self) -> std::io::Result<()> {
         #[cfg(unix)]
-        if unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) } < 0 {
+        if self.isolated && unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) } < 0 {
             let error = std::io::Error::last_os_error();
             if error.raw_os_error() != Some(libc::ESRCH) {
                 return Err(error);
@@ -630,7 +675,7 @@ impl ChildTree {
             }
             // TerminateJobObject is asynchronous. Keep the worker registered
             // until descendants release executable and output file handles.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
             loop {
                 let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION =
                     unsafe { std::mem::zeroed() };
@@ -651,7 +696,7 @@ impl ChildTree {
                 }
                 if std::time::Instant::now() >= deadline {
                     return Err(std::io::Error::other(
-                        "child job did not finish stopping within 10 seconds",
+                        "child job did not finish stopping within one second",
                     ));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(20));
@@ -660,17 +705,47 @@ impl ChildTree {
         Ok(())
     }
 
-    fn stop(&mut self) -> std::io::Result<()> {
+    pub(super) fn stop(&mut self) -> std::io::Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+        if let Some(mut signal) = self.shutdown_signal.take() {
+            signal()?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+            while self.try_wait()?.is_none() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if self.finished {
+                return Ok(());
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(descendants) = &mut self.descendants {
+            descendants.signal(true)?;
+        }
         let stopped = self.stop_descendants();
-        if stopped.is_err() {
+        if stopped.is_err() || !self.isolated {
             let _ = self.child.kill();
         }
-        self.child.wait()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while self.child.try_wait()?.is_none() {
+            if std::time::Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "child did not stop within one second",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         stopped?;
         self.finished = true;
         Ok(())
     }
 }
+
+// The job handle is owned by ChildTree and accessed only behind the child mutex.
+#[cfg(windows)]
+unsafe impl Send for ChildTree {}
 
 impl Drop for ChildTree {
     fn drop(&mut self) {

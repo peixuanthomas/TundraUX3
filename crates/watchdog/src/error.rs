@@ -6,6 +6,7 @@ pub enum WatchdogError {
     AlreadyInstalled,
     RuntimeAlreadyStarted,
     RuntimeStopped,
+    Shutdown(String),
     NotInstalled,
     InvalidIdentifier(String),
     ConflictingAppRegistration(String),
@@ -35,6 +36,7 @@ impl fmt::Display for WatchdogError {
                 formatter.write_str("a watchdog runtime has already been started in this process")
             }
             Self::RuntimeStopped => formatter.write_str("the watchdog runtime has stopped"),
+            Self::Shutdown(message) => write!(formatter, "watchdog shutdown incomplete: {message}"),
             Self::NotInstalled => formatter.write_str("the process watchdog is not installed"),
             Self::InvalidIdentifier(value) => {
                 write!(formatter, "invalid watchdog identifier: {value}")

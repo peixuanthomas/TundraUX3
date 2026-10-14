@@ -3,6 +3,7 @@
 //! Saved desktop roles are never consulted here. Writes run only in the root
 //! helper, after the caller has obtained real operating-system authorization.
 use super::*;
+use crate::ManagedCommand;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -81,7 +82,7 @@ fn native(tool: &str, args: &[&str], input: Option<&[u8]>) -> Result<String, Man
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_managed()
         .map_err(io_error)?;
     if let Some(input) = input {
         child

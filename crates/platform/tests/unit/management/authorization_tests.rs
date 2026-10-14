@@ -46,7 +46,7 @@ fn approved_session_reuses_authority_and_revoke_blocks_cloned_owners() {
     *authority.0.revoker.lock().unwrap() = Some(client.revoke_handle().unwrap());
     *authority.0.session.lock().unwrap() = Some(Authorized {
         client,
-        child: Command::new("/bin/true").spawn().unwrap(),
+        child: Command::new("/bin/true").spawn_managed().unwrap(),
     });
     let clone = authority.clone();
     for _ in 0..2 {

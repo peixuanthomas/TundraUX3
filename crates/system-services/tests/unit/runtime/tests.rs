@@ -512,7 +512,7 @@ fn sample() -> WeatherData {
         attribution: String::new(),
     }
 }
-fn watchdog() -> AppWatchdog {
+fn watchdog() -> (watchdog::WatchdogRuntime, AppWatchdog) {
     let config = watchdog::WatchdogConfig::new(
         std::env::temp_dir().join("ss-reports"),
         std::env::temp_dir().join("ss-fallback"),
@@ -521,15 +521,16 @@ fn watchdog() -> AppWatchdog {
         "1",
     )
     .with_unclean_exit_tracking(false);
-    let (_runtime, process) = watchdog::WatchdogRuntime::start_isolated(config).unwrap();
-    process
+    let (runtime, process) = watchdog::WatchdogRuntime::start_isolated(config).unwrap();
+    let app = process
         .register_app(watchdog::AppDescriptor::new(
             watchdog::AppId::from_static("system-services-test"),
             "test",
             "1",
             watchdog::AppCriticality::SessionCritical,
         ))
-        .unwrap()
+        .unwrap();
+    (runtime, app)
 }
 fn config() -> SystemServicesConfig {
     SystemServicesConfig {
@@ -554,9 +555,10 @@ fn network_time_failure_publishes_degraded_state_and_shutdown_completes() {
                 outcomes: Mutex::new(vec![Err("weather unavailable".to_string())]),
                 calls: AtomicUsize::new(0),
             });
+            let (_watchdog_runtime, app_watchdog) = watchdog();
             let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
                 runtime_config,
-                watchdog(),
+                app_watchdog,
                 Arc::new(mock_platform()),
                 provider,
             );
@@ -640,6 +642,7 @@ fn network_status_call_count(platform: &platform::mock::MockPlatform) -> usize {
 }
 
 fn start_with_zero_status_intervals() -> (
+    watchdog::WatchdogRuntime,
     SystemServicesHandle,
     watch::Receiver<SystemSnapshot>,
     Arc<platform::mock::MockPlatform>,
@@ -655,18 +658,19 @@ fn start_with_zero_status_intervals() -> (
     config.system_status_active_refresh_interval = Duration::ZERO;
     config.system_status_active_slow_refresh_interval = Duration::ZERO;
     let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, receiver) = SystemServicesRuntime::start_with_platform_and_provider(
         config,
-        watchdog(),
+        app_watchdog,
         platform_trait,
         provider,
     );
-    (handle, receiver, platform)
+    (_watchdog_runtime, handle, receiver, platform)
 }
 
 #[test]
 fn zero_status_intervals_keep_commands_responsive() {
-    let (handle, mut receiver, platform) = start_with_zero_status_intervals();
+    let (_watchdog_runtime, handle, mut receiver, platform) = start_with_zero_status_intervals();
     wait_until(&mut receiver, |snapshot| {
         matches!(snapshot.storage, StorageState::Ready(_))
     });
@@ -756,9 +760,10 @@ fn injected_platform_refreshes_immediately_manually_and_at_active_interval() {
     config.system_status_active_refresh_interval = Duration::from_millis(30);
     config.system_status_active_slow_refresh_interval = Duration::from_millis(30);
     let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
         config,
-        watchdog(),
+        app_watchdog,
         platform_trait,
         provider,
     );
@@ -806,9 +811,10 @@ async fn active_metrics_progress_while_weather_provider_is_pending() {
     runtime_config.system_status_active_refresh_interval = Duration::from_millis(20);
     runtime_config.system_status_active_slow_refresh_interval = Duration::from_millis(40);
     let platform_trait: Arc<dyn platform::Platform> = platform.clone();
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
         runtime_config.clone(),
-        watchdog(),
+        app_watchdog,
         platform_trait,
         provider,
     );
@@ -867,9 +873,10 @@ fn time_validation_preempts_pending_weather_and_refresh_resumes() {
     runtime_config.request_timeout = Duration::from_secs(60);
     let (started_tx, started_rx) = std_mpsc::channel();
     let provider_calls = Arc::new(AtomicUsize::new(0));
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, mut snapshots) = SystemServicesRuntime::start_with_platform_and_provider(
         runtime_config.clone(),
-        watchdog(),
+        app_watchdog,
         Arc::new(mock_platform()),
         Arc::new(GatedProvider {
             started: started_tx,
@@ -910,9 +917,10 @@ fn time_validation_keeps_candidate_errors_while_weather_is_pending() {
     runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
     runtime_config.request_timeout = Duration::from_secs(60);
     let (started_tx, started_rx) = std_mpsc::channel();
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, _) = SystemServicesRuntime::start_with_platform_and_provider(
         runtime_config.clone(),
-        watchdog(),
+        app_watchdog,
         Arc::new(mock_platform()),
         Arc::new(GatedProvider {
             started: started_tx,
@@ -954,9 +962,10 @@ async fn ready_stale_unavailable_and_manual_refresh_are_published() {
     let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
     let mut runtime_config = config();
     runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
         runtime_config,
-        watchdog(),
+        app_watchdog,
         platform,
         provider,
     );
@@ -977,9 +986,10 @@ async fn ready_stale_unavailable_and_manual_refresh_are_published() {
     let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
     let mut runtime_config = config();
     runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
         runtime_config,
-        watchdog(),
+        app_watchdog,
         platform,
         unavailable,
     );
@@ -998,9 +1008,10 @@ async fn reconfiguration_and_shutdown_are_controllable() {
     let platform: Arc<dyn platform::Platform> = Arc::new(mock_platform());
     let mut runtime_config = config();
     runtime_config.timezone_location = Some(runtime_config.fallback_location.clone());
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, mut receiver) = SystemServicesRuntime::start_with_platform_and_provider(
         runtime_config,
-        watchdog(),
+        app_watchdog,
         platform,
         provider.clone(),
     );
@@ -1251,9 +1262,10 @@ fn shutdown_and_reconfigure_cancel_pending_provider_wait() {
     let mut initial = config();
     initial.timezone_location = Some(initial.fallback_location.clone());
     let (entered_tx, entered_rx) = std_mpsc::channel();
+    let (_watchdog_runtime, app_watchdog) = watchdog();
     let (handle, _) = SystemServicesRuntime::start_with_platform_and_provider(
         initial.clone(),
-        watchdog(),
+        app_watchdog,
         Arc::new(mock_platform()),
         Arc::new(PendingProvider {
             entered: Mutex::new(Some(entered_tx)),
@@ -1268,4 +1280,29 @@ fn shutdown_and_reconfigure_cancel_pending_provider_wait() {
     let started = Instant::now();
     handle.shutdown().unwrap();
     assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn watchdog_shutdown_cancels_services_while_handle_remains_alive() {
+    let (runtime, app) = watchdog();
+    let mut initial = config();
+    initial.timezone_location = Some(initial.fallback_location.clone());
+    let (entered_tx, entered_rx) = std_mpsc::channel();
+    let (handle, _) = SystemServicesRuntime::start_with_platform_and_provider(
+        initial,
+        app,
+        Arc::new(mock_platform()),
+        Arc::new(PendingProvider {
+            entered: Mutex::new(Some(entered_tx)),
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let started = Instant::now();
+    runtime.shutdown().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(matches!(
+        handle.refresh_weather(),
+        Err(SystemServicesError::Shutdown)
+    ));
+    handle.shutdown().unwrap();
 }

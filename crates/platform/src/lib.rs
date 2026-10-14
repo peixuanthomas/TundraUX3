@@ -12,11 +12,13 @@ pub use error_details::CapturedIoError;
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod macos;
+mod managed_process;
 pub mod management;
 pub mod mock;
 mod paths;
 mod platform;
 mod process;
+pub use managed_process::{ManagedChild, ManagedCommand};
 mod system_monitor;
 mod terminal;
 

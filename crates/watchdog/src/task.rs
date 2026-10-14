@@ -36,6 +36,12 @@ impl ThreadCancellation {
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)
     }
+
+    /// Wake or cancel a worker's own bounded computation. Called immediately
+    /// if cancellation already happened. The callback must not panic.
+    pub fn on_cancel(&self, callback: impl Fn() + Send + Sync + 'static) {
+        self.0.add_abort(Arc::new(callback));
+    }
 }
 
 impl TaskControl {
@@ -51,7 +57,6 @@ impl TaskControl {
         }
     }
 
-    #[cfg(feature = "tokio")]
     fn add_abort(&self, abort: Arc<dyn Fn() + Send + Sync>) {
         self.aborts
             .lock()
@@ -112,11 +117,14 @@ impl GroupState {
     }
 
     pub(crate) fn cancel_all(&self) {
-        let tasks = self
+        let tasks: Vec<_> = self
             .tasks
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for task in tasks.values() {
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .cloned()
+            .collect();
+        for task in tasks {
             task.cancel();
         }
     }
@@ -190,6 +198,21 @@ pub struct ManagedLocalTaskHandle<T> {
 }
 
 impl ManagedTaskGroup {
+    /// Release finished entries when submitting an unbounded stream of distinct jobs.
+    pub fn reap_finished(&self) {
+        self.state
+            .tasks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, task| !task.completed.load(Ordering::Acquire));
+    }
+    pub fn manage_resource(
+        &self,
+        name: impl Into<String>,
+        cleanup: impl FnMut() -> std::io::Result<()> + Send + 'static,
+    ) -> Result<crate::ManagedResource, WatchdogError> {
+        self.app.manage_resource(name, cleanup)
+    }
     /// Bind submission identity while preserving the existing group registry.
     pub fn with_log_context(
         mut self,
@@ -229,6 +252,9 @@ impl ManagedTaskGroup {
                 .or_insert_with(|| Arc::new(GroupState::new()))
                 .clone()
         };
+        if !app.process.shared.running.load(Ordering::Acquire) {
+            state.close_and_cancel();
+        }
         Self {
             app,
             name: name.to_string(),

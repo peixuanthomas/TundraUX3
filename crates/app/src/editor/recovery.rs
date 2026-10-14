@@ -38,7 +38,19 @@ impl Default for RecoveryId {
 pub struct EditorRecoveryLease {
     id: RecoveryId,
     path: PathBuf,
-    lock: Arc<File>,
+    lock: Arc<RecoveryLock>,
+}
+
+#[derive(Debug)]
+struct RecoveryLock(File);
+
+impl Drop for RecoveryLock {
+    fn drop(&mut self) {
+        // A concurrently forked child can retain this open file description
+        // until exec closes CLOEXEC descriptors. Release our ownership now;
+        // merely closing the parent's descriptor leaves the draft locked.
+        let _ = self.0.unlock();
+    }
 }
 
 impl EditorRecoveryLease {
@@ -283,7 +295,7 @@ fn try_lease(
         Ok(()) => Ok(Some(EditorRecoveryLease {
             id,
             path,
-            lock: Arc::new(file),
+            lock: Arc::new(RecoveryLock(file)),
         })),
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(error)) => {

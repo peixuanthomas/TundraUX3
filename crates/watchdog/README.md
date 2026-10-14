@@ -47,8 +47,24 @@ on `platform`.
   establishes a safe state.
 - Mutating operations use `begin_operation` and durable checkpoints. A manual
   outcome keeps the journal and must leave related writes disabled.
-- Dropping/shutting down a task group cancels and reaps tracked work; cancellation
-  is not reported as a panic.
+- Shutting down a task group cancels and waits for tracked work; dropping a
+  handle alone does not stop its worker. Threads must observe cancellation and
+  bound blocking waits. Cancellation is not reported as a panic.
+
+Internal commands use `platform::ManagedCommand`. Their owners stop and reap
+children on errors and on drop, and register cleanup with the current watchdog.
+Process shutdown stops registered resources before waiting for worker threads;
+cleanup failures and workers that exceed the shutdown deadline return an error.
+`ManagedResource` also covers PTY children. Cleanup must have a time limit and
+must not wait for another worker that needs shutdown to finish. Successful
+cleanup unregisters the resource; failures remain registered for a later retry.
+
+Desktop applications use the separate external-launch path. Its reaper stops
+waiting when UX exits, while the application continues independently. Update
+replacements keep an explicit owning launcher until the replacement exits.
+System-operation helpers transfer work to their own watchdog so disconnecting
+the UI does not interrupt a package database write. The privileged authorization
+broker monitors its private connection and cancels its own work on disconnect.
 
 Reports live under the configured report directory as matching JSON and text
 files. Operation journals live under

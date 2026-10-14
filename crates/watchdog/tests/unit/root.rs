@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 use std::fs;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
@@ -51,6 +51,125 @@ fn receive_incident(runtime: &WatchdogRuntime) -> IncidentReceipt {
 fn cleanup(runtime: WatchdogRuntime, root: &std::path::Path) {
     runtime.shutdown().unwrap();
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn resources_stop_before_waiting_for_workers_and_reject_late_registration() {
+    let (runtime, process, root) = test_runtime("resource-shutdown");
+    let app = test_app(&process);
+    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = stopped.clone();
+    let resource = process
+        .manage_resource("child", move || {
+            flag.store(true, Ordering::Release);
+            Ok(())
+        })
+        .unwrap();
+    let observed = stopped.clone();
+    let (entered, ready) = std::sync::mpsc::channel();
+    let worker = app
+        .task_group("resource-waiter")
+        .spawn_thread(TaskSpec::one_shot(TaskId::from_static("wait")), move || {
+            entered.send(()).unwrap();
+            while !observed.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+            }
+        })
+        .unwrap();
+    ready.recv_timeout(Duration::from_secs(2)).unwrap();
+    runtime.shutdown().unwrap();
+    assert!(stopped.load(Ordering::Acquire));
+    worker.join().unwrap();
+    assert!(matches!(
+        process.manage_resource("late", || Ok(())),
+        Err(WatchdogError::RuntimeStopped)
+    ));
+    assert!(
+        app.task_group("late-group")
+            .spawn_thread(TaskSpec::one_shot(TaskId::from_static("late")), || {})
+            .is_err()
+    );
+    drop(resource);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resource_drop_retries_failed_cleanup_and_shutdown_reports_failure() {
+    let (runtime, process, root) = test_runtime("resource-failure");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let resource = process
+        .manage_resource("stuck-child", move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "fixture did not stop",
+            ))
+        })
+        .unwrap();
+    drop(resource);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    assert!(matches!(
+        runtime.shutdown(),
+        Err(WatchdogError::Shutdown(_))
+    ));
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert!(process.try_recv_incident().is_some());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cancellation_callback_observes_cancellation_before_registration() {
+    let (runtime, process, root) = test_runtime("cancel-callback");
+    let app = test_app(&process);
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let worker = app
+        .task_group("callback")
+        .spawn_thread_with_cancellation(
+            TaskSpec::one_shot(TaskId::from_static("wait")),
+            move |cancel| {
+                entered.send(()).unwrap();
+                released.recv_timeout(Duration::from_secs(2)).unwrap();
+                let counter = counter.clone();
+                cancel.on_cancel(move || {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                });
+            },
+        )
+        .unwrap();
+    ready.recv_timeout(Duration::from_secs(2)).unwrap();
+    worker.cancel();
+    release.send(()).unwrap();
+    worker.join().unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    cleanup(runtime, &root);
+}
+
+#[test]
+fn cleanup_panic_does_not_prevent_other_resources_from_stopping() {
+    let (runtime, process, root) = test_runtime("cleanup-panic");
+    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = stopped.clone();
+    let normal = process
+        .manage_resource("normal", move || {
+            flag.store(true, Ordering::Release);
+            Ok(())
+        })
+        .unwrap();
+    let panicking = process
+        .manage_resource("panicking", || panic!("cleanup fixture"))
+        .unwrap();
+    assert!(matches!(
+        runtime.shutdown(),
+        Err(WatchdogError::Shutdown(_))
+    ));
+    assert!(stopped.load(Ordering::Acquire));
+    drop(panicking);
+    drop(normal);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -612,6 +731,22 @@ fn global_install_child() {
         ),
     );
     assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
+
+    let fail_once = Arc::new(AtomicBool::new(true));
+    let resource = installed
+        .manage_resource("cleanup-panic", move || {
+            assert!(!fail_once.swap(false, Ordering::SeqCst), "cleanup fixture");
+            Ok(())
+        })
+        .unwrap();
+    assert!(resource.stop().is_err());
+    assert_eq!(
+        cleanup_calls.load(Ordering::SeqCst),
+        1,
+        "a caught resource cleanup panic must leave the UX terminal intact"
+    );
+    resource.stop().unwrap();
+    drop(resource);
 
     second_runtime.shutdown().unwrap();
     runtime.shutdown().unwrap();

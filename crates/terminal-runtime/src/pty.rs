@@ -107,10 +107,11 @@ impl CommandLineExitStatus {
 /// `Drop` enforces that order.
 pub struct CommandLinePty {
     #[allow(dead_code)]
-    master: Option<Arc<Mutex<Box<dyn MasterPty + Send>>>>,
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
-    process_tree: ProcessTreeGuard,
+    process_tree: Arc<Mutex<ProcessTreeGuard>>,
+    process_registration: Option<watchdog::ManagedResource>,
     parser: Arc<Mutex<vt100::Parser>>,
     output_revision: Arc<AtomicU64>,
     reader_task: Option<ManagedThreadHandle<()>>,
@@ -174,13 +175,61 @@ impl CommandLinePty {
             Ok(guard) => guard,
             Err(error) => {
                 let _ = child.kill();
+                let _ = wait_stopped(child.as_mut());
                 return Err(error);
             }
         };
-        let reader = pair.master.try_clone_reader().map_err(portable_error)?;
-        let writer = Arc::new(Mutex::new(
-            pair.master.take_writer().map_err(portable_error)?,
-        ));
+        let child = Arc::new(Mutex::new(child));
+        let process_tree = Arc::new(Mutex::new(process_tree));
+        // The slave and master share the Windows console. Release the slave
+        // before registering cleanup so closing the master really closes it.
+        drop(pair.slave);
+        let master = Arc::new(Mutex::new(Some(pair.master)));
+        let cleanup_child = child.clone();
+        let cleanup_tree = process_tree.clone();
+        let cleanup_master = master.clone();
+        let process_registration = reader_tasks.manage_resource("terminal-process", move || {
+            let stopped = cleanup_tree
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .terminate();
+            let mut child = cleanup_child.lock().unwrap_or_else(|e| e.into_inner());
+            if stopped.is_err() {
+                let _ = child.kill();
+            }
+            let waited = wait_stopped(child.as_mut());
+            drop(child);
+            // A view may outlive watchdog shutdown. Close the console here
+            // so its reader can reach EOF before watchdog waits for workers.
+            cleanup_master
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+            waited.and(stopped)
+        });
+        let process_registration = match process_registration {
+            Ok(registration) => registration,
+            Err(error) => {
+                let _ = process_tree
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .terminate();
+                let mut child = child.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = child.kill();
+                let _ = wait_stopped(child.as_mut());
+                return Err(io::Error::other(error));
+            }
+        };
+        let (reader, writer) = {
+            let master = lock_io(&master)?;
+            let master = master.as_ref().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "command line PTY is closed")
+            })?;
+            (
+                master.try_clone_reader().map_err(portable_error)?,
+                Arc::new(Mutex::new(master.take_writer().map_err(portable_error)?)),
+            )
+        };
         let parser = Arc::new(Mutex::new(vt100::Parser::new(
             config.rows.max(1),
             config.columns.max(1),
@@ -213,10 +262,11 @@ impl CommandLinePty {
             })?;
 
         Ok(Self {
-            master: Some(Arc::new(Mutex::new(pair.master))),
+            master,
             writer: Some(writer),
-            child: Arc::new(Mutex::new(child)),
+            child,
             process_tree,
+            process_registration: Some(process_registration),
             parser,
             output_revision,
             reader_task: Some(reader_task),
@@ -245,10 +295,11 @@ impl CommandLinePty {
             pixel_width: 0,
             pixel_height: 0,
         };
-        let master = self.master.as_ref().ok_or_else(|| {
+        let master = lock_io(&self.master)?;
+        let master = master.as_ref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "command line PTY is closed")
         })?;
-        lock_io(master)?.resize(size).map_err(portable_error)?;
+        master.resize(size).map_err(portable_error)?;
         let mut parser = lock_io(&self.parser)?;
         parser.set_size(size.rows, size.cols);
         self.output_revision.fetch_add(1, Ordering::Release);
@@ -301,8 +352,12 @@ impl CommandLinePty {
     }
 
     pub fn wait(&self) -> io::Result<CommandLineExitStatus> {
-        let mut child = lock_io(&self.child)?;
-        child.wait().map(CommandLineExitStatus::from_portable)
+        loop {
+            if let Some(status) = self.try_wait()? {
+                return Ok(status);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Requests an orderly interrupt from the interactive program. This is
@@ -316,7 +371,7 @@ impl CommandLinePty {
     /// inspection or permission failure is reported instead of silently killing
     /// only the direct child and leaving its other jobs behind.
     pub fn force_terminate(&self) -> io::Result<()> {
-        match self.process_tree.terminate() {
+        match lock_io(&self.process_tree)?.terminate() {
             Ok(()) => Ok(()),
             Err(containment_error) => {
                 #[cfg(target_os = "linux")]
@@ -350,7 +405,7 @@ impl CommandLinePty {
 
     fn close_pty_handles(&mut self) {
         self.writer.take();
-        self.master.take();
+        self.master.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 
     fn join_reader_bounded(&mut self, timeout: Duration) {
@@ -364,9 +419,9 @@ impl CommandLinePty {
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // A broken platform PTY must never freeze the Shell. The
-                // detached reader owns no host terminal and will close its
-                // remaining handle whenever the operating-system read ends.
+                // Keep the worker in watchdog's registry. A broken PTY must
+                // not freeze the UI; watchdog reports a shutdown failure if
+                // closing our process tree does not unblock the reader.
                 self.reader_task.take();
             }
         }
@@ -378,6 +433,7 @@ impl Drop for CommandLinePty {
         // Killing first closes the slave end and lets the reader finish. It is
         // intentionally best-effort: teardown must never panic.
         let _ = self.force_terminate();
+        self.process_registration.take();
         self.close_pty_handles();
         self.join_reader_bounded(Duration::from_millis(500));
     }
@@ -392,12 +448,30 @@ fn next_reader_task_spec() -> io::Result<TaskSpec> {
     Ok(TaskSpec::one_shot(id))
 }
 
+fn wait_stopped(child: &mut (dyn Child + Send + Sync)) -> io::Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while child.try_wait()?.is_none() {
+        if std::time::Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "terminal child did not stop within one second",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    Ok(())
+}
+
 /// Keeps all descendants of the embedded CLI in a platform containment
 /// boundary so closing a terminal cannot leave commands running behind it.
 #[cfg(windows)]
 struct ProcessTreeGuard {
     job: windows_sys::Win32::Foundation::HANDLE,
 }
+
+// The owned Windows job is used only while holding process_tree's mutex.
+#[cfg(windows)]
+unsafe impl Send for ProcessTreeGuard {}
 
 #[cfg(windows)]
 impl ProcessTreeGuard {
@@ -416,7 +490,8 @@ impl ProcessTreeGuard {
         }
         let guard = Self { job };
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            | windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_BREAKAWAY_OK;
         let configured = unsafe {
             SetInformationJobObject(
                 job,

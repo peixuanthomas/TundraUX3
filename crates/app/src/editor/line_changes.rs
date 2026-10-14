@@ -3,6 +3,7 @@
 use super::background::Latest;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -33,7 +34,7 @@ impl Cache {
         &self,
         key: (u64, u64),
         background: bool,
-        compute: impl FnOnce() -> Arc<[LineMarker]> + Send + 'static,
+        compute: impl FnOnce(&AtomicBool) -> Arc<[LineMarker]> + Send + 'static,
     ) -> Arc<[LineMarker]> {
         self.poll();
         let mut value = self
@@ -48,10 +49,10 @@ impl Cache {
         self.1.cancel();
         if background {
             *value = Some((key, Arc::from([])));
-            self.1.submit(move |_| (key, compute()));
+            self.1.submit(move |cancel| (key, compute(cancel)));
             Arc::from([])
         } else {
-            let markers = compute();
+            let markers = compute(&AtomicBool::new(false));
             *value = Some((key, Arc::clone(&markers)));
             markers
         }
@@ -96,7 +97,16 @@ impl Eq for Cache {}
 
 /// Trim equal prefixes/suffixes while borrowing Rope lines. A local edit in a
 /// multi-million-line log must not allocate two full arrays of line strings.
+#[cfg(test)]
 pub(super) fn compare_ropes(old: &ropey::Rope, new: &ropey::Rope) -> Arc<[LineMarker]> {
+    compare_ropes_cancellable(old, new, &AtomicBool::new(false))
+}
+
+pub(super) fn compare_ropes_cancellable(
+    old: &ropey::Rope,
+    new: &ropey::Rope,
+    cancel: &AtomicBool,
+) -> Arc<[LineMarker]> {
     let old_count = if old.len_bytes() == 0 {
         0
     } else {
@@ -111,12 +121,15 @@ pub(super) fn compare_ropes(old: &ropey::Rope, new: &ropey::Rope) -> Arc<[LineMa
         .lines()
         .take(old_count)
         .zip(new.lines().take(new_count))
-        .take_while(|(left, right)| left == right)
+        .take_while(|(left, right)| !cancel.load(Ordering::Relaxed) && left == right)
         .count();
     let mut suffix = 0;
     let mut old_lines = old.lines_at(old_count);
     let mut new_lines = new.lines_at(new_count);
     while suffix < old_count.min(new_count).saturating_sub(prefix) {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         if old_lines.prev() != new_lines.prev() {
             break;
         }
@@ -137,7 +150,10 @@ pub(super) fn compare_ropes(old: &ropey::Rope, new: &ropey::Rope) -> Arc<[LineMa
         .take(new_end - start)
         .map(Cow::from)
         .collect();
-    let changed = compare(&old_window, &new_window);
+    let changed = compare_cancellable(&old_window, &new_window, cancel);
+    if cancel.load(Ordering::Relaxed) {
+        return Arc::from([]);
+    }
     let mut markers = Vec::with_capacity(new_count.max(1));
     markers.resize(start, LineMarker::default());
     markers.extend_from_slice(&changed);
@@ -146,15 +162,29 @@ pub(super) fn compare_ropes(old: &ropey::Rope, new: &ropey::Rope) -> Arc<[LineMa
 }
 
 pub(super) fn compare(old: &[Cow<'_, str>], new: &[Cow<'_, str>]) -> Arc<[LineMarker]> {
+    compare_cancellable(old, new, &AtomicBool::new(false))
+}
+
+fn compare_cancellable(
+    old: &[Cow<'_, str>],
+    new: &[Cow<'_, str>],
+    cancel: &AtomicBool,
+) -> Arc<[LineMarker]> {
     let mut matches = Vec::new();
     let mut prefix = 0;
     while prefix < old.len().min(new.len()) && old[prefix] == new[prefix] {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         matches.push((prefix, prefix));
         prefix += 1;
     }
     let mut old_end = old.len();
     let mut new_end = new.len();
     while old_end > prefix && new_end > prefix && old[old_end - 1] == new[new_end - 1] {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         old_end -= 1;
         new_end -= 1;
     }
@@ -162,11 +192,17 @@ pub(super) fn compare(old: &[Cow<'_, str>], new: &[Cow<'_, str>]) -> Arc<[LineMa
     // Unique common lines anchor distant edits without a quadratic whole-file table.
     let mut occurrences = HashMap::<&str, (usize, usize, usize, usize)>::new();
     for (index, line) in old.iter().enumerate().take(old_end).skip(prefix) {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         let entry = occurrences.entry(line.as_ref()).or_default();
         entry.0 = index;
         entry.1 += 1;
     }
     for (index, line) in new.iter().enumerate().take(new_end).skip(prefix) {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         if let Some(entry) = occurrences.get_mut(line.as_ref()) {
             entry.2 = index;
             entry.3 += 1;
@@ -181,6 +217,9 @@ pub(super) fn compare(old: &[Cow<'_, str>], new: &[Cow<'_, str>]) -> Arc<[LineMa
     let mut tails: Vec<usize> = Vec::new();
     let mut previous = vec![None; candidates.len()];
     for (index, &(_, new_index)) in candidates.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         let position = tails.partition_point(|&tail| candidates[tail].1 < new_index);
         if position > 0 {
             previous[index] = Some(tails[position - 1]);
@@ -204,6 +243,9 @@ pub(super) fn compare(old: &[Cow<'_, str>], new: &[Cow<'_, str>]) -> Arc<[LineMa
     // Such unmatched blocks are conservatively marked as replacements.
     let mut budget = 1_000_000usize;
     for (x, y) in anchors {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         match_gap(old, new, a..x, b..y, &mut budget, &mut matches);
         if x < old_end {
             matches.push((x, y));
@@ -217,6 +259,9 @@ pub(super) fn compare(old: &[Cow<'_, str>], new: &[Cow<'_, str>]) -> Arc<[LineMa
     let mut markers = vec![LineMarker::default(); new.len().max(1)];
     let (mut a, mut b) = (0, 0);
     for (x, y) in matches {
+        if cancel.load(Ordering::Relaxed) {
+            return Arc::from([]);
+        }
         let paired = (x - a).min(y - b);
         for marker in &mut markers[b..b + paired] {
             marker.change = LineChange::Modified;

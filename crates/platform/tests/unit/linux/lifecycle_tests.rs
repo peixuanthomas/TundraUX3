@@ -10,11 +10,11 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "tundra-logind-test-{}-{}",
-            std::process::id(),
-            DETACHED_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let root =
+            std::env::temp_dir().join(format!("tundra-logind-test-{}-{}", std::process::id(), {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            }));
         let config = WatchdogConfig::new(
             root.join("reports"),
             root.join("fallback"),

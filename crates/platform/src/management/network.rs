@@ -6,6 +6,7 @@ mod transaction;
 mod wifi;
 
 use super::*;
+use crate::ManagedCommand;
 use serde_json::Value as Json;
 use std::collections::HashMap;
 use std::io::Read;
@@ -561,7 +562,7 @@ pub(super) fn run_status(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_managed()
         .map_err(io_error)?;
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();

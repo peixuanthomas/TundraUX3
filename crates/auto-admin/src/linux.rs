@@ -1,4 +1,5 @@
 use super::*;
+use platform::ManagedCommand;
 use platform::{
     linux::authorization::{Interaction, TextAgent},
     service::ServiceError,
@@ -241,7 +242,7 @@ impl Interaction for AutoAdminAuthorization {
                 });
             }
             let mut child = command
-                .spawn()
+                .spawn_managed_inherited()
                 .map_err(|_| ServiceError::ServiceUnavailable)?;
             *self.job.0.process.lock().unwrap_or_else(|e| e.into_inner()) =
                 platform::management::termination::ProcessTree::child(child.id()).ok();

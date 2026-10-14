@@ -1,5 +1,6 @@
 //! A Shell-owned authorization session. No password, token file or public socket
 //! is retained. Only the inherited private socket can issue fixed requests.
+use crate::ManagedCommand;
 use crate::management::{HelperReady, ManagementCommand, ManagementError, helper};
 use crate::service::ServiceError;
 use serde::{Deserialize, Serialize};
@@ -221,7 +222,7 @@ fn start_operation(command: &ManagementCommand, actor: u32) -> Result<UnixStream
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_supervised_helper()
         .map_err(failure)?;
     let mut request = Zeroizing::new(serde_json::to_vec(command).map_err(failure)?);
     request.push(b'\n');
@@ -281,6 +282,54 @@ pub fn entry(actor: u32) -> Result<(), ManagementError> {
     if helper::peer_uid(&channel).map_err(failure)? != actor {
         return Err(failure("Session channel does not belong to the actor"));
     }
+    // This broker is an early CLI entry and has no ordinary application runtime.
+    // Give it its own watchdog and monitor disconnection even during an account
+    // command. An unprivileged UI cannot force-kill an already elevated helper.
+    let logs = tempfile::Builder::new()
+        .prefix("tundra-authorization-")
+        .tempdir()
+        .map_err(failure)?;
+    let config = watchdog::WatchdogConfig::new(
+        logs.path().join("reports"),
+        logs.path().join("fallback"),
+        logs.path().join("state"),
+        "authorization",
+        env!("CARGO_PKG_VERSION"),
+    );
+    let (_runtime, process) = watchdog::WatchdogRuntime::start(config).map_err(failure)?;
+    let process = process.install_global().map_err(failure)?;
+    let app = process
+        .register_app(watchdog::AppDescriptor::new(
+            watchdog::AppId::from_static("authorization"),
+            "Authorization",
+            env!("CARGO_PKG_VERSION"),
+            watchdog::AppCriticality::ProcessCritical,
+        ))
+        .map_err(failure)?;
+    let monitor = channel.try_clone().map_err(failure)?;
+    let _monitor_task = app
+        .task_group("authorization-connection")
+        .spawn_thread_with_cancellation(
+            watchdog::TaskSpec::one_shot(watchdog::TaskId::from_static("disconnect")),
+            move |cancel| {
+                while !cancel.is_cancelled() {
+                    let mut descriptor = libc::pollfd {
+                        fd: monitor.as_raw_fd(),
+                        events: libc::POLLRDHUP | libc::POLLHUP,
+                        revents: 0,
+                    };
+                    let ready = unsafe { libc::poll(&mut descriptor, 1, 100) };
+                    if ready > 0
+                        && descriptor.revents & (libc::POLLRDHUP | libc::POLLHUP | libc::POLLERR)
+                            != 0
+                    {
+                        let _ = process.cancel_owned_work();
+                        break;
+                    }
+                }
+            },
+        )
+        .map_err(failure)?;
     write_packet(&mut channel, &Response::Done)?;
     loop {
         let request: Request = match read_packet(&mut channel) {

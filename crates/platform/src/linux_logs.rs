@@ -2,6 +2,8 @@
 //!
 //! Call this on a worker: the subprocess deadline is five seconds. No shell,
 //! elevation, pager, persistent collector, or traditional log-file scan is used.
+#[cfg(target_os = "linux")]
+use crate::ManagedCommand;
 use runtime_log::{LogQuery, LogQueryResult, LogSourceState};
 use std::sync::atomic::AtomicBool;
 
@@ -77,7 +79,7 @@ mod implementation {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_managed()
         {
             Ok(child) => child,
             Err(error) => {

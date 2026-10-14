@@ -1,6 +1,8 @@
 //! State belonging to one REPL's operating-system commands, never the host
 //! process. Child commands retain their inherited terminal streams.
 
+#[cfg(unix)]
+use crate::ManagedCommand;
 use std::io;
 use std::process::Command;
 
@@ -376,7 +378,7 @@ impl SystemCommandSession {
                 Ok(())
             });
         }
-        let status = child.status()?;
+        let status = child.status_managed()?;
         self.initialized = true;
         let snapshot = (|| {
             let mut environment_bytes = Vec::new();

@@ -1,5 +1,7 @@
 //! Shared UI/CLI client. Disconnecting stops this reader, never the system operation.
 use super::*;
+#[cfg(target_os = "linux")]
+use crate::ManagedCommand;
 use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, mpsc},
@@ -84,7 +86,7 @@ pub fn run(
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            let mut child = launch.spawn().map_err(failure)?;
+            let mut child = launch.spawn_supervised_helper().map_err(failure)?;
             let mut request = Zeroizing::new(
                 serde_json::to_vec(&command)
                     .map_err(|e| ManagementError::InvalidInput(e.to_string()))?,
@@ -187,7 +189,7 @@ pub fn run(
 /// independent operation has its own lifetime and is never killed here.
 #[cfg(target_os = "linux")]
 fn wait_for_launcher(
-    mut child: std::process::Child,
+    mut child: crate::ManagedChild,
     detached: &AtomicBool,
 ) -> Result<std::process::Output, ManagementError> {
     use std::io::Read;

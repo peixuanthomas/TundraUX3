@@ -90,6 +90,34 @@ fn production_code_uses_the_workspace_watchdog_for_hooks_and_tasks() {
                 ));
             }
         }
+        // These are the reviewed low-level adapters. New command callers must
+        // use ManagedCommand; only these owners may create raw processes.
+        let process_adapter = [
+            "platform/src/managed_process.rs",
+            "platform/src/management/packages/runner.rs",
+            "platform/src/management/helper.rs", // transfers to its own watchdog before serving
+            "terminal-runtime/src/pty.rs",
+        ]
+        .iter()
+        .any(|relative| path == crates.join(relative));
+        if !process_adapter
+            && [
+                ".spawn(",
+                ".spawn_command(",
+                ".output(",
+                "libc::fork(",
+                "command.status(",
+                "process.status(",
+                "child.status(",
+            ]
+            .iter()
+            .any(|needle| compact.contains(needle))
+        {
+            violations.push(format!(
+                "{}: child processes must use an owned process adapter",
+                path.strip_prefix(&workspace).unwrap_or(&path).display()
+            ));
+        }
     }
 
     assert!(

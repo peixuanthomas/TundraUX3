@@ -118,7 +118,7 @@ impl EditorState {
         self.line_change_cache.get_or_compute(
             (self.revision, self.saved_revision),
             current.len_bytes() > background::SYNC_BYTES,
-            move || {
+            move |cancel| {
                 let old_rope;
                 let old = if let Some((rope, _, _)) = saved.rope() {
                     rope
@@ -150,7 +150,7 @@ impl EditorState {
                         &summary(&current, if same { "old" } else { "new" }),
                     );
                 }
-                line_changes::compare_ropes(old, &current)
+                line_changes::compare_ropes_cancellable(old, &current, cancel)
             },
         )
     }

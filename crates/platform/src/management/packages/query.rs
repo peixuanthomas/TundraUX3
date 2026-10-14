@@ -1,4 +1,5 @@
 use super::{PackageBackend, PackageRecord, detect_backend, pacman, parsing, validate_target};
+use crate::ManagedCommand;
 use crate::management::{
     ManagementAction, ManagementError, ManagementQuery, ManagementRow, ManagementSnapshot,
 };
@@ -65,7 +66,7 @@ fn run_read_command_with_empty(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_managed()
         .map_err(|error| {
             ManagementError::Unavailable(format!("Could not run {program}: {error}"))
         })?;

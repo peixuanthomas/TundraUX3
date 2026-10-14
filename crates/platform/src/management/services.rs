@@ -1,5 +1,6 @@
 //! systemd system and current-user .service management.
 use super::*;
+use crate::ManagedCommand;
 use std::collections::BTreeMap;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, RawFd};
@@ -607,7 +608,7 @@ fn run_systemctl(
     if let Some(unit) = unit {
         command.args(["--", unit]);
     }
-    let mut child = command.spawn().map_err(|error| {
+    let mut child = command.spawn_managed().map_err(|error| {
         ManagementError::Unavailable(format!("Cannot launch systemctl: {error}"))
     })?;
     let result = (|| {
@@ -684,7 +685,7 @@ fn run_read_tool(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_managed()
         .map_err(|error| ManagementError::Unavailable(error.to_string()))?;
     let result = (|| {
         let mut stdout = child

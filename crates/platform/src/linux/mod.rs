@@ -13,9 +13,10 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+#[cfg(test)]
+use std::process::Child;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use arboard::Clipboard;
@@ -52,7 +53,6 @@ const TRASH_INFO_SUFFIX: &str = ".trashinfo";
 
 static CLIPBOARD: OnceLock<Mutex<Option<Clipboard>>> = OnceLock::new();
 static LIFECYCLE_EVENTS: OnceLock<Mutex<LifecycleEvents>> = OnceLock::new();
-static DETACHED_TASK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LinuxPlatform;
@@ -638,61 +638,22 @@ fn managed_platform_watchdog() -> Result<AppWatchdog, PlatformError> {
 }
 
 fn run_detached(mut command: Command, operation: &'static str) -> Result<(), PlatformError> {
-    let app = managed_platform_watchdog()?;
     let program = command.get_program().to_os_string();
-    let sequence = DETACHED_TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let id =
-        TaskId::new(format!("child-launch-{sequence}")).map_err(|error| PlatformError::Native {
-            operation: "create Linux child reaper task id",
-            message: error.to_string(),
-        })?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // Process creation stays synchronous so callers can accurately report a
-    // missing opener/application. Only the potentially long wait is moved to
-    // the watchdog-managed worker.
-    let child = spawn_detached_child(&mut command, operation, &program)?;
-    let child = Arc::new(Mutex::new(Some(child)));
-    let worker_child = Arc::clone(&child);
-    let spawned =
-        app.task_group("platform-linux")
-            .spawn_thread(TaskSpec::one_shot(id), move || {
-                if let Some(mut child) = worker_child
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .take()
-                {
-                    let _ = child.wait();
-                }
-            });
-    if let Err(error) = spawned {
-        // A worker-creation failure must not leave a child process behind. Do
-        // not let it continue: terminate first, then reap the now-dead child.
-        if let Some(mut child) = child
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
-        {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        return Err(PlatformError::Native {
-            operation: "start Linux child reaper",
-            message: error.to_string(),
-        });
-    }
-    Ok(())
+    crate::managed_process::spawn_external(&mut command)
+        .map_err(|error| io_error(operation, Some(PathBuf::from(program)), error))
 }
 
+#[cfg(test)]
 fn spawn_detached_child(
     command: &mut Command,
     operation: &'static str,
     program: &OsString,
 ) -> Result<Child, PlatformError> {
-    command
-        .spawn()
+    crate::managed_process::spawn_external_child(command)
         .map_err(|error| io_error(operation, Some(PathBuf::from(program)), error))
 }
 

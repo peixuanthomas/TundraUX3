@@ -8,10 +8,9 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// Runs inside the independent privileged helper. No process killer or
-/// kill-on-drop guard is installed. Client cancellation/disconnection must not
-/// interrupt a package database write or a maintainer script. Explicit AA
-/// termination/kill requests are handled by the helper's independent control loop.
+/// Runs inside the independent privileged helper. Client disconnection does
+/// not end the operation. The helper owns the process until completion and
+/// cleans it up if its worker panics or the helper itself shuts down.
 pub(super) fn execute(
     spec: PackageCommand,
     backend: PackageBackend,
@@ -58,7 +57,7 @@ pub(super) fn execute(
         command.env("DEBIAN_PRIORITY", "critical");
     }
     command.cwd("/");
-    let mut child = pair.slave.spawn_command(command).map_err(pty_error)?;
+    let mut child = PackageProcess::spawn(pair.slave.as_ref(), command).map_err(pty_error)?;
     drop(pair.slave);
     interaction.emit(OperationEvent::Progress {
         message: format!(
@@ -227,6 +226,95 @@ fn size(columns: u16, rows: u16) -> PtySize {
         rows: rows.clamp(5, 200),
         pixel_width: 0,
         pixel_height: 0,
+    }
+}
+
+struct PackageProcess {
+    state: std::sync::Arc<std::sync::Mutex<PackageProcessState>>,
+    registration: Option<watchdog::ManagedResource>,
+}
+
+struct PackageProcessState {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    tree: Option<crate::management::termination::ProcessTree>,
+    stopped: bool,
+}
+
+impl PackageProcessState {
+    fn stop(&mut self) -> std::io::Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        if let Some(tree) = &mut self.tree {
+            tree.signal(true)?;
+        }
+        if self.child.try_wait()?.is_none() {
+            self.child.kill()?;
+        }
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while self.child.try_wait()?.is_none() {
+            if Instant::now() >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "package child did not stop within one second",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        self.stopped = true;
+        Ok(())
+    }
+}
+
+impl Drop for PackageProcessState {
+    fn drop(&mut self) {
+        let _ = self.stop();
+    }
+}
+
+impl PackageProcess {
+    fn spawn(slave: &dyn portable_pty::SlavePty, command: CommandBuilder) -> std::io::Result<Self> {
+        let child = slave
+            .spawn_command(command)
+            .map_err(std::io::Error::other)?;
+        let mut state = PackageProcessState {
+            tree: None,
+            child,
+            stopped: false,
+        };
+        let pid = state.child.process_id().ok_or_else(|| {
+            std::io::Error::other("package process did not expose its process ID")
+        })?;
+        state.tree = Some(crate::management::termination::ProcessTree::child(pid)?);
+        let state = std::sync::Arc::new(std::sync::Mutex::new(state));
+        let cleanup = state.clone();
+        let registration =
+            watchdog::ManagedResource::register_current("package-process", move || {
+                cleanup.lock().unwrap_or_else(|e| e.into_inner()).stop()
+            })
+            .map_err(std::io::Error::other)?;
+        Ok(Self {
+            state,
+            registration,
+        })
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .child
+            .try_wait()
+    }
+}
+
+impl Drop for PackageProcess {
+    fn drop(&mut self) {
+        if let Some(registration) = self.registration.take() {
+            drop(registration);
+        } else {
+            let _ = self.state.lock().unwrap_or_else(|e| e.into_inner()).stop();
+        }
     }
 }
 fn pty_error(error: impl std::fmt::Display) -> ManagementError {

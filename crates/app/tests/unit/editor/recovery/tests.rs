@@ -136,6 +136,20 @@ fn cloned_render_state_retains_ownership_until_its_last_copy_is_dropped() {
 }
 
 #[test]
+fn duplicate_descriptor_does_not_extend_draft_ownership() {
+    let fixture = RecoveryFixture::new("duplicate-descriptor");
+    let paths = fixture.paths();
+    let lease = new_draft(&paths, "draft", 1);
+    // A duplicate shares the same lock, just like the descriptor briefly
+    // inherited by a child between fork and exec on Linux.
+    let duplicate = lease.lock.0.try_clone().unwrap();
+    drop(lease);
+    let claimed = claim_next_editor_recovery(&paths, "alice").unwrap();
+    drop(duplicate);
+    assert!(claimed.is_some());
+}
+
+#[test]
 fn inactive_drafts_are_claimed_one_at_a_time_in_updated_order() {
     let fixture = RecoveryFixture::new("ordered");
     let paths = fixture.paths();

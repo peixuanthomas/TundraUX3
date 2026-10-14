@@ -9,6 +9,7 @@ mod log_error;
 mod model;
 mod report;
 mod report_catalog;
+mod resource;
 mod runtime;
 mod sanitize;
 mod task;
@@ -20,6 +21,7 @@ pub use journal::OperationGuard;
 pub use log_error::capture_error;
 pub use model::*;
 pub use report_catalog::{IncidentReportCatalog, IncidentReportSummary};
+pub use resource::ManagedResource;
 pub use runtime::{AppWatchdog, CaughtPanic, EmergencyCleanup, ProcessWatchdog, WatchdogRuntime};
 pub use task::{ManagedTaskGroup, ManagedThreadHandle, ThreadCancellation};
 

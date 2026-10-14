@@ -1,4 +1,5 @@
 use super::*;
+use crate::ManagedCommand;
 use std::fs;
 use std::os::windows::ffi::OsStringExt;
 use std::os::windows::process::CommandExt;
@@ -36,7 +37,7 @@ impl SystemCommandSession {
             .env(ENVIRONMENT, &environment)
             .env(DIRECTORY, &directory)
             .env(COMPLETE, &complete)
-            .status()?;
+            .status_managed()?;
         let snapshot = (|| {
             if fs::read(&complete)? != b"complete\r\n" {
                 return Err(io::Error::other("incomplete command state"));

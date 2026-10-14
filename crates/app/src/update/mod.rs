@@ -1,3 +1,4 @@
+use platform::ManagedCommand;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Cursor, Read};
@@ -1289,7 +1290,7 @@ trait TransactionOperations {
 #[cfg(any(windows, target_os = "linux"))]
 #[derive(Default)]
 struct NativeTransactionOperations {
-    child: std::cell::RefCell<Option<std::process::Child>>,
+    child: std::cell::RefCell<Option<platform::ManagedChild>>,
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -1313,7 +1314,7 @@ impl TransactionOperations for NativeTransactionOperations {
         let mut child = std::process::Command::new(&paths.installed_shell)
             .env(UPDATE_READY_FILE_ENV, &paths.ready)
             .env(UPDATE_TARGET_SHA_ENV, target_sha)
-            .spawn()
+            .spawn_managed_inherited()
             .map_err(|error| UpdateError::new(format!("could not start updated Shell: {error}")))?;
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while std::time::Instant::now() < deadline {
@@ -1340,7 +1341,7 @@ impl TransactionOperations for NativeTransactionOperations {
     fn launch_restored(&self, shell: &Path, reason: &str) -> Result<(), UpdateError> {
         let child = std::process::Command::new(shell)
             .env(UPDATE_ROLLBACK_ENV, reason)
-            .spawn()
+            .spawn_managed_inherited()
             .map_err(|error| {
                 UpdateError::new(format!("could not restart restored Shell: {error}"))
             })?;
@@ -1649,9 +1650,12 @@ fn launch_helper_mode(
     #[cfg(windows)]
     {
         let _terminal_control = platform::TerminalControlHandler::install();
-        let status = process.status().map_err(|error| {
-            UpdateError::new(format!("could not launch update helper: {error}"))
-        })?;
+        let status = process
+            .spawn_successor()
+            .and_then(|mut child| child.wait())
+            .map_err(|error| {
+                UpdateError::new(format!("could not launch update helper: {error}"))
+            })?;
         if !status.success() {
             return Err(UpdateError::new(format!("update helper failed: {status}")));
         }
@@ -1659,7 +1663,8 @@ fn launch_helper_mode(
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     process
-        .spawn()
+        .spawn_successor()
+        .and_then(|mut child| child.wait())
         .map(|_| ())
         .map_err(|error| UpdateError::new(format!("could not launch update helper: {error}")))
 }

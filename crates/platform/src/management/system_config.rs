@@ -1,6 +1,7 @@
 //! Reviewed, version-checked text configuration writes. No arbitrary privileged
 //! command is accepted. All file operations are relative to no-follow handles.
 use super::*;
+use crate::ManagedCommand;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::{CString, OsStr};
@@ -9,7 +10,7 @@ use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::{ffi::OsStrExt, fs::MetadataExt, process::CommandExt};
 use std::path::{Component, Path};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -68,7 +69,7 @@ fn checker_drain(reader: &mut impl Read, bytes: &mut Vec<u8>) -> Result<(), Mana
 /// Both pipes are drained by the same watchdog-owned operation. Every error,
 /// cancellation or timeout reaps the checker, so no reader thread can outlive it.
 fn collect_checker(
-    child: &mut Child,
+    child: &mut crate::ManagedChild,
     flag: &AtomicBool,
     timeout: Duration,
 ) -> Result<(Option<ExitStatus>, Vec<u8>), ManagementError> {
@@ -632,7 +633,7 @@ fn validate_candidate_with_program(
             Ok(())
         });
     }
-    let mut child = match command.spawn() {
+    let mut child = match command.spawn_managed() {
         Ok(child) => child,
         Err(e) => {
             return Ok(ConfigCheck::Unavailable(format!(
@@ -1203,7 +1204,7 @@ mod tests {
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .spawn()
+                .spawn_managed()
                 .unwrap()
         };
         let flag = AtomicBool::new(false);
@@ -1597,7 +1598,7 @@ mod tests {
                 .args(["-q", "-t", "ed25519", "-N", ""])
                 .arg("-f")
                 .arg(&key)
-                .status()
+                .status_managed()
                 .unwrap()
                 .success()
         );

@@ -1,3 +1,5 @@
+#[cfg(not(unix))]
+use platform::ManagedCommand;
 use std::sync::Arc;
 use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
 
@@ -216,7 +218,10 @@ fn wait_for_replacement(mut command: std::process::Command) -> std::io::Result<i
     // Windows cannot replace this process with exec. Keep the process that
     // PowerShell is waiting for alive until the replacement exits; otherwise
     // PowerShell resumes reading keys and writing into the replacement's TUI.
-    command.status().map(|status| status.code().unwrap_or(1))
+    command
+        .spawn_successor()?
+        .wait()
+        .map(|status| status.code().unwrap_or(1))
 }
 
 fn restart_error(executable: &std::path::Path, error: std::io::Error) -> std::io::Error {

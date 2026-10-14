@@ -316,6 +316,58 @@ fn pty_process_runs_inside_platform_containment() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(any(windows, unix))]
+#[test]
+fn watchdog_shutdown_stops_terminal_even_if_the_view_still_owns_it() {
+    use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
+    let root = std::env::temp_dir().join(format!(
+        "tundra-pty-shutdown-{}-{}",
+        std::process::id(),
+        NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let config = WatchdogConfig::new(
+        root.join("reports"),
+        root.join("fallback"),
+        root.join("state"),
+        "pty-shutdown-test",
+        "test",
+    );
+    let (runtime, process) = WatchdogRuntime::start_isolated(config).unwrap();
+    let app = process
+        .register_app(AppDescriptor::new(
+            AppId::from_static("pty-test"),
+            "PTY test",
+            "test",
+            AppCriticality::Optional,
+        ))
+        .unwrap();
+    #[cfg(windows)]
+    let (program, args) = ("cmd.exe", vec!["/D".into(), "/Q".into()]);
+    #[cfg(unix)]
+    let (program, args) = ("/bin/sh", Vec::new());
+    let pty = CommandLinePty::spawn(
+        CommandLinePtyConfig {
+            program: program.into(),
+            args,
+            env: Vec::new(),
+            cwd: None,
+            columns: 80,
+            rows: 24,
+            scrollback_lines: 0,
+        },
+        &app.task_group("terminal"),
+    )
+    .unwrap();
+    assert!(pty.try_wait().unwrap().is_none());
+    let start = std::time::Instant::now();
+    let stopped = runtime.shutdown();
+    assert!(start.elapsed() < Duration::from_secs(4));
+    assert!(pty.try_wait().unwrap().is_some());
+    drop(pty);
+    stopped.unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(any(windows, target_os = "linux"))]
 fn assert_snapshot_contains(
     pty: &CommandLinePty,

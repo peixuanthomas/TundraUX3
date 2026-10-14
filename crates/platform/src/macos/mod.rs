@@ -1,3 +1,4 @@
+use crate::ManagedCommand;
 #[cfg(target_os = "macos")]
 use std::collections::BTreeMap;
 #[cfg(target_os = "macos")]
@@ -240,7 +241,7 @@ impl Platform for MacosPlatform {
     }
 
     fn read_clipboard_text(&self) -> Result<String, PlatformError> {
-        let output = Command::new(PBPASTE).output().map_err(|error| {
+        let output = Command::new(PBPASTE).output_managed().map_err(|error| {
             PlatformError::from_io("read clipboard", Some(PathBuf::from(PBPASTE)), &error)
         })?;
 
@@ -259,7 +260,7 @@ impl Platform for MacosPlatform {
         let mut child = Command::new(PBCOPY)
             .stdin(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_managed()
             .map_err(|error| {
                 PlatformError::from_io("write clipboard", Some(PathBuf::from(PBCOPY)), &error)
             })?;
@@ -418,7 +419,7 @@ end run"#;
         .arg("--")
         .arg(title)
         .arg(body)
-        .output()
+        .output_managed()
         .map_err(|error| {
             PlatformError::from_io(
                 "show critical error dialog",
@@ -2066,9 +2067,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(OPEN).args(args).output().map_err(|error| {
-        PlatformError::from_io("open with macOS open", Some(PathBuf::from(OPEN)), &error)
-    })?;
+    let output = Command::new(OPEN)
+        .args(args)
+        .output_managed()
+        .map_err(|error| {
+            PlatformError::from_io("open with macOS open", Some(PathBuf::from(OPEN)), &error)
+        })?;
 
     if output.status.success() {
         Ok(())

@@ -181,10 +181,11 @@ impl SystemServicesRuntime {
         );
         let (snapshot_tx, snapshot_rx) = watch::channel(initial);
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let shutdown_tx = command_tx.clone();
         let tasks = watchdog.task_group("system-services");
         let mut worker_inputs = Some((config, platform, provider, snapshot_tx, command_rx));
         let join = tasks
-            .spawn_thread(
+            .spawn_thread_with_cancellation(
                 TaskSpec {
                     id: TaskId::from_static("runtime"),
                     kind: TaskKind::LongRunning,
@@ -192,7 +193,11 @@ impl SystemServicesRuntime {
                     replay_safety: ReplaySafety::Never,
                     restart_policy: RestartPolicy::never(),
                 },
-                move || {
+                move |cancel| {
+                    let shutdown_tx = shutdown_tx.clone();
+                    cancel.on_cancel(move || {
+                        let _ = shutdown_tx.send(Command::Shutdown);
+                    });
                     let (config, platform, provider, snapshot_tx, command_rx) = worker_inputs
                         .take()
                         .expect("the non-restartable system services worker runs once");

@@ -1,11 +1,12 @@
 //! Session authorization is an inherited connection, never a saved password.
+use crate::ManagedCommand;
 use crate::linux::privilege_session::{Client, Request};
 use crate::management::ManagementError;
 use crate::service::ServiceError;
 use std::io::Write;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -22,7 +23,7 @@ struct State {
 }
 struct Authorized {
     client: Client,
-    child: Child,
+    child: crate::ManagedChild,
 }
 impl Drop for Authorized {
     fn drop(&mut self) {
@@ -153,7 +154,9 @@ impl PrivilegeSession {
             }
             *revoker = Some(channel.try_clone().map_err(failure)?);
         }
-        let mut child = launch.spawn().map_err(failure)?;
+        let mut child = launch.spawn_managed().map_err(failure)?;
+        let shutdown_channel = channel.try_clone().map_err(failure)?;
+        child.shutdown_via(move || shutdown_channel.shutdown(std::net::Shutdown::Both));
         // Command retains its configured stdout socket after spawn. Close our
         // copy before reading: if sudo exits without authorizing, the reader
         // must see EOF immediately so ensure() can request a password.
