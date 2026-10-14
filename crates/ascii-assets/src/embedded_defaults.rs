@@ -21,7 +21,9 @@ macro_rules! embedded_default_theme_file {
     };
 }
 
-pub(crate) const EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
+// Keep one allocation shared by validation, recovery, and lookup. A `const`
+// can materialize the entire table (including PNG bytes) at each use site.
+pub(crate) static EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
     embedded_default_theme_file!("banner", "banner.toml"),
     embedded_default_theme_file!("explorer_icons", "explorer_icons.toml"),
     embedded_default_theme_file!("home_icons", "home_icons.toml"),
