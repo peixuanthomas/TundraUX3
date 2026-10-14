@@ -263,11 +263,9 @@ impl ShellSession {
                         && at.saturating_duration_since(start) <= Duration::from_millis(500)
                 }),
             ui::MouseEventKind::Click(ui::MouseButton::Left) => true,
-            ui::MouseEventKind::Drag(_) => {
-                self.screen_keyboard.pressed = None;
-                false
-            }
-            ui::MouseEventKind::Move => {
+            // Terminals report even a small held movement as Drag. Keep the
+            // press while it stays on this key; leaving it cancels permanently.
+            ui::MouseEventKind::Drag(ui::MouseButton::Left) | ui::MouseEventKind::Move => {
                 if self
                     .screen_keyboard
                     .pressed
@@ -276,6 +274,12 @@ impl ShellSession {
                 {
                     self.screen_keyboard.pressed = None;
                 }
+                false
+            }
+            ui::MouseEventKind::Scroll(_)
+            | ui::MouseEventKind::Down(_)
+            | ui::MouseEventKind::Drag(_) => {
+                self.screen_keyboard.pressed = None;
                 false
             }
             _ => false,

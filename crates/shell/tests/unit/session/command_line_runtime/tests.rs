@@ -712,16 +712,30 @@ fn live_keyboard_types_into_child_pty_and_resize_reaches_the_child() {
         let point = (key.x, key.y);
         assert!(
             state
-                .route_screen_keyboard_input(
+                .prepare_input(
                     InputEvent::mouse_down(ui::MouseButton::Left, point),
                     platform.as_ref(),
                     std::time::Instant::now()
                 )
                 .is_none()
         );
+        // Fast pointer typing can include held motion before each release.
+        let moved = (key.x + 1, key.y);
+        assert!(key.width > 1);
+        for position in [point, moved] {
+            assert!(
+                state
+                    .prepare_input(
+                        InputEvent::mouse_drag(ui::MouseButton::Left, position),
+                        platform.as_ref(),
+                        std::time::Instant::now(),
+                    )
+                    .is_none()
+            );
+        }
         let event = state
-            .route_screen_keyboard_input(
-                InputEvent::mouse_up(ui::MouseButton::Left, point),
+            .prepare_input(
+                InputEvent::mouse_up(ui::MouseButton::Left, moved),
                 platform.as_ref(),
                 std::time::Instant::now(),
             )

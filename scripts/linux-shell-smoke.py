@@ -205,7 +205,7 @@ def check_status_details(master: int, output: bytearray, child: subprocess.Popen
         read_available(master, output, 0.05)
 
 
-def painted_label_position(data: bytes, label: str, columns: int, rows: int) -> tuple[int, int]:
+def painted_label_position(data: bytes, label: str, columns: int, rows: int, first_row: int = 0) -> tuple[int, int]:
     """Locate an ASCII label in a complete Ratatui repaint; return SGR coordinates."""
     screen = [[" "] * columns for _ in range(rows)]
     x = y = 0
@@ -243,7 +243,7 @@ def painted_label_position(data: bytes, label: str, columns: int, rows: int) -> 
                 if width == 2 and x + 1 < columns:
                     screen[y][x + 1] = " "
             x += width
-    for row, cells in enumerate(screen):
+    for row, cells in enumerate(screen[first_row:], start=first_row):
         column = "".join(cells).find(label)
         if column >= 0:
             return column + 1, row + 1
@@ -406,6 +406,27 @@ def check_keyboard_paste(master: int, output: bytearray, child: subprocess.Popen
             read_available(master, output, 0.05)
 
     click("Show keyboard")
+    # Send the next clicks in one burst, including held movement inside each
+    # keycap. The real CLI must receive every letter, including the repeated s.
+    positions = {
+        letter: painted_label_position(bytes(output[start:]), f" {letter} ", 140, 40, first_row=20)
+        for letter in "asd"
+    }
+    os.write(master, b"printf 'RAPID_%s\\n' ")
+    reports = bytearray()
+    for letter in "assd":
+        x, y = positions[letter]
+        x += 1  # Move from the surrounding space to the key's legend.
+        reports.extend(
+            f"\x1b[<0;{x};{y}M\x1b[<32;{x};{y}M"
+            f"\x1b[<32;{x + 1};{y}M\x1b[<0;{x + 1};{y}m".encode()
+        )
+    offset = len(output)
+    os.write(master, reports + b"\r")
+    if not wait_for_output(master, output, b"RAPID_assd", child, 5.0, offset):
+        raise SystemExit("rapid keyboard clicks lost letters:\n" + output_diagnostic(output[offset:]))
+    if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("rapid keyboard command did not complete")
     for _ in range(3):
         click("Paste")
     click("Hide keyboard")
@@ -417,7 +438,7 @@ def check_keyboard_paste(master: int, output: bytearray, child: subprocess.Popen
         raise SystemExit("terminal stopped accepting commands after Paste")
     if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, offset, ignore_spaces=True):
         raise SystemExit("command after Paste did not complete")
-    print("PASS: repeated unavailable-clipboard clicks and subsequent terminal command")
+    print("PASS: rapid screen-keyboard clicks with small held movements, repeated unavailable-clipboard clicks and subsequent terminal command")
 
 
 def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, isolated: Path) -> None:

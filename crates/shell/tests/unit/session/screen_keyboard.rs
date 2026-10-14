@@ -54,6 +54,76 @@ fn route(state: &mut ShellSession, input: InputEvent) -> Option<InputEvent> {
     state.route_screen_keyboard_input(input, platform::native_platform().as_ref(), Instant::now())
 }
 
+#[test]
+fn rapid_keyboard_clicks_keep_small_movements_inside_each_key() {
+    for auto_admin in [false, true] {
+        for hover in [false, true] {
+            let mut state = session();
+            let (responses, inputs) = std::sync::mpsc::channel();
+            if auto_admin {
+                state
+                    .begin_auto_admin("Keyboard input".into(), false, responses)
+                    .unwrap();
+            }
+            state.toggle_input_keyboard();
+            state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+            let platform = platform::native_platform();
+            let start = Instant::now();
+            let mut keys = Vec::new();
+            // No redraw or delay between clicks; touch also works without hover.
+            for (index, letter) in ['a', 's', 's', 'd'].into_iter().enumerate() {
+                let area = state
+                    .input_keyboard_layout()
+                    .buttons
+                    .into_iter()
+                    .find(|button| button.action == Action::Letter(letter))
+                    .unwrap()
+                    .area;
+                assert!(area.width > 1);
+                let point = (area.x, area.y);
+                let moved = (area.x + 1, area.y);
+                let at = start + Duration::from_millis(index as u64 * 30);
+                let mut events = Vec::new();
+                if hover {
+                    events.push(InputEvent::mouse_moved(point));
+                }
+                events.push(InputEvent::mouse_down(PointerButton::Left, point));
+                if index > 0 {
+                    events.push(InputEvent::mouse_drag(PointerButton::Left, point));
+                    events.push(InputEvent::mouse_drag(PointerButton::Left, moved));
+                }
+                events.push(InputEvent::mouse_up(PointerButton::Left, moved));
+                for event in events {
+                    if let Some(InputEvent::Key(key)) =
+                        state.prepare_input(event, platform.as_ref(), at)
+                    {
+                        keys.push(key);
+                    }
+                }
+                assert!(state.screen_keyboard.pressed.is_none());
+                assert!(state.interaction.button_capture.is_none());
+            }
+            if auto_admin {
+                let bytes: Vec<_> = inputs
+                    .try_iter()
+                    .flat_map(|input| match input {
+                        platform::management::OperationInput::Terminal { bytes } => bytes,
+                        _ => Vec::new(),
+                    })
+                    .collect();
+                assert_eq!(bytes, b"assd", "hover={hover}");
+                assert!(keys.is_empty());
+            } else {
+                assert_eq!(
+                    keys,
+                    ['a', 's', 's', 'd'].map(|letter| KeyInput::new(InputKey::Char(letter))),
+                    "hover={hover}"
+                );
+            }
+        }
+    }
+}
+
 fn click(state: &mut ShellSession, action: Action) -> Option<InputEvent> {
     click_with_platform(state, action, platform::native_platform().as_ref())
 }
@@ -195,7 +265,7 @@ fn command_line_launcher_resizes_content_and_generates_real_modified_keys() {
 
 #[test]
 fn keyboard_cancels_clicks_on_drag_resize_focus_loss_timeout_and_page_change() {
-    for cancel in 0..5 {
+    for cancel in 0..9 {
         let mut state = session();
         state.toggle_input_keyboard();
         state.advance_input_keyboard(ui::MotionFrame::reduced(std::time::Duration::ZERO));
@@ -229,9 +299,37 @@ fn keyboard_cancels_clicks_on_drag_resize_focus_loss_timeout_and_page_change() {
             3 => {
                 state.poll_input_keyboard(Instant::now() + Duration::from_secs(1));
             }
-            _ => {
+            4 => {
                 state.enter_screen(ShellScreen::Launcher);
                 state.sync_input_keyboard();
+            }
+            5 => {
+                route(
+                    &mut state,
+                    InputEvent::mouse_drag(PointerButton::Left, (0, 0)),
+                );
+                route(
+                    &mut state,
+                    InputEvent::mouse_drag(PointerButton::Left, (area.x, area.y)),
+                );
+            }
+            6 => {
+                route(
+                    &mut state,
+                    InputEvent::mouse_scroll(ScrollDirection::Down, (area.x, area.y)),
+                );
+            }
+            7 => {
+                route(
+                    &mut state,
+                    InputEvent::mouse_down(PointerButton::Right, (area.x, area.y)),
+                );
+            }
+            _ => {
+                route(
+                    &mut state,
+                    InputEvent::mouse_drag(PointerButton::Right, (area.x, area.y)),
+                );
             }
         }
         let input = route(
