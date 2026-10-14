@@ -785,6 +785,7 @@ fn render_screen_keyboard_keys(
         )
         .with_bracketed_label(false)
         .with_centered_label(true)
+        .with_pressed_fill(true)
         .with_latched(
             target.action.is_latched(model.modifiers)
                 || model.physical_pressed.contains(&target.action),

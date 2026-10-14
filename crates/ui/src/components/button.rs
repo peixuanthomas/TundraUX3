@@ -90,6 +90,7 @@ pub struct Button {
     pub bracketed_label: bool,
     pub latched: bool,
     pub centered_label: bool,
+    pub pressed_fill: bool,
 }
 
 impl Button {
@@ -110,6 +111,7 @@ impl Button {
             bracketed_label: true,
             latched: false,
             centered_label: false,
+            pressed_fill: false,
         }
     }
 
@@ -127,6 +129,12 @@ impl Button {
 
     pub fn with_centered_label(mut self, centered: bool) -> Self {
         self.centered_label = centered;
+        self
+    }
+
+    /// Fill held or latched keycaps and keep their legends readable.
+    pub fn with_pressed_fill(mut self, filled: bool) -> Self {
+        self.pressed_fill = filled;
         self
     }
 
@@ -261,7 +269,7 @@ impl Button {
 
     fn bordered_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let state = self.render_state(area, theme);
-        let style = Self::style_for_state(state, theme);
+        let style = self.style_for_state(state, theme);
         Paragraph::new(self.label_text(area.height.saturating_sub(2)))
             .alignment(HorizontalAlignment::Center)
             .style(style)
@@ -270,12 +278,12 @@ impl Button {
                     .block()
                     .borders(Borders::ALL)
                     .style(style)
-                    .border_style(Self::border_style(state, theme)),
+                    .border_style(self.border_style(state, theme)),
             )
     }
 
     fn borderless_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
-        let style = Self::style_for_state(self.render_state(area, theme), theme);
+        let style = self.style_for_state(self.render_state(area, theme), theme);
         Paragraph::new(self.label_text(area.height))
             .alignment(HorizontalAlignment::Center)
             .style(style)
@@ -325,7 +333,10 @@ impl Button {
         let state = self.render_state(area, theme);
         let mut surface_state = state;
         surface_state.selected = false;
-        let style = Self::style_for_state(surface_state, theme).bg(theme.tokens().raised);
+        let mut style = self.style_for_state(surface_state, theme);
+        if !self.pressed_fill || !state.active || state.disabled {
+            style = style.bg(theme.tokens().raised);
+        }
         Paragraph::new("")
             .alignment(HorizontalAlignment::Left)
             .style(style)
@@ -334,7 +345,7 @@ impl Button {
                     .block()
                     .borders(Borders::ALL)
                     .style(style)
-                    .border_style(Self::border_style(state, theme)),
+                    .border_style(self.border_style(state, theme)),
             )
     }
 
@@ -360,11 +371,17 @@ impl Button {
         state
     }
 
-    fn border_style(state: ComponentState, theme: &TundraTheme) -> Style {
+    fn border_style(&self, state: ComponentState, theme: &TundraTheme) -> Style {
         if state.disabled {
             return theme.disabled_style();
         }
         if state.active {
+            if self.pressed_fill {
+                return theme
+                    .border_style()
+                    .fg(theme.button_pressed_color())
+                    .bg(theme.button_pressed_color());
+            }
             return theme.border_style().fg(theme.button_pressed_color());
         }
         if state.hovered || state.focused || state.selected {
@@ -373,7 +390,7 @@ impl Button {
         theme.border_style()
     }
 
-    fn style_for_state(state: ComponentState, theme: &TundraTheme) -> Style {
+    fn style_for_state(&self, state: ComponentState, theme: &TundraTheme) -> Style {
         if state.disabled {
             return theme.disabled_style();
         }
@@ -387,7 +404,11 @@ impl Button {
             style = style.bg(frame.background);
         }
         if state.active {
-            style = style.fg(theme.button_pressed_color());
+            style = if self.pressed_fill {
+                theme.tokens().filled_style(theme.button_pressed_color())
+            } else {
+                style.fg(theme.button_pressed_color())
+            };
         } else if state.hovered || state.focused || state.selected {
             style = style.fg(theme.button_accent_color());
         }

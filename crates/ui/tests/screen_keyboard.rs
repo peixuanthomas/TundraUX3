@@ -68,11 +68,23 @@ fn keycap_frames_follow_corner_preferences_and_legends_use_border_color() {
                 assert_eq!(
                     buffer[legend].fg,
                     if pressed {
-                        context.theme.accent
+                        context.theme.filled_style(context.theme.accent).fg.unwrap()
                     } else {
                         context.theme.border
                     }
                 );
+                for y in key.area.y..key.area.bottom() {
+                    for x in key.area.x..key.area.right() {
+                        assert_eq!(
+                            buffer[(x, y)].bg,
+                            if pressed {
+                                context.theme.accent
+                            } else {
+                                context.theme.canvas
+                            }
+                        );
+                    }
+                }
             }
         }
     }
@@ -217,11 +229,24 @@ fn physical_presses_and_virtual_latches_share_themed_keycap_colors() {
             let expected = context.theme.accent;
             for action in physical.into_iter().chain([Shift]) {
                 let area = key_area(&layout, action);
-                assert_eq!(buffer[(area.x, area.y)].fg, expected, "{action:?}");
                 for y in area.y..area.bottom() {
                     for x in area.x..area.right() {
+                        assert_eq!(buffer[(x, y)].bg, expected, "{action:?}");
                         if !buffer[(x, y)].symbol().trim().is_empty() {
-                            assert_eq!(buffer[(x, y)].fg, expected, "{action:?}");
+                            let border = layout.bordered_buttons
+                                && (x == area.x
+                                    || x + 1 == area.right()
+                                    || y == area.y
+                                    || y + 1 == area.bottom());
+                            assert_eq!(
+                                buffer[(x, y)].fg,
+                                if border {
+                                    expected
+                                } else {
+                                    context.theme.filled_style(expected).fg.unwrap()
+                                },
+                                "{action:?}"
+                            );
                         }
                     }
                 }
@@ -229,9 +254,9 @@ fn physical_presses_and_virtual_latches_share_themed_keycap_colors() {
             model.physical_pressed = &[];
             let (_, released) = draw(bounds, false, &model, &context);
             let shift = key_area(&layout, Shift);
-            assert_eq!(released[(shift.x, shift.y)].fg, expected);
+            assert_eq!(released[(shift.x, shift.y)].bg, expected);
             let a = key_area(&layout, Letter('a'));
-            assert_ne!(released[(a.x, a.y)].fg, expected);
+            assert_eq!(released[(a.x, a.y)].bg, context.theme.canvas);
         }
     }
 }
@@ -598,9 +623,17 @@ fn keycaps_are_literal_and_latches_stay_bright_without_pointer_or_keyboard_focus
                 assert_eq!(
                     buffer[(x, row)].fg,
                     if action.is_latched(model.modifiers) {
-                        context.theme.accent
+                        context.theme.filled_style(context.theme.accent).fg.unwrap()
                     } else {
                         context.theme.border
+                    }
+                );
+                assert_eq!(
+                    buffer[(x, row)].bg,
+                    if action.is_latched(model.modifiers) {
+                        context.theme.accent
+                    } else {
+                        context.theme.canvas
                     }
                 );
             }

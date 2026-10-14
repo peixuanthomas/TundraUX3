@@ -19,8 +19,8 @@ const RESTORED_MARKER: &str = "SCREEN_KEYBOARD_TERMINAL_RESTORED";
 const ROWS: u16 = 24;
 const COLS: u16 = 80;
 const ACCENT: vt100::Color = vt100::Color::Rgb(12, 34, 56);
-// Keycaps use the configured accent on press and border color for legends.
-const PRESSED: vt100::Color = ACCENT;
+// Held keycaps use the configured accent fill and contrasting white legends.
+const PRESSED: vt100::Color = vt100::Color::Idx(15);
 const TEXT: vt100::Color = vt100::Color::Rgb(140, 160, 180);
 // The demo's surrounding AA controls retain ordinary page button colors.
 const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 241, 244);
@@ -92,7 +92,9 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     });
     terminal.mouse(0, q, false);
     terminal.wait_for("held letter accent", |screen| {
-        color_at(screen, q) == PRESSED && typed_text(screen, false) == "aBc"
+        color_at(screen, q) == PRESSED
+            && screen.cell(q.0, q.1).unwrap().bgcolor() == ACCENT
+            && typed_text(screen, false) == "aBc"
     });
     terminal.mouse(0, q, true);
     terminal.wait_for("released letter and cleared pointer accent", |screen| {
@@ -833,11 +835,19 @@ fn screen_keyboard_localized_keycaps_use_configured_colors_and_corner_shapes() {
         assert_eq!(color_at(terminal.parser.screen(), position), TEXT);
         terminal.mouse(0, position, false);
         terminal.wait_for("configured keycap press accent", |screen| {
-            color_at(screen, position) == ACCENT
+            let area = button_area(screen, false, ScreenKeyboardAction::Letter('a'));
+            color_at(screen, position) == PRESSED
+                && (area.y..area.bottom()).all(|row| {
+                    (area.x..area.right())
+                        .all(|col| screen.cell(row, col).unwrap().bgcolor() == ACCENT)
+                })
         });
         terminal.mouse(0, position, true);
         terminal.wait_for("keycap release and real text input", |screen| {
-            color_at(screen, position) == TEXT && typed_text(screen, false) == "a"
+            color_at(screen, position) == TEXT
+                && screen.cell(position.0, position.1).unwrap().bgcolor()
+                    == vt100::Color::Rgb(7, 17, 22)
+                && typed_text(screen, false) == "a"
         });
         terminal.send(b"\x1b");
         terminal.finish();
@@ -1135,7 +1145,10 @@ fn visible_button_position(
         for col in area.x..area.right() {
             let cell = screen.cell(row, col).unwrap();
             if !cell.contents().trim().is_empty()
-                && matches!(cell.fgcolor(), TEXT | ACCENT | PAGE_TEXT | PAGE_PRESSED)
+                && matches!(
+                    cell.fgcolor(),
+                    TEXT | ACCENT | PRESSED | PAGE_TEXT | PAGE_PRESSED
+                )
             {
                 return Some((row, col));
             }

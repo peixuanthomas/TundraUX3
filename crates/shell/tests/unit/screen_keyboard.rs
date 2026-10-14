@@ -509,7 +509,14 @@ fn screen_keyboard_actual_colors_follow_input_and_theme_in_rgb_and_ansi() {
         );
         assert_eq!(
             key_colors(&state, &layout, context.clone(), 'w'),
-            (pressed, pressed)
+            (
+                context.theme.filled_style(pressed).fg.unwrap(),
+                if layout.bordered_buttons {
+                    pressed
+                } else {
+                    context.theme.filled_style(pressed).fg.unwrap()
+                }
+            )
         );
         state.handle_input(mouse(&layout, 'w', MouseEventKind::Up(left)), &layout, now);
         assert_eq!(key_colors(&state, &layout, context.clone(), 'w').0, normal);
@@ -698,7 +705,7 @@ fn physical_feedback_uses_pressed_colors_then_returns_to_normal() {
         );
         assert_eq!(
             key_colors(&state, &layout, context.clone(), 'a').0,
-            context.theme.accent
+            context.theme.filled_style(context.theme.accent).fg.unwrap()
         );
         state.physical.expire(now + Duration::from_millis(250));
         assert_eq!(

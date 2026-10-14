@@ -172,7 +172,11 @@ fn live_aa_keyboard_keeps_dialog_buttons_visible_and_uses_one_layout_for_input()
             state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
             draw(&mut compositor, &mut terminal, &mut state, &prepared);
             let theme = prepared.context.compatibility_theme();
-            assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+            for y in region.area.y..region.area.bottom() {
+                for x in region.area.x..region.area.right() {
+                    assert_eq!(terminal.backend().buffer()[(x, y)].bg, theme.accent_color);
+                }
+            }
             state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
             assert!(inputs.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"y")));
         } else {
@@ -1431,13 +1435,18 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
     state.apply_input_at(InputEvent::mouse_moved(point), now);
     state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.tokens().filled_style(theme.accent_color).fg.unwrap()
+    );
+    assert_eq!(terminal.backend().buffer()[point].bg, theme.accent_color);
     state.apply_input_at(
         InputEvent::mouse_up(PointerButton::Left, point),
         now + Duration::from_millis(50),
     );
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
     assert_eq!(terminal.backend().buffer()[point].fg, theme.border_color);
+    assert_eq!(terminal.backend().buffer()[point].bg, theme.background);
     assert!(rx.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"\r")));
     state.apply_input(InputEvent::mouse_moved(point));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
