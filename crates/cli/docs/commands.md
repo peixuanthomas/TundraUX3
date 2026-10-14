@@ -6,7 +6,7 @@
 tundra-shell
 ```
 
-`tundra-shell` 不接收任何命令行参数，包括 `--help`；传入任何参数都会以参数错误退出。它固定进入全屏 UI，应用选择与 Editor 文件打开只能从 UI 发起。
+`tundra-shell` 不带参数时进入全屏 UI；`--help`（`-h`）显示帮助，`--version`（`-V`）显示程序名和版本后退出。其他公开参数仍会以参数错误退出，应用选择与 Editor 文件打开只能从 UI 发起。
 
 `tundra-cli` 是独立的运维工具，可读取和修改公开配置，但不能向 Shell 传参或绕过 UI 打开 Editor：
 
@@ -16,6 +16,7 @@ tundra-cli <command> [options]
 
 | 命令 | 作用 |
 | --- | --- |
+| `--version` / `-V` | 显示 CLI 程序名和版本后退出。 |
 | `debug asset` / `debug asset <name>` | 显示资源帮助或渲染指定资源；TOML art set 会输出全部图案。 |
 | `debug asset <name> -a` | 原样输出完整资源文件，包括 TOML 元数据。 |
 | `debug asset <name> --<item>` | 只输出 TOML 资源中的项目，例如 `home_icons --launcher`。 |
@@ -44,6 +45,8 @@ tundra-cli <command> [options]
 | `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
 
 调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中输入 `/debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
+
+CLI 的帮助（含子命令帮助、无参数启动）和版本查询，以及 Shell 的帮助和版本查询，直接输出内置文本，不启动 watchdog、不读取配置，也不进入终端界面。即使日志或数据目录无法写入也能使用；Linux 下这些查询不需要 root 启动确认。
 
 ## 配置与固定应用
 

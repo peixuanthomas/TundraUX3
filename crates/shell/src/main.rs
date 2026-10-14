@@ -2,6 +2,25 @@ use std::sync::Arc;
 use watchdog::{ProcessWatchdog, WatchdogConfig, WatchdogRuntime};
 
 fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    // Print built-in information before identity checks, storage, or watchdog.
+    match shell::parse_shell_args(&args) {
+        Ok(shell::ShellLaunchCommand::Help) => {
+            println!(
+                "TundraUX3 Shell\n\
+                 Usage: tundra-shell [OPTIONS]\n\n\
+                 Start the fullscreen UI when no options are supplied.\n\n\
+                 Options:\n  -h, --help     Show help\n  -V, --version  Show version\n\n\
+                 Use tundra-cli for commands and configuration."
+            );
+            return;
+        }
+        Ok(shell::ShellLaunchCommand::Version) => {
+            println!("tundra-shell {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        _ => {}
+    }
     #[cfg(target_os = "linux")]
     match shell::confirm_linux_startup() {
         Ok(user) => {
@@ -19,7 +38,6 @@ fn main() {
     // Entry and post-run failures remain renderable without loading or repairing assets.
     // Runtime language scopes override this fallback while the shell is running.
     let _language = i18n::enter_snapshot(Arc::new(i18n::LanguageSnapshot::embedded(0)));
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.as_slice() == ["__update-probe"] {
         let identity = app::update::current_build_identity();
         println!("protocol={}", app::update::UPDATE_PROTOCOL_VERSION);

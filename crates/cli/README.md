@@ -10,6 +10,9 @@
 | 内建 Command Line 或 `repl` 中的 UX 命令 | `/debug doctor` |
 | 内建 Command Line 或 `repl` 中的系统命令 | `ls -la` 或 `dir` |
 | 查询帮助 | `tundra-cli help`、`tundra-cli users --help` |
+| 查询版本 | `tundra-cli --version` 或 `tundra-cli -V` |
+
+帮助（含子命令帮助和无参数启动）与版本查询无需启动 watchdog 或读取配置，日志和数据目录不可写时也能使用。
 
 普通输入交给系统命令解释器，UX 命令必须加 `/`。命令行保留当前会话的目录和已导出环境变量，不改变主进程或系统配置。
 

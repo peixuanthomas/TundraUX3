@@ -1,3 +1,10 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellLaunchCommand {
+    Run,
+    Help,
+    Version,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellArgError {
     ArgumentNotAllowed(String),
@@ -9,7 +16,7 @@ impl std::fmt::Display for ShellArgError {
             Self::ArgumentNotAllowed(argument) => {
                 write!(
                     formatter,
-                    "tundra-shell does not accept arguments: {argument}"
+                    "unsupported tundra-shell argument: {argument}; use --help for usage"
                 )
             }
         }
@@ -20,17 +27,25 @@ impl std::error::Error for ShellArgError {}
 
 /// Validates the `tundra-shell` process boundary.
 ///
-/// Shell functionality is exposed through its UI, so every command-line
-/// argument—including help and former launch flags—is rejected.
-pub fn parse_shell_args<I, S>(args: I) -> Result<(), ShellArgError>
+/// Only help and version are public arguments; no arguments starts the UI.
+pub fn parse_shell_args<I, S>(args: I) -> Result<ShellLaunchCommand, ShellArgError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    if let Some(argument) = args.into_iter().next() {
+    let mut args = args.into_iter();
+    let Some(argument) = args.next() else {
+        return Ok(ShellLaunchCommand::Run);
+    };
+    let command = match argument.as_ref() {
+        "-h" | "--help" => ShellLaunchCommand::Help,
+        "-V" | "--version" => ShellLaunchCommand::Version,
+        other => return Err(ShellArgError::ArgumentNotAllowed(other.to_string())),
+    };
+    if let Some(extra) = args.next() {
         return Err(ShellArgError::ArgumentNotAllowed(
-            argument.as_ref().to_string(),
+            extra.as_ref().to_string(),
         ));
     }
-    Ok(())
+    Ok(command)
 }

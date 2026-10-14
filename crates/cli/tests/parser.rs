@@ -18,6 +18,8 @@ use watchdog::{
 fn simple_commands_dispatch_from_a_table() {
     let cases: &[(&[&str], CliCommand)] = &[
         (&[], CliCommand::Help),
+        (&["--version"], CliCommand::Version),
+        (&["-V"], CliCommand::Version),
         (&["debug", "doctor"], CliCommand::Doctor),
         (&["debug", "paths"], CliCommand::Paths),
         (&["debug", "explain"], CliCommand::Explain),
@@ -60,6 +62,27 @@ fn simple_commands_dispatch_from_a_table() {
             parse_args(args.iter().copied()),
             Ok(expected.clone()),
             "unexpected dispatch for {args:?}"
+        );
+    }
+}
+
+#[test]
+fn version_prints_the_package_version_without_platform_support() {
+    for flag in ["--version", "-V"] {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        assert_eq!(
+            run_with_platform([flag], &UnsupportedPlatform, &mut stdout, &mut stderr),
+            0
+        );
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            format!("tundra-cli {}\n", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(stderr.is_empty());
+        assert_eq!(
+            parse_args([flag, "extra"]),
+            Err(CliError::UnexpectedArgument("extra".into()))
         );
     }
 }

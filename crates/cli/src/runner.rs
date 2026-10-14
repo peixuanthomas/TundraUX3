@@ -170,6 +170,15 @@ where
             let _ = write_help(stdout);
             0
         }
+        Ok(CliCommand::Version) => {
+            match writeln!(stdout, "tundra-cli {}", env!("CARGO_PKG_VERSION")) {
+                Ok(()) => 0,
+                Err(error) => {
+                    let _ = writeln!(stderr, "ERROR: could not print version: {error}");
+                    1
+                }
+            }
+        }
         Ok(CliCommand::Explain) => {
             let _ = write_explain(stdout);
             0

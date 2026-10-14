@@ -30,6 +30,7 @@ pub enum CliCommand {
     TestWatchdogCritical,
     TestWatchdogPanic,
     Help,
+    Version,
     #[doc(hidden)]
     UpdateProbe,
     #[doc(hidden)]
@@ -38,6 +39,24 @@ pub enum CliCommand {
         parent_pid: u32,
         recover_only: bool,
     },
+}
+
+impl CliCommand {
+    /// These commands only print built-in text and need no startup runtime.
+    pub fn is_help_or_version(&self) -> bool {
+        matches!(
+            self,
+            Self::Help
+                | Self::Version
+                | Self::TopicHelp(_)
+                | Self::DebugHelp
+                | Self::UiStyleHelp
+                | Self::Asset(AssetAction::Help)
+                | Self::ClearLogs(crate::ClearLogsAction::Help)
+                | Self::Logs(crate::LogsAction::Help)
+                | Self::Management(crate::ManagementCli::Help(_))
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +222,7 @@ where
         "__apply-update" => parse_internal_update_args(&args, false),
         "__recover-update" => parse_internal_update_args(&args, true),
         "-h" | "--help" | "help" => parse_no_extra_args(&args, CliCommand::Help),
+        "-V" | "--version" => parse_no_extra_args(&args, CliCommand::Version),
         other => Err(CliError::UnknownCommand(other.to_string())),
     }
 }

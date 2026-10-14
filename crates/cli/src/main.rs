@@ -10,6 +10,15 @@ mod embedded_children_linux;
 
 fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    // Built-in help and version output must work even when startup prompts,
+    // storage, or watchdog initialization are unavailable.
+    if cli::parse_args(&args).is_ok_and(|command| command.is_help_or_version()) {
+        std::process::exit(cli::run(
+            &args,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        ));
+    }
     #[cfg(target_os = "linux")]
     if matches!(
         args.first().map(String::as_str),

@@ -42,6 +42,8 @@ pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
         output,
         "  help [command]  Show help, for example: help config or help debug doctor"
     )?;
+    writeln!(output, "  -h, --help      Show help")?;
+    writeln!(output, "  -V, --version   Show version")?;
     writeln!(
         output,
         "\nUse <command> --help (or -h) for syntax, values, and examples."

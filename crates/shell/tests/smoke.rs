@@ -1,9 +1,8 @@
 use std::io::{self, Write};
-use std::process::Command;
 
 use shell::{
-    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, ShellArgError, banner_lines,
-    parse_shell_args, render_static_banner,
+    ENTER_FULLSCREEN_SEQUENCE, EXIT_FULLSCREEN_SEQUENCE, ShellArgError, ShellLaunchCommand,
+    banner_lines, parse_shell_args, render_static_banner,
 };
 
 #[test]
@@ -28,24 +27,37 @@ fn static_banner_renders_the_complete_logo_and_resets_color() {
 }
 
 #[test]
-fn shell_rejects_all_arguments_before_starting_the_ui() {
-    assert_eq!(parse_shell_args(std::iter::empty::<&str>()), Ok(()));
+fn shell_accepts_information_flags_and_rejects_other_arguments() {
+    assert_eq!(
+        parse_shell_args(std::iter::empty::<&str>()),
+        Ok(ShellLaunchCommand::Run)
+    );
+    for argument in ["-h", "--help"] {
+        assert_eq!(parse_shell_args([argument]), Ok(ShellLaunchCommand::Help));
+    }
+    for argument in ["-V", "--version"] {
+        assert_eq!(
+            parse_shell_args([argument]),
+            Ok(ShellLaunchCommand::Version)
+        );
+    }
 
     for argument in [
         "-notfullscreen",
         "-debug",
         "-editor",
-        "--help",
+        "--unknown",
         "document.md",
     ] {
-        let error = parse_shell_args([argument]).expect_err("every argument must be rejected");
+        let error =
+            parse_shell_args([argument]).expect_err("unsupported argument must be rejected");
         assert_eq!(
             error,
             ShellArgError::ArgumentNotAllowed(argument.to_string())
         );
         assert_eq!(
             error.to_string(),
-            format!("tundra-shell does not accept arguments: {argument}")
+            format!("unsupported tundra-shell argument: {argument}; use --help for usage")
         );
     }
 
@@ -54,15 +66,14 @@ fn shell_rejects_all_arguments_before_starting_the_ui() {
         Err(ShellArgError::ArgumentNotAllowed("-debug".to_string()))
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_tundra-shell"))
-        .arg("--help")
-        .output()
-        .expect("run tundra-shell with a prohibited argument");
-
-    assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).expect("argument error should be utf8");
-    assert!(stderr.contains("tundra-shell does not accept arguments: --help"));
+    for flag in ["--help", "-h", "--version", "-V"] {
+        for extra in ["extra", "--help", "--version"] {
+            assert_eq!(
+                parse_shell_args([flag, extra]),
+                Err(ShellArgError::ArgumentNotAllowed(extra.to_string()))
+            );
+        }
+    }
 }
 
 #[test]
