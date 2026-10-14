@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn editor_dialogs_use_specific_translated_titles_and_actions() {
+    let mut session = state();
+    session.enter_screen(ShellScreen::Editor);
+    for action in [
+        "edit-goto",
+        "edit-file",
+        "edit-language",
+        "edit-newline",
+        "edit-encoding",
+        "edit-indent",
+        "edit-about",
+    ] {
+        session.config_form(action, "Content".into(), vec![]);
+        let form = session.to_management_view_model().form.unwrap();
+        assert!(!form.title.contains("config-editor-"));
+        assert_ne!(form.title, i18n::tr!("shell-editor"));
+        assert!(!form.submit_label.unwrap().contains("config-editor-"));
+        assert_eq!(form.dismiss_only, action == "edit-about");
+    }
+}
+
+#[test]
+fn system_configuration_opens_the_path_form_without_a_single_item_menu() {
+    let mut session = state();
+    session.enter_screen(ShellScreen::Editor);
+    session.config_editor_action(ui::EditorConfigAction::Menu);
+    let form = session.to_management_view_model().form.unwrap();
+    assert_eq!(form.identity, "config-open");
+    assert!(form.choice.is_none());
+    assert!(!form.message.is_empty());
+    assert_eq!(form.fields.len(), 1);
+    assert_eq!(form.fields[0].label, i18n::tr!("config-editor-path"));
+    assert!(form.fields[0].value.is_empty());
+}
+
+#[test]
+fn editor_choice_dialogs_apply_the_original_value_and_close_in_one_step() {
+    let mut session = state();
+    session.enter_screen(ShellScreen::Editor);
+    session.config_form(
+        "edit-language",
+        String::new(),
+        vec![ManagementField {
+            id: "value".into(),
+            value: "Auto".into(),
+            choices: vec!["Auto".into(), "Text".into()],
+            ..Default::default()
+        }],
+    );
+    let form = session.to_management_view_model().form.unwrap();
+    assert_eq!(
+        form.choice.unwrap().values,
+        vec![
+            i18n::tr!("ui-editor-language-auto"),
+            i18n::tr!("ui-editor-language-text")
+        ]
+    );
+    session.pages.management.management_state.choice_selected = 1;
+    session.handle_management_choice_key(&KeyInput::new(InputKey::Enter));
+    assert!(session.pages.management.management_state.form.is_none());
+    assert_eq!(
+        session.pages.editor.editor_language.as_deref(),
+        Some("Text")
+    );
+    session.config_form(
+        "edit-indent",
+        String::new(),
+        vec![ManagementField {
+            id: "value".into(),
+            value: "Space:4".into(),
+            choices: vec!["Space:4".into(), "Tab:4".into()],
+            ..Default::default()
+        }],
+    );
+    let values = session
+        .to_management_view_model()
+        .form
+        .unwrap()
+        .choice
+        .unwrap()
+        .values;
+    assert!(values[0].contains('4') && !values[0].contains("Space:"));
+    assert!(values[1].contains('4') && !values[1].contains("Tab:"));
+    session.handle_management_choice_key(&KeyInput::new(InputKey::Escape));
+    assert!(session.pages.management.management_state.form.is_none());
+}
+
+#[test]
 fn same_kind_operations_finish_without_replacing_each_others_snapshot() {
     let mut session = state();
     let first = session.active_page_id();

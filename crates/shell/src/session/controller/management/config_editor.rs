@@ -24,7 +24,11 @@ pub(in crate::session) struct ConfigEditorState {
 fn field(id: &str, value: String) -> ManagementField {
     ManagementField {
         id: id.into(),
-        label: management_text("field", id, id),
+        label: match id {
+            "path" => i18n::tr!("config-editor-path"),
+            "mode" => i18n::tr!("config-editor-permissions"),
+            _ => management_text("field", id, id),
+        },
         value,
         required: true,
         ..Default::default()
@@ -439,10 +443,14 @@ impl ShellSession {
             });
         }
         self.reset_management_form_view();
+        let direct_choice = action.starts_with("edit-")
+            && fields
+                .first()
+                .is_some_and(|field| !field.choices.is_empty());
         self.pages.management.management_state.terminal_mode = false;
         self.pages.management.management_state.form = Some(ManagementEditor {
-            title: if action.starts_with("edit-") {
-                i18n::tr!("shell-editor")
+            title: if let Some(key) = editor_dialog_title_key(action) {
+                i18n::tr!(key)
             } else {
                 i18n::tr!(format!("config-editor-{action}"))
             },
@@ -453,6 +461,9 @@ impl ShellSession {
             purpose: FormPurpose::Configuration(action.into()),
         });
         self.pages.editor.editor_open_menu = None;
+        if direct_choice {
+            self.open_management_choice_field(0);
+        }
         self.refresh_hit_map();
     }
 
@@ -465,7 +476,11 @@ impl ShellSession {
         self.pages.editor.editor_open_menu = None;
         match action {
             ui::EditorConfigAction::Menu => {
-                let choices = if self.config_editor_active() {
+                if !self.config_editor_active() {
+                    self.config_editor_action(ui::EditorConfigAction::Open);
+                    return;
+                }
+                let choices = {
                     vec![
                         "preview",
                         "check",
@@ -475,8 +490,6 @@ impl ShellSession {
                         "logs",
                         "open",
                     ]
-                } else {
-                    vec!["open"]
                 };
                 let choices = choices
                     .into_iter()
@@ -497,12 +510,14 @@ impl ShellSession {
             ui::EditorConfigAction::Open => {
                 self.config_form(
                     "open",
-                    String::new(),
+                    i18n::tr!("config-editor-open-help"),
                     vec![field(
                         "path",
-                        self.app
-                            .editor_state()
-                            .and_then(|s| s.document.path.as_ref())
+                        self.pages
+                            .editor
+                            .editor_config
+                            .path
+                            .as_ref()
                             .map(|p| p.display().to_string())
                             .unwrap_or_default(),
                     )],

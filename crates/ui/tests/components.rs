@@ -400,6 +400,38 @@ fn dialog_is_modal_and_activates_selected_actions() {
 }
 
 #[test]
+fn narrow_dialog_wraps_body_and_keeps_both_actions_visible() {
+    let mut dialog = Dialog::new(
+        "confirm",
+        "Confirm",
+        "A long confirmation message wraps onto the next row.",
+        vec![
+            DialogAction::new("save", "Save changes"),
+            DialogAction::new("cancel", "Cancel"),
+        ],
+    );
+    dialog.open();
+    let area = Rect::new(0, 0, 22, 8);
+    let actions = dialog.action_areas(area);
+    assert_eq!(actions.len(), 2);
+    assert!(actions[0].1.y < actions[1].1.y);
+    let mut buffer = Buffer::empty(area);
+    dialog.render(area, &mut buffer, &TundraTheme::default());
+    let second_body_line = (1..area.right() - 1)
+        .map(|x| buffer[(x, 2)].symbol())
+        .collect::<String>();
+    assert!(!second_body_line.trim().is_empty());
+    let cancel = actions[1].1;
+    assert_eq!(
+        dialog.handle_event(
+            InputEvent::mouse(MouseEvent::click(cancel.x, cancel.y, MouseButton::Left)),
+            area
+        ),
+        ComponentEvent::Activated(ComponentId::new("cancel"))
+    );
+}
+
+#[test]
 fn dialog_actions_reuse_button_press_and_release_semantics() {
     let mut dialog = Dialog::new(
         "confirm",

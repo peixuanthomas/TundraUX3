@@ -2,7 +2,7 @@ use ratatui::layout::Rect;
 
 use super::model::{
     UserManagementAction, UserManagementActionViewModel, UserManagementField, UserManagementFocus,
-    UserManagementFormKind, UserManagementFormViewModel, UserManagementViewModel,
+    UserManagementFormViewModel, UserManagementViewModel,
 };
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
@@ -348,10 +348,8 @@ fn user_management_form_layout(
     area: Rect,
     form: &UserManagementFormViewModel,
 ) -> UserManagementFormLayout {
-    let desired_height = match form.kind {
-        UserManagementFormKind::Create => 12,
-        UserManagementFormKind::EditInfo | UserManagementFormKind::Password => 9,
-    };
+    let desired_height =
+        (form.field_order().len() as u16).saturating_add(3 + u16::from(form.error.is_some()));
     let compact = area.height < desired_height;
     let dialog = if compact {
         area

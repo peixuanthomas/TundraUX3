@@ -270,6 +270,49 @@ fn management_text(prefix: &str, id: &str, fallback: &str) -> String {
     }
 }
 
+fn editor_dialog_title_key(action: &str) -> Option<&'static str> {
+    Some(match action {
+        "edit-goto" => "ui-editor-go-to-line",
+        "edit-file" => "ui-editor-go-to-file",
+        "edit-language" => "ui-editor-language",
+        "edit-newline" => "ui-editor-line-ending",
+        "edit-encoding" => "ui-editor-encoding",
+        "edit-indent" => "ui-editor-indentation",
+        "edit-about" => "ui-editor-about",
+        _ => return None,
+    })
+}
+
+fn form_value_text(purpose: &FormPurpose, field: &ManagementField, value: &str) -> String {
+    if field.choices.iter().all(|v| v == "true" || v == "false") && !field.choices.is_empty() {
+        return match value {
+            "true" => i18n::tr!("management-value-yes"),
+            "false" => i18n::tr!("management-value-no"),
+            _ => value.into(),
+        };
+    }
+    if let FormPurpose::Configuration(action) = purpose {
+        match (action.as_str(), value) {
+            ("edit-language", "Auto") => return i18n::tr!("ui-editor-language-auto"),
+            ("edit-language", "Text") => return i18n::tr!("ui-editor-language-text"),
+            ("edit-indent", _) => {
+                if let Some((kind, count)) = value.split_once(':') {
+                    return i18n::tr!(
+                        if kind == "Tab" {
+                            "ui-editor-indent-tabs"
+                        } else {
+                            "ui-editor-indent-spaces"
+                        },
+                        count = count
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    value.into()
+}
+
 fn management_detail_value(kind: Option<ManagementKind>, key: &str, value: &str) -> String {
     if kind == Some(ManagementKind::Users) && key == "Source" {
         return management_text("account-source", value, value);
@@ -1320,8 +1363,16 @@ impl ShellSession {
                 .as_ref()
                 .filter(|_| !s.terminal_mode)
                 .map(|f| ui::ManagementForm {
+                    dismiss_only: matches!(&f.purpose, FormPurpose::Configuration(action) if action == "edit-about"),
                     submit_label: Some(match &f.purpose {
                         FormPurpose::Action(action,_)=>action_label(action),
+                        FormPurpose::Configuration(action) if action.starts_with("edit-") => match action.as_str() {
+                            "edit-goto" => i18n::tr!("ui-editor-go-to-line"),
+                            "edit-file" => i18n::tr!("ui-editor-go-to-file"),
+                            "edit-about" => i18n::tr!("management-form-close"),
+                            _ => i18n::tr!("management-form-apply"),
+                        },
+                        FormPurpose::Configuration(action) if action == "open" => i18n::tr!("ui-editor-open"),
                         FormPurpose::Configuration(action)=>i18n::tr!(format!("config-editor-{}", match action.as_str() {
                             "preview"=>"check", "check"=>"apply", "history"=>"restore", "conflict"=>"rebase", "properties"=>"preview", "result"=>"continue", other=>other,
                         })),
@@ -1344,7 +1395,7 @@ impl ShellSession {
                         f.fields.get(index).map(|field| ui::ManagementChoices {
                             disabled: match &f.purpose { FormPurpose::Menu(items)=>items.iter().map(|(a,_)|a.disabled_reason.is_some() || (s.operation_job.is_some() && a.id!="cancel_operation" && !management_view_action(a))).collect(),_=>vec![] },
                             field: index,
-                            values: field.choices.clone(),
+                            values: field.choices.iter().map(|value| form_value_text(&f.purpose, field, value)).collect(),
                             selected: s.choice_selected,
                             scroll: s.choice_scroll,
                             columns: s.choice_columns,
@@ -1359,11 +1410,11 @@ impl ShellSession {
                         .iter()
                         .map(|v| ui::ManagementFormField {
                             id: v.id.clone(),
-                            label: management_text("field", &v.id, &v.label),
+                            label: if matches!(f.purpose, FormPurpose::Configuration(_)) { v.label.clone() } else { management_text("field", &v.id, &v.label) },
                             value: if v.secret {
                                 "•".repeat(v.value.chars().count())
                             } else {
-                                v.value.clone()
+                                form_value_text(&f.purpose, v, &v.value)
                             },
                             secret: false,
                             choices: v.choices.clone(),

@@ -143,3 +143,14 @@ ui-editor-search-next = F3 Next
 ui-editor-search-replace = Enter Replace
 ui-editor-search-replace-all = Ctrl+Enter Replace All
 ui-editor-search-close = Esc Close
+
+ui-editor-language-auto = Auto detect
+ui-editor-language-text = Plain text
+ui-editor-indent-spaces = { $count } spaces
+ui-editor-indent-tabs = Tabs (width { $count })
+config-editor-path = Absolute path to the configuration file
+config-editor-permissions = File permissions (octal, e.g. 0644)
+config-editor-open-help = Enter the absolute path of a system configuration file, such as /etc/hosts. Its contents will open in the editor. Saving previews changes and requests system authorization when needed.
+management-form-apply = Apply
+management-value-yes = Yes
+management-value-no = No

@@ -2,7 +2,7 @@ use super::*;
 
 fn management_form_is_menu(form: &ManagementEditor) -> bool {
     matches!(&form.purpose, FormPurpose::Menu(_))
-        || matches!(&form.purpose, FormPurpose::Configuration(action) if action == "menu")
+        || matches!(&form.purpose, FormPurpose::Configuration(action) if matches!(action.as_str(), "menu" | "edit-file" | "edit-language" | "edit-newline" | "edit-encoding" | "edit-indent"))
 }
 
 #[cfg(test)]

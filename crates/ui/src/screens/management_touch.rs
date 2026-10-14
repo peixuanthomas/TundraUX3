@@ -41,6 +41,8 @@ pub struct ManagementForm {
     pub cancel_disabled: bool,
     pub submit_label: Option<String>,
     pub submit_disabled: bool,
+    /// Informational dialogs have a single close action.
+    pub dismiss_only: bool,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagementViewModel {
@@ -243,6 +245,7 @@ fn management_choice_width(form: &ManagementForm, choice: &ManagementChoices) ->
 }
 fn choice_form(main: Rect, form: &ManagementForm, choice: &ManagementChoices) -> Rect {
     let content_width = management_choice_width(form, choice)
+        .saturating_add(1)
         .max(form.title.width())
         .max(i18n::tr!("management-form-close").width() + 2);
     let width = content_width
@@ -278,6 +281,121 @@ fn choice_form_inner(form: Rect) -> Rect {
         content.width.saturating_sub(horizontal * 2),
         content.height.saturating_sub(vertical * 2),
     )
+}
+fn form_submit_text(form: &ManagementForm) -> String {
+    format!(
+        "Ctrl+Enter {}",
+        form.submit_label
+            .clone()
+            .unwrap_or_else(|| i18n::tr!("management-form-submit"))
+    )
+}
+fn content_form_inner(form: Rect, spacious: bool) -> Rect {
+    let content = inner(form).intersection(form);
+    let horizontal = if content.width >= 38 {
+        2
+    } else {
+        u16::from(content.width >= 10)
+    };
+    let vertical = u16::from(spacious && content.height >= 5);
+    Rect::new(
+        content.x + horizontal,
+        content.y + vertical,
+        content.width.saturating_sub(horizontal * 2),
+        content.height.saturating_sub(vertical * 2),
+    )
+}
+fn form_cancel_text(form: &ManagementForm) -> String {
+    if form.dismiss_only {
+        i18n::tr!("management-form-close")
+    } else {
+        format!("Esc {}", i18n::tr!("management-form-cancel"))
+    }
+}
+fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
+    let mut lines = if field.label.is_empty() {
+        vec![]
+    } else {
+        management_wrapped_lines(&field.label, width)
+    };
+    let value = if field.secret {
+        "•".repeat(field.value.chars().count())
+    } else {
+        field.value.clone()
+    };
+    lines.extend(management_wrapped_lines(&value, width));
+    lines
+}
+fn form_action_sizes(form: &ManagementForm, width: u16) -> (u16, u16, u16, u16, u16) {
+    let submit = if form.dismiss_only {
+        0
+    } else {
+        (form_submit_text(form).width() + 2).min(usize::from(width)) as u16
+    };
+    let cancel = (form_cancel_text(form).width() + 2).min(usize::from(width)) as u16;
+    let submit_height = if submit == 0 {
+        0
+    } else {
+        management_wrapped_lines(&format!("[{}]", form_submit_text(form)), submit)
+            .len()
+            .min(usize::from(u16::MAX)) as u16
+    };
+    let cancel_height = management_wrapped_lines(&format!("[{}]", form_cancel_text(form)), cancel)
+        .len()
+        .min(usize::from(u16::MAX)) as u16;
+    let rows = if submit > 0 && submit.saturating_add(1).saturating_add(cancel) > width {
+        submit_height.saturating_add(cancel_height)
+    } else {
+        submit_height.max(cancel_height)
+    };
+    (submit, cancel, submit_height, cancel_height, rows)
+}
+fn content_form(main: Rect, form: &ManagementForm) -> Rect {
+    let max_width = main.width.saturating_sub(u16::from(main.width > 40) * 2);
+    let longest = form
+        .message
+        .lines()
+        .chain(
+            form.fields
+                .iter()
+                .flat_map(|f| [f.label.as_str(), f.value.as_str()]),
+        )
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(0);
+    let actions = if form.dismiss_only {
+        form_cancel_text(form).width() + 2
+    } else {
+        form_submit_text(form).width() + form_cancel_text(form).width() + 5
+    };
+    let width = longest
+        .max(form.title.width())
+        .max(actions)
+        .saturating_add(6)
+        .clamp(32, 88)
+        .min(usize::from(max_width)) as u16;
+    let content_width = content_form_inner(Rect::new(0, 0, width, 12), true).width;
+    let message = if form.message.is_empty() {
+        0
+    } else {
+        management_wrapped_lines(&form.message, content_width.saturating_sub(1)).len()
+    };
+    let fields: usize = form
+        .fields
+        .iter()
+        .map(|field| field_lines(field, content_width.saturating_sub(1)).len())
+        .sum::<usize>()
+        + form.fields.len().saturating_sub(1);
+    let (_, _, _, _, footer) = form_action_sizes(form, content_width);
+    let height = (message
+        + fields
+        + usize::from(message > 0 && fields > 0)
+        + usize::from(footer)
+        + if main.height > 16 { 5 } else { 3 })
+    .min(usize::from(
+        main.height.saturating_sub(u16::from(main.height > 16) * 2),
+    )) as u16;
+    crate::centered_rect(main, width, height)
 }
 fn right_track(area: Rect) -> Rect {
     Rect::new(
@@ -700,52 +818,66 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         }
     }
     let form_model = model.form.as_ref();
-    let form_width = main.width.saturating_sub(2).min(88);
-    let form_height = main.height.saturating_sub(2).max(1).min(main.height);
     let form = form_model
-        .and_then(|form| {
-            form.choice
-                .as_ref()
-                .map(|choice| choice_form(main, form, choice))
-        })
-        .unwrap_or_else(|| {
-            Rect::new(
-                main.x + main.width.saturating_sub(form_width) / 2,
-                main.y + main.height.saturating_sub(form_height) / 2,
-                form_width,
-                form_height,
+        .map(|form| {
+            form.choice.as_ref().map_or_else(
+                || content_form(main, form),
+                |choice| choice_form(main, form, choice),
             )
-        });
-    let form_inner = inner(form);
+        })
+        .unwrap_or_default();
+    let form_inner = content_form_inner(form, main.height > 16);
     let message_len = form_model.map_or(0, |form| {
-        management_wrapped_lines(&form.message, form_inner.width.saturating_sub(1)).len()
+        if form.message.is_empty() {
+            0
+        } else {
+            management_wrapped_lines(&form.message, form_inner.width.saturating_sub(1)).len()
+        }
     });
     let has_fields = form_model.is_some_and(|form| !form.fields.is_empty());
-    let available = form_inner.height.saturating_sub(3);
-    let message_height = if has_fields {
-        (available / 2)
-            .max(1)
-            .min(available.saturating_sub(2))
-            .min(message_len as u16)
+    let (submit_width, cancel_width, submit_height, cancel_height, footer_height) =
+        form_model.map_or((0, 0, 0, 0, 0), |f| form_action_sizes(f, form_inner.width));
+    let footer_height = footer_height.min(form_inner.height);
+    let available = form_inner
+        .height
+        .saturating_sub(footer_height + u16::from(form_inner.height > footer_height));
+    let field_min = form_model
+        .and_then(|f| {
+            f.fields
+                .get(f.selected.min(f.fields.len().saturating_sub(1)))
+        })
+        .map_or(0, |field| {
+            field_lines(field, form_inner.width.saturating_sub(1))
+                .len()
+                .min(3) as u16
+        });
+    let message_height = if has_fields && message_len > 0 {
+        (message_len.min(usize::from(
+            available
+                .saturating_sub(field_min + 1)
+                .max(u16::from(available >= 2)),
+        ))) as u16
     } else {
-        available
+        (message_len.min(usize::from(available))) as u16
     };
+    let message_gap = u16::from(
+        has_fields
+            && message_height > 0
+            && available > message_height + field_min.min(available.saturating_sub(message_height)),
+    );
     let message = Rect::new(form_inner.x, form_inner.y, form_inner.width, message_height);
     let fields_area = Rect::new(
         form_inner.x,
-        message.bottom(),
+        message.bottom().saturating_add(message_gap),
         form_inner.width,
-        available.saturating_sub(message_height),
+        available.saturating_sub(message_height + message_gap),
     );
     let mut field_ranges = Vec::new();
     let mut field_length = 0;
     if let Some(form_model) = form_model {
-        for field in &form_model.fields {
-            let height =
-                management_wrapped_lines(&field.label, fields_area.width.saturating_sub(1)).len()
-                    + management_wrapped_lines(&field.value, fields_area.width.saturating_sub(1))
-                        .len()
-                    + 1;
+        for (index, field) in form_model.fields.iter().enumerate() {
+            let height = field_lines(field, fields_area.width.saturating_sub(1)).len()
+                + usize::from(index + 1 < form_model.fields.len());
             field_ranges.push((field_length, height));
             field_length += height;
         }
@@ -783,16 +915,26 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         })
         .collect();
     let submit = Rect::new(
-        form_inner.x,
-        form_inner.bottom().saturating_sub(1),
-        form_inner.width / 2,
-        1,
+        if submit_width.saturating_add(cancel_width).saturating_add(1) > form_inner.width {
+            form_inner.right().saturating_sub(submit_width)
+        } else {
+            form_inner
+                .right()
+                .saturating_sub(submit_width + cancel_width + u16::from(submit_width > 0))
+                .max(form_inner.x)
+        },
+        form_inner.bottom().saturating_sub(footer_height),
+        submit_width,
+        submit_height.min(footer_height),
     );
     let cancel = Rect::new(
-        submit.right(),
-        submit.y,
-        form_inner.width.saturating_sub(submit.width),
-        1,
+        form_inner.right().saturating_sub(cancel_width),
+        form_inner
+            .bottom()
+            .saturating_sub(cancel_height.min(footer_height))
+            .max(form_inner.y),
+        cancel_width,
+        cancel_height.min(footer_height),
     );
     if let Some(form_model) = form_model {
         add_text_bar(
@@ -850,9 +992,13 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
             })
             .collect();
         choice_cancel = Rect::new(
-            choice_inner.x,
+            choice_inner.right().saturating_sub(
+                (i18n::tr!("management-form-close").width() + 2)
+                    .min(usize::from(choice_inner.width)) as u16,
+            ),
             choice_inner.bottom().saturating_sub(footer_height),
-            choice_inner.width,
+            (i18n::tr!("management-form-close").width() + 2).min(usize::from(choice_inner.width))
+                as u16,
             footer_height,
         );
         if let Some(bar) = management_scrollbar(
@@ -1371,14 +1517,7 @@ pub fn render_management_overlay(
     );
     for (index, area) in &layout.fields {
         let field = &form.fields[*index];
-        let value = if field.secret {
-            "•".repeat(field.value.chars().count())
-        } else {
-            field.value.clone()
-        };
-        let mut lines = management_wrapped_lines(&field.label, area.width);
-        lines.extend(management_wrapped_lines(&value, area.width));
-        lines.push(String::new());
+        let lines = field_lines(field, area.width);
         let skip = layout
             .field_start
             .saturating_sub(layout.field_ranges[*index].0);
@@ -1386,25 +1525,32 @@ pub fn render_management_overlay(
             management_field_id(form, *index),
             lines.into_iter().skip(skip).collect::<Vec<_>>().join("\n"),
         );
+        button.bracketed_label = false;
         button.state.selected = form.selected == *index;
         button.render_borderless_frame(frame, *area, &theme);
     }
     let mut submit = Button::new(
         management_form_control_id(form, "confirm"),
-        format!(
-            "Ctrl+Enter {}",
-            form.submit_label
-                .clone()
-                .unwrap_or_else(|| i18n::tr!("management-form-submit"))
-        ),
+        management_wrapped_lines(
+            &format!("[{}]", form_submit_text(form)),
+            layout.submit.width,
+        )
+        .join("\n"),
     );
+    submit.bracketed_label = false;
     submit.set_disabled(form.submit_disabled);
     submit.state.selected = form.selected >= form.fields.len() && form.choice.is_none();
     submit.render_borderless_frame(frame, layout.submit, &theme);
     let mut cancel = Button::new(
         management_form_control_id(form, "cancel"),
-        format!("Esc {}", i18n::tr!("management-form-cancel")),
+        management_wrapped_lines(
+            &format!("[{}]", form_cancel_text(form)),
+            layout.cancel.width,
+        )
+        .join("\n"),
     );
+    cancel.bracketed_label = false;
+    cancel.state.selected = form.dismiss_only;
     cancel.set_disabled(form.cancel_disabled);
     cancel.render_borderless_frame(frame, layout.cancel, &theme);
     for bar in &layout.scrollbars {

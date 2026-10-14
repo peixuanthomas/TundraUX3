@@ -714,10 +714,16 @@ impl EditorViewModel {
             selected_menu: EditorMenu::File,
             selected_menu_action: 0,
             status_actions: vec![
-                (EditorMenuAction::Language, "Text".into()),
+                (
+                    EditorMenuAction::Language,
+                    i18n::tr!("ui-editor-language-text"),
+                ),
                 (EditorMenuAction::LineEnding, "LF".into()),
                 (EditorMenuAction::Encoding, "UTF-8".into()),
-                (EditorMenuAction::Indentation, "Space:4".into()),
+                (
+                    EditorMenuAction::Indentation,
+                    i18n::tr!("ui-editor-indent-spaces", count = 4),
+                ),
             ],
             configuration: false,
             config_form: None,

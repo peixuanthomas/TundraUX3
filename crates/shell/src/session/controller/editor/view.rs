@@ -191,7 +191,8 @@ impl ShellSession {
         model.status_actions = vec![
             (
                 ui::EditorMenuAction::Language,
-                self.pages
+                match self
+                    .pages
                     .editor
                     .editor_language
                     .clone()
@@ -204,7 +205,12 @@ impl ShellSession {
                             .and_then(|s| s.to_str())
                             .unwrap_or("Text")
                             .to_owned()
-                    }),
+                    })
+                    .as_str()
+                {
+                    "Text" => i18n::tr!("ui-editor-language-text"),
+                    language => language.to_owned(),
+                },
             ),
             (
                 ui::EditorMenuAction::LineEnding,
@@ -221,14 +227,13 @@ impl ShellSession {
             ),
             (
                 ui::EditorMenuAction::Indentation,
-                format!(
-                    "{}:{}",
+                i18n::tr!(
                     if self.pages.editor.editor_indent_tabs {
-                        "Tab"
+                        "ui-editor-indent-tabs"
                     } else {
-                        "Space"
+                        "ui-editor-indent-spaces"
                     },
-                    self.pages.editor.editor_indent_width
+                    count = self.pages.editor.editor_indent_width
                 ),
             ),
         ];

@@ -134,3 +134,14 @@ ui-editor-search-next = F3 下一处
 ui-editor-search-replace = Enter 替换
 ui-editor-search-replace-all = Ctrl+Enter 全部替换
 ui-editor-search-close = Esc 关闭
+
+ui-editor-language-auto = 自动识别
+ui-editor-language-text = 纯文本
+ui-editor-indent-spaces = { $count } 个空格
+ui-editor-indent-tabs = 制表符（宽度 { $count }）
+config-editor-path = 配置文件的绝对路径
+config-editor-permissions = 文件权限（八进制，如 0644）
+config-editor-open-help = 输入要编辑的系统配置文件的绝对路径，例如 /etc/hosts。读取后会在编辑器中显示内容；保存前会预览修改，并在需要时请求系统授权。
+management-form-apply = 应用
+management-value-yes = 是
+management-value-no = 否

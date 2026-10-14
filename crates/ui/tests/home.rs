@@ -544,7 +544,7 @@ fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_co
 }
 
 #[test]
-fn notification_layout_uses_nominal_size_and_adapts_to_full_shell_widths() {
+fn notification_layout_follows_content_and_adapts_to_full_shell_widths() {
     let model = NotificationViewModel::new(
         "42",
         NotificationLevel::Modal,
@@ -561,21 +561,21 @@ fn notification_layout_uses_nominal_size_and_adapts_to_full_shell_widths() {
 
     let NotificationLayout::Dialog(layout) = notification_layout(Rect::new(5, 7, 64, 9), &model)
     else {
-        panic!("the exact nominal notification size must render");
+        panic!("a short notification must fit its content");
     };
-    assert_eq!(layout.dialog, Rect::new(5, 7, 64, 9));
-    assert_eq!(layout.message, Rect::new(6, 8, 62, 1));
+    assert_eq!(layout.dialog, Rect::new(19, 9, 35, 5));
+    assert_eq!(layout.message, Rect::new(20, 10, 33, 1));
     assert_eq!(layout.actions.len(), 2);
     assert_eq!(layout.actions[0].index, 0);
-    assert_eq!(layout.actions[0].area, Rect::new(25, 10, 9, 1));
+    assert_eq!(layout.actions[0].area, Rect::new(24, 12, 9, 1));
     assert_eq!(layout.actions[1].index, 1);
-    assert_eq!(layout.actions[1].area, Rect::new(38, 10, 11, 1));
+    assert_eq!(layout.actions[1].area, Rect::new(37, 12, 11, 1));
 
     let NotificationLayout::Dialog(narrow) = notification_layout(Rect::new(0, 0, 50, 12), &model)
     else {
         panic!("the minimum full-shell width must keep modal actions operable");
     };
-    assert_eq!(narrow.dialog.width, 50);
+    assert_eq!(narrow.dialog.width, 35);
     assert_eq!(narrow.actions.len(), 2);
     assert!(narrow.actions.iter().all(|action| action.area.width > 0));
     for area in [Rect::new(0, 0, 39, 9), Rect::new(0, 0, 64, 8)] {

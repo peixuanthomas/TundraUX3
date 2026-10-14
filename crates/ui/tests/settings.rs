@@ -32,6 +32,38 @@ fn settings_catalog_does_not_offer_unavailable_device_pages() {
 }
 
 #[test]
+fn theme_picker_shrinks_to_one_or_two_options() {
+    let mut model = sample_model();
+    for count in [1, 2] {
+        model.picker = Some(SettingsPickerViewModel {
+            kind: SettingsPickerKind::Theme,
+            title: "Theme".into(),
+            query: String::new(),
+            options: (0..count)
+                .map(|n| SettingsPickerOptionViewModel::new(format!("Theme {n}"), ""))
+                .collect(),
+            selected_index: 0,
+            window_start: 0,
+            searchable: false,
+        });
+        for (width, height) in [(120, 40), (50, 16), (32, 10)] {
+            let bounds = Rect::new(0, 0, width, height);
+            let layout = settings_layout(bounds, &model);
+            let dialog = layout.picker_dialog.unwrap();
+            assert_eq!(dialog.height, count as u16 + 5);
+            assert_eq!(dialog.intersection(bounds), dialog);
+            assert_eq!(layout.picker_options.len(), count);
+            for option in &layout.picker_options {
+                assert_eq!(
+                    settings_hit_test(&layout, (option.area.x, option.area.y)),
+                    Some(SettingsHitTarget::PickerOption(option.index))
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn settings_editor_actions_are_hittable_without_a_duplicate_page_back() {
     let mut model = sample_model();
     let area = Rect::new(0, 0, 40, 10);

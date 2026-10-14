@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::widgets::{Borders, Clear, Paragraph, Widget};
+use ratatui::widgets::{Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::TundraTheme;
 
@@ -210,9 +210,10 @@ impl Dialog {
         frame.render_widget(Clear, area);
         frame.render_widget(self.block(theme), area);
         let inner = inner_area(area);
-        let body_height = inner.height.saturating_sub(1);
+        let body_height = self.body_height(area);
         frame.render_widget(
             Paragraph::new(self.body.join("\n"))
+                .wrap(Wrap { trim: false })
                 .alignment(HorizontalAlignment::Left)
                 .style(theme.raised_style()),
             Rect::new(inner.x, inner.y, inner.width, body_height),
@@ -277,27 +278,51 @@ impl Dialog {
 
     fn action_layout(&self, area: Rect) -> Vec<(usize, Rect)> {
         let inner = inner_area(area);
-        if inner.height == 0 {
+        if inner.is_empty() {
             return Vec::new();
         }
-
-        let action_y = inner.y.saturating_add(inner.height.saturating_sub(1));
-        let mut action_x = inner.x;
-        self.actions
+        let mut x = 0u16;
+        let mut row = 0u16;
+        let mut actions = Vec::new();
+        for (index, action) in self.actions.iter().enumerate() {
+            let width = u16::try_from(terminal_width(&action.label))
+                .unwrap_or(u16::MAX)
+                .saturating_add(2)
+                .min(inner.width);
+            if x > 0 && x.saturating_add(width) > inner.width {
+                row = row.saturating_add(1);
+                x = 0;
+            }
+            actions.push((index, Rect::new(inner.x + x, row, width, 1)));
+            x = x.saturating_add(width).saturating_add(1);
+        }
+        let capacity = inner.height.saturating_sub(1).max(1);
+        let selected_row = actions
             .iter()
-            .enumerate()
-            .map_while(|(index, action)| {
-                let width = u16::try_from(terminal_width(&action.label))
-                    .unwrap_or(u16::MAX)
-                    .saturating_add(2);
-                if action_x.saturating_add(width) > inner.x.saturating_add(inner.width) {
+            .find(|(index, _)| Some(*index) == self.selected_action)
+            .map_or(0, |(_, area)| area.y);
+        let start = selected_row.saturating_add(1).saturating_sub(capacity);
+        let visible_rows = row.saturating_add(1).min(capacity);
+        let y = inner.bottom().saturating_sub(visible_rows);
+        actions
+            .into_iter()
+            .filter_map(|(index, mut area)| {
+                if area.y < start || area.y >= start.saturating_add(capacity) {
                     return None;
                 }
-                let area = Rect::new(action_x, action_y, width, 1);
-                action_x = action_x.saturating_add(width.saturating_add(1));
+                area.y = y + area.y - start;
                 Some((index, area))
             })
             .collect()
+    }
+
+    fn body_height(&self, area: Rect) -> u16 {
+        let inner = inner_area(area);
+        self.action_layout(area)
+            .iter()
+            .map(|(_, action)| action.y.saturating_sub(inner.y))
+            .min()
+            .unwrap_or(inner.height)
     }
 
     fn sync_buttons(&mut self) {
@@ -353,8 +378,9 @@ impl Dialog {
 
     fn render_body(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
         let inner = inner_area(area);
-        let body_height = inner.height.saturating_sub(1);
+        let body_height = self.body_height(area);
         Paragraph::new(self.body.join("\n"))
+            .wrap(Wrap { trim: false })
             .alignment(HorizontalAlignment::Left)
             .style(theme.raised_style())
             .render(

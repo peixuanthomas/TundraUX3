@@ -6,8 +6,6 @@ use super::model::{NotificationActionViewModel, NotificationViewModel};
 
 const NOTIFICATION_DIALOG_WIDTH: u16 = 64;
 const NOTIFICATION_DIALOG_MIN_WIDTH: u16 = 40;
-const NOTIFICATION_DIALOG_MIN_HEIGHT: u16 = 7;
-const NOTIFICATION_DIALOG_WITH_ACTIONS_MIN_HEIGHT: u16 = 9;
 const NOTIFICATION_DIALOG_BORDER_CELLS: u16 = 2;
 const NOTIFICATION_ACTION_GAP: u16 = 4;
 
@@ -45,10 +43,32 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
     let required_width = notification_text_width(&super::model::notification_title(model))
         .saturating_add(NOTIFICATION_DIALOG_BORDER_CELLS)
         .clamp(3, NOTIFICATION_DIALOG_MIN_WIDTH);
-    let dialog_width = area
-        .width
+    let message_width = notification_text_width(&model.message);
+    let action_width = if model.stacked_actions {
+        model
+            .actions
+            .iter()
+            .map(|action| notification_text_width(&notification_action_text(action)))
+            .max()
+            .unwrap_or(0)
+    } else {
+        model
+            .actions
+            .iter()
+            .fold(0u16, |width, action| {
+                width.saturating_add(notification_text_width(&notification_action_text(action)))
+            })
+            .saturating_add(
+                (model.actions.len().saturating_sub(1) as u16)
+                    .saturating_mul(NOTIFICATION_ACTION_GAP),
+            )
+    };
+    let dialog_width = message_width
+        .max(action_width)
+        .saturating_add(NOTIFICATION_DIALOG_BORDER_CELLS)
         .max(required_width)
-        .min(NOTIFICATION_DIALOG_WIDTH);
+        .min(NOTIFICATION_DIALOG_WIDTH)
+        .min(area.width);
     let inner_width = dialog_width.saturating_sub(NOTIFICATION_DIALOG_BORDER_CELLS);
     let unscrolled_line_count = wrap_notification_text(&model.message, inner_width)
         .len()
@@ -116,15 +136,7 @@ pub fn notification_layout(area: Rect, model: &NotificationViewModel) -> Notific
         .min(message_capacity);
     let max_scroll_offset = message_line_count.saturating_sub(usize::from(message_height));
     let scroll_offset = model.scroll_offset.min(max_scroll_offset);
-    let nominal_height = if action_metrics.is_empty() {
-        NOTIFICATION_DIALOG_MIN_HEIGHT
-    } else {
-        NOTIFICATION_DIALOG_WITH_ACTIONS_MIN_HEIGHT
-    };
-    let dialog_height = fixed_height
-        .saturating_add(message_height)
-        .max(nominal_height)
-        .min(area.height);
+    let dialog_height = fixed_height.saturating_add(message_height).min(area.height);
     let dialog = centered_rect(area, dialog_width, dialog_height);
     let inner = Rect::new(
         dialog.x.saturating_add(1),

@@ -997,3 +997,129 @@ fn an_empty_shell_main_has_no_clickable_management_buttons() {
     assert!(management_button_regions(Rect::new(0, 1, 60, 0), &model).is_empty());
     assert!(management_button_regions(Rect::new(0, 1, 0, 20), &model).is_empty());
 }
+
+#[test]
+fn short_dialogs_follow_content_and_keep_complete_actions_in_narrow_windows() {
+    let context = RenderContext::from_theme(
+        &TundraTheme::default_dark(),
+        Default::default(),
+        Default::default(),
+    );
+    for (title, message, label) in [
+        ("Go to Line", "Enter line:column", "Go to Line"),
+        ("跳转到行", "输入行号与列号", "跳转到行"),
+    ] {
+        let model = ManagementViewModel {
+            form: Some(ManagementForm {
+                title: title.into(),
+                message: message.into(),
+                submit_label: Some(label.into()),
+                fields: vec![ManagementFormField {
+                    label: title.into(),
+                    value: "1:1".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        for (width, height) in [(120, 40), (50, 16), (32, 10)] {
+            let main = Rect::new(0, 0, width, height);
+            let layout = management_layout(main, &model);
+            assert!(layout.form.height <= 11);
+            assert_eq!(layout.form.intersection(main), layout.form);
+            assert!(layout.submit.intersection(layout.cancel).is_empty());
+            assert!(layout.fields_area.intersection(layout.submit).is_empty());
+            assert!(layout.message.height > 0 && layout.fields_area.height >= 2);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|f| render_management_overlay(f, main, &model, &context))
+                .unwrap();
+            let input = layout
+                .fields
+                .iter()
+                .flat_map(|(_, area)| {
+                    (area.y..area.bottom())
+                        .flat_map(move |y| (area.x..area.right()).map(move |x| (x, y)))
+                })
+                .map(|point| terminal.backend().buffer()[point].symbol())
+                .collect::<String>();
+            assert!(input.contains("1:1"), "{width}x{height}: {input}");
+            let painted = (layout.submit.y..layout.submit.bottom())
+                .map(|y| {
+                    (layout.submit.x..layout.submit.right())
+                        .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<String>()
+                .replace(' ', "");
+            assert!(
+                painted.contains(&format!("[Ctrl+Enter{label}]").replace(' ', "")),
+                "{width}x{height}: {painted}"
+            );
+            for region in management_button_regions(main, &model) {
+                assert_eq!(region.area.intersection(main), region.area);
+            }
+        }
+    }
+}
+
+#[test]
+fn informational_dialog_has_one_close_button_and_long_messages_scroll() {
+    let mut model = ManagementViewModel {
+        form: Some(ManagementForm {
+            title: "About".into(),
+            message: "Tundra Editor\nMicrosoft Edit".into(),
+            dismiss_only: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let main = Rect::new(0, 0, 120, 40);
+    let layout = management_layout(main, &model);
+    assert_eq!(layout.form.height, 8);
+    assert!(layout.submit.is_empty());
+    let regions = management_button_regions(main, &model);
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].area, layout.cancel);
+    model.form.as_mut().unwrap().message = (0..40)
+        .map(|n| format!("Line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let main = Rect::new(0, 0, 50, 16);
+    let layout = management_layout(main, &model);
+    assert!(
+        layout
+            .scrollbars
+            .iter()
+            .any(|b| b.target == ManagementScrollTarget::FormMessage)
+    );
+    assert!(layout.message.intersection(layout.cancel).is_empty());
+}
+
+#[test]
+fn ordinary_form_controls_stay_inside_even_a_tiny_main_area() {
+    let model = ManagementViewModel {
+        form: Some(ManagementForm {
+            fields: vec![ManagementFormField {
+                label: "Path".into(),
+                value: "/etc/hosts".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    for width in 1..=35 {
+        for height in 1..=16 {
+            let main = Rect::new(2, 1, width, height);
+            for region in management_button_regions(main, &model) {
+                assert_eq!(
+                    region.area.intersection(main),
+                    region.area,
+                    "{width}x{height}"
+                );
+            }
+        }
+    }
+}

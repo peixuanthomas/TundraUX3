@@ -537,9 +537,13 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     let mut picker_dialog = None;
     let mut picker_list = None;
     if let Some(picker) = &model.picker {
-        let dialog = centered(area, area.width.min(78), area.height.min(24));
+        let dialog = settings_picker_dialog(area, picker);
         picker_dialog = Some(dialog);
-        let list = picker_list_area(dialog, picker.kind == SettingsPickerKind::Timezone);
+        let list = picker_list_area(
+            dialog,
+            picker.kind == SettingsPickerKind::Timezone,
+            picker.searchable,
+        );
         picker_list = Some(list);
         let visible_rows = usize::from(list.height);
         let start = picker.window_start.min(picker.options.len());
@@ -559,8 +563,16 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .update
         .as_ref()
         .and_then(|update| update.confirmation.as_ref());
-    let update_confirmation =
-        confirmation.map(|_| centered(area, area.width.min(72), area.height.min(14)));
+    let update_confirmation = confirmation.map(|confirmation| {
+        let width = area.width.min(72);
+        let lines =
+            crate::management_wrapped_lines(&confirmation.body, width.saturating_sub(4)).len();
+        centered(
+            area,
+            width,
+            (lines.saturating_add(6).min(usize::from(area.height))) as u16,
+        )
+    });
     let (update_confirm_button, update_cancel_button) = confirmation
         .zip(update_confirmation)
         .map(|(confirmation, dialog)| {
@@ -1263,7 +1275,7 @@ fn render_picker(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    let dialog = centered(area, area.width.min(78), area.height.min(24));
+    let dialog = settings_picker_dialog(area, picker);
     frame.render_widget(Clear, dialog);
     Surface::new()
         .titled(format!(" {} ", picker.title))
@@ -1286,19 +1298,12 @@ fn render_picker(
             theme,
             theme.muted,
         );
-    } else {
-        let help = if picker.kind == SettingsPickerKind::DefaultThemeIcons {
-            i18n::tr!("ui-settings-arrows-choose-enter-apply-esc-back")
-        } else {
-            i18n::tr!("ui-settings-arrows-choose-enter-apply-esc-cancel")
-        };
-        frame.render_widget(
-            Paragraph::new(Line::styled(help, theme.muted_style()))
-                .alignment(HorizontalAlignment::Left),
-            query_area,
-        );
     }
-    let list = picker_list_area(dialog, picker.kind == SettingsPickerKind::Timezone);
+    let list = picker_list_area(
+        dialog,
+        picker.kind == SettingsPickerKind::Timezone,
+        picker.searchable,
+    );
     let visible = usize::from(list.height);
     let start = picker.window_start.min(picker.options.len());
     let items = picker
@@ -1691,23 +1696,54 @@ fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
     label_width.saturating_add(component_padding)
 }
 
-fn picker_list_area(dialog: Rect, timezone: bool) -> Rect {
+fn picker_list_area(dialog: Rect, timezone: bool, searchable: bool) -> Rect {
     let content = inset(dialog, 2, 2);
     if timezone && dialog.width >= 70 {
         Rect::new(
             content.x,
-            content.y.saturating_add(1),
+            content.y.saturating_add(u16::from(searchable)),
             content.width / 2,
-            content.height.saturating_sub(2),
+            content.height.saturating_sub(1 + u16::from(searchable)),
         )
     } else {
         Rect::new(
             content.x,
-            content.y.saturating_add(1),
+            content.y.saturating_add(u16::from(searchable)),
             content.width,
-            content.height.saturating_sub(2),
+            content.height.saturating_sub(1 + u16::from(searchable)),
         )
     }
+}
+
+fn settings_picker_dialog(area: Rect, picker: &SettingsPickerViewModel) -> Rect {
+    // A timezone map needs its canvas; other pickers grow with their visible rows.
+    if picker.kind == SettingsPickerKind::Timezone {
+        return centered(area, area.width.min(78), area.height.min(24));
+    }
+    let content = picker
+        .options
+        .iter()
+        .map(|option| terminal_width(&format!("{}  {}", option.label, option.detail)) + 2)
+        .max()
+        .unwrap_or(0);
+    let width = content
+        .max(terminal_width(&picker.title))
+        .max(
+            terminal_width(&i18n::tr!("ui-settings-touch-apply"))
+                + terminal_width(&i18n::tr!("ui-settings-touch-cancel"))
+                + 4,
+        )
+        .saturating_add(4)
+        .clamp(32, 78)
+        .min(usize::from(area.width)) as u16;
+    let height = picker
+        .options
+        .len()
+        .max(1)
+        .saturating_add(5 + usize::from(picker.searchable))
+        .min(24)
+        .min(usize::from(area.height)) as u16;
+    centered(area, width, height)
 }
 
 fn picker_map_area(dialog: Rect) -> Rect {
