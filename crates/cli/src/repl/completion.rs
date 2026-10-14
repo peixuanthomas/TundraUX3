@@ -1,5 +1,17 @@
 //! Suggestions use known UX and system syntax, never execute commands or read secrets.
 use rustyline::hint::Hint;
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
+
+/// Merge and sort on the discovery worker, never once per typed character.
+pub(super) fn system_candidates(mut names: Vec<String>) -> Vec<String> {
+    names.extend(system_words(std::env::consts::OS, &[]));
+    names.sort();
+    names.dedup();
+    names
+}
 
 const COMMANDS: &[&str] = &[
     "help",
@@ -49,7 +61,15 @@ impl Hint for CommandHint {
     }
 }
 
-fn completion_context(line: &str, pos: usize) -> Option<(usize, &str, Vec<String>)> {
+fn completion_context<'a>(
+    line: &'a str,
+    pos: usize,
+    system_commands: &'a [String],
+) -> Option<(usize, &'a str, Cow<'a, [String]>)> {
+    // Pasted scripts/long values are valid input, but need no expensive hints.
+    if line.len() > 4096 {
+        return None;
+    }
     let prefix = line.get(..pos)?;
     let ux = prefix.starts_with('/');
     if ux {
@@ -63,42 +83,64 @@ fn completion_context(line: &str, pos: usize) -> Option<(usize, &str, Vec<String
     let words = shlex::split(&prefix[..start])?;
     let partial = &prefix[start..];
     (!partial.contains(['\'', '"', '\\'])).then(|| {
-        let candidates = if ux {
-            next_words(&words)
+        let candidates = if !ux && words.is_empty() {
+            Cow::Borrowed(system_commands)
         } else {
-            system_words(std::env::consts::OS, &words)
+            let mut candidates = if ux {
+                next_words(&words)
+            } else {
+                system_words(std::env::consts::OS, &words)
+            };
+            candidates.sort();
+            candidates.dedup();
+            Cow::Owned(candidates)
         };
         (start, partial, candidates)
     })
 }
 
-pub(super) fn command_completions(line: &str, pos: usize) -> (usize, Vec<String>) {
-    let Some((start, partial, candidates)) = completion_context(line, pos) else {
+fn prefix_choices<'a>(partial: &str, candidates: &'a [String]) -> &'a [String] {
+    let start = candidates.partition_point(|candidate| candidate.as_str() < partial);
+    let rest = &candidates[start..];
+    &rest[..rest.partition_point(|candidate| candidate.starts_with(partial))]
+}
+
+pub(super) fn command_completions(
+    line: &str,
+    pos: usize,
+    path_commands: &[String],
+) -> (usize, Vec<String>) {
+    let Some((start, partial, candidates)) = completion_context(line, pos, path_commands) else {
         return (pos, Vec::new());
     };
-    let choices = candidates
-        .iter()
-        .filter(|candidate| candidate.starts_with(partial))
-        .cloned()
-        .collect::<Vec<_>>();
+    let partial = matching_word(line, partial);
+    let choices = prefix_choices(&partial, &candidates);
     if choices.is_empty() {
-        (start, nearby_words(partial, &candidates))
+        (start, nearby_words(&partial, &candidates))
     } else {
-        (start, choices)
+        (start, choices.to_vec())
     }
 }
 
-pub(super) fn command_hint(line: &str, pos: usize) -> Option<CommandHint> {
-    if pos != line.len() || line.is_empty() || line.chars().any(char::is_control) {
+pub(super) fn command_hint(
+    line: &str,
+    pos: usize,
+    path_commands: &[String],
+) -> Option<CommandHint> {
+    if pos != line.len()
+        || line.is_empty()
+        || line.len() > 4096
+        || line.chars().any(char::is_control)
+    {
         return None;
     }
-    let (start, partial, candidates) = completion_context(line, pos)?;
-    let choices = candidates
-        .iter()
-        .filter(|candidate| candidate.starts_with(partial))
-        .cloned()
-        .collect::<Vec<_>>();
-    if choices.iter().any(|choice| choice == partial) {
+    let (start, partial, candidates) = completion_context(line, pos, path_commands)?;
+    let partial = matching_word(line, partial);
+    let choices = prefix_choices(&partial, &candidates);
+    if choices
+        .first()
+        .is_some_and(|choice| choice == partial.as_ref())
+    {
         // /debug (without a trailing space) should already show its subcommands.
         let words = shlex::split(line)?;
         let next = if line.starts_with('/') {
@@ -109,20 +151,28 @@ pub(super) fn command_hint(line: &str, pos: usize) -> Option<CommandHint> {
         return information("Suggestions", &next);
     }
     if choices.len() == 1 {
-        let suffix = choices[0].strip_prefix(partial)?.to_string();
+        let suffix = choices[0].get(partial.len()..)?.to_string();
         return Some(CommandHint {
             display: suffix.clone(),
             suffix: Some(suffix),
         });
     }
     if !choices.is_empty() {
-        return information("Suggestions", &choices);
+        return information("Suggestions", choices);
     }
-    let corrected = nearby_words(partial, &candidates)
+    let corrected = nearby_words(&partial, &candidates)
         .into_iter()
         .map(|word| format!("{}{word}", &line[..start]))
         .collect::<Vec<_>>();
     information("Did you mean", &corrected)
+}
+
+fn matching_word<'a>(line: &str, word: &'a str) -> std::borrow::Cow<'a, str> {
+    if cfg!(windows) && !line.starts_with('/') {
+        std::borrow::Cow::Owned(word.to_ascii_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(word)
+    }
 }
 
 fn information(label: &str, choices: &[String]) -> Option<CommandHint> {
@@ -248,7 +298,17 @@ pub(super) fn system_words(os: &str, words: &[String]) -> Vec<String> {
         commands.dedup();
         return commands;
     }
-    let words = words.iter().map(String::as_str).collect::<Vec<_>>();
+    let normalized = words
+        .iter()
+        .map(|word| {
+            if os == "windows" {
+                word.to_ascii_lowercase()
+            } else {
+                word.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    let words = normalized.iter().map(String::as_str).collect::<Vec<_>>();
     if words.len() == 1 {
         return strings(match words[0] {
             "git" => &[
@@ -486,47 +546,76 @@ fn next_words(words: &[String]) -> Vec<String> {
 }
 
 fn nearby_words(partial: &str, candidates: &[String]) -> Vec<String> {
-    let word = partial.trim_start_matches('/');
-    if word.len() < 2 || word.len() > 64 || !word.is_ascii() {
+    let word = partial
+        .trim_start_matches('/')
+        .chars()
+        .take(65)
+        .collect::<Vec<_>>();
+    if word.len() < 2 || word.len() > 64 {
         return Vec::new();
     }
-    let limit = 2;
-    let mut matches = candidates
-        .iter()
-        .filter_map(|candidate| {
-            let distance = edit_distance(
-                word.as_bytes(),
-                candidate.trim_start_matches('/').as_bytes(),
-            );
-            (distance > 0 && distance <= limit).then_some((distance, candidate.clone()))
-        })
-        .collect::<Vec<_>>();
-    matches.sort();
-    let best = matches.first().map(|item| item.0);
-    matches
-        .into_iter()
-        .filter(|item| Some(item.0) == best)
-        .map(|item| item.1)
-        .collect()
-}
-
-fn edit_distance(left: &[u8], right: &[u8]) -> usize {
-    let mut rows = vec![vec![0; right.len() + 1]; left.len() + 1];
-    for (index, row) in rows.iter_mut().enumerate() {
-        row[0] = index;
-    }
-    for index in 0..=right.len() {
-        rows[0][index] = index;
-    }
-    for i in 1..=left.len() {
-        for j in 1..=right.len() {
-            rows[i][j] = (rows[i - 1][j] + 1)
-                .min(rows[i][j - 1] + 1)
-                .min(rows[i - 1][j - 1] + usize::from(left[i - 1] != right[j - 1]));
-            if i > 1 && j > 1 && left[i - 1] == right[j - 2] && left[i - 2] == right[j - 1] {
-                rows[i][j] = rows[i][j].min(rows[i - 2][j - 2] + 1);
-            }
+    // Suggestions are optional: stop rather than delay the next key when PATH
+    // contains an unusually large number of similarly spelled executables.
+    let deadline = Instant::now() + Duration::from_millis(2);
+    let mut best = 3;
+    let mut matches = Vec::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        if index > 0 && index % 16 == 0 && Instant::now() >= deadline {
+            break;
+        }
+        let candidate_word = candidate
+            .trim_start_matches('/')
+            .chars()
+            .take(67)
+            .collect::<Vec<_>>();
+        if word.len().abs_diff(candidate_word.len()) > 2 || candidate_word.len() > 66 {
+            continue;
+        }
+        let distance = edit_distance(&word, &candidate_word);
+        if distance == 0 || distance > 2 || distance > best {
+            continue;
+        }
+        if distance < best {
+            matches.clear();
+            best = distance;
+        }
+        if matches.len() < 128 {
+            matches.push(candidate.clone());
         }
     }
-    rows[left.len()][right.len()]
+    matches
 }
+
+fn edit_distance(left: &[char], right: &[char]) -> usize {
+    // Only distances <= 2 matter. Keep three narrow rows for insertion,
+    // deletion, replacement and adjacent transposition, without a heap matrix.
+    const FAR: usize = 3;
+    if left.len().abs_diff(right.len()) > 2 || left.len() > 64 || right.len() > 66 {
+        return FAR;
+    }
+    let mut previous = [FAR; 67];
+    let mut before_previous = [FAR; 67];
+    for (j, value) in previous.iter_mut().enumerate().take(right.len() + 1) {
+        *value = j.min(FAR);
+    }
+    let mut current = [FAR; 67];
+    for i in 1..=left.len() {
+        current.fill(FAR);
+        current[0] = i.min(FAR);
+        for j in i.saturating_sub(2).max(1)..=right.len().min(i + 2) {
+            current[j] = (previous[j] + 1)
+                .min(current[j - 1] + 1)
+                .min(previous[j - 1] + usize::from(left[i - 1] != right[j - 1]));
+            if i > 1 && j > 1 && left[i - 1] == right[j - 2] && left[i - 2] == right[j - 1] {
+                current[j] = current[j].min(before_previous[j - 2] + 1);
+            }
+        }
+        std::mem::swap(&mut before_previous, &mut previous);
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()].min(FAR)
+}
+
+#[cfg(test)]
+#[path = "../../tests/unit/repl/completion.rs"]
+mod tests;

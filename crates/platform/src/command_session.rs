@@ -5,8 +5,8 @@ use std::io;
 use std::process::Command;
 
 use std::{
-    collections::BTreeMap,
-    ffi::OsString,
+    collections::{BTreeMap, BTreeSet},
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
 };
 
@@ -27,6 +27,34 @@ pub struct SystemCommandSession {
     initialized: bool,
 }
 
+/// An owned snapshot of command lookup settings, without the rest of the
+/// session environment. Creating it does no filesystem work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutableSearchPath {
+    directory: PathBuf,
+    path: Option<OsString>,
+    #[cfg(windows)]
+    extensions: Option<OsString>,
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 impl SystemCommandSession {
     pub fn new() -> io::Result<Self> {
         Ok(Self {
@@ -42,6 +70,92 @@ impl SystemCommandSession {
         &self.directory
     }
 
+    fn environment_value(&self, name: &str) -> Option<&OsStr> {
+        self.environment.iter().find_map(|(key, value)| {
+            let matches = if cfg!(windows) {
+                key.to_string_lossy().eq_ignore_ascii_case(name)
+            } else {
+                key == name
+            };
+            matches.then_some(value.as_os_str())
+        })
+    }
+
+    pub fn executable_search_path(&self) -> ExecutableSearchPath {
+        ExecutableSearchPath {
+            directory: self.directory.clone(),
+            path: self.environment_value("PATH").map(OsStr::to_os_string),
+            #[cfg(windows)]
+            extensions: self.environment_value("PATHEXT").map(OsStr::to_os_string),
+        }
+    }
+}
+
+impl ExecutableSearchPath {
+    /// Read executable names without running them. Call from a worker: a
+    /// filesystem operation may wait on a slow or unavailable PATH directory.
+    /// Cancellation is checked between reads; it cannot interrupt an OS call.
+    pub fn executable_names(&self, cancelled: impl Fn() -> bool) -> Vec<String> {
+        let mut directories = BTreeSet::new();
+        if cfg!(windows) {
+            directories.insert(self.directory.clone());
+        }
+        if let Some(path) = &self.path {
+            directories.extend(std::env::split_paths(path).map(|dir| self.directory.join(dir)));
+        }
+        #[cfg(windows)]
+        let extensions = self
+            .extensions
+            .as_deref()
+            .unwrap_or_else(|| OsStr::new(".COM;.EXE;.BAT;.CMD"))
+            .to_string_lossy()
+            .split(';')
+            .filter(|ext| ext.starts_with('.') && !ext.contains(['/', '\\']))
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<_>>();
+        let mut names = BTreeSet::new();
+        for directory in directories {
+            if cancelled() {
+                return Vec::new();
+            }
+            let Ok(entries) = std::fs::read_dir(directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if cancelled() {
+                    return Vec::new();
+                }
+                let filename = entry.file_name();
+                let Some(name) = filename.to_str() else {
+                    continue;
+                };
+                #[cfg(windows)]
+                let name = {
+                    let lower = name.to_ascii_lowercase();
+                    let Some(extension) =
+                        extensions.iter().find(|ext| lower.ends_with(ext.as_str()))
+                    else {
+                        continue;
+                    };
+                    lower[..lower.len() - extension.len()].to_string()
+                };
+                // Suggestions are inserted as a shell word, so skip names that
+                // need quoting or could introduce shell operators/controls.
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '+'))
+                    && is_executable_file(&entry.path())
+                {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        names.into_iter().collect()
+    }
+}
+
+impl SystemCommandSession {
     /// Best-effort hint only: inspect shell builtins and executable paths in
     /// this session without spawning a shell or executing the supplied text.
     pub fn is_likely_command(&self, word: &str) -> bool {
@@ -115,37 +229,11 @@ impl SystemCommandSession {
                 return true;
             }
         }
-        let get_env = |name: &str| {
-            self.environment.iter().find_map(|(key, value)| {
-                let matches = if cfg!(windows) {
-                    key.to_string_lossy().eq_ignore_ascii_case(name)
-                } else {
-                    key == name
-                };
-                matches.then_some(value)
-            })
-        };
-        let executable = |path: &Path| {
-            let Ok(metadata) = std::fs::metadata(path) else {
-                return false;
-            };
-            if !metadata.is_file() {
-                return false;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
-        };
         let candidate_exists = |path: &Path| {
             #[cfg(windows)]
             {
-                let extensions = get_env("PATHEXT")
+                let extensions = self
+                    .environment_value("PATHEXT")
                     .map(|v| v.to_string_lossy().into_owned())
                     .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
                 extensions
@@ -156,18 +244,18 @@ impl SystemCommandSession {
                             .to_string_lossy()
                             .to_ascii_lowercase()
                             .ends_with(&ext.to_ascii_lowercase())
-                            && executable(path)
+                            && is_executable_file(path)
                         {
                             return true;
                         }
                         let mut candidate = path.as_os_str().to_os_string();
                         candidate.push(ext);
-                        executable(Path::new(&candidate))
+                        is_executable_file(Path::new(&candidate))
                     })
             }
             #[cfg(not(windows))]
             {
-                executable(path)
+                is_executable_file(path)
             }
         };
         if word.contains('/') || (cfg!(windows) && word.contains(['\\', ':'])) {
@@ -176,7 +264,7 @@ impl SystemCommandSession {
         if cfg!(windows) && candidate_exists(&self.directory.join(word)) {
             return true;
         }
-        get_env("PATH").is_some_and(|path| {
+        self.environment_value("PATH").is_some_and(|path| {
             std::env::split_paths(path)
                 .any(|dir| candidate_exists(&self.directory.join(dir).join(word)))
         })

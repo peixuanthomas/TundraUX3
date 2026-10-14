@@ -83,7 +83,7 @@ where
         code
     };
     if let Ok(CliCommand::Repl { embedded }) = parse_args(&args) {
-        crate::repl::run_repl(embedded, execute)
+        crate::repl::run_repl(embedded, Some(&cli_watchdog), execute)
     } else {
         execute(&args)
     }
@@ -106,7 +106,7 @@ where
         .map(|arg| arg.as_ref().to_string())
         .collect::<Vec<_>>();
     if let Ok(CliCommand::Repl { embedded }) = parse_args(&args) {
-        return crate::repl::run_repl(embedded, |command| {
+        return crate::repl::run_repl(embedded, None, |command| {
             dispatch(command, platform, stdout, stderr, None, None)
         });
     }

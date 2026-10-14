@@ -23,7 +23,7 @@ mod terminal;
 #[cfg(windows)]
 pub mod windows;
 
-pub use command_session::{SystemCommandResult, SystemCommandSession};
+pub use command_session::{ExecutableSearchPath, SystemCommandResult, SystemCommandSession};
 pub use diagnostics::{
     CheckStatus, DoctorReport, EnvironmentCheck, PathCheck, WindowsBuildClass,
     check_directory_read_write, classify_windows_build, run_doctor, run_doctor_with,

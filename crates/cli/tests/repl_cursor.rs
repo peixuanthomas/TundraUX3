@@ -1,5 +1,7 @@
 //! Exercise rustyline through the same native PTY and screen parser as Shell.
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+#[path = "support/repl_watchdog.rs"]
+mod support;
 use std::{
     io::{Read, Write},
     sync::{Arc, Mutex},
@@ -10,12 +12,49 @@ use std::{
 fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
     const CHILD: &str = "TUNDRA_TEST_REPL_CURSOR_CHILD";
     if std::env::var_os(CHILD).is_some() {
-        std::process::exit(cli::run_with_platform(
+        let runtime = support::ReplWatchdog::new(Some(
+            std::env::var_os("TUNDRA_TEST_REPL_WATCHDOG_ROOT")
+                .unwrap()
+                .into(),
+        ));
+        let code = cli::run_with_platform_and_watchdog(
             ["repl", "--embedded"],
             &platform::mock::UnsupportedPlatform,
             &mut std::io::stdout(),
             &mut std::io::stderr(),
-        ));
+            &runtime.process,
+            runtime.app.clone(),
+        );
+        drop(runtime);
+        std::process::exit(code);
+    }
+    struct PathFixture(std::path::PathBuf);
+    impl Drop for PathFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = PathFixture(std::env::temp_dir().join(format!(
+        "tundra-repl-path-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    )));
+    for (dir, name) in [
+        ("first", "tundra-path-start"),
+        ("second", "tundra-path-after"),
+    ] {
+        std::fs::create_dir_all(fixture.0.join(dir)).unwrap();
+        let filename = if cfg!(windows) {
+            format!("{name}.cmd")
+        } else {
+            name.into()
+        };
+        let path = fixture.0.join(dir).join(filename);
+        std::fs::write(&path, "echo PATH_TOOL_EXECUTED").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
     }
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -35,6 +74,12 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
     command.env("TUNDRA_COMMAND_LINE_USERNAME", "cursor-test");
     command.env("TUNDRA_COMMAND_LINE_ACCENT", "\x1b[38;2;12;34;56m");
     command.env("TERM", "xterm-256color");
+    // Isolate names from installed tools (e.g. Windows HelpPane also matches
+    // hel). SystemCommandSession resolves the interpreter independently.
+    command.env("PATH", fixture.0.join("first"));
+    command.env("TUNDRA_PATH_UPDATE", fixture.0.join("second"));
+    // The parent also removes this directory if an assertion kills the child.
+    command.env("TUNDRA_TEST_REPL_WATCHDOG_ROOT", fixture.0.join("watchdog"));
     let child = pair.slave.spawn_command(command).unwrap();
     struct StopChild(Box<dyn portable_pty::Child + Send + Sync>);
     impl Drop for StopChild {
@@ -197,6 +242,34 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
             std::thread::sleep(Duration::from_millis(10));
         }
     };
+    send(b"tundra-path-st");
+    wait_for(">> tundra-path-start", 3);
+    send(b"\x15tundra-path-strat");
+    wait_for(">> tundra-path-strat", 0);
+    wait_for_hint_row("Did you mean: tundra-path-start");
+    send(b"\x15");
+    wait_for(">>", 0);
+    submit(
+        if cfg!(windows) {
+            "set \"PATH=%TUNDRA_PATH_UPDATE%\""
+        } else {
+            "export PATH=\"$TUNDRA_PATH_UPDATE\""
+        },
+        false,
+    );
+    send(b"tundra-path-aft");
+    wait_for(">> tundra-path-after", 2);
+    send(b"\x15tundra-path-afetr");
+    wait_for(">> tundra-path-afetr", 0);
+    wait_for_hint_row("Did you mean: tundra-path-after");
+    send(b"\t");
+    wait_for(">> tundra-path-after", 0);
+    send(b"\x15tundra-path-start");
+    wait_for(">> tundra-path-start", 0);
+    wait_for_hint_row("");
+    send(b"\x15");
+    wait_for(">>", 0);
+    assert!(!String::from_utf8_lossy(&raw.lock().unwrap()).contains("PATH_TOOL_EXECUTED"));
     for (input, hint) in [
         ("hell", "Did you mean: help"),
         ("/hell", "Did you mean: /help"),

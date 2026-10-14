@@ -1,6 +1,99 @@
 use super::*;
 
 #[test]
+fn executable_names_follow_session_path_directory_and_platform_file_rules() {
+    let root = tempfile::tempdir().unwrap();
+    let mut session = SystemCommandSession::new().unwrap();
+    session.directory = root.path().to_path_buf();
+    session.environment.clear();
+    session.environment.insert(
+        "PATH".into(),
+        std::env::join_paths(["bin", "missing", "bin"]).unwrap(),
+    );
+    std::fs::create_dir(root.path().join("bin")).unwrap();
+    let suffix = if cfg!(windows) { ".cMd" } else { "" };
+    for name in [
+        "tundra-path-tool",
+        "ignored&operator",
+        "ignored space",
+        "ignored\ncontrol",
+    ] {
+        // Windows filenames cannot contain control characters.
+        if cfg!(windows) && name.contains('\n') {
+            continue;
+        }
+        let path = root.path().join("bin").join(format!("{name}{suffix}"));
+        std::fs::write(&path, "echo MUST_NOT_RUN > SENTINEL").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    std::fs::write(root.path().join("bin/ordinary.txt"), "not executable").unwrap();
+    std::fs::create_dir(root.path().join("bin").join(format!("directory{suffix}"))).unwrap();
+    assert_eq!(
+        session.executable_search_path().executable_names(|| false),
+        ["tundra-path-tool"]
+    );
+    assert!(!root.path().join("SENTINEL").exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let link = root.path().join("bin/tundra-link");
+        std::os::unix::fs::symlink("tundra-path-tool", &link).unwrap();
+        assert_eq!(
+            session.executable_search_path().executable_names(|| false),
+            ["tundra-link", "tundra-path-tool"]
+        );
+        std::fs::set_permissions(
+            root.path().join("bin/tundra-path-tool"),
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        assert!(
+            session
+                .executable_search_path()
+                .executable_names(|| false)
+                .is_empty()
+        );
+    }
+    #[cfg(windows)]
+    {
+        session.environment.insert("PATHEXT".into(), ".EXE".into());
+        assert!(
+            session
+                .executable_search_path()
+                .executable_names(|| false)
+                .is_empty()
+        );
+        session.environment.remove(OsStr::new("PATH"));
+        session.environment.remove(OsStr::new("PATHEXT"));
+        session.environment.insert("Path".into(), "bin".into());
+        assert_eq!(
+            session.executable_search_path().executable_names(|| false),
+            ["tundra-path-tool"]
+        );
+    }
+    session.environment.insert("PATH".into(), "absent".into());
+    #[cfg(windows)]
+    session.environment.remove(OsStr::new("Path"));
+    assert!(
+        session
+            .executable_search_path()
+            .executable_names(|| false)
+            .is_empty()
+    );
+    session.directory = root.path().join("bin");
+    session.environment.insert("PATH".into(), "".into());
+    #[cfg(windows)]
+    assert_eq!(
+        session.executable_search_path().executable_names(|| false),
+        ["tundra-path-tool"]
+    );
+}
+
+#[test]
 fn system_command_hint_uses_session_paths_and_never_executes_files() {
     let root = tempfile::tempdir().unwrap();
     let mut session = SystemCommandSession::new().unwrap();

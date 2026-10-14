@@ -1,6 +1,55 @@
 use super::*;
 use rustyline::hint::Hint;
 
+// Keep syntax-only tests independent of the developer machine's PATH.
+fn command_completions(line: &str, pos: usize) -> (usize, Vec<String>) {
+    completion::command_completions(line, pos, &completion::system_candidates(Vec::new()))
+}
+
+fn command_hint(line: &str, pos: usize) -> Option<CommandHint> {
+    completion::command_hint(line, pos, &completion::system_candidates(Vec::new()))
+}
+
+#[test]
+fn path_commands_join_prefix_completion_and_typo_correction_without_entering_ux_syntax() {
+    let names = completion::system_candidates(vec![
+        "tundra-path-tool".into(),
+        "help".into(),
+        "中文工具".into(),
+    ]);
+    assert_eq!(
+        completion::command_completions("tundra-path-t", 13, &names).1,
+        ["tundra-path-tool"]
+    );
+    let typo = "tundra-path-tolo";
+    let hint = completion::command_hint(typo, typo.len(), &names).unwrap();
+    assert_eq!(hint.display(), "\nDid you mean: tundra-path-tool");
+    assert!(hint.completion().is_none());
+    assert_eq!(
+        completion::command_completions("hel", 3, &names).1,
+        ["help"]
+    );
+    assert!(
+        completion::command_completions("/tundra-path-t", 14, &names)
+            .1
+            .is_empty()
+    );
+    let typo = "中文工县";
+    assert!(
+        completion::command_hint(typo, typo.len(), &names)
+            .unwrap()
+            .display()
+            .contains("中文工具")
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        completion::command_hint("TUNDRA-PATH-T", 13, &names)
+            .unwrap()
+            .completion(),
+        Some("ool")
+    );
+}
+
 #[test]
 fn suggestions_continue_through_debug_config_help_and_log_arguments() {
     for (line, expected) in [
@@ -71,6 +120,7 @@ fn typos_suggest_full_corrected_commands_without_inserting_hint_labels() {
 fn hint_foreground_is_gray_and_resets_afterward() {
     let display = PromptDisplay {
         accent: "\x1b[95m".into(),
+        path_commands: PathCommands::new(None),
     };
     assert_eq!(display.highlight_hint("lp"), "\x1b[90mlp\x1b[39m");
     assert_eq!(
@@ -144,6 +194,7 @@ fn ux_completion_covers_formal_operations_and_keeps_system_commands_intact() {
 fn status_metadata_is_added_only_to_the_rendered_primary_prompt() {
     let display = PromptDisplay {
         accent: "\x1b[95m".to_string(),
+        path_commands: PathCommands::new(None),
     };
     let prompt = "○ user@C:\\Documents >> ";
     assert_eq!(

@@ -9,19 +9,23 @@ use rustyline::{
 };
 
 mod completion;
+mod path_commands;
 use completion::{CommandHint, command_completions, command_hint};
+use path_commands::PathCommands;
 
 struct PromptDisplay {
     accent: String,
+    path_commands: PathCommands,
 }
 
 impl PromptDisplay {
-    fn new() -> Self {
+    fn new(watchdog: Option<&watchdog::AppWatchdog>) -> Self {
         Self {
             accent: std::env::var("TUNDRA_COMMAND_LINE_ACCENT")
                 .ok()
                 .and_then(|value| validated_foreground(&value))
                 .unwrap_or_else(|| "\x1b[38;2;99;211;229m".to_string()),
+            path_commands: PathCommands::new(watchdog),
         }
     }
 }
@@ -48,7 +52,11 @@ impl Completer for PromptDisplay {
         pos: usize,
         _context: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<String>)> {
-        Ok(command_completions(line, pos))
+        Ok(command_completions(
+            line,
+            pos,
+            &self.path_commands.commands(),
+        ))
     }
 }
 impl Hinter for PromptDisplay {
@@ -59,7 +67,7 @@ impl Hinter for PromptDisplay {
         pos: usize,
         _context: &rustyline::Context<'_>,
     ) -> Option<CommandHint> {
-        command_hint(line, pos)
+        command_hint(line, pos, &self.path_commands.commands())
     }
 }
 impl Validator for PromptDisplay {}
@@ -104,7 +112,11 @@ const COMMAND_LINE_USERNAME_ENV: &str = "TUNDRA_COMMAND_LINE_USERNAME";
 /// Runs an interactive Tundra command loop. The callback is deliberately the
 /// normal CLI dispatcher, so REPL input cannot drift from the regular CLI
 /// command surface.
-pub(crate) fn run_repl<F>(embedded: bool, mut execute_cli: F) -> i32
+pub(crate) fn run_repl<F>(
+    embedded: bool,
+    watchdog: Option<&watchdog::AppWatchdog>,
+    mut execute_cli: F,
+) -> i32
 where
     F: FnMut(&[String]) -> i32,
 {
@@ -134,7 +146,7 @@ where
                 return 1;
             }
         };
-    editor.set_helper(Some(PromptDisplay::new()));
+    editor.set_helper(Some(PromptDisplay::new(watchdog)));
     let mut system_session = None;
     println!(
         "System commands run by default. /help: UX command help; help: system command help; exit: leave."
@@ -145,6 +157,20 @@ where
         if separate_next_prompt {
             println!();
             separate_next_prompt = false;
+        }
+        // Only copy lookup settings here. Never wait for filesystem reads
+        // before showing the prompt or handling a key.
+        if let Some(helper) = editor.helper_mut()
+            && let Some(search) = system_session.as_ref().map_or_else(
+                || {
+                    SystemCommandSession::new()
+                        .ok()
+                        .map(|s| s.executable_search_path())
+                },
+                |s: &SystemCommandSession| Some(s.executable_search_path()),
+            )
+        {
+            helper.path_commands.refresh(search);
         }
         let prompt = repl_prompt(embedded, system_session.as_ref());
         // Keep layout input free of terminal controls on every platform.
