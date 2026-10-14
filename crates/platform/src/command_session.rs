@@ -25,6 +25,8 @@ pub struct SystemCommandSession {
     directory: PathBuf,
     #[cfg(unix)]
     initialized: bool,
+    #[cfg(target_os = "linux")]
+    shell: Option<PathBuf>,
 }
 
 /// An owned snapshot of command lookup settings, without the rest of the
@@ -62,6 +64,8 @@ impl SystemCommandSession {
             directory: std::env::current_dir()?,
             #[cfg(unix)]
             initialized: false,
+            #[cfg(target_os = "linux")]
+            shell: None,
         })
     }
 
@@ -312,18 +316,37 @@ impl SystemCommandSession {
         };
         let environment_fd = duplicate(&environment)?;
         let directory_fd = duplicate(&directory)?;
-        let mut child = Command::new("/bin/sh");
+        // Resolve only when executing, never on the prompt/input path. Keep
+        // the interpreter for this session even if a command changes SHELL.
+        #[cfg(target_os = "linux")]
+        let shell = self.shell.get_or_insert_with(|| {
+            select_linux_shell(self.environment.get(OsStr::new("SHELL")), || {
+                crate::linux::identity::LinuxUserContext::current()
+                    .ok()
+                    .map(|user| user.shell)
+            })
+        });
+        #[cfg(not(target_os = "linux"))]
+        let shell = Path::new("/bin/sh");
+        let fish = shell.file_name() == Some(OsStr::new("fish"));
+        let mut child = Command::new(&shell);
         // Load login defaults once, rather than resetting PATH after every
         // command. The input is a separate argument, not interpolated into
         // the snapshot protocol. EXIT also captures state after `exit N`.
+        if fish && self.initialized {
+            child.arg("--no-config");
+        }
         child
-            .args([
-                if self.initialized { "-c" } else { "-lc" },
-                UNIX_COMMAND,
-                "tundra-system-command",
-                command,
-            ])
-            // Some /bin/sh implementations discard inherited OLDPWD at
+            .arg(if self.initialized { "-c" } else { "-lc" })
+            .arg(if fish { FISH_COMMAND } else { UNIX_COMMAND });
+        // POSIX shells consume the next argument as $0; fish starts $argv
+        // immediately. Both receive the command as data, without quoting it.
+        if !fish {
+            child.arg("tundra-system-command");
+        }
+        child
+            .arg(command)
+            // Some shells discard inherited OLDPWD at
             // startup. Restore it explicitly so `cd -` works across calls.
             .arg(
                 self.environment
@@ -379,14 +402,56 @@ impl SystemCommandSession {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn select_linux_shell(
+    configured: Option<&OsString>,
+    account_shell: impl FnOnce() -> Option<PathBuf>,
+) -> PathBuf {
+    let usable = |path: &PathBuf| path.is_absolute() && is_executable_file(path);
+    configured
+        .map(PathBuf::from)
+        .filter(usable)
+        .or_else(|| account_shell().filter(usable))
+        .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+}
+
 // Use an absolute env path: `command -p env` itself replaces the child's
 // PATH on some shells. cwd has its own stream so filename newlines survive.
 // The extra NUL is a completion marker; partial snapshots are never applied.
+// zsh's builtin `cd -` reads an internal previous-directory value rather than
+// the restored OLDPWD. Use that exported value unless a user cd function exists.
 #[cfg(unix)]
 const UNIX_COMMAND: &str = r#"trap 'command -p pwd -P >&9 && /usr/bin/env -0 >&8 && command -p printf "\0" >&8' EXIT
 export OLDPWD
 if [ "$3" = 1 ]; then OLDPWD=$2; fi
+if [ -n "${ZSH_VERSION-}" ] && ! typeset -f cd >/dev/null; then
+    eval '\cd() {
+        if [ "$#" = 1 ] && [ "$1" = - ]; then
+            builtin cd -- "$OLDPWD"
+        else
+            builtin cd "$@"
+        fi
+    }'
+fi
 eval "$1"
+"#;
+
+#[cfg(unix)]
+const FISH_COMMAND: &str = r#"set -g __tundra_previous_pwd "$PWD"
+function __tundra_directory_changed --on-variable PWD
+    if test "$PWD" != "$__tundra_previous_pwd"
+        set -gx OLDPWD "$__tundra_previous_pwd"
+        set -g __tundra_previous_pwd "$PWD"
+    end
+end
+function __tundra_snapshot --on-event fish_exit
+    builtin pwd -P >&9; and /usr/bin/env -0 >&8; and builtin printf '\0' >&8
+end
+if test "$argv[3]" = 1
+    set -gx OLDPWD "$argv[2]"
+    set -g dirprev "$argv[2]"
+end
+eval "$argv[1]"
 "#;
 
 #[cfg(unix)]

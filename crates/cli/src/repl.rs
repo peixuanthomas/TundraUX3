@@ -148,9 +148,14 @@ where
         };
     editor.set_helper(Some(PromptDisplay::new(watchdog)));
     let mut system_session = None;
+    #[cfg(target_os = "linux")]
     println!(
-        "System commands run by default. /help: UX command help; help: system command help; exit: leave."
+        "System commands use your default shell. /help: UX help; help: shell help (if supported); exit: leave."
     );
+    #[cfg(windows)]
+    println!("System commands use cmd.exe. /help: UX help; help: cmd help; exit: leave.");
+    #[cfg(not(any(target_os = "linux", windows)))]
+    println!("System commands use /bin/sh. /help: UX help; exit: leave.");
     let mut separate_next_prompt = false;
 
     loop {
@@ -292,8 +297,6 @@ where
                         "This looks like a system command. Remove the '/' prefix: {}",
                         visible_command(ux_command)
                     );
-                } else {
-                    let _ = crate::help_text::write_error_help(&mut std::io::stderr(), &arguments);
                 }
                 2
             }

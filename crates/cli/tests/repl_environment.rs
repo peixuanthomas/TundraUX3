@@ -19,7 +19,10 @@ fn run_child_if_requested() {
 }
 
 fn run_repl(test: &str, input: &str, embedded: bool) -> Output {
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    #[cfg(target_os = "linux")]
+    command.env("SHELL", "/bin/bash");
+    let mut child = command
         .args(["--exact", test, "--nocapture"])
         .env(CHILD, if embedded { "embedded" } else { "standalone" })
         .stdin(Stdio::piped())
@@ -85,7 +88,7 @@ fn repl_defaults_to_system_commands_and_hints_do_not_execute_alternatives() {
             1
         );
         assert!(stderr.contains("Prefix it with '/': /new"), "{stderr}");
-        assert!(stderr.contains("Usage: tundra-cli config"), "{stderr}");
+        assert!(!stderr.contains("Usage: tundra-cli"), "{stderr}");
         assert!(
             stderr.contains("repl cannot be started from inside repl"),
             "{stderr}"
@@ -113,12 +116,43 @@ fn bare_help_is_passed_to_the_system_without_ux_interception() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(output.status.success(), "{stdout}\n{stderr}");
-        assert!(stdout.contains("/help: UX command help; help: system command help"));
-        assert!(stdout.contains("[system exit code:"), "{stdout}");
+        assert!(stdout.contains("/help: UX help"));
+        assert!(stdout.contains("[system exit code: 0]"), "{stdout}");
+        #[cfg(target_os = "linux")]
+        {
+            assert!(stdout.contains("System commands use your default shell."));
+            assert!(stdout.contains("help: shell help (if supported)"));
+            assert!(stdout.contains("GNU bash"), "{stdout}");
+            assert!(!stderr.contains("Permission denied"), "{stderr}");
+            assert!(
+                !stderr.contains("could not retain command state"),
+                "{stderr}"
+            );
+        }
         assert!(stdout.contains("AFTER_SYSTEM_HELP"), "{stdout}");
         assert!(!stdout.contains("Usage: tundra-cli"), "{stdout}");
         assert!(!stderr.contains("Prefix it with '/'"), "{stderr}");
     }
+}
+
+#[test]
+fn ux_errors_stay_brief_and_explicit_help_still_works() {
+    run_child_if_requested();
+    let output = run_repl(
+        "ux_errors_stay_brief_and_explicit_help_still_works",
+        "/config invalid\n/not-a-ux-command\n/config set\n/help config\nexit\n",
+        true,
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    assert_eq!(stderr.matches("ERROR:").count(), 3, "{stderr}");
+    assert!(!stderr.contains("Usage:"), "{stderr}");
+    assert_eq!(
+        stdout.matches("Usage: tundra-cli config").count(),
+        1,
+        "{stdout}"
+    );
 }
 
 #[test]

@@ -141,6 +141,104 @@ fn run(session: &mut SystemCommandSession, command: &str, code: i32) {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_shell_selection_uses_valid_default_then_account_then_fallback() {
+    let bash = OsString::from("/bin/bash");
+    assert_eq!(
+        select_linux_shell(Some(&bash), || panic!("unneeded account lookup")),
+        Path::new("/bin/bash")
+    );
+    for invalid in ["", "bash", "/tundra-nonexistent-shell", "/tmp"] {
+        assert_eq!(
+            select_linux_shell(Some(&invalid.into()), || Some("/bin/bash".into())),
+            Path::new("/bin/bash")
+        );
+    }
+    assert_eq!(
+        select_linux_shell(None, || Some("/bin/bash".into())),
+        Path::new("/bin/bash")
+    );
+    assert_eq!(select_linux_shell(None, || None), Path::new("/bin/sh"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_bash_help_and_state_use_the_selected_shell_for_the_whole_session() {
+    let mut session = SystemCommandSession::new().unwrap();
+    session
+        .environment
+        .insert("SHELL".into(), "/bin/bash".into());
+    assert!(
+        session.shell.is_none(),
+        "prompt setup must not resolve shells"
+    );
+    run(
+        &mut session,
+        "help > /dev/null; export BASH_CHECK=$BASH_VERSION; export SHELL=/bin/dash",
+        0,
+    );
+    assert!(
+        !session
+            .environment
+            .get(OsStr::new("BASH_CHECK"))
+            .unwrap()
+            .is_empty()
+    );
+    run(
+        &mut session,
+        "[[ $BASH_VERSION = $BASH_CHECK ]] && help cd > /dev/null; unset SHELL",
+        0,
+    );
+    run(
+        &mut session,
+        "[[ -n $BASH_VERSION ]] && help > /dev/null",
+        0,
+    );
+    assert_eq!(session.shell.as_deref(), Some(Path::new("/bin/bash")));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires fish; set TUNDRA_TEST_FISH to its absolute executable path"]
+fn linux_fish_preserves_native_commands_environment_directory_and_exit_status() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("space 'quote' 中文\n");
+    std::fs::create_dir(&directory).unwrap();
+    let mut session = SystemCommandSession::new().unwrap();
+    session.environment.insert(
+        "SHELL".into(),
+        std::env::var_os("TUNDRA_TEST_FISH").unwrap_or_else(|| "/usr/bin/fish".into()),
+    );
+    session
+        .environment
+        .insert("DESTINATION".into(), directory.as_os_str().into());
+    run(
+        &mut session,
+        "set -gx RETAINED 'one\n第二行=value'; cd \"$DESTINATION\"",
+        0,
+    );
+    assert_eq!(session.directory, directory);
+    run(
+        &mut session,
+        "test \"$RETAINED\" = 'one\n第二行=value'; and test \"$PWD\" = \"$DESTINATION\"",
+        0,
+    );
+    run(&mut session, "cd ..", 0);
+    run(&mut session, "cd -", 0);
+    assert_eq!(session.directory, directory);
+    run(
+        &mut session,
+        "set -e RETAINED; set -gx PATH /nonexistent; exit 7",
+        7,
+    );
+    run(
+        &mut session,
+        "not set -q RETAINED; and test \"$PATH\" = /nonexistent",
+        0,
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn unix_commands_retain_exports_directory_and_unsets_without_changing_the_host() {
