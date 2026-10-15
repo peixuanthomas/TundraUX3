@@ -316,6 +316,17 @@ fn verify_current(
     )?;
     for (index, actual) in current.iter().enumerate() {
         let before = &record.before[index];
+        let after = record.after.as_ref().and_then(|files| {
+            files
+                .iter()
+                .find(|file| file.document.path == actual.document.path)
+        });
+        let properties_match = |known: &StoredFile| {
+            actual.document.uid == known.document.uid
+                && actual.document.gid == known.document.gid
+                && actual.document.mode == known.document.mode
+                && actual.attributes == known.attributes
+        };
         let permitted = if let Some(candidates) = candidates {
             actual.document.existed == before.document.existed
                 && actual.document.content == before.document.content
@@ -323,29 +334,22 @@ fn verify_current(
                 && actual.document.gid == before.document.gid
                 && actual.document.mode == before.document.mode
                 && actual.attributes == before.attributes
-                || record
-                    .after
-                    .as_ref()
-                    .and_then(|files| {
-                        files
-                            .iter()
-                            .find(|file| file.document.path == actual.document.path)
-                    })
-                    .is_some_and(|after| actual.document.version == after.document.version)
+                || after.is_some_and(|after| actual.document.version == after.document.version)
                 || candidates
                     .get(&actual.document.path)
                     .is_some_and(|(content, existed)| {
                         actual.document.existed == *existed
                             && actual.document.content == *content
                             && (!*existed
-                                || actual.document.uid == before.document.uid
+                                || before.document.existed && properties_match(before)
+                                || after.is_some_and(|after| {
+                                    after.document.existed && properties_match(after)
+                                })
+                                || !before.document.existed
+                                    && after.is_none_or(|after| !after.document.existed)
+                                    && actual.document.uid == before.document.uid
                                     && actual.document.gid == before.document.gid
-                                    && (if before.document.existed {
-                                        actual.document.mode == before.document.mode
-                                            && actual.attributes == before.attributes
-                                    } else {
-                                        matches!(actual.document.mode, 0o600 | 0o644)
-                                    }))
+                                    && matches!(actual.document.mode, 0o600 | 0o644))
                     })
         } else {
             record

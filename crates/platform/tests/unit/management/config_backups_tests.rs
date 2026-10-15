@@ -88,11 +88,17 @@ fn pending_account_record_keeps_password_original_before_the_write() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("backups");
     let session = begin_at(&root, "users", &[]).unwrap();
-    session.set_payload(serde_json::json!({"action":"user_password","target":"alice","changes":[{"database":"shadow","name":"alice","before":["alice","$6$original", "1"],"after":["alice","$6$original","1"],"fields":[1,2],"member":null}]})).unwrap();
+    session.set_payload(serde_json::json!({"action":"user_password","target":"alice","users":{"alice":{"before":1000,"after":1000}},"groups":{},"changes":[{"database":"shadow","name":"alice","before":["alice","$6$original", "1"],"after":["alice","$6$original","1"],"fields":[1,2],"member":null}]})).unwrap();
     let record = read_record(&root, session.id()).unwrap();
     assert_eq!(record.payload["changes"][0]["before"][1], "$6$original");
     assert!(record.after.is_none());
     assert!(!differences(&record).contains("$6$original"));
+    let mut changed = record.payload.clone();
+    changed["changes"][0]["after"][1] = Value::String("$6$updated".into());
+    session.set_payload(changed).unwrap();
+    let diff = differences(&read_record(&root, session.id()).unwrap());
+    assert!(diff.contains("Password changed"));
+    assert!(!diff.contains("$6$"));
 }
 #[test]
 fn native_only_changes_are_visible_and_unconfirmed_operations_cannot_restore() {
@@ -109,4 +115,34 @@ fn native_only_changes_are_visible_and_unconfirmed_operations_cannot_restore() {
     record.source = "firewall".into();
     record.payload = serde_json::json!({"backend":"firewalld","changes":[{"zone":"public","scope":"runtime","kind":"port","value":"2222/tcp","before":false,"after":true}]});
     assert!(differences(&record).contains("public / runtime / port 2222/tcp: false -> true"));
+}
+#[test]
+fn native_recovery_uses_recorded_properties_for_sidecars() {
+    for existed in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("backups");
+        let file = dir.path().join("zone.xml.old");
+        if existed {
+            fs::write(&file, "original sidecar").unwrap();
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let session = begin_at(&root, "firewall", &[file.clone()]).unwrap();
+        fs::write(&file, "first native version").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        session.finish("saved").unwrap();
+        let record = read_record(&root, session.id()).unwrap();
+        fs::write(&file, "native inverse").unwrap();
+        let candidate = BTreeMap::from([(file.clone(), ("native inverse".into(), true))]);
+        assert!(verify_current(&record, Some(&candidate)).is_ok());
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(verify_current(&record, Some(&candidate)).is_err());
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        restore_record(&root, &record, Some(&candidate)).unwrap();
+        if existed {
+            assert_eq!(fs::read_to_string(&file).unwrap(), "original sidecar");
+            assert_eq!(fs::metadata(&file).unwrap().mode() & 0o777, 0o644);
+        } else {
+            assert!(!file.exists());
+        }
+    }
 }
