@@ -16,6 +16,7 @@ serde = { version = "1", features = ["derive"] }
 zeroize = "1"
 chrono = { version = "0.4", features = ["serde"] }
 runtime-log = { path = "../runtime-log" }
+i18n = { path = "../i18n" }
 ratatui-image.workspace = true
 same-file = "1"
 tempfile = "3.27"
@@ -28,6 +29,9 @@ battery = { package = "starship-battery", version = "=0.10.1" }
 watchdog = { path = "../watchdog", features = ["test-support"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+croner = "=3.0.1"
+shlex = "2.0"
+chrono-tz = "0.10.4"
 # Keep desktop-only integrations out of the Windows and macOS dependency graph.
 arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
 freedesktop-desktop-entry = "0.8.1"
