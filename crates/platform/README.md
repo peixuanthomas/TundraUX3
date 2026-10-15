@@ -13,6 +13,7 @@
 | 系统用户、用户组和 SSH 公钥 | [用户管理](docs/user-management.md) |
 | 差异预览、私有检查、授权保存和恢复 | [系统配置文件](docs/system-config.md) |
 | 按操作分组的配置、账户和用户组恢复 | [配置备份与恢复](docs/config-backups.md) |
+| 监听端口、UFW 与 firewalld 放行规则 | [防火墙与端口](docs/firewall.md) |
 | 脚本调用、任务编号与退出码 | [运维 CLI](../cli/docs/operations.md) |
 | 进程、日志、文档、目录性能及复测方式 | [性能优化](docs/performance.md) |
 
