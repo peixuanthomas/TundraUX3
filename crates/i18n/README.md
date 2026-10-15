@@ -43,6 +43,15 @@ formats immediately. Nested `LocalizedMessage` and `LocalizedText` arguments ret
 their original IDs and render through the same snapshot; nesting stops at depth
 32 with an emergency fallback. `String`/`&str` conversions to `LocalizedText` are always raw.
 
+`current_snapshot()` clones the current thread's `Arc<LanguageSnapshot>` (or the
+embedded English default). `snapshot.export()` returns serializable
+`LanguageSnapshotData` with the language code, generation, current Fluent text,
+and customized English fallback text. `data.restore()` validates the supplied
+resources and returns a snapshot using only memory and the receiving process's
+embedded English fallback. Resource paths are generated diagnostic labels;
+import never reads, repairs, or writes user language files. Enter the restored
+snapshot in the worker or helper thread before formatting user-visible messages.
+
 `LanguageSnapshot::load` is strict for the requested pack. It rejects malformed
 manifests, invalid Fluent, duplicate message/term/attribute IDs, unresolved or
 cyclic references, unsupported functions, and changed named-argument contracts

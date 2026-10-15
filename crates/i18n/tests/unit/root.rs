@@ -8,6 +8,117 @@ use std::{
     },
 };
 
+#[test]
+fn snapshot_data_preserves_custom_language_and_english_without_files() {
+    let fixture = Fixture::new();
+    fixture.locale(
+        "en-US",
+        "English",
+        "test-wire = Hello { $name }\ntest-wire-fallback = Customized English\n",
+    );
+    fixture.locale("fr-FR", "Français", "test-wire = Bonjour { $name }\n");
+    let snapshot = fixture.snapshot("fr-FR", 42);
+    let data = snapshot.export();
+    let serialized = toml::to_string(&data).unwrap();
+    let data: LanguageSnapshotData = toml::from_str(&serialized).unwrap();
+    drop(fixture);
+    let restored = data.restore().unwrap();
+    assert_eq!(restored.code(), "fr-FR");
+    assert_eq!(restored.generation(), 42);
+    assert_eq!(
+        msg!("test-wire", name = "Ada").render(&restored),
+        "Bonjour Ada"
+    );
+    assert_eq!(
+        msg!("test-wire-fallback").render(&restored),
+        "Customized English"
+    );
+    assert_eq!(
+        msg!("notifications-action-ok").render(&restored),
+        msg!("notifications-action-ok").render(&LanguageSnapshot::embedded(0))
+    );
+}
+
+#[test]
+fn snapshot_data_validates_code_graph_and_argument_contracts() {
+    let mut data = LanguageSnapshotData {
+        code: "fr-FR".into(),
+        generation: 1,
+        current: vec![],
+        english: vec!["test-wire = Hello { $name }\n".into()],
+    };
+    for (source, kind) in [
+        ("test-wire = {\n", LanguageErrorKind::Syntax),
+        (
+            "test-wire = A\ntest-wire = B\n",
+            LanguageErrorKind::Duplicate,
+        ),
+        (
+            "test-wire = { unknown-wire }\n",
+            LanguageErrorKind::Reference,
+        ),
+        (
+            "test-wire = Bonjour { $other }\n",
+            LanguageErrorKind::Parameters,
+        ),
+    ] {
+        data.current = vec![source.into()];
+        assert_eq!(data.restore().unwrap_err().kind, kind);
+    }
+    data.current.clear();
+    data.english = vec!["resources-repaired = Missing named arguments\n".into()];
+    assert_eq!(
+        data.restore().unwrap_err().kind,
+        LanguageErrorKind::Parameters
+    );
+    for english in [vec![], vec!["test-wire-extra = Extra\n".into()]] {
+        data.english = english;
+        data.current = vec!["notifications-action-ok = { $unexpected }\n".into()];
+        assert_eq!(
+            data.restore().unwrap_err().kind,
+            LanguageErrorKind::Parameters
+        );
+        data.current = vec!["resources-repaired = 缺少原有参数\n".into()];
+        assert_eq!(
+            data.restore().unwrap_err().kind,
+            LanguageErrorKind::Parameters
+        );
+    }
+    data = LanguageSnapshot::embedded(0).export();
+    data.code = "../en-US".into();
+    assert_eq!(
+        data.restore().unwrap_err().kind,
+        LanguageErrorKind::UnknownLanguage
+    );
+}
+
+#[test]
+fn current_snapshot_retains_active_arc_and_thread_isolation() {
+    let default = current_snapshot();
+    assert_eq!(default.code(), DEFAULT_LANGUAGE);
+    let snapshot = Arc::new(
+        LanguageSnapshotData {
+            code: "zh-CN".into(),
+            generation: 7,
+            current: vec!["test-wire-scope = 当前语言\n".into()],
+            english: vec![],
+        }
+        .restore()
+        .unwrap(),
+    );
+    let guard = enter_snapshot(Arc::clone(&snapshot));
+    assert!(Arc::ptr_eq(&current_snapshot(), &snapshot));
+    assert_eq!(
+        std::thread::spawn(|| current_snapshot().code().to_owned())
+            .join()
+            .unwrap(),
+        DEFAULT_LANGUAGE
+    );
+    drop(guard);
+    assert!(Arc::ptr_eq(&current_snapshot(), &default));
+    assert_eq!(msg!("test-wire-scope").render(&snapshot), "当前语言");
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {

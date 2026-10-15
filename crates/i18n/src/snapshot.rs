@@ -59,12 +59,73 @@ pub struct LanguageLoad {
     pub diagnostics: Vec<RepairDiagnostic>,
 }
 
+/// Owned Fluent text for passing a snapshot to another process without filesystem access.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LanguageSnapshotData {
+    pub code: String,
+    pub generation: u64,
+    pub current: Vec<String>,
+    pub english: Vec<String>,
+}
+
+impl LanguageSnapshotData {
+    /// Validate supplied text and rebuild bundles entirely in memory.
+    pub fn restore(&self) -> Result<LanguageSnapshot, LanguageError> {
+        let code = canonical_language_code(&self.code)?;
+        let sources = |tier: &str, text: &[String]| {
+            text.iter()
+                .enumerate()
+                .map(|(index, text)| Source {
+                    path: PathBuf::from(format!("<memory>/{tier}/{index}.ftl")),
+                    text: text.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let current = sources("current", &self.current);
+        let mut english = sources("english", &self.english);
+        let embedded = embedded_sources();
+        resource::validate(&english, Some(&embedded), true)?;
+        let existing = resource::identifiers(&english);
+        for fallback in &embedded {
+            let empty = Source {
+                path: fallback.path.clone(),
+                text: String::new(),
+            };
+            if let Some(text) = resource::append_missing(&empty, fallback, &existing)? {
+                english.push(Source {
+                    path: fallback.path.clone(),
+                    text,
+                });
+            }
+        }
+        resource::validate(&current, Some(&english), true)?;
+        LanguageSnapshot::from_sources(code, self.generation, current, english, embedded)
+    }
+}
+
 impl LanguageSnapshot {
     pub fn code(&self) -> &str {
         &self.code
     }
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub fn export(&self) -> LanguageSnapshotData {
+        LanguageSnapshotData {
+            code: self.code.clone(),
+            generation: self.generation,
+            current: self
+                .current_sources
+                .iter()
+                .map(|source| source.text.clone())
+                .collect(),
+            english: self
+                .english_sources
+                .iter()
+                .map(|source| source.text.clone())
+                .collect(),
+        }
     }
 
     /// Repair built-in defaults, then validate the requested locale before returning a candidate.

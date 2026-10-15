@@ -14,8 +14,11 @@ pub use catalog::{
 pub use contract::{MessageContract, message_contract};
 pub use error::{LanguageError, LanguageErrorKind, RepairDiagnostic, RepairKind};
 pub use message::{LocalizedError, LocalizedMessage, LocalizedText, MessageArg};
-pub use scope::{SnapshotGuard, enter_snapshot, render_current, render_diagnostic, with_snapshot};
-pub use snapshot::{LanguageLoad, LanguageSnapshot};
+pub use scope::{
+    SnapshotGuard, current_snapshot, enter_snapshot, render_current, render_diagnostic,
+    with_snapshot,
+};
+pub use snapshot::{LanguageLoad, LanguageSnapshot, LanguageSnapshotData};
 
 include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
 

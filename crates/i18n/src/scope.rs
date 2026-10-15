@@ -42,9 +42,10 @@ pub fn with_snapshot<R>(snapshot: &Arc<LanguageSnapshot>, f: impl FnOnce() -> R)
     f()
 }
 
-pub fn render_current(message: &LocalizedMessage) -> String {
+/// Clone the thread's active snapshot, or the in-memory English default.
+pub fn current_snapshot() -> Arc<LanguageSnapshot> {
     static DEFAULT: OnceLock<Arc<LanguageSnapshot>> = OnceLock::new();
-    let snapshot = ACTIVE
+    ACTIVE
         .with(|active| {
             active
                 .borrow()
@@ -53,8 +54,11 @@ pub fn render_current(message: &LocalizedMessage) -> String {
         })
         .unwrap_or_else(|| {
             Arc::clone(DEFAULT.get_or_init(|| Arc::new(LanguageSnapshot::embedded(0))))
-        });
-    snapshot.render(message)
+        })
+}
+
+pub fn render_current(message: &LocalizedMessage) -> String {
+    current_snapshot().render(message)
 }
 
 /// Render stable diagnostic text from immutable embedded English, independent of
