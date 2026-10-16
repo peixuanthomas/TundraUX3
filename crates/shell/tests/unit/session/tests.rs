@@ -4352,11 +4352,22 @@ fn fixed_launcher_items_include_editor_and_keep_command_line_admin_only() {
     let launcher = admin.to_launcher_view_model();
     assert_eq!(
         launcher.items.len(),
-        if cfg!(target_os = "linux") { 9 } else { 4 }
+        if cfg!(target_os = "linux") { 13 } else { 4 }
     );
     assert_eq!(launcher.items[0].id, app::COMMAND_LINE_APPLICATION.id);
     assert_eq!(launcher.items[1].id, app::EDITOR_APPLICATION.id);
     assert!(launcher.items.iter().any(|item| item.id == "builtin.users"));
+    for id in [
+        "builtin.firewall",
+        "builtin.ssh",
+        "builtin.backups",
+        "builtin.scheduled-tasks",
+    ] {
+        assert_eq!(
+            launcher.items.iter().any(|item| item.id == id),
+            cfg!(target_os = "linux")
+        );
+    }
     assert!(launcher.items.iter().all(|item| item.is_builtin()));
     assert!(
         launcher
@@ -4370,7 +4381,7 @@ fn fixed_launcher_items_include_editor_and_keep_command_line_admin_only() {
     let launcher = user.to_launcher_view_model();
     assert_eq!(
         launcher.items.len(),
-        if cfg!(target_os = "linux") { 8 } else { 3 }
+        if cfg!(target_os = "linux") { 12 } else { 3 }
     );
     assert_eq!(launcher.items[0].id, app::EDITOR_APPLICATION.id);
     assert!(launcher.items.iter().any(|item| item.id == "builtin.users"));
