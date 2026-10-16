@@ -260,6 +260,7 @@ pub(super) fn query(
         ],
         notices,
         backend: backend.id().into(),
+        ..Default::default()
     };
     if backend == PackageBackend::Pacman {
         snapshot.actions.push(action(

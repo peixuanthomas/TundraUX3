@@ -981,6 +981,7 @@ mod linux {
                         result.state = "running".into();
                     }
                     OperationEvent::Snapshot { snapshot } => result.snapshot = Some(snapshot),
+                    OperationEvent::Transaction { id, .. } => result.transaction_id = Some(id),
                     OperationEvent::ConfigDocument { document } => result.document = Some(document),
                     OperationEvent::Output { text: message } => {
                         if let Some(id) = message.strip_prefix("Network transaction: ") {

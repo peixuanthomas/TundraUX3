@@ -214,11 +214,21 @@ impl Drop for Client {
     }
 }
 
-fn start_operation(command: &ManagementCommand, actor: u32) -> Result<UnixStream, ManagementError> {
+fn start_operation(
+    command: &ManagementCommand,
+    actor: u32,
+    caller_pid: u32,
+    caller_start_ticks: u64,
+) -> Result<UnixStream, ManagementError> {
     // The portable installation directory is user-writable. Re-execute the
     // already authorized running image, never a replaceable filesystem path.
     let mut child = Command::new("/proc/self/exe")
-        .args(["__system-helper", &actor.to_string()])
+        .args([
+            "__system-helper-bound",
+            &actor.to_string(),
+            &caller_pid.to_string(),
+            &caller_start_ticks.to_string(),
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -282,6 +292,8 @@ pub fn entry(actor: u32) -> Result<(), ManagementError> {
     if helper::peer_uid(&channel).map_err(failure)? != actor {
         return Err(failure("Session channel does not belong to the actor"));
     }
+    let caller_pid = helper::peer_credentials(&channel).map_err(failure)?.pid as u32;
+    let caller_start_ticks = helper::process_start_ticks(caller_pid)?;
     // This broker is an early CLI entry and has no ordinary application runtime.
     // Give it its own watchdog and monitor disconnection even during an account
     // command. An unprivileged UI cannot force-kill an already elevated helper.
@@ -338,13 +350,15 @@ pub fn entry(actor: u32) -> Result<(), ManagementError> {
             Err(_) => return Ok(()),
         };
         match request {
-            Request::Start(ref command) => match start_operation(command, actor) {
-                Ok(stream) => {
-                    write_packet(&mut channel, &Response::Connected)?;
-                    send_connection(&channel, &stream)?;
+            Request::Start(ref command) => {
+                match start_operation(command, actor, caller_pid, caller_start_ticks) {
+                    Ok(stream) => {
+                        write_packet(&mut channel, &Response::Connected)?;
+                        send_connection(&channel, &stream)?;
+                    }
+                    Err(error) => write_packet(&mut channel, &Response::Failed(error.to_string()))?,
                 }
-                Err(error) => write_packet(&mut channel, &Response::Failed(error.to_string()))?,
-            },
+            }
             Request::Attach(ref path) => {
                 match helper::check_attach_path(path, actor).and_then(|()| helper::connect(path, 0))
                 {

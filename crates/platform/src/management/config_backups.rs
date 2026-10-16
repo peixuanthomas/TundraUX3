@@ -43,7 +43,9 @@ fn check_cancelled(flag: &AtomicBool) -> Result<(), ManagementError> {
 }
 fn record_path(root: &Path, id: &str) -> Result<PathBuf, ManagementError> {
     if id.is_empty() || id.len() > 100 || !id.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
-        return Err(ManagementError::InvalidInput("Invalid backup ID".into()));
+        return Err(ManagementError::InvalidInput(
+            i18n::tr!("platform-backups-invalid-id").into(),
+        ));
     }
     Ok(root.join("operations").join(format!("{id}.json")))
 }
@@ -52,7 +54,7 @@ fn write_record(root: &Path, record: &Record) -> Result<(), ManagementError> {
     let m = base.metadata().map_err(error)?;
     if m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o022 != 0 {
         return Err(ManagementError::PermissionDenied(
-            "Unsafe backup directory".into(),
+            i18n::tr!("platform-backups-unsafe-directory").into(),
         ));
     }
     base.set_permissions(fs::Permissions::from_mode(0o700))
@@ -62,7 +64,7 @@ fn write_record(root: &Path, record: &Record) -> Result<(), ManagementError> {
     let metadata = directory.metadata().map_err(error)?;
     if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o022 != 0 {
         return Err(ManagementError::PermissionDenied(
-            "Unsafe backup directory".into(),
+            i18n::tr!("platform-backups-unsafe-directory").into(),
         ));
     }
     directory
@@ -112,13 +114,13 @@ fn read_record(root: &Path, id: &str) -> Result<Record, ManagementError> {
         || m.len() > MAX_RECORD
     {
         return Err(ManagementError::PermissionDenied(
-            "Unsafe backup record".into(),
+            i18n::tr!("platform-backups-unsafe-record").into(),
         ));
     }
     let record: Record = serde_json::from_reader(file.take(MAX_RECORD)).map_err(error)?;
     if record.id != id || record.format_version != 1 {
         return Err(ManagementError::InvalidInput(
-            "Unsupported backup record".into(),
+            i18n::tr!("platform-backups-unsupported-record").into(),
         ));
     }
     Ok(record)
@@ -235,13 +237,20 @@ pub(crate) fn snapshots(
 ) -> Result<Vec<(ConfigDocument, ConfigDocument)>, ManagementError> {
     let record = read_record(Path::new(ROOT), id)?;
     let after = record.after.ok_or_else(|| {
-        ManagementError::Conflict("The configuration operation has no verified result".into())
+        ManagementError::Conflict(i18n::tr!("platform-backups-unverified-result").into())
     })?;
     Ok(record
         .before
         .into_iter()
         .zip(after)
         .map(|(before, after)| (before.document, after.document))
+        .collect())
+}
+pub(crate) fn before_snapshots(id: &str) -> Result<Vec<ConfigDocument>, ManagementError> {
+    Ok(read_record(Path::new(ROOT), id)?
+        .before
+        .into_iter()
+        .map(|file| file.document)
         .collect())
 }
 pub(crate) fn validate_current(id: &str) -> Result<(), ManagementError> {
@@ -252,7 +261,7 @@ pub(crate) fn append_created_path(id: &str, path: &Path) -> Result<(), Managemen
         || path.extension().and_then(|s| s.to_str()) != Some("nmconnection")
     {
         return Err(ManagementError::InvalidInput(
-            "Unexpected new network profile path".into(),
+            i18n::tr!("platform-backups-unexpected-profile").into(),
         ));
     }
     let root = Path::new(ROOT);
@@ -359,9 +368,9 @@ fn verify_current(
                 .is_some_and(|after| actual.document.version == after.document.version)
         };
         if !permitted {
-            return Err(ManagementError::Conflict(format!(
-                "Configuration changed after this operation: {}",
-                actual.document.path.display()
+            return Err(ManagementError::Conflict(i18n::tr!(
+                "platform-backups-conflict",
+                path = actual.document.path.display().to_string()
             )));
         }
     }
@@ -463,7 +472,7 @@ fn restore_selected(
         .any(|path| !record.before.iter().any(|file| &file.document.path == path))
     {
         return Err(ManagementError::InvalidInput(
-            "Recovery contains an unrecorded configuration file".into(),
+            i18n::tr!("platform-backups-unrecorded-file").into(),
         ));
     }
     record
@@ -489,7 +498,7 @@ fn safe_text(path: &Path, content: &str) -> String {
             .map(|line| {
                 let mut fields = line.split(':').map(String::from).collect::<Vec<_>>();
                 if fields.len() > 1 {
-                    fields[1] = "[protected]".into();
+                    fields[1] = i18n::tr!("platform-backups-protected").into();
                 }
                 fields.join(":")
             })
@@ -498,7 +507,7 @@ fn safe_text(path: &Path, content: &str) -> String {
     } else if path.starts_with("/etc/NetworkManager/system-connections")
         || path.starts_with("/etc/sysconfig/network-scripts")
     {
-        "[protected network configuration]".into()
+        i18n::tr!("platform-backups-protected-network").into()
     } else {
         content.into()
     }
@@ -510,10 +519,12 @@ fn differences(record: &Record) -> String {
         let original = safe_text(&before.document.path, &before.document.content);
         let updated = after
             .map(|s| safe_text(&s.document.path, &s.document.content))
-            .unwrap_or_else(|| "[result not recorded]".into());
+            .unwrap_or_else(|| i18n::tr!("platform-backups-unrecorded-result").into());
         text.push_str(&format!(
-            "{}\n--- before\n+++ after\n",
-            before.document.path.display()
+            "{}\n--- {}\n+++ {}\n",
+            before.document.path.display(),
+            i18n::tr!("platform-backups-before"),
+            i18n::tr!("platform-backups-after")
         ));
         for line in original.lines() {
             text.push_str(&format!("-{line}\n"));
@@ -523,26 +534,47 @@ fn differences(record: &Record) -> String {
         }
         if let Some(after) = after {
             for (label, old, new) in [
-                ("UID", before.document.uid, after.document.uid),
-                ("GID", before.document.gid, after.document.gid),
-                ("Mode", before.document.mode, after.document.mode),
+                (
+                    i18n::tr!("platform-backups-uid"),
+                    before.document.uid,
+                    after.document.uid,
+                ),
+                (
+                    i18n::tr!("platform-backups-gid"),
+                    before.document.gid,
+                    after.document.gid,
+                ),
+                (
+                    i18n::tr!("platform-backups-mode"),
+                    before.document.mode,
+                    after.document.mode,
+                ),
             ] {
                 if old != new {
                     text.push_str(&format!("{label}: {old} -> {new}\n"));
                 }
             }
             if original == updated && before.document.content != after.document.content {
-                text.push_str("Protected credentials changed\n");
+                text.push_str(&format!(
+                    "{}\n",
+                    i18n::tr!("platform-backups-credentials-changed")
+                ));
             }
             if before.attributes != after.attributes {
-                text.push_str("File access attributes changed\n");
+                text.push_str(&format!(
+                    "{}\n",
+                    i18n::tr!("platform-backups-attributes-changed")
+                ));
             }
             if before.document.existed != after.document.existed {
-                text.push_str(if after.document.existed {
-                    "File created\n"
-                } else {
-                    "File removed\n"
-                });
+                text.push_str(&format!(
+                    "{}\n",
+                    if after.document.existed {
+                        i18n::tr!("platform-backups-created")
+                    } else {
+                        i18n::tr!("platform-backups-removed")
+                    }
+                ));
             }
         }
     }
@@ -565,8 +597,10 @@ fn differences(record: &Record) -> String {
         }
         if record.payload["ufw_before"] != record.payload["ufw_after"] {
             text.push_str(&format!(
-                "UFW\n--- before\n{}\n+++ after\n{}\n",
+                "UFW\n--- {}\n{}\n+++ {}\n{}\n",
+                i18n::tr!("platform-backups-before"),
                 record.payload["ufw_before"].as_str().unwrap_or(""),
+                i18n::tr!("platform-backups-after"),
                 record.payload["ufw_after"].as_str().unwrap_or("")
             ));
         }
@@ -579,11 +613,13 @@ fn differences(record: &Record) -> String {
                 .unwrap_or_else(|| value.to_string())
         };
         text.push_str(&format!(
-            "{} {} {}\n--- before\n{}\n+++ after\n{}\n",
+            "{} {} {}\n--- {}\n{}\n+++ {}\n{}\n",
             record.payload["type"].as_str().unwrap_or(""),
             record.payload["timer"].as_str().unwrap_or(""),
             record.payload["user"].as_str().unwrap_or(""),
+            i18n::tr!("platform-backups-before"),
             render(&record.payload["before"]),
+            i18n::tr!("platform-backups-after"),
             render(&record.payload["after"])
         ));
     }
@@ -609,6 +645,12 @@ fn can_restore(record: &Record) -> bool {
     record.after.is_some()
         && record.result != "pending"
         && !record.result.starts_with("awaiting SSH")
+        && record.result != "awaiting network confirmation"
+        && record
+            .payload
+            .get("restore_disabled_reason")
+            .and_then(Value::as_str)
+            .is_none()
 }
 pub fn query(
     query: &ManagementQuery,
@@ -622,13 +664,14 @@ fn query_at(
     flag: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
     let mut snapshot = ManagementSnapshot {
-        backend: "Configuration backups".into(),
+        details_complete: true,
+        backend: i18n::tr!("platform-backups-backend").into(),
         columns: vec![
-            "Recovery".into(),
-            "Time".into(),
-            "Source".into(),
-            "File".into(),
-            "Result".into(),
+            i18n::tr!("platform-backups-recovery").into(),
+            i18n::tr!("platform-backups-time").into(),
+            i18n::tr!("platform-backups-source").into(),
+            i18n::tr!("platform-backups-file").into(),
+            i18n::tr!("platform-backups-result").into(),
         ],
         ..Default::default()
     };
@@ -639,9 +682,10 @@ fn query_at(
             return legacy_rows(root, query, snapshot, flag);
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            snapshot.needs_authorization = true;
             snapshot.actions.push(ManagementAction {
                 id: "inspect_backups".into(),
-                label: "Authorize backup inspection".into(),
+                label: i18n::tr!("platform-backups-authorize").into(),
                 privileged: true,
                 ..Default::default()
             });
@@ -664,11 +708,34 @@ fn query_at(
             .into_owned();
         let record = read_record(root, &id)?;
         ids.push(id.clone());
+        let source = match record.source.as_str() {
+            "system-config" => i18n::tr!("platform-backups-source-config"),
+            "users" => i18n::tr!("platform-backups-source-users"),
+            "network" => i18n::tr!("platform-backups-source-network"),
+            "firewall" => i18n::tr!("platform-backups-source-firewall"),
+            "ssh" => i18n::tr!("platform-backups-source-ssh"),
+            "scheduled-tasks" => i18n::tr!("platform-backups-source-scheduled"),
+            "restore" => i18n::tr!("platform-backups-source-restore"),
+            _ => record.source.clone(),
+        };
+        let result = match record.result.as_str() {
+            "pending" => i18n::tr!("management-value-pending"),
+            "restored" => i18n::tr!("management-value-restored"),
+            "restore failed" => i18n::tr!("platform-backups-restore-failed"),
+            "awaiting SSH connection confirmation" => i18n::tr!("platform-backups-awaiting-ssh"),
+            "awaiting network confirmation" => i18n::tr!("platform-backups-awaiting-network"),
+            "saved" => i18n::tr!("platform-backups-saved"),
+            "restored absence" => i18n::tr!("platform-backups-restored-absence"),
+            _ => record.result.clone(),
+        };
         let paths = operation_subject(&record);
         if query.target.as_ref().is_some_and(|t| t != &id)
-            || !format!("{} {} {}", record.source, paths, record.result)
-                .to_lowercase()
-                .contains(&query.filter.to_lowercase())
+            || !format!(
+                "{} {} {} {} {}",
+                record.source, source, paths, record.result, result
+            )
+            .to_lowercase()
+            .contains(&query.filter.to_lowercase())
         {
             continue;
         }
@@ -681,21 +748,27 @@ fn query_at(
             .unwrap_or_default();
         let mut actions = vec![ManagementAction {
             id: "preview_restore".into(),
-            label: "View differences".into(),
+            label: i18n::tr!("platform-backups-view-diff").into(),
             privileged: true,
             ..Default::default()
         }];
         actions.push(ManagementAction {
             id: "restore".into(),
-            label: "Restore".into(),
+            label: i18n::tr!("platform-backups-restore").into(),
             privileged: true,
             confirm: true,
             primary: true,
-            disabled_reason: (!can_restore(&record))
-                .then(|| "Operation is unfinished; inspect or confirm it first".into()),
+            disabled_reason: record
+                .payload
+                .get("restore_disabled_reason")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .or_else(|| {
+                    (!can_restore(&record)).then(|| i18n::tr!("platform-backups-unfinished").into())
+                }),
             fields: vec![ManagementField {
                 id: "allow_unvalidated".into(),
-                label: "Restore without an available checker".into(),
+                label: i18n::tr!("platform-backups-unvalidated").into(),
                 value: "false".into(),
                 choices: vec!["false".into(), "true".into()],
                 ..Default::default()
@@ -705,9 +778,12 @@ fn query_at(
         let difference = differences(&record);
         snapshot.rows.push(ManagementRow {
             id: id.clone(),
-            cells: vec![id.clone(), time, record.source, paths, record.result],
-            detail: vec![("Difference".into(), difference)],
-            identity: BTreeMap::from([("backup_id".into(), id)]),
+            cells: vec![id.clone(), time, source, paths, result],
+            detail: vec![(i18n::tr!("platform-backups-difference").into(), difference)],
+            identity: BTreeMap::from([
+                ("backup_id".into(), id),
+                ("source".into(), record.source),
+            ]),
             actions,
         });
     }
@@ -758,18 +834,21 @@ fn legacy_rows_excluding(
             id: id.clone(),
             cells: vec![
                 id.clone(),
-                "Unknown".into(),
-                "system-config (legacy)".into(),
+                i18n::tr!("platform-backups-unknown").into(),
+                i18n::tr!("platform-backups-source-legacy"),
                 file.clone(),
-                "Unknown".into(),
+                i18n::tr!("platform-backups-unknown").into(),
             ],
             detail: vec![
-                ("File".into(), file.clone()),
+                (i18n::tr!("platform-backups-file").into(), file.clone()),
                 (
-                    "Original".into(),
+                    i18n::tr!("platform-backups-original").into(),
                     safe_text(&stored.document.path, &stored.document.content),
                 ),
-                ("Current".into(), safe_text(&current.path, &current.content)),
+                (
+                    i18n::tr!("platform-backups-current").into(),
+                    safe_text(&current.path, &current.content),
+                ),
             ],
             identity: BTreeMap::from([
                 ("path".into(), file.clone()),
@@ -777,7 +856,7 @@ fn legacy_rows_excluding(
             ]),
             actions: vec![ManagementAction {
                 id: "restore_legacy".into(),
-                label: "Restore old version".into(),
+                label: i18n::tr!("platform-backups-restore-legacy").into(),
                 privileged: true,
                 confirm: true,
                 values: BTreeMap::from([
@@ -787,7 +866,7 @@ fn legacy_rows_excluding(
                 ]),
                 fields: vec![ManagementField {
                     id: "allow_unvalidated".into(),
-                    label: "Restore without an available checker".into(),
+                    label: i18n::tr!("platform-backups-unvalidated").into(),
                     value: "false".into(),
                     choices: vec!["false".into(), "true".into()],
                     ..Default::default()
@@ -807,15 +886,15 @@ pub fn execute(
     check_cancelled(flag)?;
     if command.action == "inspect_backups" {
         io.emit(OperationEvent::Snapshot {
-            snapshot: query(&ManagementQuery::new(ManagementKind::Backups), flag)?,
+            snapshot: query(&ManagementQuery::from_inspection(command), flag)?
+                .with_authorized_refresh(command),
         });
-        return Ok("Backup history loaded".into());
+        return Ok(i18n::tr!("platform-backups-loaded").into());
     }
     if command.action == "restore_legacy" {
-        let path = command
-            .values
-            .get("path")
-            .ok_or_else(|| ManagementError::InvalidInput("Select a configuration backup".into()))?;
+        let path = command.values.get("path").ok_or_else(|| {
+            ManagementError::InvalidInput(i18n::tr!("platform-backups-select-configuration").into())
+        })?;
         let restore = ManagementCommand {
             kind: ManagementKind::SystemConfig,
             action: "restore".into(),
@@ -825,25 +904,30 @@ pub fn execute(
         };
         return system_config::execute(&restore, context, io, flag);
     }
-    let id = command
-        .target
-        .as_deref()
-        .ok_or_else(|| ManagementError::InvalidInput("Select a backup".into()))?;
+    let id = command.target.as_deref().ok_or_else(|| {
+        ManagementError::InvalidInput(i18n::tr!("platform-backups-select").into())
+    })?;
     let record = read_record(Path::new(ROOT), id)?;
     if command.action == "preview_restore" {
         io.emit(OperationEvent::Output {
             text: differences(&record),
         });
-        return Ok("Recovery differences ready".into());
+        return Ok(i18n::tr!("platform-backups-diff-ready").into());
     }
     if command.action != "restore" {
         return Err(ManagementError::InvalidInput(
-            "Unknown backup operation".into(),
+            i18n::tr!("platform-backups-unknown-operation").into(),
         ));
     }
     if !can_restore(&record) {
         return Err(ManagementError::Conflict(
-            "The operation is unfinished; inspect or confirm it before recovery".into(),
+            record
+                .payload
+                .get("restore_disabled_reason")
+                .and_then(Value::as_str)
+                .map(String::from)
+                .unwrap_or_else(|| i18n::tr!("platform-backups-unfinished-recovery"))
+                .into(),
         ));
     }
     if record.source == "ssh" {
@@ -851,10 +935,6 @@ pub fn execute(
     }
     if record.source == "users" {
         return super::users::restore_backup(&record.payload, context, io, flag);
-    }
-    if record.source == "network" {
-        super::network::restore_preflight(&record.payload, context, flag)?;
-        return super::network::restore_backup(&record.payload, context, io, flag);
     }
     let _firewall_lock = if record.source == "firewall" {
         Some(super::firewall::lock_rules(flag)?)
@@ -881,7 +961,7 @@ pub fn execute(
                 if command.values.get("allow_unvalidated").map(String::as_str) != Some("true") =>
             {
                 return Err(ManagementError::Unavailable(
-                    "No checker is available; explicitly choose unvalidated recovery".into(),
+                    i18n::tr!("platform-backups-no-checker").into(),
                 ));
             }
             _ => {}
@@ -894,7 +974,7 @@ pub fn execute(
         }
         _ => {
             restore(id)?;
-            "Configuration content restored and verified; services have not been reloaded".into()
+            i18n::tr!("platform-backups-content-restored").into()
         }
     };
     Ok(result)

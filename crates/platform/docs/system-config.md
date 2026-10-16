@@ -16,7 +16,9 @@ Linux 检查使用单独进程的私有挂载空间。候选文件覆盖在该�
 
 ## 加载与命令行
 
-默认仅保存。SSH 的“重新加载”只允许固定的 SSH 服务。systemd 默认重新读取服务定义；显式选择 `reload_service=true` 才再重新加载该服务。完成后查询服务状态。加载失败、查询失败或取消等待都保留已保存内容，可查看日志、继续编辑或手动恢复。
+默认仅保存。SSH 的“重新加载”只允许固定的 SSH 服务，并要求提供此次保存的备份编号；检查配置和监听方式后准备独立恢复任务，再加载。必须在 120 秒内从新的真实 SSH 连接执行 `tundra-cli ssh confirm ID`，否则恢复保存前的配置。旧连接或复用旧连接不能确认。详细说明见 [SSH 管理](ssh-management.md)。
+
+systemd 默认重新读取服务定义；显式选择 `reload_service=true` 才再重新加载该服务。完成后查询服务状态。普通服务加载失败、查询失败或取消等待都保留已保存内容，可查看日志、继续编辑或手动恢复。
 
 外部命令使用 `tundra-cli system-config read|diff|check|apply|permissions|history|restore|reload …`。脚本保存必须提供 `--expected-version`；未验证保存必须显式指定 `--allow-unvalidated`。系统授权不会被 `--yes` 替代。内建 Command Line 使用 `/system-config …`。
 
@@ -38,6 +40,6 @@ cargo test --locked -p platform real_isolated_user_service -- --ignored
 
 The existing text editor handles system files. It reads the file version and metadata, previews the content and property differences, checks a private candidate view, requests OS authorization and atomically replaces the file. Failed checks block saving; missing checkers require explicit unvalidated saving. SSH validates the main configuration, actual included fragments and host keys with `sshd -t`; systemd checks the original unit together with its drop-ins. Neither check modifies the live configuration.
 
-Recovery records are protected by a `0700` system directory and `0600` files. Saving retains ownership, permissions, ACLs and extended attributes and rechecks the original file and parent directory after backup. Restoring a previously absent file removes the newly created file and keeps a recovery record of that removal. Reloading and checking the result are separate from saving; their failure leaves the saved changes available for further editing or manual recovery.
+Recovery records are protected by a `0700` system directory and `0600` files. Saving retains ownership, permissions, ACLs and extended attributes and rechecks the original file and parent directory after backup. Restoring a previously absent file removes the newly created file and keeps a recovery record of that removal. SSH activation requires the saved backup ID and a real new connection confirmation within 120 seconds; an independent task restores unconfirmed changes. Other service reloads report their result separately from saving.
 
 References: [OpenSSH sshd](https://man.openbsd.org/sshd.8), [OpenSSH Include parser](https://github.com/openssh/openssh-portable/blob/master/servconf.c), [systemd-analyze](https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html).

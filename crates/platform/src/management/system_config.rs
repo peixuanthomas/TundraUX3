@@ -109,7 +109,7 @@ fn collect_checker(
 }
 
 /// Open every directory separately. A path replacement cannot redirect renameat.
-fn parent(path: &Path, create: bool) -> Result<(File, CString), ManagementError> {
+pub(super) fn parent(path: &Path, create: bool) -> Result<(File, CString), ManagementError> {
     if !path.is_absolute() || path.components().any(|p| matches!(p, Component::ParentDir)) {
         return Err(invalid("Select an absolute file path without '..'"));
     }
@@ -196,13 +196,13 @@ fn attributes(file: &File) -> Result<BTreeMap<String, Vec<u8>>, ManagementError>
     Ok(output)
 }
 
-#[derive(Serialize, Deserialize)]
-struct StoredFile {
-    document: ConfigDocument,
-    attributes: BTreeMap<String, Vec<u8>>,
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) struct StoredFile {
+    pub(super) document: ConfigDocument,
+    pub(super) attributes: BTreeMap<String, Vec<u8>>,
 }
 
-fn read_stored(path: &Path) -> Result<StoredFile, ManagementError> {
+pub(super) fn read_stored(path: &Path) -> Result<StoredFile, ManagementError> {
     let mut ancestor = path
         .parent()
         .ok_or_else(|| invalid("Select a regular file"))?;
@@ -441,9 +441,32 @@ fn validate_candidate_with_program(
     remove: bool,
     program_override: Option<&Path>,
 ) -> Result<ConfigCheck, ManagementError> {
+    validate_candidates(
+        path,
+        text,
+        validator,
+        flag,
+        remove,
+        program_override,
+        &[],
+        None,
+    )
+    .map(|(check, _)| check)
+}
+
+fn validate_candidates(
+    path: &Path,
+    text: &str,
+    validator: &str,
+    flag: &AtomicBool,
+    remove: bool,
+    program_override: Option<&Path>,
+    extras: &[(PathBuf, String)],
+    connection: Option<&str>,
+) -> Result<(ConfigCheck, String), ManagementError> {
     cancelled(flag)?;
     if text.len() > MAX_TEXT || text.contains('\0') {
-        return Err(invalid("Select UTF-8 text up to 256 KiB"));
+        return Err(invalid(&i18n::tr!("platform-management-utf8-limit")));
     }
     let detected = detect_validator(path);
     if detected != "none" && !matches!(validator, "auto" | "") && validator != detected {
@@ -457,15 +480,19 @@ fn validate_candidate_with_program(
         validator
     };
     if validator == "none" {
-        return Ok(ConfigCheck::Unavailable(
-            "No configuration checker is available for this file".into(),
+        return Ok((
+            ConfigCheck::Unavailable(i18n::tr!("platform-management-checker-unavailable").into()),
+            String::new(),
         ));
     }
     if validator == "sources" {
-        return Ok(match super::packages::validate_source_config(path, text) {
-            Ok(()) => ConfigCheck::Passed,
-            Err(e) => ConfigCheck::Failed(e.to_string()),
-        });
+        return Ok((
+            match super::packages::validate_source_config(path, text) {
+                Ok(()) => ConfigCheck::Passed,
+                Err(e) => ConfigCheck::Failed(e.to_string()),
+            },
+            String::new(),
+        ));
     }
     let (program, args): (&str, Vec<String>) = match validator {
         "sshd" => (
@@ -474,12 +501,22 @@ fn validate_candidate_with_program(
             } else {
                 "/usr/bin/sshd"
             },
-            vec![
-                "-t".into(),
-                "-ddd".into(),
-                "-f".into(),
-                ssh_main(path).display().to_string(),
-            ],
+            if let Some(connection) = connection {
+                vec![
+                    "-T".into(),
+                    "-C".into(),
+                    connection.into(),
+                    "-f".into(),
+                    ssh_main(path).display().to_string(),
+                ]
+            } else {
+                vec![
+                    "-t".into(),
+                    "-ddd".into(),
+                    "-f".into(),
+                    ssh_main(path).display().to_string(),
+                ]
+            },
         ),
         "fstab" => (
             "/usr/bin/findmnt",
@@ -509,9 +546,13 @@ fn validate_candidate_with_program(
         .transpose()?
         .unwrap_or(program);
     if !Path::new(program).is_file() {
-        return Ok(ConfigCheck::Unavailable(format!(
-            "{program} is missing; install the checker"
-        )));
+        return Ok((
+            ConfigCheck::Unavailable(i18n::tr!(
+                "platform-management-missing-checker",
+                program = program
+            )),
+            String::new(),
+        ));
     }
     // Overlay the candidate only in the validation child. Includes and drop-ins
     // see their real absolute paths; the host configuration is never changed.
@@ -528,8 +569,9 @@ fn validate_candidate_with_program(
         base = PathBuf::from("/etc");
     }
     if base == Path::new("/") {
-        return Ok(ConfigCheck::Unavailable(
-            "No isolated configuration directory is available".into(),
+        return Ok((
+            ConfigCheck::Unavailable(i18n::tr!("platform-management-no-isolated-directory").into()),
+            String::new(),
         ));
     }
     let temp = tempfile::Builder::new()
@@ -550,12 +592,32 @@ fn validate_candidate_with_program(
     if remove {
         let candidate = c(candidate.as_os_str())?;
         if unsafe { libc::mknod(candidate.as_ptr(), libc::S_IFCHR | 0o600, 0) } != 0 {
-            return Ok(ConfigCheck::Unavailable(
-                "Cannot check removal in an isolated configuration view".into(),
+            return Ok((
+                ConfigCheck::Unavailable(i18n::tr!("platform-management-removal-unchecked").into()),
+                String::new(),
             ));
         }
     } else {
         fs::write(&candidate, text).map_err(failure)?;
+    }
+    for (extra, content) in extras {
+        if content.len() > MAX_TEXT || content.contains('\0') {
+            return Err(invalid(&i18n::tr!("platform-management-utf8-limit")));
+        }
+        let relative = extra
+            .strip_prefix(&base)
+            .map_err(|_| invalid(&i18n::tr!("platform-management-same-ssh-directory")))?;
+        if relative
+            .components()
+            .any(|c| matches!(c, Component::ParentDir))
+        {
+            return Err(invalid(&i18n::tr!("platform-management-invalid-candidate")));
+        }
+        let destination = upper.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(failure)?;
+        }
+        fs::write(destination, content).map_err(failure)?;
     }
     let target = c(base.as_os_str())?;
     let options = format!(
@@ -636,14 +698,18 @@ fn validate_candidate_with_program(
     let mut child = match command.spawn_managed() {
         Ok(child) => child,
         Err(e) => {
-            return Ok(ConfigCheck::Unavailable(format!(
-                "Cannot run isolated configuration check: {e}"
-            )));
+            return Ok((
+                ConfigCheck::Unavailable(i18n::tr!(
+                    "platform-management-check-start-failed",
+                    error = e.to_string()
+                )),
+                String::new(),
+            ));
         }
     };
     let (status, output) = collect_checker(&mut child, flag, Duration::from_secs(30))?;
     cancelled(flag)?;
-    Ok(match status {
+    let check = match status {
         Some(s) if s.success() && validator == "sshd" && !remove
             && path != ssh_main(path) && !ssh_trace_contains_candidate(&output,path) => {
             ConfigCheck::Failed("The SSH main configuration did not include this file; edit its Include directive first".into())
@@ -651,7 +717,38 @@ fn validate_candidate_with_program(
         Some(s) if s.success() => ConfigCheck::Passed,
         Some(_) => ConfigCheck::Failed(String::from_utf8_lossy(&output).lines().map(runtime_log::sanitize_text).collect::<Vec<_>>().join("\n")),
         None => ConfigCheck::Failed("Configuration check timed out".into()),
-    })
+    };
+    Ok((check, String::from_utf8_lossy(&output).into_owned()))
+}
+
+pub(crate) fn check_ssh_candidates(
+    files: &[(PathBuf, String)],
+    connection_spec: &str,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    let (path, text) = files
+        .iter()
+        .find(|(path, _)| path.file_name() == Some(OsStr::new("sshd_config")))
+        .ok_or_else(|| invalid(&i18n::tr!("platform-management-include-main")))?;
+    let extras = files
+        .iter()
+        .filter(|(p, _)| p != path)
+        .cloned()
+        .collect::<Vec<_>>();
+    for connection in [None, Some(connection_spec)] {
+        let (check, output) =
+            validate_candidates(path, text, "sshd", flag, false, None, &extras, connection)?;
+        match check {
+            ConfigCheck::Passed if connection.is_some() => return Ok(output),
+            ConfigCheck::Passed => {}
+            ConfigCheck::Failed(message) => return Err(ManagementError::Failed(message)),
+            ConfigCheck::Unavailable(message) => return Err(ManagementError::Unavailable(message)),
+            ConfigCheck::NotChecked => {
+                return Err(invalid(&i18n::tr!("platform-management-ssh-unchecked")));
+            }
+        }
+    }
+    unreachable!()
 }
 
 pub fn check(
@@ -700,6 +797,7 @@ fn backup(previous: &StoredFile, root: &Path) -> Result<String, ManagementError>
         .map_err(|e| ManagementError::Failed(e.to_string()))?;
     file.sync_all().map_err(failure)?;
     directory.sync_all().map_err(failure)?;
+    super::config_backups::start_legacy(root, &id, previous)?;
     Ok(id)
 }
 
@@ -712,6 +810,30 @@ fn install(
     attrs: &BTreeMap<String, Vec<u8>>,
     root: &Path,
     before_commit: impl FnOnce() -> Result<(), ManagementError>,
+) -> Result<ConfigDocument, ManagementError> {
+    install_impl(
+        previous,
+        content,
+        uid,
+        gid,
+        mode,
+        attrs,
+        root,
+        before_commit,
+        true,
+    )
+}
+
+fn install_impl(
+    previous: &StoredFile,
+    content: &str,
+    uid: u32,
+    gid: u32,
+    mode: u32,
+    attrs: &BTreeMap<String, Vec<u8>>,
+    root: &Path,
+    before_commit: impl FnOnce() -> Result<(), ManagementError>,
+    record_backup: bool,
 ) -> Result<ConfigDocument, ManagementError> {
     let path = &previous.document.path;
     let (directory, name) = parent(path, true)?;
@@ -775,7 +897,11 @@ fn install(
             "Parent directory changed; reopen the file".into(),
         ));
     }
-    let backup_id = backup(previous, root)?;
+    let backup_id = if record_backup {
+        Some(backup(previous, root)?)
+    } else {
+        None
+    };
     before_commit()?;
     if read(path)?.version != previous.document.version {
         return Err(ManagementError::Conflict(
@@ -803,8 +929,85 @@ fn install(
     }
     directory.sync_all().map_err(failure)?;
     let mut document = read(path)?;
-    document.backup_id = Some(backup_id);
+    if let Some(id) = &backup_id {
+        super::config_backups::finish_at(root, id, "saved")?;
+    }
+    document.backup_id = backup_id;
     Ok(document)
+}
+
+pub(crate) fn install_reviewed(
+    path: &Path,
+    expected_version: &str,
+    content: &str,
+) -> Result<ConfigDocument, ManagementError> {
+    let previous = read_stored(path)?;
+    if previous.document.version != expected_version {
+        return Err(ManagementError::Conflict(
+            i18n::tr!("platform-management-review-again").into(),
+        ));
+    }
+    install_impl(
+        &previous,
+        content,
+        previous.document.uid,
+        previous.document.gid,
+        previous.document.mode,
+        &previous.attributes,
+        Path::new(BACKUPS),
+        || Ok(()),
+        false,
+    )
+}
+
+pub(super) fn restore_snapshot(
+    stored: &StoredFile,
+    expected_version: &str,
+) -> Result<(), ManagementError> {
+    let previous = read_stored(&stored.document.path)?;
+    if previous.document.version != expected_version {
+        return Err(ManagementError::Conflict(
+            i18n::tr!("platform-management-recovery-conflict").into(),
+        ));
+    }
+    if stored.document.existed {
+        install_impl(
+            &previous,
+            &stored.document.content,
+            stored.document.uid,
+            stored.document.gid,
+            stored.document.mode,
+            &stored.attributes,
+            Path::new(BACKUPS),
+            || Ok(()),
+            false,
+        )?;
+    } else if previous.document.existed {
+        let (directory, name) = parent(&stored.document.path, false)?;
+        if read(&stored.document.path)?.version != expected_version {
+            return Err(ManagementError::Conflict(
+                i18n::tr!("platform-management-recovery-conflict").into(),
+            ));
+        }
+        if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+            return Err(failure(std::io::Error::last_os_error()));
+        }
+        directory.sync_all().map_err(failure)?;
+    }
+    let actual = read_stored(&stored.document.path)?;
+    if actual.document.existed != stored.document.existed
+        || actual.document.content != stored.document.content
+        || (stored.document.existed
+            && (actual.document.uid != stored.document.uid
+                || actual.document.gid != stored.document.gid
+                || actual.document.mode != stored.document.mode
+                || actual.attributes != stored.attributes))
+    {
+        return Err(ManagementError::Failed(
+            i18n::tr!("platform-management-restored-mismatch").into(),
+        ));
+    }
+    Ok(())
 }
 
 fn verify_parent(path: &Path, original: &File) -> Result<(), ManagementError> {
@@ -841,6 +1044,7 @@ fn restore_absence(
     }
     directory.sync_all().map_err(failure)?;
     let mut restored = read(path)?;
+    super::config_backups::finish_at(root, &id, "restored absence")?;
     restored.backup_id = Some(id);
     Ok(restored)
 }
@@ -864,6 +1068,11 @@ pub fn query(
         for entry in entries.take(1000) {
             cancelled(flag)?;
             let entry = entry.map_err(failure)?;
+            if !entry.file_type().map_err(failure)?.is_file()
+                || entry.path().extension() != Some(OsStr::new("json"))
+            {
+                continue;
+            }
             let stored = read_backup(&entry.path())?;
             if query
                 .target
@@ -904,7 +1113,7 @@ pub fn query(
     Ok(snapshot)
 }
 
-fn read_backup(path: &Path) -> Result<StoredFile, ManagementError> {
+pub(super) fn read_backup(path: &Path) -> Result<StoredFile, ManagementError> {
     let (directory, name) = parent(path, false)?;
     let fd = unsafe {
         libc::openat(
@@ -997,6 +1206,9 @@ pub fn execute(
         }
         if detect_validator(path) == "sshd" && scope != "system" {
             return Err(invalid("SSH reload requires the system service"));
+        }
+        if detect_validator(path) == "sshd" {
+            return super::ssh::activate_saved_configuration(command, _context, io, flag);
         }
         if detect_validator(path) == "systemd" {
             super::services::execute(

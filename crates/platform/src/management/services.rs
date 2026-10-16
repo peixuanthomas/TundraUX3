@@ -186,6 +186,7 @@ pub fn query(
             },
             config::create_action(scope),
         ],
+        ..Default::default()
     })
 }
 

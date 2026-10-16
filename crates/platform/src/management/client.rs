@@ -12,7 +12,7 @@ use std::{sync::atomic::Ordering, time::Duration};
 #[cfg(target_os = "linux")]
 pub fn run(
     authority: &super::authorization::PrivilegeSession,
-    command: Option<ManagementCommand>,
+    mut command: Option<ManagementCommand>,
     privileged: bool,
     socket: Option<PathBuf>,
     inputs: mpsc::Receiver<OperationInput>,
@@ -22,6 +22,13 @@ pub fn run(
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
     use zeroize::Zeroizing;
+    if let Some(command) = &mut command {
+        command.values.insert(
+            "__tundra_language".into(),
+            serde_json::to_string(&i18n::current_snapshot().export())
+                .map_err(|error| ManagementError::InvalidInput(error.to_string()))?,
+        );
+    }
     let failure = |e: std::io::Error| ManagementError::Failed(e.to_string());
     let actor = unsafe { libc::getuid() };
     let mut terminal_size = None;

@@ -30,15 +30,21 @@ struct AccountBackup {
 
 pub(crate) fn describe_backup(payload: &Value) -> String {
     let Ok(backup) = serde_json::from_value::<AccountBackup>(payload.clone()) else {
-        return "Account backup details unavailable".into();
+        return i18n::tr!("platform-account-recovery-unavailable").into();
     };
     let mut text = String::new();
     for change in &backup.changes {
         text.push_str(&format!("{} ({})\n", change.name, change.database));
         if change.before.is_none() {
-            text.push_str("Account or group created\n");
+            text.push_str(&format!(
+                "{}\n",
+                i18n::tr!("platform-account-recovery-created")
+            ));
         } else if change.after.is_none() {
-            text.push_str("Account or group deleted; home retained\n");
+            text.push_str(&format!(
+                "{}\n",
+                i18n::tr!("platform-account-recovery-deleted")
+            ));
         } else {
             let old = change.before.as_ref().unwrap();
             let new = change.after.as_ref().unwrap();
@@ -52,35 +58,46 @@ pub(crate) fn describe_backup(payload: &Value) -> String {
                     continue;
                 }
                 if matches!(change.database.as_str(), "shadow" | "gshadow") && index == 1 {
-                    text.push_str("Password changed (protected)\n");
+                    text.push_str(&format!(
+                        "{}\n",
+                        i18n::tr!("platform-account-recovery-password-changed")
+                    ));
                     continue;
                 }
                 if let Some(member) = &change.member {
-                    text.push_str(&format!(
-                        "Member {member}: {} -> {}\n",
-                        self::member(old, index, member),
-                        self::member(new, index, member)
+                    text.push_str(&i18n::tr!(
+                        "platform-account-recovery-member-change",
+                        member = member.as_str(),
+                        before = self::member(old, index, member).to_string(),
+                        after = self::member(new, index, member).to_string()
                     ));
+                    text.push('\n');
                 } else {
                     let field = match (change.database.as_str(), index) {
-                        ("passwd", 2) => "UID",
-                        ("passwd", 3) => "Primary group",
-                        ("passwd", 4) => "Display name",
-                        ("passwd", 5) => "Home directory",
-                        ("passwd", 6) => "Shell",
-                        ("shadow", 2) => "Password age date",
-                        ("shadow", 3) => "Minimum password age",
-                        ("shadow", 4) => "Maximum password age",
-                        ("shadow", 5) => "Password expiry warning",
-                        ("shadow", 6) => "Password inactivity period",
-                        ("shadow", 7) => "Account expiry date",
-                        ("group", 2) => "GID",
-                        ("group" | "gshadow", 3) => "Members",
-                        ("gshadow", 2) => "Administrators",
-                        ("subuid", i) if i % 3 == 1 => "First subordinate UID",
-                        ("subgid", i) if i % 3 == 1 => "First subordinate GID",
-                        ("subuid" | "subgid", i) if i % 3 == 2 => "Subordinate ID count",
-                        _ => "Account field",
+                        ("passwd", 2) => i18n::tr!("platform-account-recovery-uid"),
+                        ("passwd", 3) => i18n::tr!("platform-account-recovery-primary-group"),
+                        ("passwd", 4) => i18n::tr!("platform-account-recovery-display-name"),
+                        ("passwd", 5) => i18n::tr!("platform-account-recovery-home"),
+                        ("passwd", 6) => i18n::tr!("platform-account-recovery-shell"),
+                        ("shadow", 2) => i18n::tr!("platform-account-recovery-password-date"),
+                        ("shadow", 3) => i18n::tr!("platform-account-recovery-minimum-age"),
+                        ("shadow", 4) => i18n::tr!("platform-account-recovery-maximum-age"),
+                        ("shadow", 5) => i18n::tr!("platform-account-recovery-warning"),
+                        ("shadow", 6) => i18n::tr!("platform-account-recovery-inactivity"),
+                        ("shadow", 7) => i18n::tr!("platform-account-recovery-expiry"),
+                        ("group", 2) => i18n::tr!("platform-account-recovery-gid"),
+                        ("group" | "gshadow", 3) => i18n::tr!("platform-account-recovery-members"),
+                        ("gshadow", 2) => i18n::tr!("platform-account-recovery-administrators"),
+                        ("subuid", i) if i % 3 == 1 => {
+                            i18n::tr!("platform-account-recovery-first-subuid")
+                        }
+                        ("subgid", i) if i % 3 == 1 => {
+                            i18n::tr!("platform-account-recovery-first-subgid")
+                        }
+                        ("subuid" | "subgid", i) if i % 3 == 2 => {
+                            i18n::tr!("platform-account-recovery-sub-count")
+                        }
+                        _ => i18n::tr!("platform-account-recovery-field"),
                     };
                     text.push_str(&format!(
                         "{field}: {} -> {}\n",
@@ -423,9 +440,9 @@ fn check_current(backup: &AccountBackup, current: &Snapshot) -> Result<(), Manag
                 .and_then(|db| db.get(&change.name)),
             true,
         ) {
-            return Err(ManagementError::Conflict(format!(
-                "Account or group changed after the operation: {}",
-                change.name
+            return Err(ManagementError::Conflict(i18n::tr!(
+                "platform-account-recovery-changed",
+                name = change.name.as_str()
             )));
         }
     }
@@ -444,8 +461,9 @@ fn check_identities(
                 identity.before
             };
             if identity_number(current, database, name)? != wanted {
-                return Err(ManagementError::Conflict(format!(
-                    "Account or group identity changed after the operation: {name}"
+                return Err(ManagementError::Conflict(i18n::tr!(
+                    "platform-account-recovery-identity-changed",
+                    name = name.as_str()
                 )));
             }
         }
@@ -455,7 +473,7 @@ fn check_identities(
 fn number(row: &[String], index: usize) -> Result<u32, ManagementError> {
     row.get(index)
         .and_then(|s| s.parse().ok())
-        .ok_or_else(|| invalid("Invalid account backup"))
+        .ok_or_else(|| invalid(&i18n::tr!("platform-account-recovery-invalid")))
 }
 fn validate_collisions(
     backup: &AccountBackup,
@@ -473,7 +491,7 @@ fn validate_collisions(
                     .any(|other| other.before.is_none() && other.after == Some(gid));
             if !renamed && all_groups.iter().any(|g| g.gid == gid && g.name != *name) {
                 return Err(ManagementError::Conflict(
-                    "The original GID is occupied".into(),
+                    i18n::tr!("platform-account-recovery-gid-occupied").into(),
                 ));
             }
         }
@@ -487,7 +505,7 @@ fn validate_collisions(
                         .is_some_and(|hash| hash.starts_with('!') || hash.starts_with('*'))
                 {
                     return Err(ManagementError::PermissionDenied(
-                        "Keep the current account unlocked".into(),
+                        i18n::tr!("platform-account-recovery-keep-unlocked").into(),
                     ));
                 }
                 let today = chrono::Utc::now().timestamp().div_euclid(86400);
@@ -498,7 +516,7 @@ fn validate_collisions(
                         .is_some_and(|d| d >= 0 && d <= today)
                 {
                     return Err(ManagementError::PermissionDenied(
-                        "Keep the current account unexpired".into(),
+                        i18n::tr!("platform-account-recovery-keep-unexpired").into(),
                     ));
                 }
             }
@@ -511,7 +529,7 @@ fn validate_collisions(
                 })
             {
                 return Err(ManagementError::PermissionDenied(
-                    "Keep root and the current account".into(),
+                    i18n::tr!("platform-account-recovery-keep-account").into(),
                 ));
             }
             if let Some(before) = &change.before {
@@ -521,12 +539,12 @@ fn validate_collisions(
                     .any(|u| u.uid == uid && u.username != change.name)
                 {
                     return Err(ManagementError::Conflict(
-                        "The original UID is occupied".into(),
+                        i18n::tr!("platform-account-recovery-uid-occupied").into(),
                     ));
                 }
                 if change.after.is_none() && users.iter().any(|u| u.username == change.name) {
                     return Err(ManagementError::Conflict(
-                        "The original account name is occupied".into(),
+                        i18n::tr!("platform-account-recovery-name-occupied").into(),
                     ));
                 }
                 if uid == context.actor_uid && change.fields.contains(&3) {
@@ -539,7 +557,7 @@ fn validate_collisions(
                         && actor.is_some_and(|a| before.get(3) != Some(&a.gid.to_string()))
                     {
                         return Err(ManagementError::PermissionDenied(
-                            "Keep the current account's administrator primary group".into(),
+                            i18n::tr!("platform-account-recovery-keep-primary").into(),
                         ));
                     }
                 }
@@ -557,7 +575,7 @@ fn validate_collisions(
                     .is_some_and(|row| member(row, 3, &actor.username));
                 if is && !was {
                     return Err(ManagementError::PermissionDenied(
-                        "Keep the current account's administrator group".into(),
+                        i18n::tr!("platform-account-recovery-keep-administrator").into(),
                     ));
                 }
             }
@@ -572,7 +590,7 @@ fn shadow_restore(name: &str, row: &[String], fields: &[usize]) -> Result<(), Ma
                 .get(name)
                 .and_then(|row| row.get(2))
                 .cloned()
-                .ok_or_else(|| invalid("Password date is unavailable"))?,
+                .ok_or_else(|| invalid(&i18n::tr!("platform-account-recovery-date-unavailable")))?,
         )
     } else {
         None
@@ -580,7 +598,7 @@ fn shadow_restore(name: &str, row: &[String], fields: &[usize]) -> Result<(), Ma
     if fields.is_empty() || fields.contains(&1) {
         let hash = row
             .get(1)
-            .ok_or_else(|| invalid("Invalid password recovery record"))?;
+            .ok_or_else(|| invalid(&i18n::tr!("platform-account-recovery-invalid-password")))?;
         let input = Zeroizing::new(format!("{name}:{hash}\n"));
         native("chpasswd", &["--encrypted"], Some(input.as_bytes()))?;
     }
@@ -690,7 +708,11 @@ fn restore_entries(
                         3 => "--gid",
                         4 => "--comment",
                         6 => "--shell",
-                        _ => return Err(invalid("Unsupported account recovery field")),
+                        _ => {
+                            return Err(invalid(&i18n::tr!(
+                                "platform-account-recovery-unsupported-field"
+                            )));
+                        }
                     };
                     native("usermod", &[option, &row[*i], "--", &change.name], None)?;
                 }
@@ -722,11 +744,11 @@ fn restore_entries(
             let mut actor = accounts(Some(member_name))?
                 .into_iter()
                 .find(|a| a.username == *member_name)
-                .ok_or_else(|| invalid("Group member no longer exists"))?;
+                .ok_or_else(|| invalid(&i18n::tr!("platform-account-recovery-missing-member")))?;
             complete_account_groups(&mut actor);
             if !add && actor.uid == context.actor_uid && is_admin_group(&change.name) {
                 return Err(ManagementError::PermissionDenied(
-                    "Keep the current account's administrator group".into(),
+                    i18n::tr!("platform-account-recovery-keep-administrator").into(),
                 ));
             }
             native(
@@ -749,7 +771,7 @@ fn restore_entries(
                 })
             {
                 return Err(ManagementError::PermissionDenied(
-                    "Keep the current account's administrator group".into(),
+                    i18n::tr!("platform-account-recovery-keep-administrator").into(),
                 ));
             }
             native("gpasswd", &["--members", &before[3], &change.name], None)?;
@@ -800,7 +822,9 @@ fn restore_entries(
                             start
                                 .checked_add(count)
                                 .and_then(|v| v.checked_sub(1))
-                                .ok_or_else(|| invalid("Invalid subordinate ID range"))?
+                                .ok_or_else(|| invalid(&i18n::tr!(
+                                    "platform-account-recovery-invalid-range"
+                                )))?
                         ),
                         "--",
                         &change.name,
@@ -822,7 +846,9 @@ fn restore_entries(
                             start
                                 .checked_add(count)
                                 .and_then(|v| v.checked_sub(1))
-                                .ok_or_else(|| invalid("Invalid subordinate ID range"))?
+                                .ok_or_else(|| invalid(&i18n::tr!(
+                                    "platform-account-recovery-invalid-range"
+                                )))?
                         ),
                         "--",
                         &change.name,
@@ -853,11 +879,11 @@ pub(crate) fn restore_backup(
 ) -> Result<String, ManagementError> {
     if unsafe { libc::geteuid() } != 0 {
         return Err(ManagementError::PermissionDenied(
-            "System authorization is required".into(),
+            i18n::tr!("platform-account-recovery-authorization").into(),
         ));
     }
-    let backup: AccountBackup =
-        serde_json::from_value(payload.clone()).map_err(|_| invalid("Invalid account backup"))?;
+    let backup: AccountBackup = serde_json::from_value(payload.clone())
+        .map_err(|_| invalid(&i18n::tr!("platform-account-recovery-invalid")))?;
     let before = capture()?;
     check_current(&backup, &before)?;
     validate_collisions(&backup, context)?;
@@ -915,32 +941,38 @@ pub(crate) fn restore_backup(
         None
     };
     let result = if let Some((passwd, group)) = checks {
-        format!(
-            "account fields restored; pwck: {}; grpck: {}",
-            if passwd { "passed" } else { "failed" },
-            if group { "passed" } else { "failed" }
+        i18n::tr!(
+            "platform-account-recovery-check-results",
+            passwd = i18n::tr!(if passwd {
+                "platform-account-recovery-passed"
+            } else {
+                "platform-account-recovery-failed"
+            }),
+            group = i18n::tr!(if group {
+                "platform-account-recovery-passed"
+            } else {
+                "platform-account-recovery-failed"
+            })
         )
     } else {
-        "account recovery failed or partially completed; consistency checks not run".into()
+        i18n::tr!("platform-account-recovery-partial").into()
     };
     session.finish(&result)?;
     outcome?;
     if !verified {
         return Err(ManagementError::Failed(
-            "Account recovery did not match the selected attributes".into(),
+            i18n::tr!("platform-account-recovery-mismatch").into(),
         ));
     }
     if checks != Some((true, true)) {
         return Err(ManagementError::Failed(
-            "Account fields restored, but account consistency checks failed. Check pwck and grpck before continuing."
-                .into(),
+            i18n::tr!("platform-account-recovery-check-failed").into(),
         ));
     }
     io.emit(OperationEvent::Output {
-        text: "Account fields restored; passwords remain protected and home directories retained"
-            .into(),
+        text: i18n::tr!("platform-account-recovery-content-restored").into(),
     });
-    Ok("Account and group recovery verified".into())
+    Ok(i18n::tr!("platform-account-recovery-verified").into())
 }
 
 #[cfg(test)]

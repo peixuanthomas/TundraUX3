@@ -341,6 +341,7 @@ pub(super) fn query(
         actions: recovery_actions(backend),
         notices,
         backend: backend.id().into(),
+        ..Default::default()
     })
 }
 

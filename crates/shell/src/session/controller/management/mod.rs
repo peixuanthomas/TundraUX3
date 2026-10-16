@@ -168,6 +168,10 @@ pub(in crate::session) fn management_title(kind: ManagementKind) -> String {
         ManagementKind::Disks => i18n::tr!("management-disks"),
         ManagementKind::Users => i18n::tr!("management-users"),
         ManagementKind::SystemConfig => i18n::tr!("management-system-config"),
+        ManagementKind::Firewall => i18n::tr!("management-firewall"),
+        ManagementKind::Ssh => i18n::tr!("management-ssh"),
+        ManagementKind::Backups => i18n::tr!("management-backups"),
+        ManagementKind::ScheduledTasks => i18n::tr!("management-scheduled-tasks"),
     }
 }
 fn management_label(id: &str, fallback: &str) -> String {
@@ -871,6 +875,7 @@ impl ShellSession {
                         .push_str(&problem.detail);
                     self.pages.management.management_state.problem = Some(problem);
                 }
+                OperationEvent::Transaction { .. } => {}
                 OperationEvent::Started {
                     kind,
                     action,

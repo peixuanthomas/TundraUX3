@@ -1,4 +1,4 @@
-//! Typed requests for the Linux management applications. No caller-supplied shell commands.
+//! Typed requests for the Linux management applications.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -16,6 +16,10 @@ pub enum ManagementKind {
     Disks,
     Users,
     SystemConfig,
+    Backups,
+    Firewall,
+    Ssh,
+    ScheduledTasks,
 }
 
 impl ManagementKind {
@@ -28,6 +32,10 @@ impl ManagementKind {
             Self::Disks => "disks",
             Self::Users => "users",
             Self::SystemConfig => "system-config",
+            Self::Backups => "backups",
+            Self::Firewall => "firewall",
+            Self::Ssh => "ssh",
+            Self::ScheduledTasks => "scheduled-tasks",
         }
     }
 }
@@ -52,9 +60,42 @@ impl ManagementQuery {
             options: BTreeMap::new(),
         }
     }
+
+    pub fn inspection_values(&self) -> BTreeMap<String, String> {
+        let mut values = BTreeMap::from([
+            ("scope".into(), self.scope.clone()),
+            ("filter".into(), self.filter.clone()),
+        ]);
+        if let Some(target) = &self.target {
+            values.insert("query_target".into(), target.clone());
+        }
+        values.extend(
+            self.options
+                .iter()
+                .map(|(key, value)| (format!("__query_option:{key}"), value.clone())),
+        );
+        values
+    }
+
+    pub fn from_inspection(command: &ManagementCommand) -> Self {
+        Self {
+            kind: command.kind,
+            scope: command.values.get("scope").cloned().unwrap_or_default(),
+            filter: command.values.get("filter").cloned().unwrap_or_default(),
+            target: command.values.get("query_target").cloned(),
+            options: command
+                .values
+                .iter()
+                .filter_map(|(key, value)| {
+                    key.strip_prefix("__query_option:")
+                        .map(|key| (key.into(), value.clone()))
+                })
+                .collect(),
+        }
+    }
 }
 
-/// Labels are English fallbacks; the Shell translates stable field/action IDs.
+/// Field/action IDs stay stable; labels may use the caller's language.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagementField {
     pub id: String,
@@ -112,6 +153,24 @@ pub struct ManagementSnapshot {
     pub actions: Vec<ManagementAction>,
     pub notices: Vec<String>,
     pub backend: String,
+    #[serde(default)]
+    pub details_complete: bool,
+    #[serde(default)]
+    pub refresh_action: Option<ManagementAction>,
+    #[serde(default)]
+    pub needs_authorization: bool,
+}
+
+impl ManagementSnapshot {
+    pub fn with_authorized_refresh(mut self, command: &ManagementCommand) -> Self {
+        self.refresh_action = Some(ManagementAction {
+            id: command.action.clone(),
+            values: command.values.clone(),
+            privileged: true,
+            ..Default::default()
+        });
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +188,10 @@ pub struct ManagementCommand {
 pub struct ExecutionContext {
     pub actor_uid: u32,
     pub helper_path: PathBuf,
+    #[serde(default)]
+    pub caller_pid: u32,
+    #[serde(default)]
+    pub caller_start_ticks: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +202,10 @@ pub enum OperationEvent {
     },
     Connected {
         operation_id: String,
+    },
+    Transaction {
+        kind: ManagementKind,
+        id: String,
     },
     Problem {
         problem: problem::OperationProblem,
@@ -250,7 +317,7 @@ impl std::fmt::Display for ManagementError {
             | Self::InvalidInput(s)
             | Self::Conflict(s)
             | Self::Failed(s) => f.write_str(s),
-            Self::Cancelled => f.write_str("Operation cancelled"),
+            Self::Cancelled => f.write_str(&i18n::tr!("platform-management-cancelled")),
         }
     }
 }
@@ -260,9 +327,15 @@ impl std::error::Error for ManagementError {}
 pub mod authorization;
 pub mod client;
 #[cfg(target_os = "linux")]
+pub mod config_backups;
+#[cfg(target_os = "linux")]
 pub mod disks;
 #[cfg(target_os = "linux")]
+pub mod firewall;
+#[cfg(target_os = "linux")]
 pub mod helper;
+#[cfg(target_os = "linux")]
+mod listening_ports;
 #[cfg(target_os = "linux")]
 pub mod network;
 #[cfg(target_os = "linux")]
@@ -271,7 +344,11 @@ pub mod problem;
 #[cfg(target_os = "linux")]
 pub mod processes;
 #[cfg(target_os = "linux")]
+pub mod scheduled_tasks;
+#[cfg(target_os = "linux")]
 pub mod services;
+#[cfg(target_os = "linux")]
+pub mod ssh;
 #[cfg(target_os = "linux")]
 pub mod system_config;
 #[cfg(target_os = "linux")]
@@ -292,12 +369,16 @@ pub fn query(
         ManagementKind::Disks => disks::query(query, cancelled),
         ManagementKind::Users => users::query(query, cancelled),
         ManagementKind::SystemConfig => system_config::query(query, cancelled),
+        ManagementKind::Backups => config_backups::query(query, cancelled),
+        ManagementKind::Firewall => firewall::query(query, cancelled),
+        ManagementKind::Ssh => ssh::query(query, cancelled),
+        ManagementKind::ScheduledTasks => scheduled_tasks::query(query, cancelled),
     };
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (query, cancelled);
         Err(ManagementError::Unavailable(
-            "Linux system management is unavailable on this platform".into(),
+            i18n::tr!("platform-management-unavailable").into(),
         ))
     }
 }
@@ -319,12 +400,20 @@ pub fn execute(
         ManagementKind::SystemConfig => {
             system_config::execute(command, context, interaction, cancelled)
         }
+        ManagementKind::Backups => {
+            config_backups::execute(command, context, interaction, cancelled)
+        }
+        ManagementKind::Firewall => firewall::execute(command, context, interaction, cancelled),
+        ManagementKind::Ssh => ssh::execute(command, context, interaction, cancelled),
+        ManagementKind::ScheduledTasks => {
+            scheduled_tasks::execute(command, context, interaction, cancelled)
+        }
     };
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (command, context, interaction, cancelled);
         Err(ManagementError::Unavailable(
-            "Linux system management is unavailable on this platform".into(),
+            i18n::tr!("platform-management-unavailable").into(),
         ))
     }
 }

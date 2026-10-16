@@ -16,6 +16,8 @@ use std::sync::atomic::Ordering;
 use zeroize::Zeroizing;
 
 const MAX_DATA: usize = 4 * 1024 * 1024;
+mod recovery;
+pub(crate) use recovery::{describe_backup, restore_backup};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserAccount {
@@ -836,6 +838,38 @@ pub fn execute(
     interaction: &mut dyn OperationInteraction,
     flag: &AtomicBool,
 ) -> Result<String, ManagementError> {
+    if matches!(command.action.as_str(), "user_ssh_add" | "user_ssh_remove") {
+        return super::ssh::execute_key_change(command, context, interaction, flag);
+    }
+    if command.action == "user_lookup" || command.action == "user_ssh_keys" {
+        return execute_unrecorded(command, context, interaction, flag);
+    }
+    cancelled(flag)?;
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(ManagementError::PermissionDenied(
+            i18n::tr!("platform-management-authorization").into(),
+        ));
+    }
+    let before = recovery::capture()?;
+    let session = super::config_backups::begin("users", &[])?;
+    session.set_payload(recovery::prepared_payload(command, &before)?)?;
+    let outcome = execute_unrecorded(command, context, interaction, flag);
+    let after = recovery::capture()?;
+    session.set_payload(recovery::payload(command, &before, &after)?)?;
+    session.finish(&i18n::tr!(if outcome.is_ok() {
+        "platform-management-user-completed"
+    } else {
+        "platform-management-user-partial"
+    }))?;
+    outcome
+}
+
+fn execute_unrecorded(
+    command: &ManagementCommand,
+    context: &ExecutionContext,
+    interaction: &mut dyn OperationInteraction,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
     cancelled(flag)?;
     if command.action == "user_lookup" {
         let mut query = ManagementQuery::new(ManagementKind::Users);
@@ -1306,7 +1340,7 @@ fn execute_group(
     Ok("Group operation completed".into())
 }
 
-fn ssh_key_paths(account: &UserAccount) -> Result<Vec<PathBuf>, ManagementError> {
+pub(crate) fn ssh_key_paths(account: &UserAccount) -> Result<Vec<PathBuf>, ManagementError> {
     let output = native(
         "sshd",
         &[
@@ -1659,11 +1693,32 @@ fn copy_key_attributes(source: &File, destination: &File) -> Result<(), Manageme
     }
     Ok(())
 }
-fn ssh_keys(
+pub(crate) fn ssh_public_keys(
+    account: &UserAccount,
+) -> Result<Vec<(String, PathBuf)>, ManagementError> {
+    let mut keys = Vec::new();
+    for path in ssh_key_paths(account)? {
+        let (directory, name) = match key_directory(&path, account, false) {
+            Err(ManagementError::Failed(_)) if !path.exists() => continue,
+            result => result?,
+        };
+        let (text, _) = read_key_file(&directory, &name)?;
+        for line in text
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+        {
+            if let Ok(key) = fingerprint(line) {
+                keys.push((key, path.clone()));
+            }
+        }
+    }
+    Ok(keys)
+}
+
+pub(crate) fn prepare_ssh_key_change(
     command: &ManagementCommand,
     account: &UserAccount,
-    interaction: &mut dyn OperationInteraction,
-) -> Result<(), ManagementError> {
+) -> Result<Vec<(PathBuf, String)>, ManagementError> {
     let paths = ssh_key_paths(account)?;
     let add = if command.action == "user_ssh_add" {
         let text = value(command, "public_key").trim();
@@ -1686,20 +1741,18 @@ fn ssh_keys(
             "Choose a SHA256 key fingerprint from View SSH public keys.",
         ));
     }
-    let mut removed = false;
-    let mut existing = BTreeSet::new();
     let mut files = Vec::new();
-    for path in &paths {
-        let (directory, name) = match key_directory(path, account, command.action == "user_ssh_add")
-        {
-            Err(ManagementError::Failed(_))
-                if !path.exists() && command.action != "user_ssh_add" =>
-            {
-                continue;
+    let mut existing = BTreeSet::new();
+    let mut removed = false;
+    for path in paths {
+        let text = match key_directory(&path, account, false) {
+            Ok((directory, name)) => read_key_file(&directory, &name)?.0,
+            Err(ManagementError::Failed(_)) if !path.exists() => {
+                super::system_config::read(&path)?;
+                String::new()
             }
-            result => result?,
+            Err(error) => return Err(error),
         };
-        let (text, identity) = read_key_file(&directory, &name)?;
         let mut kept = Vec::new();
         let mut changed = false;
         for line in text.lines() {
@@ -1708,11 +1761,6 @@ fn ssh_keys(
                 && let Ok(key) = fingerprint(line)
             {
                 existing.insert(key.clone());
-                if command.action == "user_ssh_keys" {
-                    interaction.emit(OperationEvent::Output {
-                        text: format!("{}  {}", key, path.display()),
-                    });
-                }
                 if command.action == "user_ssh_remove" && key == remove {
                     removed = true;
                     changed = true;
@@ -1728,7 +1776,7 @@ fn ssh_keys(
         } else {
             format!("{}\n", kept.join("\n"))
         };
-        files.push((directory, name, text, identity, content));
+        files.push((path, text, content));
     }
     if let Some((text, key)) = add {
         if existing.contains(&key) {
@@ -1736,7 +1784,7 @@ fn ssh_keys(
                 "This key already exists. View the existing keys.".into(),
             ));
         }
-        let (directory, name, old, identity, _) = files
+        let (path, old, _) = files
             .into_iter()
             .next()
             .ok_or_else(|| invalid("No writable SSH key file."))?;
@@ -1750,24 +1798,97 @@ fn ssh_keys(
             },
             text
         );
-        write_key_file(&directory, &name, &old, identity, &content, account)?;
-        interaction.emit(OperationEvent::Output {
-            text: format!("Added {key}"),
-        });
-    } else if command.action == "user_ssh_remove" {
+        Ok(vec![(path, content)])
+    } else {
         if !removed {
             return Err(ManagementError::Conflict(
                 "The key was not found. View keys and retry.".into(),
             ));
         }
-        for (directory, name, old, identity, content) in files {
-            if old != content {
-                write_key_file(&directory, &name, &old, identity, &content, account)?;
-            }
+        Ok(files
+            .into_iter()
+            .filter_map(|(path, old, content)| (old != content).then_some((path, content)))
+            .collect())
+    }
+}
+
+pub(crate) fn execute_ssh_key_unchecked(
+    command: &ManagementCommand,
+    account: &UserAccount,
+    interaction: &mut dyn OperationInteraction,
+) -> Result<(), ManagementError> {
+    for (path, content) in prepare_ssh_key_change(command, account)? {
+        let (directory, name) = key_directory(&path, account, command.action == "user_ssh_add")?;
+        let (text, identity) = read_key_file(&directory, &name)?;
+        write_key_file(&directory, &name, &text, identity, &content, account)?;
+    }
+    interaction.emit(OperationEvent::Output {
+        text: i18n::tr!(
+            "platform-ssh-ssh-public-keys-updated-confirm-through-a-new-ssh-connection"
+        )
+        .into(),
+    });
+    Ok(())
+}
+
+pub(crate) fn apply_prepared_ssh_key_change(
+    account: &UserAccount,
+    files: &[(ConfigDocument, String)],
+    interaction: &mut dyn OperationInteraction,
+) -> Result<(), ManagementError> {
+    for (before, content) in files {
+        if super::system_config::read(&before.path)?.version != before.version {
+            return Err(ManagementError::Conflict(
+                i18n::tr!("platform-ssh-ssh-key-file-changed-before-applying-refresh-and-retry")
+                    .into(),
+            ));
         }
-    } else if existing.is_empty() {
+        let (directory, name) = key_directory(&before.path, account, true)?;
+        let (text, identity) = read_key_file(&directory, &name)?;
+        if text != before.content
+            || identity.is_some() != before.existed
+            || super::system_config::read(&before.path)?.version != before.version
+        {
+            return Err(ManagementError::Conflict(
+                i18n::tr!("platform-ssh-ssh-key-file-changed-before-applying-refresh-and-retry")
+                    .into(),
+            ));
+        }
+        write_key_file(
+            &directory,
+            &name,
+            &before.content,
+            identity,
+            content,
+            account,
+        )?;
+    }
+    interaction.emit(OperationEvent::Output {
+        text: i18n::tr!(
+            "platform-ssh-ssh-public-keys-updated-confirm-through-a-new-ssh-connection"
+        )
+        .into(),
+    });
+    Ok(())
+}
+
+fn ssh_keys(
+    command: &ManagementCommand,
+    account: &UserAccount,
+    interaction: &mut dyn OperationInteraction,
+) -> Result<(), ManagementError> {
+    if command.action != "user_ssh_keys" {
+        return execute_ssh_key_unchecked(command, account, interaction);
+    }
+    let keys = ssh_public_keys(account)?;
+    if keys.is_empty() {
         interaction.emit(OperationEvent::Output {
             text: "No SSH public keys found".into(),
+        });
+    }
+    for (key, path) in keys {
+        interaction.emit(OperationEvent::Output {
+            text: format!("{}  {}", key, path.display()),
         });
     }
     Ok(())

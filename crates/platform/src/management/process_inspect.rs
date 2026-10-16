@@ -1,10 +1,10 @@
 //! Extra information is read only for the selected PID and checked against start time.
 use super::{ProcessRecord, check_cancelled, parse_stat};
+use crate::management::listening_ports::{endpoint, socket_inode};
 use crate::management::{ManagementAction, ManagementError, ManagementField, ManagementRow};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
-use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
@@ -273,14 +273,6 @@ fn unknown(error: &io::Error) -> String {
     }
 }
 
-fn socket_inode(target: &str) -> Option<u64> {
-    target
-        .strip_prefix("socket:[")?
-        .strip_suffix(']')?
-        .parse()
-        .ok()
-}
-
 fn owned_ports(text: &str, protocol: &str, ipv6: bool, owned: &BTreeSet<u64>) -> Vec<String> {
     text.lines()
         .skip(1)
@@ -300,30 +292,6 @@ fn owned_ports(text: &str, protocol: &str, ipv6: bool, owned: &BTreeSet<u64>) ->
             Some(format!("{protocol} {local} -> {remote} ({state})"))
         })
         .collect()
-}
-
-fn endpoint(value: &str, ipv6: bool) -> Option<String> {
-    let (address, port) = value.split_once(':')?;
-    let port = u16::from_str_radix(port, 16).ok()?;
-    if ipv6 {
-        if address.len() != 32 {
-            return None;
-        }
-        let mut bytes = [0u8; 16];
-        for (index, word) in address.as_bytes().chunks_exact(8).enumerate() {
-            bytes[index * 4..index * 4 + 4].copy_from_slice(
-                &u32::from_str_radix(std::str::from_utf8(word).ok()?, 16)
-                    .ok()?
-                    .to_le_bytes(),
-            );
-        }
-        Some(format!("[{}]:{port}", Ipv6Addr::from(bytes)))
-    } else {
-        Some(format!(
-            "{}:{port}",
-            Ipv4Addr::from(u32::from_str_radix(address, 16).ok()?.to_le_bytes())
-        ))
-    }
 }
 
 fn cgroup_service(text: &str) -> Option<(String, &'static str)> {

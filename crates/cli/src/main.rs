@@ -22,9 +22,27 @@ fn main() {
     #[cfg(target_os = "linux")]
     if matches!(
         args.first().map(String::as_str),
-        Some("__system-helper" | "__privilege-session" | "__network-rollback")
+        Some(
+            "__system-helper"
+                | "__system-helper-bound"
+                | "__privilege-session"
+                | "__network-rollback"
+                | "__ssh-rollback"
+                | "__ssh-recover-pending"
+        )
     ) {
-        let result = if args.len() != 2 {
+        let result = if args[0] == "__ssh-recover-pending" && args.len() == 1 {
+            platform::management::ssh::recover_pending()
+        } else if args[0] == "__system-helper-bound" && args.len() == 4 {
+            match (args[1].parse(), args[2].parse(), args[3].parse()) {
+                (Ok(actor), Ok(pid), Ok(start)) => {
+                    platform::management::helper::entry_bound(actor, pid, start)
+                }
+                _ => Err(platform::management::ManagementError::InvalidInput(
+                    i18n::tr!("platform-management-invalid-caller"),
+                )),
+            }
+        } else if args.len() != 2 {
             Err(platform::management::ManagementError::InvalidInput(
                 "Invalid internal operation arguments".into(),
             ))
@@ -43,6 +61,8 @@ fn main() {
                         platform::management::helper::entry(actor)
                     }
                 })
+        } else if args[0] == "__ssh-rollback" {
+            platform::management::ssh::rollback_transaction(&args[1])
         } else {
             platform::management::network::rollback_transaction(&args[1])
         };

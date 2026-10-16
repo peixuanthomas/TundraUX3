@@ -387,6 +387,7 @@ fn snapshot(
             ],
             ..Default::default()
         }],
+        ..Default::default()
     })
 }
 

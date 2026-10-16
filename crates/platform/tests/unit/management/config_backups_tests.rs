@@ -75,7 +75,7 @@ fn restore_preserves_properties_removes_created_files_and_can_be_undone() {
     let undo = history
         .rows
         .iter()
-        .find(|row| row.cells[2] == "restore")
+        .find(|row| row.identity.get("source").map(String::as_str) == Some("restore"))
         .unwrap();
     restore_record(&root, &read_record(&root, &undo.id).unwrap(), None).unwrap();
     assert_eq!(fs::read_to_string(&old).unwrap(), "changed\n");
@@ -112,9 +112,44 @@ fn native_only_changes_are_visible_and_unconfirmed_operations_cannot_restore() {
     assert!(can_restore(&record));
     record.result = "awaiting SSH connection confirmation".into();
     assert!(!can_restore(&record));
+    record.result = "awaiting network confirmation".into();
+    assert!(!can_restore(&record));
     record.source = "firewall".into();
     record.payload = serde_json::json!({"backend":"firewalld","changes":[{"zone":"public","scope":"runtime","kind":"port","value":"2222/tcp","before":false,"after":true}]});
     assert!(differences(&record).contains("public / runtime / port 2222/tcp: false -> true"));
+    record.result = "completed".into();
+    record.payload["restore_disabled_reason"] =
+        Value::String("The temporary connection has no saved profile".into());
+    assert!(!can_restore(&record));
+}
+
+#[test]
+fn backup_translation_preserves_internal_ids_and_pending_state() {
+    let language = i18n::LanguageSnapshotData {
+        code: "zh-CN".into(),
+        generation: 9,
+        current: vec!["platform-backups-recovery = 全角备份编号\nplatform-backups-source-ssh = 安全远程登录\nplatform-backups-awaiting-ssh = 等待新连接确认\n".into()],
+        english: Vec::new(),
+    }.restore().unwrap();
+    let _language = i18n::enter_snapshot(std::sync::Arc::new(language));
+    let directory = tempfile::tempdir().unwrap();
+    let session = begin_at(directory.path(), "ssh", &[]).unwrap();
+    session
+        .finish("awaiting SSH connection confirmation")
+        .unwrap();
+    let snapshot = query_at(
+        directory.path(),
+        &ManagementQuery::new(ManagementKind::Backups),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(snapshot.columns[0], "全角备份编号");
+    assert_eq!(snapshot.rows[0].cells[2], "安全远程登录");
+    assert_eq!(snapshot.rows[0].cells[4], "等待新连接确认");
+    let record = read_record(directory.path(), session.id()).unwrap();
+    assert_eq!(record.source, "ssh");
+    assert_eq!(record.result, "awaiting SSH connection confirmation");
+    assert!(!can_restore(&record));
 }
 #[test]
 fn native_recovery_uses_recorded_properties_for_sidecars() {

@@ -69,7 +69,52 @@ fn base_directory(euid: u32, actor: u32) -> PathBuf {
 pub fn entry(actor: u32) -> Result<(), ManagementError> {
     check_actor(actor)?;
     let euid = unsafe { libc::geteuid() };
-    start(actor, euid)
+    let pid = unsafe { libc::getppid() } as u32;
+    start(actor, euid, pid, process_start_ticks(pid).unwrap_or(0))
+}
+
+pub fn entry_bound(
+    actor: u32,
+    caller_pid: u32,
+    caller_start_ticks: u64,
+) -> Result<(), ManagementError> {
+    check_actor(actor)?;
+    let parent = unsafe { libc::getppid() };
+    let parent_path = format!("/proc/{parent}");
+    let parent_exe = fs::metadata(format!("{parent_path}/exe")).map_err(failure)?;
+    let own_exe = fs::metadata("/proc/self/exe").map_err(failure)?;
+    let status = fs::read_to_string(format!("{parent_path}/status")).map_err(failure)?;
+    let root_parent = status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))
+        .is_some_and(|line| line.split_whitespace().all(|id| id == "0"));
+    let command = fs::read(format!("{parent_path}/cmdline")).map_err(failure)?;
+    if !root_parent
+        || parent_exe.dev() != own_exe.dev()
+        || parent_exe.ino() != own_exe.ino()
+        || !command
+            .split(|b| *b == 0)
+            .any(|arg| arg == b"__privilege-session")
+        || process_start_ticks(caller_pid)? != caller_start_ticks
+    {
+        return Err(ManagementError::PermissionDenied(
+            i18n::tr!("platform-management-caller-session").into(),
+        ));
+    }
+    start(
+        actor,
+        unsafe { libc::geteuid() },
+        caller_pid,
+        caller_start_ticks,
+    )
+}
+
+pub(crate) fn process_start_ticks(pid: u32) -> Result<u64, ManagementError> {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .map_err(failure)?
+        .rsplit_once(')')
+        .and_then(|(_, fields)| fields.split_whitespace().nth(19)?.parse().ok())
+        .ok_or_else(|| failure(i18n::tr!("platform-management-caller-unavailable")))
 }
 
 pub(crate) fn check_actor(actor: u32) -> Result<(), ManagementError> {
@@ -98,7 +143,12 @@ pub(crate) fn check_actor(actor: u32) -> Result<(), ManagementError> {
     Ok(())
 }
 
-fn start(actor: u32, euid: u32) -> Result<(), ManagementError> {
+fn start(
+    actor: u32,
+    euid: u32,
+    caller_pid: u32,
+    caller_start_ticks: u64,
+) -> Result<(), ManagementError> {
     let mut request = String::new();
     std::io::stdin()
         .lock()
@@ -186,6 +236,8 @@ fn start(actor: u32, euid: u32) -> Result<(), ManagementError> {
         ExecutionContext {
             actor_uid: actor,
             helper_path,
+            caller_pid,
+            caller_start_ticks,
         },
         &private,
     );
@@ -291,16 +343,26 @@ struct PendingQuestion {
 }
 
 fn needs_stable_recovery_binary(command: &ManagementCommand) -> bool {
-    command.kind == ManagementKind::Network
-        && matches!(
-            command.action.as_str(),
-            "configure"
-                | "wifi-connect"
-                | "wifi-connect-password"
-                | "wifi-hidden"
-                | "wifi-disconnect"
-                | "wifi-forget"
-        )
+    command.kind == ManagementKind::Ssh
+        || command.kind == ManagementKind::Backups
+        || (command.kind == ManagementKind::SystemConfig
+            && command.action == "reload"
+            && command
+                .target
+                .as_deref()
+                .is_some_and(|p| p.starts_with("/etc/ssh/")))
+        || (command.kind == ManagementKind::Users
+            && matches!(command.action.as_str(), "user_ssh_add" | "user_ssh_remove"))
+        || command.kind == ManagementKind::Network
+            && matches!(
+                command.action.as_str(),
+                "configure"
+                    | "wifi-connect"
+                    | "wifi-connect-password"
+                    | "wifi-hidden"
+                    | "wifi-disconnect"
+                    | "wifi-forget"
+            )
 }
 
 fn encode_record(sequence: u64, event: OperationEvent) -> Result<Vec<u8>, ManagementError> {
@@ -405,6 +467,10 @@ fn deliver_input(
 }
 
 pub(crate) fn peer_uid(stream: &UnixStream) -> std::io::Result<u32> {
+    Ok(peer_credentials(stream)?.uid)
+}
+
+pub(crate) fn peer_credentials(stream: &UnixStream) -> std::io::Result<libc::ucred> {
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
     if unsafe {
@@ -419,15 +485,27 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> std::io::Result<u32> {
     {
         return Err(std::io::Error::last_os_error());
     }
-    Ok(credentials.uid)
+    Ok(credentials)
 }
 
 fn serve(
     listener: UnixListener,
-    command: ManagementCommand,
+    mut command: ManagementCommand,
     context: ExecutionContext,
     private: &std::path::Path,
 ) -> Result<(), ManagementError> {
+    let language = command
+        .values
+        .remove("__tundra_language")
+        .map(|data| {
+            serde_json::from_str::<i18n::LanguageSnapshotData>(&data)
+                .map_err(failure)?
+                .restore()
+                .map(Arc::new)
+                .map_err(failure)
+        })
+        .transpose()?;
+    let _language = language.map(i18n::enter_snapshot);
     serve_operation(
         listener,
         OperationEvent::Started {
@@ -481,11 +559,13 @@ fn serve_operation(
         size: None,
     });
     let mut operation = Some(operation);
+    let language = i18n::current_snapshot();
     let worker = app
         .task_group("operation")
         .spawn_thread(
             TaskSpec::one_shot(TaskId::from_static("execute")),
             move || {
+                let _language = i18n::enter_snapshot(language.clone());
                 // Managed closures implement FnMut; move the channels exactly once.
                 // This operation must never be replayed automatically after a panic.
                 let Some(mut io) = worker_io.take() else {

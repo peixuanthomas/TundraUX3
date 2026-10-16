@@ -44,6 +44,8 @@ impl Drop for ChildGuard {
 
 fn context() -> ExecutionContext {
     ExecutionContext {
+        caller_pid: 0,
+        caller_start_ticks: 0,
         actor_uid: unsafe { libc::getuid() },
         helper_path: PathBuf::new(),
     }

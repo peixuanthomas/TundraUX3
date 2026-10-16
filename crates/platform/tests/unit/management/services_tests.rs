@@ -126,6 +126,8 @@ impl OperationInteraction for Interaction {
 #[test]
 fn cancelled_and_malformed_operations_never_reach_systemctl() {
     let context = ExecutionContext {
+        caller_pid: 0,
+        caller_start_ticks: 0,
         actor_uid: unsafe { libc::getuid() },
         helper_path: PathBuf::new(),
     };
