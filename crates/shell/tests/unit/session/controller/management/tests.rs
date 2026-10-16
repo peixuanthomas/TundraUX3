@@ -1,5 +1,200 @@
 use super::*;
 
+fn translated_management_language(generation: u64) -> i18n::LanguageSnapshot {
+    i18n::LanguageSnapshotData {
+        code: "zh-CN".into(),
+        generation,
+        current: vec!["test-management-name = 名称\ntest-management-count = 数量\n".into()],
+        english: vec![],
+    }
+    .restore()
+    .unwrap()
+}
+
+#[test]
+fn cached_management_language_refreshes_once_and_keeps_authorized_query_and_sort() {
+    let mut session = shortcut_action_state(ManagementKind::Backups, "inspect");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    let old_language = (
+        session.language.code().to_owned(),
+        session.language.generation(),
+    );
+    let page = session.active_page_id();
+    let state = &mut session.pages.management.management_state;
+    state.query.as_mut().unwrap().filter = "selected filter".into();
+    state.snapshot.refresh_action = Some(ManagementAction {
+        id: "inspect_fixture".into(),
+        privileged: true,
+        ..Default::default()
+    });
+    state.snapshot.columns = vec!["Name".into(), "Count".into()];
+    state.snapshot.rows[0].cells = vec!["Zulu".into(), "2".into()];
+    let mut other = state.snapshot.rows[0].clone();
+    other.id = "other".into();
+    other.cells = vec!["alpha".into(), "10".into()];
+    state.snapshot.rows.push(other);
+    state.snapshot_language = Some(old_language);
+    state.snapshot_query = state.query.clone();
+    session.sort_management(0);
+    let expected_query = session.pages.management.management_state.query.clone();
+    let expected_sort = session.pages.management.management_state.sort;
+    session.enter_new_page(ShellScreen::Settings);
+    let generation = session.language.generation() + 1;
+    session.publish_language(
+        i18n::LanguageCatalog::built_in(),
+        i18n::LanguageLoad {
+            snapshot: translated_management_language(generation),
+            diagnostics: vec![],
+        },
+    );
+    session.poll_management();
+    assert!(
+        session
+            .pages
+            .management
+            .get(page)
+            .unwrap()
+            .management_state
+            .last_language_attempt
+            .is_none()
+    );
+    session.return_from_screen(ShellScreen::Settings);
+    assert_eq!(session.active_page_id(), page);
+    session.poll_management();
+    let language = ("zh-CN".into(), generation);
+    let state = &session.pages.management.management_state;
+    assert_eq!(state.last_language_attempt.as_ref(), Some(&language));
+    assert_eq!(state.query, expected_query);
+    assert_eq!(state.refresh_command().unwrap().action, "inspect_fixture");
+    assert_eq!(
+        state.refresh_command().unwrap().values["filter"],
+        "selected filter"
+    );
+    session.pages.management.management_state.status = "do not retry failed refresh".into();
+    session.poll_management();
+    assert_eq!(
+        session.pages.management.management_state.status,
+        "do not retry failed refresh"
+    );
+    let mut snapshot = session.pages.management.management_state.snapshot.clone();
+    snapshot.columns = vec![
+        session.language.render(&i18n::msg!("test-management-name")),
+        session
+            .language
+            .render(&i18n::msg!("test-management-count")),
+    ];
+    snapshot.rows.reverse();
+    let (job, _) = session.management_job();
+    *job.0.snapshot.lock().unwrap() = Some(Ok(snapshot));
+    session.register_management_job(&job, TaskDomain::ManagementQuery, TaskClass::Query);
+    session.pages.management.management_state.query_job = Some(job);
+    session.poll_management();
+    let state = &session.pages.management.management_state;
+    assert_eq!(state.snapshot_language.as_ref(), Some(&language));
+    assert_eq!(state.snapshot.columns, ["名称", "数量"]);
+    assert_eq!(state.sort, expected_sort);
+    assert_eq!(state.snapshot.rows[0].id, "other");
+    assert_eq!(state.snapshot.rows[state.selected].id, "mock-selected-item");
+    assert_eq!(state.query, expected_query);
+}
+
+#[test]
+fn language_refresh_waits_for_writes_and_rejects_old_language_results_as_current() {
+    let mut session = shortcut_action_state(ManagementKind::ScheduledTasks, "inspect");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    let (job, _) = session.management_job();
+    let old_language = job.0.language.clone();
+    session.pages.management.management_state.snapshot_language = Some(old_language.clone());
+    session.pages.management.management_state.operation_job = Some(job.clone());
+    session.register_management_job(&job, TaskDomain::ManagementOperation, TaskClass::Operation);
+    let generation = session.language.generation() + 1;
+    session.publish_language(
+        i18n::LanguageCatalog::built_in(),
+        i18n::LanguageLoad {
+            snapshot: translated_management_language(generation),
+            diagnostics: vec![],
+        },
+    );
+    session.poll_management();
+    assert!(
+        session
+            .pages
+            .management
+            .management_state
+            .last_language_attempt
+            .is_none()
+    );
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .as_ref(),
+        Some(&job)
+    );
+    assert!(!job.0.cancelled.load(Ordering::Relaxed));
+    let snapshot = session.pages.management.management_state.snapshot.clone();
+    job.0.events.lock().unwrap().extend([
+        OperationEvent::Snapshot { snapshot },
+        OperationEvent::Completed {
+            message: "write finished".into(),
+        },
+    ]);
+    session.poll_management();
+    assert_eq!(
+        session.pages.management.management_state.snapshot_language,
+        Some(old_language)
+    );
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .last_language_attempt,
+        Some(("zh-CN".into(), generation))
+    );
+    assert!(
+        session
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .is_none()
+    );
+}
+
+#[test]
+fn language_refresh_sort_retention_requires_the_same_view() {
+    let mut state = ManagementState::default();
+    let mut old_query = ManagementQuery::new(ManagementKind::Firewall);
+    old_query.scope = "listeners".into();
+    state.snapshot_language = Some(("en-US".into(), 1));
+    state.snapshot_query = Some(old_query);
+    state.sort_columns = vec!["Name".into(), "Count".into()];
+    state.sort = Some(ui::TableSort {
+        column: 1,
+        descending: true,
+    });
+    let new_query = ManagementQuery::new(ManagementKind::Firewall);
+    let mut snapshot = ManagementSnapshot {
+        columns: vec!["规则".into(), "来源".into()],
+        ..Default::default()
+    };
+    state.sort_snapshot(&mut snapshot, &("zh-CN".into(), 2), Some(&new_query));
+    assert!(state.sort.is_none());
+    state.sort = Some(ui::TableSort {
+        column: 0,
+        descending: false,
+    });
+    let mut snapshot = ManagementSnapshot {
+        columns: vec!["Rule".into(), "Source".into()],
+        ..Default::default()
+    };
+    state.sort_snapshot(&mut snapshot, &("en-US".into(), 3), Some(&new_query));
+    assert!(state.sort.is_some());
+}
+
 #[test]
 fn new_management_choices_translate_only_defined_option_fields() {
     for (action, field_id, raw, key) in [

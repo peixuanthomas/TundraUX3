@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(in crate::session) struct ManagementJob(Arc<ManagementJobShared>);
 struct ManagementJobShared {
     id: u64,
+    language: (String, u64),
+    query: Option<ManagementQuery>,
     cancelled: Arc<AtomicBool>,
     discard_output: AtomicBool,
     snapshot: Mutex<Option<Result<ManagementSnapshot, ManagementError>>>,
@@ -107,6 +109,9 @@ pub(in crate::session) struct ManagementState {
     kind: Option<ManagementKind>,
     query: Option<ManagementQuery>,
     snapshot: ManagementSnapshot,
+    snapshot_language: Option<(String, u64)>,
+    snapshot_query: Option<ManagementQuery>,
+    last_language_attempt: Option<(String, u64)>,
     selected: usize,
     scroll: usize,
     list_scroll_explicit: bool,
@@ -169,9 +174,31 @@ impl ManagementState {
         })
     }
 
-    fn sort_snapshot(&mut self, snapshot: &mut ManagementSnapshot) {
+    fn sort_snapshot(
+        &mut self,
+        snapshot: &mut ManagementSnapshot,
+        language: &(String, u64),
+        query: Option<&ManagementQuery>,
+    ) {
+        let same_view = self
+            .snapshot_query
+            .as_ref()
+            .zip(query)
+            .is_some_and(|(before, after)| {
+                before.kind == after.kind
+                    && before.scope == after.scope
+                    && before.options == after.options
+            });
         if self.sort_columns != snapshot.columns {
-            self.sort = None;
+            if self
+                .snapshot_language
+                .as_ref()
+                .is_none_or(|previous| previous == language)
+                || !same_view
+                || self.sort_columns.len() != snapshot.columns.len()
+            {
+                self.sort = None;
+            }
             self.sort_columns = snapshot.columns.clone();
         }
         if let Some(sort) = self.sort {
@@ -182,6 +209,8 @@ impl ManagementState {
                 )
             });
         }
+        self.snapshot_language = Some(language.clone());
+        self.snapshot_query = query.cloned();
     }
 }
 
@@ -486,6 +515,8 @@ impl ShellSession {
         (
             ManagementJob(Arc::new(ManagementJobShared {
                 id: PageInstanceId::new().get(),
+                language: (self.language.code().into(), self.language.generation()),
+                query: self.pages.management.management_state.query.clone(),
                 cancelled: Arc::new(AtomicBool::new(false)),
                 discard_output: AtomicBool::new(false),
                 snapshot: Mutex::new(None),
@@ -556,6 +587,8 @@ impl ShellSession {
         let Some(query) = self.pages.management.management_state.query.clone() else {
             return;
         };
+        self.pages.management.management_state.last_language_attempt =
+            Some((self.language.code().into(), self.language.generation()));
         // A requested refresh replaces the previous query, including when a new
         // worker cannot be started. Its late result must not restore an old filter.
         self.cancel_management_query();
@@ -835,8 +868,15 @@ impl ShellSession {
             .management_state
             .query_job
             .as_ref()
-            .and_then(|job| job.0.snapshot.lock().ok()?.take());
-        if let Some(result) = result {
+            .and_then(|job| {
+                job.0
+                    .snapshot
+                    .lock()
+                    .ok()?
+                    .take()
+                    .map(|result| (result, job.0.language.clone(), job.0.query.clone()))
+            });
+        if let Some((result, language, query)) = result {
             if let Some(job) = self.pages.management.management_state.query_job.take() {
                 self.tasks.complete(TaskDomain::ManagementQuery, job.0.id);
             }
@@ -872,10 +912,11 @@ impl ShellSession {
                             });
                         }
                     }
-                    self.pages
-                        .management
-                        .management_state
-                        .sort_snapshot(&mut snapshot);
+                    self.pages.management.management_state.sort_snapshot(
+                        &mut snapshot,
+                        &language,
+                        query.as_ref(),
+                    );
                     let selected = self
                         .pages
                         .management
@@ -914,6 +955,13 @@ impl ShellSession {
             }
             self.pages.management.management_state.refreshed = Some(Instant::now());
         }
+        let operation_source = self
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .as_ref()
+            .map(|job| Arc::clone(&job.0));
         let events = self
             .pages
             .management
@@ -981,6 +1029,9 @@ impl ShellSession {
                             Some(ManagementQuery::new(kind));
                         self.pages.management.management_state.snapshot =
                             ManagementSnapshot::default();
+                        self.pages.management.management_state.snapshot_language = None;
+                        self.pages.management.management_state.snapshot_query = None;
+                        self.pages.management.management_state.last_language_attempt = None;
                         self.pages.management.management_state.refresh_requested = false;
                         self.pages.management.management_state.refreshing_authorized = false;
                     }
@@ -1006,10 +1057,13 @@ impl ShellSession {
                     }
                     self.cancel_management_query();
                     let mut snapshot = snapshot;
-                    self.pages
-                        .management
-                        .management_state
-                        .sort_snapshot(&mut snapshot);
+                    if let Some(source) = &operation_source {
+                        self.pages.management.management_state.sort_snapshot(
+                            &mut snapshot,
+                            &source.language,
+                            source.query.as_ref(),
+                        );
+                    }
                     let selected = self
                         .pages
                         .management
@@ -1274,6 +1328,22 @@ impl ShellSession {
                     self.refresh_management();
                 }
             }
+        }
+        let language = (self.language.code().to_owned(), self.language.generation());
+        let state = &self.pages.management.management_state;
+        if visible
+            && self.active_screen() == ShellScreen::Management
+            && state
+                .snapshot_language
+                .as_ref()
+                .is_some_and(|previous| previous != &language)
+            && state.last_language_attempt.as_ref() != Some(&language)
+            && state.query_job.is_none()
+            && state.operation_job.is_none()
+            && state.draft_job.is_none()
+            && state.form.is_none()
+        {
+            self.refresh_management();
         }
     }
 

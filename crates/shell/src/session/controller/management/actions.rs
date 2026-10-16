@@ -798,6 +798,10 @@ impl ShellSession {
             Ok(worker) => {
                 self.pages.management.management_state.refreshing_authorized =
                     refreshing_authorized;
+                if refreshing_authorized {
+                    self.pages.management.management_state.last_language_attempt =
+                        Some(job.0.language.clone());
+                }
                 self.pages
                     .management
                     .management_state
