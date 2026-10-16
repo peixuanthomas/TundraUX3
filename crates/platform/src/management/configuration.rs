@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigCandidate {
+    pub path: PathBuf,
+    pub expected_version: String,
+    pub content: String,
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) fn confirm_preview(
     id: &str,
@@ -8,7 +15,32 @@ pub(crate) fn confirm_preview(
     lines: &[String],
     io: &mut dyn super::OperationInteraction,
 ) -> Result<(), super::ManagementError> {
-    let pages = lines.len().max(1).div_ceil(100);
+    let mut pages = vec![String::new()];
+    let mut rows = 0;
+    for text in lines {
+        let text = runtime_log::sanitize_text(text);
+        for line in text.split('\n') {
+            let mut remaining = line;
+            loop {
+                let mut end = remaining.len().min(48 * 1024);
+                while !remaining.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let part = &remaining[..end];
+                if rows == 100 || pages.last().unwrap().len() + part.len() + 1 > 48 * 1024 {
+                    pages.push(String::new());
+                    rows = 0;
+                }
+                pages.last_mut().unwrap().push_str(part);
+                pages.last_mut().unwrap().push('\n');
+                rows += 1;
+                if end == remaining.len() {
+                    break;
+                }
+                remaining = &remaining[end..];
+            }
+        }
+    }
     let mut page = 0;
     loop {
         let apply = i18n::tr!("permissions-confirm");
@@ -16,7 +48,7 @@ pub(crate) fn confirm_preview(
         let next = i18n::tr!("permissions-next");
         let previous = i18n::tr!("permissions-previous");
         let mut choices = vec![cancel.clone(), apply.clone()];
-        if page + 1 < pages {
+        if page + 1 < pages.len() {
             choices.push(next.clone());
         }
         if page > 0 {
@@ -27,21 +59,15 @@ pub(crate) fn confirm_preview(
             i18n::tr!(
                 "permissions-page",
                 page = (page + 1) as i64,
-                pages = pages as i64
+                pages = pages.len() as i64
             ),
-            lines
-                .iter()
-                .skip(page * 100)
-                .take(100)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n")
+            pages[page]
         );
         let answer = io.ask(id, &prompt, &choices, false)?;
         if answer == apply {
             return Ok(());
         }
-        if answer == next && page + 1 < pages {
+        if answer == next && page + 1 < pages.len() {
             page += 1;
         } else if answer == previous && page > 0 {
             page -= 1;

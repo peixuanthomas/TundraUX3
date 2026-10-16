@@ -336,6 +336,17 @@ impl ShellSession {
                 i18n::tr!("permissions-search-help")
             );
         }
+        if self.pages.management.management_state.kind == Some(ManagementKind::SystemSettings) {
+            message = format!(
+                "{}\n{}",
+                i18n::tr!("system-settings-help"),
+                if action.id == "set_system_ntp_servers" {
+                    i18n::tr!("system-settings-servers-help")
+                } else {
+                    String::new()
+                }
+            );
+        }
         if (action.confirm && !action.privileged) || !action.fields.is_empty() {
             self.reset_management_form_view();
             self.pages.management.management_state.form = Some(ManagementEditor {
@@ -619,6 +630,12 @@ impl ShellSession {
             identity: row.as_ref().map(|r| r.identity.clone()).unwrap_or_default(),
             values,
         };
+        if kind == ManagementKind::SystemSettings
+            && let Some(unit) = command.values.get("unit")
+            && let Some(query) = &mut self.pages.management.management_state.query
+        {
+            query.options.insert("provider".into(), unit.clone());
+        }
         self.start_management_operation(Some(command), action.privileged, None, Some(description));
     }
 
@@ -919,7 +936,10 @@ impl ShellSession {
 
     pub(in crate::session) fn confirm_management_discard(&mut self, close: bool) -> bool {
         let state = &self.pages.management.management_state;
-        if state.kind != Some(ManagementKind::FilePermissions) {
+        if !matches!(
+            state.kind,
+            Some(ManagementKind::FilePermissions | ManagementKind::SystemSettings)
+        ) {
             return false;
         }
         let dirty = state.form.as_ref().is_some_and(|form| {

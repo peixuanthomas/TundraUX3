@@ -2,7 +2,7 @@
 
 ui-settings-appearance = Appearance
 ui-settings-region-time = Region & Time
-ui-settings-system = System
+ui-settings-system = Runtime alerts
 ui-settings-file-explorer = File Explorer
 ui-settings-editor = Editor
 ui-settings-update = Update

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 mod configuration;
-pub use configuration::{ConfigCheck, ConfigDocument};
+pub use configuration::{ConfigCandidate, ConfigCheck, ConfigDocument};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,6 +21,7 @@ pub enum ManagementKind {
     Ssh,
     ScheduledTasks,
     FilePermissions,
+    SystemSettings,
 }
 
 impl ManagementKind {
@@ -38,6 +39,7 @@ impl ManagementKind {
             Self::Ssh => "ssh",
             Self::ScheduledTasks => "scheduled-tasks",
             Self::FilePermissions => "file-permissions",
+            Self::SystemSettings => "system-settings",
         }
     }
 }
@@ -368,6 +370,8 @@ pub mod ssh;
 #[cfg(target_os = "linux")]
 pub mod system_config;
 #[cfg(target_os = "linux")]
+pub mod system_settings;
+#[cfg(target_os = "linux")]
 pub mod termination;
 #[cfg(target_os = "linux")]
 pub mod users;
@@ -390,6 +394,7 @@ pub fn query(
         ManagementKind::Ssh => ssh::query(query, cancelled),
         ManagementKind::ScheduledTasks => scheduled_tasks::query(query, cancelled),
         ManagementKind::FilePermissions => file_permissions::query(query, cancelled),
+        ManagementKind::SystemSettings => system_settings::query(query, cancelled),
     };
     #[cfg(not(target_os = "linux"))]
     {
@@ -427,6 +432,9 @@ pub fn execute(
         }
         ManagementKind::FilePermissions => {
             file_permissions::execute(command, context, interaction, cancelled)
+        }
+        ManagementKind::SystemSettings => {
+            system_settings::execute(command, context, interaction, cancelled)
         }
     };
     #[cfg(not(target_os = "linux"))]

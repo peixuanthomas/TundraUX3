@@ -230,6 +230,7 @@ pub(in crate::session) fn management_title(kind: ManagementKind) -> String {
         ManagementKind::Backups => i18n::tr!("management-backups"),
         ManagementKind::ScheduledTasks => i18n::tr!("management-scheduled-tasks"),
         ManagementKind::FilePermissions => i18n::tr!("permissions-title"),
+        ManagementKind::SystemSettings => i18n::tr!("system-settings-title"),
     }
 }
 fn management_label(id: &str, fallback: &str) -> String {

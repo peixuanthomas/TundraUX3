@@ -2,7 +2,7 @@
 
 ui-settings-appearance = 外观
 ui-settings-region-time = 区域与时间
-ui-settings-system = 系统
+ui-settings-system = 运行与提醒
 ui-settings-file-explorer = 文件管理器
 ui-settings-editor = 编辑器
 ui-settings-update = 更新

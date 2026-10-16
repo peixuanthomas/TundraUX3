@@ -6,7 +6,7 @@ if [[ $EUID != 0 ]]; then echo 'Run as root inside WSL.' >&2; exit 1; fi
 binary=$(realpath "$1")
 fixture_uid=$2
 fixture_case=${3:-scheduled}
-[[ $fixture_case == scheduled || $fixture_case == ssh ]]
+[[ $fixture_case == scheduled || $fixture_case == ssh || $fixture_case == settings ]]
 fixture_test=management::scheduled_tasks::isolated::private_systemd_create_execute_persist_pause_resume_and_restore
 if [[ $fixture_case == ssh ]]; then
     ssh_bundle=$(realpath "$4")
@@ -15,6 +15,12 @@ if [[ $fixture_case == ssh ]]; then
     LD_LIBRARY_PATH="$ssh_bundle/lib/x86_64-linux-gnu:$ssh_bundle/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export TUNDRA_TEST_SSHD LD_LIBRARY_PATH
     fixture_test=management::ssh::connection::real_tests::systemd_tests::real_systemd_ssh_service_and_socket
+fi
+if [[ $fixture_case == settings ]]; then
+    time_bundle=$(realpath "$4")
+    [[ -x $time_bundle/usr/sbin/chronyd ]]
+    export time_bundle
+    fixture_test=management::system_settings::isolated::private_system_settings_and_time_configuration
 fi
 available_tests=$("$binary" --list)
 [[ $available_tests == *"$fixture_test: test"* ]] || { echo "Test not found: $fixture_test" >&2; exit 1; }
@@ -32,10 +38,16 @@ trap cleanup EXIT
 TUNDRA_HOST_MNT_NS=$(readlink /proc/self/ns/mnt)
 TUNDRA_HOST_NET_NS=$(readlink /proc/self/ns/net)
 TUNDRA_HOST_PID_NS=$(readlink /proc/self/ns/pid)
-export binary fixture_uid fixture_case fixture_test output cgroup inner TUNDRA_HOST_MNT_NS TUNDRA_HOST_NET_NS TUNDRA_HOST_PID_NS
+TUNDRA_HOST_UTS_NS=$(readlink /proc/self/ns/uts)
+export binary fixture_uid fixture_case fixture_test output cgroup inner TUNDRA_HOST_MNT_NS TUNDRA_HOST_NET_NS TUNDRA_HOST_PID_NS TUNDRA_HOST_UTS_NS
 bash -c '
     echo $$ > "$cgroup/cgroup.procs"
     exec unshare --mount --pid --fork --cgroup --net --uts --ipc --mount-proc bash "$inner"
 '
 cat "$output/test.log"
+if [[ $fixture_case == settings ]]; then
+    for log in "$output"/dbus.log "$output"/systemd-hostnamed.log "$output"/systemd-timedated.log; do
+        if [[ -f $log ]]; then cat "$log"; fi
+    done
+fi
 [[ $(cat "$output/status") == 0 ]]

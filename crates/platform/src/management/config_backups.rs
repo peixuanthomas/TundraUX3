@@ -176,7 +176,7 @@ pub(crate) fn begin_from_backup(
         root: root.into(),
     })
 }
-fn begin_at(
+pub(super) fn begin_at(
     root: &Path,
     source: &str,
     paths: &[PathBuf],
@@ -710,6 +710,7 @@ fn query_at(
         ids.push(id.clone());
         let source = match record.source.as_str() {
             "system-config" => i18n::tr!("platform-backups-source-config"),
+            "system-settings" => i18n::tr!("system-settings-title"),
             "users" => i18n::tr!("platform-backups-source-users"),
             "network" => i18n::tr!("platform-backups-source-network"),
             "firewall" => i18n::tr!("platform-backups-source-firewall"),
@@ -725,6 +726,9 @@ fn query_at(
             "awaiting SSH connection confirmation" => i18n::tr!("platform-backups-awaiting-ssh"),
             "awaiting network confirmation" => i18n::tr!("platform-backups-awaiting-network"),
             "saved" => i18n::tr!("platform-backups-saved"),
+            "rolled back" => i18n::tr!("system-settings-rolled-back"),
+            "recovery conflict" => i18n::tr!("system-settings-recovery-conflict"),
+            "conflict" => i18n::tr!("platform-management-review-again"),
             "restored absence" => i18n::tr!("platform-backups-restored-absence"),
             _ => record.result.clone(),
         };
