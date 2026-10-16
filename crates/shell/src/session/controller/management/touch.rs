@@ -83,6 +83,27 @@ impl ShellSession {
             self.pages.management.management_state.shortcut_repeat_guard = Some(key.key.clone());
             return true;
         }
+        let searchable = self
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .and_then(|form| form.fields.get(index))
+            .is_some_and(|field| field.control == FieldControl::SearchableChoice);
+        if searchable {
+            match key.key {
+                InputKey::Char(c) => {
+                    self.search_management_choices(&c.to_string(), false);
+                    return true;
+                }
+                InputKey::Backspace => {
+                    self.search_management_choices("", true);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         match key.key {
             InputKey::Escape => {
                 if self
@@ -213,9 +234,37 @@ impl ShellSession {
             .position(|value| value == &field.value)
             .unwrap_or(0);
         self.pages.management.management_state.choice_field = Some(index);
+        self.pages.management.management_state.choice_search.clear();
         self.pages.management.management_state.choice_selected = selected;
         self.pages.management.management_state.choice_scroll = 0;
         self.pages.management.management_state.choice_columns = 0;
+        self.keep_management_choice_visible();
+    }
+    pub(super) fn search_management_choices(&mut self, value: &str, backspace: bool) {
+        let state = &mut self.pages.management.management_state;
+        let Some(field) = state
+            .choice_field
+            .and_then(|index| state.form.as_ref().and_then(|form| form.fields.get(index)))
+        else {
+            return;
+        };
+        if field.control != FieldControl::SearchableChoice {
+            return;
+        }
+        if backspace {
+            state.choice_search.pop();
+        } else if state.choice_search.len() + value.len() <= 256 {
+            state
+                .choice_search
+                .extend(value.chars().filter(|c| !c.is_control()));
+        }
+        if let Some(index) = field.choices.iter().position(|choice| {
+            choice
+                .to_lowercase()
+                .contains(&state.choice_search.to_lowercase())
+        }) {
+            state.choice_selected = index;
+        }
         self.keep_management_choice_visible();
     }
     pub(in crate::session) fn cancel_management_pointer_gesture(&mut self) {
@@ -662,6 +711,24 @@ impl ShellSession {
                 .iter()
                 .find(|(_, area)| area.contains(position))
             {
+                let field_view = &model.form.as_ref().unwrap().fields[*index];
+                if field_view.control != ui::ManagementFormControl::Text {
+                    let area = layout.fields.iter().find(|(i, _)| i == index).unwrap().1;
+                    let skip = layout
+                        .field_start
+                        .saturating_sub(layout.field_ranges[*index].0);
+                    let cell = ui::management_permission_cells(field_view, area, skip)
+                        .into_iter()
+                        .find(|(_, area)| area.contains(position))
+                        .map(|(cell, _)| cell)
+                        .unwrap_or(0);
+                    if let Some(form) = &mut self.pages.management.management_state.form {
+                        form.selected = *index;
+                        super::input::toggle_management_check(&mut form.fields[*index], cell);
+                    }
+                    self.pages.management.management_state.permission_cell = cell;
+                    return;
+                }
                 let choice = if let Some(form) = &mut self.pages.management.management_state.form {
                     form.selected = *index;
                     if !form.fields[*index].choices.is_empty() {
@@ -679,6 +746,7 @@ impl ShellSession {
                     None
                 };
                 if let Some(selected) = choice {
+                    self.pages.management.management_state.choice_search.clear();
                     self.pages.management.management_state.choice_field = Some(*index);
                     self.pages.management.management_state.choice_selected = selected;
                     self.pages.management.management_state.choice_scroll = 0;

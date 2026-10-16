@@ -336,6 +336,13 @@ impl ShellSession {
                 self.stay_on_page(id);
                 ShellAction::Redraw
             }
+            ShellCommand::ManagementDiscardForm(id, close) => {
+                self.with_page_context(id, |session| session.discard_management_form());
+                if close {
+                    self.request_page_close(id);
+                }
+                ShellAction::Redraw
+            }
             ShellCommand::Shutdown => {
                 let _ = self.persist_all_editor_recovery_now(received_at);
                 self.shutdown_requested = true;

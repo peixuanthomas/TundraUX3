@@ -287,7 +287,7 @@ pub(in crate::session) fn explorer_context_menu_view_model(
             item(
                 "properties",
                 i18n::tr!("shell-properties"),
-                selected_count == 1,
+                selected_count > 0,
                 false,
             ),
         ]
@@ -333,7 +333,7 @@ pub(in crate::session) fn explorer_context_menu_view_model(
             item(
                 "properties",
                 i18n::tr!("shell-properties"),
-                selected_count == 1,
+                selected_count > 0,
                 false,
             ),
         ]);
@@ -548,7 +548,14 @@ pub(in crate::session) fn explorer_properties_view_model(
             title: i18n::tr!("shell-properties"),
             properties: vec![ui::ExplorerPropertyViewModel {
                 label: i18n::tr!("shell-selection"),
-                value: i18n::tr!("shell-no-item-selected"),
+                value: if state.effective_selected_paths().is_empty() {
+                    i18n::tr!("shell-no-item-selected")
+                } else {
+                    i18n::tr!(
+                        "permissions-selection",
+                        count = state.effective_selected_paths().len() as i64
+                    )
+                },
             }],
             close_label: i18n::tr!("shell-close"),
         });

@@ -11,6 +11,14 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ManagementFormControl {
+    #[default]
+    Text,
+    Checkbox,
+    Permissions,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagementFormField {
     pub id: String,
@@ -18,9 +26,12 @@ pub struct ManagementFormField {
     pub value: String,
     pub secret: bool,
     pub choices: Vec<String>,
+    pub control: ManagementFormControl,
+    pub selected_cell: Option<usize>,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagementChoices {
+    pub search: String,
     pub field: usize,
     pub values: Vec<String>,
     pub selected: usize,
@@ -313,18 +324,92 @@ fn form_cancel_text(form: &ManagementForm) -> String {
     }
 }
 fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
+    if field.control == ManagementFormControl::Permissions {
+        return vec![
+            field.label.clone(),
+            permission_heading(width),
+            i18n::tr!("permissions-owner"),
+            i18n::tr!("permissions-group"),
+            i18n::tr!("permissions-others"),
+        ];
+    }
     let mut lines = if field.label.is_empty() {
         vec![]
     } else {
         management_wrapped_lines(&field.label, width)
     };
-    let value = if field.secret {
+    let value = if field.control == ManagementFormControl::Checkbox {
+        if field.value == "true" {
+            "[x]".into()
+        } else {
+            "[ ]".into()
+        }
+    } else if field.secret {
         "•".repeat(field.value.chars().count())
     } else {
         field.value.clone()
     };
     lines.extend(management_wrapped_lines(&value, width));
     lines
+}
+
+fn permission_heading(width: u16) -> String {
+    let label = permission_label_width(width);
+    let cell = width.saturating_sub(label) / 3;
+    let mut text = " ".repeat(label as usize);
+    for title in [
+        i18n::tr!("permissions-read"),
+        i18n::tr!("permissions-write"),
+        i18n::tr!("permissions-execute"),
+    ] {
+        let title = crate::components::truncate_to_terminal_width(&title, cell as usize);
+        text.push_str(&title);
+        text.push_str(&" ".repeat(cell.saturating_sub(title.width() as u16) as usize));
+    }
+    text
+}
+fn permission_label_width(width: u16) -> u16 {
+    [
+        i18n::tr!("permissions-owner"),
+        i18n::tr!("permissions-group"),
+        i18n::tr!("permissions-others"),
+    ]
+    .iter()
+    .map(|s| s.width() as u16 + 1)
+    .max()
+    .unwrap_or(1)
+    .min(width.saturating_sub(9))
+}
+pub fn management_permission_cells(
+    field: &ManagementFormField,
+    area: Rect,
+    skip: usize,
+) -> Vec<(usize, Rect)> {
+    if field.control != ManagementFormControl::Permissions {
+        return Vec::new();
+    }
+    let label = permission_label_width(area.width);
+    let width = area.width.saturating_sub(label) / 3;
+    (0..9)
+        .filter_map(|index| {
+            let row = 2 + index / 3;
+            if row < skip || row - skip >= area.height as usize || width < 3 {
+                return None;
+            }
+            Some((
+                index,
+                Rect::new(
+                    area.x + label + index as u16 % 3 * width,
+                    area.y + (row - skip) as u16,
+                    width,
+                    1,
+                ),
+            ))
+        })
+        .collect()
+}
+pub fn management_permission_id(form: &ManagementForm, index: usize, cell: usize) -> String {
+    format!("{}.cell.{cell}", management_field_id(form, index))
 }
 fn form_action_sizes(form: &ManagementForm, width: u16) -> (u16, u16, u16, u16, u16) {
     let submit = if form.dismiss_only {
@@ -1155,7 +1240,17 @@ pub fn management_button_regions(
                 form.cancel_disabled,
             );
             for (index, area) in &layout.fields {
-                push(management_field_id(form, *index), *area, false);
+                let field = &form.fields[*index];
+                if field.control == ManagementFormControl::Permissions {
+                    let skip = layout
+                        .field_start
+                        .saturating_sub(layout.field_ranges[*index].0);
+                    for (cell, area) in management_permission_cells(field, *area, skip) {
+                        push(management_permission_id(form, *index, cell), area, false);
+                    }
+                } else {
+                    push(management_field_id(form, *index), *area, false);
+                }
             }
         }
         return buttons;
@@ -1457,7 +1552,17 @@ pub fn render_management_overlay(
     Surface::new()
         .bordered(true)
         .raised(true)
-        .titled(form.title.clone())
+        .titled(
+            if form
+                .choice
+                .as_ref()
+                .is_some_and(|choice| !choice.search.is_empty())
+            {
+                format!("{} · {}", form.title, form.choice.as_ref().unwrap().search)
+            } else {
+                form.title.clone()
+            },
+        )
         .render_frame(frame, layout.form, context);
     if let Some(choice) = &form.choice {
         for (index, area) in &layout.choice_rows {
@@ -1521,6 +1626,32 @@ pub fn render_management_overlay(
         let skip = layout
             .field_start
             .saturating_sub(layout.field_ranges[*index].0);
+        if field.control == ManagementFormControl::Permissions {
+            frame.render_widget(
+                Paragraph::new(
+                    lines
+                        .into_iter()
+                        .skip(skip)
+                        .map(Line::from)
+                        .collect::<Vec<_>>(),
+                )
+                .style(theme.body_style()),
+                *area,
+            );
+            for (cell, area) in management_permission_cells(field, *area, skip) {
+                let value = match field.value.as_bytes().get(cell) {
+                    Some(b'1') => "[x]",
+                    Some(b'0') => "[ ]",
+                    _ => "[-]",
+                };
+                let mut button = Button::new(management_permission_id(form, *index, cell), value);
+                button.bracketed_label = false;
+                button.state.selected =
+                    form.selected == *index && field.selected_cell == Some(cell);
+                button.render_borderless_frame(frame, area, &theme);
+            }
+            continue;
+        }
         let mut button = Button::new(
             management_field_id(form, *index),
             lines.into_iter().skip(skip).collect::<Vec<_>>().join("\n"),

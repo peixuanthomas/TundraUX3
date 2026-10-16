@@ -77,6 +77,7 @@ pub enum ExplorerOverlayControl {
     ConflictChoice(ExplorerConflictChoice),
     ApplyToRemaining,
     PropertiesClose,
+    PropertiesPermissions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -850,14 +851,21 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
             Some(ExplorerOverlayLayout {
                 area: dialog,
                 content,
-                controls: vec![ExplorerOverlayControlLayout {
-                    control: ExplorerOverlayControl::PropertiesClose,
-                    area: line_in_rect(
-                        content,
-                        content.y.saturating_add(content.height.saturating_sub(1)),
-                    ),
-                    enabled: true,
-                }],
+                controls: vec![
+                    ExplorerOverlayControlLayout {
+                        control: ExplorerOverlayControl::PropertiesPermissions,
+                        area: line_in_rect(content, content.bottom().saturating_sub(2)),
+                        enabled: true,
+                    },
+                    ExplorerOverlayControlLayout {
+                        control: ExplorerOverlayControl::PropertiesClose,
+                        area: line_in_rect(
+                            content,
+                            content.y.saturating_add(content.height.saturating_sub(1)),
+                        ),
+                        enabled: true,
+                    },
+                ],
             })
         }
         None if model.pending_dialog.is_some() => {

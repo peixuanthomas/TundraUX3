@@ -21,6 +21,75 @@ fn session(size: (u16, u16)) -> ShellSession {
 }
 
 #[test]
+fn permission_boxes_work_with_keyboard_mouse_and_touch() {
+    for hover in [false, true] {
+        let mut session = session((108, 30));
+        session.pages.management.management_state.kind = Some(ManagementKind::FilePermissions);
+        let field = ManagementField {
+            id: "files".into(),
+            value: "mmmmmmmmm".into(),
+            control: FieldControl::Permissions,
+            ..Default::default()
+        };
+        session.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
+            title: "Permissions".into(),
+            message: String::new(),
+            message_scroll: 0,
+            fields: vec![field.clone()],
+            selected: 0,
+            purpose: FormPurpose::Action(
+                ManagementAction {
+                    fields: vec![field],
+                    ..Default::default()
+                },
+                None,
+            ),
+        });
+        for cell in 0..9 {
+            let region = ui::management_button_regions(
+                session.management_main(),
+                &session.to_management_view_model(),
+            )
+            .into_iter()
+            .find(|region| region.id.as_str().ends_with(&format!(".cell.{cell}")))
+            .unwrap();
+            pointer_input(&mut session, (region.area.x, region.area.y), hover);
+            assert_eq!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .fields[0]
+                    .value
+                    .as_bytes()[cell],
+                b'1'
+            );
+            session.handle_management_key(&KeyInput::new(InputKey::Space));
+            assert_eq!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .fields[0]
+                    .value
+                    .as_bytes()[cell],
+                b'0'
+            );
+        }
+        session.cancel_management_form();
+        assert!(session.pages.management.management_state.form.is_some());
+        assert!(session.notification_has_active_modal());
+    }
+}
+
+#[test]
 fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
     for size in [(40, 10), (60, 18), (120, 40)] {
         let mut session = session(size);

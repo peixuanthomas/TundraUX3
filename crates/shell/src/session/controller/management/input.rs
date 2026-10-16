@@ -3,9 +3,22 @@ use crate::session::*;
 
 impl ShellSession {
     pub(in crate::session) fn handle_management_paste(&mut self, value: &str) {
+        if self
+            .pages
+            .management
+            .management_state
+            .choice_field
+            .is_some()
+        {
+            self.search_management_choices(value, false);
+            return;
+        }
         if let Some(form) = &mut self.pages.management.management_state.form {
             if let Some(field) = form.fields.get_mut(form.selected) {
-                if field.choices.is_empty() && field.value.len() + value.len() <= 16 * 1024 {
+                if field.control == FieldControl::Text
+                    && field.choices.is_empty()
+                    && field.value.len() + value.len() <= 16 * 1024
+                {
                     field
                         .value
                         .extend(value.chars().filter(|c| !c.is_control()));
@@ -123,6 +136,48 @@ impl ShellSession {
         {
             if key.phase == InputPhase::Press {
                 self.submit_management_form();
+            }
+            return;
+        }
+        let check_control = self
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .and_then(|form| form.fields.get(form.selected))
+            .is_some_and(|field| {
+                matches!(
+                    field.control,
+                    FieldControl::Checkbox | FieldControl::Permissions
+                )
+            });
+        if check_control
+            && matches!(
+                key.key,
+                InputKey::Left
+                    | InputKey::Right
+                    | InputKey::Space
+                    | InputKey::Enter
+                    | InputKey::Char(_)
+                    | InputKey::Backspace
+            )
+        {
+            let mut cell = self.pages.management.management_state.permission_cell;
+            if key.key == InputKey::Left {
+                cell = (cell + 8) % 9;
+            }
+            if key.key == InputKey::Right {
+                cell = (cell + 1) % 9;
+            }
+            self.pages.management.management_state.permission_cell = cell;
+            if matches!(key.key, InputKey::Space | InputKey::Enter)
+                && key.phase == InputPhase::Press
+                && !key.has_non_shift_modifier()
+            {
+                if let Some(form) = &mut self.pages.management.management_state.form {
+                    toggle_management_check(&mut form.fields[form.selected], cell);
+                }
             }
             return;
         }
@@ -631,5 +686,19 @@ impl ShellSession {
                 .output_scroll
                 .saturating_add_signed((-delta).clamp(i16::MIN as isize, i16::MAX as isize) as i16);
         }
+    }
+}
+
+pub(super) fn toggle_management_check(field: &mut ManagementField, cell: usize) {
+    match field.control {
+        FieldControl::Checkbox => field.value = (field.value != "true").to_string(),
+        FieldControl::Permissions => {
+            let mut bytes = field.value.as_bytes().to_vec();
+            if let Some(value) = bytes.get_mut(cell) {
+                *value = if *value == b'1' { b'0' } else { b'1' };
+            }
+            field.value = String::from_utf8(bytes).expect("permission states are ASCII");
+        }
+        FieldControl::Text | FieldControl::SearchableChoice => {}
     }
 }

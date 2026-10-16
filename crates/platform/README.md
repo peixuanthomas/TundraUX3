@@ -11,6 +11,7 @@
 | 私有授权连接、撤销和任务控制接口 | [授权与助手连接](docs/authorization.md) |
 | Wi-Fi、网络恢复、磁盘健康与目录扫描 | [网络和磁盘](docs/network-disks.md) |
 | 系统用户、用户组和 SSH 公钥 | [用户管理](docs/user-management.md) |
+| 多选文件的权限、归属和递归范围预览 | [文件权限](docs/file-permissions.md) |
 | 差异预览、私有检查、授权保存和恢复 | [系统配置文件](docs/system-config.md) |
 | 按操作分组的配置、账户和用户组恢复 | [配置备份与恢复](docs/config-backups.md) |
 | 监听端口、UFW 与 firewalld 放行规则 | [防火墙与端口](docs/firewall.md) |

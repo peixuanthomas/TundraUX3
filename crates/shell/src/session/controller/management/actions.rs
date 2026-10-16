@@ -321,10 +321,21 @@ impl ShellSession {
                 i18n::tr!("management-operation-running");
             return;
         }
-        let message = row
+        let mut message = row
             .as_ref()
             .map(|r| r.cells.join(" · "))
             .unwrap_or_default();
+        if action
+            .fields
+            .iter()
+            .any(|field| field.control == FieldControl::Permissions)
+        {
+            message = format!(
+                "{}\n{}",
+                i18n::tr!("permissions-help"),
+                i18n::tr!("permissions-search-help")
+            );
+        }
         if (action.confirm && !action.privileged) || !action.fields.is_empty() {
             self.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
@@ -880,6 +891,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn cancel_management_form(&mut self) {
+        if self.confirm_management_discard(false) {
+            return;
+        }
         if self.pages.management.management_state.form.as_ref().is_some_and(|form|matches!(&form.purpose,FormPurpose::Answer(id) if id.starts_with("package-config-"))){self.pages.management.management_state.status=i18n::tr!("management-config-needs-answer");return;}
         if self
             .pages
@@ -899,5 +913,34 @@ impl ShellSession {
                 }
             }
         }
+    }
+
+    pub(in crate::session) fn confirm_management_discard(&mut self, close: bool) -> bool {
+        let state = &self.pages.management.management_state;
+        if state.kind != Some(ManagementKind::FilePermissions) {
+            return false;
+        }
+        let dirty = state.form.as_ref().is_some_and(|form| matches!(&form.purpose, FormPurpose::Action(action, _) if action.fields != form.fields));
+        if !dirty {
+            return false;
+        }
+        let id = self.active_page_id();
+        self.notify_modal_with_options(ShellNotification::modal(
+            i18n::msg!("permissions-discard-title"),
+            i18n::msg!("permissions-discard-message"),
+            ui::NotificationTone::Warning,
+            vec![
+                ShellNotificationAction::new("discard", i18n::msg!("permissions-discard"))
+                    .with_follow_up(ShellCommand::ManagementDiscardForm(id, close)),
+                ShellNotificationAction::new("stay", i18n::msg!("page-close-stay"))
+                    .cancel()
+                    .with_shortcut(InputKey::Escape),
+            ],
+        ));
+        true
+    }
+    pub(in crate::session) fn discard_management_form(&mut self) {
+        self.pages.management.management_state.form = None;
+        self.reset_management_form_view();
     }
 }
