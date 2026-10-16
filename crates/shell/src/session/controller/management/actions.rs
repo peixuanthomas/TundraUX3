@@ -337,6 +337,7 @@ impl ShellSession {
             );
         }
         if (action.confirm && !action.privileged) || !action.fields.is_empty() {
+            self.reset_management_form_view();
             self.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
                 message_scroll: 0,
@@ -913,6 +914,7 @@ impl ShellSession {
                 }
             }
         }
+        self.reset_management_form_view();
     }
 
     pub(in crate::session) fn confirm_management_discard(&mut self, close: bool) -> bool {
@@ -920,7 +922,11 @@ impl ShellSession {
         if state.kind != Some(ManagementKind::FilePermissions) {
             return false;
         }
-        let dirty = state.form.as_ref().is_some_and(|form| matches!(&form.purpose, FormPurpose::Action(action, _) if action.fields != form.fields));
+        let dirty = state.form.as_ref().is_some_and(|form| {
+            matches!(&form.purpose, FormPurpose::Action(action, _) if action.fields != form.fields
+                || action.fields.iter().any(|field| field.control == FieldControl::Permissions
+                    && action.values.get(&format!("{}_initial", field.id)).is_some_and(|initial| initial != &field.value)))
+        });
         if !dirty {
             return false;
         }

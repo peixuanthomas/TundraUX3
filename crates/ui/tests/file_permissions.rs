@@ -2,6 +2,43 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn keyboard_selection_keeps_each_permission_cell_visible_in_short_forms() {
+    let main = Rect::new(0, 0, 108, 14);
+    for cell in 0..9 {
+        let field = ManagementFormField {
+            id: "files".into(),
+            value: "mmmmmmmmm".into(),
+            control: ManagementFormControl::Permissions,
+            selected_cell: Some(cell),
+            ..Default::default()
+        };
+        let model = ManagementViewModel {
+            form: Some(ManagementForm {
+                identity: "short".into(),
+                message: "Long explanation ".repeat(40),
+                fields: vec![
+                    field.clone(),
+                    ManagementFormField {
+                        id: "directories".into(),
+                        ..field
+                    },
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let regions = management_button_regions(main, &model);
+        assert!(
+            regions
+                .iter()
+                .any(|region| region.id.as_str()
+                    == format!("management.field.short.files.cell.{cell}")),
+            "cell {cell} is hidden"
+        );
+    }
+}
+
+#[test]
 fn permission_matrix_has_nine_distinct_visible_button_targets() {
     for (width, height) in [(50, 16), (108, 20), (140, 40)] {
         let main = Rect::new(0, 0, width, height);

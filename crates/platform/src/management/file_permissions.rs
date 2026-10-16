@@ -2,10 +2,11 @@
 use super::*;
 use std::collections::BTreeSet;
 use std::ffi::CString;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::{
-    ffi::OsStrExt,
+    ffi::{OsStrExt, OsStringExt},
     fs::{MetadataExt, PermissionsExt},
 };
 use std::path::Path;
@@ -22,6 +23,7 @@ pub struct PermissionEntry {
     pub changed: (i64, i64),
     pub directory: bool,
     pub acl: bool,
+    pub default_acl: bool,
     pub capabilities: bool,
     pub links: u64,
 }
@@ -74,6 +76,18 @@ fn open(path: &Path) -> Result<File, ManagementError> {
 fn fd_path(file: &File) -> PathBuf {
     PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()))
 }
+fn path_label(path: &Path) -> String {
+    format!("{path:?}")
+}
+pub fn encode_paths(paths: &[PathBuf]) -> String {
+    serde_json::to_string(
+        &paths
+            .iter()
+            .map(|path| path.as_os_str().as_bytes())
+            .collect::<Vec<_>>(),
+    )
+    .expect("path bytes serialize")
+}
 fn has_attribute(file: &File, name: &str) -> Result<bool, ManagementError> {
     let path = CString::new(fd_path(file).as_os_str().as_bytes()).unwrap();
     let name = CString::new(name).unwrap();
@@ -100,6 +114,7 @@ fn entry(path: &Path, file: &File) -> Result<PermissionEntry, ManagementError> {
         changed: (m.ctime(), m.ctime_nsec()),
         directory: m.is_dir(),
         acl: has_attribute(file, "system.posix_acl_access")?,
+        default_acl: m.is_dir() && has_attribute(file, "system.posix_acl_default")?,
         capabilities: has_attribute(file, "security.capability")?,
         links: m.nlink(),
     })
@@ -162,7 +177,7 @@ pub fn scan(
 }
 
 fn roots(values: &BTreeMap<String, String>) -> Result<Vec<PathBuf>, ManagementError> {
-    let paths: Vec<PathBuf> = serde_json::from_str(
+    let paths: Vec<Vec<u8>> = serde_json::from_str(
         values
             .get("paths")
             .ok_or_else(|| ManagementError::InvalidInput(i18n::tr!("permissions-select-files")))?,
@@ -173,7 +188,10 @@ fn roots(values: &BTreeMap<String, String>) -> Result<Vec<PathBuf>, ManagementEr
             "permissions-select-files"
         )));
     }
-    Ok(paths)
+    Ok(paths
+        .into_iter()
+        .map(|path| PathBuf::from(OsString::from_vec(path)))
+        .collect())
 }
 fn mixed(entries: &[&PermissionEntry]) -> String {
     (0..9)
@@ -291,9 +309,9 @@ pub fn query(
                 |g| format!("{} ({})", g.name, g.gid),
             );
             ManagementRow {
-                id: entry.path.display().to_string(),
+                id: path_label(&entry.path),
                 cells: vec![
-                    entry.path.display().to_string(),
+                    path_label(&entry.path),
                     format!("{:03o}", entry.mode & 0o777),
                     owner.clone(),
                     group.clone(),
@@ -396,7 +414,9 @@ fn apply(entry: &PermissionEntry, change: PermissionChange) -> Result<bool, Mana
     if &self::entry(&entry.path, &file)? != entry {
         return Err(ManagementError::Conflict(i18n::tr!("permissions-changed")));
     }
-    if change.uid.is_some() || change.gid.is_some() {
+    if change.uid.is_some_and(|uid| uid != entry.uid)
+        || change.gid.is_some_and(|gid| gid != entry.gid)
+    {
         let empty = c"";
         if unsafe {
             libc::fchownat(
@@ -412,7 +432,7 @@ fn apply(entry: &PermissionEntry, change: PermissionChange) -> Result<bool, Mana
         }
     }
     let current = file.metadata().map_err(failed)?.mode();
-    if change.mask != 0 {
+    if current & change.mask != change.bits & change.mask {
         fs::set_permissions(
             fd_path(&file),
             fs::Permissions::from_mode(
@@ -458,15 +478,12 @@ pub fn execute(
         files = before.entries.iter().filter(|e| !e.directory).count() as i64,
         directories = before.entries.iter().filter(|e| e.directory).count() as i64
     );
-    let mut lines: Vec<_> = paths
-        .iter()
-        .map(|path| path.display().to_string())
-        .collect();
+    let mut lines: Vec<_> = paths.iter().map(|path| path_label(path)).collect();
     for entry in &before.entries {
         let patch = if entry.directory { directories } else { files };
         lines.push(format!(
             "{}: {:04o} → {:04o}; {}:{} → {}:{}",
-            entry.path.display(),
+            path_label(&entry.path),
             entry.mode & 0o7777,
             (entry.mode & 0o7777 & !patch.mask) | patch.bits,
             entry.uid,
@@ -477,17 +494,21 @@ pub fn execute(
         if entry.acl {
             lines.push(i18n::tr!("permissions-acl"));
         }
+        if entry.default_acl {
+            lines.push(i18n::tr!("permissions-default-acl"));
+        }
         if entry.links > 1 && !entry.directory {
             lines.push(i18n::tr!("permissions-hardlinks"));
         }
-        if (patch.uid.is_some() || patch.gid.is_some())
+        if (patch.uid.is_some_and(|uid| uid != entry.uid)
+            || patch.gid.is_some_and(|gid| gid != entry.gid))
             && (entry.mode & 0o6000 != 0 || entry.capabilities)
         {
             lines.push(i18n::tr!("permissions-special-cleared"));
         }
     }
     for (path, reason) in &before.skipped {
-        lines.push(format!("{}: {reason}", path.display()));
+        lines.push(format!("{}: {reason}", path_label(path)));
     }
     super::configuration::confirm_preview("permissions-apply", &preview, &lines, io)?;
     if scan(&paths, recursive, flag)? != before {
@@ -503,9 +524,9 @@ pub fn execute(
                 text: format!(
                     "{}: {}{}",
                     i18n::tr!("permissions-done"),
-                    entry.path.display(),
+                    path_label(&entry.path),
                     if cleared {
-                        format!("\n{}", i18n::tr!("permissions-special-cleared"))
+                        format!("\n{}", i18n::tr!("permissions-special-were-cleared"))
                     } else {
                         String::new()
                     }
@@ -516,7 +537,7 @@ pub fn execute(
                     text: format!(
                         "{}: {}: {error}",
                         i18n::tr!("permissions-failed"),
-                        entry.path.display()
+                        path_label(&entry.path)
                     ),
                 });
                 for pending in &entries[index + 1..] {
@@ -524,7 +545,7 @@ pub fn execute(
                         text: format!(
                             "{}: {}",
                             i18n::tr!("permissions-pending"),
-                            pending.path.display()
+                            path_label(&pending.path)
                         ),
                     });
                 }
@@ -538,6 +559,84 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn linux_names_roundtrip_without_utf8_and_control_characters_are_visible() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join(OsString::from_vec(b"file\n\x1b[2J\xff".to_vec()));
+        fs::write(&path, "test").unwrap();
+        let paths = roots(&BTreeMap::from([(
+            "paths".into(),
+            encode_paths(std::slice::from_ref(&path)),
+        )]))
+        .unwrap();
+        assert_eq!(paths, vec![path.clone()]);
+        assert!(path_label(&path).contains("\\n"));
+        assert!(!path_label(&path).chars().any(char::is_control));
+        assert_eq!(
+            scan(&paths, false, &AtomicBool::new(false))
+                .unwrap()
+                .entries[0]
+                .path,
+            path
+        );
+    }
+    #[test]
+    fn directory_default_access_rules_are_detected_and_preserved() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("directory");
+        fs::create_dir(&path).unwrap();
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let acl = [
+            2u8, 0, 0, 0, 1, 0, 7, 0, 255, 255, 255, 255, 4, 0, 5, 0, 255, 255, 255, 255, 32, 0, 0,
+            0, 255, 255, 255, 255,
+        ];
+        assert_eq!(
+            unsafe {
+                libc::setxattr(
+                    name.as_ptr(),
+                    c"system.posix_acl_default".as_ptr(),
+                    acl.as_ptr().cast(),
+                    acl.len(),
+                    0,
+                )
+            },
+            0
+        );
+        let before = entry(&path, &open(&path).unwrap()).unwrap();
+        assert!(before.default_acl);
+        apply(
+            &before,
+            PermissionChange {
+                mask: 0o007,
+                bits: 0,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(entry(&path, &open(&path).unwrap()).unwrap().default_acl);
+    }
+    #[test]
+    fn assigning_the_existing_owner_keeps_special_permissions() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("file");
+        fs::write(&path, "test").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o4600)).unwrap();
+        let before = entry(&path, &open(&path).unwrap()).unwrap();
+        assert!(
+            !apply(
+                &before,
+                PermissionChange {
+                    uid: Some(before.uid),
+                    gid: Some(before.gid),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+        );
+        assert_eq!(fs::metadata(path).unwrap().mode() & 0o7777, 0o4600);
+    }
     #[test]
     fn masks_preserve_untouched_and_special_bits() {
         let command = ManagementCommand {
@@ -625,7 +724,7 @@ mod tests {
             target: None,
             identity: BTreeMap::new(),
             values: BTreeMap::from([
-                ("paths".into(), serde_json::to_string(&[root]).unwrap()),
+                ("paths".into(), encode_paths(&[root.into()])),
                 ("recursive".into(), "true".into()),
                 ("files_initial".into(), "mmmmmmmmm".into()),
                 ("directories_initial".into(), "mmmmmmmmm".into()),

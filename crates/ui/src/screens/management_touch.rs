@@ -967,10 +967,18 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
             field_length += height;
         }
     }
-    let selected_range = form_model
+    let mut selected_range = form_model
         .and_then(|form| field_ranges.get(form.selected))
         .copied()
         .unwrap_or((0, 0));
+    if let Some(field) = form_model.and_then(|form| form.fields.get(form.selected))
+        && field.control == ManagementFormControl::Permissions
+    {
+        selected_range = (
+            selected_range.0 + 2 + field.selected_cell.unwrap_or(0) / 3,
+            1,
+        );
+    }
     let field_start = form_model
         .and_then(|form| form.field_scroll)
         .unwrap_or_else(|| {

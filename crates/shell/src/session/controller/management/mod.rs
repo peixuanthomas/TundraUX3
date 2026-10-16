@@ -1376,7 +1376,11 @@ impl ShellSession {
                 .map(|form| format!("choice:{}:{index}", form.instance));
         }
         if let Some(form) = &state.form {
-            if !form.fields.iter().any(|field| field.choices.is_empty()) {
+            if !form
+                .fields
+                .iter()
+                .any(|field| field.control == FieldControl::Text && field.choices.is_empty())
+            {
                 return None;
             }
             Some(format!("form:{}", form.instance))
@@ -1391,16 +1395,12 @@ impl ShellSession {
             return;
         }
         if let Some(form) = &mut state.form {
-            if form
-                .fields
-                .get(form.selected)
-                .is_none_or(|field| !field.choices.is_empty())
-            {
-                if let Some(index) = form
-                    .fields
-                    .iter()
-                    .position(|field| field.choices.is_empty())
-                {
+            if form.fields.get(form.selected).is_none_or(|field| {
+                field.control != FieldControl::Text || !field.choices.is_empty()
+            }) {
+                if let Some(index) = form.fields.iter().position(|field| {
+                    field.control == FieldControl::Text && field.choices.is_empty()
+                }) {
                     form.selected = index;
                 }
             }

@@ -176,7 +176,7 @@ impl ShellSession {
                 && !key.has_non_shift_modifier()
             {
                 if let Some(form) = &mut self.pages.management.management_state.form {
-                    toggle_management_check(&mut form.fields[form.selected], cell);
+                    toggle_management_check(form, form.selected, cell);
                 }
             }
             return;
@@ -689,10 +689,19 @@ impl ShellSession {
     }
 }
 
-pub(super) fn toggle_management_check(field: &mut ManagementField, cell: usize) {
+pub(super) fn toggle_management_check(form: &mut ManagementEditor, index: usize, cell: usize) {
+    let field = &mut form.fields[index];
     match field.control {
         FieldControl::Checkbox => field.value = (field.value != "true").to_string(),
         FieldControl::Permissions => {
+            // A cell switched back to its original value still applies to recursive children.
+            if let FormPurpose::Action(action, _) = &mut form.purpose
+                && let Some(initial) = action.values.get_mut(&format!("{}_initial", field.id))
+                && initial.len() == 9
+                && cell < 9
+            {
+                initial.replace_range(cell..cell + 1, "m");
+            }
             let mut bytes = field.value.as_bytes().to_vec();
             if let Some(value) = bytes.get_mut(cell) {
                 *value = if *value == b'1' { b'0' } else { b'1' };

@@ -1109,14 +1109,17 @@ impl ShellSession {
                     return;
                 }
                 self.close_explorer_popup();
-                let mut query = platform::management::ManagementQuery::new(
-                    platform::management::ManagementKind::FilePermissions,
-                );
-                query.options.insert(
-                    "paths".into(),
-                    serde_json::to_string(&paths).expect("file paths serialize"),
-                );
-                self.open_management_query(query);
+                #[cfg(target_os = "linux")]
+                {
+                    let mut query = platform::management::ManagementQuery::new(
+                        platform::management::ManagementKind::FilePermissions,
+                    );
+                    query.options.insert(
+                        "paths".into(),
+                        platform::management::file_permissions::encode_paths(&paths),
+                    );
+                    self.open_management_query(query);
+                }
             }
             ExplorerOverlayControl::ConflictChoice(choice) => {
                 let action = match choice {

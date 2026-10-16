@@ -303,6 +303,8 @@ impl ShellSession {
         }
     }
     pub(super) fn reset_management_form_view(&mut self) {
+        self.pages.management.management_state.choice_search.clear();
+        self.pages.management.management_state.permission_cell = 0;
         self.pages.management.management_state.form_field_scroll = None;
         self.pages.management.management_state.choice_field = None;
         self.pages.management.management_state.choice_scroll = 0;
@@ -720,11 +722,16 @@ impl ShellSession {
                     let cell = ui::management_permission_cells(field_view, area, skip)
                         .into_iter()
                         .find(|(_, area)| area.contains(position))
-                        .map(|(cell, _)| cell)
-                        .unwrap_or(0);
+                        .map(|(cell, _)| cell);
+                    if field_view.control == ui::ManagementFormControl::Permissions
+                        && cell.is_none()
+                    {
+                        return;
+                    }
+                    let cell = cell.unwrap_or(0);
                     if let Some(form) = &mut self.pages.management.management_state.form {
                         form.selected = *index;
-                        super::input::toggle_management_check(&mut form.fields[*index], cell);
+                        super::input::toggle_management_check(form, *index, cell);
                     }
                     self.pages.management.management_state.permission_cell = cell;
                     return;
