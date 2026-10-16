@@ -25,6 +25,10 @@ const COMMANDS: &[&str] = &[
     "users",
     "system-config",
     "operations",
+    "firewall",
+    "ssh",
+    "backups",
+    "scheduled-tasks",
     "logs",
     "debug",
     "cls",
@@ -534,6 +538,9 @@ fn next_words(words: &[String]) -> Vec<String> {
             if verb == "reload" {
                 flags.push("--reload-service".into());
             }
+        }
+        if group == "backups" && verb == "restore" {
+            flags.push("--allow-unvalidated".into());
         }
         if crate::management_command::is_draft(group, &verb) {
             flags.extend(strings(&["--apply", "--allow-unvalidated"]));

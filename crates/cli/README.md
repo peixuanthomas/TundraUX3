@@ -4,6 +4,8 @@
 
 `src/commands/` 按命令分组；参数解析、REPL 和程序入口留在 crate 根模块，Linux 管理连接使用共享的 platform 接口。
 
+运维命令包括 `firewall`（监听端口与放行规则）、`ssh`（生效设置、公钥和新连接确认）、`backups`（集中差异与恢复）和 `scheduled-tasks`（既有任务及持久 service/timer）。需要系统权限的只读查询也使用同一授权流程；查询及预览支持 JSON。
+
 | 用法 | 示例 |
 | --- | --- |
 | 外部终端 | `tundra-cli debug doctor` |
@@ -23,6 +25,6 @@ Linux 内建 Command Line 会继续管理脱离终端会话的后代进程；正
 - [日志查询、跟随和导出](../runtime-log/docs/logs.md)
 - [界面预览](../shell/docs/previews.md)
 
-运行 `cargo build --locked -p shell -p cli` 后再验证内嵌命令行。CLI 使用 Shell 提供的界面预览，不能把它描述为完全不依赖界面代码。普通帮助和 Command Line 提示使用英文。
+运行 `cargo build --locked -p shell -p cli` 后再验证内嵌命令行。CLI 使用 Shell 提供的界面预览，不能把它描述为完全不依赖界面代码。`firewall`、`ssh`、`backups`、`scheduled-tasks` 的帮助和参数提示使用当前语言，提供英文、简体中文资源；无语言快照时使用内置英文，帮助查询仍不读取配置。
 
 验证：`cargo test --locked -p cli`。

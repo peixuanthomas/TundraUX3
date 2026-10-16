@@ -12,6 +12,10 @@ fn formal_help_lists_operations_and_explains_authorization() {
         "users",
         "system-config",
         "operations",
+        "firewall",
+        "ssh",
+        "backups",
+        "scheduled-tasks",
     ] {
         let mut output = Vec::new();
         let mut errors = Vec::new();
@@ -49,6 +53,10 @@ fn secrets_and_missing_versions_are_rejected_before_running() {
             "1-2",
         ][..],
         &["packages", "install", "demo", "--run", "unsafe"][..],
+        &["firewall", "allow", "--port", "22", "--command", "unsafe"][..],
+        &["ssh", "configure", "--port", "0"][..],
+        &["backups", "restore"][..],
+        &["scheduled-tasks", "create", "--name", "test"][..],
     ] {
         let mut output = Vec::new();
         let mut errors = Vec::new();
@@ -181,6 +189,27 @@ mod linux {
                 .iter()
                 .any(|entry| entry[0] == "Disk bytes read")
         );
+    }
+    #[test]
+    fn listening_ports_json_reports_a_real_socket_without_modifying_the_firewall() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let result = successful_json(&[
+            "firewall",
+            "listeners",
+            "--filter",
+            &address,
+            "--json",
+            "--yes",
+            "--non-interactive",
+        ]);
+        assert_eq!(result["backend"], "Linux listening ports");
+        assert!(result["rows"].as_array().unwrap().iter().any(|row| {
+            row["cells"][2] == address
+                && row["cells"][3]
+                    .as_str()
+                    .is_some_and(|owner| owner.contains(&std::process::id().to_string()))
+        }));
     }
     #[test]
     fn nonexistent_operation_uses_failure_code_and_json_result() {

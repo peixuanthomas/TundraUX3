@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn new_management_commands_complete_verbs_and_only_supported_flags() {
+    for (line, expected) in [
+        ("/firewall ", "allow"),
+        ("/ssh ", "confirm"),
+        ("/backups ", "restore"),
+        ("/scheduled-tasks ", "run-now"),
+    ] {
+        assert!(
+            command_completions(line, line.len(), &[])
+                .1
+                .contains(&expected.to_string())
+        );
+    }
+    let line = "/firewall allow --";
+    let flags = command_completions(line, line.len(), &[]).1;
+    assert!(flags.contains(&"--port".into()));
+    assert!(!flags.contains(&"--command".into()));
+    assert!(!flags.contains(&"--decision".into()));
+    let line = "/backups restore --";
+    assert!(
+        command_completions(line, line.len(), &[])
+            .1
+            .contains(&"--allow-unvalidated".into())
+    );
+}
+
+#[test]
 fn large_candidate_lists_do_not_delay_each_typed_character() {
     let commands = system_candidates((0..100_000).map(|i| format!("command-{i:056}")).collect());
     let typo = "z".repeat(64);

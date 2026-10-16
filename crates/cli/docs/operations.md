@@ -14,12 +14,51 @@ Use `tundra-cli <group> help` for exact syntax. In the built-in Command Line, pr
 | `users` | `list`, `show`, `lookup`, `groups`, `shells`, `ssh-keys` | account, group, Shell, expiry and SSH-key commands |
 | `system-config` | `read`, `diff`, `check`, `history`, `preview-restore` | `apply`, `permissions`, `restore`, `reload` |
 | `operations` | `list`, `status` | `attach` reconnects to an existing task |
+| `firewall` | `list`, `show`, `listeners` | `allow`, `remove` |
+| `ssh` | `show`, `keys`, `status` | `configure`, `add-key`, `remove-key`, `confirm`, `cancel` |
+| `backups` | `list`, `show`, `preview-restore` | `restore` |
+| `scheduled-tasks` | `list`, `inspect`, `preview` | `create`, `pause`, `resume`, `run-now` |
 
 The command and exit-code tables are bilingual; detailed behavior below is in Chinese. Use `tundra-cli <group> help` for English syntax.
 
 查询支持 `--json`。文本列表第一列是可用于后续操作的准确 ID。JSON 模式下，标准输出只含结果，进度和原生工具输出写入标准错误。日志持续跟随使用 `logs follow --json` 输出 JSONL。
 
 `users set-groups 用户 --groups 用户组` 修改补充组；`users primary-group 用户 --primary-group 用户组` 将主组改为已有的本地组。仍作为任何账户主组使用的组不能删除。
+
+## Firewall, SSH, backups and schedules / 防火墙、SSH、备份与定时任务
+
+```text
+tundra-cli firewall listeners --json
+tundra-cli firewall list --json
+tundra-cli firewall allow --port 8000-8010 --protocol tcp --source 192.0.2.0/24 --yes
+tundra-cli firewall allow --port 8443 --zone public --duration both --yes
+tundra-cli firewall remove RULE_ID --yes
+tundra-cli ssh show alice --json
+tundra-cli ssh configure alice --port 2222 --open-firewall true --yes
+tundra-cli ssh confirm TRANSACTION_ID --yes --non-interactive
+tundra-cli backups list --json
+tundra-cli backups preview-restore BACKUP_ID --json
+tundra-cli backups restore BACKUP_ID --allow-unvalidated --yes
+tundra-cli scheduled-tasks list --json
+tundra-cli scheduled-tasks inspect TASK_ID --json
+tundra-cli scheduled-tasks preview --name daily-job --command '/usr/bin/true' --schedule daily --json
+tundra-cli scheduled-tasks create --name daily-job --command '/usr/bin/true' --schedule daily --yes --non-interactive
+tundra-cli scheduled-tasks pause TASK_ID --yes
+tundra-cli scheduled-tasks resume TASK_ID --yes
+tundra-cli scheduled-tasks run-now TASK_ID --yes
+```
+
+防火墙只操作已有 UFW/firewalld 的放行规则。UFW 同时修改保存规则与运行规则，停用时只保存；firewalld 使用 `--zone`，`--duration runtime` 只立即生效，`permanent` 只保存并在重载或重启后使用，`both` 分别更新两份配置。不会自动安装、启用或切换后端；同时运行时拒绝写入。端口列表显示当前网络命名空间的 TCP 监听与未连接 UDP socket，以及 IPv4/IPv6 地址和能够读取的进程。
+
+SSH `show`、`keys` 和 `configure` 可省略账户，此时使用启动程序的 Linux 账户。`configure` 的可选字段是 `--port`、`--password-authentication yes|no`、`--pubkey-authentication yes|no`、`--permit-root-login yes|prohibit-password|forced-commands-only|no` 和 `--open-firewall true|false`；未提供的字段保持界面读取的当前值。新增公钥使用 `add-key USER --public-key 'ssh-ed25519 ...'`，移除使用 `remove-key USER --fingerprint SHA256:...`。
+
+SSH 修改等待最多 120 秒。保留原命令运行，从另一个禁用连接共享的真实新 SSH 连接登录，再运行 `ssh confirm 事务ID`；`ssh status 事务ID` 查询，`ssh cancel 事务ID --yes` 取消。超时或原操作取消会恢复旧设置。确认必须由实际新连接发出，不信任用户填写的环境变量。可选防火墙同步只新增新端口，不删除旧端口。操作中的事务编号写入标准错误，JSON 结果保留 `transaction_id`。
+
+备份按修改操作分组，显示来源、文件、结果与差异；历史记录受系统权限保护，需要时进入授权。恢复前核对当前文件及受影响的运行状态，拒绝覆盖其他程序后来的修改。`--allow-unvalidated` 只用于明确接受没有可用配置检查器的恢复；检查失败仍会阻止恢复。旧的单文件配置备份也可在同一列表选择恢复。
+
+定时任务统一列出 systemd 系统/用户 timer、当前用户 crontab、`/etc/crontab`、`/etc/cron.d` 和系统周期目录。`inspect` 返回同一任务的详情，包含命令、运行账户、上次结果、下次时间；cron 本身不保存原定时执行的退出结果，手动执行的结果单独显示。新任务先 `preview` 查看 service/timer 定义，再 `create` 保存；使用系统时区，错过的触发时间不会补跑。暂停只阻止之后触发，不停止已经运行的命令。
+
+`firewall`、`ssh`、`backups` 与 `scheduled-tasks` 的只读查询可以加 `--authorize` 请求完整受保护信息。必须授权才能读取的防火墙/SSH/备份查询会自动进入同一授权流程。脚本可配合 `--authorization-fd`，缺少必要授权输入时沿用退出码 6。预览动作的原生文本保存在 JSON 的 `output` 数组，任务查询结果仍使用统一 `ManagementSnapshot` 格式。
 
 ## Confirmation and authorization / 确认与授权
 
@@ -56,7 +95,7 @@ tundra-cli system-config read /etc/ssh/sshd_config --json
 tundra-cli system-config diff /etc/ssh/sshd_config --input sshd.candidate
 tundra-cli system-config check /etc/ssh/sshd_config --input sshd.candidate
 tundra-cli system-config apply /etc/ssh/sshd_config --input sshd.candidate --expected-version VERSION --yes
-tundra-cli system-config reload /etc/ssh/sshd_config --service ssh.service --yes
+tundra-cli system-config reload /etc/ssh/sshd_config --service ssh.service --backup-id SAVED_BACKUP_ID --yes
 tundra-cli system-config history /etc/ssh/sshd_config --json
 tundra-cli system-config preview-restore /etc/ssh/sshd_config --backup-id ID --expected-version VERSION --json
 tundra-cli system-config restore /etc/ssh/sshd_config --backup-id ID --expected-version VERSION --yes
@@ -66,7 +105,7 @@ tundra-cli system-config restore /etc/ssh/sshd_config --backup-id ID --expected-
 
 `system-config check 文件` 检查当前内容；提供 `--input 候选文件` 时，在临时视图中检查候选，不提前替换正式文件。
 
-systemd 文件的 `system-config reload` 默认重新读取服务定义并检查相关服务；增加 `--reload-service` 才重载运行中的服务。SSH 使用已识别的 SSH 服务重载，两种操作都不会启动未运行的服务。
+systemd 文件的 `system-config reload` 默认重新读取服务定义并检查相关服务；增加 `--reload-service` 才重载运行中的服务。SSH 使用已识别的 SSH 服务重载，并要求传入保存时返回的 `document.backup_id`，以便重载失败时恢复原运行配置。两种操作都不会启动未运行的服务。
 
 ## Tasks and network confirmation / 后台任务与网络确认
 

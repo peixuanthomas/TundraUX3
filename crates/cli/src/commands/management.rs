@@ -1,7 +1,7 @@
 //! Public Linux operations. The parser selects fixed backend actions, never command strings.
 use crate::CliError;
 use platform::management::ManagementKind;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +35,10 @@ pub(crate) fn kind(group: &str) -> Option<ManagementKind> {
         "disks" => ManagementKind::Disks,
         "users" => ManagementKind::Users,
         "system-config" => ManagementKind::SystemConfig,
+        "firewall" => ManagementKind::Firewall,
+        "ssh" => ManagementKind::Ssh,
+        "backups" => ManagementKind::Backups,
+        "scheduled-tasks" => ManagementKind::ScheduledTasks,
         _ => return None,
     })
 }
@@ -142,6 +146,21 @@ pub(crate) fn verbs(group: &str) -> &'static [&'static str] {
             "reload",
         ],
         "operations" => &["list", "status", "attach"],
+        "firewall" => &["list", "show", "listeners", "allow", "remove"],
+        "ssh" => &[
+            "show",
+            "keys",
+            "configure",
+            "add-key",
+            "remove-key",
+            "confirm",
+            "cancel",
+            "status",
+        ],
+        "backups" => &["list", "show", "preview-restore", "restore"],
+        "scheduled-tasks" => &[
+            "list", "inspect", "preview", "create", "pause", "resume", "run-now",
+        ],
         _ => &[],
     }
 }
@@ -171,8 +190,10 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
         offset = 2;
     }
     if !verbs(group).contains(&verb.as_str()) {
-        return Err(invalid(format!(
-            "Unknown {group} operation {verb}; run {group} help"
+        return Err(invalid(i18n::tr!(
+            "cli-administration-unknown-operation",
+            group = group.to_string(),
+            verb = verb.to_string()
         )));
     }
     let mut result = ManagementRequest {
@@ -193,18 +214,36 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
         result.wait_seconds = 1;
     }
     let allowed = allowed_values(group, &result.verb);
+    let extended = matches!(group, "firewall" | "ssh" | "backups" | "scheduled-tasks");
+    let mut seen_options = BTreeSet::new();
     let mut index = offset;
     while index < args.len() {
         let arg = &args[index];
+        if extended && arg.starts_with("--") && !seen_options.insert(arg.clone()) {
+            return Err(invalid(i18n::tr!(
+                "cli-administration-duplicate-option",
+                arg = arg.to_string()
+            )));
+        }
         match arg.as_str() {
             "--json" => result.json = true,
             "--yes" => result.yes = true,
             "--non-interactive" => result.non_interactive = true,
+            "--authorize"
+                if matches!(group, "firewall" | "ssh" | "backups" | "scheduled-tasks")
+                    && allowed.contains(&"authorize") =>
+            {
+                result.values.insert("authorize".into(), "true".into());
+            }
             "--apply" if is_draft(group, &result.verb) => result.apply = true,
             "--reload-service" if group == "system-config" && result.verb == "reload" => {
                 result.values.insert("reload_service".into(), "true".into());
             }
-            "--allow-unvalidated" if group == "system-config" || is_draft(group, &result.verb) => {
+            "--allow-unvalidated"
+                if group == "system-config"
+                    || is_draft(group, &result.verb)
+                    || (group == "backups" && result.verb == "restore") =>
+            {
                 result
                     .values
                     .insert("allow_unvalidated".into(), "true".into());
@@ -213,23 +252,23 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
                 index += 1;
                 let value = args
                     .get(index)
-                    .ok_or_else(|| invalid("--wait needs seconds"))?;
+                    .ok_or_else(|| invalid(i18n::tr!("cli-administration-wait-needed")))?;
                 result.wait_seconds = value
                     .parse::<u64>()
                     .ok()
                     .filter(|seconds| *seconds <= 86400)
-                    .ok_or_else(|| invalid("--wait must be 0..86400 seconds"))?;
+                    .ok_or_else(|| invalid(i18n::tr!("cli-administration-wait-range")))?;
             }
             "--password-fd" | "--secret-fd" | "--authorization-fd" => {
                 index += 1;
                 let value = args
                     .get(index)
-                    .ok_or_else(|| invalid("Secret descriptor number is missing"))?;
+                    .ok_or_else(|| invalid(i18n::tr!("cli-administration-secret-fd-needed")))?;
                 let fd = value
                     .parse::<i32>()
                     .ok()
                     .filter(|fd| *fd >= 0)
-                    .ok_or_else(|| invalid("Secret descriptor must be a nonnegative integer"))?;
+                    .ok_or_else(|| invalid(i18n::tr!("cli-administration-secret-fd-invalid")))?;
                 if arg == "--authorization-fd" {
                     result.authorization_fd = Some(fd);
                 } else {
@@ -250,25 +289,42 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
                     key.as_str(),
                     "password" | "sudo_password" | "secret" | "content"
                 ) {
-                    return Err(invalid(
-                        "Passwords and configuration text cannot be command-line values; use --password-fd or --input",
-                    ));
+                    return Err(invalid(i18n::tr!("cli-administration-no-secret-values")));
                 }
                 if !allowed.contains(&key.as_str()) {
-                    return Err(invalid(format!(
-                        "Unsupported {group} {} option {arg}",
-                        result.verb
+                    return Err(invalid(i18n::tr!(
+                        "cli-administration-unsupported-group",
+                        group = group,
+                        operation = result.verb.clone(),
+                        option = arg.to_string()
                     )));
                 }
                 index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| invalid(format!("{arg} needs a value")))?;
+                let value = args.get(index).ok_or_else(|| {
+                    invalid(i18n::tr!(
+                        "cli-administration-value-needed",
+                        arg = arg.to_string()
+                    ))
+                })?;
+                if extended && value.starts_with("--") {
+                    return Err(invalid(i18n::tr!(
+                        "cli-administration-value-needed",
+                        arg = arg.to_string()
+                    )));
+                }
                 if result.values.insert(key, value.clone()).is_some() {
-                    return Err(invalid(format!("Duplicate option {arg}")));
+                    return Err(invalid(i18n::tr!(
+                        "cli-administration-duplicate-option",
+                        arg = arg.to_string()
+                    )));
                 }
             }
-            _ if arg.starts_with('-') => return Err(invalid(format!("Unsupported option {arg}"))),
+            _ if arg.starts_with('-') => {
+                return Err(invalid(i18n::tr!(
+                    "cli-administration-unsupported-option",
+                    arg = arg.to_string()
+                )));
+            }
             _ if result.target.is_none() => result.target = Some(arg.clone()),
             _ if group == "services"
                 && result.verb == "create-instance"
@@ -276,7 +332,12 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
             {
                 result.values.insert("instance".into(), arg.clone());
             }
-            _ => return Err(invalid(format!("Unexpected argument {arg}"))),
+            _ => {
+                return Err(invalid(i18n::tr!(
+                    "cli-administration-unexpected-argument",
+                    arg = arg.to_string()
+                )));
+            }
         }
         index += 1;
     }
@@ -299,6 +360,13 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
         "users" => !matches!(result.verb.as_str(), "list" | "groups" | "shells"),
         "system-config" => true,
         "operations" => result.verb != "list",
+        "firewall" => matches!(result.verb.as_str(), "show" | "remove"),
+        "ssh" => matches!(
+            result.verb.as_str(),
+            "confirm" | "cancel" | "status" | "add-key" | "remove-key"
+        ),
+        "backups" => result.verb != "list",
+        "scheduled-tasks" => !matches!(result.verb.as_str(), "list" | "preview" | "create"),
         _ => false,
     };
     if group == "network"
@@ -311,13 +379,17 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
         return Err(invalid("--decision must be keep or revert"));
     }
     if requires_target && result.target.is_none() {
-        return Err(invalid(format!(
-            "{} {} needs an exact target",
-            group, result.verb
+        return Err(invalid(i18n::tr!(
+            "cli-administration-target-needed",
+            group = group,
+            operation = result.verb.clone()
         )));
     }
-    if !requires_target && result.target.is_some() {
-        return Err(invalid("This operation does not take a target"));
+    if !requires_target
+        && result.target.is_some()
+        && !(group == "ssh" && matches!(result.verb.as_str(), "show" | "keys" | "configure"))
+    {
+        return Err(invalid(i18n::tr!("cli-administration-no-target")));
     }
     if group == "system-config"
         && matches!(result.verb.as_str(), "diff" | "apply")
@@ -339,10 +411,125 @@ pub(crate) fn parse_management(group: &str, args: &[String]) -> Result<Managemen
             "Saving a draft needs --expected-version from system-config read",
         ));
     }
+    for (key, choices) in match group {
+        "firewall" => vec![
+            ("protocol", vec!["tcp", "udp"]),
+            ("duration", vec!["runtime", "permanent", "both"]),
+        ],
+        "ssh" => vec![
+            ("password_authentication", vec!["yes", "no"]),
+            ("pubkey_authentication", vec!["yes", "no"]),
+            (
+                "permit_root_login",
+                vec!["yes", "prohibit-password", "forced-commands-only", "no"],
+            ),
+            ("open_firewall", vec!["true", "false"]),
+        ],
+        _ => Vec::new(),
+    } {
+        if result
+            .values
+            .get(key)
+            .is_some_and(|value| !choices.contains(&value.as_str()))
+        {
+            return Err(invalid(i18n::tr!(
+                "cli-administration-choice-needed",
+                option = key.replace('_', "-"),
+                choices = choices.join("|")
+            )));
+        }
+    }
+    let required_values = match (group, result.verb.as_str()) {
+        ("firewall", "allow") => &["port"][..],
+        ("ssh", "add-key") => &["public_key"][..],
+        ("ssh", "remove-key") => &["fingerprint"][..],
+        ("scheduled-tasks", "preview" | "create") => &["name", "command", "schedule"][..],
+        _ => &[],
+    };
+    for key in required_values {
+        if result
+            .values
+            .get(*key)
+            .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(invalid(i18n::tr!(
+                "cli-administration-required-option",
+                option = key.replace('_', "-"),
+                field = match *key {
+                    "port" => i18n::tr!("cli-administration-field-port"),
+                    "public_key" => i18n::tr!("cli-administration-field-public-key"),
+                    "fingerprint" => i18n::tr!("cli-administration-field-fingerprint"),
+                    "name" => i18n::tr!("cli-administration-field-name"),
+                    "command" => i18n::tr!("cli-administration-field-command"),
+                    "schedule" => i18n::tr!("cli-administration-field-schedule"),
+                    _ => key.to_string(),
+                }
+            )));
+        }
+    }
+    if matches!(group, "firewall" | "ssh") {
+        if let Some(port) = result.values.get("port") {
+            let pieces = port.split(['-', ':']).collect::<Vec<_>>();
+            let ports = pieces
+                .iter()
+                .map(|value| value.parse::<u16>().ok().filter(|port| *port > 0))
+                .collect::<Option<Vec<_>>>();
+            if ports.as_ref().is_none_or(|ports| {
+                ports.is_empty()
+                    || ports.len() > if group == "ssh" { 1 } else { 2 }
+                    || ports.len() == 2 && ports[0] > ports[1]
+            }) {
+                return Err(invalid(i18n::tr!("cli-administration-invalid-port")));
+            }
+        }
+    }
     Ok(ManagementCli::Run(result))
 }
 
 pub(crate) fn allowed_values(group: &str, verb: &str) -> Vec<&'static str> {
+    match group {
+        "firewall" => {
+            return match verb {
+                "list" | "listeners" => vec!["filter", "authorize"],
+                "show" => vec!["authorize"],
+                "allow" => vec!["protocol", "port", "source", "zone", "duration"],
+                _ => Vec::new(),
+            };
+        }
+        "ssh" => {
+            return match verb {
+                "show" | "keys" => vec!["authorize"],
+                "configure" => vec![
+                    "port",
+                    "password_authentication",
+                    "pubkey_authentication",
+                    "permit_root_login",
+                    "open_firewall",
+                ],
+                "add-key" => vec!["public_key"],
+                "remove-key" => vec!["fingerprint"],
+                _ => Vec::new(),
+            };
+        }
+        "backups" => {
+            return match verb {
+                "list" => vec!["filter", "authorize"],
+                "show" | "preview-restore" => vec!["authorize"],
+                _ => Vec::new(),
+            };
+        }
+        "scheduled-tasks" => {
+            return match verb {
+                "list" => vec!["filter", "authorize"],
+                "inspect" => vec!["authorize"],
+                "preview" | "create" => {
+                    vec!["name", "command", "working_directory", "schedule", "user"]
+                }
+                _ => Vec::new(),
+            };
+        }
+        _ => {}
+    }
     let mut common = vec!["filter"];
     match group {
         "services" => {
@@ -431,17 +618,19 @@ pub(crate) fn is_draft(group: &str, verb: &str) -> bool {
 pub(crate) fn help(output: &mut impl Write, group: &str) -> std::io::Result<()> {
     writeln!(
         output,
-        "Usage: tundra-cli {group} <operation> [target] [options]"
-    )?;
-    writeln!(output, "Operations: {}", verbs(group).join(", "))?;
-    writeln!(
-        output,
-        "--json  --yes  --non-interactive  --wait <0..86400 seconds> (default 900)"
+        "{}",
+        i18n::tr!("cli-administration-usage", group = group.to_string())
     )?;
     writeln!(
         output,
-        "--password-fd <fd> reads the operation password; --authorization-fd <fd> reads the sudo password. Secrets are never arguments."
+        "{}",
+        i18n::tr!(
+            "cli-administration-operations",
+            operations = verbs(group).join(", ")
+        )
     )?;
+    writeln!(output, "{}", i18n::tr!("cli-administration-options"))?;
+    writeln!(output, "{}", i18n::tr!("cli-administration-secret-help"))?;
     match group {
         "services" => writeln!(
             output,
@@ -469,18 +658,23 @@ pub(crate) fn help(output: &mut impl Write, group: &str) -> std::io::Result<()> 
         )?,
         "system-config" => writeln!(
             output,
-            "read FILE returns text/version/attributes; diff FILE --input CANDIDATE; check FILE [--input CANDIDATE] checks current or candidate content; apply FILE --input CANDIDATE --expected-version VERSION; permissions FILE --uid UID --gid GID --mode OCTAL --expected-version VERSION; history FILE; preview-restore/restore FILE --backup-id ID --expected-version VERSION; reload FILE --service UNIT [--scope system|user] [--reload-service]. For systemd, reload reads definitions by default; --reload-service also reloads the running service. --validator auto|sshd|systemd|fstab|sources; --allow-unvalidated is explicit. Applying checks the configuration; failed checks block save. Restore preserves a recovery entry."
+            "read FILE returns text/version/attributes; diff FILE --input CANDIDATE; check FILE [--input CANDIDATE] checks current or candidate content; apply FILE --input CANDIDATE --expected-version VERSION; permissions FILE --uid UID --gid GID --mode OCTAL --expected-version VERSION; history FILE; preview-restore/restore FILE --backup-id ID --expected-version VERSION; reload FILE --service UNIT [--scope system|user] [--reload-service]. SSH reload requires --backup-id ID returned by apply, so failed reload can recover the previous running configuration. For systemd, reload reads definitions by default; --reload-service also reloads the running service. --validator auto|sshd|systemd|fstab|sources; --allow-unvalidated is explicit. Applying checks the configuration; failed checks block save. Restore preserves a recovery entry."
         )?,
         "operations" => writeln!(
             output,
             "list displays recoverable IDs; status ID waits one second by default; attach ID reconnects without starting or repeating an operation. Timeout/disconnect returns status 7 with the task ID. Active package writes are never killed."
         )?,
+        "firewall" => writeln!(output, "{}", i18n::tr!("cli-administration-help-firewall"))?,
+        "ssh" => writeln!(output, "{}", i18n::tr!("cli-administration-help-ssh"))?,
+        "backups" => writeln!(output, "{}", i18n::tr!("cli-administration-help-backups"))?,
+        "scheduled-tasks" => writeln!(
+            output,
+            "{}",
+            i18n::tr!("cli-administration-help-scheduled-tasks")
+        )?,
         _ => {}
     }
-    writeln!(
-        output,
-        "Exit codes: 0 success; 1 failure/partial; 2 arguments; 3 permission; 4 unsupported; 5 busy/version conflict; 6 input needed; 7 unfinished/unknown; 130 cancelled."
-    )
+    writeln!(output, "{}", i18n::tr!("cli-administration-exit-codes"))
 }
 
 #[cfg(test)]
@@ -494,6 +688,29 @@ mod tests {
                 .map(|value| value.to_string())
                 .collect::<Vec<_>>(),
         )
+    }
+
+    #[test]
+    fn chinese_administration_help_keeps_native_option_values() {
+        let language = std::sync::Arc::new(i18n::LanguageSnapshotData {
+            code: "zh-CN".into(),
+            generation: 1,
+            current: vec![include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/management-cli-administration.ftl")).into()],
+            english: Vec::new(),
+        }.restore().unwrap());
+        i18n::with_snapshot(&language, || {
+            let mut output = Vec::new();
+            help(&mut output, "firewall").unwrap();
+            let output = String::from_utf8(output).unwrap();
+            assert!(output.contains("用法："));
+            assert!(output.contains("--duration runtime|permanent|both"));
+            assert!(
+                parse("firewall", &["allow", "--port", "0"])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("端口")
+            );
+        });
     }
     #[test]
     fn formal_commands_keep_secret_text_off_arguments_and_reject_arbitrary_flags() {
@@ -570,5 +787,49 @@ mod tests {
         );
         assert!(parse("network", &["confirm", "1-2", "--decision", "typo"]).is_err());
         assert!(parse("network", &["confirm", "1-2", "--decision", "revert"]).is_ok());
+    }
+    #[test]
+    fn new_management_commands_reject_unsupported_values_before_authorization() {
+        for (group, arguments) in [
+            ("firewall", vec!["allow", "--port", "65536"]),
+            ("firewall", vec!["allow", "--port", "90-80"]),
+            (
+                "firewall",
+                vec!["allow", "--port", "22", "--protocol", "icmp"],
+            ),
+            ("firewall", vec!["allow", "--port", "--yes"]),
+            ("firewall", vec!["allow", "--port", "22", "--yes", "--yes"]),
+            ("ssh", vec!["configure", "--open-firewall", "yes"]),
+            ("ssh", vec!["configure", "--permit-root-login", "never"]),
+            ("ssh", vec!["configure", "--port", "22-23"]),
+            ("ssh", vec!["confirm"]),
+            ("backups", vec!["restore", "1-2", "--command", "true"]),
+            ("scheduled-tasks", vec!["create", "--name", "demo"]),
+        ] {
+            assert!(parse(group, &arguments).is_err(), "{group} {arguments:?}");
+        }
+        for (group, arguments) in [
+            (
+                "firewall",
+                vec!["allow", "--port", "8000-8010", "--source", "192.0.2.0/24"],
+            ),
+            ("ssh", vec!["configure", "--port", "2222"]),
+            ("ssh", vec!["confirm", "1-2", "--yes", "--non-interactive"]),
+            ("backups", vec!["restore", "1-2", "--allow-unvalidated"]),
+            (
+                "scheduled-tasks",
+                vec![
+                    "preview",
+                    "--name",
+                    "demo",
+                    "--command",
+                    "echo demo",
+                    "--schedule",
+                    "daily",
+                ],
+            ),
+        ] {
+            assert!(parse(group, &arguments).is_ok(), "{group} {arguments:?}");
+        }
     }
 }

@@ -68,6 +68,7 @@ mod linux {
         snapshot: Option<ManagementSnapshot>,
         document: Option<ConfigDocument>,
         preview_diff: Option<String>,
+        output: Vec<String>,
         problem: Option<problem::OperationProblem>,
     }
     enum ClientEvent {
@@ -121,10 +122,30 @@ mod linux {
         if request.group == "operations" {
             return operations(request, &authority, stdout, stderr);
         }
-        let kind = kind(&request.group)
-            .ok_or_else(|| ManagementError::InvalidInput("Unknown management group".into()))?;
+        let kind = kind(&request.group).ok_or_else(|| {
+            ManagementError::InvalidInput(i18n::tr!("cli-administration-unknown-group").into())
+        })?;
         if kind == ManagementKind::SystemConfig {
             return configuration(request, &authority, stdout, stderr);
+        }
+        if kind == ManagementKind::Ssh
+            && matches!(request.verb.as_str(), "confirm" | "cancel" | "status")
+        {
+            return execute_and_print(
+                ManagementCommand {
+                    kind,
+                    action: format!("ssh_{}", request.verb),
+                    target: request.target.clone(),
+                    values: request.values.clone(),
+                    identity: BTreeMap::new(),
+                },
+                true,
+                request.verb != "status",
+                request,
+                &authority,
+                stdout,
+                stderr,
+            );
         }
         if kind == ManagementKind::Users && request.verb == "shells" {
             output_json_or_text(
@@ -140,6 +161,15 @@ mod linux {
             query.scope = "system".into();
         }
         query.filter = request.values.get("filter").cloned().unwrap_or_default();
+        if kind == ManagementKind::Firewall && request.verb == "listeners" {
+            query.scope = "listeners".into();
+        }
+        if matches!(
+            kind,
+            ManagementKind::Ssh | ManagementKind::Backups | ManagementKind::ScheduledTasks
+        ) {
+            query.target = request.target.clone();
+        }
         if kind == ManagementKind::Packages {
             query.scope = match request.verb.as_str() {
                 "search" | "install" => "search",
@@ -204,9 +234,16 @@ mod linux {
                 | ("network", "list" | "show" | "wifi-list")
                 | ("disks", "list" | "show" | "inodes")
                 | ("users", "list" | "show" | "groups" | "lookup")
+                | ("firewall", "list" | "show" | "listeners")
+                | ("ssh", "show" | "keys")
+                | ("backups", "list" | "show")
+                | ("scheduled-tasks", "list" | "inspect")
         );
         if pure_query {
-            let mut snapshot = platform::management::query(&query, &AtomicBool::new(false))?;
+            let (snapshot, code) = inventory(&query, request, &authority, stdout, stderr)?;
+            let Some(mut snapshot) = snapshot else {
+                return Ok(code);
+            };
             if let Some(target) = &request.target {
                 if request.verb != "search" {
                     snapshot.rows.retain(|row| row_matches(row, target));
@@ -222,7 +259,7 @@ mod linux {
             }
             if request.target.is_some() && request.verb != "search" && snapshot.rows.is_empty() {
                 return Err(ManagementError::Conflict(
-                    "The target is not in the current list; refresh and use its exact ID".into(),
+                    i18n::tr!("cli-administration-missing-target").into(),
                 ));
             }
             print_snapshot(&snapshot, request.json, stdout)?;
@@ -261,7 +298,10 @@ mod linux {
             };
             return execute_and_print(command, false, false, request, &authority, stdout, stderr);
         }
-        let mut snapshot = platform::management::query(&query, &AtomicBool::new(false))?;
+        let (snapshot, code) = inventory(&query, request, &authority, stdout, stderr)?;
+        let Some(mut snapshot) = snapshot else {
+            return Ok(code);
+        };
         let action_id = backend_action(kind, &request.verb, &snapshot.backend);
         let mut selected = select_action(&snapshot, request, &action_id)?;
         if kind == ManagementKind::Network && selected.0.disabled_reason.is_some() {
@@ -299,7 +339,7 @@ mod linux {
             request
                 .values
                 .iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "filter" | "scope"))
+                .filter(|(key, _)| !matches!(key.as_str(), "filter" | "scope" | "authorize"))
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
         if kind == ManagementKind::Services {
@@ -345,7 +385,10 @@ mod linux {
                     request,
                     stdout,
                     stderr,
-                    &format!("Missing --{}", field.id.replace('_', "-")),
+                    &i18n::tr!(
+                        "cli-administration-missing-option",
+                        option = field.id.replace('_', "-")
+                    ),
                 );
             }
         }
@@ -355,6 +398,13 @@ mod linux {
                 request.non_interactive.to_string(),
             );
             values.insert("yes".into(), request.yes.to_string());
+        }
+        if kind == ManagementKind::ScheduledTasks {
+            values.insert("yes".into(), request.yes.to_string());
+            values.insert(
+                "non_interactive".into(),
+                request.non_interactive.to_string(),
+            );
         }
         if kind == ManagementKind::Network && request.non_interactive && request.verb == "configure"
         {
@@ -423,6 +473,96 @@ mod linux {
             || row.identity.get("name").is_some_and(|name| name == target)
     }
 
+    fn inventory(
+        query: &ManagementQuery,
+        request: &ManagementRequest,
+        authority: &authorization::PrivilegeSession,
+        stdout: &mut impl Write,
+        stderr: &mut impl Write,
+    ) -> Result<(Option<ManagementSnapshot>, i32), ManagementError> {
+        let inspect_id = match query.kind {
+            ManagementKind::Firewall => Some("inspect_firewall"),
+            ManagementKind::Ssh => Some("inspect_ssh"),
+            ManagementKind::Backups => Some("inspect_backups"),
+            ManagementKind::ScheduledTasks => Some("inspect_scheduled_tasks"),
+            _ => None,
+        };
+        let explicit = request.values.get("authorize").map(String::as_str) == Some("true");
+        let result = platform::management::query(query, &AtomicBool::new(false));
+        let mut permission_needed = false;
+        let snapshot = match result {
+            Ok(snapshot) => snapshot,
+            Err(error)
+                if inspect_id.is_some()
+                    && unsafe { libc::geteuid() } != 0
+                    && (explicit || matches!(error, ManagementError::PermissionDenied(_))) =>
+            {
+                permission_needed = true;
+                ManagementSnapshot::default()
+            }
+            Err(error) => return Err(error),
+        };
+        let inspect =
+            inspect_id.and_then(|id| snapshot.actions.iter().find(|action| action.id == id));
+        let needs = explicit
+            || permission_needed
+            || (inspect.is_some()
+                && match query.kind {
+                    ManagementKind::Backups => true,
+                    ManagementKind::Ssh => !snapshot
+                        .rows
+                        .iter()
+                        .any(|row| row.identity.contains_key("uid")),
+                    ManagementKind::Firewall => snapshot.needs_authorization,
+                    _ => false,
+                });
+        if !needs {
+            return Ok((Some(snapshot), 0));
+        }
+        let Some(id) = inspect_id else {
+            return Ok((Some(snapshot), 0));
+        };
+        let mut values = inspect
+            .map(|action| action.values.clone())
+            .unwrap_or_default();
+        values.insert("scope".into(), query.scope.clone());
+        if query.kind == ManagementKind::Ssh {
+            if let Some(username) = &query.target {
+                values.insert("username".into(), username.clone());
+            }
+        }
+        let result = operate(
+            Some(ManagementCommand {
+                kind: query.kind,
+                action: id.into(),
+                target: None,
+                values,
+                identity: BTreeMap::new(),
+            }),
+            true,
+            None,
+            request,
+            authority,
+            stderr,
+        )?;
+        if result.code != 0 {
+            print_result(&result, request.json, stdout)?;
+            return Ok((None, result.code));
+        }
+        let mut snapshot = result.snapshot.ok_or_else(|| {
+            ManagementError::Failed(i18n::tr!("cli-administration-missing-inventory").into())
+        })?;
+        if !query.filter.is_empty() {
+            let needle = query.filter.to_lowercase();
+            snapshot.rows.retain(|row| {
+                row.cells
+                    .iter()
+                    .any(|cell| cell.to_lowercase().contains(&needle))
+            });
+        }
+        Ok((Some(snapshot), 0))
+    }
+
     fn backend_action(kind: ManagementKind, verb: &str, backend: &str) -> String {
         match kind {
             ManagementKind::Services => match verb {
@@ -459,6 +599,27 @@ mod linux {
             }
             .replace('-', "_"),
             ManagementKind::Disks if verb == "automatic-mount" => "auto_mount".into(),
+            ManagementKind::Firewall => match verb {
+                "allow" => "add_rule",
+                "remove" => "remove_rule",
+                _ => verb,
+            }
+            .into(),
+            ManagementKind::Ssh => match verb {
+                "configure" => "ssh_configure",
+                "add-key" => "user_ssh_add",
+                "remove-key" => "user_ssh_remove",
+                _ => verb,
+            }
+            .into(),
+            ManagementKind::Backups => verb.replace('-', "_"),
+            ManagementKind::ScheduledTasks => match verb {
+                "preview" => "preview_task",
+                "create" => "create_task",
+                "run-now" => "run_now",
+                _ => verb,
+            }
+            .into(),
             _ => verb.into(),
         }
     }
@@ -479,6 +640,8 @@ mod linux {
                 | "repair-dependencies"
                 | "check"
                 | "group-create"
+                | "allow"
+                | "preview"
         ) && !(request.group == "network" && request.verb == "check");
         if global {
             if let Some(action) = snapshot.actions.iter().find(|action| action.id == id) {
@@ -491,6 +654,9 @@ mod linux {
             .iter()
             .filter(|row| {
                 row_matches(row, target)
+                    || (request.group == "ssh"
+                        && target.is_empty()
+                        && row.identity.contains_key("uid"))
                     || (request.group == "network"
                         && request.verb == "wifi-connect"
                         && request
@@ -512,7 +678,7 @@ mod linux {
         }
         if rows.len() > 1 {
             return Err(ManagementError::Conflict(
-                "Several items match; choose an exact ID from the list".into(),
+                i18n::tr!("cli-administration-several-targets").into(),
             ));
         }
         if let Some(row) = rows.first() {
@@ -524,6 +690,15 @@ mod linux {
                     ));
                 }
                 return Ok((action.clone(), Some((*row).clone())));
+            }
+            if request.group == "backups" && id == "restore" {
+                if let Some(action) = row
+                    .actions
+                    .iter()
+                    .find(|action| action.id == "restore_legacy")
+                {
+                    return Ok((action.clone(), Some((*row).clone())));
+                }
             }
             // Explicit SSID on an interface also supports a hidden personal network.
             if request.group == "network"
@@ -553,7 +728,7 @@ mod linux {
             }
         }
         Err(ManagementError::Unavailable(
-            "This action is unavailable for the target; inspect its current details".into(),
+            i18n::tr!("cli-administration-unavailable-action").into(),
         ))
     }
 
@@ -604,7 +779,7 @@ mod linux {
                     request,
                     stdout,
                     stderr,
-                    "Review this change, then pass --yes",
+                    &i18n::tr!("cli-administration-review-needed"),
                 );
             }
             if !confirm_change(
@@ -940,7 +1115,9 @@ mod linux {
             ManagementError::Unavailable("Start management commands with tundra-cli".into())
         })?;
         let group = observer_group(&process)?;
+        let language = i18n::current_snapshot();
         let worker = spawn_observer(&group, move || {
+            let _language = i18n::enter_snapshot(language.clone());
             let callback = |event| {
                 let _ = send.send(ClientEvent::Event(event));
             };
@@ -970,7 +1147,7 @@ mod linux {
             {
                 result.code = 7;
                 result.state = "unfinished".into();
-                result.message = "Stopped waiting; the operation may still be running. Use operations attach with its ID.".into();
+                result.message = i18n::tr!("cli-administration-wait-stopped").into();
                 break;
             }
             match receive.recv_timeout(Duration::from_millis(30)) {
@@ -984,9 +1161,7 @@ mod linux {
                     OperationEvent::Transaction { id, .. } => result.transaction_id = Some(id),
                     OperationEvent::ConfigDocument { document } => result.document = Some(document),
                     OperationEvent::Output { text: message } => {
-                        if let Some(id) = message.strip_prefix("Network transaction: ") {
-                            result.transaction_id = Some(id.trim().into());
-                        }
+                        result.output.push(runtime_log::sanitize_text(&message));
                         let _ = writeln!(stderr, "{}", runtime_log::sanitize_text(&message));
                     }
                     OperationEvent::Progress { message, .. }
@@ -1081,7 +1256,19 @@ mod linux {
                         result.message = message;
                         break;
                     }
-                    OperationEvent::Started { kind, action, .. } => {
+                    OperationEvent::Started {
+                        kind,
+                        action,
+                        target,
+                    } => {
+                        if kind == ManagementKind::Ssh
+                            && matches!(
+                                action.as_str(),
+                                "ssh_confirm" | "ssh_cancel" | "ssh_status"
+                            )
+                        {
+                            result.transaction_id = target;
+                        }
                         config_check = kind == ManagementKind::SystemConfig && action == "check";
                         result.kind = Some(kind);
                         result.action = action;
@@ -1283,7 +1470,7 @@ mod linux {
         if json {
             output_json_or_text(
                 true,
-                &serde_json::json!({"status":result.state,"exit_code":result.code,"operation_id":result.operation_id,"transaction_id":result.transaction_id,"kind":result.kind,"action":result.action,"message":result.message,"problem":result.problem,"snapshot":result.snapshot,"document":result.document,"diff":result.preview_diff}),
+                &serde_json::json!({"status":result.state,"exit_code":result.code,"operation_id":result.operation_id,"transaction_id":result.transaction_id,"kind":result.kind,"action":result.action,"message":result.message,"problem":result.problem,"snapshot":result.snapshot,"document":result.document,"diff":result.preview_diff,"output":result.output}),
                 stdout,
             )
         } else {
@@ -1296,6 +1483,11 @@ mod linux {
             if let Some(difference) = &result.preview_diff {
                 writeln!(stdout, "{difference}").map_err(failure)?;
             }
+            if matches!(result.action.as_str(), "preview_task" | "preview_restore") {
+                for output in &result.output {
+                    writeln!(stdout, "{output}").map_err(failure)?;
+                }
+            }
             writeln!(stdout, "{}", runtime_log::sanitize_text(&result.message)).map_err(failure)?;
             if result.code == 7 {
                 if let Some(id) = &result.operation_id {
@@ -1303,7 +1495,16 @@ mod linux {
                 }
             }
             if let Some(id) = &result.transaction_id {
-                writeln!(stdout, "network_transaction={id}").map_err(failure)?;
+                writeln!(
+                    stdout,
+                    "{}={id}",
+                    if result.kind == Some(ManagementKind::Ssh) {
+                        "ssh_transaction"
+                    } else {
+                        "network_transaction"
+                    }
+                )
+                .map_err(failure)?;
             }
             Ok(())
         }
@@ -1405,7 +1606,11 @@ mod linux {
         stderr: &mut impl Write,
         message: &str,
     ) -> Result<i32, ManagementError> {
-        let _ = writeln!(stderr, "{message}. Supply the required input and retry.");
+        let _ = writeln!(
+            stderr,
+            "{}",
+            i18n::tr!("cli-administration-input-required", message = message)
+        );
         if request.json {
             output_json_or_text(
                 true,
@@ -1419,8 +1624,7 @@ mod linux {
     fn read_line(prompt: &str, stderr: &mut impl Write) -> Result<String, ManagementError> {
         if !std::io::stdin().is_terminal() {
             return Err(ManagementError::InvalidInput(
-                "Interactive input needs a terminal; use --non-interactive and explicit options"
-                    .into(),
+                i18n::tr!("cli-administration-terminal-needed").into(),
             ));
         }
         write!(stderr, "{prompt}: ").map_err(failure)?;
@@ -1431,7 +1635,11 @@ mod linux {
     }
     fn confirm_change(prompt: &str, stderr: &mut impl Write) -> Result<bool, ManagementError> {
         Ok(matches!(
-            read_line(&format!("{prompt}. Continue? [y/N]"), stderr)?.as_str(),
+            read_line(
+                &i18n::tr!("cli-administration-continue", prompt = prompt),
+                stderr
+            )?
+            .as_str(),
             "y" | "Y" | "yes"
         ))
     }
@@ -1541,6 +1749,95 @@ mod linux {
     #[cfg(test)]
     mod tests {
         use super::*;
+        fn request(group: &str, arguments: &[&str]) -> ManagementRequest {
+            let ManagementCli::Run(request) = crate::management_command::parse_management(
+                group,
+                &arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap() else {
+                panic!("expected request");
+            };
+            request
+        }
+        #[test]
+        fn new_actions_keep_backend_ids_default_account_and_legacy_restore() {
+            for (kind, verb, expected) in [
+                (ManagementKind::Firewall, "allow", "add_rule"),
+                (ManagementKind::Firewall, "remove", "remove_rule"),
+                (ManagementKind::Ssh, "configure", "ssh_configure"),
+                (ManagementKind::ScheduledTasks, "preview", "preview_task"),
+                (ManagementKind::ScheduledTasks, "run-now", "run_now"),
+                (
+                    ManagementKind::Backups,
+                    "preview-restore",
+                    "preview_restore",
+                ),
+            ] {
+                assert_eq!(backend_action(kind, verb, ""), expected);
+            }
+            let ssh = ManagementSnapshot {
+                rows: vec![ManagementRow {
+                    id: "alice".into(),
+                    identity: BTreeMap::from([("uid".into(), "1000".into())]),
+                    actions: vec![ManagementAction {
+                        id: "ssh_configure".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let (_, selected) = select_action(
+                &ssh,
+                &request("ssh", &["configure", "--port", "2222"]),
+                "ssh_configure",
+            )
+            .unwrap();
+            assert_eq!(selected.unwrap().id, "alice");
+            let backups = ManagementSnapshot {
+                rows: vec![ManagementRow {
+                    id: "1-2".into(),
+                    actions: vec![ManagementAction {
+                        id: "restore_legacy".into(),
+                        values: BTreeMap::from([("expected_version".into(), "version".into())]),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let (action, _) = select_action(
+                &backups,
+                &request("backups", &["restore", "1-2"]),
+                "restore",
+            )
+            .unwrap();
+            assert_eq!(action.id, "restore_legacy");
+            assert_eq!(action.values["expected_version"], "version");
+        }
+        #[test]
+        fn previews_keep_generated_text_in_json_and_text_results() {
+            let result = ResultData {
+                kind: Some(ManagementKind::ScheduledTasks),
+                action: "preview_task".into(),
+                output: vec!["[Timer]\nOnCalendar=daily".into()],
+                ..Default::default()
+            };
+            let mut output = Vec::new();
+            print_result(&result, true, &mut output).unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+            assert_eq!(json["output"][0], "[Timer]\nOnCalendar=daily");
+            output.clear();
+            print_result(&result, false, &mut output).unwrap();
+            assert!(
+                String::from_utf8(output)
+                    .unwrap()
+                    .contains("OnCalendar=daily")
+            );
+        }
         #[test]
         fn explicit_wifi_password_selects_replacement_and_open_networks_reject_it() {
             let ManagementCli::Run(mut request) = crate::management_command::parse_management(

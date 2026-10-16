@@ -208,7 +208,7 @@ where
 
     match command.as_str() {
         "services" | "processes" | "packages" | "network" | "disks" | "users" | "system-config"
-        | "operations" => {
+        | "operations" | "firewall" | "ssh" | "backups" | "scheduled-tasks" => {
             crate::management_command::parse_management(&command, &args).map(CliCommand::Management)
         }
         "launcher" => crate::launcher_command::parse_launcher(&args).map(CliCommand::Launcher),

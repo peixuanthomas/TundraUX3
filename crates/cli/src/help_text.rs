@@ -2,10 +2,7 @@ use std::io::Write;
 
 pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
     writeln!(output, "TundraUX3 CLI")?;
-    writeln!(
-        output,
-        "Usage: tundra-cli <config|launcher|services|processes|packages|network|disks|users|system-config|operations|logs|debug|cls|new|repl|help>"
-    )?;
+    writeln!(output, "{}", i18n::tr!("cli-administration-root-usage"))?;
     writeln!(
         output,
         "  cls     Clear terminal history and screen, then move the cursor home"

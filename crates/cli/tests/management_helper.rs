@@ -113,7 +113,7 @@ impl Fixture {
         assert!(
             cmdline
                 .split(|byte| *byte == 0)
-                .any(|argument| argument == b"__system-helper")
+                .any(|argument| matches!(argument, b"__system-helper" | b"__system-helper-bound"))
         );
         let sockets = fs::read_to_string("/proc/net/unix").unwrap();
         let inode = sockets
@@ -204,6 +204,61 @@ fn read_until_finished(stream: UnixStream) -> Vec<OperationRecord> {
         }
         assert!(records.len() < 16);
     }
+}
+
+#[test]
+#[ignore = "requires an ordinary Linux user and pidfd-capable kernel"]
+fn ordinary_user_helper_preserves_custom_language_without_locale_file_access() {
+    let actor = unsafe { getuid() };
+    assert_ne!(actor, 0);
+    let mut fixture = Fixture::new();
+    let language = i18n::LanguageSnapshotData {
+        code: "zh-CN".into(),
+        generation: 7,
+        current: vec!["platform-backups-invalid-id = 自定义备份编号错误".into()],
+        english: Vec::new(),
+    };
+    let command = ManagementCommand {
+        kind: ManagementKind::Backups,
+        action: "preview_restore".into(),
+        target: Some("invalid-id".into()),
+        values: [(
+            "__tundra_language".into(),
+            serde_json::to_string(&language).unwrap(),
+        )]
+        .into(),
+        identity: Default::default(),
+    };
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
+        .args(["__system-helper", &actor.to_string()])
+        .env("TMPDIR", &fixture.directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    serde_json::to_writer(&mut input, &command).unwrap();
+    input.write_all(b"\n").unwrap();
+    drop(input);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ready: HelperReady = serde_json::from_slice(&output.stdout).unwrap();
+    let stream = helper::connect(&ready.socket, actor).unwrap();
+    fixture.identify_helper(&stream, &ready, actor);
+    let records = read_until_finished(stream);
+    fixture.completed = true;
+    assert!(records.iter().any(|record| matches!(&record.event,
+        OperationEvent::Failed { message } if message == "自定义备份编号错误")));
+    assert!(
+        !serde_json::to_string(&records)
+            .unwrap()
+            .contains("__tundra_language")
+    );
 }
 
 #[test]
@@ -451,13 +506,24 @@ fn private_authorization_session_reuses_authority_and_exits_on_revoke() {
 
 #[test]
 fn ordinary_process_cannot_create_a_privilege_session_or_use_plain_pipes() {
-    let output = Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
-        .args(["__privilege-session", &unsafe { getuid() }.to_string()])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    let actor = unsafe { getuid() }.to_string();
+    for arguments in [
+        vec!["__privilege-session".into(), actor.clone()],
+        vec![
+            "__system-helper-bound".into(),
+            actor.clone(),
+            std::process::id().to_string(),
+            "1".into(),
+        ],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_tundra-cli"))
+            .args(arguments)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
 }
 
 #[test]
