@@ -289,3 +289,112 @@ esac
         drop(server);
     }
 }
+
+pub(in crate::management::ssh) fn prepare_systemd_change(
+    id: &str,
+    port: u16,
+    deadline: bool,
+) -> u64 {
+    let flag = AtomicBool::new(false);
+    prepare_root().unwrap();
+    let service = discover(&flag).unwrap();
+    assert!(service.reload_reason.is_none(), "{service:?}");
+    let before = system_config::read(Path::new(MAIN)).unwrap();
+    let after = rewrite(&before.content, true, port, "no", "yes", "yes");
+    let mut files = vec![Change {
+        before,
+        after,
+        after_existed: true,
+    }];
+    if service.socket {
+        files.push(Change {
+            before: system_config::read(Path::new(SOCKET_DROPIN)).unwrap(),
+            after: socket_content(&service.socket_listen, port).unwrap(),
+            after_existed: true,
+        });
+    }
+    let paths = files
+        .iter()
+        .map(|file| file.before.path.clone())
+        .collect::<Vec<_>>();
+    let session = super::super::super::config_backups::begin("ssh", &paths).unwrap();
+    session.set_payload(serde_json::json!({"transaction_id":id,"backup_id":session.id(),"firewall_observed":true,"firewall_restore":{"add":[],"remove":[]}})).unwrap();
+    let directory = Path::new(ROOT).join(id);
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&directory)
+        .unwrap();
+    let owner_pid = std::process::id();
+    let mut journal = Journal {
+        actor_uid: 0,
+        owner_pid,
+        owner_start_ticks: connection::start_ticks(owner_pid).unwrap(),
+        boot_id: boot_id().unwrap(),
+        state: State::Applying,
+        deadline: now() + 120,
+        applied_ticks: 0,
+        backup_id: session.id().into(),
+        rollback_backup_id: None,
+        plan: Plan {
+            service,
+            files,
+            ports: vec![port],
+            key_command: None,
+            backup_to_restore: None,
+            seed_backup: None,
+            remove_firewall: Vec::new(),
+            add_firewall: Vec::new(),
+        },
+        firewall: Vec::new(),
+        result: String::new(),
+    };
+    write(&directory, &journal).unwrap();
+    for file in &journal.plan.files {
+        system_config::install_reviewed(&file.before.path, &file.before.version, &file.after)
+            .unwrap();
+    }
+    load(&journal.plan.service, &flag).unwrap();
+    verify_plan(&journal.plan, &flag).unwrap();
+    journal.applied_ticks = connection::ticks().unwrap();
+    journal.deadline = now() + if deadline { 1 } else { 120 };
+    journal.state = State::AwaitingConfirmation;
+    session
+        .finish("awaiting SSH connection confirmation")
+        .unwrap();
+    write(&directory, &journal).unwrap();
+    journal.applied_ticks
+}
+
+pub(in crate::management::ssh) fn restore_systemd_change(id: &str, deadline: bool) {
+    if deadline {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .env("TUNDRA_SSH_RECOVERY_ID", id)
+            .args([
+                "management::ssh::transaction::real_tests::real_recovery_probe",
+                "--exact",
+                "--ignored",
+                "--nocapture",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    } else {
+        let pid = std::process::id();
+        let context = ExecutionContext {
+            actor_uid: 0,
+            helper_path: std::env::current_exe().unwrap(),
+            caller_pid: pid,
+            caller_start_ticks: connection::start_ticks(pid).unwrap(),
+        };
+        confirm(id, &context, false, &AtomicBool::new(false)).unwrap();
+    }
+    assert_eq!(
+        read(&Path::new(ROOT).join(id)).unwrap().state,
+        State::Restored
+    );
+}

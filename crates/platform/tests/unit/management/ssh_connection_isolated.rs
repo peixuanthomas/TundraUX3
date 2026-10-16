@@ -369,3 +369,6 @@ fn real_isolated_ssh_connections() {
         temp.path(),
     );
 }
+
+#[path = "ssh_systemd_isolated.rs"]
+mod systemd_tests;

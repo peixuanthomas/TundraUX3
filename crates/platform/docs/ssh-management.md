@@ -54,6 +54,15 @@ bash scripts/tests/firewall-isolated.sh /path/to/platform-test-binary \
   /private/firewall-package-root ssh /private/openssh-package-root
 ```
 
-恢复测试的 systemctl 返回值来自私有挂载目录中的固定测试程序，真实 sshd 进程和文件恢复均实际运行。实际 systemd unit 的 Restart / KillMode 行为、操作系统授权窗口以及真正整机重启恢复，仍需要可丢弃的 Linux 测试主机验收。测试不会修改开发主机的真实 SSH 或防火墙。
+上述回退测试的 systemctl 返回值来自私有挂载目录中的固定测试程序，真实 sshd 进程和文件恢复均实际运行。
+
+`real_systemd_ssh_service_and_socket` 进一步使用真正的私有 systemd PID1、`ssh.service` 和 `ssh.socket`，验证 `KillMode=process`、`Accept=no` 和生产加载/恢复函数。普通服务实际执行 SIGHUP，socket 实际执行 systemctl 停止/启动；两种方式都检查旧连接继续执行命令、旧连接共享通道不能确认、新目标端口的新连接通过，以及取消和独立超时回退后的原端口与旧会话。普通服务的主进程编号保持，socket 方式的主进程编号改变。该用例在 WSL 通过四种组合，超时场景使用一秒测试期限触发同一个恢复函数。
+
+```sh
+bash scripts/tests/isolated-systemd.sh /path/to/platform-test-binary \
+  0 ssh /private/openssh-package-root
+```
+
+脚本保留原定时任务模式。SSH 模式隔离挂载、网络、进程、cgroup、`/etc`、`/root`、`/run` 和 `/var/lib`，只生成临时账户与 shadow，不读取宿主 shadow；所有 systemctl 操作都连接私有 PID1。操作系统授权窗口和真正整机重启恢复仍需要对应 Linux 主机验收。测试不会修改开发主机的真实 SSH 或防火墙。
 
 参考：[OpenSSH sshd](https://man.openbsd.org/sshd.8)、[sshd_config](https://man.openbsd.org/sshd_config.5)。
