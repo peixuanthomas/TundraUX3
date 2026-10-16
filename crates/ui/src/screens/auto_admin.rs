@@ -81,15 +81,12 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
     } else {
         1
     };
-    let stop_row = model.can_stop
-        && !model.confirming
-        && !model.finished
-        && !stopping
-        && content_width
-            < (crate::components::terminal_width(&i18n::tr!("aa-screen-keyboard")) as u16 + 2) * 2
-                + 2;
     let stacked_warning = stopping && content_width < 36;
-    let action_height = if stop_row || stacked_warning { 2 } else { 1 };
+    let action_height = if stacked_warning {
+        2
+    } else {
+        u16::from(model.confirming || model.finished || model.can_stop || stopping)
+    };
     let lines = |text: &str| {
         crate::management_wrapped_lines(text, content_width)
             .len()
@@ -181,21 +178,12 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
         Constraint::Length(button_height),
     ])
     .split(inner);
-    let count = if model.confirming || stopping {
-        2
-    } else if model.finished {
-        1
-    } else if model.can_stop {
-        2
-    } else {
-        1
-    };
+    let count = if model.confirming || stopping { 2 } else { 1 };
     let button_gap = if inner.width >= 40 { 2 } else { 0 };
-    let row_count = if stop_row { 1 } else { count };
-    let button_width = inner.width.saturating_sub(button_gap * (row_count - 1)) / row_count;
+    let button_width = inner.width.saturating_sub(button_gap * (count - 1)) / count;
     let button_areas = Layout::horizontal(vec![
         Constraint::Length(button_width.min(34));
-        row_count as usize
+        count as usize
     ])
     .flex(Flex::Center)
     .spacing(button_gap)
@@ -204,26 +192,27 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
         ..areas[6]
     });
     let mut buttons = std::array::from_fn(|i| button_areas.get(i).copied().unwrap_or_default());
-    if stop_row || stacked_warning {
-        let action_width = inner.width.min(if stopping { 24 } else { 18 });
+    if !model.confirming && !model.finished && !stopping {
+        buttons[1] = if model.can_stop {
+            buttons[0]
+        } else {
+            Rect::default()
+        };
+        buttons[0] = Rect::default();
+    }
+    if stacked_warning {
+        let action_width = inner.width.min(24);
         let area = Rect::new(
             inner.x + inner.width.saturating_sub(action_width) / 2,
             areas[6].y,
             action_width,
             1.min(areas[6].height),
         );
-        if stop_row {
-            buttons[1] = Rect {
-                y: area.y + u16::from(areas[6].height > 1),
-                ..area
-            };
-        } else {
-            buttons[0] = area;
-            buttons[1] = Rect {
-                y: area.y + u16::from(areas[6].height > 1),
-                ..area
-            };
-        }
+        buttons[0] = area;
+        buttons[1] = Rect {
+            y: area.y + u16::from(areas[6].height > 1),
+            ..area
+        };
     }
     (
         AutoAdminLayout {
@@ -289,15 +278,15 @@ pub fn render_auto_admin(
 
 pub fn render_auto_admin_in(
     frame: &mut Frame<'_>,
-    bounds: Rect,
+    _bounds: Rect,
     main: Rect,
     model: &AutoAdminViewModel,
     context: &RenderContext,
 ) {
     let (layout, warning) = authorization_layout(main, model);
-    super::auto_admin_preview::render_auto_admin_frame(
+    super::auto_admin_preview::render_auto_admin_frame_in_area(
         frame,
-        bounds,
+        main,
         &layout,
         warning,
         if model.stop == AutoAdminStopState::Warning {
@@ -369,11 +358,7 @@ pub(super) fn render_auto_admin_contents(
     } else if model.finished {
         vec![("aa.close", i18n::tr!("aa-close"), true)]
     } else {
-        let mut labels = vec![(
-            "aa.keyboard",
-            i18n::tr!("aa-screen-keyboard"),
-            model.button_focus == Some(0),
-        )];
+        let mut labels = vec![];
         if model.can_stop {
             labels.push((
                 "aa.stop",
@@ -384,12 +369,17 @@ pub(super) fn render_auto_admin_contents(
         labels
     };
     let theme = context.compatibility_theme();
-    for ((id, label, focused), area) in labels.into_iter().zip(layout.buttons) {
+    let first = usize::from(
+        !model.confirming && !model.finished && model.stop != AutoAdminStopState::Warning,
+    );
+    for ((id, label, focused), area) in labels
+        .into_iter()
+        .zip(layout.buttons.into_iter().skip(first))
+    {
         let mut button = Button::new(id, label);
         button.set_disabled(!match id {
             "aa.kill" => model.can_kill,
             "aa.stop" => model.stop == AutoAdminStopState::None,
-            "aa.keyboard" => model.stop == AutoAdminStopState::None,
             _ => true,
         });
         button.set_focused(focused);

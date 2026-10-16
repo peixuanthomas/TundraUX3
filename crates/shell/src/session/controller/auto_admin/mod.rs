@@ -426,10 +426,12 @@ impl ShellSession {
         if self.auto_admin.job.as_ref()?.interaction_phase() != phase {
             return None;
         }
+        let area =
+            ui::auto_admin_layout_in(self.auto_admin_available_area(), &self.auto_admin_model()?)
+                .buttons[index];
         self.button_regions
             .iter()
-            .filter(|region| region.id.as_str().starts_with("aa."))
-            .nth(index)
+            .find(|region| region.id.as_str().starts_with("aa.") && region.area == area)
             .cloned()
     }
     fn auto_admin_model(&self) -> Option<ui::AutoAdminViewModel> {

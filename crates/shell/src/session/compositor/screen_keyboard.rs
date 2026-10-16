@@ -10,51 +10,53 @@ impl ScreenCompositor {
         state: &ShellSession,
         context: &RenderContext,
     ) {
-        if let Some(area) = state.keyboard_launcher_area() {
-            ui::components::Button::new(
-                "input.keyboard",
-                if state.input_keyboard_open() {
-                    i18n::tr!("screen-keyboard-hide")
-                } else {
-                    i18n::tr!("screen-keyboard-show")
-                },
-            )
-            .render_borderless_frame(frame, area, &context.compatibility_theme());
-        }
-        if !state.input_keyboard_open() && state.screen_keyboard.visibility == 0 {
+        let Some(launcher) = state.keyboard_launcher_area() else {
             return;
-        }
+        };
         let layout = state.input_keyboard_layout();
         let mut keyboard_context = context.clone();
         if let Some(buttons) = &mut keyboard_context.buttons {
             buttons.keyboard_focus_visible = false;
         }
-        ui::render_screen_keyboard_panel(
-            frame,
-            &layout,
-            &ScreenKeyboardViewModel {
-                text: "",
-                focus: ui::ScreenKeyboardAction::ToggleKeyboard,
-                modifiers: state.screen_keyboard.modifiers,
-                physical_pressed: &state.screen_keyboard.physical.pressed_actions(),
-                last_key: "",
-                message: "",
-            },
-            &keyboard_context,
-        );
-        if !layout.usable {
-            let area = if let Some(model) = state.auto_admin_view() {
-                ui::auto_admin_layout_in(state.auto_admin_available_area(), &model).input
-            } else {
-                let bounds = Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1);
-                let (_, mut area) = state
-                    .command_line_keyboard_layout(ui::ShellFrameLayout::new(bounds, None, context));
-                area.width = area.width.saturating_sub(30);
-                area
-            };
-            let message = i18n::tr!("screen-keyboard-input-small");
-            frame.render_widget(ratatui::widgets::Paragraph::new(message), area);
+        if state.input_keyboard_open() || state.screen_keyboard.visibility > 0 {
+            ui::render_screen_keyboard_panel(
+                frame,
+                &layout,
+                &ScreenKeyboardViewModel {
+                    text: "",
+                    focus: ui::ScreenKeyboardAction::ToggleKeyboard,
+                    modifiers: state.screen_keyboard.modifiers,
+                    physical_pressed: &state.screen_keyboard.physical.pressed_actions(),
+                    last_key: "",
+                    message: "",
+                },
+                &keyboard_context,
+            );
+            if !layout.usable {
+                frame.render_widget(ratatui::widgets::Clear, layout.hint);
+                frame.render_widget(
+                    Paragraph::new(i18n::tr!("screen-keyboard-input-small"))
+                        .wrap(ratatui::widgets::Wrap { trim: false })
+                        .style(context.compatibility_theme().body_style()),
+                    layout.hint,
+                );
+            }
         }
+        let mut button = ui::components::Button::new(
+            "input.keyboard",
+            if state.input_keyboard_open() {
+                i18n::tr!("screen-keyboard-hide")
+            } else {
+                i18n::tr!("screen-keyboard-show")
+            },
+        );
+        button.set_focused(
+            state
+                .auto_admin_view()
+                .is_some_and(|model| model.button_focus == Some(0)),
+        );
+        frame.render_widget(ratatui::widgets::Clear, launcher);
+        button.render_borderless_frame(frame, launcher, &context.compatibility_theme());
     }
 
     pub(crate) fn keyboard_demo_layout(

@@ -9,6 +9,16 @@ impl ShellSession {
         &self,
         point: CellPosition,
     ) -> Option<ui::components::ButtonRegion> {
+        if let Some(area) = self
+            .keyboard_launcher_area()
+            .filter(|area| rect_contains(*area, point))
+        {
+            return Some(ui::components::ButtonRegion {
+                id: "input.keyboard".into(),
+                area,
+                disabled: false,
+            });
+        }
         if self.screen_keyboard.visibility > 0 {
             if let Some(button) = self
                 .input_keyboard_layout()

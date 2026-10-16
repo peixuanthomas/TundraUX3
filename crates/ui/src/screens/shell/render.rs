@@ -156,7 +156,9 @@ pub fn render_shell_chrome_with_status_focus(
     context: &RenderContext,
     status_focused: bool,
 ) {
-    if layout.is_compact() {
+    if layout.is_compact()
+        || matches!(layout.shell, ShellLayout::Full { top, .. } if top.height < 3)
+    {
         if layout.bounds.is_empty() {
             return;
         }
@@ -178,7 +180,8 @@ pub fn render_shell_chrome_with_status_focus(
             )),
             line,
         );
-        if let Some(area) = layout.back_button {
+        if let Some(mut area) = layout.back_button {
+            area.height = 1;
             let mut button = Button::new(
                 "shell.back",
                 format!(
@@ -189,6 +192,9 @@ pub fn render_shell_chrome_with_status_focus(
             );
             button.state.hovered = chrome.back_button_hovered;
             button.render_borderless_frame(frame, area, &theme);
+        }
+        if let ShellLayout::Full { status, .. } = layout.shell {
+            render_status(frame, status, layout, chrome, context, status_focused);
         }
         return;
     }
@@ -287,6 +293,25 @@ fn render_status(
         return;
     }
     let theme = context.compatibility_theme();
+    if area.height < 3 {
+        frame.render_widget(Clear, area);
+        if let Some(message) = layout.status_message {
+            let (text, style) = status_presentation(&chrome.status, &theme);
+            let mut message_theme = theme.clone();
+            message_theme.foreground = style.fg.unwrap_or(theme.foreground);
+            let mut button =
+                Button::new("shell.status", truncate_status_text(&text, message.width))
+                    .with_bracketed_label(false);
+            button.set_focused(status_focused);
+            button.render_borderless_frame(frame, message, &message_theme);
+        }
+        if let (Some(label), Some(area)) = (&chrome.status.time_button_label, layout.time_button) {
+            let mut button = Button::new("shell.status.time", label).with_bracketed_label(false);
+            button.state.selected = chrome.status.time_button_selected;
+            button.render_borderless_frame(frame, area, &theme);
+        }
+        return;
+    }
     let surface = Surface::new()
         .titled(i18n::tr!("ui-shell-status"))
         .bordered(true);

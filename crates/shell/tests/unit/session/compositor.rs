@@ -49,12 +49,164 @@ fn draw(
 fn text(buffer: &Buffer, area: Rect) -> String {
     (area.y..area.bottom())
         .map(|y| {
-            (area.x..area.right())
-                .map(|x| buffer[(x, y)].symbol())
-                .collect::<String>()
+            let mut row = String::new();
+            let mut x = area.x;
+            // TestBackend can retain old symbols in wide-character continuation cells.
+            while x < area.right() {
+                let symbol = buffer[(x, y)].symbol();
+                row.push_str(symbol);
+                x += ratatui::text::Span::raw(symbol).width().max(1) as u16;
+            }
+            row
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[test]
+fn aa_keyboard_keeps_background_layout_and_places_one_global_launcher_on_every_page() {
+    let host = CommandLineHost::new(default_editor_watchdog().unwrap());
+    for screen in [
+        ShellScreen::Home,
+        ShellScreen::FirstRunSetup,
+        ShellScreen::Login,
+        ShellScreen::BootstrapAdmin,
+        ShellScreen::UserManagement,
+        ShellScreen::Explorer,
+        ShellScreen::Launcher,
+        ShellScreen::CommandLine,
+        ShellScreen::Editor,
+        ShellScreen::Settings,
+        ShellScreen::Logs,
+        ShellScreen::Management,
+        ShellScreen::Diagnostics,
+        ShellScreen::SystemStatus,
+        ShellScreen::Clock,
+    ] {
+        for (width, height) in [(120, 40), (108, 20), (80, 24), (60, 23), (49, 11)] {
+            let mut state = session();
+            state.terminal_size = (width, height);
+            state.app.dispatch_at(
+                app::AppCommand::SetAuthSession(Some(AuthSession {
+                    source: identity::IdentitySource::LocalAccount,
+                    session_id: "layout".into(),
+                    user_id: "layout".into(),
+                    username: "layout".into(),
+                    role: UserRole::Admin,
+                    started_at_epoch_ms: 1,
+                })),
+                Instant::now(),
+            );
+            state.enter_screen(screen);
+            state.app.dispatch_at(
+                app::AppCommand::SetActiveAppearance(Some(Default::default())),
+                Instant::now(),
+            );
+            if screen == ShellScreen::Settings {
+                state.pages.settings.settings_state = Some(SettingsState {
+                    category: ui::SettingsCategory::Appearance,
+                    selected_field: ui::SettingsField::Theme,
+                    status: i18n::msg!("settings-ready").into(),
+                    scroll_offset: 0,
+                    picker: None,
+                    color_editor: None,
+                    weather_location_editor: None,
+                    file_extensions_editor: None,
+                    time_sync_server_editor: None,
+                    time_sync_validation_request_id: None,
+                });
+            }
+            let (tx, _rx) = mpsc::channel();
+            state
+                .begin_auto_admin("Keyboard layout".into(), false, tx)
+                .unwrap();
+            let mut prepared = home_frame(&state, 0, true);
+            prepared.page =
+                ScreenViewModel::from_session(&state, &host, Instant::now(), Default::default());
+            let mut compositor = ScreenCompositor::default();
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            let original = state.frame_layout.unwrap();
+            let launcher = state
+                .keyboard_launcher_area()
+                .expect("AA shares the global launcher");
+            assert_eq!(launcher.right(), width);
+            assert_eq!(
+                launcher.bottom(),
+                original.status_message.map_or(height, |r| r.y)
+            );
+            assert!(
+                !state
+                    .button_regions
+                    .iter()
+                    .any(|r| r.id.as_str() == "aa.keyboard")
+            );
+            state.toggle_input_keyboard();
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            let layout = state.frame_layout.unwrap();
+            let keyboard = state.input_keyboard_layout();
+            let launcher = state.keyboard_launcher_area().unwrap();
+            assert_eq!(layout, original);
+            assert_eq!(launcher.bottom(), height);
+            let aa = ui::auto_admin_layout_in(
+                state.auto_admin_available_area(),
+                &state.auto_admin_view().unwrap(),
+            );
+            assert!(aa.dialog.intersection(keyboard.keyboard).is_empty());
+            assert!(aa.dialog.intersection(launcher).is_empty());
+            state.toggle_input_keyboard();
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            assert_eq!(state.frame_layout.unwrap(), original);
+        }
+    }
+}
+
+#[test]
+fn page_keyboard_animates_chrome_and_content_together_and_restores_them() {
+    for screen in [ShellScreen::CommandLine, ShellScreen::Management] {
+        let mut state = session();
+        state.enter_screen(screen);
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let prepared = home_frame(&state, 0, true);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let original = state.frame_layout.unwrap();
+        let original_launcher = state.keyboard_launcher_area().unwrap();
+        assert_eq!(original_launcher.right(), 120);
+        assert_eq!(
+            original_launcher.bottom(),
+            original.status_message.unwrap().y
+        );
+        state.toggle_input_keyboard();
+        let mut previous_top = 3;
+        let mut previous_launcher = original_launcher.y;
+        for millis in [0, 55, 110, 165, 220] {
+            let prepared = home_frame(&state, millis, false);
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            let layout = state.frame_layout.unwrap();
+            let ui::ShellLayout::Full { top, status, main } = layout.shell else {
+                panic!("full layout");
+            };
+            assert_eq!(main, layout.main);
+            assert!(top.height <= previous_top);
+            previous_top = top.height;
+            let launcher = state.keyboard_launcher_area().unwrap();
+            assert!(launcher.y >= previous_launcher);
+            previous_launcher = launcher.y;
+            assert!(main.bottom() <= state.input_keyboard_layout().keyboard.y);
+            assert!(launcher.bottom() <= status.y);
+        }
+        let layout = state.frame_layout.unwrap();
+        assert_eq!(layout.back_button.unwrap().height, 1);
+        assert!(layout.status_message.is_none() && layout.time_button.is_none());
+        assert_eq!(layout.main.y, 1);
+        assert_eq!(state.keyboard_launcher_area().unwrap().bottom(), 40);
+        assert!(text(terminal.backend().buffer(), Rect::new(0, 0, 120, 1)).contains("TundraUX"));
+        state.toggle_input_keyboard();
+        let prepared = home_frame(&state, 500, true);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        assert_eq!(state.frame_layout.unwrap(), original);
+    }
 }
 
 #[test]
@@ -152,12 +304,13 @@ fn live_aa_keyboard_keeps_dialog_buttons_visible_and_uses_one_layout_for_input()
         let bounds = Rect::new(0, 0, width, height);
         assert_eq!(aa.dialog.intersection(bounds), aa.dialog);
         assert!(aa.dialog.intersection(keyboard.keyboard).is_empty());
-        assert!(!aa.buttons[0].is_empty());
+        assert!(aa.buttons[0].is_empty());
         assert!(
             state
                 .button_regions
                 .iter()
-                .any(|button| button.id.as_str() == "aa.keyboard" && button.area == aa.buttons[0])
+                .any(|button| button.id.as_str() == "input.keyboard"
+                    && Some(button.area) == state.keyboard_launcher_area())
         );
         if keyboard.usable {
             assert!(text(terminal.backend().buffer(), keyboard.keyboard).contains("CapsLock"));
@@ -332,13 +485,13 @@ fn command_line_keyboard_launcher_uses_the_selected_language() {
         for expected in [show, hide] {
             let prepared = home_frame(&state, 0, true);
             draw(&mut compositor, &mut terminal, &mut state, &prepared);
+            let actual = text(
+                terminal.backend().buffer(),
+                state.keyboard_launcher_area().unwrap(),
+            );
             assert!(
-                text(
-                    terminal.backend().buffer(),
-                    state.keyboard_launcher_area().unwrap()
-                )
-                .replace(' ', "")
-                .contains(&expected.replace(' ', ""))
+                actual.replace(' ', "").contains(&expected.replace(' ', "")),
+                "{language}: expected {expected}, got {actual}"
             );
             state.toggle_input_keyboard();
         }
@@ -1460,7 +1613,7 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
     let first = state
         .button_regions
         .iter()
-        .find(|r| r.id.as_str() == "aa.keyboard")
+        .find(|r| r.id.as_str() == "input.keyboard")
         .unwrap()
         .area;
     assert_eq!(

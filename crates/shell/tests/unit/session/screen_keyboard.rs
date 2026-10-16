@@ -55,6 +55,56 @@ fn route(state: &mut ShellSession, input: InputEvent) -> Option<InputEvent> {
 }
 
 #[test]
+fn shared_keyboard_launcher_opens_and_closes_with_mouse_or_touch_in_each_input_context() {
+    for context in ["cli", "aa", "search", "management_form", "editor_form"] {
+        for hover in [false, true] {
+            let mut state = session();
+            let (tx, _rx) = std::sync::mpsc::channel();
+            match context {
+                "aa" => {
+                    state
+                        .begin_auto_admin("Keyboard input".into(), false, tx)
+                        .unwrap();
+                }
+                "search" | "management_form" => state.enter_screen(ShellScreen::Management),
+                "editor_form" => state.enter_screen(ShellScreen::Editor),
+                _ => {}
+            }
+            if context.ends_with("form") {
+                state.config_form(
+                    "open",
+                    String::new(),
+                    vec![platform::management::ManagementField {
+                        id: "path".into(),
+                        label: "Path".into(),
+                        ..Default::default()
+                    }],
+                );
+            }
+            for open in [true, false] {
+                let area = state.keyboard_launcher_area().unwrap();
+                let point = (area.x, area.y);
+                if hover {
+                    route(&mut state, InputEvent::mouse_moved(point));
+                }
+                route(
+                    &mut state,
+                    InputEvent::mouse_down(PointerButton::Left, point),
+                );
+                assert_ne!(state.input_keyboard_open(), open);
+                route(&mut state, InputEvent::mouse_up(PointerButton::Left, point));
+                assert_eq!(
+                    state.input_keyboard_open(),
+                    open,
+                    "{context}, hover={hover}"
+                );
+                state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+            }
+        }
+    }
+}
+
+#[test]
 fn rapid_keyboard_clicks_keep_small_movements_inside_each_key() {
     for auto_admin in [false, true] {
         for hover in [false, true] {
@@ -253,7 +303,15 @@ fn command_line_launcher_resizes_content_and_generates_real_modified_keys() {
             ui::KeyModifiers::CTRL
         )))
     );
-    click(&mut state, Action::ToggleKeyboard);
+    let area = state.keyboard_launcher_area().unwrap();
+    route(
+        &mut state,
+        InputEvent::mouse_down(PointerButton::Left, (area.x, area.y)),
+    );
+    route(
+        &mut state,
+        InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)),
+    );
     state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
     assert!(!state.input_keyboard_open());
     assert_eq!(state.command_line_input_area().unwrap(), original);

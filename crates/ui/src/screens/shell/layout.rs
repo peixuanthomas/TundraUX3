@@ -76,8 +76,8 @@ pub(crate) fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     )
 }
 
-/// Geometry shared by composition, hit testing and effects. Chrome stays fixed;
-/// any legacy page projection is applied only to the content rectangle.
+/// Geometry shared by composition, hit testing and effects, including keyboard
+/// animation. Legacy page projection applies only to the content rectangle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShellFrameLayout {
     pub bounds: Rect,
@@ -135,6 +135,60 @@ impl ShellFrameLayout {
         matches!(self.shell, ShellLayout::Compact(_))
     }
 
+    /// Chrome and page geometry follow the same progress as the visible keys.
+    pub fn with_input_keyboard(mut self, keyboard: Rect, visibility: u16) -> Self {
+        let progress = u32::from(visibility.min(1_000));
+        match self.shell {
+            ShellLayout::Full {
+                mut top,
+                mut status,
+                ..
+            } => {
+                top.height -= (2 * progress / 1_000) as u16;
+                let slide = (3 * progress).div_ceil(1_000) as u16;
+                status.y += slide;
+                status.height -= slide;
+                self.main.y = self.main.y.saturating_sub(
+                    (u32::from(self.main.y - self.bounds.y - 1) * progress / 1_000) as u16,
+                );
+                let bottom = keyboard.y.min(status.y.saturating_sub(1));
+                self.main.height = bottom.saturating_sub(self.main.y);
+                self.shell = ShellLayout::Full {
+                    top,
+                    main: self.main,
+                    status,
+                };
+                if let Some(button) = &mut self.back_button {
+                    button.height = if top.height < 3 { 1 } else { 3 };
+                }
+                self.status_message = self
+                    .status_message
+                    .map(|mut area| {
+                        area.y = status.y;
+                        area.height = status.height;
+                        area
+                    })
+                    .filter(|area| !area.is_empty());
+                self.time_button = self
+                    .time_button
+                    .map(|mut area| {
+                        area.y = status.y;
+                        area.height = status.height;
+                        area
+                    })
+                    .filter(|area| !area.is_empty());
+            }
+            ShellLayout::Compact(_) => {
+                self.main.height = keyboard
+                    .y
+                    .min(self.bounds.bottom().saturating_sub(1))
+                    .saturating_sub(self.main.y);
+                self.shell = ShellLayout::Compact(self.main);
+            }
+        }
+        self
+    }
+
     /// Size the button from the same shortcut that the compositor paints.
     pub fn with_back_shortcut(mut self, shortcut: &str) -> Self {
         let compact = self.is_compact();
@@ -152,7 +206,7 @@ impl ShellFrameLayout {
 
     /// Keep the compact Escape button available even while a shell dialog is open.
     pub fn modal_area(self) -> Rect {
-        if self.is_compact() {
+        if self.is_compact() || self.status_message.is_none() {
             self.main
         } else {
             self.bounds

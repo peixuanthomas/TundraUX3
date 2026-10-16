@@ -376,7 +376,7 @@ pub fn screen_keyboard_input_layout_with_visibility(
     visibility: u16,
     auto_admin: bool,
 ) -> ScreenKeyboardLayout {
-    let reserved = if auto_admin { 16 } else { 8 };
+    let reserved = if auto_admin { 14 } else { 6 };
     let height = (bounds.height / 2).min(bounds.height.saturating_sub(reserved));
     let usable = bounds.width >= 60 && height >= 7;
     let visible = visibility > 0 && usable;
@@ -391,18 +391,56 @@ pub fn screen_keyboard_input_layout_with_visibility(
     if !visible {
         layout.keyboard = Rect::new(bounds.x, bounds.bottom(), bounds.width, 0);
         layout.buttons.clear();
+        layout.hint = Rect::default();
+        if visibility > 0 && !usable {
+            let rows = crate::management_wrapped_lines(
+                &i18n::tr!("screen-keyboard-input-small"),
+                bounds.width,
+            )
+            .len()
+            .min(usize::from(bounds.height.saturating_sub(2))) as u16;
+            let height =
+                (u32::from(rows) * u32::from(visibility.min(1_000))).div_ceil(1_000) as u16;
+            layout.hint = Rect::new(
+                bounds.x,
+                bounds.bottom().saturating_sub(1 + height),
+                bounds.width,
+                height,
+            );
+            layout.keyboard.y = layout.hint.y;
+        }
     } else {
+        let width = (crate::components::terminal_width(&i18n::tr!("screen-keyboard-input-paste"))
+            as u16
+            + 2)
+        .min(
+            screen_keyboard_launcher_area(bounds)
+                .x
+                .saturating_sub(bounds.x),
+        );
         append_row(
             &mut layout.buttons,
-            Rect::new(bounds.x, bounds.bottom() - 1, bounds.width, 1),
-            &[
-                (ScreenKeyboardAction::ToggleKeyboard, 1),
-                (ScreenKeyboardAction::Paste, 1),
-            ],
+            Rect::new(bounds.x, bounds.bottom() - 1, width, 1),
+            &[(ScreenKeyboardAction::Paste, 1)],
             false,
         );
     }
     layout
+}
+
+pub fn screen_keyboard_launcher_area(bounds: Rect) -> Rect {
+    let width = crate::components::terminal_width(&i18n::tr!("screen-keyboard-show"))
+        .max(crate::components::terminal_width(&i18n::tr!(
+            "screen-keyboard-hide"
+        )))
+        .saturating_add(2)
+        .min(usize::from(bounds.width)) as u16;
+    Rect::new(
+        bounds.right().saturating_sub(width),
+        bounds.bottom().saturating_sub(1),
+        width,
+        u16::from(bounds.height > 0),
+    )
 }
 
 fn keyboard_layout(

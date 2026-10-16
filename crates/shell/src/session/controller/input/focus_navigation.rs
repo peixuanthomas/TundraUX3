@@ -27,19 +27,21 @@ impl ShellSession {
         let layout =
             ui::ShellFrameLayout::new(bounds, self.status_time_button_label().as_deref(), &context)
                 .with_back_shortcut(self.shell_back_shortcut());
-        self.refresh_hit_map_with_frame_layout(motion, layout);
+        self.refresh_hit_map_with_frame_layout(motion, self.input_keyboard_content_layout(layout));
     }
 
     pub(in crate::session) fn shell_layout_for(&self, bounds: Rect) -> ui::ShellLayout {
         self.frame_layout
             .filter(|layout| layout.bounds == bounds)
             .unwrap_or_else(|| {
-                ui::ShellFrameLayout::new(
-                    bounds,
-                    self.status_time_button_label().as_deref(),
-                    &ui::RenderContext::default(),
+                self.input_keyboard_content_layout(
+                    ui::ShellFrameLayout::new(
+                        bounds,
+                        self.status_time_button_label().as_deref(),
+                        &ui::RenderContext::default(),
+                    )
+                    .with_back_shortcut(self.shell_back_shortcut()),
                 )
-                .with_back_shortcut(self.shell_back_shortcut())
             })
             .shell
     }

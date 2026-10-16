@@ -64,18 +64,19 @@ pub fn auto_admin_preview_layout(
         Constraint::Length(1),
     ])
     .split(inner);
-    let count = if model.confirming {
-        2
-    } else if model.finished {
-        1
-    } else if model.can_stop {
-        2
-    } else {
-        1
-    };
+    let count = if model.confirming { 2 } else { 1 };
     let buttons = Layout::horizontal(vec![Constraint::Ratio(1, count); count as usize])
         .spacing(u16::from(width >= 50))
         .split(rows[5]);
+    let mut buttons = std::array::from_fn(|index| buttons.get(index).copied().unwrap_or_default());
+    if !model.confirming && !model.finished {
+        buttons[1] = if model.can_stop {
+            buttons[0]
+        } else {
+            Rect::default()
+        };
+        buttons[0] = Rect::default();
+    }
     (
         AutoAdminLayout {
             dialog,
@@ -83,7 +84,7 @@ pub fn auto_admin_preview_layout(
             terminal: rows[2],
             status: rows[3],
             input: rows[4],
-            buttons: std::array::from_fn(|index| buttons.get(index).copied().unwrap_or_default()),
+            buttons,
         },
         rows[0],
     )

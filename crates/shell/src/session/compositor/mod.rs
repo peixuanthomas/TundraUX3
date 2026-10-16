@@ -136,6 +136,7 @@ impl ScreenCompositor {
             &context,
         )
         .with_back_shortcut(chrome.back_shortcut);
+        let layout = state.input_keyboard_content_layout(layout);
         if state.graphical_icons_enabled()
             && !layout.is_compact()
             && let Some(icons) = icons

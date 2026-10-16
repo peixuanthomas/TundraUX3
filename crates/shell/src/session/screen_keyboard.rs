@@ -120,61 +120,43 @@ impl ShellSession {
     }
 
     pub(super) fn input_keyboard_layout(&self) -> ScreenKeyboardLayout {
+        let mut bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        if let ui::ShellLayout::Full { status, .. } = ui::compute_shell_layout(bounds) {
+            let slide = (3 * u32::from(self.input_keyboard_visibility())).div_ceil(1_000) as u16;
+            bounds.height = status.y + slide;
+        }
         ui::screen_keyboard_input_layout_with_visibility(
-            Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1),
+            bounds,
             self.input_keyboard_open(),
-            if self.screen_keyboard.owner == self.input_keyboard_owner() {
-                self.screen_keyboard.visibility
-            } else {
-                0
-            },
+            self.input_keyboard_visibility(),
             self.auto_admin_visible(),
         )
     }
 
-    pub(super) fn auto_admin_available_area(&self) -> Rect {
-        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let shell = ui::ShellFrameLayout::new(bounds, None, &ui::RenderContext::default());
-        let keyboard = self.input_keyboard_layout();
-        if !self.auto_admin_visible() || keyboard.keyboard.is_empty() {
-            shell.main
+    fn input_keyboard_visibility(&self) -> u16 {
+        if self.screen_keyboard.owner == self.input_keyboard_owner() {
+            self.screen_keyboard.visibility
         } else {
-            Rect::new(
-                bounds.x,
-                shell.main.y,
-                bounds.width,
-                shell
-                    .main
-                    .height
-                    .min(keyboard.keyboard.y.saturating_sub(shell.main.y)),
-            )
+            0
         }
     }
 
-    pub(super) fn command_line_keyboard_layout(
-        &self,
-        mut layout: ui::ShellFrameLayout,
-    ) -> (ui::ShellFrameLayout, Rect) {
-        let keyboard = self.input_keyboard_layout();
-        if !self.auto_admin_visible() && !keyboard.keyboard.is_empty() {
-            layout.main.height = layout
-                .main
-                .height
-                .min(keyboard.keyboard.y.saturating_sub(layout.main.y));
+    pub(super) fn auto_admin_available_area(&self) -> Rect {
+        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let mut main = ui::ShellFrameLayout::new(bounds, None, &ui::RenderContext::default()).main;
+        if self.auto_admin_visible() {
+            let bottom = self.input_keyboard_layout().keyboard.y.min(
+                self.keyboard_launcher_area()
+                    .map_or(bounds.bottom(), |area| area.y),
+            );
+            main.height = main.height.min(bottom.saturating_sub(main.y));
         }
-        let footer = Rect::new(
-            layout.main.x,
-            layout.main.bottom().saturating_sub(1),
-            layout.main.width,
-            u16::from(layout.main.height > 0),
-        );
-        layout.main.height = layout.main.height.saturating_sub(footer.height);
-        (layout, footer)
+        main
     }
 
     pub(super) fn command_line_input_area(&self) -> Option<Rect> {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let (layout, _) = self.command_line_keyboard_layout(ui::ShellFrameLayout::new(
+        let layout = self.input_keyboard_content_layout(ui::ShellFrameLayout::new(
             bounds,
             None,
             &ui::RenderContext::default(),
@@ -190,32 +172,26 @@ impl ShellSession {
             self.input_keyboard_owner(),
             Some(KeyboardOwner::CommandLine(_) | KeyboardOwner::Management(..))
         ) {
-            self.command_line_keyboard_layout(layout).0
+            layout.with_input_keyboard(
+                self.input_keyboard_layout().keyboard,
+                self.input_keyboard_visibility(),
+            )
         } else {
             layout
         }
     }
 
     pub(super) fn keyboard_launcher_area(&self) -> Option<Rect> {
-        if !matches!(
-            self.input_keyboard_owner(),
-            Some(KeyboardOwner::CommandLine(_) | KeyboardOwner::Management(..))
-        ) {
+        if self.input_keyboard_owner().is_none() {
             return None;
         }
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        let (_, footer) = self.command_line_keyboard_layout(ui::ShellFrameLayout::new(
-            bounds,
-            None,
-            &ui::RenderContext::default(),
-        ));
-        let width = footer.width.min(30);
-        Some(Rect::new(
-            footer.right().saturating_sub(width),
-            footer.y,
-            width,
-            footer.height,
-        ))
+        let mut footer = bounds;
+        if let ui::ShellLayout::Full { status, .. } = ui::compute_shell_layout(bounds) {
+            let slide = (3 * u32::from(self.input_keyboard_visibility())).div_ceil(1_000) as u16;
+            footer.height = status.y + slide;
+        }
+        Some(ui::screen_keyboard_launcher_area(footer))
     }
 
     pub(super) fn toggle_input_keyboard(&mut self) {
@@ -279,6 +255,7 @@ impl ShellSession {
         });
         if region.is_none()
             && !layout.keyboard.contains(point)
+            && (layout.usable || !layout.hint.contains(point))
             && self.screen_keyboard.pressed.is_none()
         {
             return Some(input);

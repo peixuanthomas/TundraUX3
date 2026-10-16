@@ -71,6 +71,24 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
         assert!(buttons.regions().contains(&region));
         assert_ne!(layout.time_button.unwrap(), message);
     }
+    let mut chrome = chrome;
+    chrome.status.status = "Ready".into();
+    for visibility in [100, 500] {
+        let layout = layout.with_input_keyboard(Rect::new(0, 24, 80, 0), visibility);
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| super::render_shell_chrome(frame, &layout, &chrome, &context))
+            .unwrap();
+        for (area, expected) in [
+            (layout.status_message.unwrap(), "Ready"),
+            (layout.time_button.unwrap(), "12:00"),
+        ] {
+            let row = (area.x..area.right())
+                .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
+                .collect::<String>();
+            assert_eq!(row.trim(), expected);
+        }
+    }
 }
 
 #[test]

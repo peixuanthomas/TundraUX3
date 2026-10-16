@@ -33,7 +33,7 @@ fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
                 assert_eq!(area.intersection(bounds), area);
             }
             for (a, left) in layout.buttons.iter().enumerate() {
-                if a < if confirming { 2 } else { 1 } {
+                if a < if confirming { 2 } else { 0 } {
                     assert!(left.width > 0 && left.height > 0);
                 }
                 for right in layout.buttons.iter().skip(a + 1) {
@@ -282,7 +282,7 @@ fn auto_admin_and_previews_show_close_only_after_the_task_ends() {
         assert!(!i18n::tr!("aa-input-required").contains("F12"));
         for (confirming, finished, expected) in [
             (true, false, &["aa.approve", "aa.deny"][..]),
-            (false, false, &["aa.keyboard"][..]),
+            (false, false, &[][..]),
             (false, true, &["aa.close"][..]),
         ] {
             let model = model(confirming, finished);
@@ -441,7 +441,7 @@ fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
                         } else if finished {
                             1
                         } else {
-                            1
+                            0
                         }) {
                             assert!(area.width > 0 && area.height > 0);
                             assert!(
@@ -472,17 +472,19 @@ fn aa_candidates_preserve_chrome_and_show_warning_and_actions() {
 #[test]
 fn confirmation_and_empty_results_are_compact_with_actions_centered_in_content() {
     let bounds = Rect::new(0, 0, 208, 55);
-    for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 1)] {
+    for (confirming, finished, count) in [(true, false, 2), (false, true, 1), (false, false, 0)] {
         let model = model(confirming, finished);
         let layout = ui::auto_admin_layout(bounds, &model);
-        let first = layout.buttons[0];
-        let last = layout.buttons[count - 1];
-        assert!(
-            (i32::from(first.x + last.right())
-                - i32::from(layout.description.x * 2 + layout.description.width))
-            .abs()
-                <= 1
-        );
+        if count > 0 {
+            let first = layout.buttons[0];
+            let last = layout.buttons[count - 1];
+            assert!(
+                (i32::from(first.x + last.right())
+                    - i32::from(layout.description.x * 2 + layout.description.width))
+                .abs()
+                    <= 1
+            );
+        }
         assert!(layout.description.x > layout.dialog.x + 1);
         assert!(layout.description.y > layout.dialog.y + 1);
         if confirming || finished {
