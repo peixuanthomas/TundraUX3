@@ -297,16 +297,23 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
     os.write(master, b"n")
     if not wait_for_output(master, output, b"TCP port", child, 5.0, offset, ignore_spaces=True):
         raise SystemExit("keyboard menu selection did not open diagnosis fields:\n" + output_diagnostic(output[offset:]))
-    # Closing a text form can keep emitting cursor control sequences. Verify
-    # the Search control restored from underneath it instead of requiring
-    # terminal silence or unchanged toolbar text to be redrawn in full.
+    # Inspect the painted frame: closing a form need not redraw Search.
     offset = len(output)
     os.write(master, b"\x1b")
-    if not wait_for_output(master, output, b"Search:", child, 5.0, offset, ignore_spaces=True):
-        raise SystemExit("diagnosis form did not return to the operation page")
-    visible = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output[offset:]))
-    if b"TCPport" in visible.replace(b" ", b""):
-        raise SystemExit("diagnosis fields remained visible after Escape")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+        frame = bytes(output[repaint_offset:])
+        try:
+            painted_label_position(frame, "Search:", 108, 20)
+        except SystemExit:
+            continue
+        try:
+            painted_label_position(frame, "TCP port", 108, 20)
+        except SystemExit:
+            break
+    else:
+        raise SystemExit("diagnosis form did not return to the operation page:\n" + output_diagnostic(output[offset:]))
     # Search and clear through the combined input. The query remains read-only.
     offset = len(output)
     os.write(master, b"sunmatched-network-for-pty\r")

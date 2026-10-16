@@ -1,6 +1,26 @@
 schema_version = 1
 name = "default-launcher-icons"
 
+[items."builtin.firewall"]
+label = "Firewall and ports"
+image = "launcher_icons/network.png"
+lines = [' [###] ', ' [# #] ', ' [###] ', '  ---  ']
+
+[items."builtin.ssh"]
+label = "SSH service"
+image = "launcher_icons/command_line.png"
+lines = [' _____ ', '|ssh> |', '|  <> |', '|_____|']
+
+[items."builtin.backups"]
+label = "Configuration backups"
+image = "launcher_icons/disks.png"
+lines = [' _____ ', '| <== |', '| --- |', '|_____|']
+
+[items."builtin.scheduled-tasks"]
+label = "Scheduled tasks"
+image = "launcher_icons/services.png"
+lines = ['  ___  ', ' / | \ ', '|  L  |', ' \___/ ']
+
 [items."builtin.users"]
 label = "Users"
 image = "home_icons/user_management.png"

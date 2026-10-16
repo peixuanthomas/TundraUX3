@@ -8,6 +8,10 @@ fn management_and_logs_are_fixed_launcher_apps_with_platform_visibility() {
         "builtin.packages",
         "builtin.network",
         "builtin.disks",
+        "builtin.firewall",
+        "builtin.ssh",
+        "builtin.backups",
+        "builtin.scheduled-tasks",
         "builtin.logs",
     ] {
         let application = BUILT_IN_LAUNCHER_APPLICATIONS

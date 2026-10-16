@@ -22,6 +22,8 @@ System-management development focuses on Linux. Windows and macOS builds let you
 ## What you can do
 
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
+- **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.
+- **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.
 - **Work with files:** browse directories, perform file operations, and edit plain text. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
 - **Open tools:** use the application launcher and built-in command line when a task calls for commands.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
@@ -39,7 +41,7 @@ Independent use of all three input methods is a core design requirement:
 | **Mouse alone** | Use visible buttons, menus, selectors, and scrollbars without depending on keyboard shortcuts. |
 | **Touchscreen alone** | Tap controls and drag scrollbars without needing a physical keyboard or mouse. |
 
-Support is still being improved. Mouse and touch need a terminal that forwards pointer events. Running AA dialogs and embedded Command Line provide buttons to show and hide the screen keyboard; opening it resizes the content above it. Other application forms need a physical keyboard or an input method supplied by the terminal/system. The external-terminal `tundra-cli debug screen-keyboard` command remains a standalone QWERTY and AA input demo. See [keyboard input](crates/shell/docs/session.md#aa-与命令行的屏幕键盘) and [preview details](crates/shell/docs/previews.md).
+Support is still being improved. Mouse and touch need a terminal that forwards pointer events. Running AA dialogs, embedded Command Line, management forms and management search provide buttons to show and hide the screen keyboard; opening it resizes the content above it. Other application forms need a physical keyboard or an input method supplied by the terminal/system. The external-terminal `tundra-cli debug screen-keyboard` command remains a standalone QWERTY and AA input demo. See [keyboard input](crates/shell/docs/session.md#aa-与命令行的屏幕键盘) and [preview details](crates/shell/docs/previews.md).
 
 Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action.
 
@@ -104,6 +106,7 @@ Most detailed documentation is currently in Chinese. Start with the [documentati
 - [Linux system management](crates/platform/docs/linux-management.md) — services, processes, packages, networks, and disks.
 - [Operations CLI](crates/cli/docs/operations.md) — reusable commands, authorization, task IDs and exit codes.
 - [System configuration editor](crates/platform/docs/system-config.md) and [user management](crates/platform/docs/user-management.md).
+- [Configuration backups](crates/platform/docs/config-backups.md), [firewall and ports](crates/platform/docs/firewall.md), [SSH management](crates/platform/docs/ssh-management.md), and [scheduled tasks](crates/platform/docs/scheduled-tasks.md).
 - [Linux runtime notes](docs/packaging/linux/README-LINUX.txt) — runtime dependencies, permissions, and portable updates (English).
 - [Logs and diagnostics](crates/runtime-log/docs/logs.md)
 - [Localization and resource recovery](crates/i18n/docs/localization.md)

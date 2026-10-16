@@ -449,6 +449,7 @@ impl ShellSession {
                 .is_some_and(|field| !field.choices.is_empty());
         self.pages.management.management_state.terminal_mode = false;
         self.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
             title: if let Some(key) = editor_dialog_title_key(action) {
                 i18n::tr!(key)
             } else {
@@ -820,6 +821,11 @@ impl ShellSession {
         );
         if let Some(d) = &self.pages.editor.editor_config.document {
             values.insert("expected_version".into(), d.version.clone());
+            if action == "reload" && d.validator == "sshd" {
+                if let Some(id) = &d.backup_id {
+                    values.insert("backup_id".into(), id.clone());
+                }
+            }
         }
         if action == "compare" {
             if let Some(path) = &self.pages.editor.editor_config.compare_path {
@@ -829,7 +835,9 @@ impl ShellSession {
         if let Some(unit) = &self.pages.editor.editor_config.service {
             values.insert("service".into(), unit.clone());
         }
-        if let Some(id) = &self.pages.editor.editor_config.restore_id {
+        if let Some(id) = &self.pages.editor.editor_config.restore_id
+            && action != "reload"
+        {
             values.insert("backup_id".into(), id.clone());
         }
         if matches!(action, "check" | "apply" | "permissions") {

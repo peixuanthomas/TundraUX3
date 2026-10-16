@@ -74,12 +74,18 @@ enum FormPurpose {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ManagementEditor {
+    instance: u64,
     title: String,
     message: String,
     message_scroll: u16,
     fields: Vec<ManagementField>,
     selected: usize,
     purpose: FormPurpose,
+}
+
+fn next_management_form_instance() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 #[derive(Clone)]
@@ -122,6 +128,8 @@ pub(in crate::session) struct ManagementState {
     status: String,
     outcome: Option<String>,
     received_snapshot: bool,
+    refresh_requested: bool,
+    refreshing_authorized: bool,
     pending_directory: Option<PathBuf>,
     pending_select: Option<PathBuf>,
     output: String,
@@ -143,6 +151,24 @@ pub(in crate::session) struct ManagementState {
 }
 
 impl ManagementState {
+    fn refresh_command(&self) -> Option<ManagementCommand> {
+        let query = self.query.as_ref()?;
+        let action = self.snapshot.refresh_action.as_ref()?;
+        let mut values = action.values.clone();
+        values.retain(|key, _| {
+            !matches!(key.as_str(), "scope" | "filter" | "query_target")
+                && !key.starts_with("__query_option:")
+        });
+        values.extend(query.inspection_values());
+        Some(ManagementCommand {
+            kind: query.kind,
+            action: action.id.clone(),
+            target: None,
+            values,
+            identity: BTreeMap::new(),
+        })
+    }
+
     fn sort_snapshot(&mut self, snapshot: &mut ManagementSnapshot) {
         if self.sort_columns != snapshot.columns {
             self.sort = None;
@@ -295,6 +321,33 @@ fn form_value_text(purpose: &FormPurpose, field: &ManagementField, value: &str) 
             _ => value.into(),
         };
     }
+    if let FormPurpose::Action(action, _) = purpose {
+        let key = match (action.id.as_str(), field.id.as_str(), value) {
+            ("add_rule", "duration", "runtime") => Some("management-value-runtime"),
+            ("add_rule", "duration", "permanent") => Some("management-value-permanent"),
+            ("add_rule", "duration", "both") => Some("management-value-both"),
+            ("ssh_configure", "password_authentication" | "pubkey_authentication", "yes") => {
+                Some("management-value-yes")
+            }
+            ("ssh_configure", "password_authentication" | "pubkey_authentication", "no") => {
+                Some("management-value-no")
+            }
+            ("ssh_configure", "permit_root_login", "yes") => {
+                Some("management-value-root-login-yes")
+            }
+            ("ssh_configure", "permit_root_login", "no") => Some("management-value-root-login-no"),
+            ("ssh_configure", "permit_root_login", "prohibit-password") => {
+                Some("management-value-root-login-prohibit-password")
+            }
+            ("ssh_configure", "permit_root_login", "forced-commands-only") => {
+                Some("management-value-root-login-forced-commands-only")
+            }
+            _ => None,
+        };
+        if let Some(key) = key {
+            return i18n::tr!(key);
+        }
+    }
     if let FormPurpose::Configuration(action) = purpose {
         match (action.as_str(), value) {
             ("edit-language", "Auto") => return i18n::tr!("ui-editor-language-auto"),
@@ -333,7 +386,10 @@ fn management_detail_value(kind: Option<ManagementKind>, key: &str, value: &str)
 }
 
 fn management_view_action(action: &ManagementAction) -> bool {
-    action.id == "set_view" || action.id.starts_with("scope_")
+    matches!(
+        action.id.as_str(),
+        "set_view" | "show_listening_ports" | "show_firewall_rules"
+    ) || action.id.starts_with("scope_")
 }
 
 fn query_management_snapshot(
@@ -503,11 +559,37 @@ impl ShellSession {
         // A requested refresh replaces the previous query, including when a new
         // worker cannot be started. Its late result must not restore an old filter.
         self.cancel_management_query();
+        let authorized = self.pages.management.management_state.refresh_command();
+        if authorized.is_some()
+            && self
+                .pages
+                .management
+                .management_state
+                .operation_job
+                .is_some()
+        {
+            self.pages.management.management_state.refresh_requested = true;
+            return;
+        }
         let Some(group) = self.settings_task_runtime.shared.task_group.clone() else {
             self.pages.management.management_state.status =
                 i18n::tr!("management-worker-unavailable");
             return;
         };
+        if let Some(command) = authorized {
+            self.pages.management.management_state.refresh_requested = false;
+            self.start_management_operation(
+                Some(command),
+                true,
+                None,
+                Some(format!(
+                    "{}\n{}",
+                    management_title(query.kind),
+                    i18n::tr!("management-control-refresh")
+                )),
+            );
+            return;
+        }
         let (job, _) = self.management_job();
         let output = Arc::downgrade(&job.0);
         let cancelled = job.0.cancelled.clone();
@@ -519,7 +601,9 @@ impl ShellSession {
             .wrapping_add(1);
         let task = TaskId::new(format!("management-query-{}-{}", query.kind.id(), job.0.id))
             .expect("bounded task identifier");
+        let language = self.language.clone();
         match group.spawn_thread(TaskSpec::one_shot(task), move || {
+            let _language = i18n::enter_snapshot(language.clone());
             let result = query_management_snapshot(&query, &cancelled);
             if let Some(output) = output.upgrade() {
                 *output.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
@@ -578,6 +662,8 @@ impl ShellSession {
         let Some(page) = self.pages.management.get_mut(id) else {
             return;
         };
+        page.management_state.refresh_requested = false;
+        page.management_state.refreshing_authorized = false;
         let detached =
             page.management_state
                 .operation_job
@@ -844,6 +930,12 @@ impl ShellSession {
             .unwrap_or_default();
         let mut completed = false;
         for event in events {
+            if matches!(
+                &event,
+                OperationEvent::Failed { .. } | OperationEvent::Disconnected { .. }
+            ) {
+                self.pages.management.management_state.refresh_requested = false;
+            }
             self.pages.management.management_state.revision = self
                 .pages
                 .management
@@ -889,6 +981,8 @@ impl ShellSession {
                             Some(ManagementQuery::new(kind));
                         self.pages.management.management_state.snapshot =
                             ManagementSnapshot::default();
+                        self.pages.management.management_state.refresh_requested = false;
+                        self.pages.management.management_state.refreshing_authorized = false;
                     }
                     self.pages.management.management_state.status = format!(
                         "{} {}",
@@ -1020,6 +1114,7 @@ impl ShellSession {
                         }
                     }
                     self.pages.management.management_state.form = Some(ManagementEditor {
+                        instance: next_management_form_instance(),
                         message_scroll: 0,
                         title: i18n::tr!("management-input-required"),
                         message: prompt,
@@ -1070,6 +1165,8 @@ impl ShellSession {
             }
         }
         if completed {
+            let refresh_finished =
+                std::mem::take(&mut self.pages.management.management_state.refreshing_authorized);
             if let Some(job) = self.pages.management.management_state.operation_job.take() {
                 self.tasks
                     .complete(TaskDomain::ManagementOperation, job.0.id);
@@ -1121,7 +1218,11 @@ impl ShellSession {
                     };
                 }
             }
-            if !config_operation && !self.pages.management.management_state.received_snapshot {
+            if !config_operation
+                && (self.pages.management.management_state.refresh_requested
+                    || (!self.pages.management.management_state.received_snapshot
+                        && !refresh_finished))
+            {
                 self.refresh_management();
             }
         }
@@ -1176,11 +1277,53 @@ impl ShellSession {
         }
     }
 
+    pub(in crate::session) fn management_keyboard_identity(&self) -> Option<String> {
+        if self.active_screen() != ShellScreen::Management && !self.config_editor_form_visible() {
+            return None;
+        }
+        let state = &self.pages.management.management_state;
+        if state.terminal_mode || state.choice_field.is_some() {
+            return None;
+        }
+        if let Some(form) = &state.form {
+            if !form.fields.iter().any(|field| field.choices.is_empty()) {
+                return None;
+            }
+            Some(format!("form:{}", form.instance))
+        } else {
+            Some(format!("search:{}", state.filtering))
+        }
+    }
+
+    pub(in crate::session) fn focus_management_keyboard_input(&mut self) {
+        let state = &mut self.pages.management.management_state;
+        if let Some(form) = &mut state.form {
+            if form
+                .fields
+                .get(form.selected)
+                .is_none_or(|field| !field.choices.is_empty())
+            {
+                if let Some(index) = form
+                    .fields
+                    .iter()
+                    .position(|field| field.choices.is_empty())
+                {
+                    form.selected = index;
+                }
+            }
+        } else {
+            state.filtering = true;
+        }
+    }
+
     fn management_main(&self) -> Rect {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
-        match self.shell_layout_for(bounds) {
-            ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
-        }
+        self.input_keyboard_content_layout(ui::ShellFrameLayout::new(
+            bounds,
+            self.status_time_button_label().as_deref(),
+            &ui::RenderContext::default(),
+        ))
+        .main
     }
     pub(in crate::session) fn resize_management_terminal(&mut self) {
         if self
@@ -1384,7 +1527,7 @@ impl ShellSession {
                         _=>i18n::tr!("management-form-submit"),
                     }),
                     submit_disabled: matches!(&f.purpose,FormPurpose::Configuration(action) if action=="check" && self.config_save_disabled(&f.fields)),
-                    identity: match &f.purpose {
+                    identity: format!("{}.{}",f.instance,match &f.purpose {
                         FormPurpose::Action(action, row) => format!(
                             "{}.{:?}",
                             action.id,
@@ -1393,7 +1536,7 @@ impl ShellSession {
                         FormPurpose::Answer(id) => id.clone(),
                         FormPurpose::Menu(_) => "more-actions".into(),
                         FormPurpose::Configuration(action) => format!("config-{action}"),
-                    },
+                    }),
                     field_scroll: s.form_field_scroll,
                     cancel_disabled: matches!(&f.purpose, FormPurpose::Answer(id) if id.starts_with("package-config-")),
                     choice: s.choice_field.and_then(|index| {

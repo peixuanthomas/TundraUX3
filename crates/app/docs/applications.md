@@ -37,6 +37,8 @@ Launcher 存储平台可执行项目及固定顺序，支持图标/列表视图�
 
 Launcher 固定提供 **Editor**；Linux 当前用户及 Windows/macOS 本地管理员还会在第一项看到 **Command Line**。这些内建应用不写入 Launcher 配置，不能删除或拖动排序。图标由 `launcher_icons.toml` 中的 built-in application ID 定义。
 
+Linux 还提供“防火墙与端口”“SSH 服务管理”“配置备份与恢复”“定时任务”四个入口，使用同一套管理表格、详情和表单。修改通过已有 AA 和系统授权执行；Windows/macOS 不执行这些 Linux 操作。
+
 Command Line 的 PTY、输入和环境状态见 [CLI 说明](../../cli/docs/commands.md)与 [terminal-runtime](../../terminal-runtime/README.md)。更新源码后需同时构建 Shell 和 CLI。
 
 ## 纯文本编辑器

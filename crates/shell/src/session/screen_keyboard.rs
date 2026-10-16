@@ -1,4 +1,4 @@
-//! Live keyboard input stays attached to one AA job or Command Line page.
+//! Live keyboard input stays attached to one job, page or management form.
 use super::*;
 use crate::previews::screen_keyboard::physical::PhysicalKeyboard;
 use ui::{ScreenKeyboardAction as Action, ScreenKeyboardLayout, ScreenKeyboardModifiers};
@@ -7,6 +7,7 @@ use ui::{ScreenKeyboardAction as Action, ScreenKeyboardLayout, ScreenKeyboardMod
 enum KeyboardOwner {
     AutoAdmin(AutoAdminJob),
     CommandLine(PageInstanceId),
+    Management(PageInstanceId, String),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,6 +52,7 @@ impl ShellSession {
         let animating = keyboard.motion.requests_redraw(frame);
         if moved {
             self.cancel_auto_admin_pointer();
+            self.cancel_management_pointer_gesture();
         }
         self.resize_auto_admin();
         animating
@@ -77,6 +79,16 @@ impl ShellSession {
             && self.interactive_overlays().is_empty()
         {
             Some(KeyboardOwner::CommandLine(self.active_page_id()))
+        } else if self.interactive_overlays().iter().all(|overlay| {
+            overlay.component()
+                == Some(if self.config_editor_form_visible() {
+                    ShellComponent::Editor
+                } else {
+                    ShellComponent::Management
+                })
+        }) {
+            self.management_keyboard_identity()
+                .map(|identity| KeyboardOwner::Management(self.active_page_id(), identity))
         } else {
             None
         }
@@ -94,6 +106,7 @@ impl ShellSession {
         };
         self.screen_keyboard.physical.reports_release = cfg!(windows);
         self.cancel_auto_admin_pointer();
+        self.cancel_management_pointer_gesture();
         if was_open {
             self.resize_auto_admin();
         }
@@ -169,10 +182,24 @@ impl ShellSession {
         ui::command_line_terminal_area_in(&layout)
     }
 
+    pub(super) fn input_keyboard_content_layout(
+        &self,
+        layout: ui::ShellFrameLayout,
+    ) -> ui::ShellFrameLayout {
+        if matches!(
+            self.input_keyboard_owner(),
+            Some(KeyboardOwner::CommandLine(_) | KeyboardOwner::Management(..))
+        ) {
+            self.command_line_keyboard_layout(layout).0
+        } else {
+            layout
+        }
+    }
+
     pub(super) fn keyboard_launcher_area(&self) -> Option<Rect> {
         if !matches!(
             self.input_keyboard_owner(),
-            Some(KeyboardOwner::CommandLine(_))
+            Some(KeyboardOwner::CommandLine(_) | KeyboardOwner::Management(..))
         ) {
             return None;
         }
@@ -196,12 +223,23 @@ impl ShellSession {
         if self.screen_keyboard.owner.is_none() {
             return;
         }
-        self.screen_keyboard.open = !self.screen_keyboard.open;
+        let opening = !self.screen_keyboard.open;
+        if opening
+            && matches!(
+                self.screen_keyboard.owner,
+                Some(KeyboardOwner::Management(..))
+            )
+        {
+            self.focus_management_keyboard_input();
+            self.sync_input_keyboard();
+        }
+        self.screen_keyboard.open = opening;
         self.screen_keyboard.modifiers = Default::default();
         self.screen_keyboard.physical.clear();
         self.screen_keyboard.pressed = None;
         self.interaction.button_capture = None;
         self.cancel_auto_admin_pointer();
+        self.cancel_management_pointer_gesture();
         self.resize_auto_admin();
     }
 
@@ -234,7 +272,7 @@ impl ShellSession {
             .filter(|area| area.contains(point));
         let region = key.map(|button| button.region()).or_else(|| {
             launcher.map(|area| ui::components::ButtonRegion {
-                id: "command-line.keyboard".into(),
+                id: "input.keyboard".into(),
                 area,
                 disabled: false,
             })
@@ -248,6 +286,7 @@ impl ShellSession {
         self.update_button_input_mode(&input);
         // Crossing into the panel cannot finish a press started in the AA/page.
         self.cancel_auto_admin_pointer();
+        self.cancel_management_pointer_gesture();
         self.interaction.button_capture = None;
         let activated = match mouse.kind {
             ui::MouseEventKind::Down(ui::MouseButton::Left) => {

@@ -1,6 +1,91 @@
 use super::*;
 
 #[test]
+fn new_management_choices_translate_only_defined_option_fields() {
+    for (action, field_id, raw, key) in [
+        (
+            "add_rule",
+            "duration",
+            "runtime",
+            "management-value-runtime",
+        ),
+        (
+            "add_rule",
+            "duration",
+            "permanent",
+            "management-value-permanent",
+        ),
+        ("add_rule", "duration", "both", "management-value-both"),
+        (
+            "ssh_configure",
+            "password_authentication",
+            "yes",
+            "management-value-yes",
+        ),
+        (
+            "ssh_configure",
+            "pubkey_authentication",
+            "no",
+            "management-value-no",
+        ),
+        (
+            "ssh_configure",
+            "permit_root_login",
+            "yes",
+            "management-value-root-login-yes",
+        ),
+        (
+            "ssh_configure",
+            "permit_root_login",
+            "no",
+            "management-value-root-login-no",
+        ),
+        (
+            "ssh_configure",
+            "permit_root_login",
+            "prohibit-password",
+            "management-value-root-login-prohibit-password",
+        ),
+        (
+            "ssh_configure",
+            "permit_root_login",
+            "forced-commands-only",
+            "management-value-root-login-forced-commands-only",
+        ),
+    ] {
+        let purpose = FormPurpose::Action(
+            ManagementAction {
+                id: action.into(),
+                ..Default::default()
+            },
+            None,
+        );
+        let field = ManagementField {
+            id: field_id.into(),
+            value: raw.into(),
+            choices: vec![raw.into()],
+            ..Default::default()
+        };
+        assert_eq!(form_value_text(&purpose, &field, raw), i18n::tr!(key));
+        assert_eq!(field.value, raw);
+        assert_eq!(field.choices, vec![raw]);
+        let account_field = ManagementField {
+            id: "username".into(),
+            ..field.clone()
+        };
+        assert_eq!(form_value_text(&purpose, &account_field, raw), raw);
+        let unrelated = FormPurpose::Action(
+            ManagementAction {
+                id: "user_info".into(),
+                ..Default::default()
+            },
+            None,
+        );
+        assert_eq!(form_value_text(&unrelated, &field, raw), raw);
+    }
+}
+
+#[test]
 fn editor_dialogs_use_specific_translated_titles_and_actions() {
     let mut session = state();
     session.enter_screen(ShellScreen::Editor);
@@ -28,7 +113,16 @@ fn system_configuration_opens_the_path_form_without_a_single_item_menu() {
     session.enter_screen(ShellScreen::Editor);
     session.config_editor_action(ui::EditorConfigAction::Menu);
     let form = session.to_management_view_model().form.unwrap();
-    assert_eq!(form.identity, "config-open");
+    assert!(form.identity.ends_with(".config-open"));
+    assert!(
+        form.identity
+            .split('.')
+            .next()
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+            > 0
+    );
     assert!(form.choice.is_none());
     assert!(!form.message.is_empty());
     assert_eq!(form.fields.len(), 1);
@@ -832,9 +926,38 @@ fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
                 .1
             };
             click_management_point(&mut clicked, (area.x, area.y));
+            let keyed_form = keyed
+                .pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .unwrap();
+            let clicked_form = clicked
+                .pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .unwrap();
+            assert_ne!(keyed_form.instance, clicked_form.instance);
             assert_eq!(
-                keyed.pages.management.management_state.form,
-                clicked.pages.management.management_state.form,
+                (
+                    &keyed_form.title,
+                    &keyed_form.message,
+                    keyed_form.message_scroll,
+                    &keyed_form.fields,
+                    keyed_form.selected,
+                    &keyed_form.purpose
+                ),
+                (
+                    &clicked_form.title,
+                    &clicked_form.message,
+                    clicked_form.message_scroll,
+                    &clicked_form.fields,
+                    clicked_form.selected,
+                    &clicked_form.purpose
+                ),
                 "{kind:?}/{id}"
             );
             assert!(
@@ -1092,6 +1215,7 @@ fn management_choice_enter_and_form_control_enter_preserve_input_and_required_ch
     session.register_management_job(&job, TaskDomain::ManagementOperation, TaskClass::Operation);
     session.pages.management.management_state.operation_job = Some(job);
     session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
         title: "Mock question".into(),
         message: String::new(),
         message_scroll: 0,
@@ -1394,6 +1518,7 @@ fn terminal_ctrl_c_is_routed_to_task_and_configuration_cannot_be_dismissed() {
         ShellCommand::ManagementKey(_)
     ));
     state.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
         message_scroll: 0,
         title: "Configuration".into(),
         message: String::new(),
@@ -1481,6 +1606,7 @@ fn terminal_button_reopens_finished_auto_admin_instead_of_a_second_input_surface
 fn text_fields_take_priority_over_actions_and_keep_secrets_out_of_view_model() {
     let mut state = state();
     state.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
         message_scroll: 0,
         title: "Authorization".into(),
         message: String::new(),
@@ -1518,6 +1644,7 @@ fn text_fields_take_priority_over_actions_and_keep_secrets_out_of_view_model() {
 fn choice_fields_reject_free_text_and_paste() {
     let mut state = state();
     state.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
         message_scroll: 0,
         title: "Choice".into(),
         message: String::new(),
@@ -1709,6 +1836,7 @@ fn management_scrollbar_drag_preserves_viewport_and_cancel_stops_capture() {
 fn touch_choice_list_selects_without_cycling_or_submitting() {
     let mut state = state();
     state.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
         title: "Choice".into(),
         message: String::new(),
         message_scroll: 0,
@@ -1805,7 +1933,8 @@ fn escape_asks_before_transferring_management_operation_to_the_session() {
 fn compact_management_uses_the_reserved_shell_content_area() {
     let mut state = state();
     state.terminal_size = (49, 11);
-    assert_eq!(state.management_main(), Rect::new(0, 1, 49, 10));
+    assert_eq!(state.management_main(), Rect::new(0, 1, 49, 9));
+    assert_eq!(state.keyboard_launcher_area().unwrap().y, 10);
     assert!(state.management_button_at((48, 0)).is_none());
 }
 
@@ -1895,6 +2024,7 @@ fn terminal_events_close_the_choice_list_and_release_form_drag() {
     ] {
         let mut state = state();
         state.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
             title: "Question".into(),
             message: String::new(),
             message_scroll: 0,
@@ -2621,6 +2751,10 @@ fn all_management_modules_sort_headers_and_keep_action_target_after_refresh() {
         ManagementKind::Disks,
         ManagementKind::Users,
         ManagementKind::SystemConfig,
+        ManagementKind::Firewall,
+        ManagementKind::Ssh,
+        ManagementKind::Backups,
+        ManagementKind::ScheduledTasks,
     ] {
         let mut session = shortcut_action_state(kind, "inspect");
         session.terminal_size = (120, 32);
@@ -2689,4 +2823,130 @@ fn all_management_modules_sort_headers_and_keep_action_target_after_refresh() {
             "mock"
         );
     }
+}
+
+#[test]
+fn complete_details_toggle_preserves_authorized_rows_and_query() {
+    for kind in [
+        ManagementKind::Firewall,
+        ManagementKind::Ssh,
+        ManagementKind::Backups,
+        ManagementKind::ScheduledTasks,
+    ] {
+        let mut session = shortcut_action_state(kind, "inspect");
+        session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+        let state = &mut session.pages.management.management_state;
+        state.snapshot.details_complete = true;
+        let mut other = state.snapshot.rows[0].clone();
+        other.id = "other-backup".into();
+        state.snapshot.rows.push(other);
+        state.snapshot.refresh_action = Some(ManagementAction {
+            id: "inspect_fixture".into(),
+            privileged: true,
+            ..Default::default()
+        });
+        state.status = "authorized snapshot retained".into();
+        let snapshot = state.snapshot.clone();
+        let query = state.query.clone();
+        session.toggle_management_details();
+        assert!(session.pages.management.management_state.details_only);
+        session.handle_management_key(&KeyInput::new(InputKey::Escape));
+        let state = &session.pages.management.management_state;
+        assert!(!state.details_only);
+        assert_eq!(state.snapshot, snapshot);
+        assert_eq!(state.snapshot.rows.len(), 2);
+        assert_eq!(state.query, query);
+        assert_eq!(state.status, "authorized snapshot retained");
+        assert!(state.query_job.is_none() && state.operation_job.is_none());
+    }
+}
+
+#[test]
+fn authorized_refresh_uses_current_query_and_waits_for_active_operation() {
+    let mut session = shortcut_action_state(ManagementKind::Backups, "inspect");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    let state = &mut session.pages.management.management_state;
+    state.snapshot.refresh_action = Some(ManagementAction {
+        id: "inspect_fixture".into(),
+        privileged: true,
+        values: BTreeMap::from([
+            ("scope".into(), "old".into()),
+            ("filter".into(), "old".into()),
+            ("query_target".into(), "old".into()),
+            ("__query_option:removed".into(), "old".into()),
+            ("native".into(), "kept".into()),
+        ]),
+        ..Default::default()
+    });
+    let query = state.query.as_mut().unwrap();
+    query.scope = "new".into();
+    query.filter = "current filter".into();
+    query.target = None;
+    query.options.insert("username".into(), "demo".into());
+    let request = state.refresh_command().unwrap();
+    assert_eq!(request.action, "inspect_fixture");
+    assert_eq!(request.values["scope"], "new");
+    assert_eq!(request.values["filter"], "current filter");
+    assert_eq!(request.values["__query_option:username"], "demo");
+    assert_eq!(request.values["native"], "kept");
+    assert!(!request.values.contains_key("query_target"));
+    assert!(!request.values.contains_key("__query_option:removed"));
+    let (job, _) = session.management_job();
+    session.pages.management.management_state.operation_job = Some(job.clone());
+    session.refresh_management();
+    assert!(session.pages.management.management_state.refresh_requested);
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .as_ref(),
+        Some(&job)
+    );
+    assert!(
+        session
+            .pages
+            .management
+            .management_state
+            .query_job
+            .is_none()
+    );
+}
+
+#[test]
+fn failed_authorized_refresh_does_not_repeat_authorization() {
+    let mut session = shortcut_action_state(ManagementKind::Backups, "inspect");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    let (job, _) = session.management_job();
+    session.register_management_job(&job, TaskDomain::ManagementOperation, TaskClass::Operation);
+    session
+        .pages
+        .management
+        .management_state
+        .snapshot
+        .refresh_action = Some(ManagementAction {
+        id: "inspect_fixture".into(),
+        privileged: true,
+        ..Default::default()
+    });
+    session
+        .pages
+        .management
+        .management_state
+        .refreshing_authorized = true;
+    session.pages.management.management_state.received_snapshot = false;
+    job.0
+        .events
+        .lock()
+        .unwrap()
+        .push_back(OperationEvent::Failed {
+            message: "inspection denied".into(),
+        });
+    session.pages.management.management_state.operation_job = Some(job);
+    session.poll_management();
+    let state = &session.pages.management.management_state;
+    assert_eq!(state.status, "inspection denied");
+    assert!(!state.refresh_requested && !state.refreshing_authorized);
+    assert!(state.operation_job.is_none() && state.query_job.is_none());
 }

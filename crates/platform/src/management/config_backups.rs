@@ -780,10 +780,7 @@ fn query_at(
             id: id.clone(),
             cells: vec![id.clone(), time, source, paths, result],
             detail: vec![(i18n::tr!("platform-backups-difference").into(), difference)],
-            identity: BTreeMap::from([
-                ("backup_id".into(), id),
-                ("source".into(), record.source),
-            ]),
+            identity: BTreeMap::from([("backup_id".into(), id), ("source".into(), record.source)]),
             actions,
         });
     }

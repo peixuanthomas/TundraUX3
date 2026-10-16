@@ -28,6 +28,10 @@ fn management_icons_upgrade_preserves_existing_custom_artwork() {
         "builtin.packages",
         "builtin.network",
         "builtin.disks",
+        "builtin.firewall",
+        "builtin.ssh",
+        "builtin.backups",
+        "builtin.scheduled-tasks",
         "builtin.logs",
     ] {
         assert!(store.launcher_icon(key).is_some());

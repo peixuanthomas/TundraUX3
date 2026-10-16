@@ -101,6 +101,29 @@ impl ShellSession {
             Some(ManagementKind::Disks) => {
                 &["open_path", "open_directory", "mount", "unmount", "scan"]
             }
+            Some(ManagementKind::Firewall) => &[
+                "show_listening_ports",
+                "show_firewall_rules",
+                "add_rule",
+                "remove_rule",
+                "inspect_firewall",
+            ],
+            Some(ManagementKind::Ssh) => &[
+                "inspect_ssh",
+                "set_view",
+                "ssh_configure",
+                "user_ssh_add",
+                "user_ssh_remove",
+            ],
+            Some(ManagementKind::Backups) => &[
+                "inspect_backups",
+                "preview_restore",
+                "restore",
+                "restore_legacy",
+            ],
+            Some(ManagementKind::ScheduledTasks) => {
+                &["create_task", "preview_task", "pause", "resume", "run_now"]
+            }
             _ => &[],
         };
         let mut primary = preferred
@@ -263,6 +286,7 @@ impl ShellSession {
                 })
                 .collect::<Vec<_>>();
             self.pages.management.management_state.form = Some(ManagementEditor {
+                instance: next_management_form_instance(),
                 title: i18n::tr!("management-more-actions"),
                 message: String::new(),
                 message_scroll: 0,
@@ -303,6 +327,7 @@ impl ShellSession {
             .unwrap_or_default();
         if (action.confirm && !action.privileged) || !action.fields.is_empty() {
             self.pages.management.management_state.form = Some(ManagementEditor {
+                instance: next_management_form_instance(),
                 message_scroll: 0,
                 title: management_label(&action.id, &action.label),
                 message,
@@ -474,6 +499,12 @@ impl ShellSession {
                 self.pages.management.management_state.kind == Some(ManagementKind::Packages);
             let mut keep_package_filter = false;
             if let Some(query) = &mut self.pages.management.management_state.query {
+                if action.id == "show_listening_ports" {
+                    query.scope = "listeners".into();
+                }
+                if action.id == "show_firewall_rules" {
+                    query.scope.clear();
+                }
                 let old_package_list = matches!(
                     query.scope.as_str(),
                     "" | "search" | "installed" | "updates"
@@ -552,6 +583,11 @@ impl ShellSession {
         let Some(kind) = self.pages.management.management_state.kind else {
             return;
         };
+        if action.id == "inspect_firewall" {
+            if let Some(query) = &self.pages.management.management_state.query {
+                values.insert("scope".into(), query.scope.clone());
+            }
+        }
         let description = std::iter::once(management_title(kind))
             .chain(std::iter::once(management_label(&action.id, &action.label)))
             .chain(row.as_ref().map(|r| r.id.clone()))
@@ -638,6 +674,15 @@ impl ShellSession {
         socket: Option<PathBuf>,
         description: Option<String>,
     ) {
+        let refreshing_authorized = command.as_ref().is_some_and(|command| {
+            self.pages
+                .management
+                .management_state
+                .snapshot
+                .refresh_action
+                .as_ref()
+                .is_some_and(|action| action.id == command.action)
+        });
         let configuration_operation = command
             .as_ref()
             .is_some_and(|c| c.kind == ManagementKind::SystemConfig);
@@ -751,6 +796,8 @@ impl ShellSession {
             },
         ) {
             Ok(worker) => {
+                self.pages.management.management_state.refreshing_authorized =
+                    refreshing_authorized;
                 self.pages
                     .management
                     .management_state
@@ -769,6 +816,8 @@ impl ShellSession {
                 self.resize_management_terminal();
             }
             Err(error) => {
+                self.pages.management.management_state.refreshing_authorized = false;
+                self.pages.management.management_state.refresh_requested = false;
                 self.pages.management.management_state.status =
                     i18n::tr!("management-worker-unavailable");
                 self.pages.management.management_state.output = error.to_string();

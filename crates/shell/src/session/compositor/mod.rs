@@ -213,11 +213,7 @@ impl ScreenCompositor {
         let layout =
             ui::ShellFrameLayout::new(bounds, chrome.status.time_button_label.as_deref(), context)
                 .with_back_shortcut(chrome.back_shortcut);
-        let layout = if state.content_screen() == ShellScreen::CommandLine {
-            state.command_line_keyboard_layout(layout).0
-        } else {
-            layout
-        };
+        let layout = state.input_keyboard_content_layout(layout);
         // Use the actual frame bounds, including a resize arriving just before draw.
         state.terminal_size = (bounds.width, bounds.height);
         state.refresh_hit_map_with_frame_layout(context.transitions, layout);
@@ -359,11 +355,7 @@ impl ScreenCompositor {
         .with_back_shortcut(chrome.back_shortcut);
         self.motion.update_layout(
             state,
-            &if state.content_screen() == ShellScreen::CommandLine {
-                state.command_line_keyboard_layout(layout).0
-            } else {
-                layout
-            },
+            &state.input_keyboard_content_layout(layout),
             context.theme,
             context.motion.reduced_motion,
         );

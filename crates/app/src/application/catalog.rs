@@ -90,6 +90,10 @@ impl BuiltInApplicationDescriptor {
             "builtin.network" => msg!("app-catalog-network-name").into(),
             "builtin.disks" => msg!("app-catalog-disks-name").into(),
             "builtin.users" => msg!("app-catalog-users-name").into(),
+            "builtin.firewall" => msg!("app-catalog-firewall-name").into(),
+            "builtin.ssh" => msg!("app-catalog-ssh-name").into(),
+            "builtin.backups" => msg!("app-catalog-backups-name").into(),
+            "builtin.scheduled-tasks" => msg!("app-catalog-scheduled-tasks-name").into(),
             _ => LocalizedText::Raw(self.name.to_string()),
         }
     }
@@ -104,6 +108,10 @@ impl BuiltInApplicationDescriptor {
             "builtin.network" => msg!("app-catalog-network-description").into(),
             "builtin.disks" => msg!("app-catalog-disks-description").into(),
             "builtin.users" => msg!("app-catalog-users-description").into(),
+            "builtin.firewall" => msg!("app-catalog-firewall-description").into(),
+            "builtin.ssh" => msg!("app-catalog-ssh-description").into(),
+            "builtin.backups" => msg!("app-catalog-backups-description").into(),
+            "builtin.scheduled-tasks" => msg!("app-catalog-scheduled-tasks-description").into(),
             _ => LocalizedText::Raw(self.description.to_string()),
         }
     }
@@ -197,6 +205,26 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         "builtin.disks",
         "Disks",
         "Inspect storage, mount filesystems and scan space usage",
+    ),
+    management_application(
+        "builtin.firewall",
+        "Firewall and ports",
+        "Inspect listening ports and manage firewall allow rules",
+    ),
+    management_application(
+        "builtin.ssh",
+        "SSH service",
+        "Configure SSH and verify a new connection before keeping changes",
+    ),
+    management_application(
+        "builtin.backups",
+        "Configuration backups",
+        "Review configuration changes and restore selected operations",
+    ),
+    management_application(
+        "builtin.scheduled-tasks",
+        "Scheduled tasks",
+        "Inspect, create, pause and run systemd and cron tasks",
     ),
 ];
 

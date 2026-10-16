@@ -4,6 +4,10 @@
 
 默认资源表使用一份静态数据，校验、修复和内存回退共用其中的图片字节，避免在同一个可执行文件中重复嵌入 PNG。
 
+语言资源包含防火墙、SSH、配置恢复和定时任务的中英文界面文字；新增启动器入口复用现有图片，并提供各自的 ASCII 图标。旧图标目录会补入四个新入口，保留已有的自定义图案。
+
+定时任务后端的表单、确认和错误提示集中在中英文 `modules/management-scheduled-tasks.ftl`，由 `i18n` 语言快照传给后台线程和授权助手。
+
 重建发布程序后，可运行 `python scripts/check-embedded-assets.py target/release/tundra-shell.exe target/release/tundra-cli.exe` 检查每张默认图片是否恰好嵌入一次；Linux/macOS 使用不带 `.exe` 的程序路径。脚本逐字节匹配源码中的完整 PNG，同时检查遗漏和重复。
 
 若某个平台的程序没有用到内置图片，编译器可以完全移除这些字节。此时添加 `--allow-missing`，只检查有无重复；脚本仍会打印实际图片数量和字节数。

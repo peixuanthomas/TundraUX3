@@ -25,6 +25,7 @@ fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
     for size in [(40, 10), (60, 18), (120, 40)] {
         let mut session = session(size);
         session.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
             title: "Select an option".into(),
             message: String::new(),
             message_scroll: 0,
@@ -115,6 +116,7 @@ fn management_forms_block_buttons_from_the_previous_frame_registry() {
             // The menu has just opened, before its first draw replaces the registry.
             session.button_regions = vec![background];
             session.pages.management.management_state.form = Some(ManagementEditor {
+                instance: next_management_form_instance(),
                 title: "Review".into(),
                 message: String::new(),
                 message_scroll: 0,
@@ -139,10 +141,13 @@ fn management_forms_block_buttons_from_the_previous_frame_registry() {
                 session.button_at(point).is_none(),
                 "covered buttons must not be recovered from the old registry"
             );
-            let button = ui::management_button_regions(main, &session.to_management_view_model())
-                .into_iter()
-                .find(|region| !region.disabled)
-                .unwrap();
+            let button = ui::management_button_regions(
+                session.management_main(),
+                &session.to_management_view_model(),
+            )
+            .into_iter()
+            .find(|region| !region.disabled)
+            .unwrap();
             assert_eq!(
                 session.button_at((button.area.x, button.area.y)),
                 Some(button)
@@ -158,4 +163,217 @@ fn management_forms_block_buttons_from_the_previous_frame_registry() {
             );
         }
     }
+}
+
+fn pointer_input(session: &mut ShellSession, point: CellPosition, hover: bool) {
+    let platform = platform::native_platform();
+    let events = if hover {
+        vec![
+            InputEvent::mouse_moved(point),
+            InputEvent::mouse_down(PointerButton::Left, point),
+            InputEvent::mouse_up(PointerButton::Left, point),
+        ]
+    } else {
+        vec![
+            InputEvent::mouse_down(PointerButton::Left, point),
+            InputEvent::mouse_up(PointerButton::Left, point),
+        ]
+    };
+    for event in events {
+        if let Some(event) = session.prepare_input(event, platform.as_ref(), Instant::now()) {
+            match event {
+                InputEvent::Key(key) => session.handle_management_key(&key),
+                InputEvent::Paste(text) => session.handle_management_paste(&text),
+                InputEvent::Mouse(mouse) => session.handle_management_pointer(mouse),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn keyboard_tap(session: &mut ShellSession, action: ui::ScreenKeyboardAction, hover: bool) {
+    let area = session
+        .input_keyboard_layout()
+        .buttons
+        .into_iter()
+        .find(|button| button.action == action)
+        .unwrap()
+        .area;
+    pointer_input(session, (area.x, area.y), hover);
+}
+
+#[test]
+fn management_text_forms_and_search_accept_mouse_and_no_hover_touch_keyboard_input() {
+    for hover in [false, true] {
+        for size in [(108, 20), (120, 40)] {
+            let mut session = session(size);
+            session.pages.management.management_state.form = Some(ManagementEditor {
+                instance: next_management_form_instance(),
+                title: "Enter value".into(),
+                message: String::new(),
+                message_scroll: 0,
+                fields: vec![ManagementField {
+                    id: "value".into(),
+                    required: true,
+                    ..Default::default()
+                }],
+                selected: 0,
+                purpose: FormPurpose::Answer("fixture".into()),
+            });
+            session.refresh_hit_map();
+            session.sync_input_keyboard();
+            let launcher = session.keyboard_launcher_area().unwrap();
+            pointer_input(&mut session, (launcher.x, launcher.y), hover);
+            session.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+            assert!(session.input_keyboard_open());
+            let layout = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            );
+            assert!(!layout.submit.is_empty(), "{size:?}");
+            assert!(layout.form.bottom() <= session.input_keyboard_layout().keyboard.y);
+            keyboard_tap(&mut session, ui::ScreenKeyboardAction::Letter('a'), hover);
+            keyboard_tap(&mut session, ui::ScreenKeyboardAction::Letter('b'), hover);
+            keyboard_tap(&mut session, ui::ScreenKeyboardAction::Backspace, hover);
+            assert_eq!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .fields[0]
+                    .value,
+                "a"
+            );
+            let submit = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            )
+            .submit;
+            pointer_input(&mut session, (submit.x, submit.y), hover);
+            assert!(session.pages.management.management_state.form.is_none());
+            session.sync_input_keyboard();
+            let launcher = session.keyboard_launcher_area().unwrap();
+            pointer_input(&mut session, (launcher.x, launcher.y), hover);
+            session.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+            keyboard_tap(&mut session, ui::ScreenKeyboardAction::Letter('x'), hover);
+            assert_eq!(session.pages.management.management_state.filter_input, "x");
+            assert!(session.pages.management.management_state.filtering);
+            keyboard_tap(&mut session, ui::ScreenKeyboardAction::Escape, hover);
+            assert!(!session.pages.management.management_state.filtering);
+            session.sync_input_keyboard();
+            assert!(!session.input_keyboard_open());
+        }
+    }
+}
+
+#[test]
+fn management_keyboard_loses_old_press_on_form_choice_modal_and_page_changes() {
+    let mut session = session((120, 40));
+    session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
+        title: "Form".into(),
+        message: String::new(),
+        message_scroll: 0,
+        fields: vec![
+            ManagementField {
+                id: "value".into(),
+                ..Default::default()
+            },
+            ManagementField {
+                id: "choice".into(),
+                value: "One".into(),
+                choices: vec!["One".into(), "Two".into()],
+                ..Default::default()
+            },
+        ],
+        selected: 0,
+        purpose: FormPurpose::Answer("fixture".into()),
+    });
+    session.toggle_input_keyboard();
+    session.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    let key = session
+        .input_keyboard_layout()
+        .buttons
+        .into_iter()
+        .find(|button| button.action == ui::ScreenKeyboardAction::Letter('a'))
+        .unwrap()
+        .area;
+    let platform = platform::native_platform();
+    session.prepare_input(
+        InputEvent::mouse_down(PointerButton::Left, (key.x, key.y)),
+        platform.as_ref(),
+        Instant::now(),
+    );
+    assert!(session.screen_keyboard.pressed.is_some());
+    let mut replacement = session
+        .pages
+        .management
+        .management_state
+        .form
+        .clone()
+        .unwrap();
+    replacement.instance = next_management_form_instance();
+    session.pages.management.management_state.form = Some(replacement);
+    session.sync_input_keyboard();
+    assert!(!session.input_keyboard_open());
+    assert!(session.screen_keyboard.pressed.is_none());
+    session.toggle_input_keyboard();
+    session.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    session.open_management_choice_field(1);
+    session.sync_input_keyboard();
+    assert!(!session.input_keyboard_open());
+    assert!(session.screen_keyboard.pressed.is_none());
+    session.pages.management.management_state.choice_field = None;
+    session.toggle_input_keyboard();
+    session.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    session.enter_screen(ShellScreen::Home);
+    session.sync_input_keyboard();
+    assert!(!session.input_keyboard_open());
+    assert!(session.keyboard_launcher_area().is_none());
+}
+
+#[test]
+fn editor_configuration_text_form_uses_the_same_keyboard_and_bounded_layout() {
+    let mut session = session((108, 20));
+    session.enter_screen(ShellScreen::Editor);
+    session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
+        title: "Configuration".into(),
+        message: String::new(),
+        message_scroll: 0,
+        fields: vec![ManagementField {
+            id: "value".into(),
+            ..Default::default()
+        }],
+        selected: 0,
+        purpose: FormPurpose::Configuration("edit-find".into()),
+    });
+    session.refresh_hit_map();
+    session.sync_input_keyboard();
+    let launcher = session.keyboard_launcher_area().unwrap();
+    pointer_input(&mut session, (launcher.x, launcher.y), false);
+    session.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    assert!(session.input_keyboard_open());
+    keyboard_tap(&mut session, ui::ScreenKeyboardAction::Letter('a'), false);
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .unwrap()
+            .fields[0]
+            .value,
+        "a"
+    );
+    let layout = ui::management_layout(
+        session.management_main(),
+        &session.to_management_view_model(),
+    );
+    assert!(!layout.submit.is_empty());
+    assert!(layout.form.bottom() <= session.input_keyboard_layout().keyboard.y);
 }

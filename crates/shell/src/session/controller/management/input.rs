@@ -412,8 +412,14 @@ impl ShellSession {
         }
         match key.key {
             InputKey::Escape
-                if self.pages.management.management_state.kind
+                if (self.pages.management.management_state.kind
                     == Some(ManagementKind::Packages)
+                    || self
+                        .pages
+                        .management
+                        .management_state
+                        .snapshot
+                        .details_complete)
                     && self.pages.management.management_state.details_only =>
             {
                 self.toggle_management_details();
@@ -549,6 +555,16 @@ impl ShellSession {
         let package_view =
             self.pages.management.management_state.kind == Some(ManagementKind::Packages);
         self.pages.management.management_state.actions_focused = !package_view;
+        if self
+            .pages
+            .management
+            .management_state
+            .snapshot
+            .details_complete
+        {
+            self.clamp_management_scroll();
+            return;
+        }
         let target = self
             .pages
             .management

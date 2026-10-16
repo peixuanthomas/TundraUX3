@@ -12,7 +12,7 @@ impl ScreenCompositor {
     ) {
         if let Some(area) = state.keyboard_launcher_area() {
             ui::components::Button::new(
-                "command-line.keyboard",
+                "input.keyboard",
                 if state.input_keyboard_open() {
                     i18n::tr!("screen-keyboard-hide")
                 } else {

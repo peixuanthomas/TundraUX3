@@ -446,6 +446,16 @@ impl ShellSession {
                 "builtin.disks" => {
                     self.open_management(platform::management::ManagementKind::Disks)
                 }
+                "builtin.firewall" => {
+                    self.open_management(platform::management::ManagementKind::Firewall)
+                }
+                "builtin.ssh" => self.open_management(platform::management::ManagementKind::Ssh),
+                "builtin.backups" => {
+                    self.open_management(platform::management::ManagementKind::Backups)
+                }
+                "builtin.scheduled-tasks" => {
+                    self.open_management(platform::management::ManagementKind::ScheduledTasks)
+                }
                 _ => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-arg1-is-not-available-in-this-build",
                     arg1 = application.localized_name()
