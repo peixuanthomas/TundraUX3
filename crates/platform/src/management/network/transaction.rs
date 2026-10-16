@@ -24,6 +24,12 @@ enum State {
 struct Journal {
     #[serde(default)]
     actor_uid: u32,
+    #[serde(default)]
+    backup_id: Option<String>,
+    #[serde(default)]
+    rollback_backup_id: Option<String>,
+    #[serde(default)]
+    rollback_plan: Option<Plan>,
     plan: Plan,
     state: State,
     deadline: u64,
@@ -288,6 +294,9 @@ pub(super) fn apply(
         wifi.password.zeroize();
     }
     let mut journal = Journal {
+        backup_id: None,
+        rollback_backup_id: None,
+        rollback_plan: None,
         actor_uid: context.actor_uid,
         plan: stored,
         state: State::Prepared,
@@ -302,6 +311,19 @@ pub(super) fn apply(
         write_journal(&directory, &journal)?;
         return Err(error);
     }
+    match history::begin(&journal.plan, context.actor_uid, cancelled) {
+        Ok(id) => journal.backup_id = Some(id),
+        Err(error) => {
+            journal.state = State::Restored;
+            journal.result = i18n::tr!(
+                "platform-network-history-no-changes",
+                error = error.to_string()
+            );
+            write_journal(&directory, &journal)?;
+            return Err(error);
+        }
+    }
+    write_journal(&directory, &journal)?;
     let helper = context
         .helper_path
         .to_str()
@@ -355,7 +377,10 @@ pub(super) fn apply(
         }
         if let Err(error) = validate_plan(&plan) {
             journal.state = State::Restored;
-            journal.result = format!("No network changes were applied: {error}");
+            journal.result = i18n::tr!(
+                "platform-network-history-no-changes",
+                error = error.to_string()
+            );
             write_journal(&directory, &journal)?;
             return Err(error);
         }
@@ -383,6 +408,9 @@ pub(super) fn apply(
             &directory,
         )?;
         journal.candidate_nm_version = candidate_nm_version;
+        if let Some(id) = &journal.backup_id {
+            super::super::config_backups::finish(id, "awaiting network confirmation")?;
+        }
         journal.state = State::AwaitingConfirmation;
         journal.deadline = now() + 120;
         write_journal(&directory, &journal)?;
@@ -396,12 +424,17 @@ pub(super) fn apply(
         },
         percent: None,
     });
+    interaction.emit(OperationEvent::Transaction {
+        kind: ManagementKind::Network,
+        id: id.clone(),
+    });
     interaction.emit(OperationEvent::Output {
-        text: format!("Network transaction: {id}"),
+        text: i18n::tr!("platform-network-history-transaction-id", id = id.clone()),
     });
     if plan.defer_confirmation && plan.wifi.is_none() {
-        return Ok(format!(
-            "Network transaction {id} awaits confirmation for 120 seconds. Run network confirm with this ID after checking the connection."
+        return Ok(i18n::tr!(
+            "platform-network-history-waiting-confirmation",
+            id = id.clone()
         ));
     }
     let answer = if plan.wifi.is_some() {
@@ -473,6 +506,8 @@ pub(super) fn apply(
             return Err(error);
         }
     }
+    history::refresh_files(&mut journal.plan)?;
+    write_journal(&directory, &journal)?;
     journal.state = State::Committed;
     journal.result = if plan.wifi.is_some() {
         "Wi-Fi connected. Selected network and required addresses verified.".into()
@@ -480,12 +515,31 @@ pub(super) fn apply(
         "Network configuration confirmed and saved".into()
     };
     write_journal(&directory, &journal)?;
+    if let Some(id) = &journal.backup_id {
+        history::finish(
+            id,
+            &journal.plan,
+            journal.actor_uid,
+            &journal.result,
+            &AtomicBool::new(false),
+        )?;
+    }
     // The recovery service observes the terminal state before exiting. Backups remain
     // private until then; retaining this small journal also records the actual outcome.
     Ok(journal.result)
 }
 
 fn validate_plan(plan: &Plan) -> Result<(), ManagementError> {
+    if let Some(id) = &plan.restore_record {
+        verify_identity(&plan.interface, &plan.identity)?;
+        if plan.kind == OwnerKind::NetworkManager && nm_device(&plan.interface)?.uuid != plan.uuid {
+            return Err(ManagementError::Conflict(
+                i18n::tr!("platform-network-history-the-active-network-changed-before-restoration")
+                    .into(),
+            ));
+        }
+        return super::super::config_backups::validate_current(id);
+    }
     verify_identity(&plan.interface, &plan.identity)?;
     if plan.kind == OwnerKind::NetworkManager && nm_device(&plan.interface)?.uuid != plan.uuid {
         return Err(ManagementError::Conflict(
@@ -523,6 +577,49 @@ fn guarded_apply(
 }
 
 fn apply_configuration(plan: &Plan, cancelled: &AtomicBool) -> Result<(), ManagementError> {
+    if let Some(id) = &plan.restore_record {
+        if plan.kind == OwnerKind::Interfaces {
+            deactivate_interfaces(&plan.interface, cancelled)?;
+        }
+        super::super::config_backups::restore_files_unrecorded(id)?;
+        if plan.kind == OwnerKind::NetworkManager {
+            if !plan.remove_uuid.is_empty()
+                && history::profile_exists(&plan.remove_uuid, cancelled)?
+            {
+                run(
+                    "nmcli",
+                    &["connection", "delete", "uuid", &plan.remove_uuid],
+                    cancelled,
+                )?;
+            }
+            run("nmcli", &["connection", "reload"], cancelled)?;
+            if plan.restore_uuid.is_empty() {
+                run(
+                    "nmcli",
+                    &["device", "disconnect", &plan.interface],
+                    cancelled,
+                )?;
+            } else {
+                run(
+                    "nmcli",
+                    &[
+                        "--wait",
+                        "35",
+                        "connection",
+                        "up",
+                        "uuid",
+                        &plan.restore_uuid,
+                        "ifname",
+                        &plan.interface,
+                    ],
+                    cancelled,
+                )?;
+            }
+        } else {
+            activate(plan, cancelled)?;
+        }
+        return Ok(());
+    }
     if plan.operation == "wifi-disconnect" {
         run(
             "nmcli",
@@ -593,7 +690,22 @@ fn apply_configuration(plan: &Plan, cancelled: &AtomicBool) -> Result<(), Manage
             deactivate_interfaces(&plan.interface, cancelled)?;
         }
         for change in &plan.files {
-            write_atomic(&change.path, &change.after, change.mode)?;
+            let current = super::super::system_config::read(&change.path)?;
+            if current.content.as_bytes() != change.before {
+                return Err(ManagementError::Conflict(
+                    i18n::tr!(
+                        "platform-network-history-network-configuration-changed-before-saving"
+                    )
+                    .into(),
+                ));
+            }
+            let content = std::str::from_utf8(&change.after).map_err(|_| {
+                ManagementError::InvalidInput(
+                    i18n::tr!("platform-network-history-network-configuration-must-be-utf-8-text")
+                        .into(),
+                )
+            })?;
+            super::super::system_config::install_reviewed(&change.path, &current.version, content)?;
         }
         activate(plan, cancelled)?;
     }
@@ -748,41 +860,62 @@ fn deactivate_interfaces(interface: &str, cancelled: &AtomicBool) -> Result<(), 
 fn restore(journal: &mut Journal, directory: &Path) -> Result<(), ManagementError> {
     if journal.state == State::Prepared {
         journal.state = State::Restored;
-        journal.result = "No network changes were applied".into();
-        return write_journal(directory, journal);
+        journal.result = i18n::tr!("platform-network-history-no-applied-changes");
+        write_journal(directory, journal)?;
+        if let Some(id) = &journal.backup_id {
+            super::super::config_backups::set_result(id, &journal.result)?;
+        }
+        return Ok(());
     }
     let result = (|| {
         // Check before any ifdown/profile deletion/file replacement, so a device
         // that reused the old interface name cannot be changed by recovery.
         verify_identity(&journal.plan.interface, &journal.plan.identity)?;
         let cancelled = AtomicBool::new(false);
+        if journal.rollback_backup_id.is_none()
+            && let Some(source) = &journal.backup_id
+            && let Some((id, plan)) =
+                history::begin_rollback(&journal.plan, source, journal.actor_uid, &cancelled)?
+        {
+            journal.rollback_backup_id = Some(id);
+            journal.rollback_plan = Some(plan);
+            write_journal(directory, journal)?;
+        }
         let down_error = if journal.plan.kind == OwnerKind::Interfaces {
             deactivate_interfaces(&journal.plan.interface, &cancelled).err()
         } else {
             None
         };
-        for change in &journal.plan.files {
-            // Refuse to overwrite a third party's later edits, but report recovery as failed.
-            let removed_by_us = journal.plan.operation == "wifi-forget" && !change.path.exists();
-            if !removed_by_us {
-                config::checked_file(&change.path)?;
-            }
-            let current = if removed_by_us {
-                Vec::new()
-            } else {
-                fs::read(&change.path).map_err(io_error)?
-            };
-            if current != change.before && current != change.after {
-                return Err(ManagementError::Conflict(format!(
-                    "Configuration changed outside this transaction: {}",
-                    change.path.display()
-                )));
-            }
-            write_atomic(&change.path, &change.before, change.mode)?;
-            if fs::read(&change.path).map_err(io_error)? != change.before {
-                return Err(ManagementError::Failed(
-                    "Restored file readback did not match its backup".into(),
-                ));
+        if let Some(id) = &journal.backup_id {
+            super::super::config_backups::restore_pending_files_unrecorded(
+                id,
+                &history::candidates(&journal.plan)?,
+            )?;
+        } else {
+            for change in &journal.plan.files {
+                // Refuse to overwrite a third party's later edits, but report recovery as failed.
+                let removed_by_us =
+                    journal.plan.operation == "wifi-forget" && !change.path.exists();
+                if !removed_by_us {
+                    config::checked_file(&change.path)?;
+                }
+                let current = if removed_by_us {
+                    Vec::new()
+                } else {
+                    fs::read(&change.path).map_err(io_error)?
+                };
+                if current != change.before && current != change.after {
+                    return Err(ManagementError::Conflict(i18n::tr!(
+                        "platform-network-history-external-change",
+                        path = change.path.display().to_string()
+                    )));
+                }
+                write_atomic(&change.path, &change.before, change.mode)?;
+                if fs::read(&change.path).map_err(io_error)? != change.before {
+                    return Err(ManagementError::Failed(
+                        i18n::tr!("platform-network-history-restored-file-readback-did-not-match-its-backup").into(),
+                    ));
+                }
             }
         }
         if journal.plan.kind == OwnerKind::NetworkManager {
@@ -848,45 +981,35 @@ fn restore(journal: &mut Journal, directory: &Path) -> Result<(), ManagementErro
     match &result {
         Ok(()) => {
             journal.state = State::Restored;
-            journal.result = "Previous network configuration restored; configuration files matched backups and the backend completed activation".into();
+            journal.result = i18n::tr!("platform-network-history-recovery-completed");
         }
         Err(error) => {
             journal.state = State::RestoreFailed;
-            journal.result = format!(
-                "Recovery failed: {error}. Backups retained at {}",
-                directory.display()
+            journal.result = i18n::tr!(
+                "platform-network-history-recovery-failed",
+                error = error.to_string(),
+                directory = directory.display().to_string()
             );
         }
     }
     write_journal(directory, journal)?;
+    if let Some(id) = &journal.backup_id {
+        super::super::config_backups::set_result(id, &journal.result)?;
+    }
+    if let (Some(id), Some(plan)) = (&journal.rollback_backup_id, &journal.rollback_plan) {
+        if result.is_ok() {
+            history::finish(
+                id,
+                plan,
+                journal.actor_uid,
+                &journal.result,
+                &AtomicBool::new(false),
+            )?;
+        } else {
+            super::super::config_backups::set_result(id, &journal.result)?;
+        }
+    }
     result
-}
-
-pub(super) fn backup_saved_wifi(uuid: &str, bytes: &[u8]) -> Result<PathBuf, ManagementError> {
-    if !Path::new(ROOT).exists() {
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(ROOT)
-            .map_err(io_error)?;
-    }
-    private_directory(Path::new(ROOT))?;
-    let directory = Path::new(ROOT).join("forgotten-wifi");
-    if !directory.exists() {
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&directory)
-            .map_err(io_error)?;
-    }
-    private_directory(&directory)?;
-    let file = directory.join(format!(
-        "{uuid}-{}.nmconnection",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-    write_atomic(&file, bytes, 0o600)?;
-    Ok(file)
 }
 
 /// Fixed root-only helper entry. Its journal cannot be supplied by the original user.
@@ -1004,13 +1127,27 @@ pub fn confirm_transaction(
             return Err(error);
         }
     }
+    history::refresh_files(&mut journal.plan)?;
+    write_journal(&directory, &journal)?;
     journal.state = State::Committed;
     journal.result = "Network configuration confirmed and saved".into();
     write_journal(&directory, &journal)?;
+    if let Some(id) = &journal.backup_id {
+        history::finish(
+            id,
+            &journal.plan,
+            journal.actor_uid,
+            &journal.result,
+            &AtomicBool::new(false),
+        )?;
+    }
     Ok(journal.result)
 }
 
 fn expected_active_uuid(plan: &Plan) -> &str {
+    if plan.restore_record.is_some() {
+        return &plan.restore_uuid;
+    }
     if matches!(plan.operation.as_str(), "wifi-disconnect" | "wifi-forget") {
         ""
     } else if let Some(wifi) = &plan.wifi {
@@ -1024,7 +1161,7 @@ fn expected_active_uuid(plan: &Plan) -> &str {
     }
 }
 
-fn nm_configuration_version(uuid: &str) -> Result<String, ManagementError> {
+pub(super) fn nm_configuration_version(uuid: &str) -> Result<String, ManagementError> {
     let bus = bus()?;
     let settings = Proxy::new(
         &bus,
@@ -1101,6 +1238,20 @@ fn validate_pending_configuration(journal: &Journal) -> Result<(), ManagementErr
     let plan = &journal.plan;
     verify_identity(&plan.interface, &plan.identity)?;
     for change in &plan.files {
+        if plan.restore_record.is_some()
+            && history::candidates(plan)?
+                .get(&change.path)
+                .is_some_and(|(_, existed)| !*existed)
+        {
+            if !change.path.exists() {
+                continue;
+            } else {
+                return Err(ManagementError::Conflict(
+                    i18n::tr!("platform-network-history-a-removed-network-path-was-recreated")
+                        .into(),
+                ));
+            }
+        }
         if plan.operation == "wifi-forget" {
             match fs::symlink_metadata(&change.path) {
                 Err(error) if error.kind()==std::io::ErrorKind::NotFound=>continue,
@@ -1275,6 +1426,9 @@ mod tests {
     #[test]
     fn journal_does_not_store_wifi_password() {
         let plan = Plan {
+            restore_record: None,
+            restore_uuid: String::new(),
+            remove_uuid: String::new(),
             defer_confirmation: false,
             operation: "wifi-connect".into(),
             identity: BTreeMap::new(),
@@ -1300,6 +1454,9 @@ mod tests {
         };
         assert!(!format!("{plan:?}").contains("secret-password"));
         let bytes = serde_json::to_string(&Journal {
+            backup_id: None,
+            rollback_backup_id: None,
+            rollback_plan: None,
             actor_uid: 1000,
             plan,
             state: State::Prepared,
@@ -1327,8 +1484,14 @@ mod tests {
         let file = directory.join("interfaces");
         fs::write(&file, b"outside edit").unwrap();
         let mut journal = Journal {
+            backup_id: None,
+            rollback_backup_id: None,
+            rollback_plan: None,
             actor_uid: 1000,
             plan: Plan {
+                restore_record: None,
+                restore_uuid: String::new(),
+                remove_uuid: String::new(),
                 defer_confirmation: false,
                 operation: "configure".into(),
                 identity: BTreeMap::new(),
@@ -1374,8 +1537,14 @@ mod tests {
         let file = directory.join("profile");
         fs::write(&file, b"new").unwrap();
         let mut journal = Journal {
+            backup_id: None,
+            rollback_backup_id: None,
+            rollback_plan: None,
             actor_uid: 1000,
             plan: Plan {
+                restore_record: None,
+                restore_uuid: String::new(),
+                remove_uuid: String::new(),
                 defer_confirmation: false,
                 operation: "configure".into(),
                 identity: BTreeMap::from([

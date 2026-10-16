@@ -2,6 +2,7 @@
 //! Changes are guarded by a root-owned recovery service, never by a Shell thread.
 mod config;
 mod diagnostics;
+mod history;
 mod transaction;
 mod wifi;
 
@@ -20,6 +21,7 @@ use std::time::{Duration, Instant};
 use zbus::blocking::{Connection, Proxy, connection::Builder};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
+pub(crate) use history::{restore_backup, restore_preflight};
 pub use transaction::rollback_transaction;
 pub use transaction::{confirm_transaction, transaction_status};
 pub use wifi::{WifiAccessPoint, scan_wifi};
@@ -281,7 +283,7 @@ pub fn execute(
         return Ok("Protected network settings were read; passwords were omitted".into());
     }
     if command.action == "forget_saved_wifi" {
-        return forget_saved_wifi(command, interaction, cancelled);
+        return forget_saved_wifi(command, context, interaction, cancelled);
     }
     let name = command
         .identity
@@ -943,6 +945,7 @@ pub(super) fn saved_wifi_profiles() -> Result<Vec<SavedWifi>, ManagementError> {
 
 fn forget_saved_wifi(
     command: &ManagementCommand,
+    context: &ExecutionContext,
     interaction: &mut dyn OperationInteraction,
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
@@ -989,13 +992,11 @@ fn forget_saved_wifi(
     if active.lines().any(|s| s == uuid) {
         return Err(ManagementError::Conflict("This profile became active; forget it through the interface so network recovery is armed".into()));
     }
-    let backup = transaction::backup_saved_wifi(uuid, &bytes)?;
     interaction.emit(OperationEvent::Output {
         text: format!(
-            "Delete saved Wi-Fi profile {:?} ({uuid}) at {}. A private backup is retained at {}.",
+            "Delete saved Wi-Fi profile {:?} ({uuid}) at {}. The configuration history retains a private recovery copy.",
             profile.id,
-            path.display(),
-            backup.display()
+            path.display()
         ),
     });
     let decision = interaction.ask(
@@ -1021,16 +1022,27 @@ fn forget_saved_wifi(
     if active.lines().any(|s| s == uuid) {
         return Err(ManagementError::Conflict("The saved profile became active while confirmation was open; use the interface action instead".into()));
     }
-    run("nmcli", &["connection", "delete", "uuid", uuid], cancelled)?;
+    let backup = history::begin_inactive(uuid, &path, context.actor_uid, cancelled)?;
+    let outcome = run("nmcli", &["connection", "delete", "uuid", uuid], cancelled);
+    history::finish_inactive(
+        &backup,
+        uuid,
+        if outcome.is_ok() {
+            "forgot inactive saved Wi-Fi profile"
+        } else {
+            "Wi-Fi profile deletion failed"
+        },
+        &AtomicBool::new(false),
+    )?;
+    outcome?;
     if saved_wifi_profiles()?.iter().any(|p| p.uuid == uuid) || path.exists() {
         return Err(ManagementError::Failed(
             "NetworkManager reported deletion, but the saved profile is still present".into(),
         ));
     }
     Ok(format!(
-        "Forgot saved Wi-Fi profile {:?}; private backup retained at {}",
-        profile.id,
-        backup.display()
+        "Forgot saved Wi-Fi profile {:?}; configuration backup {backup}",
+        profile.id
     ))
 }
 

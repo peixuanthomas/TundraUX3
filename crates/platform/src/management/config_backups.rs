@@ -936,6 +936,10 @@ pub fn execute(
     if record.source == "users" {
         return super::users::restore_backup(&record.payload, context, io, flag);
     }
+    if record.source == "network" {
+        super::network::restore_preflight(&record.payload, context, flag)?;
+        return super::network::restore_backup(&record.payload, context, io, flag);
+    }
     let _firewall_lock = if record.source == "firewall" {
         Some(super::firewall::lock_rules(flag)?)
     } else {

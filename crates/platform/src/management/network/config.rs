@@ -757,6 +757,12 @@ pub(super) struct FileChange {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Plan {
     #[serde(default)]
+    pub restore_record: Option<String>,
+    #[serde(default)]
+    pub restore_uuid: String,
+    #[serde(default)]
+    pub remove_uuid: String,
+    #[serde(default)]
     pub defer_confirmation: bool,
     pub operation: String,
     pub identity: BTreeMap<String, String>,
@@ -920,6 +926,9 @@ pub(super) fn prepare(
 ) -> Result<Plan, ManagementError> {
     let a = addresses(values)?;
     let mut plan = Plan {
+        restore_record: None,
+        restore_uuid: String::new(),
+        remove_uuid: String::new(),
         defer_confirmation: values
             .get("defer_confirmation")
             .is_some_and(|v| v == "true"),
@@ -1381,6 +1390,9 @@ pub(super) fn prepare_wifi(
             .into()
     };
     Ok(Plan {
+        restore_record: None,
+        restore_uuid: String::new(),
+        remove_uuid: String::new(),
         defer_confirmation: false,
         operation: "wifi-connect".into(),
         identity: interface_identity(name)?,
@@ -1466,6 +1478,9 @@ pub(super) fn prepare_wifi_action(
         });
     }
     Ok(Plan {
+        restore_record: None,
+        restore_uuid: String::new(),
+        remove_uuid: String::new(),
         defer_confirmation: false,
         operation: operation.into(),
         identity: interface_identity(name)?,
