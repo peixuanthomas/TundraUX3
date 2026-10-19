@@ -761,11 +761,32 @@ fn explorer_name_dialog_renders_clickable_input_and_actions() {
             .any(|control| control.control == ExplorerOverlayControl::Cancel)
     );
 
-    let output = render_output(&model);
+    let terminal = render_terminal(&model);
+    let output = terminal_output(&terminal);
     assert!(output.contains("Rename"));
     assert!(output.contains("Enter a new name"));
-    assert!(output.contains("> README-new.md_"));
+    assert!(output.contains("> README-new_.md"));
     assert!(output.contains("Save"));
+    let input = overlay_control_area(&model, &ExplorerOverlayControl::NameInput);
+    let buffer = terminal.backend().buffer();
+    let start = (input.x..input.right())
+        .find(|&x| buffer[(x, input.y)].symbol() == ">")
+        .expect("name input prefix")
+        + 2;
+    let theme = TundraTheme::default_dark();
+    assert_eq!(buffer[(start + 10, input.y)].symbol(), "_");
+    assert_ne!(buffer[(start + 10, input.y)].bg, theme.tokens().focus);
+    for (index, character) in "README-new.md".chars().enumerate() {
+        let column = start + index as u16 + u16::from(index >= 10);
+        let cell = &buffer[(column, input.y)];
+        assert_eq!(cell.symbol(), character.to_string());
+        if index < 10 {
+            assert_eq!(cell.bg, theme.tokens().focus);
+            assert_eq!(cell.fg, theme.tokens().surface);
+        } else {
+            assert_ne!(cell.bg, theme.tokens().focus);
+        }
+    }
 }
 
 #[test]
