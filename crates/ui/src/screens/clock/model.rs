@@ -6,6 +6,7 @@ pub enum ClockCreateDialogFocus {
     Input,
     CreateAlarm,
     CreateCountdown,
+    Cancel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

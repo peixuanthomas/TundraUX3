@@ -279,7 +279,7 @@ fn render_clock_create_dialog(
         layout.cancel,
         "clock.create-cancel",
         &i18n::tr!("ui-clock-touch-cancel"),
-        false,
+        model.focus == ClockCreateDialogFocus::Cancel,
         theme,
     );
 }

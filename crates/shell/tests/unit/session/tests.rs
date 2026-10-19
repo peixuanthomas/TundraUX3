@@ -4882,6 +4882,27 @@ fn clock_storage_retry_keeps_the_due_summary_visible() {
 }
 
 #[test]
+fn clock_cancel_is_reachable_by_keyboard_and_accepts_enter_space_or_escape() {
+    for key in ["Enter", " ", "Esc"] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        state.set_navigation_path(vec![ShellScreen::Clock]);
+        state.pages.clock.clock_create_state = Some(ClockCreateState::default());
+        state.refresh_hit_map();
+        state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+        assert_eq!(
+            state.pages.common.focused_component,
+            ShellComponent::ClockCreateCancelButton
+        );
+        state.apply_input(InputEvent::from_key_label(key));
+        assert!(state.pages.clock.clock_create_state.is_none(), "{key}");
+    }
+}
+
+#[test]
 fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -4949,6 +4970,11 @@ fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
     assert_eq!(
         state.pages.common.focused_component,
         ShellComponent::ClockCreateCountdownButton
+    );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(
+        state.pages.common.focused_component,
+        ShellComponent::ClockCreateCancelButton
     );
     state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(

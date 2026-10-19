@@ -35,6 +35,7 @@ impl ShellOverlayDescriptor {
                 ShellComponent::ClockCreateInput,
                 ShellComponent::ClockCreateAlarmButton,
                 ShellComponent::ClockCreateCountdownButton,
+                ShellComponent::ClockCreateCancelButton,
             ],
             Some(component) => vec![component],
             None => Vec::new(),

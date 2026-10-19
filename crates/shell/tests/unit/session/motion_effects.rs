@@ -50,6 +50,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
     for (area, expected) in [
         (layout.create_alarm, ShellCommand::ClockCreateAlarm),
         (layout.create_countdown, ShellCommand::ClockCreateCountdown),
+        (layout.cancel, ShellCommand::ClockCloseCreate),
     ] {
         let center = (
             area.x.saturating_add(area.width / 2),

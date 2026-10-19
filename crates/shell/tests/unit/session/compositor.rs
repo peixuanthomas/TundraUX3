@@ -1177,6 +1177,38 @@ fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_di
 }
 
 #[test]
+fn clock_create_cancel_closes_on_release_with_or_without_hover() {
+    for hover in [false, true] {
+        let mut state = session();
+        state.enter_screen(ShellScreen::Clock);
+        state.restore_clock_profile(Default::default());
+        state.open_clock_create_dialog();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut prepared = home_frame(&state, 0, true);
+        prepared.page = ScreenViewModel::Clock(Box::new(state.to_clock_view_model()));
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let cancel = state
+            .button_regions
+            .iter()
+            .find(|region| region.id.as_str() == "clock.create-cancel")
+            .unwrap()
+            .area;
+        let point = (cancel.x + cancel.width / 2, cancel.y);
+        if hover {
+            state.apply_input(InputEvent::mouse_moved(point));
+        }
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        assert!(state.pages.clock.clock_create_state.is_some());
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, (0, 0)));
+        assert!(state.pages.clock.clock_create_state.is_some());
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        assert!(state.pages.clock.clock_create_state.is_none());
+    }
+}
+
+#[test]
 fn launcher_card_single_click_waits_for_release() {
     let mut state = session();
     state.enter_screen(ShellScreen::Launcher);

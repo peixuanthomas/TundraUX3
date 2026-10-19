@@ -338,12 +338,14 @@ impl ShellSession {
             ui::ClockCreateDialogFocus::Input => state.active_field,
             ui::ClockCreateDialogFocus::CreateAlarm => 3,
             ui::ClockCreateDialogFocus::CreateCountdown => 4,
+            ui::ClockCreateDialogFocus::Cancel => 5,
         };
-        let next = (current as isize + direction as isize).rem_euclid(5) as usize;
+        let next = (current as isize + direction as isize).rem_euclid(6) as usize;
         match next {
             0..=2 => self.select_clock_create_field(next),
             3 => self.set_clock_create_focus(ui::ClockCreateDialogFocus::CreateAlarm),
-            _ => self.set_clock_create_focus(ui::ClockCreateDialogFocus::CreateCountdown),
+            4 => self.set_clock_create_focus(ui::ClockCreateDialogFocus::CreateCountdown),
+            _ => self.set_clock_create_focus(ui::ClockCreateDialogFocus::Cancel),
         }
     }
 
@@ -359,6 +361,7 @@ impl ShellSession {
             ui::ClockCreateDialogFocus::CreateCountdown => {
                 ShellComponent::ClockCreateCountdownButton
             }
+            ui::ClockCreateDialogFocus::Cancel => ShellComponent::ClockCreateCancelButton,
         };
     }
 

@@ -64,6 +64,7 @@ impl ShellSession {
                     ui::ClockCreateDialogFocus::CreateCountdown => {
                         (target, ShellCommand::ClockCreateCountdown)
                     }
+                    ui::ClockCreateDialogFocus::Cancel => (target, ShellCommand::ClockCloseCreate),
                 },
                 InputKey::Char(' ') if create.focus == ui::ClockCreateDialogFocus::CreateAlarm => {
                     (target, ShellCommand::ClockCreateAlarm)
@@ -72,6 +73,9 @@ impl ShellSession {
                     if create.focus == ui::ClockCreateDialogFocus::CreateCountdown =>
                 {
                     (target, ShellCommand::ClockCreateCountdown)
+                }
+                InputKey::Char(' ') if create.focus == ui::ClockCreateDialogFocus::Cancel => {
+                    (target, ShellCommand::ClockCloseCreate)
                 }
                 InputKey::Backspace if create.focus == ui::ClockCreateDialogFocus::Input => {
                     (target, ShellCommand::ClockCreateBackspace)
@@ -178,6 +182,9 @@ impl ShellSession {
                     }
                     Some(ShellComponent::ClockCreateCountdownButton) => {
                         (modal_target, ShellCommand::ClockCreateCountdown)
+                    }
+                    Some(ShellComponent::ClockCreateCancelButton) => {
+                        (modal_target, ShellCommand::ClockCloseCreate)
                     }
                     _ => (modal_target, ShellCommand::CaptureOverlayInput),
                 },

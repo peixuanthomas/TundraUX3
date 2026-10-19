@@ -272,6 +272,11 @@ pub(in crate::session) fn build_shell_hit_map(
                                 area: dialog.create_countdown,
                                 layer: ShellHitLayer::AppOverlay,
                             });
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::ClockCreateCancelButton,
+                                area: dialog.cancel,
+                                layer: ShellHitLayer::AppOverlay,
+                            });
                         }
                     }
                 }
@@ -336,6 +341,7 @@ pub(in crate::session) fn build_shell_hit_map(
                             | ShellComponent::ClockCreateInput
                             | ShellComponent::ClockCreateAlarmButton
                             | ShellComponent::ClockCreateCountdownButton
+                            | ShellComponent::ClockCreateCancelButton
                     ))
         });
     }
@@ -398,6 +404,7 @@ pub(in crate::session) fn build_shell_hit_map(
                     ShellComponent::ClockCreateDialog
                         | ShellComponent::ClockCreateAlarmButton
                         | ShellComponent::ClockCreateCountdownButton
+                        | ShellComponent::ClockCreateCancelButton
                 ))
     });
 

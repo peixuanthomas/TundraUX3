@@ -243,6 +243,7 @@ impl ShellSession {
                     ShellComponent::ClockCreateInput,
                     ShellComponent::ClockCreateAlarmButton,
                     ShellComponent::ClockCreateCountdownButton,
+                    ShellComponent::ClockCreateCancelButton,
                 ];
             }
             if self.is_strict_guest() {

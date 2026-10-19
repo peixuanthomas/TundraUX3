@@ -34,6 +34,8 @@
 
 切换为鼠标操作时，首页按钮隐藏键盘焦点颜色；启动器的选中项目继续显示强调色。
 
+新建闹钟弹窗可通过取消按钮、Esc，或 Tab 选中取消后按 Enter/空格关闭；鼠标与触摸沿用同一区域按下、松开才执行的规则。
+
 管理结果记录生成时的语言版本。切换语言或重载自定义语言包后，正在显示或重新返回的管理页会等当前操作和表单结束，再沿原读取方式刷新一次；失败不循环请求。同一视图保留排序、筛选和所选记录。
 
 较大的控制器再按实际工作拆分：editor 分为 view/input/settings/files/recovery/tasks；settings 分为 forms/background/view/devices/tasks；management 分为 actions/input/touch/config_editor。入口文件负责连接这些步骤。

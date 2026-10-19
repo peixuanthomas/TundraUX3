@@ -889,6 +889,7 @@ pub(in crate::session) fn component_message(component: ShellComponent) -> i18n::
         ShellComponent::ClockCreateCountdownButton => {
             i18n::msg!("shell-component-clock-create-countdown-button")
         }
+        ShellComponent::ClockCreateCancelButton => i18n::msg!("ui-clock-touch-cancel"),
         ShellComponent::Diagnostics => i18n::msg!("shell-component-diagnostics"),
         ShellComponent::Logs => i18n::msg!("shell-component-logs"),
         ShellComponent::Management => i18n::msg!("management-title"),
