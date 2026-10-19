@@ -84,6 +84,22 @@ impl ShellSession {
             {
                 return input;
             }
+            if self.active_screen() == ShellScreen::Editor
+                && self.app.storage_config().editor.vim_mode_enabled
+                && self.pages.editor.editor_focus == ui::EditorFocus::Canvas
+                && self.pages.editor.editor_load_state.is_none()
+                && self.pages.editor.editor_save_state.is_none()
+                && self
+                    .active_overlay_descriptor()
+                    .is_none_or(|overlay| overlay.kind == ui::MotionOverlayKind::Toast)
+                && self.pages.editor.editor_search_bar.is_none()
+            {
+                // Vim reserves physical Esc; the Back button still closes the document.
+                return InputEvent::Key(KeyInput::with_modifiers(
+                    InputKey::Char('w'),
+                    InputModifiers::CTRL,
+                ));
+            }
             return InputEvent::Key(KeyInput::new(InputKey::Escape));
         }
         input

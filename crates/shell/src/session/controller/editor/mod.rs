@@ -6,6 +6,7 @@ mod search_bar;
 mod settings;
 pub(in crate::session) mod tasks;
 mod view;
+mod vim;
 use crate::session::*;
 pub(in crate::session) const EDITOR_RECOVERY_IDLE: Duration = Duration::from_secs(2);
 pub(in crate::session) const EDITOR_RECOVERY_INTERVAL: Duration = Duration::from_secs(10);

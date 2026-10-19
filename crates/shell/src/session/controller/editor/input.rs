@@ -64,6 +64,12 @@ impl ShellSession {
             }
             return;
         }
+        if key.key == InputKey::F(8) && !key.has_non_shift_modifier() {
+            if !repeated {
+                self.toggle_editor_vim();
+            }
+            return;
+        }
         if matches!(key.key, InputKey::Char('r' | 'R'))
             && key.modifiers == InputModifiers::none()
             && self
@@ -135,6 +141,9 @@ impl ShellSession {
         // Keyboard editing always returns the live caret to the document after
         // a pointer interaction with a menu or toolbar.
         self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+        if self.handle_editor_vim_key(&key, platform) {
+            return;
+        }
         let command_key = key.modifiers.control
             || (platform.kind() == PlatformKind::Macos && key.modifiers.super_key);
         if command_key {
@@ -374,6 +383,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn handle_editor_paste(&mut self, value: String) {
+        self.pages.editor.editor_vim_pending = None;
         if self.config_editor_form_visible() {
             self.handle_management_paste(&value);
             return;
@@ -392,6 +402,9 @@ impl ShellSession {
         mouse: MouseInput,
         platform: &dyn Platform,
     ) {
+        if matches!(mouse.kind, ui::MouseEventKind::Down(_)) {
+            self.pages.editor.editor_vim_pending = None;
+        }
         if self.config_editor_form_visible() {
             self.handle_management_pointer(mouse);
             return;

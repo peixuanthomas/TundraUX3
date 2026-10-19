@@ -624,6 +624,18 @@ def check_editor_resize(master, slave, output, child, isolated):
         raise SystemExit("Editor did not open the resize fixture")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("Editor did not settle before typing")
+    for keys, marker in [
+        (b"\x1b[19~", b"Normal"),
+        (b"ggi\x1b[200~Vim regression \x1b[201~", b"Insert"),
+        (b"\x1b", b"Normal"),
+        (b"u\x1b[19~", b"Off"),
+    ]:
+        offset = len(output)
+        os.write(master, keys)
+        if not wait_for_output(master, output, marker, child, 5.0, offset):
+            raise SystemExit("Vim mode did not show " + repr(marker) + ":\n" + output_diagnostic(output[offset:]))
+        if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+            raise SystemExit("Editor did not settle after the Vim input")
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 116, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):

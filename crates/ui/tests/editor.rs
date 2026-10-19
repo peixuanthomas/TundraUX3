@@ -1,6 +1,71 @@
 mod support;
 
 #[test]
+fn vim_toggle_is_localized_visible_and_uses_shared_pointer_feedback() {
+    use ui::components::{ButtonFrame, ButtonRegion};
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for locale in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&assets, locale, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        for mode in [
+            None,
+            Some(ui::EditorVimMode::Normal),
+            Some(ui::EditorVimMode::Insert),
+        ] {
+            let mut model = EditorViewModel::source("note.txt", "hello");
+            model.vim_mode = mode;
+            let layout = editor_layout(Rect::new(0, 0, 108, 24), &model);
+            let toggle = layout.vim_toggle;
+            assert_eq!(
+                layout.hit_test(toggle.x, toggle.y),
+                Some(EditorHitTarget::MenuAction(ui::EditorMenuAction::ToggleVim))
+            );
+            assert!(
+                layout
+                    .menus
+                    .iter()
+                    .all(|item| item.area.right() <= toggle.x)
+            );
+            for pressed in [false, true] {
+                let mut theme = TundraTheme::default_dark();
+                let region = ButtonRegion {
+                    id: "editor.vim-toggle".into(),
+                    area: toggle,
+                    disabled: false,
+                };
+                let mut buttons =
+                    ButtonFrame::new(Some(region.clone()), pressed.then_some(region), &theme);
+                buttons.keyboard_focus_visible = false;
+                theme.buttons = Some(buttons);
+                let mut terminal = Terminal::new(TestBackend::new(108, 24)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        render_editor(frame, frame.area(), &model, &theme);
+                    })
+                    .unwrap();
+                let buffer = terminal.backend().buffer();
+                let text = support::terminal_output(&terminal);
+                assert!(text.contains("VIM_mode"));
+                assert!(
+                    !text.contains("h/j/k/l"),
+                    "Vim help stays hidden until requested"
+                );
+                assert_eq!(
+                    buffer[(toggle.x + 1, toggle.y)].fg,
+                    if pressed {
+                        theme.button_pressed_color()
+                    } else {
+                        theme.accent_color
+                    }
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn inline_search_layout_and_hit_targets_stay_inside_resized_editor() {
     use ui::{EditorSearchBar, EditorSearchControl};
     let mut model = EditorViewModel::source("note.txt", "one\ntwo\nthree");

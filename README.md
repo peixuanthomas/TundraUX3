@@ -25,7 +25,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Set up Linux:** change the host name, system timezone and automatic time synchronization, with reviewed timesyncd/chrony server configuration separate from Tundra preferences.
 - **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.
 - **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.
-- **Work with files:** browse directories, perform file operations, and edit plain text. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
+- **Work with files:** browse directories, perform file operations, and edit plain text with optional Vim-style keys (F8; the choice is saved). System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
 - **Manage Linux file access:** edit permissions and ownership for selected files, with separate file/directory permissions and a reviewed recursive range. Toggle permission boxes with Space or Enter.
 - **Open tools:** use the application launcher and built-in command line when a task calls for commands.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.

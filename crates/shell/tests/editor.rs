@@ -25,6 +25,102 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn vim_toggle_persists_and_normal_keys_do_not_insert_or_close_the_document() {
+    let fixture = FixtureRoot::new("vim-mode");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    assert_eq!(state.to_editor_view_model().vim_mode, None);
+    type_text(&mut state, &platform, "hello\nworld");
+    state.apply_input_with_platform(InputEvent::key(InputKey::F(8)), &platform);
+    assert_eq!(
+        state.to_editor_view_model().vim_mode,
+        Some(ui::EditorVimMode::Normal)
+    );
+    type_text(&mut state, &platform, "ggi中");
+    state.apply_input_with_platform(InputEvent::key(InputKey::Escape), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert!(state.to_notification_view_model().is_none());
+    assert_eq!(
+        state.to_editor_view_model().vim_mode,
+        Some(ui::EditorVimMode::Normal)
+    );
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["中hello", "world"]
+    );
+    type_text(&mut state, &platform, "0x");
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["hello", "world"]
+    );
+    type_text(&mut state, &platform, "u");
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["中hello", "world"]
+    );
+    type_text(&mut state, &platform, "dd");
+    assert_eq!(state.to_editor_view_model().source_lines, vec!["world"]);
+    type_text(&mut state, &platform, "u");
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["中hello", "world"]
+    );
+    type_text(&mut state, &platform, "ggyyp");
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["中hello", "中hello", "world"]
+    );
+    let frame = ui::ShellFrameLayout::new(
+        Rect::new(0, 0, 120, 40),
+        None,
+        &ui::RenderContext::default(),
+    );
+    let back = frame.back_button.unwrap();
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (back.x, back.y)),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, (back.x, back.y)),
+        &platform,
+    );
+    assert!(
+        state.to_notification_view_model().is_some(),
+        "Back must still ask to close a dirty document"
+    );
+
+    let mut reopened = logged_in_state(&platform);
+    open_editor_from_home(&mut reopened, &platform);
+    assert_eq!(
+        reopened.to_editor_view_model().vim_mode,
+        Some(ui::EditorVimMode::Normal)
+    );
+    let toggle = current_editor_layout(&reopened).vim_toggle;
+    assert_eq!(
+        current_editor_layout(&reopened).hit_test(toggle.x, toggle.y),
+        Some(EditorHitTarget::MenuAction(ui::EditorMenuAction::ToggleVim))
+    );
+    reopened.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, (toggle.x, toggle.y)),
+        &platform,
+    );
+    reopened.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, (toggle.x, toggle.y)),
+        &platform,
+    );
+    assert_eq!(reopened.to_editor_view_model().vim_mode, None);
+    let stored = storage::StorageManager::open(app_paths(fixture.path()))
+        .unwrap()
+        .manager
+        .load_config()
+        .unwrap();
+    assert!(!stored.editor.vim_mode_enabled);
+    type_text(&mut reopened, &platform, "hjkl");
+    assert_eq!(reopened.to_editor_view_model().source_lines, vec!["hjkl"]);
+}
+
+#[test]
 fn completed_save_updates_the_status_and_the_original_explorer_metadata() {
     let fixture = FixtureRoot::new("save-refreshes-explorer");
     let platform = mock_platform(fixture.path());

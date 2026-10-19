@@ -2,6 +2,8 @@
 
 `ascii-assets` 加载和校验主题、ASCII 图案、图标及字体，统计绘制所需尺寸，并提供内置资源用于修复。语言源码也随资源分发；加载和翻译由 `i18n` 负责。
 
+编辑器 Vim 开关、当前模式和按需打开的快捷键帮助位于中英文 `modules/editor-vim.ftl`。
+
 文件权限与归属的中英文提示集中在 `modules/file-permissions.ftl`，包括空格与 Enter 的勾选操作说明。
 
 操作系统设置和校时配置的中英文提示集中在 `modules/system-settings.ftl`，区分环境能力、工具和查询失败原因，并保留原始诊断详情。

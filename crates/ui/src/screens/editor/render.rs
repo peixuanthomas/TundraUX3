@@ -179,9 +179,18 @@ fn render_menu_bar(
         Rect::new(
             start,
             layout.menu_bar.y,
-            layout.menu_bar.right().saturating_sub(start),
+            layout.vim_toggle.x.saturating_sub(start),
             layout.menu_bar.height,
         ),
+    );
+    render_editor_button(
+        frame,
+        layout.vim_toggle,
+        "editor.vim-toggle",
+        vim_mode_label(model.vim_mode),
+        model.vim_mode.is_some(),
+        false,
+        theme,
     );
 }
 

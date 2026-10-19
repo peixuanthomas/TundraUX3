@@ -127,8 +127,10 @@ impl ShellSession {
             Field::RestoreDefaults => {
                 if let Some(dialog) = self.pages.editor.editor_settings_dialog.as_mut() {
                     let explorer_open_extensions = dialog.draft.explorer_open_extensions.clone();
+                    let vim_mode_enabled = dialog.draft.vim_mode_enabled;
                     dialog.draft = storage::EditorConfig {
                         explorer_open_extensions,
+                        vim_mode_enabled,
                         ..storage::EditorConfig::default()
                     };
                 }

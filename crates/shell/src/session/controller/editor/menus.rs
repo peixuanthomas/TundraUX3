@@ -25,6 +25,23 @@ impl ShellSession {
         self.pages.editor.editor_open_menu = None;
         self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
         let command = match action {
+            Action::ToggleVim => {
+                self.toggle_editor_vim();
+                return;
+            }
+            Action::VimHelp => {
+                self.notify_modal(
+                    i18n::msg!("ui-editor-vim-help"),
+                    i18n::msg!("ui-editor-vim-help-text"),
+                    ui::NotificationTone::Info,
+                    vec![
+                        ShellNotificationAction::new("close", i18n::msg!("shell-close"))
+                            .with_shortcut(InputKey::Escape)
+                            .cancel(),
+                    ],
+                );
+                return;
+            }
             Action::SaveAs => Command::RequestSaveAs,
             Action::Close => Command::RequestClose,
             Action::Exit => {

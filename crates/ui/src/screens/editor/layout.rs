@@ -233,6 +233,7 @@ pub struct EditorSourceLineMap {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorLayout {
+    pub vim_toggle: Rect,
     pub menu_scrollbar: Option<Rect>,
     pub search_items: Vec<(EditorSearchControl, Rect)>,
     pub status_items: Vec<EditorMenuItemLayout>,
@@ -315,6 +316,9 @@ impl EditorLayout {
         }
         if let Some(item) = self.modes.iter().find(|item| contains(item.area, x, y)) {
             return Some(EditorHitTarget::Mode(item.mode));
+        }
+        if contains(self.vim_toggle, x, y) {
+            return Some(EditorHitTarget::MenuAction(EditorMenuAction::ToggleVim));
         }
         if let Some(item) = self.menus.iter().find(|item| contains(item.area, x, y)) {
             return Some(EditorHitTarget::Menu(item.menu));
@@ -761,7 +765,27 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
                 usize::from(canvas.width),
             )
         });
-    let (menus, modes) = menu_layout(menu_bar);
+    let vim_width = [
+        None,
+        Some(EditorVimMode::Normal),
+        Some(EditorVimMode::Insert),
+    ]
+    .into_iter()
+    .map(|mode| terminal_width(&vim_mode_label(mode)))
+    .max()
+    .unwrap_or(0);
+    let vim_toggle = Rect::new(
+        menu_bar
+            .right()
+            .saturating_sub(to_u16(vim_width).min(menu_bar.width)),
+        menu_bar.y,
+        to_u16(vim_width).min(menu_bar.width),
+        menu_bar.height,
+    );
+    let (menus, modes) = menu_layout(Rect {
+        width: vim_toggle.x.saturating_sub(menu_bar.x),
+        ..menu_bar
+    });
     let (menu_popup, menu_items) = menu_popup_layout(area, &menus, model);
     let settings = model
         .settings
@@ -845,6 +869,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         })
         .collect();
     EditorLayout {
+        vim_toggle,
         menu_scrollbar: menu_popup
             .filter(|_| {
                 model
@@ -1311,7 +1336,7 @@ pub fn editor_menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             EditorMenuAction::ToggleWrap,
         ],
         EditorMenu::Settings => Vec::new(),
-        EditorMenu::Help => vec![EditorMenuAction::About],
+        EditorMenu::Help => vec![EditorMenuAction::VimHelp, EditorMenuAction::About],
     }
 }
 
@@ -1457,6 +1482,8 @@ pub(super) fn menu_bar_label(menu: EditorMenu) -> String {
 
 pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
     let label = match action {
+        EditorMenuAction::ToggleVim => i18n::tr!("ui-editor-vim-toggle"),
+        EditorMenuAction::VimHelp => i18n::tr!("ui-editor-vim-help"),
         EditorMenuAction::SaveAs => i18n::tr!("ui-editor-save-as"),
         EditorMenuAction::Close => i18n::tr!("ui-editor-close"),
         EditorMenuAction::Exit => i18n::tr!("ui-editor-exit"),
@@ -1547,6 +1574,14 @@ pub(super) fn mode_label(mode: EditorMode) -> String {
         EditorMode::Rich => i18n::tr!("ui-editor-rich"),
         EditorMode::Source => i18n::tr!("ui-editor-source"),
     }
+}
+
+pub(super) fn vim_mode_label(mode: Option<EditorVimMode>) -> String {
+    i18n::tr!(match mode {
+        None => "ui-editor-vim-off",
+        Some(EditorVimMode::Normal) => "ui-editor-vim-normal",
+        Some(EditorVimMode::Insert) => "ui-editor-vim-insert",
+    })
 }
 
 pub(super) fn scrollbar_layout(

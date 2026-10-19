@@ -147,6 +147,7 @@ fn toml_and_json_documents_round_trip() {
             sort_direction: ExplorerSortDirection::Descending,
         },
         editor: EditorConfig {
+            vim_mode_enabled: true,
             explorer_open_extensions: vec!["md".to_string(), "rs".to_string()],
             cursor_acceleration_enabled: false,
             cursor_acceleration_delay_ms: 1_500,

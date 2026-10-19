@@ -10,6 +10,13 @@ pub enum EditorFocus {
     StatusBar,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EditorVimMode {
+    #[default]
+    Normal,
+    Insert,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMenu {
     File,
@@ -45,6 +52,8 @@ pub enum EditorToolbarAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMenuAction {
+    ToggleVim,
+    VimHelp,
     SaveAs,
     Close,
     Exit,
@@ -624,6 +633,7 @@ impl EditorToolbarState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorViewModel {
+    pub vim_mode: Option<EditorVimMode>,
     pub search_bar: Option<EditorSearchBar>,
     pub selected_menu: EditorMenu,
     pub selected_menu_action: usize,
@@ -710,6 +720,7 @@ pub struct EditorViewModel {
 impl EditorViewModel {
     pub fn new(file_name: impl Into<String>, blocks: Vec<EditorRenderBlock>) -> Self {
         Self {
+            vim_mode: None,
             search_bar: None,
             selected_menu: EditorMenu::File,
             selected_menu_action: 0,

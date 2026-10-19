@@ -398,6 +398,7 @@ pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN: usize = 64;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct EditorConfig {
+    pub vim_mode_enabled: bool,
     /// Filename suffixes that Explorer routes to the built-in editor.
     ///
     /// Values omit the leading dot, are matched case-insensitively, and may
@@ -413,6 +414,7 @@ pub struct EditorConfig {
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
+            vim_mode_enabled: false,
             explorer_open_extensions: DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS
                 .iter()
                 .map(|extension| (*extension).to_string())
