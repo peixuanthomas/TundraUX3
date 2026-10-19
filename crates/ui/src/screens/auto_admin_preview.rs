@@ -77,11 +77,14 @@ pub fn auto_admin_preview_layout(
         };
         buttons[0] = Rect::default();
     }
+    let (terminal, terminal_scrollbar) =
+        super::auto_admin::auto_admin_terminal_layout(rows[2], model);
     (
         AutoAdminLayout {
             dialog,
             description: rows[1],
-            terminal: rows[2],
+            terminal,
+            terminal_scrollbar,
             status: rows[3],
             input: rows[4],
             buttons,

@@ -33,6 +33,7 @@ pub(in crate::session) struct AutoAdminState {
     scroll: u16,
     revision: u64,
     pointer: Option<(usize, u8, Instant)>,
+    terminal_scrollbar_grab: Option<(u16, u8)>,
     suppress_repeats: bool,
     action_key: Option<(InputKey, Instant)>,
     button_focus: Option<usize>,
@@ -311,6 +312,7 @@ impl ShellSession {
     }
     pub(in crate::session) fn cancel_auto_admin_pointer(&mut self) {
         self.auto_admin.pointer = None;
+        self.auto_admin.terminal_scrollbar_grab = None;
     }
     pub(in crate::session) fn auto_admin_running(&self) -> bool {
         self.auto_admin
@@ -514,8 +516,14 @@ impl ShellSession {
         }
         let job = self.auto_admin.job.as_ref().unwrap().clone();
         self.update_button_input_mode(input);
-        if matches!(input, InputEvent::Key(_) | InputEvent::Paste(_)) {
-            self.auto_admin.pointer = None;
+        if matches!(
+            input,
+            InputEvent::Key(_)
+                | InputEvent::Paste(_)
+                | InputEvent::FocusLost
+                | InputEvent::Resize { .. }
+        ) {
+            self.cancel_auto_admin_pointer();
         }
         if let InputEvent::Key(key) = input {
             if key.phase == InputPhase::Release {
@@ -674,10 +682,55 @@ impl ShellSession {
                 }
             }
             InputEvent::Mouse(mouse) => {
-                let layout = ui::auto_admin_layout_in(
-                    self.auto_admin_available_area(),
-                    &self.auto_admin_model().unwrap(),
-                );
+                let model = self.auto_admin_model().unwrap();
+                let layout = ui::auto_admin_layout_in(self.auto_admin_available_area(), &model);
+                if let Some(bar) = layout.terminal_scrollbar {
+                    match mouse.kind {
+                        ui::MouseEventKind::Down(ui::MouseButton::Left)
+                            if rect_contains(bar.track, mouse.coordinates()) =>
+                        {
+                            self.cancel_auto_admin_pointer();
+                            let grab = if rect_contains(bar.thumb, mouse.coordinates()) {
+                                mouse.row().saturating_sub(bar.thumb.y)
+                            } else {
+                                0
+                            };
+                            self.auto_admin.terminal_scrollbar_grab =
+                                Some((grab, job.interaction_phase()));
+                            self.drag_auto_admin_terminal(
+                                &job,
+                                &model.terminal,
+                                bar,
+                                mouse.row(),
+                                grab,
+                            );
+                            return true;
+                        }
+                        ui::MouseEventKind::Drag(ui::MouseButton::Left) => {
+                            if let Some((grab, phase)) = self.auto_admin.terminal_scrollbar_grab
+                                && phase == job.interaction_phase()
+                            {
+                                self.drag_auto_admin_terminal(
+                                    &job,
+                                    &model.terminal,
+                                    bar,
+                                    mouse.row(),
+                                    grab,
+                                );
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if matches!(
+                    mouse.kind,
+                    ui::MouseEventKind::Down(_)
+                        | ui::MouseEventKind::Up(_)
+                        | ui::MouseEventKind::Scroll(_)
+                ) {
+                    self.auto_admin.terminal_scrollbar_grab = None;
+                }
                 let hit = layout
                     .buttons
                     .iter()
@@ -742,6 +795,27 @@ impl ShellSession {
             self.auto_admin.scroll = self.auto_admin.scroll.min(max_scroll);
         }
         true
+    }
+    fn drag_auto_admin_terminal(
+        &self,
+        job: &AutoAdminJob,
+        terminal: &ui::CommandLineTerminalSnapshot,
+        bar: ui::CommandLineScrollbarLayout,
+        row: u16,
+        grab: u16,
+    ) {
+        let start = scrollbar_window_start(
+            row,
+            grab,
+            bar.track.y,
+            bar.track.height,
+            bar.thumb.height,
+            terminal.scrollback_rows,
+            0,
+        );
+        let target = terminal.scrollback_rows.saturating_sub(start);
+        let current = terminal.scrollback_offset;
+        job.scroll_terminal(target > current, target.abs_diff(current));
     }
     fn activate_auto_admin_button(&mut self, job: &AutoAdminJob, index: usize) {
         if job.stop_warning() {

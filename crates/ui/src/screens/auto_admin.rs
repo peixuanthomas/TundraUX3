@@ -36,6 +36,7 @@ pub struct AutoAdminLayout {
     pub dialog: Rect,
     pub description: Rect,
     pub terminal: Rect,
+    pub terminal_scrollbar: Option<crate::CommandLineScrollbarLayout>,
     pub status: Rect,
     pub input: Rect,
     pub buttons: [Rect; 4],
@@ -214,17 +215,36 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
             ..area
         };
     }
+    let (terminal, terminal_scrollbar) = auto_admin_terminal_layout(areas[2], model);
     (
         AutoAdminLayout {
             dialog,
             description: areas[0],
-            terminal: areas[2],
+            terminal,
+            terminal_scrollbar,
             status: areas[3],
             input: areas[4],
             buttons,
         },
         warning,
     )
+}
+
+pub(super) fn auto_admin_terminal_layout(
+    area: Rect,
+    model: &AutoAdminViewModel,
+) -> (Rect, Option<crate::CommandLineScrollbarLayout>) {
+    // Reserve a column before history arrives so the running PTY keeps its width.
+    let terminal = Rect {
+        width: area.width.saturating_sub(1),
+        ..area
+    };
+    let scrollbar = if model.confirming || model.stop == AutoAdminStopState::Warning {
+        None
+    } else {
+        crate::command_line_scrollbar_layout(area, &model.terminal)
+    };
+    (terminal, scrollbar)
 }
 
 fn auto_admin_hint(model: &AutoAdminViewModel, width: u16) -> String {
@@ -324,6 +344,18 @@ pub(super) fn render_auto_admin_contents(
             &model.terminal,
             &context.compatibility_theme(),
         );
+        if let Some(bar) = layout.terminal_scrollbar {
+            let viewport = usize::from(model.terminal.rows.min(layout.terminal.height)).max(1);
+            crate::components::Scrollbar::new(
+                model.terminal.scrollback_rows.saturating_add(viewport),
+                viewport,
+                model
+                    .terminal
+                    .scrollback_rows
+                    .saturating_sub(model.terminal.scrollback_offset),
+            )
+            .render_frame(frame, bar.track, context);
+        }
     }
     frame.render_widget(
         wrapped_paragraph(&model.status, layout.status.width),

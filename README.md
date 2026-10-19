@@ -47,6 +47,8 @@ Support is still being improved. Mouse and touch need a terminal that forwards p
 
 Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action.
 
+AA output includes a draggable scrollbar for reviewing retained output while a task runs and after it finishes.
+
 ## Get started
 
 Use an interactive terminal with at least **108 columns × 20 rows** for the default interface. Some applications, including the built-in command line, need more vertical space. Mouse and touch support depend on the terminal in use.

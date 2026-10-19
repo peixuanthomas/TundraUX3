@@ -845,6 +845,7 @@ pub fn render_screen_keyboard_aa_test(
     context: &RenderContext,
 ) {
     let aa = crate::AutoAdminLayout {
+        terminal_scrollbar: None,
         dialog: layout.aa_dialog,
         description: layout.title,
         terminal: Rect::default(),

@@ -5,6 +5,52 @@ use ui::{
 };
 
 #[test]
+fn live_output_scrollbar_keeps_text_clear_and_tracks_history() {
+    let bounds = Rect::new(0, 0, 120, 40);
+    let mut model = model(false, false);
+    let initial = ui::auto_admin_layout(bounds, &model);
+    for finished in [false, true] {
+        model.finished = finished;
+        for offset in [0, 60, 120] {
+            let snapshot = std::sync::Arc::make_mut(&mut model.terminal);
+            *snapshot =
+                CommandLineTerminalSnapshot::blank(initial.terminal.width, initial.terminal.height);
+            snapshot.scrollback_rows = 120;
+            snapshot.scrollback_offset = offset;
+            for row in 0..snapshot.rows {
+                snapshot.cells[usize::from(row + 1) * usize::from(snapshot.columns) - 1].symbol =
+                    "X".into();
+            }
+            let layout = ui::auto_admin_layout(bounds, &model);
+            assert_eq!(layout.terminal.width, initial.terminal.width);
+            let bar = layout.terminal_scrollbar.unwrap();
+            assert_eq!(bar.track.x, layout.terminal.right());
+            assert_eq!(bar.track.intersection(layout.terminal).width, 0);
+            if offset == 0 {
+                assert_eq!(bar.thumb.bottom(), bar.track.bottom());
+            } else if offset == 120 {
+                assert_eq!(bar.thumb.y, bar.track.y);
+            }
+            let mut terminal =
+                Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+            let context = RenderContext::default();
+            terminal
+                .draw(|frame| ui::render_auto_admin(frame, bounds, &model, &context))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            for y in layout.terminal.y..layout.terminal.bottom() {
+                assert_eq!(buffer[(layout.terminal.right() - 1, y)].symbol(), "X");
+            }
+            assert_eq!(buffer[(bar.thumb.x, bar.thumb.y)].symbol(), "█");
+            assert_eq!(
+                buffer[(bar.thumb.x, bar.thumb.y)].fg,
+                context.theme.accent_strong
+            );
+        }
+    }
+}
+
+#[test]
 fn auto_admin_buttons_and_terminal_fit_small_and_normal_windows() {
     for (width, height) in [(220, 65), (120, 40), (80, 24), (50, 12), (40, 12), (20, 8)] {
         let bounds = Rect::new(0, 0, width, height);

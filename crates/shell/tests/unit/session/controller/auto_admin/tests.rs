@@ -634,6 +634,82 @@ fn finished_terminal_keeps_keyboard_scrollback_available() {
 }
 
 #[test]
+fn output_history_can_be_dragged_without_hover_while_running_or_finished() {
+    for finished in [false, true] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            (120, 40),
+            ShellHomeMode::User,
+        );
+        let (job, rx) = job(storage::AutoAdminPolicy::Automatic);
+        state.show_auto_admin_job(job.clone());
+        for index in 0..80 {
+            job.emit(&OperationEvent::Output {
+                text: format!("Output line {index}"),
+            });
+        }
+        if finished {
+            job.finish(Ok("Done".into()));
+        }
+        let view = state.auto_admin_view().unwrap();
+        let layout = ui::auto_admin_layout_in(state.auto_admin_available_area(), &view);
+        let bar = layout.terminal_scrollbar.unwrap();
+        state.apply_input(InputEvent::mouse_down(
+            PointerButton::Left,
+            (bar.thumb.x, bar.thumb.y),
+        ));
+        state.apply_input(InputEvent::mouse_drag(
+            PointerButton::Left,
+            (bar.track.x, bar.track.y),
+        ));
+        let oldest = state.auto_admin_view().unwrap();
+        assert_eq!(
+            oldest.terminal.scrollback_offset,
+            oldest.terminal.scrollback_rows
+        );
+        assert!(oldest.terminal.cells.iter().any(|cell| cell.symbol == "0"));
+        state.apply_input(InputEvent::mouse_drag(
+            PointerButton::Left,
+            (bar.track.x, bar.track.bottom()),
+        ));
+        state.apply_input(InputEvent::mouse_up(
+            PointerButton::Left,
+            (bar.track.x, bar.track.bottom()),
+        ));
+        assert_eq!(
+            state.auto_admin_view().unwrap().terminal.scrollback_offset,
+            0
+        );
+        for cancel in [
+            InputEvent::FocusLost,
+            InputEvent::Resize {
+                width: 120,
+                height: 40,
+            },
+        ] {
+            state.apply_input(InputEvent::mouse_down(
+                PointerButton::Left,
+                (bar.thumb.x, bar.thumb.y),
+            ));
+            state.apply_input(cancel);
+            state.apply_input(InputEvent::mouse_drag(
+                PointerButton::Left,
+                (bar.track.x, bar.track.y),
+            ));
+            assert_eq!(
+                state.auto_admin_view().unwrap().terminal.scrollback_offset,
+                0
+            );
+        }
+        assert!(state.auto_admin_visible());
+        assert!(
+            rx.try_iter()
+                .all(|input| matches!(input, OperationInput::Resize { .. }))
+        );
+    }
+}
+
+#[test]
 fn closing_pending_approval_denies_it_and_reopening_cannot_approve_it() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
