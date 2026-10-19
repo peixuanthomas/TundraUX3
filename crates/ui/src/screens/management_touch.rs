@@ -385,8 +385,7 @@ fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
 }
 
 fn permission_heading(width: u16) -> String {
-    let label = permission_label_width(width);
-    let cell = width.saturating_sub(label) / 3;
+    let (label, cell) = permission_column_widths(width);
     let mut text = " ".repeat(label as usize);
     for title in [
         i18n::tr!("permissions-read"),
@@ -394,13 +393,16 @@ fn permission_heading(width: u16) -> String {
         i18n::tr!("permissions-execute"),
     ] {
         let title = crate::components::truncate_to_terminal_width(&title, cell as usize);
+        let title_width = title.width() as u16;
+        let leading = cell / 2 - title_width / 2;
+        text.push_str(&" ".repeat(usize::from(leading)));
         text.push_str(&title);
-        text.push_str(&" ".repeat(cell.saturating_sub(title.width() as u16) as usize));
+        text.push_str(&" ".repeat(usize::from(cell - leading - title_width)));
     }
     text
 }
-fn permission_label_width(width: u16) -> u16 {
-    [
+fn permission_column_widths(width: u16) -> (u16, u16) {
+    let label = [
         i18n::tr!("permissions-owner"),
         i18n::tr!("permissions-group"),
         i18n::tr!("permissions-others"),
@@ -409,7 +411,8 @@ fn permission_label_width(width: u16) -> u16 {
     .map(|s| s.width() as u16 + 1)
     .max()
     .unwrap_or(1)
-    .min(width.saturating_sub(9))
+    .min(width.saturating_sub(9));
+    (label, width.saturating_sub(label) / 3)
 }
 pub fn management_permission_cells(
     field: &ManagementFormField,
@@ -419,8 +422,7 @@ pub fn management_permission_cells(
     if field.control != ManagementFormControl::Permissions {
         return Vec::new();
     }
-    let label = permission_label_width(area.width);
-    let width = area.width.saturating_sub(label) / 3;
+    let (label, width) = permission_column_widths(area.width);
     (0..9)
         .filter_map(|index| {
             let row = 2 + index / 3;
