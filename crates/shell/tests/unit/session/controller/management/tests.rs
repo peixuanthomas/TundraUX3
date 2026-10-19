@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "package_workspace.rs"]
+mod package_workspace;
+
 #[test]
 fn failed_empty_management_queries_expose_complete_details_without_retry_or_authorization() {
     for kind in [
@@ -825,7 +828,7 @@ fn shortcut_action_state(kind: ManagementKind, id: &str) -> ShellSession {
 }
 
 #[test]
-fn package_buttons_stay_in_place_and_disabled_actions_do_not_execute() {
+fn package_navigation_stays_separate_and_disabled_actions_do_not_execute() {
     for id in [
         "remove",
         "install",
@@ -841,42 +844,36 @@ fn package_buttons_stay_in_place_and_disabled_actions_do_not_execute() {
                 .take(3)
                 .map(|(action, _)| action.id.as_str())
                 .collect::<Vec<_>>(),
-            ["refresh", "scope_installed", "more_actions"]
+            ["scope_search", "scope_updates", "scope_installed"]
         );
-        assert_eq!(actions.len(), 7);
+        let index = actions
+            .iter()
+            .position(|(action, _)| action.id == id)
+            .unwrap();
         let model = session.to_management_view_model();
-        assert_eq!(model.detail_action_start, Some(0));
-        for (index, expected) in ["remove", "install", "upgrade", "scope_search"]
-            .into_iter()
-            .enumerate()
-        {
-            let action = &actions[index + 3].0;
-            assert!(action.id == expected || action.id == format!("pacman_{expected}"));
-            assert_eq!(
-                model.actions[index + 3].1,
-                action.id == id || expected == "scope_search"
-            );
-            if !model.actions[index + 3].1 {
-                session.activate_management_action(index + 3);
-                assert!(session.pages.management.management_state.form.is_none());
-                assert!(
-                    session
-                        .pages
-                        .management
-                        .management_state
-                        .draft_job
-                        .is_none()
-                );
-                assert!(
-                    session
-                        .pages
-                        .management
-                        .management_state
-                        .operation_job
-                        .is_none()
-                );
-            }
-        }
+        assert!(model.workspace.unwrap().primary_actions.contains(&index));
+        assert!(model.actions[index].1);
+        session.pages.management.management_state.snapshot.rows[0].actions[0].disabled_reason =
+            Some("Unavailable".into());
+        assert!(!session.to_management_view_model().actions[index].1);
+        session.activate_management_action(index);
+        assert!(session.pages.management.management_state.form.is_none());
+        assert!(
+            session
+                .pages
+                .management
+                .management_state
+                .draft_job
+                .is_none()
+        );
+        assert!(
+            session
+                .pages
+                .management
+                .management_state
+                .operation_job
+                .is_none()
+        );
     }
 }
 
@@ -887,12 +884,17 @@ fn package_detail_buttons_use_the_same_target_for_pointer_and_keyboard() {
         session.terminal_size = (120, 30);
         let model = session.to_management_view_model();
         let layout = ui::management_layout(session.management_main(), &model);
-        let install = layout.actions[4];
+        let index = session
+            .management_actions()
+            .iter()
+            .position(|(action, _)| action.id == "install")
+            .unwrap();
+        let install = layout.actions[index];
         assert_eq!(install.intersection(layout.detail_actions_panel), install);
         if by_touch {
             click_management_point(&mut session, (install.x, install.y));
         } else {
-            session.handle_management_key(&KeyInput::new(InputKey::Char('5')));
+            session.handle_management_key(&KeyInput::new(InputKey::Char('i')));
         }
         assert!(
             matches!(session.pages.management.management_state.form.as_ref().map(|form| &form.purpose), Some(FormPurpose::Action(action, Some(row))) if action.id == "install" && row.id == "mock-selected-item")
@@ -1264,6 +1266,30 @@ fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
         for id in ids {
             let mut keyed = shortcut_action_state(kind, id);
             let mut clicked = shortcut_action_state(kind, id);
+            if kind == ManagementKind::Packages {
+                for session in [&mut keyed, &mut clicked] {
+                    let scope = match id {
+                        "upgrade_all" | "pacman_upgrade_all" => Some("updates"),
+                        "refresh" => Some("search"),
+                        _ => None,
+                    };
+                    if let Some(scope) = scope {
+                        session
+                            .pages
+                            .management
+                            .management_state
+                            .query
+                            .as_mut()
+                            .unwrap()
+                            .scope = scope.into();
+                    }
+                    session
+                        .pages
+                        .management
+                        .management_state
+                        .package_advanced_open = id == "refresh";
+                }
+            }
             let (shortcut, key) = management_action_shortcut(Some(kind), id)
                 .expect("each current action has a shortcut");
             keyed.handle_management_key(&KeyInput::new(key));
@@ -1277,9 +1303,19 @@ fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
                     model.actions[index].0,
                     format!(
                         "[{shortcut}] {}",
-                        action_label(
-                            &clicked.pages.management.management_state.snapshot.rows[0].actions[0]
-                        )
+                        if kind == ManagementKind::Packages
+                            && matches!(id, "scope_search" | "scope_installed" | "scope_updates")
+                        {
+                            i18n::tr!(format!(
+                                "management-package-nav-{}",
+                                id.strip_prefix("scope_").unwrap()
+                            ))
+                        } else {
+                            action_label(
+                                &clicked.pages.management.management_state.snapshot.rows[0].actions
+                                    [0],
+                            )
+                        }
                     )
                 );
                 ui::management_layout(clicked.management_main(), &model).actions[index]
@@ -2908,6 +2944,7 @@ fn package_details_keep_all_rows_and_escape_returns_to_the_list() {
 #[test]
 fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_search_text() {
     let mut session = package_list_state();
+    let search_result = session.pages.management.management_state.snapshot.clone();
     session.pages.management.management_state.filter_input = "shell".into();
     session
         .pages
@@ -2929,6 +2966,16 @@ fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_searc
         "shell"
     );
     assert!(session.pages.management.management_state.filtering);
+    assert!(
+        session
+            .pages
+            .management
+            .management_state
+            .snapshot
+            .rows
+            .is_empty()
+    );
+    session.pages.management.management_state.snapshot = search_result;
     session.handle_management_key(&KeyInput::new(InputKey::Tab));
     assert!(!session.pages.management.management_state.filtering);
     assert_eq!(
@@ -3030,35 +3077,27 @@ fn package_navigation_remains_enabled_during_a_background_operation() {
     let (job, _) = session.management_job();
     session.register_management_job(&job, TaskDomain::ManagementOperation, TaskClass::Operation);
     session.pages.management.management_state.operation_job = Some(job.clone());
-    let more = session
-        .management_actions()
-        .iter()
-        .position(|(action, _)| action.id == "more_actions")
-        .unwrap();
-    session.activate_management_action(more);
+    session.handle_management_key(&KeyInput::new(InputKey::F(3)));
     let model = session.to_management_view_model();
-    let FormPurpose::Menu(items) = &session
-        .pages
-        .management
-        .management_state
-        .form
-        .as_ref()
-        .unwrap()
-        .purpose
-    else {
-        panic!("expected menu");
-    };
-    let choice = model.form.unwrap().choice.unwrap();
+    assert!(
+        session
+            .pages
+            .management
+            .management_state
+            .package_advanced_open
+    );
+    assert!(session.pages.management.management_state.form.is_none());
+    let items = session.management_actions();
     let installed = items
         .iter()
         .position(|(action, _)| action.id == "scope_installed")
         .unwrap();
-    assert!(!choice.disabled[installed]);
+    assert!(model.actions[installed].1);
     let remove = items
         .iter()
         .position(|(action, _)| action.id == "remove")
         .unwrap();
-    assert!(choice.disabled[remove]);
+    assert!(!model.actions[remove].1);
     session.handle_management_key(&KeyInput::new(InputKey::F(7)));
     assert_eq!(
         session
@@ -3162,13 +3201,19 @@ fn all_management_modules_sort_headers_and_keep_action_target_after_refresh() {
             vec!["Name".into(), "Count".into()];
         session.pages.management.management_state.snapshot.rows = vec![row, other];
         let original = session.pages.management.management_state.snapshot.clone();
-        let layout = ui::management_layout(
-            session.management_main(),
-            &session.to_management_view_model(),
-        );
-        assert!(layout.actions_panel.is_empty());
-        for area in layout.actions.iter().filter(|area| !area.is_empty()) {
-            assert_eq!(area.intersection(layout.detail_actions_panel), *area);
+        let model = session.to_management_view_model();
+        let layout = ui::management_layout(session.management_main(), &model);
+        if let Some(workspace) = &model.workspace {
+            assert!(!layout.actions_panel.is_empty());
+            for index in &workspace.primary_actions {
+                let area = layout.actions[*index];
+                assert_eq!(area.intersection(layout.detail_actions_panel), area);
+            }
+        } else {
+            assert!(layout.actions_panel.is_empty());
+            for area in layout.actions.iter().filter(|area| !area.is_empty()) {
+                assert_eq!(area.intersection(layout.detail_actions_panel), *area);
+            }
         }
         let header = layout.headers[0].1;
         click_management_point(&mut session, (header.x, header.y));

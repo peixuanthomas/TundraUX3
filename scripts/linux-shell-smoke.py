@@ -365,7 +365,8 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     os.kill(child.pid, signal.SIGWINCH)
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
     # The fixed Linux catalog places Packages seventh and Logs fourth.
-    step(b"\x1b[H" + b"\x1b[B" * 6 + b"\r", b"Installed packages", "Packages did not open")
+    step(b"\x1b[H" + b"\x1b[B" * 6 + b"\r", b"Search packages", "Packages did not open")
+    step(b"\x1b[18~", b"Installed packages", "Installed page did not open")
     # Installed rows must return after leaving the full detail page, even
     # when a detail query targeted only the first package.
     if Path("/usr/bin/dpkg-query").is_file():
@@ -383,14 +384,14 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
                        (b"\x1b[18~", b"Installed packages")):
         step(key, title, "Package scope shortcut did not switch views", timeout=45.0)
         if key == b"\x1b[17~" and Path("/usr/bin/dpkg-query").is_file():
-            step(b"bash\r", b"Bourne Again", "Package search did not load matching metadata", timeout=45.0)
+            step(b"GNU Bourne Again\r", b"Bourne Again", "Package search did not load matching metadata", timeout=45.0)
     if Path("/usr/bin/dpkg-query").is_file() and len(names) >= 2:
         step(b"\x15", names[1].encode(), "Clearing package search did not restore installed rows")
-    # View actions are the final six menu items, in the same order on every
-    # package page. Only navigation is submitted here; no system write runs.
-    for upward, title in ((2, b"Software sources"), (1, b"Configuration conflicts"), (0, b"Package status")):
-        step(b"3", b"Close", "Package More actions did not open")
-        step(b"\x1b[F" + b"\x1b[A" * upward + b"\r", title,
+    # Each main page owns its advanced entry. F3, Down and Enter reach it
+    # without a pointer; these navigation steps never submit system writes.
+    for root, title in ((b"\x1b[17~", b"Software sources"), (b"\x1b[18~", b"Configuration conflicts"), (b"\x1b[19~", b"Package status")):
+        step(root + b"\x1bOR", b"Advanced", "Package advanced section did not open")
+        step(b"\x1b[B\r", title,
              "Package auxiliary view did not open", timeout=45.0)
         step(b"\x1b[18~", b"Installed packages", "Auxiliary view could not return to packages")
     step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Packages did not return to Launcher")

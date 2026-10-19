@@ -4,6 +4,8 @@
 
 编辑器 Vim 开关、当前模式和按需打开的快捷键帮助位于中英文 `modules/editor-vim.ftl`。
 
+软件包分栏页的主导航、高级区和键盘提示位于中英文 `modules/management-services-process-packages.ftl`。
+
 文件权限与归属的中英文提示集中在 `modules/file-permissions.ftl`，包括空格与 Enter 的勾选操作说明。
 
 操作系统设置和校时配置的中英文提示集中在 `modules/system-settings.ftl`，区分环境能力、工具和查询失败原因，并保留原始诊断详情。

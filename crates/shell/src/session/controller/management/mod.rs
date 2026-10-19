@@ -1,5 +1,6 @@
 mod actions;
 mod input;
+mod packages;
 use crate::session::*;
 use platform::management::*;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -129,6 +130,8 @@ pub(in crate::session) struct ManagementState {
     selected_action: usize,
     permission_cell: usize,
     actions_focused: bool,
+    workspace_focus: ui::components::WorkspaceFocus,
+    package_advanced_open: bool,
     filtering: bool,
     filter_input: String,
     shortcut_repeat_guard: Option<InputKey>,
@@ -286,6 +289,7 @@ fn management_action_shortcut(
         "recover" => return Some(("F9", InputKey::F(9))),
         "cancel_operation" => return Some(("F10", InputKey::F(10))),
         "query_details" => return Some(("F4", InputKey::F(4))),
+        "package_advanced" => return Some(("F3", InputKey::F(3))),
         _ => return None,
     };
     let label = match letter {
@@ -496,7 +500,11 @@ impl ShellSession {
         )
     }
     pub(in crate::session) fn open_management(&mut self, kind: ManagementKind) {
-        self.open_management_query(ManagementQuery::new(kind));
+        let mut query = ManagementQuery::new(kind);
+        if kind == ManagementKind::Packages {
+            query.scope = "search".into();
+        }
+        self.open_management_query(query);
     }
 
     pub(in crate::session) fn open_management_query(&mut self, query: ManagementQuery) {
@@ -507,9 +515,16 @@ impl ShellSession {
         }
         self.enter_new_page(ShellScreen::Management);
         if self.pages.management.management_state.kind != Some(kind) {
+            let search = kind == ManagementKind::Packages && query.scope == "search";
             self.pages.management.management_state = ManagementState {
                 kind: Some(kind),
                 query: Some(query),
+                filtering: search,
+                workspace_focus: if search {
+                    ui::components::WorkspaceFocus::Search
+                } else {
+                    ui::components::WorkspaceFocus::List
+                },
                 ..Default::default()
             };
         }
@@ -1485,6 +1500,7 @@ impl ShellSession {
         let s = &self.pages.management.management_state;
         let actions = self.management_actions();
         ui::ManagementViewModel {
+            workspace: (s.kind == Some(ManagementKind::Packages)).then(|| self.package_workspace_model(&actions)),
             scope_id: format!("{:?}", s.kind),
             detail_action_start: Some(0),
             sort: s.sort,
@@ -1563,17 +1579,25 @@ impl ShellSession {
                 .iter()
                 .enumerate()
                 .map(|(index, (a, _))| {
-                    let label = action_label(a);
+                    let label = if s.kind == Some(ManagementKind::Packages) {
+                        match a.id.as_str() {
+                            "scope_search" => i18n::tr!("management-package-nav-search"),
+                            "scope_updates" => i18n::tr!("management-package-nav-updates"),
+                            "scope_installed" => i18n::tr!("management-package-nav-installed"),
+                            "package_advanced" => format!("{} {}", if s.package_advanced_open { "▾" } else { "▸" }, self.package_advanced_label()),
+                            _ => action_label(a),
+                        }
+                    } else { action_label(a) };
                     let shortcut = if a.id == "current_task" {
                         "Ctrl+T".to_string()
                     } else if let Some((shortcut, _)) = management_action_shortcut(s.kind, &a.id) {
                         shortcut.to_string()
                     } else {
-                        ((index + 1) % 10).to_string()
+                        if s.kind == Some(ManagementKind::Packages) && index >= 10 { String::new() } else { ((index + 1) % 10).to_string() }
                     };
                     (
-                        format!("[{shortcut}] {label}"),
-                        a.disabled_reason.is_none() && (s.operation_job.is_none() || management_view_action(a) || matches!(a.id.as_str(),"cancel_operation"|"more_actions"|"current_task")),
+                        if shortcut.is_empty() { label } else { format!("[{shortcut}] {label}") },
+                        self.management_action_enabled(a),
                     )
                 })
                 .collect(),
@@ -1597,7 +1621,7 @@ impl ShellSession {
             actions_focused: s.actions_focused,
             filter: s.filter_input.clone(),
             filtering: s.filtering,
-            status: s.status.clone(),
+            status: if s.kind == Some(ManagementKind::Packages) { format!("{} | {}", i18n::tr!("management-package-keyboard-hint"), s.status) } else { s.status.clone() },
             loading: s.query_job.is_some() || s.draft_job.is_some(),
             running: s.operation_job.is_some(),
             output: s.output.clone(),

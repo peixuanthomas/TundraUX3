@@ -1,3 +1,10 @@
+management-package-nav-search = Search
+management-package-keyboard-hint = Tab: region · ↑↓: select · Enter/Space: activate
+management-package-nav-updates = Updates
+management-package-nav-installed = Installed
+management-package-advanced-sources = Advanced · Software sources
+management-package-advanced-status = Advanced · Checks and repairs
+management-package-advanced-config = Advanced · Configuration
 management-action-reload = Reload service configuration
 management-action-daemon-reload = Reload service definitions
 management-action-create-service = Create service

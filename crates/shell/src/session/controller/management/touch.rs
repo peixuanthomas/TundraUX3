@@ -344,6 +344,9 @@ impl ShellSession {
             query.target = None;
         }
         self.pages.management.management_state.filtering = false;
+        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+            self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+        }
         self.pages.management.management_state.list_scroll_explicit = false;
         self.refresh_management();
     }
@@ -355,7 +358,10 @@ impl ShellSession {
                 self.refresh_management();
             }
             ui::ManagementControl::Search => {
-                self.pages.management.management_state.filtering = true
+                self.pages.management.management_state.filtering = true;
+                if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+                    self.focus_package_workspace(ui::components::WorkspaceFocus::Search);
+                }
             }
             ui::ManagementControl::ApplySearch => self.apply_management_filter(),
             ui::ManagementControl::ClearSearch => {
@@ -773,6 +779,9 @@ impl ShellSession {
         }
         if layout.filter.contains(position) {
             self.pages.management.management_state.filtering = true;
+            if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+                self.focus_package_workspace(ui::components::WorkspaceFocus::Search);
+            }
             return;
         }
         if self.pages.management.management_state.terminal_mode {
@@ -812,6 +821,13 @@ impl ShellSession {
             self.pages.management.management_state.actions_focused = false;
             self.pages.management.management_state.details_scroll = 0;
             self.pages.management.management_state.action_scroll = None;
+            if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+                self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+            }
+        } else if layout.details.contains(position)
+            && self.pages.management.management_state.kind == Some(ManagementKind::Packages)
+        {
+            self.focus_package_workspace(ui::components::WorkspaceFocus::Details);
         }
         self.clamp_management_scroll();
     }

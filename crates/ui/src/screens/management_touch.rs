@@ -11,6 +11,10 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+#[path = "management_workspace.rs"]
+mod workspace;
+pub use workspace::ManagementWorkspace;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ManagementFormControl {
     #[default]
@@ -57,6 +61,7 @@ pub struct ManagementForm {
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagementViewModel {
+    pub workspace: Option<ManagementWorkspace>,
     pub scope_id: String,
     pub action_ids: Vec<String>,
     /// Actions before this index belong to the toolbar; the rest sit below details.
@@ -555,6 +560,7 @@ pub fn management_toolbar(
 }
 #[derive(Debug, Clone)]
 pub struct ManagementLayout {
+    pub workspace: Option<crate::components::SidebarWorkspaceLayout>,
     pub compact_actions: bool,
     pub filter: Rect,
     pub controls: Vec<(ManagementControl, Rect)>,
@@ -621,7 +627,27 @@ fn management_action_rects(area: Rect, actions: &[(String, bool)], compact: bool
         .collect::<Vec<_>>();
     crate::right_aligned_actions(area, &widths)
 }
+fn management_search_button_label(model: &ManagementViewModel) -> String {
+    if model.filtering {
+        i18n::tr!("regression-management-search-enter")
+    } else if model.workspace.is_some() {
+        format!("[Ctrl+Enter] {}", i18n::tr!("regression-management-search"))
+    } else {
+        management_controls()[1].1.clone()
+    }
+}
 pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementLayout {
+    if let Some(workspace) = model.workspace.as_ref().filter(|_| !model.terminal) {
+        return workspace::layout(main, model, workspace);
+    }
+    management_content_layout(main, model, main, 0)
+}
+fn management_content_layout(
+    main: Rect,
+    model: &ManagementViewModel,
+    form_area: Rect,
+    workspace_footer: u16,
+) -> ManagementLayout {
     // Very short shell content areas keep actionable controls before repeated
     // titles, status text, borders, and the list/detail preview.
     let compact_actions =
@@ -660,7 +686,13 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     if show_refresh {
         controls.push((ManagementControl::Refresh, refresh));
     }
-    let search_width = i18n::tr!("regression-management-search-enter").width() as u16 + 2;
+    let search_width = if model.workspace.is_some() {
+        management_search_button_label(model)
+    } else {
+        i18n::tr!("regression-management-search-enter")
+    }
+    .width() as u16
+        + 2;
     let show_search = clear.x.saturating_sub(filter_x) >= search_width + min_filter_width;
     let search = Rect::new(
         clear
@@ -686,10 +718,10 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     let status = Rect::new(
         main.x,
         main.bottom()
-            .saturating_sub(u16::from(!compact_actions))
+            .saturating_sub(u16::from(!compact_actions || model.workspace.is_some()))
             .max(main.y),
         main.width,
-        u16::from(main.height > 0 && !compact_actions),
+        u16::from(main.height > 0 && (!compact_actions || model.workspace.is_some())),
     );
     let detail_start = model
         .detail_action_start
@@ -765,23 +797,26 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     );
     let detail_button_rows = |width: u16| {
         detail_start.map_or(0, |start| {
-            management_action_rects(
-                Rect::new(
-                    0,
-                    0,
-                    width.saturating_sub(if compact_actions { 0 } else { 2 }),
-                    u16::MAX,
-                ),
-                &model.actions[start..],
-                compact_actions,
-            )
-            .iter()
-            .map(|area| area.bottom())
-            .max()
-            .unwrap_or(0)
+            let area = Rect::new(
+                0,
+                0,
+                width.saturating_sub(if compact_actions { 0 } else { 2 }),
+                u16::MAX,
+            );
+            let rects = if model.workspace.is_some() && !compact_actions {
+                workspace::action_rects(area, &model.actions[start..])
+            } else {
+                management_action_rects(area, &model.actions[start..], compact_actions)
+            };
+            rects.iter().map(|area| area.bottom()).max().unwrap_or(0)
         })
     };
-    let (list, mut details) = if model.details_only || compact_actions {
+    let (mut list, mut details) = if model.workspace.is_some() {
+        crate::components::SidebarWorkspaceLayout::panes(
+            content,
+            model.details_only || compact_actions,
+        )
+    } else if model.details_only || compact_actions {
         (Rect::default(), content)
     } else if main.width >= 90 {
         let left = content.width * 58 / 100;
@@ -812,6 +847,7 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
             ),
         )
     };
+    list.height = list.height.saturating_sub(workspace_footer);
     let mut detail_actions_panel = Rect::default();
     if let Some(start) = detail_start.filter(|_| !model.terminal) {
         let height = detail_button_rows(details.width)
@@ -825,15 +861,16 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         );
         details.height = details.height.saturating_sub(height);
         actions.resize(start, Rect::default());
-        actions.extend(management_action_rects(
-            if compact_actions {
-                detail_actions_panel
-            } else {
-                inner(detail_actions_panel)
-            },
-            &model.actions[start..],
-            compact_actions,
-        ));
+        let area = if compact_actions {
+            detail_actions_panel
+        } else {
+            inner(detail_actions_panel)
+        };
+        actions.extend(if model.workspace.is_some() && !compact_actions {
+            workspace::action_rects(area, &model.actions[start..])
+        } else {
+            management_action_rects(area, &model.actions[start..], compact_actions)
+        });
     }
     let mut column_widths = model
         .columns
@@ -961,8 +998,8 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     let form = form_model
         .map(|form| {
             form.choice.as_ref().map_or_else(
-                || content_form(main, form),
-                |choice| choice_form(main, form, choice),
+                || content_form(form_area, form),
+                |choice| choice_form(form_area, form, choice),
             )
         })
         .unwrap_or_default();
@@ -1181,6 +1218,7 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         }
     }
     ManagementLayout {
+        workspace: None,
         compact_actions,
         filter,
         controls,
@@ -1400,18 +1438,44 @@ pub fn render_management_content(
         .title_style()
         .add_modifier(Modifier::BOLD | Modifier::REVERSED);
     if !layout.compact_actions {
+        let title_area = layout
+            .workspace
+            .as_ref()
+            .map_or(main, |workspace| workspace.content);
         frame.render_widget(
             Paragraph::new(model.title.clone()).style(theme.title_style()),
-            Rect::new(main.x, main.y, main.width, u16::from(main.height > 0)),
+            Rect::new(
+                title_area.x,
+                title_area.y,
+                title_area.width,
+                u16::from(title_area.height > 0),
+            ),
         );
+    }
+    if let (Some(workspace), Some(workspace_layout)) = (&model.workspace, &layout.workspace) {
+        let buttons = workspace
+            .navigation_actions
+            .iter()
+            .map(|index| {
+                let mut button = Button::new(
+                    management_action_id(model, *index),
+                    model.actions[*index].0.clone(),
+                );
+                button.set_disabled(!model.actions[*index].1);
+                button.set_focused(
+                    model.actions_focused
+                        && model.selected_action == *index
+                        && model.form.is_none(),
+                );
+                button
+            })
+            .collect::<Vec<_>>();
+        workspace_layout.render_navigation(frame, &buttons, workspace.active_navigation, context);
     }
     for (control, area) in &layout.controls {
         let label = match control {
             ManagementControl::ClearSearch => "× [Ctrl+U]".into(),
-            ManagementControl::ApplySearch if model.filtering => {
-                i18n::tr!("regression-management-search-enter")
-            }
-            ManagementControl::ApplySearch => management_controls()[1].1.clone(),
+            ManagementControl::ApplySearch => management_search_button_label(model),
             _ => management_controls()[0].1.clone(),
         };
         let mut button = Button::new(management_control_id(model, *control), label);
@@ -1457,6 +1521,11 @@ pub fn render_management_content(
             .render_frame(frame, layout.list, context);
         Surface::new()
             .bordered(true)
+            .focused(
+                model.workspace.as_ref().is_some_and(|workspace| {
+                    workspace.focus == crate::components::WorkspaceFocus::Details
+                }) && model.form.is_none(),
+            )
             .titled(i18n::tr!("management-touch-details"))
             .render_frame(frame, layout.details, context);
         if !layout.detail_actions_panel.is_empty() && !layout.compact_actions {
@@ -1503,7 +1572,16 @@ pub fn render_management_content(
         {
             lines.push(Line::styled(
                 table_line(row),
-                if index == model.selected && !model.actions_focused {
+                if index == model.selected
+                    && !model.actions_focused
+                    && model.workspace.as_ref().is_none_or(|workspace| {
+                        workspace.focus == crate::components::WorkspaceFocus::List
+                            && theme
+                                .buttons
+                                .as_ref()
+                                .is_none_or(|buttons| buttons.keyboard_focus_visible)
+                    })
+                {
                     selected
                 } else {
                     theme.body_style()
@@ -1564,8 +1642,24 @@ pub fn render_management_content(
         );
         for (offset, area) in layout.actions.iter().enumerate() {
             let index = layout.action_start + offset;
+            if model
+                .workspace
+                .as_ref()
+                .is_some_and(|workspace| workspace.navigation_actions.contains(&index))
+                && layout.workspace.is_some()
+            {
+                continue;
+            }
             if let Some((label, enabled)) = model.actions.get(index) {
-                let mut button = Button::new(management_action_id(model, index), label.clone());
+                let mut button = if model.workspace.is_some() {
+                    Button::new(
+                        management_action_id(model, index),
+                        management_wrapped_lines(label, area.width).join("\n"),
+                    )
+                    .with_bracketed_label(false)
+                } else {
+                    Button::new(management_action_id(model, index), label.clone())
+                };
                 button.set_disabled(!enabled);
                 button.state.selected =
                     model.form.is_none() && model.actions_focused && model.selected_action == index;

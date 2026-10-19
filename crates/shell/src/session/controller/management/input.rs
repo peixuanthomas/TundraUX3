@@ -270,6 +270,9 @@ impl ShellSession {
             }
             return;
         }
+        if self.handle_package_workspace_key(key) {
+            return;
+        }
         if self.pages.management.management_state.filtering {
             if management_control_modifier(key) && key.key == InputKey::Enter {
                 self.apply_management_filter();
@@ -285,7 +288,13 @@ impl ShellSession {
                 return;
             }
             match key.key {
-                InputKey::Escape => self.pages.management.management_state.filtering = false,
+                InputKey::Escape => {
+                    self.pages.management.management_state.filtering = false;
+                    if self.pages.management.management_state.kind == Some(ManagementKind::Packages)
+                    {
+                        self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+                    }
+                }
                 InputKey::Enter => {
                     self.apply_management_filter();
                 }
@@ -439,17 +448,16 @@ impl ShellSession {
             InputKey::Char(c) => InputKey::Char(c.to_ascii_lowercase()),
             _ => key.key.clone(),
         };
-        if let Some((action, row)) =
-            self.all_management_actions()
-                .into_iter()
-                .find(|(action, _)| {
-                    management_action_shortcut(
-                        self.pages.management.management_state.kind,
-                        &action.id,
-                    )
-                    .is_some_and(|(_, shortcut)| shortcut == action_key)
-                })
-        {
+        let shortcut_actions =
+            if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+                self.management_actions()
+            } else {
+                self.all_management_actions()
+            };
+        if let Some((action, row)) = shortcut_actions.into_iter().find(|(action, _)| {
+            management_action_shortcut(self.pages.management.management_state.kind, &action.id)
+                .is_some_and(|(_, shortcut)| shortcut == action_key)
+        }) {
             if key.phase == InputPhase::Press {
                 self.activate_management_item(action, row);
                 self.pages.management.management_state.shortcut_repeat_guard =
@@ -618,6 +626,13 @@ impl ShellSession {
         let package_view =
             self.pages.management.management_state.kind == Some(ManagementKind::Packages);
         self.pages.management.management_state.actions_focused = !package_view;
+        if package_view {
+            self.focus_package_workspace(if self.pages.management.management_state.details_only {
+                ui::components::WorkspaceFocus::Details
+            } else {
+                ui::components::WorkspaceFocus::List
+            });
+        }
         if self.pages.management.management_state.problem.is_some()
             || self
                 .pages
@@ -685,6 +700,9 @@ impl ShellSession {
         state.list_scroll_explicit = false;
         state.actions_focused = false;
         state.revision = state.revision.wrapping_add(1);
+        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+            self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+        }
         self.clamp_management_scroll();
     }
 

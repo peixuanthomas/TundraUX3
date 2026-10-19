@@ -2,6 +2,24 @@ use super::*;
 use crate::session::*;
 
 impl ShellSession {
+    pub(super) fn management_action_enabled(&self, action: &ManagementAction) -> bool {
+        action.disabled_reason.is_none()
+            && (self
+                .pages
+                .management
+                .management_state
+                .operation_job
+                .is_none()
+                || management_view_action(action)
+                || matches!(
+                    action.id.as_str(),
+                    "cancel_operation"
+                        | "more_actions"
+                        | "current_task"
+                        | "package_advanced"
+                        | "query_details"
+                ))
+    }
     pub(in crate::session) fn all_management_actions(
         &self,
     ) -> Vec<(ManagementAction, Option<ManagementRow>)> {
@@ -83,10 +101,12 @@ impl ShellSession {
     pub(in crate::session) fn management_actions(
         &self,
     ) -> Vec<(ManagementAction, Option<ManagementRow>)> {
+        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+            return self.package_actions();
+        }
         let all = self.all_management_actions();
         let kind = self.pages.management.management_state.kind;
         let preferred: &[&str] = match kind {
-            Some(ManagementKind::Packages) => &["refresh", "scope_installed"],
             Some(ManagementKind::Users) => &["user_create", "group_create", "set_view"],
             Some(ManagementKind::Services) => &["start", "stop", "restart", "view_logs"],
             Some(ManagementKind::Processes) => &["term", "cont"],
@@ -130,21 +150,6 @@ impl ShellSession {
             .iter()
             .filter_map(|id| all.iter().find(|(action, _)| action.id == *id).cloned())
             .collect::<Vec<_>>();
-        if kind == Some(ManagementKind::Packages)
-            && !primary.iter().any(|(action, _)| action.id == "refresh")
-        {
-            primary.insert(
-                0,
-                (
-                    ManagementAction {
-                        id: "refresh".into(),
-                        disabled_reason: Some(i18n::tr!("management-action-not-available")),
-                        ..Default::default()
-                    },
-                    None,
-                ),
-            );
-        }
         if primary.is_empty()
             && !matches!(kind, Some(ManagementKind::Packages | ManagementKind::Users))
         {
@@ -217,12 +222,6 @@ impl ShellSession {
             ));
         }
         let detail_actions: &[&[&str]] = match kind {
-            Some(ManagementKind::Packages) => &[
-                &["remove"],
-                &["install", "pacman_install"],
-                &["upgrade", "pacman_upgrade"],
-                &["scope_search"],
-            ],
             Some(ManagementKind::Users)
                 if self
                     .pages
@@ -262,6 +261,23 @@ impl ShellSession {
         let Some((action, row)) = self.management_actions().get(index).cloned() else {
             return;
         };
+        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+            let actions = self.management_actions();
+            let workspace = self.package_workspace_model(&actions);
+            self.pages.management.management_state.workspace_focus =
+                if workspace.navigation_actions.contains(&index) {
+                    ui::components::WorkspaceFocus::Navigation
+                } else if index == workspace.advanced_toggle
+                    || workspace.advanced_actions.contains(&index)
+                {
+                    ui::components::WorkspaceFocus::Advanced
+                } else {
+                    ui::components::WorkspaceFocus::Actions
+                };
+            self.pages.management.management_state.actions_focused = true;
+            self.pages.management.management_state.selected_action = index;
+            self.pages.management.management_state.filtering = false;
+        }
         self.activate_management_item(action, row);
     }
 
@@ -270,6 +286,11 @@ impl ShellSession {
         action: ManagementAction,
         row: Option<ManagementRow>,
     ) {
+        if action.id == "package_advanced" {
+            self.pages.management.management_state.package_advanced_open =
+                !self.pages.management.management_state.package_advanced_open;
+            return;
+        }
         if action.id == "query_details" {
             self.toggle_management_details();
             return;
@@ -534,6 +555,13 @@ impl ShellSession {
         if management_view_action(&action) {
             let package_view =
                 self.pages.management.management_state.kind == Some(ManagementKind::Packages);
+            let previous_scope = self
+                .pages
+                .management
+                .management_state
+                .query
+                .as_ref()
+                .map(|query| query.scope.clone());
             let mut keep_package_filter = false;
             if let Some(query) = &mut self.pages.management.management_state.query {
                 if action.id == "show_listening_ports" {
@@ -570,6 +598,18 @@ impl ShellSession {
                 }
             }
             if package_view {
+                if previous_scope.as_deref()
+                    != self
+                        .pages
+                        .management
+                        .management_state
+                        .query
+                        .as_ref()
+                        .map(|query| query.scope.as_str())
+                {
+                    self.pages.management.management_state.snapshot = ManagementSnapshot::default();
+                    self.pages.management.management_state.problem = None;
+                }
                 if !keep_package_filter {
                     self.pages.management.management_state.filter_input.clear();
                 }
@@ -591,6 +631,31 @@ impl ShellSession {
                 self.pages.management.management_state.actions_focused = false;
                 self.pages.management.management_state.list_scroll_explicit = false;
                 self.pages.management.management_state.outcome = None;
+                if matches!(
+                    self.pages
+                        .management
+                        .management_state
+                        .query
+                        .as_ref()
+                        .map(|query| query.scope.as_str()),
+                    Some("search" | "updates" | "installed")
+                ) {
+                    self.pages.management.management_state.package_advanced_open = false;
+                }
+                let focus = self.pages.management.management_state.workspace_focus;
+                let focus = if self
+                    .pages
+                    .management
+                    .management_state
+                    .query
+                    .as_ref()
+                    .is_some_and(|query| query.scope == "search")
+                {
+                    ui::components::WorkspaceFocus::Search
+                } else {
+                    focus
+                };
+                self.focus_package_workspace(focus);
             }
             self.refresh_management();
             return;

@@ -1,3 +1,10 @@
+management-package-nav-search = 搜索
+management-package-keyboard-hint = Tab 切换区域 · ↑↓ 选择 · Enter/空格 执行
+management-package-nav-updates = 更新
+management-package-nav-installed = 已安装
+management-package-advanced-sources = 高级功能 · 软件源
+management-package-advanced-status = 高级功能 · 检查与修复
+management-package-advanced-config = 高级功能 · 配置文件
 management-action-reload = 重新加载服务配置
 management-action-daemon-reload = 重新读取服务定义
 management-action-create-service = 创建服务

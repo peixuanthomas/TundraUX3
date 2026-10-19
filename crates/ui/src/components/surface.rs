@@ -10,6 +10,7 @@ use crate::{RenderContext, TundraTheme};
 /// from normal surfaces; it is reserved for focus and interaction state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Surface {
+    pub focused: bool,
     pub title: Option<String>,
     pub bordered: bool,
     pub raised: bool,
@@ -25,6 +26,7 @@ impl Default for Surface {
 impl Surface {
     pub const fn new() -> Self {
         Self {
+            focused: false,
             title: None,
             bordered: false,
             raised: false,
@@ -48,6 +50,11 @@ impl Surface {
 
     pub const fn raised(mut self, raised: bool) -> Self {
         self.raised = raised;
+        self
+    }
+
+    pub const fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
         self
     }
 
@@ -130,7 +137,22 @@ impl Surface {
                         .unwrap_or(context.theme.border_shape)
                         .border_type(),
                 )
-                .border_style(Style::default().fg(tokens.border).bg(tokens.canvas));
+                .border_style(
+                    Style::default()
+                        .fg(
+                            if self.focused
+                                && context
+                                    .buttons
+                                    .as_ref()
+                                    .is_none_or(|buttons| buttons.keyboard_focus_visible)
+                            {
+                                tokens.accent
+                            } else {
+                                tokens.border
+                            },
+                        )
+                        .bg(tokens.canvas),
+                );
         }
         if let Some(title) = &self.title {
             block = block.title(title.as_str()).title_style(
