@@ -31,7 +31,7 @@ pub(super) fn detect(
     preferred: Option<&str>,
 ) -> Result<Provider, ManagementError> {
     let manager = systemd(connection)?;
-    let files: Vec<(String, String)> = manager.call("ListUnitFiles", &()).map_err(error)?;
+    let files: Vec<(String, String)> = manager.call("ListUnitFiles", &()).map_err(dbus_error)?;
     let mut providers = BTreeMap::new();
     let mut names: BTreeSet<String> = [
         "systemd-timesyncd.service",
@@ -54,14 +54,14 @@ pub(super) fn detect(
         if !Path::new(directory).exists() {
             continue;
         }
-        for path in fs::read_dir(directory).map_err(error)? {
-            let path = path.map_err(error)?.path();
+        for path in fs::read_dir(directory).map_err(io_error)? {
+            let path = path.map_err(io_error)?.path();
             if path
                 .extension()
                 .is_some_and(|extension| extension == "list")
             {
                 for name in fs::read_to_string(path)
-                    .map_err(error)?
+                    .map_err(io_error)?
                     .lines()
                     .map(str::trim)
                     .filter(|name| !name.is_empty() && !name.starts_with('#'))
@@ -80,20 +80,21 @@ pub(super) fn detect(
         }) {
             continue;
         }
-        let path: zbus::zvariant::OwnedObjectPath =
-            manager.call("LoadUnit", &(name.as_str(),)).map_err(error)?;
+        let path: zbus::zvariant::OwnedObjectPath = manager
+            .call("LoadUnit", &(name.as_str(),))
+            .map_err(dbus_error)?;
         let unit = Proxy::new(
             connection,
             "org.freedesktop.systemd1",
             path.as_str(),
             "org.freedesktop.systemd1.Unit",
         )
-        .map_err(error)?;
-        let id: String = unit.get_property("Id").map_err(error)?;
-        let active: String = unit.get_property("ActiveState").map_err(error)?;
+        .map_err(dbus_error)?;
+        let id: String = unit.get_property("Id").map_err(dbus_error)?;
+        let active: String = unit.get_property("ActiveState").map_err(dbus_error)?;
         let enabled: String = manager
             .call("GetUnitFileState", &(id.as_str(),))
-            .map_err(error)?;
+            .map_err(dbus_error)?;
         providers.insert(
             id.clone(),
             Provider {
@@ -109,7 +110,7 @@ pub(super) fn detect(
     if !any_active
         && timedate(connection)?
             .get_property::<bool>("NTP")
-            .map_err(error)?
+            .map_err(dbus_error)?
     {
         return Err(ManagementError::Unavailable(i18n::tr!(
             "system-settings-provider-ambiguous"
@@ -387,8 +388,8 @@ fn source_paths(tokens: &[String]) -> Result<Vec<PathBuf>, ManagementError> {
         if !Path::new(&directory).exists() {
             continue;
         }
-        for file in fs::read_dir(&directory).map_err(error)? {
-            let file = file.map_err(error)?;
+        for file in fs::read_dir(&directory).map_err(io_error)? {
+            let file = file.map_err(io_error)?;
             if file.file_name().to_string_lossy().ends_with(suffix) {
                 paths.entry(file.file_name()).or_insert(file.path());
             }
@@ -447,17 +448,17 @@ fn chrony_main(provider: &Provider, connection: &Connection) -> Result<PathBuf, 
     let manager = systemd(connection)?;
     let path: zbus::zvariant::OwnedObjectPath = manager
         .call("LoadUnit", &(provider.unit.as_str(),))
-        .map_err(error)?;
+        .map_err(dbus_error)?;
     let service = Proxy::new(
         connection,
         "org.freedesktop.systemd1",
         path.as_str(),
         "org.freedesktop.systemd1.Service",
     )
-    .map_err(error)?;
-    let pid: u32 = service.get_property("MainPID").map_err(error)?;
+    .map_err(dbus_error)?;
+    let pid: u32 = service.get_property("MainPID").map_err(dbus_error)?;
     let args = if pid != 0 {
-        let bytes = fs::read(format!("/proc/{pid}/cmdline")).map_err(error)?;
+        let bytes = fs::read(format!("/proc/{pid}/cmdline")).map_err(io_error)?;
         bytes
             .split(|b| *b == 0)
             .filter(|part| !part.is_empty())
@@ -465,7 +466,7 @@ fn chrony_main(provider: &Provider, connection: &Connection) -> Result<PathBuf, 
             .collect::<Vec<_>>()
     } else {
         type StartCommand = (String, Vec<String>, bool, u64, u64, u64, u64, u32, i32, i32);
-        let commands: Vec<StartCommand> = service.get_property("ExecStart").map_err(error)?;
+        let commands: Vec<StartCommand> = service.get_property("ExecStart").map_err(dbus_error)?;
         if commands.len() != 1 || commands[0].1.iter().any(|argument| argument.contains('$')) {
             return Err(ManagementError::Unavailable(i18n::tr!(
                 "system-settings-config-missing"
@@ -602,7 +603,9 @@ pub(super) fn configuration(
                 "/org/freedesktop/timesync1",
                 "org.freedesktop.timesync1.Manager",
             )?;
-            let links: Vec<String> = timesync.get_property("LinkNTPServers").map_err(error)?;
+            let links: Vec<String> = timesync
+                .get_property("LinkNTPServers")
+                .map_err(dbus_error)?;
             sources.extend(links.into_iter().map(|address| Source {
                 path: PathBuf::new(),
                 line: 0,

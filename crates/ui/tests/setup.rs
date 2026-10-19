@@ -175,7 +175,7 @@ fn narrow_setup_navigation_keeps_previous_and_primary_shortcuts_visible() {
         .unwrap();
     let output = terminal_output(&terminal);
     assert!(output.contains("Alt+← Back"));
-    assert!(output.contains("Ctrl+Enter Next"));
+    assert!(output.contains("F10 Next"));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
     assert!(output.contains("[x] At least 10 characters"));
     assert!(output.contains("[x] Different from username"));
     assert!(output.contains("[x] Passwords match"));
-    assert!(output.contains("Ctrl+Enter Submit"));
+    assert!(output.contains("F10 Submit"));
     assert!(!output.contains("Admin username:"));
     assert!(!output.contains("Admin password:"));
     assert!(!output.contains("Timezone Map"));

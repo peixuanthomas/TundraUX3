@@ -5,8 +5,8 @@ use crate::{
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::Modifier,
-    text::Line,
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -66,6 +66,7 @@ pub struct ManagementViewModel {
     pub sort: Option<crate::TableSort>,
     pub column_width_limits: Vec<usize>,
     pub rows: Vec<Vec<String>>,
+    pub empty_message: String,
     pub selected: usize,
     pub scroll: usize,
     pub table_scroll: usize,
@@ -98,10 +99,16 @@ pub enum ManagementControl {
     Terminal,
 }
 pub fn management_controls() -> Vec<(ManagementControl, String)> {
-    vec![(
-        ManagementControl::Refresh,
-        i18n::tr!("management-control-refresh"),
-    )]
+    vec![
+        (
+            ManagementControl::Refresh,
+            i18n::tr!("management-control-refresh"),
+        ),
+        (
+            ManagementControl::ApplySearch,
+            i18n::tr!("regression-management-search"),
+        ),
+    ]
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagementScrollTarget {
@@ -210,21 +217,45 @@ pub fn management_wrapped_lines(text: &str, width: u16) -> Vec<String> {
     for original in text.split('\n') {
         let mut line = String::new();
         let mut used = 0;
-        for c in original.chars().filter(|c| !c.is_control() || *c == '\t') {
-            let value = if c == '\t' {
-                "    ".to_string()
-            } else {
-                c.to_string()
-            };
-            for c in value.chars() {
-                let next = c.width().unwrap_or(0);
-                if used > 0 && used + next > width {
-                    lines.push(std::mem::take(&mut line));
-                    used = 0;
-                }
-                line.push(c);
-                used += next;
+        let mut wrapped = false;
+        let original = original
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\t')
+            .collect::<String>()
+            .replace('\t', "    ");
+        let span = Span::raw(original);
+        for glyph in span.styled_graphemes(Style::default()) {
+            let next = glyph.symbol.width();
+            let whitespace = glyph.symbol.chars().all(char::is_whitespace);
+            if used > 0 && used + next > width && whitespace {
+                lines.push(std::mem::take(&mut line));
+                used = 0;
+                wrapped = true;
+                continue;
             }
+            if used > 0 && used + next > width {
+                wrapped = true;
+                // Keep words intact when a whitespace boundary fits the viewport.
+                if let Some((boundary, space)) = line
+                    .char_indices()
+                    .rev()
+                    .find(|(index, c)| c.is_whitespace() && !line[..*index].trim().is_empty())
+                {
+                    let remainder = line.split_off(boundary + space.len_utf8());
+                    lines.push(line.trim_end().to_string());
+                    line = remainder;
+                    used = line.width();
+                }
+            }
+            if used > 0 && used + next > width {
+                lines.push(std::mem::take(&mut line));
+                used = 0;
+            }
+            if line.is_empty() && wrapped && whitespace {
+                continue;
+            }
+            line.push_str(glyph.symbol);
+            used += next;
         }
         lines.push(line);
     }
@@ -295,7 +326,7 @@ fn choice_form_inner(form: Rect) -> Rect {
 }
 fn form_submit_text(form: &ManagementForm) -> String {
     format!(
-        "Ctrl+Enter {}",
+        "F10 {}",
         form.submit_label
             .clone()
             .unwrap_or_else(|| i18n::tr!("management-form-submit"))
@@ -354,8 +385,7 @@ fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
 }
 
 fn permission_heading(width: u16) -> String {
-    let label = permission_label_width(width);
-    let cell = width.saturating_sub(label) / 3;
+    let (label, cell) = permission_column_widths(width);
     let mut text = " ".repeat(label as usize);
     for title in [
         i18n::tr!("permissions-read"),
@@ -363,13 +393,16 @@ fn permission_heading(width: u16) -> String {
         i18n::tr!("permissions-execute"),
     ] {
         let title = crate::components::truncate_to_terminal_width(&title, cell as usize);
+        let title_width = title.width() as u16;
+        let leading = cell / 2 - title_width / 2;
+        text.push_str(&" ".repeat(usize::from(leading)));
         text.push_str(&title);
-        text.push_str(&" ".repeat(cell.saturating_sub(title.width() as u16) as usize));
+        text.push_str(&" ".repeat(usize::from(cell - leading - title_width)));
     }
     text
 }
-fn permission_label_width(width: u16) -> u16 {
-    [
+fn permission_column_widths(width: u16) -> (u16, u16) {
+    let label = [
         i18n::tr!("permissions-owner"),
         i18n::tr!("permissions-group"),
         i18n::tr!("permissions-others"),
@@ -378,7 +411,8 @@ fn permission_label_width(width: u16) -> u16 {
     .map(|s| s.width() as u16 + 1)
     .max()
     .unwrap_or(1)
-    .min(width.saturating_sub(9))
+    .min(width.saturating_sub(9));
+    (label, width.saturating_sub(label) / 3)
 }
 pub fn management_permission_cells(
     field: &ManagementFormField,
@@ -388,8 +422,7 @@ pub fn management_permission_cells(
     if field.control != ManagementFormControl::Permissions {
         return Vec::new();
     }
-    let label = permission_label_width(area.width);
-    let width = area.width.saturating_sub(label) / 3;
+    let (label, width) = permission_column_widths(area.width);
     (0..9)
         .filter_map(|index| {
             let row = 2 + index / 3;
@@ -597,34 +630,56 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         .y
         .saturating_add(u16::from(!compact_actions))
         .min(main.bottom());
-    let refresh_width = (management_controls()[0].1.width() as u16 + 2).min(main.width);
+    let min_filter_width = management_search_prefix(0).width() as u16 + 3;
+    let refresh_width = management_controls()[0].1.width() as u16 + 2;
+    let show_refresh = main.width >= refresh_width + 1 + min_filter_width;
     let refresh = Rect::new(
         main.x,
         header_y,
-        refresh_width,
+        if show_refresh { refresh_width } else { 0 },
         u16::from(header_y < main.bottom()),
     );
-    let clear_width =
-        if model.filter.is_empty() || main.width.saturating_sub(refresh_width + 1) < 20 {
-            0
-        } else {
-            12
-        };
+    let filter_x = if show_refresh {
+        refresh.right().saturating_add(1)
+    } else {
+        main.x
+    };
+    let available = main.right().saturating_sub(filter_x);
+    let clear_width = if model.filter.is_empty() || available < 12 + min_filter_width {
+        0
+    } else {
+        12
+    };
     let clear = Rect::new(
         main.right().saturating_sub(clear_width),
         header_y,
         clear_width,
         refresh.height,
     );
-    let mut controls = vec![(ManagementControl::Refresh, refresh)];
+    let mut controls = Vec::new();
+    if show_refresh {
+        controls.push((ManagementControl::Refresh, refresh));
+    }
+    let search_width = i18n::tr!("regression-management-search-enter").width() as u16 + 2;
+    let show_search = clear.x.saturating_sub(filter_x) >= search_width + min_filter_width;
+    let search = Rect::new(
+        clear
+            .x
+            .saturating_sub(if show_search { search_width } else { 0 }),
+        header_y,
+        if show_search { search_width } else { 0 },
+        refresh.height,
+    );
+    if show_search {
+        controls.push((ManagementControl::ApplySearch, search));
+    }
     if clear_width > 0 {
         controls.push((ManagementControl::ClearSearch, clear));
     }
-    let filter_x = refresh.right().saturating_add(1).min(main.right());
     let filter = Rect::new(
         filter_x,
         header_y,
-        clear.x.saturating_sub(filter_x),
+        search.x.saturating_sub(filter_x),
         refresh.height,
     );
     let header_end = header_y.saturating_add(refresh.height).min(main.bottom());
@@ -1267,7 +1322,9 @@ pub fn management_button_regions(
         push(
             management_control_id(model, *control),
             *area,
-            *control == ManagementControl::Details && model.rows.is_empty(),
+            *control == ManagementControl::Details
+                && model.rows.is_empty()
+                && model.details.is_empty(),
         );
     }
     push(
@@ -1351,10 +1408,18 @@ pub fn render_management_content(
     for (control, area) in &layout.controls {
         let label = match control {
             ManagementControl::ClearSearch => "× [Ctrl+U]".into(),
+            ManagementControl::ApplySearch if model.filtering => {
+                i18n::tr!("regression-management-search-enter")
+            }
+            ManagementControl::ApplySearch => management_controls()[1].1.clone(),
             _ => management_controls()[0].1.clone(),
         };
         let mut button = Button::new(management_control_id(model, *control), label);
-        button.set_disabled(*control == ManagementControl::Details && model.rows.is_empty());
+        button.set_disabled(
+            *control == ManagementControl::Details
+                && model.rows.is_empty()
+                && model.details.is_empty(),
+        );
         button.render_borderless_frame(frame, *area, &theme);
     }
     let mut filter = TextInput::new(format!("management.filter.{}", model.scope_id))
@@ -1449,7 +1514,11 @@ pub fn render_management_content(
             lines.push(Line::from(if model.loading {
                 i18n::tr!("management-loading")
             } else {
-                i18n::tr!("management-empty")
+                if model.empty_message.is_empty() {
+                    i18n::tr!("management-empty")
+                } else {
+                    model.empty_message.clone()
+                }
             }));
         }
         let area = Rect::new(

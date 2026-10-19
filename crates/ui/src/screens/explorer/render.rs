@@ -165,54 +165,27 @@ fn render_explorer_sidebar(
             header,
         );
     }
-    let (Some(first), Some(last)) = (
-        layout.quick_locations.first(),
-        layout.quick_locations.last(),
-    ) else {
-        return;
-    };
-    let items = layout
-        .quick_locations
-        .iter()
-        .map(|location_layout| {
-            let Some(location) = model.quick_locations.get(location_layout.index) else {
-                return ListItem::new("explorer.quick.missing", "").tone(ComponentTone::Muted);
-            };
-            let icon = explorer_icon_line(assets, &location.icon_key);
-            let text = fit_cell(
-                &format!("{icon} {}", location.label),
-                usize::from(location_layout.area.width),
-            );
-            let tone = if location.current || location.drop_target {
-                ComponentTone::Accent
-            } else if location.enabled {
-                ComponentTone::Default
-            } else {
-                ComponentTone::Muted
-            };
-            ListItem::new(format!("explorer.quick.{}", location_layout.index), text)
-                .disabled(!location.enabled)
-                .tone(tone)
-        })
-        .collect();
-    let mut list = List::new("explorer.quick", items).with_highlight_symbol(None::<String>);
-    list.set_selected(
-        model
-            .quick_locations
-            .iter()
-            .position(|location| location.current)
-            .and_then(|index| index.checked_sub(layout.quick_location_visible_start)),
-    );
-    list.render_borderless_with_context(
-        Rect::new(
-            first.area.x,
-            first.area.y,
-            first.area.width,
-            last.area.bottom().saturating_sub(first.area.y),
-        ),
-        frame.buffer_mut(),
-        context,
-    );
+    for location_layout in &layout.quick_locations {
+        let Some(location) = model.quick_locations.get(location_layout.index) else {
+            continue;
+        };
+        let icon = explorer_icon_line(assets, &location.icon_key);
+        let label = format!("{icon} {}", location.label);
+        let label = if location.current {
+            i18n::tr!("ui-explorer-current-location", label = label)
+        } else {
+            format!("  {label}")
+        };
+        let mut button = Button::new(
+            format!("explorer.quick.{}", location_layout.index),
+            fit_cell(&label, usize::from(location_layout.area.width)),
+        )
+        .with_bracketed_label(false);
+        button.set_disabled(!location.enabled);
+        button.set_focused(location.current);
+        button.state.selected = location.drop_target;
+        button.render_borderless_frame(frame, location_layout.area, theme);
+    }
 }
 
 fn explorer_table_header(
@@ -721,8 +694,12 @@ fn render_explorer_name_dialog(
                     input_area.height.saturating_sub(2),
                 );
 
-                let mut input = TextInput::new("explorer.name.input").with_cursor_symbol("_");
+                let mut input = TextInput::new("explorer.name.input")
+                    .with_cursor_symbol("_")
+                    .with_horizontal_scroll(true);
                 input.set_value(&dialog.value);
+                input.set_cursor(dialog.cursor);
+                input.set_selection_anchor(dialog.selection_anchor);
                 input.set_focused(selection == 0);
                 input.state.hovered = selection == 0;
                 input.render_borderless_frame_with_prefix(frame, input_content, theme, "> ");
@@ -916,10 +893,13 @@ fn render_explorer_search(
     };
 
     let mut input = TextInput::new("explorer.search.input")
+        .with_horizontal_scroll(true)
         .with_placeholder(i18n::tr!("ui-explorer-empty"))
         .with_placeholder_when_focused(true)
         .with_cursor_symbol("_");
     input.set_value(&search.query);
+    input.set_cursor(search.cursor);
+    input.set_selection_anchor(search.selection_anchor);
     input.set_focused(search.active);
     input.state.hovered = search.active;
 

@@ -102,6 +102,35 @@ fn fixture(pid: u32, parent: u32) -> ProcessRecord {
 }
 
 #[test]
+fn process_snapshot_prioritizes_readable_summary_and_retains_full_name_in_details() {
+    let mut process = fixture(123, 1);
+    process.name = "database-worker-with-a-long-name".into();
+    let snapshot = snapshot(
+        vec![process],
+        &ManagementQuery::new(ManagementKind::Processes),
+        "boot",
+        0,
+    )
+    .unwrap();
+    assert_eq!(&snapshot.columns[..4], ["Name", "PID", "CPU %", "Memory"]);
+    let row = &snapshot.rows[0];
+    assert_eq!(
+        &row.cells[..4],
+        [
+            "database-worker-with-a-long-name",
+            "123",
+            "123.0",
+            "0.1 MiB"
+        ]
+    );
+    assert!(
+        row.detail
+            .iter()
+            .any(|(key, value)| key == "Name" && value == &row.cells[0])
+    );
+}
+
+#[test]
 fn complete_snapshot_search_sort_and_tree_never_truncate_or_hide_orphans() {
     let processes = (2..62)
         .map(|pid| fixture(pid, if pid % 3 == 0 { 2 } else { 9999 }))
@@ -117,7 +146,7 @@ fn complete_snapshot_search_sort_and_tree_never_truncate_or_hide_orphans() {
     assert_eq!(tree.rows.len(), 60);
     assert_eq!(tree.rows[0].id, "2");
     assert_eq!(tree.rows[1].id, "3");
-    assert!(tree.rows[1].cells[7].starts_with("  "));
+    assert!(tree.rows[1].cells[0].starts_with("  "));
     query.filter = "worker-61".into();
     let filtered = snapshot(processes, &query, "boot", 0).unwrap();
     assert_eq!(filtered.rows.len(), 1);

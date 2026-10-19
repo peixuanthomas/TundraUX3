@@ -201,11 +201,7 @@ impl SystemMonitor for NativeSystemMonitor {
                     })
             })
             .collect::<Vec<_>>();
-        let thermal = if thermal_values.is_empty() {
-            Err("no temperature sensors detected".into())
-        } else {
-            Ok(thermal_values)
-        };
+        let thermal = Ok(thermal_values);
 
         let batteries = sample_batteries();
         let processes = self
@@ -261,7 +257,18 @@ impl SystemMonitor for NativeSystemMonitor {
 
 fn sample_batteries() -> Result<Vec<BatterySample>, String> {
     let manager = battery::Manager::new().map_err(|error| error.to_string())?;
-    let batteries = manager.batteries().map_err(|error| error.to_string())?;
+    let batteries = match manager.batteries() {
+        Ok(batteries) => batteries,
+        #[cfg(target_os = "linux")]
+        Err(error)
+            if std::error::Error::source(&error)
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     collect_battery_samples(batteries.map(|result| {
         result.map(|battery| BatterySample {
             vendor: battery.vendor().map(str::to_string),

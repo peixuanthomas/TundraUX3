@@ -36,6 +36,11 @@ fn run_doctor_with_terminal_graphics_probe<Stdout: Write, Stderr: Write>(
     let _ = writeln!(stdout, "Platform kind: {}", platform.kind().as_str());
     let _ = writeln!(
         stdout,
+        "{}",
+        i18n::tr!("startup-diagnostics-status-explanation")
+    );
+    let _ = writeln!(
+        stdout,
         "WARN: optional/limited feature; FAIL: required check failed. Run debug paths for path templates."
     );
 
@@ -547,7 +552,7 @@ fn write_storage_check(output: &mut impl Write, check: &StorageCheck) {
     let _ = writeln!(
         output,
         "[{}] {}: {}",
-        check.status.as_str(),
+        doctor_status(check.status),
         check.label,
         check.message
     );
@@ -559,7 +564,7 @@ fn write_asset_check(output: &mut impl Write, check: &AsciiAssetCheck) {
     let _ = writeln!(
         output,
         "[{}] Required ASCII assets (theme {}): {}",
-        check.status.as_str(),
+        doctor_status(check.status),
         check.theme_id,
         check.message
     );
@@ -572,7 +577,7 @@ fn write_environment_check(output: &mut impl Write, check: &EnvironmentCheck) {
     let _ = writeln!(
         output,
         "[{}] {}: {}",
-        check.status.as_str(),
+        doctor_status(check.status),
         check.label,
         check.message
     );
@@ -582,11 +587,19 @@ fn write_path_check(output: &mut impl Write, check: &PathCheck) {
     let _ = writeln!(
         output,
         "[{}] {}: {} - {}",
-        check.status.as_str(),
+        doctor_status(check.status),
         check.label,
         check.path.display(),
         check.message
     );
+}
+
+fn doctor_status(status: CheckStatus) -> String {
+    i18n::tr!(match status {
+        CheckStatus::Pass => "startup-check-pass",
+        CheckStatus::Warning => "startup-check-warning",
+        CheckStatus::Fail => "startup-check-fail",
+    })
 }
 
 fn write_fallback_doctor_checks(

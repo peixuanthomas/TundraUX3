@@ -2,6 +2,31 @@ use super::overlays::{ResolvedExplorerOverlay, ShellOverlayCategory};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+#[test]
+fn strong_clock_due_events_keep_reminder_semantics_and_dismiss_actions() {
+    for (kind, title) in [
+        (ScheduledClockEntryKind::DailyAlarm, "Alarm reminder"),
+        (ScheduledClockEntryKind::Countdown, "Countdown reminder"),
+    ] {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (116, 41));
+        set_test_auth_role(&mut state, UserRole::User);
+        while state.notification_dismiss_active_modal_without_response() {}
+        let ordinary = state.handle_clock_due_events(vec![DueEvent {
+            id: 1,
+            kind,
+            strong: true,
+            display_time: "07:34:56".into(),
+        }]);
+        assert!(ordinary.is_none());
+        let model = state.to_notification_view_model().unwrap();
+        assert_eq!(model.tone, ui::NotificationTone::Info);
+        assert_eq!(model.title, title);
+        assert!(model.actions.iter().any(|action| action.id == "dismiss"));
+        state.apply_input(InputEvent::from_key_label("Esc"));
+        assert!(state.to_notification_view_model().is_none());
+    }
+}
+
 struct SystemStatusTestWeatherProvider;
 
 impl system_services::WeatherProvider for SystemStatusTestWeatherProvider {
@@ -2504,7 +2529,7 @@ fn system_status_modal_focus_traps_and_restores_page_focus() {
         ShellComponent::SystemStatus
     );
 
-    state.apply_time_sync_failure_for_test("offline");
+    state.show_time_sync_failure_dialog("offline");
     state.refresh_hit_map();
     assert_eq!(state.focus_order(), vec![ShellComponent::TimeSyncDialog]);
     state.move_focus(ui::FocusDirection::Previous);
@@ -3780,8 +3805,15 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
 #[test]
 fn explorer_address_and_search_keep_non_overlay_text_input_routing() {
     for mode in [ExplorerInputMode::Address, ExplorerInputMode::Search] {
-        let mut state = explorer_routing_test_state();
-        state.pages.explorer.explorer_input_mode = mode;
+        let (mut state, platform, _fixture) = explorer_terminal_test_fixture();
+        state.storage_manager = Some(
+            StorageManager::open(platform.app_paths().unwrap())
+                .unwrap()
+                .manager,
+        );
+        state.begin_explorer_input(mode);
+        state.pages.explorer.explorer_input = "界a".into();
+        state.pages.explorer.explorer_address_cursor = 2;
 
         assert_eq!(state.resolved_explorer_overlay(), None);
         assert_eq!(state.active_overlay_descriptor(), None);
@@ -3793,14 +3825,38 @@ fn explorer_address_and_search_keep_non_overlay_text_input_routing() {
             state.route_key_input(&KeyInput::from_label("Esc")).1,
             ShellCommand::CancelExplorerInput
         );
+        for (label, expected, cursor) in [
+            ("Backspace", "界", 1),
+            ("x", "界x", 2),
+            ("Home", "界x", 0),
+            ("x", "x界x", 1),
+            ("End", "x界x", 3),
+            ("Backspace", "x界", 2),
+        ] {
+            let key = KeyInput::from_label(label);
+            assert_eq!(
+                state.route_key_input(&key).1,
+                ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone()))
+            );
+            state.apply_input_with_platform(InputEvent::Key(key), &platform);
+            assert_eq!(
+                state.pages.explorer.explorer_input, expected,
+                "{mode:?}: {label}"
+            );
+            assert_eq!(
+                state.pages.explorer.explorer_address_cursor, cursor,
+                "{mode:?}: {label}"
+            );
+            if mode == ExplorerInputMode::Search {
+                assert_eq!(state.app.explorer_state().unwrap().query, expected);
+            }
+        }
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
         assert_eq!(
-            state.route_key_input(&KeyInput::from_label("Backspace")).1,
-            ShellCommand::ExplorerBackspace
+            state.pages.explorer.explorer_input_mode,
+            ExplorerInputMode::Browse
         );
-        assert_eq!(
-            state.route_key_input(&KeyInput::from_label("x")).1,
-            ShellCommand::AppendExplorerChar('x')
-        );
+        assert!(state.pages.explorer.explorer_input.is_empty());
     }
 }
 
@@ -5223,7 +5279,8 @@ fn cached_time_sync_replays_into_recreated_shell_state() {
     let mut failed_state = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
     CachedTimeSyncResult::Failure.apply_to_state_at(&mut failed_state, replayed_at);
     assert!(failed_state.time_sync_attempted);
-    assert!(failed_state.time_sync_failure_dialog_visible());
+    assert!(!failed_state.time_sync_failure_dialog_visible());
+    assert!(failed_state.status().contains("system clock"));
 }
 
 #[test]
@@ -5851,19 +5908,29 @@ fn explorer_toolbar_shortcuts_route_without_shifted_symbols() {
         );
     }
 
-    state.pages.explorer.explorer_input_mode = ExplorerInputMode::NewFolder;
+    state.begin_explorer_input(ExplorerInputMode::NewFolder);
+    let key = KeyInput::from_label("N");
     assert_eq!(
-        state.route_key_input(&KeyInput::from_label("N")).1,
-        ShellCommand::AppendExplorerChar('N')
+        state.route_key_input(&key).1,
+        ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone()))
     );
-    assert_ne!(
-        state.route_key_input(&KeyInput::from_label("Left")).1,
-        ShellCommand::ExplorerOpenBack
-    );
-    assert_ne!(
-        state.route_key_input(&KeyInput::from_label("Delete")).1,
-        ShellCommand::ExplorerDelete
-    );
+    state.apply_input(InputEvent::Key(key));
+    assert_eq!(state.pages.explorer.explorer_input, "N");
+    for (label, expected, cursor) in [("Left", "N", 0), ("Delete", "", 0)] {
+        let key = KeyInput::from_label(label);
+        assert_eq!(
+            state.route_key_input(&key).1,
+            ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone()))
+        );
+        state.apply_input(InputEvent::Key(key));
+        assert_eq!(state.pages.explorer.explorer_input, expected);
+        assert_eq!(state.pages.explorer.explorer_address_cursor, cursor);
+        assert_eq!(state.pages.explorer.explorer_overlay_selection, 0);
+        assert_eq!(
+            state.pages.explorer.explorer_input_mode,
+            ExplorerInputMode::NewFolder
+        );
+    }
 }
 
 fn explorer_routing_test_state() -> ShellSession {
@@ -6216,7 +6283,7 @@ fn explorer_terminal_action_cannot_bypass_permissions_size_or_trash_location() {
 
 #[test]
 fn explorer_search_shortcut_preserves_text_input_and_sort() {
-    let mut state = explorer_routing_test_state();
+    let state = explorer_routing_test_state();
     for (character, modifiers) in [
         ('d', InputModifiers::ALT),
         ('d', InputModifiers::CTRL),
@@ -6257,22 +6324,42 @@ fn explorer_search_shortcut_preserves_text_input_and_sort() {
         state.route_key_input(&KeyInput::from_label("F6")).1,
         ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Sort)
     );
+    let (mut state, platform, _fixture) = explorer_terminal_test_fixture();
+    state.storage_manager = Some(
+        StorageManager::open(platform.app_paths().unwrap())
+            .unwrap()
+            .manager,
+    );
     for mode in [
         ExplorerInputMode::Address,
         ExplorerInputMode::Search,
         ExplorerInputMode::NewFolder,
         ExplorerInputMode::Rename,
     ] {
-        state.pages.explorer.explorer_input_mode = mode;
+        state.begin_explorer_input(mode);
+        state.pages.explorer.explorer_input.clear();
+        state.pages.explorer.explorer_address_cursor = 0;
+        state.pages.explorer.explorer_address_selection_anchor = None;
+        let mut expected = String::new();
         for character in ['s', 'S', 'r', 'c', 'x', 'v', 'd'] {
+            let key = KeyInput::new(InputKey::Char(character));
             assert_eq!(
-                state
-                    .route_key_input(&KeyInput::new(InputKey::Char(character)))
-                    .1,
-                ShellCommand::AppendExplorerChar(character),
+                state.route_key_input(&key).1,
+                ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone())),
                 "{mode:?}: {character}"
             );
+            state.apply_input_with_platform(InputEvent::Key(key), &platform);
+            expected.push(character);
+            assert_eq!(
+                state.pages.explorer.explorer_input, expected,
+                "{mode:?}: {character}"
+            );
+            assert_eq!(state.pages.explorer.explorer_input_mode, mode);
+            if mode == ExplorerInputMode::Search {
+                assert_eq!(state.app.explorer_state().unwrap().query, expected);
+            }
         }
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     }
 }
 
@@ -6576,13 +6663,30 @@ fn explorer_dialog_navigation_wraps_and_preserves_input_focus() {
     ] {
         let mut state = explorer_routing_test_state();
         state.begin_explorer_input(mode);
+        state.pages.explorer.explorer_input = "界ab".into();
+        state.pages.explorer.explorer_address_cursor = 1;
+        state.pages.explorer.explorer_address_selection_anchor = None;
         state.refresh_hit_map();
+        for (key, cursor) in [("Right", 2), ("Left", 1), ("Home", 0), ("End", 3)] {
+            state.apply_input(InputEvent::from_key_label(key));
+            assert_eq!(
+                state.pages.explorer.explorer_overlay_selection, 0,
+                "{mode:?}: {key}"
+            );
+            assert_eq!(
+                state.pages.explorer.explorer_address_cursor, cursor,
+                "{mode:?}: {key}"
+            );
+            assert_eq!(state.pages.explorer.explorer_input, "界ab");
+        }
         for (key, selected) in [
-            ("Right", 1),
+            ("Tab", 1),
+            ("Right", 2),
+            ("Left", 1),
             ("Down", 2),
             ("Tab", 0),
-            ("Left", 2),
-            ("Up", 1),
+            ("Up", 2),
+            ("Shift+Tab", 1),
             ("Shift+Tab", 0),
         ] {
             state.apply_input(InputEvent::from_key_label(key));
@@ -6592,12 +6696,32 @@ fn explorer_dialog_navigation_wraps_and_preserves_input_focus() {
                 "{mode:?}: {key}"
             );
         }
-        state.apply_input(InputEvent::from_key_label("Left"));
+        state.apply_input(InputEvent::from_key_label("Tab"));
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Enter")).1,
+            ShellCommand::ExplorerOverlayActivate
+        );
+        state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+        assert_eq!(state.pages.explorer.explorer_overlay_selection, 0);
+        state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+        assert_eq!(state.pages.explorer.explorer_overlay_selection, 2);
         state.apply_input(InputEvent::from_key_label("x"));
-        assert!(state.pages.explorer.explorer_input.is_empty());
+        assert_eq!(state.pages.explorer.explorer_input, "界ab");
         state.apply_input(InputEvent::from_key_label("Enter"));
         assert!(state.to_explorer_view_model().overlay.is_none());
         assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        state.begin_explorer_input(mode);
+        state.refresh_hit_map();
+        assert_eq!(
+            state.route_key_input(&KeyInput::from_label("Enter")).1,
+            ShellCommand::SubmitExplorerInput
+        );
+        state.apply_input(InputEvent::from_key_label("Esc"));
+        assert!(state.to_explorer_view_model().overlay.is_none());
+        assert_eq!(
+            state.pages.explorer.explorer_input_mode,
+            ExplorerInputMode::Browse
+        );
     }
 }
 

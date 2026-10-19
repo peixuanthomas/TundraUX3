@@ -1,6 +1,5 @@
 use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 
 use super::model::{NotificationActionViewModel, NotificationViewModel};
 
@@ -201,38 +200,7 @@ pub(crate) fn wrap_notification_text(text: &str, width: u16) -> Vec<String> {
         return Vec::new();
     }
 
-    let width = usize::from(width);
-    let mut wrapped = Vec::new();
-    for source_line in text.split('\n') {
-        if source_line.is_empty() {
-            wrapped.push(String::new());
-            continue;
-        }
-
-        let span = Span::raw(source_line);
-        let mut line = String::new();
-        let mut line_width = 0usize;
-        for grapheme in span.styled_graphemes(Style::default()) {
-            let grapheme_width = Line::from(grapheme.symbol).width();
-            if !line.is_empty() && line_width.saturating_add(grapheme_width) > width {
-                wrapped.push(std::mem::take(&mut line));
-                line_width = 0;
-            }
-            if grapheme_width > width && line.is_empty() {
-                wrapped.push(grapheme.symbol.to_string());
-                continue;
-            }
-            line.push_str(grapheme.symbol);
-            line_width = line_width.saturating_add(grapheme_width);
-        }
-        if !line.is_empty() {
-            wrapped.push(line);
-        }
-    }
-    if wrapped.is_empty() {
-        wrapped.push(String::new());
-    }
-    wrapped
+    crate::management_wrapped_lines(text, width)
 }
 
 fn notification_wrapped_line_count(text: &str, width: u16) -> u16 {

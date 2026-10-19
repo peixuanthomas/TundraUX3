@@ -533,8 +533,9 @@ pub(super) fn program(name: &str) -> Result<PathBuf, ManagementError> {
             return Ok(path);
         }
     }
-    Err(ManagementError::Unavailable(format!(
-        "Required system tool {name} is not installed"
+    Err(ManagementError::MissingDependency(i18n::tr!(
+        "management-required-tool-missing",
+        name = name
     )))
 }
 
@@ -545,7 +546,13 @@ pub(super) fn run(
 ) -> Result<String, ManagementError> {
     let (output, error, status) = run_status(name, args, cancelled)?;
     if status != 0 {
-        return Err(ManagementError::Failed(format!("{name} failed: {error}")));
+        return Err(ManagementError::Failed(i18n::tr!(
+            "management-tool-query-failed",
+            name = name,
+            code = status.to_string(),
+            error = error,
+            output = output
+        )));
     }
     Ok(output)
 }

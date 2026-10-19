@@ -180,6 +180,16 @@ impl ShellSession {
                     .cloned(),
             );
         }
+        let state = &self.pages.management.management_state;
+        if state.can_show_details() && (state.snapshot.rows.is_empty() || state.problem.is_some()) {
+            primary.push((
+                ManagementAction {
+                    id: "query_details".into(),
+                    ..Default::default()
+                },
+                None,
+            ));
+        }
         if !all.is_empty() {
             primary.push((
                 ManagementAction {
@@ -260,6 +270,10 @@ impl ShellSession {
         action: ManagementAction,
         row: Option<ManagementRow>,
     ) {
+        if action.id == "query_details" {
+            self.toggle_management_details();
+            return;
+        }
         if action.id == "current_task" {
             self.management_touch_control(ui::ManagementControl::Terminal);
             return;
@@ -559,7 +573,13 @@ impl ShellSession {
                 if !keep_package_filter {
                     self.pages.management.management_state.filter_input.clear();
                 }
-                self.pages.management.management_state.filtering = false;
+                self.pages.management.management_state.filtering = self
+                    .pages
+                    .management
+                    .management_state
+                    .query
+                    .as_ref()
+                    .is_some_and(|query| query.scope == "search");
                 self.pages.management.management_state.details_only = false;
                 self.pages.management.management_state.terminal_mode = false;
                 self.pages.management.management_state.details_scroll = 0;
@@ -809,6 +829,8 @@ impl ShellSession {
                             | ManagementError::PermissionDenied(_)
                             | ManagementError::InvalidInput(_)
                             | ManagementError::Unavailable(_)
+                            | ManagementError::MissingDependency(_)
+                            | ManagementError::UnsupportedEnvironment(_)
                     ) {
                         emit(OperationEvent::Problem {
                             problem: problem::OperationProblem::from_error(&error),

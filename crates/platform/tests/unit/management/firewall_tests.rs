@@ -3,6 +3,34 @@ use super::ssh_ports::{apply_ports, own_rule, prepare_ports, rollback_ports};
 use super::*;
 use std::collections::VecDeque;
 
+#[test]
+fn unsupported_firewall_explains_requirements_and_keeps_listener_navigation() {
+    for installed_firewalld in [false, true] {
+        let mut fixture = Fixture::ufw("", false);
+        fixture.ufw = false;
+        fixture.firewalld = installed_firewalld;
+        fixture.commands.clear();
+        let snapshot = snapshot(load(&mut fixture, &flag()).unwrap(), "").unwrap();
+        assert!(snapshot.rows.is_empty());
+        assert!(!snapshot.needs_authorization);
+        assert_eq!(
+            snapshot.notices,
+            [i18n::tr!("management-firewall-unavailable")]
+        );
+        assert_eq!(
+            snapshot.details[0].1,
+            i18n::tr!(if installed_firewalld {
+                "management-firewalld-inactive"
+            } else {
+                "management-firewall-tools-missing"
+            })
+        );
+        assert_eq!(snapshot.actions.len(), 1);
+        assert_eq!(snapshot.actions[0].id, "show_listening_ports");
+        assert!(fixture.commands.is_empty());
+    }
+}
+
 struct Fixture {
     ufw: bool,
     firewalld: bool,
@@ -223,7 +251,7 @@ fn firewalld_keeps_runtime_permanent_and_ipv6_rules_separate() {
     assert!(fixture.commands.is_empty());
 }
 #[test]
-fn unsupported_backend_has_no_explanation_or_write_action() {
+fn unsupported_backend_explains_requirements_and_rejects_write_actions() {
     let mut fixture = Fixture {
         ufw: false,
         firewalld: false,
@@ -234,11 +262,36 @@ fn unsupported_backend_has_no_explanation_or_write_action() {
         error: String::new(),
         commands: VecDeque::new(),
     };
-    let result = snapshot(load(&mut fixture, &flag()).unwrap(), "").unwrap();
+    let state = load(&mut fixture, &flag()).unwrap();
+    assert!(matches!(
+        validate_request(&command(&state), &state),
+        Err(ManagementError::Unavailable(_))
+    ));
+    let result = snapshot(state, "").unwrap();
     assert_eq!(result.backend, "Not supported yet");
     assert!(result.rows.is_empty());
-    assert!(result.notices.is_empty());
+    assert_eq!(
+        result.notices,
+        [i18n::tr!("management-firewall-unavailable")]
+    );
+    assert_eq!(
+        result.details,
+        [(
+            i18n::tr!("management-requirements"),
+            i18n::tr!("management-firewall-tools-missing")
+        )]
+    );
+    assert_eq!(
+        result
+            .actions
+            .iter()
+            .map(|action| action.id.as_str())
+            .collect::<Vec<_>>(),
+        ["show_listening_ports"]
+    );
     assert!(result.actions.iter().all(|action| !action.privileged));
+    assert!(!result.needs_authorization);
+    assert!(fixture.commands.is_empty());
 }
 #[test]
 fn simultaneous_backends_disable_all_changes() {

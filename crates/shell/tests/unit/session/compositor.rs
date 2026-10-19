@@ -1598,18 +1598,27 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
         now + Duration::from_millis(50),
     );
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.border_color);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.readable_text_color(theme.border_color)
+    );
     assert_eq!(terminal.backend().buffer()[point].bg, theme.background);
     assert!(rx.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"\r")));
     state.apply_input(InputEvent::mouse_moved(point));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.border_color);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.readable_text_color(theme.border_color)
+    );
     state.apply_input(InputEvent::mouse_moved((point.0 + 1, point.1)));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
     assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
     state.apply_input(InputEvent::key(InputKey::F(6)));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.border_color);
+    assert_eq!(
+        terminal.backend().buffer()[point].fg,
+        theme.readable_text_color(theme.border_color)
+    );
     let first = state
         .button_regions
         .iter()

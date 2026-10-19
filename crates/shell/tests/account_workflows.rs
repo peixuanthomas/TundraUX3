@@ -26,6 +26,26 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn setup_f10_completes_appearance_without_relying_on_modified_enter() {
+    let (_fixture, mut state) = fresh_setup_state("setup-f10");
+    state.apply_input(InputEvent::from_key_label("F10"));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Timezone);
+    state.apply_input(InputEvent::from_key_label("F10"));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Admin);
+    type_text(&mut state, "AdminUser");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("F10"));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
+    state.apply_input(InputEvent::Key(KeyInput::new(InputKey::F(10)).repeated()));
+    assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
+    state.apply_input(InputEvent::from_key_label("F10"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+}
+
+#[test]
 fn setup_primary_shortcut_and_previous_step_preserve_text_and_disabled_submit() {
     let fixture = FixtureRoot::new("setup-primary-shortcuts");
     let platform = mock_platform(fixture.path());

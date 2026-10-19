@@ -161,6 +161,18 @@ impl ShellSession {
         if key.phase == InputPhase::Release {
             return (target, ShellCommand::Noop);
         }
+        if key.key == InputKey::F(10) && key.is_unmodified_action_key() {
+            return (
+                target,
+                if key.phase != InputPhase::Press {
+                    ShellCommand::Noop
+                } else if self.pages.setup.setup_custom_color_target.is_some() {
+                    ShellCommand::ApplySetupCustomColor
+                } else {
+                    ShellCommand::SetupPrimaryAction
+                },
+            );
+        }
         if key.has_non_shift_modifier() {
             if key.phase == InputPhase::Press
                 && key.modifiers.is_control()

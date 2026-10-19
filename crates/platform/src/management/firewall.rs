@@ -319,7 +319,14 @@ fn load(native: &mut impl Native, flag: &AtomicBool) -> Result<State, Management
             state.zones.sort();
             state.zones.dedup();
         }
-        Backend::Unsupported => {}
+        Backend::Unsupported => state.detail.push((
+            i18n::tr!("management-requirements"),
+            i18n::tr!(if firewalld {
+                "management-firewalld-inactive"
+            } else {
+                "management-firewall-tools-missing"
+            }),
+        )),
     }
     state.fingerprint = hash(&format!(
         "{:?}:{}:{}:{}:{:?}",
@@ -509,10 +516,7 @@ pub fn query(
         Ok(state) => snapshot(state, &query.filter),
         Err(error)
             if unsafe { libc::geteuid() } != 0
-                && matches!(
-                    error,
-                    ManagementError::PermissionDenied(_) | ManagementError::Failed(_)
-                ) =>
+                && matches!(error, ManagementError::PermissionDenied(_)) =>
         {
             Ok(ManagementSnapshot {
                 needs_authorization: true,
@@ -559,6 +563,10 @@ fn snapshot(state: State, filter: &str) -> Result<ManagementSnapshot, Management
         ..Default::default()
     };
     if state.backend == Backend::Unsupported {
+        snapshot
+            .notices
+            .push(i18n::tr!("management-firewall-unavailable"));
+        snapshot.details = state.detail;
         return Ok(snapshot);
     }
     let identity = BTreeMap::from([

@@ -15,6 +15,53 @@ use platform::{
 use storage::StorageManager;
 
 #[test]
+fn refresh_keeps_search_selection_and_scroll_while_reloading_metadata() {
+    let fixture = Fixture::new("refresh-context");
+    for name in ["a.txt", "b.txt", "other.md"] {
+        fs::write(fixture.documents.join(name), name).unwrap();
+    }
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    let actor = session();
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&actor),
+        &fixture.platform,
+        &storage,
+    );
+    state.query = ".txt".into();
+    state.apply_projection();
+    state.select_index(1, ExplorerSelectionMode::Replace);
+    state.viewport_offset = 1;
+    state.viewport_follows_focus = false;
+    let selected = state.selected_path();
+    let anchor = state.selection_anchor.clone();
+    fs::write(fixture.documents.join("b.txt"), "updated document").unwrap();
+
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&actor),
+        &fixture.platform,
+        &storage,
+    );
+
+    assert_eq!(state.query, ".txt");
+    assert_eq!(state.entries.len(), 2);
+    assert_eq!(state.selected_path(), selected);
+    assert_eq!(
+        state.effective_selected_paths(),
+        selected.into_iter().collect::<Vec<_>>()
+    );
+    assert_eq!(state.selection_anchor, anchor);
+    assert_eq!(state.viewport_offset, 1);
+    assert!(!state.viewport_follows_focus);
+    assert_eq!(state.selected_entry().unwrap().size, 16);
+}
+
+#[test]
 fn refresh_lists_directory_entries_and_filters_hidden_files() {
     let fixture = Fixture::new("refresh-hidden");
     fs::write(fixture.documents.join("visible.txt"), "visible").expect("visible fixture");

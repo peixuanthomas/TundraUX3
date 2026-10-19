@@ -46,3 +46,18 @@ fn successful_battery_samples_keep_all_devices() {
         Ok(expected)
     );
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn native_monitor_treats_missing_battery_directory_and_temperature_sensors_as_empty() {
+    let mut monitor = NativeSystemMonitor::new().unwrap();
+    let sample = monitor.sample_slow().unwrap();
+    if monitor.components.is_empty() {
+        assert_eq!(sample.thermal, Ok(Vec::new()));
+    }
+    if std::fs::metadata("/sys/class/power_supply")
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    {
+        assert_eq!(sample.batteries, Ok(Vec::new()));
+    }
+}

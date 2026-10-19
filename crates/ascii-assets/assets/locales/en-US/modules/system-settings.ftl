@@ -37,6 +37,14 @@ system-settings-invalid = Invalid system setting
 system-settings-hostname-invalid = Use a host name of 1–64 lowercase ASCII letters, digits, dots and hyphens; labels cannot start or end with a hyphen.
 system-settings-address-invalid = Enter a server host name or IP address, without a URL, port or configuration directive.
 system-settings-tool-failed = { $tool } is unavailable or failed: { $reason }
+system-settings-service-error = System settings service query failed: { $reason }
+system-settings-environment-error = Host name, system timezone and time synchronization settings cannot be read or changed. Use a Linux environment running systemd and the system D-Bus; extra permissions cannot provide missing services.
+    Cause: { $reason }
+system-settings-tool-exit = { $tool } did not complete successfully: { $status }
+    Standard error: { $errors }
+    Standard output: { $output }
+system-settings-query-limited = { $setting } query is limited: { $reason }
+system-settings-ntp-limited = The time service could not be identified. Automatic synchronization and server changes are unavailable. Check the cause in details, resolve it, then refresh.
 system-settings-verify-failed = Cannot verify the resulting system state. Refresh before retrying.
 system-settings-review = Review these operating system changes before applying:
 system-settings-completed = System settings applied and actual values refreshed

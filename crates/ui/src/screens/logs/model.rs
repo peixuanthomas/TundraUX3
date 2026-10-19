@@ -17,6 +17,7 @@ pub enum LogsSection {
 pub struct LogsEventViewModel {
     pub id: String,
     pub timestamp: String,
+    pub time_label: String,
     pub level: String,
     pub module: String,
     pub operation: String,

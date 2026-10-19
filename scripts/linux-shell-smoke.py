@@ -205,8 +205,8 @@ def check_status_details(master: int, output: bytearray, child: subprocess.Popen
         read_available(master, output, 0.05)
 
 
-def painted_label_position(data: bytes, label: str, columns: int, rows: int, first_row: int = 0) -> tuple[int, int]:
-    """Locate an ASCII label in a complete Ratatui repaint; return SGR coordinates."""
+def painted_screen_lines(data: bytes, columns: int, rows: int) -> list[str]:
+    """Read ASCII cells from a complete Ratatui repaint and its later diffs."""
     screen = [[" "] * columns for _ in range(rows)]
     x = y = 0
     for token in re.findall(r"\x1b\[[0-?]*[ -/]*[@-~]|[\s\S]", data.decode(errors="replace")):
@@ -243,11 +243,17 @@ def painted_label_position(data: bytes, label: str, columns: int, rows: int, fir
                 if width == 2 and x + 1 < columns:
                     screen[y][x + 1] = " "
             x += width
+    return ["".join(row) for row in screen]
+
+
+def painted_label_position(data: bytes, label: str, columns: int, rows: int, first_row: int = 0) -> tuple[int, int]:
+    """Locate an ASCII label in a complete Ratatui repaint; return SGR coordinates."""
+    screen = painted_screen_lines(data, columns, rows)
     for row, cells in enumerate(screen[first_row:], start=first_row):
-        column = "".join(cells).find(label)
+        column = cells.find(label)
         if column >= 0:
             return column + 1, row + 1
-    raise SystemExit(f"Button {label!r} was not painted:\n" + "\n".join("".join(row) for row in screen))
+    raise SystemExit(f"Button {label!r} was not painted:\n" + "\n".join(screen))
 
 
 def check_management_menu(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
@@ -272,9 +278,8 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
     repaint_offset = len(output)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 108, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
-    deadline = time.monotonic() + 0.5
-    while time.monotonic() < deadline:
-        read_available(master, output, 0.05)
+    if not wait_for_output(master, output, b"More actions", child, 5.0, repaint_offset, ignore_spaces=True):
+        raise SystemExit("Network did not repaint its actions after resizing:\n" + output_diagnostic(output[repaint_offset:]))
     more_x, more_y = painted_label_position(bytes(output[repaint_offset:]), "More actions", 108, 20)
     press_more = f"\x1b[<0;{more_x};{more_y}M".encode()
     release_more = f"\x1b[<0;{more_x};{more_y}m".encode()
@@ -378,7 +383,7 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
                        (b"\x1b[18~", b"Installed packages")):
         step(key, title, "Package scope shortcut did not switch views", timeout=45.0)
         if key == b"\x1b[17~" and Path("/usr/bin/dpkg-query").is_file():
-            step(b"sbash\r", b"Bourne Again", "Package search did not load matching metadata", timeout=45.0)
+            step(b"bash\r", b"Bourne Again", "Package search did not load matching metadata", timeout=45.0)
     if Path("/usr/bin/dpkg-query").is_file() and len(names) >= 2:
         step(b"\x15", names[1].encode(), "Clearing package search did not restore installed rows")
     # View actions are the final six menu items, in the same order on every
@@ -483,6 +488,230 @@ def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, 
     if child.poll() is None:
         raise SystemExit("Q did not exit the crash page")
     print("PASS: crash reason/version/component/location/report, Q exit and saved report")
+
+
+def check_permission_draft(master, slave, output, child, path):
+    original = path.stat()
+    offset = len(output)
+    os.write(master, b"\x1b[21;2~")
+    if not wait_for_output(master, output, b"Properties", child, 5.0, offset):
+        raise SystemExit("Explorer context menu did not offer Properties")
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    offset = len(output)
+    # The text-file menu starts with Open, Cut, Copy, Rename, Delete, Properties.
+    os.write(master, b"\x1b[B" * 5 + b"\r")
+    if not wait_for_output(master, output, b"Edit permissions and ownership", child, 5.0, offset):
+        raise SystemExit("file Properties did not offer permissions editing:\n" + output_diagnostic(output[offset:]))
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    offset = len(output)
+    os.write(master, b"\r")
+    if not wait_for_output(master, output, b"Permissions and ownership", child, 5.0, offset):
+        raise SystemExit("Properties did not open the permissions page")
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    offset = len(output)
+    os.write(master, b"1")
+    if not wait_for_output(master, output, b"Left/Right", child, 5.0, offset):
+        raise SystemExit("permission draft form did not open")
+
+    # Resize to obtain a complete repaint before reading incremental cell changes.
+    repaint = len(output)
+    for columns in (117, 116):
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, columns, 0, 0))
+        os.kill(child.pid, signal.SIGWINCH)
+        wait_for_output_quiet(master, output, child, quiet_period=0.3)
+
+    def screen_after(keys):
+        if keys:
+            os.write(master, keys)
+        deadline = time.monotonic() + 0.75
+        while time.monotonic() < deadline:
+            if child.poll() is not None:
+                raise SystemExit("shell exited during permission draft regression")
+            read_available(master, output, 0.05)
+        return painted_screen_lines(bytes(output[repaint:]), 116, 41)
+
+    screen = screen_after(b"")
+    owner_row = next((i for i, line in enumerate(screen) if "Owner" in line and "[x]" in line), None)
+    if owner_row is None:
+        raise SystemExit("permission Owner row was not painted:\n" + "\n".join(screen))
+    column = screen[owner_row].index("[x]")
+    if screen_after(b" ")[owner_row][column:column + 3] != "[ ]":
+        raise SystemExit("physical Space did not clear the selected permission box")
+    if screen_after(b"\r")[owner_row][column:column + 3] != "[x]":
+        raise SystemExit("Enter did not restore the selected permission box")
+    screen = screen_after(b"\t\t")
+    recursive_row = next((i + 1 for i, line in enumerate(screen[:-1]) if "Include directory contents" in line), None)
+    if recursive_row is None or "[ ]" not in screen[recursive_row]:
+        raise SystemExit("recursive checkbox was not painted unchecked:\n" + "\n".join(screen))
+    column = screen[recursive_row].index("[ ]")
+    if screen_after(b" ")[recursive_row][column:column + 3] != "[x]":
+        raise SystemExit("physical Space did not enable recursive draft selection")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Discard unsaved changes?", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("changed permission draft did not request discard confirmation")
+    if screen_after(b"\x1b")[recursive_row][column:column + 3] != "[x]":
+        raise SystemExit("cancelling discard lost the permission draft")
+    screen_after(b"\x1b")
+    screen_after(b"\r")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+        raise SystemExit("discarded permission draft did not return to Explorer")
+    current = path.stat()
+    if (current.st_mode, current.st_uid, current.st_gid, current.st_ctime_ns) != (
+        original.st_mode, original.st_uid, original.st_gid, original.st_ctime_ns
+    ):
+        raise SystemExit("permission draft changed filesystem metadata without applying")
+    print("PASS: physical Space and Enter toggle permission drafts; cancel preserves draft and discard leaves metadata unchanged")
+
+
+def check_system_settings_environment(master, output, child):
+    if Path("/proc/1/comm").read_text().strip() == "systemd":
+        return
+    offset = len(output)
+    os.write(master, b"s")
+    if not wait_for_output(master, output, b"OS settings", child, 5.0, offset):
+        raise SystemExit("Settings did not expose the operating system entry")
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    offset = len(output)
+    os.write(master, b"\x1b[19~")
+    if not wait_for_output(master, output, b"This environment does not support the feature", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("OS settings did not explain the unavailable systemd environment:\n" + output_diagnostic(output[offset:]))
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    offset = len(output)
+    os.write(master, b"\x1bOS")
+    if not wait_for_output(master, output, b"PID 1", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("OS settings F4 details omitted the specific systemd cause:\n" + output_diagnostic(output[offset:]))
+    for marker in [b"systemd", b"extra permissions cannot"]:
+        if not wait_for_output(master, output, marker, child, 5.0, offset, ignore_spaces=True):
+            raise SystemExit(f"OS settings details omitted {marker!r}:\n" + output_diagnostic(output[offset:]))
+    os.write(master, b"\x1b")
+    wait_for_output_quiet(master, output, child, quiet_period=0.3)
+    for marker in [b"OS settings", b"Launcher"]:
+        wait_for_output_quiet(master, output, child, quiet_period=0.3)
+        offset = len(output)
+        os.write(master, b"\x1b")
+        if not wait_for_output(master, output, marker, child, 5.0, offset, ignore_spaces=True):
+            raise SystemExit("OS settings did not return through its original navigation path")
+    print("PASS: unsupported OS settings shows an environment limit and F4 explains systemd requirements without authorization")
+
+
+def check_editor_resize(master, slave, output, child, isolated):
+    directory = isolated / "resize-workflow"
+    directory.mkdir()
+    path = directory / "notes.txt"
+    original = "resize baseline\n"
+    addition = " resize regression unsaved"
+    path.write_text(original)
+
+    offset = len(output)
+    os.write(master, b"e")
+    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+        raise SystemExit("Explorer did not open for the resize regression")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle before the resize regression")
+    offset = len(output)
+    os.write(master, b"\x0c")
+    if not wait_for_output(master, output, b"Absolute path", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("Explorer address input did not open for the resize regression")
+    os.write(master, b"\x01\x1b[200~" + str(directory).encode() + b"\x1b[201~\r")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle at the resize fixture")
+    offset = len(output)
+    os.write(master, b"\r")
+    if not wait_for_output(master, output, b"resize baseline", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("Editor did not open the resize fixture")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not settle before typing")
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 116, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not settle at 116x41")
+    os.write(master, b"\x1b[1;5F\x1b[200~" + addition.encode() + b"\x1b[201~")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not accept the unsaved resize text")
+    if path.read_text() != original:
+        raise SystemExit("resize fixture was saved before requesting a save")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Unsaved document", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("dirty Editor did not show its close confirmation")
+
+    offset = len(output)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output(master, output, b"Terminal is too small (80x24)", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("small-terminal overlay did not render")
+    os.write(master, b"UNEXPECTED_SMALL_TERMINAL_INPUT\r")
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    if child.poll() is not None:
+        raise SystemExit("shrinking the terminal exited the shell")
+    if path.read_text() != original:
+        raise SystemExit("small-terminal input submitted the hidden save dialog")
+
+    offset = len(output)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 116, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output(master, output, b"Unsaved document", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("restoring the terminal lost the active close confirmation")
+    deadline = time.monotonic() + 0.75
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    os.write(master, b"\x1b")
+    deadline = time.monotonic() + 0.75
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    os.write(master, b"\x13")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and path.read_text() != original + addition:
+        if child.poll() is not None:
+            raise SystemExit("shell exited before saving the preserved edit")
+        read_available(master, output, 0.05)
+    if path.read_text() != original + addition:
+        raise SystemExit(
+            f"resize save mismatch: expected {original + addition!r}, got {path.read_text()!r}; output:\n"
+            + output_diagnostic(output[offset:])
+        )
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not settle after saving the preserved edit")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+        raise SystemExit("saved Editor did not return to Explorer")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle after the editor save")
+    offset = len(output)
+    os.write(master, b"\x1bOQ")
+    if not wait_for_output(master, output, b"Rename", child, 5.0, offset):
+        raise SystemExit("Explorer rename did not open")
+    deadline = time.monotonic() + 0.75
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    os.write(master, b"\x01renamed.txt\r")
+    renamed = directory / "renamed.txt"
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not renamed.exists():
+        read_available(master, output, 0.05)
+    if path.exists() or not renamed.exists() or renamed.read_text() != original + addition:
+        raise SystemExit(
+            f"Ctrl+A rename did not replace the complete file name: {list(directory.iterdir())}; output:\n"
+            + output_diagnostic(output[offset:])
+        )
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle after renaming")
+    check_permission_draft(master, slave, output, child, renamed)
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Launcher", child, 5.0, offset):
+        raise SystemExit("resize workflow did not return to Home")
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Home did not settle after the resize workflow")
+    print("PASS: 116x41 to 80x24 preserves unsaved text and dialog; restore, save and Ctrl+A rename succeed")
 
 
 def main() -> int:
@@ -642,7 +871,7 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Appearance color input did not close")
         home_offset = len(output)
-        os.write(master, b"\t\t\t\r")
+        os.write(master, b"\x1b[21~")
         if not wait_for_output(
             master, output, b"Explorer", child, 10.0, start_offset=home_offset
         ):
@@ -654,6 +883,8 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle before pointer regression")
 
+        check_editor_resize(master, slave, output, child, isolated)
+        check_system_settings_environment(master, output, child)
         check_status_details(master, output, child)
 
         # Exercise the companion CLI launched by the real Shell, not just a

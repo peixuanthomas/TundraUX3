@@ -78,15 +78,24 @@ fn check_cancelled(cancelled: &AtomicBool) -> Result<(), ManagementError> {
 }
 
 fn connection(scope: Scope) -> Result<Connection, ManagementError> {
+    if scope == Scope::System {
+        super::capability::system_manager()?;
+    }
     let result = match scope {
         Scope::System => crate::linux::dbus::system(),
         Scope::User => crate::linux::dbus::session(),
     };
     result.map_err(|error| {
-        ManagementError::Unavailable(format!(
-            "Cannot connect to the {} service manager: {error}",
-            scope.id()
-        ))
+        let detail = i18n::tr!(
+            "management-service-manager-query",
+            scope = scope.id(),
+            error = error.to_string()
+        );
+        if error == crate::service::ServiceError::PermissionDenied {
+            ManagementError::PermissionDenied(detail)
+        } else {
+            ManagementError::Unavailable(detail)
+        }
     })
 }
 

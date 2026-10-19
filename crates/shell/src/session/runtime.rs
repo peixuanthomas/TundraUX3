@@ -842,7 +842,7 @@ impl CachedTimeSyncResult {
                 state.apply_time_sync_utc(*utc + elapsed);
             }
             Self::Failure => {
-                state.apply_time_sync_failure_message("联网校准时间失败");
+                state.apply_time_sync_failure_message(i18n::msg!("time-sync-network-failed"));
             }
         }
     }
@@ -973,7 +973,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         reduced_motion_enabled(&state),
     );
     let mut compositor = ScreenCompositor::default();
-    let mut terminal_size_error = None;
     let mut terminal_suspended = false;
     let mut last_background_poll = runtime_origin;
     let mut update_ready_marked = false;
@@ -1047,9 +1046,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 continue;
             }
 
-            if let Err(error) = terminal_size_requirement.validate(crossterm::terminal::size()?) {
-                terminal_size_error = Some(io::Error::other(error));
-                break;
+            if resize_runtime_session(&mut state, crossterm::terminal::size()?, platform.as_ref()) {
+                compositor.cancel_for_bounds_change();
+                redraw.request_redraw();
             }
 
             let accent = theme
@@ -1136,8 +1135,19 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 );
                 let mut animation_running = false;
                 guard.terminal_mut().draw(|frame| {
-                    animation_running =
-                        compositor.render(frame, &mut state, &prepared, launcher_icons.as_ref());
+                    let bounds = frame.area();
+                    if let Err(error) =
+                        terminal_size_requirement.validate((bounds.width, bounds.height))
+                    {
+                        render_terminal_size_notice(frame, error, &theme);
+                    } else {
+                        animation_running = compositor.render(
+                            frame,
+                            &mut state,
+                            &prepared,
+                            launcher_icons.as_ref(),
+                        );
+                    }
                 })?;
                 if !update_ready_marked {
                     app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
@@ -1201,15 +1211,17 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
                 for terminal_event in terminal_events {
                     let identity_before_input = RedrawIdentity::from_session(&state);
-                    if let event::Event::Resize(width, height) = &terminal_event
-                        && let Err(error) = terminal_size_requirement.validate((*width, *height))
-                    {
-                        terminal_size_error = Some(io::Error::other(error));
-                        break;
-                    }
-                    let boundary_changed = matches!(&terminal_event, event::Event::Resize(_, _));
-                    if boundary_changed {
+                    if let event::Event::Resize(width, height) = &terminal_event {
                         compositor.cancel_for_bounds_change();
+                        resize_runtime_session(&mut state, (*width, *height), platform.as_ref());
+                        redraw.request_redraw();
+                        continue;
+                    }
+                    if terminal_size_requirement
+                        .validate(state.terminal_size())
+                        .is_err()
+                    {
+                        continue;
                     }
                     let received_at = Instant::now();
                     if let event::Event::Key(key) = &terminal_event
@@ -1286,9 +1298,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 }
             }
 
-            if terminal_size_error.is_some() {
-                break;
-            }
             if reset_requested {
                 break;
             }
@@ -1311,9 +1320,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         Ok(None)
     }));
 
-    let preserve_prepared_update = matches!(&execution, Ok(Ok(None)))
-        && terminal_size_error.is_none()
-        && state.update_apply_manifest().is_some();
+    if !matches!(&execution, Ok(Ok(None))) {
+        let _ = state.persist_all_editor_recovery_now(Instant::now());
+    }
+    let preserve_prepared_update =
+        matches!(&execution, Ok(Ok(None))) && state.update_apply_manifest().is_some();
     let cleanup = stop_fullscreen_session_tasks(
         &mut state,
         &mut command_line_hosts,
@@ -1332,10 +1343,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         ));
     }
 
-    if let Some(error) = terminal_size_error {
-        return Err(error);
-    }
-
     let outcome = if let Some(manifest) = state.update_apply_manifest().map(ToOwned::to_owned) {
         FullscreenShellSessionOutcome::UpdatePrepared(manifest)
     } else if reset_requested {
@@ -1349,6 +1356,44 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     };
     language_runtime.update_from(&state);
     Ok((outcome, state.ascii_assets.clone()))
+}
+
+fn resize_runtime_session(
+    state: &mut ShellSession,
+    size: (u16, u16),
+    platform: &dyn Platform,
+) -> bool {
+    if state.terminal_size() == size {
+        return false;
+    }
+    state.apply_input_with_platform(
+        InputEvent::Resize {
+            width: size.0,
+            height: size.1,
+        },
+        platform,
+    );
+    true
+}
+
+fn render_terminal_size_notice(
+    frame: &mut ratatui::Frame<'_>,
+    error: crate::startup::terminal_size::ShellTerminalSizeError,
+    theme: &ui::TundraTheme,
+) {
+    let message = i18n::tr!(
+        "shell-runtime-terminal-too-small",
+        width = error.width,
+        height = error.height,
+        required_width = error.required.width,
+        required_height = error.required.height,
+    );
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(message)
+            .style(theme.body_style())
+            .wrap(ratatui::widgets::Wrap { trim: false }),
+        frame.area(),
+    );
 }
 
 /// Cleanup has already run when this is called, including for a caught unwind.

@@ -421,6 +421,8 @@ pub struct ExplorerNameDialogViewModel {
     pub title: String,
     pub prompt: String,
     pub value: String,
+    pub cursor: usize,
+    pub selection_anchor: Option<usize>,
     pub error: Option<String>,
     pub confirm_label: String,
     pub cancel_label: String,
@@ -499,14 +501,19 @@ pub enum ExplorerOverlayViewModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerSearchViewModel {
     pub query: String,
+    pub cursor: usize,
+    pub selection_anchor: Option<usize>,
     pub active: bool,
     pub match_count: Option<usize>,
 }
 
 impl ExplorerSearchViewModel {
     pub fn new(query: impl Into<String>, active: bool, match_count: Option<usize>) -> Self {
+        let query = query.into();
         Self {
-            query: query.into(),
+            cursor: query.chars().count(),
+            selection_anchor: None,
+            query,
             active,
             match_count,
         }

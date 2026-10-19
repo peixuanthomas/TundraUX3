@@ -39,7 +39,7 @@ fn tool(name: &str) -> Result<PathBuf, ManagementError> {
         .map(|root| Path::new(root).join(name))
         .find(|path| path.is_file())
         .ok_or_else(|| {
-            ManagementError::Unavailable(i18n::tr!("platform-ssh-tool-missing", name = name))
+            ManagementError::MissingDependency(i18n::tr!("platform-ssh-tool-missing", name = name))
         })
 }
 fn run(name: &str, args: &[&str], flag: &AtomicBool) -> Result<String, ManagementError> {
@@ -109,11 +109,16 @@ fn run_output(
                 let out = String::from_utf8_lossy(&out).into_owned();
                 let err = String::from_utf8_lossy(&err).into_owned();
                 if !status.success() {
-                    return Err(ManagementError::Failed(i18n::tr!(
+                    let detail = i18n::tr!(
                         "platform-ssh-tool-failed",
                         name = name,
                         error = runtime_log::sanitize_text(err.trim())
-                    )));
+                    );
+                    return Err(if err.to_ascii_lowercase().contains("permission denied") {
+                        ManagementError::PermissionDenied(detail)
+                    } else {
+                        ManagementError::Failed(detail)
+                    });
                 }
                 return Ok((out, err));
             }
@@ -332,6 +337,8 @@ pub fn query(
     query: &ManagementQuery,
     flag: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
+    check_cancelled(flag)?;
+    super::capability::system_manager()?;
     let selected = query
         .target
         .as_deref()
@@ -348,10 +355,7 @@ pub fn query(
         Ok(snapshot) => snapshot,
         Err(error)
             if unsafe { libc::geteuid() } != 0
-                && matches!(
-                    &error,
-                    ManagementError::PermissionDenied(_) | ManagementError::Failed(_)
-                ) =>
+                && matches!(&error, ManagementError::PermissionDenied(_)) =>
         {
             let mut snapshot = ManagementSnapshot {
                 columns: vec![

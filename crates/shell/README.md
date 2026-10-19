@@ -2,7 +2,7 @@
 
 `shell` 把应用状态、界面、终端输入和后台任务连接起来，提供 `tundra-shell`。它决定当前页面、返回路径、焦点和弹窗，最后合成完整的一帧。
 
-文件属性的“权限与归属”支持多选，并打开独立管理页，沿用 AA、页面任务和返回规则。修改表单退出前确认是否放弃，账户选择支持查找与屏幕键盘。
+文件属性的“权限与归属”支持多选，并打开独立管理页，沿用 AA、页面任务和返回规则。权限与递归勾选项可用空格或 Enter 切换，文字字段的空格继续作为文本输入。修改表单退出前确认是否放弃，账户选择支持查找与屏幕键盘。
 
 设置内区分 Tundra 选项与 Linux 操作系统设置。主机名、时区、自动校时和服务器配置沿用管理页的授权、任务和返回规则，不改 Tundra 自己的显示时区和时间来源。
 
@@ -35,6 +35,8 @@
 较大的控制器再按实际工作拆分：editor 分为 view/input/settings/files/recovery/tasks；settings 分为 forms/background/view/devices/tasks；management 分为 actions/input/touch/config_editor。入口文件负责连接这些步骤。
 
 终端模式和子终端由 [terminal-runtime](../terminal-runtime/README.md) 管理；批准、密码和任务执行由 [auto-admin](../auto-admin/README.md) 管理。Shell 保留界面控制，不另建任务监督系统。
+
+运行中窗口小于布局下限时显示尺寸提示并暂停页面输入，保留编辑缓冲、弹窗和计时状态；恢复尺寸后继续。编辑器保存完成同步更新状态及相关文件列表。文件名输入复用共享选区控件，首次设置和管理表单提供 F10 完成，管理搜索明确提示 Enter 提交。
 
 ```mermaid
 flowchart LR

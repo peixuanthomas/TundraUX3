@@ -666,6 +666,16 @@ fn query_at(
     let mut snapshot = ManagementSnapshot {
         details_complete: true,
         backend: i18n::tr!("platform-backups-backend").into(),
+        details: vec![
+            (
+                i18n::tr!("management-backups-how-title"),
+                i18n::tr!("management-backups-how"),
+            ),
+            (
+                i18n::tr!("management-backups-scope-title"),
+                i18n::tr!("management-backups-scope"),
+            ),
+        ],
         columns: vec![
             i18n::tr!("platform-backups-recovery").into(),
             i18n::tr!("platform-backups-time").into(),
@@ -683,6 +693,12 @@ fn query_at(
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             snapshot.needs_authorization = true;
+            snapshot
+                .notices
+                .push(i18n::tr!("management-backups-permission"));
+            snapshot
+                .details
+                .push((i18n::tr!("management-requirements"), e.to_string()));
             snapshot.actions.push(ManagementAction {
                 id: "inspect_backups".into(),
                 label: i18n::tr!("platform-backups-authorize").into(),
@@ -808,7 +824,10 @@ fn legacy_rows_excluding(
 ) -> Result<ManagementSnapshot, ManagementError> {
     let entries = match fs::read_dir(root) {
         Ok(v) => v,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(snapshot),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            snapshot.notices.push(i18n::tr!("management-backups-empty"));
+            return Ok(snapshot);
+        }
         Err(e) => return Err(error(e)),
     };
     for entry in entries {
@@ -875,6 +894,9 @@ fn legacy_rows_excluding(
                 ..Default::default()
             }],
         });
+    }
+    if snapshot.rows.is_empty() && query.filter.is_empty() && query.target.is_none() {
+        snapshot.notices.push(i18n::tr!("management-backups-empty"));
     }
     Ok(snapshot)
 }

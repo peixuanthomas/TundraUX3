@@ -193,7 +193,7 @@ fn package_table_long_values_keep_both_version_columns_visible_and_full_details(
 #[test]
 fn management_search_cursor_is_visible_for_empty_chinese_and_long_input() {
     use unicode_width::UnicodeWidthStr;
-    for width in [20, 50] {
+    for width in [5, 12, 20, 50, 108, 116] {
         for filter in [
             String::new(),
             "中文搜索".into(),
@@ -208,6 +208,39 @@ fn management_search_cursor_is_visible_for_empty_chinese_and_long_input() {
             let theme = TundraTheme::default_dark();
             let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
             let layout = management_layout(area, &model);
+            assert!(layout.filter.width >= 5);
+            let buttons = management_button_regions(area, &model);
+            for (control, rect) in &layout.controls {
+                let label = match control {
+                    ManagementControl::Refresh => management_controls()[0].1.clone(),
+                    ManagementControl::ApplySearch => {
+                        i18n::tr!("regression-management-search-enter")
+                    }
+                    ManagementControl::ClearSearch => "× [Ctrl+U]".into(),
+                    _ => unreachable!(),
+                };
+                assert!(
+                    usize::from(rect.width) >= label.width() + 2,
+                    "{width}: {label}"
+                );
+                assert!(rect.intersection(layout.filter).is_empty());
+                let id = management_control_id(&model, *control);
+                assert_eq!(
+                    buttons
+                        .iter()
+                        .find(|button| button.id.as_str() == id)
+                        .unwrap()
+                        .area,
+                    *rect
+                );
+            }
+            assert_eq!(
+                layout
+                    .controls
+                    .iter()
+                    .any(|(control, _)| *control == ManagementControl::ApplySearch),
+                width >= 50
+            );
             let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
             terminal
                 .draw(|frame| render_management_content(frame, area, &model, &context))
@@ -293,7 +326,7 @@ fn management_action_labels_fit_touch_regions_in_small_windows() {
                 .collect::<String>();
             assert!(painted.contains(hint), "{width}x{height}: {hint}");
             assert!(painted.contains(if rect == form_layout.submit {
-                "Ctrl+Enter"
+                "F10"
             } else {
                 "Esc"
             }));
@@ -331,7 +364,7 @@ fn compact_toolbar_keeps_every_basic_touch_action_visible() {
     for size in [(64, 14), (60, 18), (80, 24)] {
         let area = Rect::new(0, 0, size.0, size.1);
         let layout = management_layout(area, &model);
-        assert_eq!(layout.controls.len(), 1);
+        assert_eq!(layout.controls.len(), 2);
         assert_eq!(layout.controls[0].0, ManagementControl::Refresh);
         assert_eq!(layout.controls[0].1.x, area.x);
         assert!(layout.controls.iter().all(|(_, rect)| rect.width > 0
@@ -695,18 +728,25 @@ fn search_clear_is_part_of_the_input_and_main_buttons_have_plain_labels() {
         ..Default::default()
     };
     let layout = management_layout(area, &model);
-    assert_eq!(layout.controls.len(), 2);
+    assert_eq!(layout.controls.len(), 3);
     let clear = layout
         .controls
         .iter()
         .find(|(control, _)| *control == ManagementControl::ClearSearch)
         .unwrap()
         .1;
-    assert_eq!(clear.x, layout.filter.right());
+    let search = layout
+        .controls
+        .iter()
+        .find(|(control, _)| *control == ManagementControl::ApplySearch)
+        .unwrap()
+        .1;
+    assert_eq!(clear.x, search.right());
+    assert_eq!(search.x, layout.filter.right());
     assert_eq!(clear.y, layout.filter.y);
     assert!(layout.actions.iter().all(|rect| rect.height == 1));
     model.filter.clear();
-    assert_eq!(management_layout(area, &model).controls.len(), 1);
+    assert_eq!(management_layout(area, &model).controls.len(), 2);
 }
 
 #[test]
@@ -1054,7 +1094,7 @@ fn short_dialogs_follow_content_and_keep_complete_actions_in_narrow_windows() {
                 .collect::<String>()
                 .replace(' ', "");
             assert!(
-                painted.contains(&format!("[Ctrl+Enter{label}]").replace(' ', "")),
+                painted.contains(&format!("[F10{label}]").replace(' ', "")),
                 "{width}x{height}: {painted}"
             );
             for region in management_button_regions(main, &model) {

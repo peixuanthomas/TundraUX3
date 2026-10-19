@@ -1,10 +1,11 @@
 //! Operating-system settings; Tundra's display and clock preferences stay separate.
+use super::network::io_error;
 use super::*;
 use crate::ManagedCommand;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
-use zbus::blocking::{Connection, Proxy};
+use zbus::blocking::{Connection, Proxy, connection::Builder};
 #[cfg(test)]
 #[path = "../../tests/unit/management/system_settings_isolated.rs"]
 mod isolated;
@@ -23,6 +24,48 @@ pub struct SystemSettingsState {
 fn error(error: impl std::fmt::Display) -> ManagementError {
     ManagementError::Failed(error.to_string())
 }
+fn dbus_error(reason: zbus::Error) -> ManagementError {
+    use crate::service::ServiceError;
+    let category = match &reason {
+        zbus::Error::FDO(error) => match error.as_ref() {
+            zbus::fdo::Error::AccessDenied(_) | zbus::fdo::Error::AuthFailed(_) => {
+                ServiceError::PermissionDenied
+            }
+            zbus::fdo::Error::ServiceUnknown(_) | zbus::fdo::Error::NameHasNoOwner(_) => {
+                ServiceError::ServiceUnavailable
+            }
+            zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::NotSupported(_) => {
+                ServiceError::Unsupported
+            }
+            _ => ServiceError::Unknown,
+        },
+        _ => crate::linux::dbus::map_error(reason.clone()),
+    };
+    let detail = i18n::tr!("system-settings-service-error", reason = reason.to_string());
+    match category {
+        ServiceError::PermissionDenied => ManagementError::PermissionDenied(detail),
+        ServiceError::ServiceUnavailable | ServiceError::Unsupported => {
+            ManagementError::UnsupportedEnvironment(i18n::tr!(
+                "system-settings-environment-error",
+                reason = detail
+            ))
+        }
+        _ => ManagementError::Failed(detail),
+    }
+}
+fn connection() -> Result<Connection, ManagementError> {
+    super::capability::system_manager().map_err(|reason| match reason {
+        ManagementError::UnsupportedEnvironment(detail) => ManagementError::UnsupportedEnvironment(
+            i18n::tr!("system-settings-environment-error", reason = detail),
+        ),
+        error => error,
+    })?;
+    Builder::system()
+        .map_err(dbus_error)?
+        .method_timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(dbus_error)
+}
 fn invalid() -> ManagementError {
     ManagementError::InvalidInput(i18n::tr!("system-settings-invalid"))
 }
@@ -39,7 +82,7 @@ fn proxy<'a>(
     path: &'static str,
     interface: &'static str,
 ) -> Result<Proxy<'a>, ManagementError> {
-    Proxy::new(connection, service, path, interface).map_err(error)
+    Proxy::new(connection, service, path, interface).map_err(dbus_error)
 }
 fn timedate(connection: &Connection) -> Result<Proxy<'_>, ManagementError> {
     proxy(
@@ -69,11 +112,11 @@ fn state(connection: &Connection) -> Result<SystemSettingsState, ManagementError
     let host = host(connection)?;
     let time = timedate(connection)?;
     Ok(SystemSettingsState {
-        hostname: host.get_property("Hostname").map_err(error)?,
-        static_hostname: host.get_property("StaticHostname").map_err(error)?,
-        timezone: time.get_property("Timezone").map_err(error)?,
-        automatic_time: time.get_property("NTP").map_err(error)?,
-        synchronized: time.get_property("NTPSynchronized").map_err(error)?,
+        hostname: host.get_property("Hostname").map_err(dbus_error)?,
+        static_hostname: host.get_property("StaticHostname").map_err(dbus_error)?,
+        timezone: time.get_property("Timezone").map_err(dbus_error)?,
+        automatic_time: time.get_property("NTP").map_err(dbus_error)?,
+        synchronized: time.get_property("NTPSynchronized").map_err(dbus_error)?,
         time_utc: chrono::Utc::now().to_rfc3339(),
     })
 }
@@ -88,7 +131,18 @@ fn native(program: &str, args: &[&str], flag: &AtomicBool) -> Result<String, Man
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn_managed()
-        .map_err(error)?;
+        .map_err(|reason| {
+            let detail = i18n::tr!(
+                "system-settings-tool-failed",
+                tool = program,
+                reason = reason.to_string()
+            );
+            match reason.kind() {
+                std::io::ErrorKind::NotFound => ManagementError::MissingDependency(detail),
+                std::io::ErrorKind::PermissionDenied => ManagementError::PermissionDenied(detail),
+                _ => ManagementError::Failed(detail),
+            }
+        })?;
     let (status, output, errors) = super::system_config::collect_command(
         &mut child,
         flag,
@@ -96,15 +150,25 @@ fn native(program: &str, args: &[&str], flag: &AtomicBool) -> Result<String, Man
     )?;
     check(flag)?;
     if !status.is_some_and(|status| status.success()) {
-        return Err(ManagementError::Unavailable(i18n::tr!(
-            "system-settings-tool-failed",
+        let detail = i18n::tr!(
+            "system-settings-tool-exit",
             tool = program,
-            reason = if status.is_none() {
-                i18n::tr!("system-settings-timeout")
+            status = status
+                .map(|status| status.to_string())
+                .unwrap_or_else(|| i18n::tr!("system-settings-timeout")),
+            output = String::from_utf8_lossy(&output).into_owned(),
+            errors = String::from_utf8_lossy(&errors).into_owned()
+        );
+        return Err(
+            if String::from_utf8_lossy(&errors)
+                .to_ascii_lowercase()
+                .contains("permission denied")
+            {
+                ManagementError::PermissionDenied(detail)
             } else {
-                runtime_log::sanitize_text(&String::from_utf8_lossy(&errors))
-            }
-        )));
+                ManagementError::Failed(detail)
+            },
+        );
     }
     String::from_utf8(output).map_err(error)
 }
@@ -134,12 +198,31 @@ fn bool_label(value: bool) -> String {
         "system-settings-no"
     })
 }
+fn query_problem(
+    reason: ManagementError,
+    setting: &str,
+    notices: &mut Vec<String>,
+    details: &mut Vec<(String, String)>,
+) -> Result<String, ManagementError> {
+    if matches!(reason, ManagementError::Cancelled) {
+        return Err(reason);
+    }
+    let problem = problem::OperationProblem::from_error(&reason);
+    let summary = i18n::tr!(
+        "system-settings-query-limited",
+        setting = setting,
+        reason = i18n::tr!(problem.summary_key)
+    );
+    notices.push(summary.clone());
+    details.push((setting.into(), problem.detail));
+    Ok(summary)
+}
 pub fn query(
     query: &ManagementQuery,
     flag: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
     check(flag)?;
-    let connection = crate::linux::dbus::system().map_err(error)?;
+    let connection = connection()?;
     let current = state(&connection)?;
     let identity = BTreeMap::from([
         ("hostname".into(), current.static_hostname.clone()),
@@ -166,14 +249,23 @@ pub fn query(
         "system-settings-edit-timezone",
         vec![zone_field],
     );
-    zone_action.disabled_reason = zones.err().map(|e| e.to_string());
+    let mut notices = Vec::new();
+    let mut details = Vec::new();
+    zone_action.disabled_reason = match zones {
+        Ok(_) => None,
+        Err(reason) => Some(query_problem(
+            reason,
+            &i18n::tr!("system-settings-timezone"),
+            &mut notices,
+            &mut details,
+        )?),
+    };
     let provider = ntp::detect(
         &connection,
         query.options.get("provider").map(String::as_str),
     );
     let mut ntp_actions = Vec::new();
     let mut ntp_details = Vec::new();
-    let mut notices = vec![i18n::tr!("system-settings-help")];
     match provider {
         Ok(provider) => {
             ntp_details.push((i18n::tr!("system-settings-provider"), provider.unit.clone()));
@@ -215,9 +307,15 @@ pub fn query(
                     ntp_actions.push(configure);
                 }
                 Err(reason) => {
-                    ntp_details.push((i18n::tr!("system-settings-status"), reason.to_string()));
-                    notices.push(reason.to_string());
-                    if matches!(reason, ManagementError::PermissionDenied(_)) {
+                    let permission = matches!(reason, ManagementError::PermissionDenied(_));
+                    let summary = query_problem(
+                        reason,
+                        &i18n::tr!("system-settings-servers"),
+                        &mut notices,
+                        &mut details,
+                    )?;
+                    ntp_details.push((i18n::tr!("system-settings-status"), summary));
+                    if permission {
                         ntp_actions.push(ManagementAction {
                             id: "inspect_system_settings".into(),
                             label: i18n::tr!("system-settings-authorize-read"),
@@ -230,8 +328,17 @@ pub fn query(
             }
         }
         Err(reason) => {
-            ntp_details.push((i18n::tr!("system-settings-status"), reason.to_string()));
-            notices.push(reason.to_string());
+            let summary = query_problem(
+                reason,
+                &i18n::tr!("system-settings-provider"),
+                &mut notices,
+                &mut details,
+            )?;
+            ntp_details.push((i18n::tr!("system-settings-status"), summary));
+            ntp_details.push((
+                i18n::tr!("system-settings-help-label"),
+                i18n::tr!("system-settings-ntp-limited"),
+            ));
         }
     }
     let local = native("/usr/bin/date", &["--iso-8601=seconds"], flag)
@@ -294,6 +401,7 @@ pub fn query(
             i18n::tr!("system-settings-help"),
         ));
     }
+    notices.push(i18n::tr!("system-settings-help"));
     Ok(ManagementSnapshot {
         columns: vec![
             i18n::tr!("system-settings-setting"),
@@ -301,6 +409,7 @@ pub fn query(
         ],
         rows,
         notices,
+        details,
         details_complete: true,
         backend: "systemd / chrony".into(),
         ..Default::default()
@@ -331,7 +440,7 @@ pub fn execute(
         io.emit(OperationEvent::Snapshot { snapshot });
         return Ok(i18n::tr!("system-settings-title"));
     }
-    let connection = crate::linux::dbus::system().map_err(error)?;
+    let connection = connection()?;
     let before = state(&connection)?;
     match command.action.as_str() {
         "set_system_hostname" | "set_system_timezone" => {
@@ -392,11 +501,11 @@ pub fn execute(
             if hostname {
                 host(&connection)?
                     .call::<_, _, ()>("SetStaticHostname", &(value, false))
-                    .map_err(error)?;
+                    .map_err(dbus_error)?;
             } else {
                 timedate(&connection)?
                     .call::<_, _, ()>("SetTimezone", &(value, false))
-                    .map_err(error)?;
+                    .map_err(dbus_error)?;
             }
             let after = state(&connection)?;
             if (if hostname {
@@ -423,24 +532,5 @@ pub fn execute(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn hostname_validation_matches_persistent_host_names() {
-        for name in ["tundra", "host-1", "tundra.example"] {
-            assert!(valid_hostname(name));
-        }
-        for name in [
-            "",
-            "UPPER",
-            "-host",
-            "host-",
-            "host..name",
-            "host/name",
-            "host\nname",
-        ] {
-            assert!(!valid_hostname(name));
-        }
-        assert!(!valid_hostname(&"x".repeat(65)));
-    }
-}
+#[path = "../../tests/unit/management/system_settings_tests.rs"]
+mod tests;

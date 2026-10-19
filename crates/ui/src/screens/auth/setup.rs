@@ -175,7 +175,7 @@ fn render_setup_unscrolled(
         let mut previous = Button::new("setup.back", i18n::tr!("ui-auth-touch-back"));
         previous.set_disabled(model.step == SetupStep::Language);
         previous.render_inline_frame(frame, back, theme);
-        Button::new("setup.continue", i18n::tr!("ui-auth-touch-continue"))
+        Button::new("setup.continue", i18n::tr!("regression-setup-next"))
             .render_inline_frame(frame, next, theme);
     }
 }
@@ -430,9 +430,9 @@ fn render_setup_admin_page(
         setup_admin_field_area(area, SetupField::Submit),
         "setup.admin.submit",
         if model.can_submit {
-            i18n::tr!("ui-auth-submit-ready")
+            i18n::tr!("regression-setup-submit-ready")
         } else {
-            i18n::tr!("ui-auth-submit-incomplete")
+            i18n::tr!("regression-setup-submit-incomplete")
         },
         model.focused_field == SetupField::Submit,
         !model.can_submit,
@@ -550,7 +550,7 @@ fn render_setup_appearance_page(
         frame,
         setup_appearance_field_area(area, SetupField::AppearanceSubmit),
         "setup.appearance.finish",
-        i18n::tr!("ui-auth-finish-setup"),
+        i18n::tr!("regression-setup-finish"),
         submit_focused,
         false,
         theme,

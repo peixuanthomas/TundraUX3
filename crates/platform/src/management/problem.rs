@@ -19,6 +19,10 @@ impl OperationProblem {
     pub fn from_error(error: &ManagementError) -> Self {
         let (code, next_action, exit_code) = match error {
             ManagementError::Unavailable(_) => ("unavailable", "requirements", 4),
+            ManagementError::MissingDependency(_) => ("missing-dependency", "requirements", 4),
+            ManagementError::UnsupportedEnvironment(_) => {
+                ("unsupported-environment", "environment", 4)
+            }
             ManagementError::PermissionDenied(_) => ("permission", "authorize", 3),
             ManagementError::InvalidInput(_) => ("invalid-input", "edit", 2),
             ManagementError::Conflict(_) => ("conflict", "refresh", 5),
@@ -27,9 +31,18 @@ impl OperationProblem {
         };
         Self {
             code: code.into(),
-            summary_key: format!("management-problem-{code}"),
+            summary_key: match error {
+                ManagementError::Unavailable(_) => "management-problem-backend-unavailable".into(),
+                ManagementError::Failed(_) => "management-problem-failure-detail".into(),
+                _ => format!("management-problem-{code}"),
+            },
             next_action: next_action.into(),
-            detail: runtime_log::sanitize_text(&error.to_string()),
+            detail: error
+                .to_string()
+                .split('\n')
+                .map(runtime_log::sanitize_text)
+                .collect::<Vec<_>>()
+                .join("\n"),
             exit_code,
             native_exit_code: None,
             service: None,
@@ -37,3 +50,7 @@ impl OperationProblem {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/management/problem_tests.rs"]
+mod tests;

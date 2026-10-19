@@ -158,12 +158,15 @@ impl ShellSession {
             ),
             InputEvent::Paste(_)
                 if self.active_screen() == ShellScreen::Explorer
-                    && self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address
+                    && matches!(
+                        self.pages.explorer.explorer_input_mode,
+                        ExplorerInputMode::Address | ExplorerInputMode::Search
+                    )
                     && self.active_overlay_descriptor().is_none() =>
             {
                 (
                     RoutedTarget::Component(ShellComponent::Explorer),
-                    ShellCommand::ExplorerEditAddress(input.clone()),
+                    ShellCommand::ExplorerEditInput(input.clone()),
                 )
             }
             InputEvent::FocusGained | InputEvent::FocusLost | InputEvent::Paste(_) => {
@@ -1411,8 +1414,8 @@ impl ShellSession {
                 self.explorer_backspace(platform);
                 ShellAction::Redraw
             }
-            ShellCommand::ExplorerEditAddress(input) => {
-                self.edit_explorer_address(input);
+            ShellCommand::ExplorerEditInput(input) => {
+                self.edit_explorer_input(input, platform);
                 ShellAction::Redraw
             }
             ShellCommand::SubmitExplorerInput => {

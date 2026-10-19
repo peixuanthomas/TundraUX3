@@ -199,7 +199,7 @@ pub fn logs_content_model(model: &LogsViewModel) -> DiagnosticsViewModel {
             .iter()
             .map(|r| {
                 vec![
-                    r.timestamp.clone(),
+                    r.time_label.clone(),
                     r.level.clone(),
                     r.module.clone(),
                     r.operation.clone(),
@@ -215,7 +215,7 @@ pub fn logs_content_model(model: &LogsViewModel) -> DiagnosticsViewModel {
             .iter()
             .map(|event| DiagnosticsCheckViewModel {
                 id: event.id.clone(),
-                label: format!("{} {}", event.timestamp, event.operation),
+                label: format!("{} {}", event.time_label, event.operation),
                 category: event.module.clone(),
                 status: match event.level.to_ascii_lowercase().as_str() {
                     "error" | "critical" | "fatal" | "alert" | "emergency" => {

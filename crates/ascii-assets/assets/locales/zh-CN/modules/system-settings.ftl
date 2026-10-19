@@ -37,6 +37,14 @@ system-settings-invalid = 系统设置内容无效
 system-settings-hostname-invalid = 主机名须为 1–64 个小写英文字母、数字、点或连字符，每段不能以连字符开头或结尾。
 system-settings-address-invalid = 请填写服务器域名或 IP 地址，不要填写网址、端口或配置指令。
 system-settings-tool-failed = { $tool } 不可用或执行失败：{ $reason }
+system-settings-service-error = 系统设置服务查询失败：{ $reason }
+system-settings-environment-error = 无法读取或修改主机名、系统时区和校时设置。请使用运行 systemd 和系统 D-Bus 的 Linux 环境；授权无法解决环境缺失。
+    具体原因：{ $reason }
+system-settings-tool-exit = { $tool } 执行未成功：{ $status }
+    错误输出：{ $errors }
+    标准输出：{ $output }
+system-settings-query-limited = { $setting }查询受限：{ $reason }
+system-settings-ntp-limited = 无法确认校时服务，暂不能切换自动校时或修改服务器。请查看详情中的原因，修复后刷新。
 system-settings-verify-failed = 无法确认修改后的系统状态，请刷新后再操作。
 system-settings-review = 执行前请检查以下操作系统修改：
 system-settings-completed = 系统设置已应用，并已重新读取实际值

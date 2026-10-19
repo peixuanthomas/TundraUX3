@@ -710,7 +710,9 @@ fn physical_feedback_uses_pressed_colors_then_returns_to_normal() {
         state.physical.expire(now + Duration::from_millis(250));
         assert_eq!(
             key_colors(&state, &layout, context.clone(), 'a').0,
-            context.theme.border
+            context
+                .compatibility_theme()
+                .readable_text_color(context.theme.border)
         );
     }
 }

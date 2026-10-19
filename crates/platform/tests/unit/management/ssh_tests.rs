@@ -1,5 +1,25 @@
 use super::*;
 #[test]
+fn native_ssh_tool_errors_suggest_authorization_only_for_explicit_permission_denial() {
+    for (message, denied) in [
+        ("/etc/ssh/sshd_config: Permission denied", true),
+        (
+            "System has not been booted with systemd as init system",
+            false,
+        ),
+        ("sshd: no hostkeys available -- exiting", false),
+    ] {
+        let command = format!("printf '%s' '{message}' >&2; exit 1");
+        let error = run("sh", &["-c", &command], &AtomicBool::new(false)).unwrap_err();
+        assert_eq!(
+            matches!(error, ManagementError::PermissionDenied(_)),
+            denied
+        );
+        assert!(error.to_string().contains(message));
+    }
+}
+
+#[test]
 fn editing_globals_keeps_include_match_and_unrelated_content() {
     let text = "# comment\nPort 22\nInclude /etc/ssh/sshd_config.d/*.conf\nPasswordAuthentication yes\nMatch User restricted\n PasswordAuthentication no\n X11Forwarding no\n";
     let changed = rewrite(text, true, 2222, "no", "yes", "prohibit-password");

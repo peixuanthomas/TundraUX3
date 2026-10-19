@@ -1,5 +1,152 @@
 use super::*;
 
+#[test]
+fn failed_empty_management_queries_expose_complete_details_without_retry_or_authorization() {
+    for kind in [
+        ManagementKind::Services,
+        ManagementKind::Network,
+        ManagementKind::Disks,
+        ManagementKind::Ssh,
+        ManagementKind::SystemSettings,
+    ] {
+        for pointer in [false, true] {
+            let mut session = shortcut_action_state(kind, "inspect");
+            session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+            session.pages.management.management_state.snapshot = ManagementSnapshot::default();
+            let (job, _) = session.management_job();
+            let native = "native query failed: environment unavailable\nfull diagnostic line";
+            *job.0.snapshot.lock().unwrap() =
+                Some(Err(ManagementError::UnsupportedEnvironment(native.into())));
+            session.register_management_job(&job, TaskDomain::ManagementQuery, TaskClass::Query);
+            session.pages.management.management_state.query_job = Some(job);
+            session.poll_management();
+            let model = session.to_management_view_model();
+            assert!(model.rows.is_empty());
+            assert_ne!(model.empty_message, i18n::tr!("management-empty"));
+            assert!(model.details.contains(native));
+            assert!(
+                model
+                    .actions
+                    .iter()
+                    .any(|(label, enabled)| label.contains("F4") && *enabled)
+            );
+            if pointer {
+                let index = session
+                    .management_actions()
+                    .iter()
+                    .position(|(action, _)| action.id == "query_details")
+                    .unwrap();
+                let area = ui::management_layout(session.management_main(), &model).actions[index];
+                click_management_point(&mut session, (area.x, area.y));
+            } else {
+                session.handle_management_key(&KeyInput::new(InputKey::F(4)));
+            }
+            let state = &session.pages.management.management_state;
+            assert!(state.details_only);
+            assert!(state.query_job.is_none() && state.operation_job.is_none());
+            assert!(state.form.is_none());
+            assert!(session.to_management_view_model().details.contains(native));
+            session.handle_management_key(&KeyInput::new(InputKey::Escape));
+            assert!(!session.pages.management.management_state.details_only);
+        }
+    }
+}
+
+#[test]
+fn empty_management_information_keeps_full_requirements_and_backup_guidance_reachable() {
+    for kind in [
+        ManagementKind::Firewall,
+        ManagementKind::Backups,
+        ManagementKind::ScheduledTasks,
+    ] {
+        let mut session = shortcut_action_state(kind, "inspect");
+        session.pages.management.management_state.snapshot = ManagementSnapshot {
+            notices: vec!["Short explanation".into()],
+            details: vec![(
+                "Requirements and next step".into(),
+                "Full requirements, recovery scope and diagnostic output".into(),
+            )],
+            details_complete: true,
+            ..Default::default()
+        };
+        let model = session.to_management_view_model();
+        assert_eq!(model.empty_message, "Short explanation");
+        assert!(model.details.contains("Full requirements"));
+        let index = session
+            .management_actions()
+            .iter()
+            .position(|(action, _)| action.id == "query_details")
+            .unwrap();
+        session.activate_management_action(index);
+        assert!(session.pages.management.management_state.details_only);
+        assert!(
+            session
+                .pages
+                .management
+                .management_state
+                .query_job
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn process_summary_headers_sort_whole_rows_and_retain_selected_identity() {
+    let mut session = shortcut_action_state(ManagementKind::Processes, "term");
+    let state = &mut session.pages.management.management_state;
+    state.snapshot.columns = [
+        "Name",
+        "PID",
+        "CPU %",
+        "Memory",
+        "PPID",
+        "UID",
+        "State",
+        "Nice (main thread)",
+    ]
+    .map(String::from)
+    .to_vec();
+    state.snapshot.rows[0].cells = ["Zulu", "9", "2.0", "90.0 MiB", "1", "1000", "S", "0"]
+        .map(String::from)
+        .to_vec();
+    let mut other = state.snapshot.rows[0].clone();
+    other.id = "process-10".into();
+    other.cells = ["alpha", "10", "10.0", "100.0 MiB", "1", "1000", "S", "0"]
+        .map(String::from)
+        .to_vec();
+    state.snapshot.rows.push(other);
+    let selected_id = state.snapshot.rows[state.selected].id.clone();
+    for (column, ascending_id) in [
+        (0, "process-10"),
+        (1, selected_id.as_str()),
+        (2, selected_id.as_str()),
+        (3, selected_id.as_str()),
+    ] {
+        let layout = ui::management_layout(
+            session.management_main(),
+            &session.to_management_view_model(),
+        );
+        let (_, header) = layout
+            .headers
+            .iter()
+            .find(|(index, _)| *index == column)
+            .unwrap();
+        click_management_point(&mut session, (header.x, header.y));
+        let state = &session.pages.management.management_state;
+        assert_eq!(state.sort.unwrap().column, column);
+        assert_eq!(state.snapshot.rows[0].id, ascending_id);
+        assert_eq!(state.snapshot.rows[state.selected].id, selected_id);
+        assert_eq!(
+            state.snapshot.rows[0].cells[1],
+            if ascending_id == "process-10" {
+                "10"
+            } else {
+                "9"
+            }
+        );
+    }
+}
+
 fn translated_management_language(generation: u64) -> i18n::LanguageSnapshot {
     i18n::LanguageSnapshotData {
         code: "zh-CN".into(),
@@ -9,6 +156,55 @@ fn translated_management_language(generation: u64) -> i18n::LanguageSnapshot {
     }
     .restore()
     .unwrap()
+}
+
+#[test]
+fn management_form_f10_answers_once_and_tab_applies_pending_search() {
+    let mut session = state();
+    let (job, responses) = session.management_job();
+    session.register_management_job(&job, TaskDomain::ManagementOperation, TaskClass::Operation);
+    session.pages.management.management_state.operation_job = Some(job);
+    session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
+        title: "Scheduled task answer".into(),
+        message: String::new(),
+        message_scroll: 0,
+        selected: 0,
+        purpose: FormPurpose::Answer("schedule-question".into()),
+        fields: vec![ManagementField {
+            id: "answer".into(),
+            value: "Yes".into(),
+            required: true,
+            ..Default::default()
+        }],
+    });
+    session.handle_management_key(&KeyInput::new(InputKey::F(10)).repeated());
+    assert!(responses.try_recv().is_err());
+    session.handle_management_key(&KeyInput::new(InputKey::F(10)));
+    assert!(
+        matches!(responses.try_recv().unwrap(), OperationInput::Answer { id, value } if id == "schedule-question" && value == "Yes")
+    );
+    assert!(session.pages.management.management_state.form.is_none());
+
+    let mut session = shortcut_action_state(ManagementKind::Users, "inspect");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    session.management_touch_control(ui::ManagementControl::Search);
+    session.handle_management_paste("alice");
+    assert!(session.pages.management.management_state.filtering);
+    session.handle_management_key(&KeyInput::new(InputKey::Tab));
+    assert!(!session.pages.management.management_state.filtering);
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .query
+            .as_ref()
+            .unwrap()
+            .filter,
+        "alice"
+    );
+    assert!(!session.pages.management.management_state.actions_focused);
 }
 
 #[test]
@@ -2732,6 +2928,9 @@ fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_searc
         session.pages.management.management_state.filter_input,
         "shell"
     );
+    assert!(session.pages.management.management_state.filtering);
+    session.handle_management_key(&KeyInput::new(InputKey::Tab));
+    assert!(!session.pages.management.management_state.filtering);
     assert_eq!(
         session
             .pages
@@ -3144,4 +3343,66 @@ fn failed_authorized_refresh_does_not_repeat_authorization() {
     assert_eq!(state.status, "inspection denied");
     assert!(!state.refresh_requested && !state.refreshing_authorized);
     assert!(state.operation_job.is_none() && state.query_job.is_none());
+}
+
+#[test]
+fn scheduled_task_name_and_account_source_keep_their_context_in_chinese() {
+    let language = i18n::LanguageSnapshotData {
+        code: "zh-CN".into(),
+        generation: 1,
+        current: vec![
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../ascii-assets/assets/locales/zh-CN/modules/regression-startup.ftl"
+            ))
+            .into(),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../ascii-assets/assets/locales/zh-CN/modules/management-cli-administration.ftl"
+            ))
+            .into(),
+            include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../ascii-assets/assets/locales/zh-CN/modules/management-users.ftl"
+            ))
+            .into(),
+        ],
+        english: vec![],
+    }
+    .restore()
+    .unwrap();
+    i18n::with_snapshot(&Arc::new(language), || {
+        let mut session = shortcut_action_state(ManagementKind::ScheduledTasks, "create_task");
+        session.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
+            title: "create".into(),
+            message: String::new(),
+            message_scroll: 0,
+            selected: 0,
+            fields: vec![ManagementField {
+                id: "name".into(),
+                label: "任务名称".into(),
+                ..Default::default()
+            }],
+            purpose: FormPurpose::Action(
+                ManagementAction {
+                    id: "create_task".into(),
+                    ..Default::default()
+                },
+                None,
+            ),
+        });
+        assert_eq!(
+            session.to_management_view_model().form.unwrap().fields[0].label,
+            "任务名称"
+        );
+        session.pages.management.management_state.kind = Some(ManagementKind::Users);
+        session.pages.management.management_state.snapshot.columns = vec!["Source".into()];
+        session.pages.management.management_state.snapshot.rows[0].detail =
+            vec![("Source".into(), "local".into())];
+        let model = session.to_management_view_model();
+        assert_eq!(model.columns, vec!["账户来源"]);
+        assert!(model.details.contains("账户来源:"));
+        assert!(!model.details.contains("软件源"));
+    });
 }

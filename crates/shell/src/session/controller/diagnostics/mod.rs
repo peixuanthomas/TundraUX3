@@ -337,6 +337,11 @@ impl ShellSession {
         &mut self,
         status: &ui::TerminalGraphicsProbeStatus,
     ) {
+        if self.active_screen() == ShellScreen::FirstRunSetup
+            || self.selected_login_icon_display_mode() == storage::IconDisplayMode::Ascii
+        {
+            return;
+        }
         match status {
             ui::TerminalGraphicsProbeStatus::Verified(_) => {}
             ui::TerminalGraphicsProbeStatus::Unsupported

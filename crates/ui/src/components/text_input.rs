@@ -89,6 +89,16 @@ impl TextInput {
         self.selection_anchor
     }
 
+    pub fn selected_text(&self) -> Option<String> {
+        self.selection_range().map(|range| {
+            self.text
+                .chars()
+                .skip(range.start)
+                .take(range.len())
+                .collect()
+        })
+    }
+
     /// Selection positions, like the cursor, count characters rather than UTF-8 bytes.
     pub fn set_selection_anchor(&mut self, anchor: Option<usize>) {
         self.selection_anchor = anchor.map(|anchor| anchor.min(char_count(&self.text)));
@@ -159,7 +169,7 @@ impl TextInput {
                     self.cursor = char_count(&self.text);
                     ComponentEvent::Consumed
                 }
-                Key::Char(character) => {
+                Key::Char(character) if !key.has_non_shift_modifier() => {
                     self.insert_char(character);
                     ComponentEvent::Changed(self.id.clone())
                 }

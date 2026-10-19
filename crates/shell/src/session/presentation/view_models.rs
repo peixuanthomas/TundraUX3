@@ -867,6 +867,9 @@ impl ShellSession {
                 let (widget_state, sensors) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(sensors) = sensors {
+                    if sensors.is_empty() {
+                        model.primary = i18n::tr!("startup-temperature-unavailable");
+                    }
                     let hottest = sensors
                         .iter()
                         .filter(|sensor| sensor.temperature_celsius.is_finite())
@@ -910,6 +913,9 @@ impl ShellSession {
                 let (widget_state, batteries) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(batteries) = batteries {
+                    if batteries.is_empty() {
+                        model.primary = i18n::tr!("startup-battery-unavailable");
+                    }
                     if let Some(battery) = batteries.first() {
                         model.progress_percent =
                             Some(battery.charge_percent.round().clamp(0.0, 100.0) as u16);
@@ -1232,7 +1238,12 @@ impl ShellSession {
                             diagnostics_public_check_summary(check)
                         },
                         detail: if can_view_details {
-                            check.detail.clone()
+                            format!(
+                                "{}: {}\n{}",
+                                check.status.localized_label().render_current(),
+                                check.localized_summary().render_current(),
+                                check.detail
+                            )
                         } else {
                             String::new()
                         },
@@ -1911,6 +1922,10 @@ impl ShellSession {
         } else {
             None
         };
+        if let Some(search) = model.search.as_mut().filter(|search| search.active) {
+            search.cursor = self.pages.explorer.explorer_address_cursor;
+            search.selection_anchor = self.pages.explorer.explorer_address_selection_anchor;
+        }
         model.pending_dialog = state.pending_dialog.as_ref().map(|dialog| {
             let (confirm, cancel) = match dialog.kind {
                 app::explorer::ExplorerDialogKind::DeleteToTrash => (
@@ -2007,6 +2022,8 @@ impl ShellSession {
                     title: title.to_string(),
                     prompt: prompt.to_string(),
                     value: self.pages.explorer.explorer_input.clone(),
+                    cursor: self.pages.explorer.explorer_address_cursor,
+                    selection_anchor: self.pages.explorer.explorer_address_selection_anchor,
                     error: state
                         .error
                         .as_ref()

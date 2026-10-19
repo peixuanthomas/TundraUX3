@@ -968,6 +968,7 @@ fn commit_location_listing(
     location: ExplorerLocation,
     entries: Vec<ExplorerEntry>,
     warning_count: usize,
+    reset_navigation: bool,
 ) {
     if let ExplorerLocation::Directory(path) = &location {
         state.current_path = path.clone();
@@ -975,12 +976,14 @@ fn commit_location_listing(
     state.current_location = location;
     state.all_entries = entries;
     state.listing_warning_count = warning_count;
-    state.query.clear();
-    state.clear_selection();
-    state.selection_cleared = false;
-    state.selected_index = 0;
-    state.viewport_offset = 0;
-    state.viewport_follows_focus = true;
+    if reset_navigation {
+        state.query.clear();
+        state.clear_selection();
+        state.selection_cleared = false;
+        state.selected_index = 0;
+        state.viewport_offset = 0;
+        state.viewport_follows_focus = true;
+    }
     state.apply_projection();
     if warning_count > 0 {
         state.message = Some(

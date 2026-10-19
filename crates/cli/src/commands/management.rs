@@ -640,10 +640,7 @@ pub(crate) fn help(output: &mut impl Write, group: &str) -> std::io::Result<()> 
             output,
             "show/files/ports/io/service PID; nice PID --nice -20..19; list [--sort pid|cpu|memory|uid|name|nice] [--descending true|false] [--tree true|false]. Changes recheck PID and start time."
         )?,
-        "packages" => writeln!(
-            output,
-            "list [--scope installed|search|updates]; search TEXT; source-add --name NAME --url URL [APT: --suite SUITE --components main --signed-by /key; DNF: --gpgkey URL]. sources add/enable/disable/remove are aliases. Source changes output drafts; --apply --expected-version saves. Script changes retain current config; --config-policy replace is APT-only. Arch install/upgrade always upgrades the full system."
-        )?,
+        "packages" => writeln!(output, "{}", i18n::tr!("startup-cli-packages-help"))?,
         "network" => writeln!(
             output,
             "wifi-list [--interface IFACE]; wifi-connect ACCESS_POINT_OR_IFACE [--ssid NAME --security open|wpa2|wpa3] [--password-fd FD]; configure IFACE --ipv4 dhcp|static|disabled --address4 CIDR --gateway4 IP --ipv6 auto|dhcp|static|disabled --address6 CIDR --gateway6 IP --dns IPs. check IFACE [--host HOST --port PORT]; confirm TRANSACTION [--decision keep|revert]. Configuration remains pending for 120 seconds until confirm; Wi-Fi confirms the selected network automatically."

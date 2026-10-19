@@ -205,14 +205,36 @@ impl ShellSession {
                 return;
             }
         };
-        let start_path = user_dirs.documents().to_path_buf();
-        let start_path = if start_path.exists() {
-            start_path
-        } else {
-            storage.layout().data_path.clone()
-        };
+        let working_directory = std::env::current_dir().ok();
+        let start_path = [
+            user_dirs.documents(),
+            user_dirs.desktop(),
+            user_dirs.downloads(),
+            user_dirs.pictures(),
+            user_dirs.videos(),
+            user_dirs.music(),
+        ]
+        .into_iter()
+        .chain(working_directory.as_deref())
+        .find(|path| std::fs::read_dir(path).is_ok())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| {
+            working_directory
+                .clone()
+                .unwrap_or_else(|| user_dirs.documents().to_path_buf())
+        });
+        let used_fallback = start_path != user_dirs.documents();
 
         self.open_explorer_at(platform, &storage, start_path, ExplorerPurpose::Browse);
+        if used_fallback
+            && let Some(explorer) = self.app.explorer_state()
+            && explorer.error.is_none()
+        {
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-explorer-default-directory-fallback",
+                path = explorer.current_path.display().to_string()
+            )));
+        }
     }
 
     pub(in crate::session) fn open_explorer_at(
@@ -399,6 +421,25 @@ impl ShellSession {
             return;
         };
         self.apply_explorer_command(command, platform);
+    }
+
+    pub(in crate::session) fn refresh_explorers_containing(
+        &mut self,
+        path: &std::path::Path,
+        platform: &dyn Platform,
+    ) {
+        for id in self.pages.explorer.ids() {
+            self.with_page_context(id, |session| {
+                let matching_directory = session.app.explorer_state().is_some_and(|state| {
+                    matches!(&state.current_location,
+                        app::explorer::ExplorerLocation::Directory(directory)
+                            if Some(directory.as_path()) == path.parent())
+                });
+                if matching_directory {
+                    session.apply_explorer_command(ExplorerCommand::Refresh, platform);
+                }
+            });
+        }
     }
 
     pub(in crate::session) fn apply_explorer_command(
@@ -635,6 +676,20 @@ impl ShellSession {
         self.pages.explorer.explorer_address_cursor =
             self.pages.explorer.explorer_input.chars().count();
         self.pages.explorer.explorer_address_selection_anchor = None;
+        if mode == ExplorerInputMode::Rename {
+            let entry = self
+                .app
+                .explorer_state()
+                .and_then(|state| state.single_selected_entry());
+            let name = &self.pages.explorer.explorer_input;
+            let basename = entry
+                .filter(|entry| entry.kind != app::explorer::ExplorerEntryKind::Directory)
+                .and_then(|_| std::path::Path::new(name).file_stem())
+                .and_then(|stem| stem.to_str())
+                .unwrap_or(name);
+            self.pages.explorer.explorer_address_cursor = basename.chars().count();
+            self.pages.explorer.explorer_address_selection_anchor = Some(0);
+        }
         let _ = self.update_explorer_state(|state| {
             state.error = None;
         });
@@ -646,54 +701,84 @@ impl ShellSession {
         character: char,
         platform: &dyn Platform,
     ) {
-        if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address {
-            self.edit_explorer_address(InputEvent::key(InputKey::Char(character)));
-            return;
-        }
-        if self.pages.explorer.explorer_input_replace_all {
-            self.pages.explorer.explorer_input.clear();
-            self.pages.explorer.explorer_input_replace_all = false;
-        }
-        self.pages.explorer.explorer_input.push(character);
-        self.apply_live_explorer_search(platform);
+        self.edit_explorer_input(InputEvent::key(InputKey::Char(character)), platform);
     }
 
     pub(in crate::session) fn explorer_backspace(&mut self, platform: &dyn Platform) {
-        if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address {
-            self.edit_explorer_address(InputEvent::key(InputKey::Backspace));
-            return;
-        }
-        if self.pages.explorer.explorer_input_replace_all {
-            self.pages.explorer.explorer_input.clear();
-            self.pages.explorer.explorer_input_replace_all = false;
-        } else {
-            self.pages.explorer.explorer_input.pop();
-        }
-        self.apply_live_explorer_search(platform);
+        self.edit_explorer_input(InputEvent::key(InputKey::Backspace), platform);
     }
 
-    pub(in crate::session) fn edit_explorer_address(&mut self, mut event: InputEvent) {
-        if self.pages.explorer.explorer_input_mode != ExplorerInputMode::Address {
+    pub(in crate::session) fn edit_explorer_input(
+        &mut self,
+        mut event: InputEvent,
+        platform: &dyn Platform,
+    ) {
+        if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Browse {
             return;
         }
-        match &mut event {
-            InputEvent::Key(key) if matches!(key.key, InputKey::Char('/' | '\\')) => {
-                key.key = InputKey::Char(std::path::MAIN_SEPARATOR);
-            }
-            InputEvent::Paste(value) => {
-                *value = value.replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
-            }
-            _ => {}
-        }
-        let mut input = ui::components::TextInput::new("explorer.address.input");
+        let mut input = ui::components::TextInput::new("explorer.input");
         input.set_value(&self.pages.explorer.explorer_input);
         input.set_cursor(self.pages.explorer.explorer_address_cursor);
         input.set_selection_anchor(self.pages.explorer.explorer_address_selection_anchor);
+        if self.pages.explorer.explorer_input_replace_all {
+            input.set_cursor(input.value().chars().count());
+            input.set_selection_anchor(Some(0));
+        }
         input.set_focused(true);
+        if let InputEvent::Key(key) = &event
+            && (key.modifiers.control || key.modifiers.super_key)
+            && !key.modifiers.alt
+        {
+            match key.key {
+                InputKey::Char('c' | 'C' | 'x' | 'X') => {
+                    if key.phase != InputPhase::Press {
+                        return;
+                    }
+                    if let Some(text) = input.selected_text() {
+                        match platform.write_clipboard_text(&text) {
+                            Ok(()) if matches!(key.key, InputKey::Char('x' | 'X')) => {
+                                event = InputEvent::key(InputKey::Backspace);
+                            }
+                            Ok(()) => {}
+                            Err(error) => {
+                                self.notify_status(error.to_string());
+                                return;
+                            }
+                        }
+                    }
+                }
+                InputKey::Char('v' | 'V') => {
+                    if key.phase != InputPhase::Press {
+                        return;
+                    }
+                    match platform.read_clipboard_text() {
+                        Ok(value) => event = InputEvent::Paste(value),
+                        Err(error) => {
+                            self.notify_status(error.to_string());
+                            return;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address {
+            match &mut event {
+                InputEvent::Key(key) if matches!(key.key, InputKey::Char('/' | '\\')) => {
+                    key.key = InputKey::Char(std::path::MAIN_SEPARATOR);
+                }
+                InputEvent::Paste(value) => {
+                    *value = value.replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
+                }
+                _ => {}
+            }
+        }
         input.handle_event_borderless(event, Rect::default());
         self.pages.explorer.explorer_input = input.value().to_string();
+        self.pages.explorer.explorer_input_replace_all = false;
         self.pages.explorer.explorer_address_cursor = input.cursor();
         self.pages.explorer.explorer_address_selection_anchor = input.selection_anchor();
+        self.apply_live_explorer_search(platform);
     }
 
     pub(in crate::session) fn apply_live_explorer_search(&mut self, platform: &dyn Platform) {

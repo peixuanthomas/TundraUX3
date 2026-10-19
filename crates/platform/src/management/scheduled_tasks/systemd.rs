@@ -4,6 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 const PROPERTIES: &str = "Id,LoadState,ActiveState,UnitFileState,Unit,TimersCalendar,TimersMonotonic,NextElapseUSecRealtime,NextElapseUSecMonotonic,LastTriggerUSec,FragmentPath,DropInPaths,User,Result,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp,Description";
 
 fn ctl(scope: &str, arguments: &[&str], flag: &AtomicBool) -> Result<String, ManagementError> {
+    check_cancelled(flag)?;
+    if scope_id(scope) == "system" {
+        super::super::capability::system_manager()?;
+    }
     let args = [
         format!("--{}", scope_id(scope)),
         "--no-pager".into(),

@@ -15,6 +15,11 @@ impl ShellSession {
         }
 
         if self.resolved_explorer_overlay().is_some()
+            && !(matches!(
+                self.resolved_explorer_overlay(),
+                Some(ResolvedExplorerOverlay::Input(_))
+            ) && self.pages.explorer.explorer_overlay_selection == 0
+                && matches!(key.key, InputKey::Left | InputKey::Right))
             && let Some(command) = explorer_overlay_navigation_command(key)
         {
             return (target, command);
@@ -70,16 +75,20 @@ impl ShellSession {
                     {
                         (target, ShellCommand::ExplorerOverlayActivate)
                     }
-                    InputKey::Backspace | InputKey::Delete
+                    InputKey::Backspace
+                    | InputKey::Delete
+                    | InputKey::Left
+                    | InputKey::Right
+                    | InputKey::Home
+                    | InputKey::End
+                    | InputKey::Char(_)
+                    | InputKey::Space
                         if self.pages.explorer.explorer_overlay_selection == 0 =>
                     {
-                        (target, ShellCommand::ExplorerBackspace)
-                    }
-                    InputKey::Char(character)
-                        if self.pages.explorer.explorer_overlay_selection == 0
-                            && !key.has_non_shift_modifier() =>
-                    {
-                        (target, ShellCommand::AppendExplorerChar(*character))
+                        (
+                            target,
+                            ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone())),
+                        )
                     }
                     _ => (target, ShellCommand::RecordInput),
                 };
@@ -131,28 +140,12 @@ impl ShellSession {
                 | InputKey::Home
                 | InputKey::End
                 | InputKey::Delete
-                    if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address
-                        && !key.has_non_shift_modifier() =>
-                {
-                    (
-                        target,
-                        ShellCommand::ExplorerEditAddress(InputEvent::Key(key.clone())),
-                    )
-                }
-                InputKey::Char('a' | 'A')
-                    if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address
-                        && (key.modifiers.control || key.modifiers.super_key)
-                        && !key.modifiers.alt =>
-                {
-                    (
-                        target,
-                        ShellCommand::ExplorerEditAddress(InputEvent::Key(key.clone())),
-                    )
-                }
-                InputKey::Backspace | InputKey::Delete => (target, ShellCommand::ExplorerBackspace),
-                InputKey::Char(character) if !key.has_non_shift_modifier() => {
-                    (target, ShellCommand::AppendExplorerChar(*character))
-                }
+                | InputKey::Backspace
+                | InputKey::Char(_)
+                | InputKey::Space => (
+                    target,
+                    ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone())),
+                ),
                 _ => (target, ShellCommand::RecordInput),
             };
         }

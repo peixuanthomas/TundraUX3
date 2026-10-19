@@ -342,7 +342,7 @@ pub(super) fn append_rows(
             &digest(text.as_bytes()),
         )),
         Ok(None) => {}
-        Err(error) => snapshot.notices.push(error.to_string()),
+        Err(error) => append_query_problem(snapshot, "crontab".into(), error)?,
     }
     let mut paths = vec![PathBuf::from("/etc/crontab")];
     match fs::read_dir("/etc/cron.d") {
@@ -360,11 +360,7 @@ pub(super) fn append_rows(
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => snapshot.notices.push(i18n::tr!(
-            "scheduled-task-source-unavailable",
-            path = "/etc/cron.d",
-            error = error.to_string()
-        )),
+        Err(error) => append_query_problem(snapshot, "/etc/cron.d".into(), io_error(error))?,
     }
     paths.sort();
     for path in paths {
@@ -376,14 +372,11 @@ pub(super) fn append_rows(
                     .rows
                     .extend(rows(&text, &path.display().to_string(), true, "", &version));
             }
-            Err(error) if !path.exists() => {
+            Err(error) if matches!(fs::symlink_metadata(&path), Err(error) if error.kind() == std::io::ErrorKind::NotFound) =>
+            {
                 let _ = error;
             }
-            Err(error) => snapshot.notices.push(i18n::tr!(
-                "scheduled-task-source-unavailable",
-                path = path.display().to_string(),
-                error = error.to_string()
-            )),
+            Err(error) => append_query_problem(snapshot, path.display().to_string(), error)?,
         }
     }
     Ok(())

@@ -251,7 +251,7 @@ impl ShellSession {
             let key = format!("{CLOCK_DUE_NOTIFICATION_KEY_PREFIX}.{user_id}.{}", event.id);
             let (title, actions) = match event.kind {
                 ScheduledClockEntryKind::DailyAlarm => (
-                    i18n::LocalizedText::from(i18n::msg!("shell-alarm")),
+                    i18n::LocalizedText::from(i18n::msg!("regression-clock-alarm-reminder")),
                     vec![
                         ShellNotificationAction::new(
                             "snooze",
@@ -268,7 +268,7 @@ impl ShellSession {
                     ],
                 ),
                 ScheduledClockEntryKind::Countdown => (
-                    i18n::LocalizedText::from(i18n::msg!("shell-countdown")),
+                    i18n::LocalizedText::from(i18n::msg!("regression-clock-countdown-reminder")),
                     vec![
                         ShellNotificationAction::new(
                             "dismiss",
@@ -280,7 +280,7 @@ impl ShellSession {
                 ),
             };
             self.notify_modal_with_options(
-                ShellNotification::modal(title, message, ui::NotificationTone::Critical, actions)
+                ShellNotification::modal(title, message, ui::NotificationTone::Info, actions)
                     .for_session()
                     .with_key(key)
                     .with_component(ShellComponent::NotificationDialog),

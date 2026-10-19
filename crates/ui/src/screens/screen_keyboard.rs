@@ -792,7 +792,7 @@ fn render_screen_keyboard_keys(
     // Keycaps share Button hit regions and configured corner shapes. Their
     // neutral frames and border-colored legends are distinct from page buttons.
     let mut theme = context.compatibility_theme();
-    theme.foreground = theme.border_color;
+    theme.foreground = theme.readable_text_color(theme.border_color);
     theme.border_color = ratatui::style::Color::DarkGray;
     if let Some(buttons) = &mut theme.buttons {
         buttons.pressed_color = buttons.accent;
