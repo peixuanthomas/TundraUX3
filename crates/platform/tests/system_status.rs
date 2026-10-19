@@ -30,10 +30,11 @@ fn native_monitor_establishes_network_rate_baseline_and_bounds_rankings() {
         pair[0].memory_bytes > pair[1].memory_bytes
             || (pair[0].memory_bytes == pair[1].memory_bytes && pair[0].pid <= pair[1].pid)
     }));
-    if let Ok(thermal) = slow.thermal {
-        assert!(!thermal.is_empty());
-    }
-    // A machine without batteries legitimately returns an empty collection.
+    let thermal = slow.thermal.unwrap();
+    assert!(thermal.iter().all(|sensor| {
+        sensor.temperature_celsius.is_finite() && sensor.critical_celsius.is_none_or(f32::is_finite)
+    }));
+    // Missing temperature sensors or batteries legitimately return empty collections.
 }
 
 #[cfg(target_os = "macos")]
