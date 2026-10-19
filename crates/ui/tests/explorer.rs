@@ -523,6 +523,12 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
     let model = sample_model();
     for width in [50, 72, 95, 96, 110] {
         let layout = explorer_layout(Rect::new(0, 0, width, 20), &model);
+        assert_eq!(layout.path_bar.bottom(), layout.search.y);
+        assert!(layout.table.y >= layout.search.bottom());
+        assert_eq!(
+            layout.hit_test(layout.address_button.x, layout.address_button.y),
+            Some(ExplorerHitTarget::Address)
+        );
         assert_eq!(
             layout
                 .toolbar_buttons

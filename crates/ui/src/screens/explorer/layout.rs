@@ -227,14 +227,14 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     };
     let panel = area;
     let inner = inset_rect(panel, 1);
-    let toolbar_rows = explorer_toolbar_rows(inner.width, model).saturating_add(1);
+    let toolbar_rows = explorer_toolbar_rows(inner.width, model);
     let mut toolbar = Rect::new(
         inner.x,
         inner.y,
         inner.width,
         toolbar_rows.min(inner.height.saturating_sub(3).max(1)),
     );
-    let remaining_height = inner.height.saturating_sub(toolbar.height + 1);
+    let remaining_height = inner.height.saturating_sub(toolbar.height + 2);
     let footer_height = if remaining_height >= 11 {
         EXPLORER_FOOTER_TALL_HEIGHT
     } else if remaining_height >= 4 {
@@ -251,9 +251,8 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     toolbar.y = footer
         .y
         .saturating_sub(toolbar.height)
-        .max(inner.y.saturating_add(1));
-    // Address/navigation belongs with the bottom controls; the top row is search and refresh.
-    let path_bar = line_in_rect(inner, toolbar.y);
+        .max(inner.y.saturating_add(2));
+    let path_bar = line_in_rect(inner, inner.y);
     let address_button_width =
         usize_to_u16(terminal_width(&i18n::tr!("ui-explorer-edit-button"))).min(path_bar.width);
     let address_button = Rect::new(
@@ -288,23 +287,17 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         .min(inner.right());
     let search = Rect::new(
         search_x,
-        inner.y,
+        path_bar.bottom(),
         inner.right().saturating_sub(search_x),
         u16::from(inner.height > 0),
     );
     let body = Rect::new(
         inner.x,
-        inner.y.saturating_add(1),
+        search.bottom(),
         inner.width,
         remaining_height.saturating_sub(footer_height),
     );
-    let action_toolbar = Rect::new(
-        toolbar.x,
-        toolbar.y.saturating_add(1),
-        toolbar.width,
-        toolbar.height.saturating_sub(1),
-    );
-    let mut toolbar_buttons = explorer_toolbar_button_layouts(action_toolbar, model, mode);
+    let mut toolbar_buttons = explorer_toolbar_button_layouts(toolbar, model, mode);
     for y in toolbar.y..toolbar.bottom() {
         let right = toolbar_buttons
             .iter()
@@ -326,7 +319,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
             action: button.action,
             area: Rect::new(
                 inner.x,
-                inner.y,
+                search.y,
                 (button.label.cell_width() + button.action.shortcut_label().cell_width() + 3)
                     .min(inner.width),
                 u16::from(inner.height > 0),
