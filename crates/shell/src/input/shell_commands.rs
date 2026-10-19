@@ -9,6 +9,7 @@ pub enum ShellCommand {
     PageCloseBackground(crate::PageInstanceId),
     PageCloseCancelTasks(crate::PageInstanceId),
     PageCloseStay(crate::PageInstanceId),
+    ManagementDiscardForm(crate::PageInstanceId, bool),
     OpenLogs,
     LogsKey(KeyInput),
     LogsPointer(MouseInput),

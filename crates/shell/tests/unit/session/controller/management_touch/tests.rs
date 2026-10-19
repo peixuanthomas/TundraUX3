@@ -21,6 +21,160 @@ fn session(size: (u16, u16)) -> ShellSession {
 }
 
 #[test]
+fn permission_boxes_work_with_keyboard_mouse_and_touch() {
+    for hover in [false, true] {
+        let mut session = session((108, 30));
+        session.pages.management.management_state.kind = Some(ManagementKind::FilePermissions);
+        let field = ManagementField {
+            id: "files".into(),
+            value: "mmmmmmmmm".into(),
+            control: FieldControl::Permissions,
+            ..Default::default()
+        };
+        session.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
+            title: "Permissions".into(),
+            message: String::new(),
+            message_scroll: 0,
+            fields: vec![field.clone()],
+            selected: 0,
+            purpose: FormPurpose::Action(
+                ManagementAction {
+                    fields: vec![field],
+                    ..Default::default()
+                },
+                None,
+            ),
+        });
+        for cell in 0..9 {
+            let region = ui::management_button_regions(
+                session.management_main(),
+                &session.to_management_view_model(),
+            )
+            .into_iter()
+            .find(|region| region.id.as_str().ends_with(&format!(".cell.{cell}")))
+            .unwrap();
+            pointer_input(&mut session, (region.area.x, region.area.y), hover);
+            assert_eq!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .fields[0]
+                    .value
+                    .as_bytes()[cell],
+                b'1'
+            );
+            session.handle_management_key(&KeyInput::new(InputKey::Space));
+            assert_eq!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .fields[0]
+                    .value
+                    .as_bytes()[cell],
+                b'0'
+            );
+        }
+        session.cancel_management_form();
+        assert!(session.pages.management.management_state.form.is_some());
+        assert!(session.notification_has_active_modal());
+    }
+}
+
+#[test]
+fn permissions_switched_back_still_apply_to_recursive_children() {
+    let mut session = session((108, 30));
+    session.pages.management.management_state.kind = Some(ManagementKind::FilePermissions);
+    let field = ManagementField {
+        id: "directories".into(),
+        value: "111000000".into(),
+        control: FieldControl::Permissions,
+        ..Default::default()
+    };
+    session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
+        title: "Permissions".into(),
+        message: String::new(),
+        message_scroll: 0,
+        fields: vec![field.clone()],
+        selected: 0,
+        purpose: FormPurpose::Action(
+            ManagementAction {
+                fields: vec![field],
+                values: BTreeMap::from([("directories_initial".into(), "111000000".into())]),
+                ..Default::default()
+            },
+            None,
+        ),
+    });
+    session.handle_management_key(&KeyInput::new(InputKey::Space));
+    session.handle_management_key(&KeyInput::new(InputKey::Space));
+    let form = session
+        .pages
+        .management
+        .management_state
+        .form
+        .as_ref()
+        .unwrap();
+    assert_eq!(form.fields[0].value, "111000000");
+    let FormPurpose::Action(action, _) = &form.purpose else {
+        panic!()
+    };
+    assert_eq!(action.values["directories_initial"], "m11000000");
+    session.cancel_management_form();
+    assert!(session.notification_has_active_modal());
+}
+
+#[test]
+fn searchable_account_choices_keep_the_keyboard_bound_to_the_same_form() {
+    let mut session = session((108, 30));
+    session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
+        title: "Owner".into(),
+        message: String::new(),
+        message_scroll: 0,
+        fields: vec![ManagementField {
+            id: "owner".into(),
+            value: "alice (1000)".into(),
+            control: FieldControl::SearchableChoice,
+            choices: vec![
+                "alice (1000)".into(),
+                "bob (1001)".into(),
+                "root (0)".into(),
+            ],
+            ..Default::default()
+        }],
+        selected: 0,
+        purpose: FormPurpose::Action(ManagementAction::default(), None),
+    });
+    session.open_management_choice_field(0);
+    assert!(session.management_keyboard_identity().is_some());
+    session.handle_management_choice_key(&KeyInput::new(InputKey::Char('b')));
+    assert_eq!(session.pages.management.management_state.choice_selected, 1);
+    session.handle_management_choice_key(&KeyInput::new(InputKey::Enter));
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .unwrap()
+            .fields[0]
+            .value,
+        "bob (1001)"
+    );
+}
+
+#[test]
 fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
     for size in [(40, 10), (60, 18), (120, 40)] {
         let mut session = session(size);

@@ -121,11 +121,13 @@ pub(in crate::session) struct ManagementState {
     action_scroll: Option<usize>,
     form_field_scroll: Option<usize>,
     choice_field: Option<usize>,
+    choice_search: String,
     choice_scroll: usize,
     choice_selected: usize,
     choice_columns: usize,
     scrollbar_grab: Option<(ui::ManagementScrollTarget, u16)>,
     selected_action: usize,
+    permission_cell: usize,
     actions_focused: bool,
     filtering: bool,
     filter_input: String,
@@ -234,6 +236,8 @@ pub(in crate::session) fn management_title(kind: ManagementKind) -> String {
         ManagementKind::Ssh => i18n::tr!("management-ssh"),
         ManagementKind::Backups => i18n::tr!("management-backups"),
         ManagementKind::ScheduledTasks => i18n::tr!("management-scheduled-tasks"),
+        ManagementKind::FilePermissions => i18n::tr!("permissions-title"),
+        ManagementKind::SystemSettings => i18n::tr!("system-settings-title"),
     }
 }
 fn management_label(id: &str, fallback: &str) -> String {
@@ -492,6 +496,11 @@ impl ShellSession {
         )
     }
     pub(in crate::session) fn open_management(&mut self, kind: ManagementKind) {
+        self.open_management_query(ManagementQuery::new(kind));
+    }
+
+    pub(in crate::session) fn open_management_query(&mut self, query: ManagementQuery) {
+        let kind = query.kind;
         if !cfg!(target_os = "linux") || self.app.auth_session().is_none() || self.is_strict_guest()
         {
             return;
@@ -500,7 +509,7 @@ impl ShellSession {
         if self.pages.management.management_state.kind != Some(kind) {
             self.pages.management.management_state = ManagementState {
                 kind: Some(kind),
-                query: Some(ManagementQuery::new(kind)),
+                query: Some(query),
                 ..Default::default()
             };
         }
@@ -1192,6 +1201,7 @@ impl ShellSession {
                             secret,
                             required: false,
                             choices,
+                            control: FieldControl::Text,
                         }],
                         selected: 0,
                         purpose: FormPurpose::Answer(id),
@@ -1360,11 +1370,26 @@ impl ShellSession {
             return None;
         }
         let state = &self.pages.management.management_state;
-        if state.terminal_mode || state.choice_field.is_some() {
+        if state.terminal_mode {
             return None;
         }
+        if let Some(index) = state.choice_field {
+            return state
+                .form
+                .as_ref()
+                .filter(|form| {
+                    form.fields
+                        .get(index)
+                        .is_some_and(|field| field.control == FieldControl::SearchableChoice)
+                })
+                .map(|form| format!("choice:{}:{index}", form.instance));
+        }
         if let Some(form) = &state.form {
-            if !form.fields.iter().any(|field| field.choices.is_empty()) {
+            if !form
+                .fields
+                .iter()
+                .any(|field| field.control == FieldControl::Text && field.choices.is_empty())
+            {
                 return None;
             }
             Some(format!("form:{}", form.instance))
@@ -1375,17 +1400,16 @@ impl ShellSession {
 
     pub(in crate::session) fn focus_management_keyboard_input(&mut self) {
         let state = &mut self.pages.management.management_state;
+        if state.choice_field.is_some() {
+            return;
+        }
         if let Some(form) = &mut state.form {
-            if form
-                .fields
-                .get(form.selected)
-                .is_none_or(|field| !field.choices.is_empty())
-            {
-                if let Some(index) = form
-                    .fields
-                    .iter()
-                    .position(|field| field.choices.is_empty())
-                {
+            if form.fields.get(form.selected).is_none_or(|field| {
+                field.control != FieldControl::Text || !field.choices.is_empty()
+            }) {
+                if let Some(index) = form.fields.iter().position(|field| {
+                    field.control == FieldControl::Text && field.choices.is_empty()
+                }) {
                     form.selected = index;
                 }
             }
@@ -1629,6 +1653,7 @@ impl ShellSession {
                     cancel_disabled: matches!(&f.purpose, FormPurpose::Answer(id) if id.starts_with("package-config-")),
                     choice: s.choice_field.and_then(|index| {
                         f.fields.get(index).map(|field| ui::ManagementChoices {
+                            search: s.choice_search.clone(),
                             disabled: match &f.purpose { FormPurpose::Menu(items)=>items.iter().map(|(a,_)|a.disabled_reason.is_some() || (s.operation_job.is_some() && a.id!="cancel_operation" && !management_view_action(a))).collect(),_=>vec![] },
                             field: index,
                             values: field.choices.iter().map(|value| form_value_text(&f.purpose, field, value)).collect(),
@@ -1657,6 +1682,12 @@ impl ShellSession {
                             },
                             secret: false,
                             choices: v.choices.clone(),
+                            control: match v.control {
+                                FieldControl::Text | FieldControl::SearchableChoice => ui::ManagementFormControl::Text,
+                                FieldControl::Checkbox => ui::ManagementFormControl::Checkbox,
+                                FieldControl::Permissions => ui::ManagementFormControl::Permissions,
+                            },
+                            selected_cell: Some(self.pages.management.management_state.permission_cell),
                         })
                         .collect(),
                 }),

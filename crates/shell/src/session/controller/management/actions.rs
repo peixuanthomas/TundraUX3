@@ -335,11 +335,34 @@ impl ShellSession {
                 i18n::tr!("management-operation-running");
             return;
         }
-        let message = row
+        let mut message = row
             .as_ref()
             .map(|r| r.cells.join(" · "))
             .unwrap_or_default();
+        if action
+            .fields
+            .iter()
+            .any(|field| field.control == FieldControl::Permissions)
+        {
+            message = format!(
+                "{}\n{}",
+                i18n::tr!("permissions-help"),
+                i18n::tr!("permissions-search-help")
+            );
+        }
+        if self.pages.management.management_state.kind == Some(ManagementKind::SystemSettings) {
+            message = format!(
+                "{}\n{}",
+                i18n::tr!("system-settings-help"),
+                if action.id == "set_system_ntp_servers" {
+                    i18n::tr!("system-settings-servers-help")
+                } else {
+                    String::new()
+                }
+            );
+        }
         if (action.confirm && !action.privileged) || !action.fields.is_empty() {
+            self.reset_management_form_view();
             self.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
                 message_scroll: 0,
@@ -627,6 +650,12 @@ impl ShellSession {
             identity: row.as_ref().map(|r| r.identity.clone()).unwrap_or_default(),
             values,
         };
+        if kind == ManagementKind::SystemSettings
+            && let Some(unit) = command.values.get("unit")
+            && let Some(query) = &mut self.pages.management.management_state.query
+        {
+            query.options.insert("provider".into(), unit.clone());
+        }
         self.start_management_operation(Some(command), action.privileged, None, Some(description));
     }
 
@@ -902,6 +931,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn cancel_management_form(&mut self) {
+        if self.confirm_management_discard(false) {
+            return;
+        }
         if self.pages.management.management_state.form.as_ref().is_some_and(|form|matches!(&form.purpose,FormPurpose::Answer(id) if id.starts_with("package-config-"))){self.pages.management.management_state.status=i18n::tr!("management-config-needs-answer");return;}
         if self
             .pages
@@ -921,5 +953,42 @@ impl ShellSession {
                 }
             }
         }
+        self.reset_management_form_view();
+    }
+
+    pub(in crate::session) fn confirm_management_discard(&mut self, close: bool) -> bool {
+        let state = &self.pages.management.management_state;
+        if !matches!(
+            state.kind,
+            Some(ManagementKind::FilePermissions | ManagementKind::SystemSettings)
+        ) {
+            return false;
+        }
+        let dirty = state.form.as_ref().is_some_and(|form| {
+            matches!(&form.purpose, FormPurpose::Action(action, _) if action.fields != form.fields
+                || action.fields.iter().any(|field| field.control == FieldControl::Permissions
+                    && action.values.get(&format!("{}_initial", field.id)).is_some_and(|initial| initial != &field.value)))
+        });
+        if !dirty {
+            return false;
+        }
+        let id = self.active_page_id();
+        self.notify_modal_with_options(ShellNotification::modal(
+            i18n::msg!("permissions-discard-title"),
+            i18n::msg!("permissions-discard-message"),
+            ui::NotificationTone::Warning,
+            vec![
+                ShellNotificationAction::new("discard", i18n::msg!("permissions-discard"))
+                    .with_follow_up(ShellCommand::ManagementDiscardForm(id, close)),
+                ShellNotificationAction::new("stay", i18n::msg!("page-close-stay"))
+                    .cancel()
+                    .with_shortcut(InputKey::Escape),
+            ],
+        ));
+        true
+    }
+    pub(in crate::session) fn discard_management_form(&mut self) {
+        self.pages.management.management_state.form = None;
+        self.reset_management_form_view();
     }
 }

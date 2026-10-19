@@ -68,11 +68,11 @@ fn checker_drain(reader: &mut impl Read, bytes: &mut Vec<u8>) -> Result<(), Mana
 
 /// Both pipes are drained by the same watchdog-owned operation. Every error,
 /// cancellation or timeout reaps the checker, so no reader thread can outlive it.
-fn collect_checker(
+pub(crate) fn collect_command(
     child: &mut crate::ManagedChild,
     flag: &AtomicBool,
     timeout: Duration,
-) -> Result<(Option<ExitStatus>, Vec<u8>), ManagementError> {
+) -> Result<(Option<ExitStatus>, Vec<u8>, Vec<u8>), ManagementError> {
     let result = (|| {
         let mut stdout = child
             .stdout
@@ -85,18 +85,19 @@ fn collect_checker(
         checker_nonblocking(&stdout)?;
         checker_nonblocking(&stderr)?;
         let mut output = Vec::new();
+        let mut errors = Vec::new();
         let started = Instant::now();
         loop {
             checker_drain(&mut stdout, &mut output)?;
-            checker_drain(&mut stderr, &mut output)?;
+            checker_drain(&mut stderr, &mut errors)?;
             if let Some(status) = child.try_wait().map_err(failure)? {
                 checker_drain(&mut stdout, &mut output)?;
-                checker_drain(&mut stderr, &mut output)?;
-                return Ok((Some(status), output));
+                checker_drain(&mut stderr, &mut errors)?;
+                return Ok((Some(status), output, errors));
             }
             cancelled(flag)?;
             if started.elapsed() >= timeout {
-                return Ok((None, output));
+                return Ok((None, output, errors));
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -106,6 +107,21 @@ fn collect_checker(
     }
     let _ = child.wait();
     result
+}
+
+fn collect_checker(
+    child: &mut crate::ManagedChild,
+    flag: &AtomicBool,
+    timeout: Duration,
+) -> Result<(Option<ExitStatus>, Vec<u8>), ManagementError> {
+    let (status, mut output, errors) = collect_command(child, flag, timeout)?;
+    output.extend(errors);
+    if output.len() > 65536 {
+        return Err(ManagementError::Failed(i18n::tr!(
+            "system-settings-output-limit"
+        )));
+    }
+    Ok((status, output))
 }
 
 /// Open every directory separately. A path replacement cannot redirect renameat.
@@ -338,6 +354,11 @@ fn detect_validator(path: &Path) -> &'static str {
     let p = path.to_string_lossy();
     if p == "/etc/ssh/sshd_config" || p.starts_with("/etc/ssh/sshd_config.d/") {
         "sshd"
+    } else if p == "/etc/chrony.conf" || p == "/etc/chrony/chrony.conf" {
+        "chrony"
+    } else if p == "/etc/systemd/timesyncd.conf" || p.starts_with("/etc/systemd/timesyncd.conf.d/")
+    {
+        "timesyncd"
     } else if p == "/etc/fstab" {
         "fstab"
     } else if p.contains("/systemd/") && (p.ends_with(".service") || p.contains(".service.d/")) {
@@ -495,6 +516,18 @@ fn validate_candidates(
         ));
     }
     let (program, args): (&str, Vec<String>) = match validator {
+        "chrony" => (
+            if Path::new("/usr/sbin/chronyd").is_file() {
+                "/usr/sbin/chronyd"
+            } else {
+                "/usr/bin/chronyd"
+            },
+            vec!["-p".into(), "-f".into(), path.display().to_string()],
+        ),
+        "timesyncd" => (
+            "/usr/bin/systemd-analyze",
+            vec!["cat-config".into(), "systemd/timesyncd.conf".into()],
+        ),
         "sshd" => (
             if Path::new("/usr/sbin/sshd").is_file() {
                 "/usr/sbin/sshd"
@@ -960,6 +993,115 @@ pub(crate) fn install_reviewed(
     )
 }
 
+pub(crate) fn check_batch(
+    main: &Path,
+    files: &[ConfigCandidate],
+    validator: &str,
+    flag: &AtomicBool,
+) -> Result<(ConfigCheck, String), ManagementError> {
+    let document = files
+        .iter()
+        .find(|file| file.path == main)
+        .ok_or_else(|| invalid(&i18n::tr!("system-settings-config-missing")))?;
+    let extras: Vec<_> = files
+        .iter()
+        .filter(|file| file.path != main)
+        .map(|file| (file.path.clone(), file.content.clone()))
+        .collect();
+    validate_candidates(
+        main,
+        &document.content,
+        validator,
+        flag,
+        false,
+        None,
+        &extras,
+        None,
+    )
+}
+
+pub(crate) fn install_batch_reviewed(
+    files: &[ConfigCandidate],
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    install_batch_at(files, flag, Path::new(BACKUPS))
+}
+
+fn install_batch_at(
+    files: &[ConfigCandidate],
+    flag: &AtomicBool,
+    backup_root: &Path,
+) -> Result<String, ManagementError> {
+    cancelled(flag)?;
+    let before = files
+        .iter()
+        .map(|file| {
+            let previous = read_stored(&file.path)?;
+            if previous.document.version != file.expected_version {
+                return Err(ManagementError::Conflict(i18n::tr!(
+                    "platform-management-review-again"
+                )));
+            }
+            Ok(previous)
+        })
+        .collect::<Result<Vec<_>, ManagementError>>()?;
+    let changed: Vec<_> = files
+        .iter()
+        .zip(&before)
+        .filter(|(file, previous)| {
+            file.content != previous.document.content || !previous.document.existed
+        })
+        .collect();
+    if changed.is_empty() {
+        return Ok(String::new());
+    }
+    let backup = super::config_backups::begin_at(
+        backup_root,
+        "system-settings",
+        &changed
+            .iter()
+            .map(|(file, _)| file.path.clone())
+            .collect::<Vec<_>>(),
+    )?;
+    for (file, previous) in files.iter().zip(&before) {
+        if read_stored(&file.path)?.document.version != previous.document.version {
+            backup.finish("conflict")?;
+            return Err(ManagementError::Conflict(i18n::tr!(
+                "platform-management-review-again"
+            )));
+        }
+    }
+    let mut applied: Vec<(&StoredFile, String)> = Vec::new();
+    for (file, previous) in changed {
+        let result = cancelled(flag)
+            .and_then(|()| install_reviewed(&file.path, &file.expected_version, &file.content));
+        match result {
+            Ok(saved) => applied.push((previous, saved.version)),
+            Err(error) => {
+                let mut conflicts = Vec::new();
+                for (previous, version) in applied.into_iter().rev() {
+                    if let Err(restore) = restore_snapshot(previous, &version) {
+                        conflicts.push(format!("{}: {restore}", previous.document.path.display()));
+                    }
+                }
+                backup.finish(if conflicts.is_empty() {
+                    "rolled back"
+                } else {
+                    "recovery conflict"
+                })?;
+                return Err(ManagementError::Failed(i18n::tr!(
+                    "system-settings-batch-failed",
+                    error = format!("{}: {error}", file.path.display()),
+                    backup = backup.id(),
+                    conflicts = conflicts.join("\n")
+                )));
+            }
+        }
+    }
+    backup.finish("saved")?;
+    Ok(backup.id().into())
+}
+
 pub(super) fn restore_snapshot(
     stored: &StoredFile,
     expected_version: &str,
@@ -1408,6 +1550,52 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn batch_save_rejects_stale_files_and_rolls_back_earlier_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let directory = temp.path().join("locked");
+        fs::create_dir(&directory).unwrap();
+        let second = directory.join("second");
+        fs::write(&first, "one").unwrap();
+        fs::write(&second, "two").unwrap();
+        let files: Vec<_> = [&first, &second]
+            .into_iter()
+            .map(|path| ConfigCandidate {
+                path: path.clone(),
+                expected_version: read(path).unwrap().version,
+                content: "changed".into(),
+            })
+            .collect();
+        fs::write(&second, "external").unwrap();
+        assert!(matches!(
+            install_batch_at(
+                &files,
+                &AtomicBool::new(false),
+                &temp.path().join("backups")
+            ),
+            Err(ManagementError::Conflict(_))
+        ));
+        assert_eq!(fs::read_to_string(&first).unwrap(), "one");
+        if unsafe { libc::geteuid() } != 0 {
+            fs::write(&second, "two").unwrap();
+            let mut files = files;
+            files[1].expected_version = read(&second).unwrap().version;
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o500)).unwrap();
+            assert!(
+                install_batch_at(
+                    &files,
+                    &AtomicBool::new(false),
+                    &temp.path().join("backups")
+                )
+                .is_err()
+            );
+            assert_eq!(fs::read_to_string(&first).unwrap(), "one");
+            assert_eq!(fs::read_to_string(&second).unwrap(), "two");
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
     #[test]
     fn checker_capture_drains_both_pipes_and_reaps_on_cancel_timeout_or_overflow() {
         let spawn = |program: &str, args: &[&str]| {

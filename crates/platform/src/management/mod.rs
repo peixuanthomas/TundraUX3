@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 mod configuration;
-pub use configuration::{ConfigCheck, ConfigDocument};
+pub use configuration::{ConfigCandidate, ConfigCheck, ConfigDocument};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +20,8 @@ pub enum ManagementKind {
     Firewall,
     Ssh,
     ScheduledTasks,
+    FilePermissions,
+    SystemSettings,
 }
 
 impl ManagementKind {
@@ -36,6 +38,8 @@ impl ManagementKind {
             Self::Firewall => "firewall",
             Self::Ssh => "ssh",
             Self::ScheduledTasks => "scheduled-tasks",
+            Self::FilePermissions => "file-permissions",
+            Self::SystemSettings => "system-settings",
         }
     }
 }
@@ -96,6 +100,16 @@ impl ManagementQuery {
 }
 
 /// Field/action IDs stay stable; labels may use the caller's language.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldControl {
+    #[default]
+    Text,
+    Checkbox,
+    Permissions,
+    SearchableChoice,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagementField {
     pub id: String,
@@ -105,6 +119,8 @@ pub struct ManagementField {
     pub required: bool,
     #[serde(default)]
     pub choices: Vec<String>,
+    #[serde(default)]
+    pub control: FieldControl,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -339,6 +355,8 @@ pub mod config_backups;
 #[cfg(target_os = "linux")]
 pub mod disks;
 #[cfg(target_os = "linux")]
+pub mod file_permissions;
+#[cfg(target_os = "linux")]
 pub mod firewall;
 #[cfg(target_os = "linux")]
 pub mod helper;
@@ -359,6 +377,8 @@ pub mod services;
 pub mod ssh;
 #[cfg(target_os = "linux")]
 pub mod system_config;
+#[cfg(target_os = "linux")]
+pub mod system_settings;
 #[cfg(target_os = "linux")]
 pub mod termination;
 #[cfg(target_os = "linux")]
@@ -381,6 +401,8 @@ pub fn query(
         ManagementKind::Firewall => firewall::query(query, cancelled),
         ManagementKind::Ssh => ssh::query(query, cancelled),
         ManagementKind::ScheduledTasks => scheduled_tasks::query(query, cancelled),
+        ManagementKind::FilePermissions => file_permissions::query(query, cancelled),
+        ManagementKind::SystemSettings => system_settings::query(query, cancelled),
     };
     #[cfg(not(target_os = "linux"))]
     {
@@ -415,6 +437,12 @@ pub fn execute(
         ManagementKind::Ssh => ssh::execute(command, context, interaction, cancelled),
         ManagementKind::ScheduledTasks => {
             scheduled_tasks::execute(command, context, interaction, cancelled)
+        }
+        ManagementKind::FilePermissions => {
+            file_permissions::execute(command, context, interaction, cancelled)
+        }
+        ManagementKind::SystemSettings => {
+            system_settings::execute(command, context, interaction, cancelled)
         }
     };
     #[cfg(not(target_os = "linux"))]

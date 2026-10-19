@@ -375,6 +375,7 @@ pub struct SettingsPickerOptionLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsHitTarget {
+    OperatingSystem,
     OverlayApply,
     OverlayCancel,
     AdjustField(SettingsField, i8),
@@ -391,6 +392,8 @@ pub enum SettingsHitTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsLayout {
+    pub category: Rect,
+    pub operating_system: Rect,
     pub main: Rect,
     pub detail: Rect,
     pub scrollbar: Option<Rect>,
@@ -420,7 +423,16 @@ pub struct SettingsLayout {
 }
 
 pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout {
-    let (category_area, raw_detail_area) = settings_content_areas(area);
+    let (mut category_area, raw_detail_area) = settings_content_areas(area);
+    let operating_system = Rect::new(
+        category_area.x,
+        category_area.bottom().saturating_sub(1),
+        category_area.width,
+        u16::from(category_area.height > 0),
+    );
+    category_area.height = category_area
+        .height
+        .saturating_sub(if category_area.height >= 5 { 2 } else { 1 });
     let mut detail_area = Rect::new(
         raw_detail_area.x,
         raw_detail_area.y,
@@ -624,6 +636,8 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .or(picker_dialog);
     let overlay_buttons = active_editor.map(settings_overlay_buttons);
     SettingsLayout {
+        category: category_area,
+        operating_system,
         main: area,
         detail: detail_area,
         scrollbar,
@@ -727,6 +741,9 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
     {
         return None;
     }
+    if contains(layout.operating_system, point) {
+        return Some(SettingsHitTarget::OperatingSystem);
+    }
     if let Some(field) = layout
         .fields
         .iter()
@@ -772,7 +789,7 @@ pub fn render_settings_content(
             })
             .collect(),
     )
-    .titled(i18n::tr!("ui-settings-sections-padded"));
+    .titled(i18n::tr!("system-settings-tundra-group"));
     categories.set_selected(
         SettingsCategory::ALL
             .iter()
@@ -784,6 +801,15 @@ pub fn render_settings_content(
     ));
     categories.set_focused(true);
     categories.render_with_context(settings_category_area(layout), frame.buffer_mut(), context);
+    let mut system_label = i18n::tr!("system-settings-group-button");
+    if terminal_width(&system_label) + 2 > layout.operating_system.width as usize {
+        system_label = i18n::tr!("system-settings-group-button-short");
+    }
+    Button::new("settings.operating-system", system_label).render_borderless_frame(
+        frame,
+        layout.operating_system,
+        theme,
+    );
     if let Some(track) = layout.category_scrollbar {
         Scrollbar::new(
             SettingsCategory::ALL.len(),
@@ -1599,12 +1625,12 @@ fn settings_category_viewport(area: Rect, selected: SettingsCategory) -> usize {
 }
 
 fn settings_category_area(layout: &SettingsLayout) -> Rect {
-    settings_content_areas(layout.main).0
+    layout.category
 }
 
 fn settings_content_areas(area: Rect) -> (Rect, Rect) {
     let inner = inset(area, 1, 1);
-    let sidebar_width = (if inner.width < 48 { 10 } else { 18 }).min(inner.width.saturating_sub(1));
+    let sidebar_width = (if inner.width < 48 { 10 } else { 19 }).min(inner.width.saturating_sub(1));
     let gap = crate::SpringStyle::CARD_GAP.min(inner.width.saturating_sub(sidebar_width));
     let [category, _, detail] = Layout::horizontal([
         Constraint::Length(sidebar_width),

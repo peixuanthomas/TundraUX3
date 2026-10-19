@@ -71,6 +71,13 @@ pub(in crate::session) const UPDATE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
 ];
 
 impl ShellSession {
+    pub(in crate::session) fn open_operating_system_settings(&mut self) {
+        if !cfg!(target_os = "linux") {
+            self.notify_status(i18n::msg!("system-settings-unavailable"));
+            return;
+        }
+        self.open_management(platform::management::ManagementKind::SystemSettings);
+    }
     pub(in crate::session) fn open_settings(&mut self) {
         if self.is_strict_guest() {
             self.notify_status(i18n::msg!("settings-guest-read-only"));
@@ -278,6 +285,9 @@ impl ShellSession {
         }
 
         match &key.key {
+            InputKey::F(8) if key.phase == InputPhase::Press => {
+                self.open_operating_system_settings()
+            }
             InputKey::Escape => self.close_settings(),
             InputKey::Tab if key.modifiers.shift => self.select_settings_category_delta(-1),
             InputKey::Tab => self.select_settings_category_delta(1),
@@ -352,6 +362,7 @@ impl ShellSession {
         };
         let layout = ui::settings_layout(app_area, &model);
         match ui::settings_hit_test(&layout, coordinates) {
+            Some(ui::SettingsHitTarget::OperatingSystem) => self.open_operating_system_settings(),
             Some(ui::SettingsHitTarget::OverlayApply) => {
                 self.handle_settings_key(&KeyInput::new(InputKey::Enter), platform)
             }

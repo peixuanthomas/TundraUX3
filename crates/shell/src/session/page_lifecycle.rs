@@ -26,6 +26,13 @@ impl ShellSession {
         if self.pending_page_closes.contains(&id) {
             return;
         }
+        if self.page_screen(id) == Some(ShellScreen::Management)
+            && self
+                .with_page_context(id, |session| session.confirm_management_discard(true))
+                .unwrap_or(false)
+        {
+            return;
+        }
         if self.page_screen(id) == Some(ShellScreen::Settings)
             && self.settings_task_runtime.update_cancel_error().is_some()
         {

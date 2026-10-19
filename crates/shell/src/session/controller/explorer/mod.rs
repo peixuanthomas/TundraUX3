@@ -1180,6 +1180,32 @@ impl ShellSession {
             ExplorerOverlayControl::OptionsClose | ExplorerOverlayControl::PropertiesClose => {
                 self.close_explorer_popup()
             }
+            ExplorerOverlayControl::PropertiesPermissions => {
+                if !cfg!(target_os = "linux") {
+                    self.notify_status(i18n::msg!("permissions-unavailable"));
+                    return;
+                }
+                let paths = self
+                    .app
+                    .explorer_state()
+                    .map(|state| state.effective_selected_paths())
+                    .unwrap_or_default();
+                if paths.is_empty() {
+                    return;
+                }
+                self.close_explorer_popup();
+                #[cfg(target_os = "linux")]
+                {
+                    let mut query = platform::management::ManagementQuery::new(
+                        platform::management::ManagementKind::FilePermissions,
+                    );
+                    query.options.insert(
+                        "paths".into(),
+                        platform::management::file_permissions::encode_paths(&paths),
+                    );
+                    self.open_management_query(query);
+                }
+            }
             ExplorerOverlayControl::ConflictChoice(choice) => {
                 let action = match choice {
                     ExplorerConflictChoice::KeepBoth => ExplorerConflictAction::KeepBoth,
@@ -1278,7 +1304,7 @@ impl ShellSession {
             {
                 2
             }
-            Some(ui::ExplorerOverlayViewModel::Properties(_)) => 1,
+            Some(ui::ExplorerOverlayViewModel::Properties(_)) => 2,
             _ => 0,
         };
         if count == 0 {
@@ -1352,7 +1378,11 @@ impl ShellSession {
                     )
                 }),
             Some(ui::ExplorerOverlayViewModel::Properties(_)) => {
-                Some(ui::ExplorerOverlayControl::PropertiesClose)
+                Some(if self.pages.explorer.explorer_overlay_selection == 0 {
+                    ui::ExplorerOverlayControl::PropertiesPermissions
+                } else {
+                    ui::ExplorerOverlayControl::PropertiesClose
+                })
             }
             _ => None,
         };

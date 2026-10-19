@@ -608,7 +608,7 @@ pub fn render_explorer_overlay(
             for (index, property) in properties
                 .properties
                 .iter()
-                .take(usize::from(overlay_layout.content.height.saturating_sub(1)))
+                .take(usize::from(overlay_layout.content.height.saturating_sub(2)))
                 .enumerate()
             {
                 let area = Rect::new(
@@ -626,13 +626,24 @@ pub fn render_explorer_overlay(
                     area,
                 );
             }
-            if let Some(control) = overlay_layout.controls.first() {
+            for control in &overlay_layout.controls {
                 render_explorer_button(
                     frame,
                     control.area,
-                    "explorer.properties.close",
-                    format!("[Esc {}]", properties.close_label),
-                    true,
+                    if control.control == ExplorerOverlayControl::PropertiesPermissions {
+                        "explorer.properties.permissions"
+                    } else {
+                        "explorer.properties.close"
+                    },
+                    if control.control == ExplorerOverlayControl::PropertiesPermissions {
+                        i18n::tr!("permissions-edit")
+                    } else {
+                        format!("[Esc {}]", properties.close_label)
+                    },
+                    (control.control == ExplorerOverlayControl::PropertiesPermissions
+                        && model.overlay_selection == 0)
+                        || (control.control == ExplorerOverlayControl::PropertiesClose
+                            && model.overlay_selection == 1),
                     control.enabled,
                     theme,
                 );

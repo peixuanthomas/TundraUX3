@@ -32,6 +32,50 @@ fn settings_catalog_does_not_offer_unavailable_device_pages() {
 }
 
 #[test]
+fn operating_system_group_has_a_separate_hittable_entry_and_respects_overlays() {
+    for (width, height) in [(40, 12), (50, 16), (108, 20), (140, 40)] {
+        let mut model = sample_model();
+        let area = Rect::new(0, 0, width, height);
+        let layout = settings_layout(area, &model);
+        let button = layout.operating_system;
+        assert!(!button.is_empty());
+        assert_eq!(button.intersection(area), button);
+        assert!(
+            layout
+                .category_cards
+                .iter()
+                .all(|category| !category.area.intersects(button))
+        );
+        assert_eq!(
+            settings_hit_test(&layout, (button.x, button.y)),
+            Some(SettingsHitTarget::OperatingSystem)
+        );
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_settings(
+                    frame,
+                    frame.area(),
+                    &chrome(),
+                    &model,
+                    &TundraTheme::default_dark(),
+                );
+            })
+            .unwrap();
+        assert!(terminal_output(&terminal).contains("F8"));
+        model.color_editor = Some(SettingsColorEditorViewModel {
+            title: "Color".into(),
+            value: "#123456".into(),
+            error: None,
+        });
+        assert_ne!(
+            settings_hit_test(&settings_layout(area, &model), (button.x, button.y)),
+            Some(SettingsHitTarget::OperatingSystem)
+        );
+    }
+}
+
+#[test]
 fn theme_picker_shrinks_to_one_or_two_options() {
     let mut model = sample_model();
     for count in [1, 2] {
@@ -136,7 +180,10 @@ fn unavailable_settings_retain_gray_buttons_and_register_disabled_hit_regions() 
             let regions: Vec<_> = buttons
                 .regions()
                 .into_iter()
-                .filter(|region| region.id.as_str().starts_with("settings."))
+                .filter(|region| {
+                    region.id.as_str().starts_with("settings.")
+                        && region.id.as_str() != "settings.operating-system"
+                })
                 .collect();
             assert_eq!(
                 regions.len(),
@@ -172,9 +219,9 @@ fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
         assert_eq!(layout.category_cards.len(), SettingsCategory::ALL.len());
         for (index, category) in layout.category_cards.iter().enumerate() {
             assert_eq!(category.category, SettingsCategory::ALL[index]);
-            assert_eq!(category.area, Rect::new(2, 2 + index as u16, 16, 1));
+            assert_eq!(category.area, Rect::new(2, 2 + index as u16, 17, 1));
         }
-        assert!(layout.fields.iter().all(|field| field.area.x == 22));
+        assert!(layout.fields.iter().all(|field| field.area.x == 23));
         for expected in [SettingsField::BorderColor, SettingsField::ShowHidden] {
             assert!(layout.fields.iter().any(|field| field.field == expected));
         }
