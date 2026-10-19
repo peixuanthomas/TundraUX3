@@ -21,6 +21,240 @@ fn session(size: (u16, u16)) -> ShellSession {
 }
 
 #[test]
+fn physical_space_reaches_permissions_and_recursive_checkboxes() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    for (control, initial, changed) in [
+        (FieldControl::Permissions, "000000000", "000010000"),
+        (FieldControl::Checkbox, "false", "true"),
+    ] {
+        let mut session = session((108, 30));
+        session.pages.management.management_state.kind = Some(ManagementKind::FilePermissions);
+        session.pages.management.management_state.permission_cell = 4;
+        session.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
+            title: "Permissions".into(),
+            message: String::new(),
+            message_scroll: 0,
+            fields: vec![ManagementField {
+                id: if control == FieldControl::Checkbox {
+                    "recursive"
+                } else {
+                    "files"
+                }
+                .into(),
+                value: initial.into(),
+                control,
+                ..Default::default()
+            }],
+            selected: 0,
+            purpose: FormPurpose::Action(ManagementAction::default(), None),
+        });
+        session.refresh_hit_map();
+        let physical_space = crossterm_event_to_input(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        )));
+        let InputEvent::Key(key) = &physical_space else {
+            panic!("expected key input")
+        };
+        assert_eq!(key.key, InputKey::Char(' '));
+        assert_eq!(
+            session.route_key_input(key).1,
+            ShellCommand::ManagementKey(key.clone())
+        );
+        session.apply_input(physical_space);
+        assert_eq!(
+            session
+                .pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .unwrap()
+                .fields[0]
+                .value,
+            changed
+        );
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent {
+                kind,
+                ..KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)
+            })));
+            assert_eq!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .fields[0]
+                    .value,
+                changed
+            );
+        }
+        session.apply_input(InputEvent::key(InputKey::Space));
+        assert_eq!(
+            session
+                .pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .unwrap()
+                .fields[0]
+                .value,
+            initial
+        );
+        for (kind, expected) in [
+            (KeyEventKind::Press, changed),
+            (KeyEventKind::Repeat, changed),
+            (KeyEventKind::Release, changed),
+        ] {
+            session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent {
+                kind,
+                ..KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            })));
+            let form = session
+                .pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .unwrap();
+            assert_eq!(form.fields[0].value, expected);
+            assert_eq!(form.selected, 0, "Enter toggles the box without submitting");
+        }
+    }
+}
+
+#[test]
+fn physical_space_preserves_checkbox_modifiers_and_text_input() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    let mut session = session((108, 30));
+    session.pages.management.management_state.kind = Some(ManagementKind::FilePermissions);
+    session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
+        title: "Permissions".into(),
+        message: String::new(),
+        message_scroll: 0,
+        fields: vec![
+            ManagementField {
+                id: "files".into(),
+                value: "000000000".into(),
+                control: FieldControl::Permissions,
+                ..Default::default()
+            },
+            ManagementField {
+                id: "recursive".into(),
+                value: "false".into(),
+                control: FieldControl::Checkbox,
+                ..Default::default()
+            },
+            ManagementField {
+                id: "label".into(),
+                value: "ab".into(),
+                ..Default::default()
+            },
+        ],
+        selected: 0,
+        purpose: FormPurpose::Action(ManagementAction::default(), None),
+    });
+    session.refresh_hit_map();
+    for (selected, initial) in [(0, "000000000"), (1, "false")] {
+        session
+            .pages
+            .management
+            .management_state
+            .form
+            .as_mut()
+            .unwrap()
+            .selected = selected;
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+            KeyModifiers::HYPER,
+            KeyModifiers::META,
+        ] {
+            session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent::new(
+                KeyCode::Char(' '),
+                modifiers,
+            ))));
+            assert_eq!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .form
+                    .as_ref()
+                    .unwrap()
+                    .fields[selected]
+                    .value,
+                initial
+            );
+        }
+        session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(
+            session
+                .pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .unwrap()
+                .fields[selected]
+                .value,
+            initial
+        );
+    }
+    session
+        .pages
+        .management
+        .management_state
+        .form
+        .as_mut()
+        .unwrap()
+        .selected = 2;
+    for kind in [KeyEventKind::Press, KeyEventKind::Repeat] {
+        session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent {
+            kind,
+            ..KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)
+        })));
+    }
+    let form = session
+        .pages
+        .management
+        .management_state
+        .form
+        .as_ref()
+        .unwrap();
+    assert_eq!(form.fields[0].value, "000000000");
+    assert_eq!(form.fields[1].value, "false");
+    assert_eq!(form.fields[2].value, "ab  ");
+    session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    ))));
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .unwrap()
+            .selected,
+        3
+    );
+}
+
+#[test]
 fn permission_boxes_work_with_keyboard_mouse_and_touch() {
     for hover in [false, true] {
         let mut session = session((108, 30));

@@ -171,8 +171,10 @@ impl ShellSession {
                 cell = (cell + 1) % 9;
             }
             self.pages.management.management_state.permission_cell = cell;
-            if matches!(key.key, InputKey::Space | InputKey::Enter)
-                && key.phase == InputPhase::Press
+            if matches!(
+                key.key,
+                InputKey::Char(' ') | InputKey::Space | InputKey::Enter
+            ) && key.phase == InputPhase::Press
                 && !key.has_non_shift_modifier()
             {
                 if let Some(form) = &mut self.pages.management.management_state.form {
