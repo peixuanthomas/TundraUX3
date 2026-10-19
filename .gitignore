@@ -9,7 +9,6 @@
 /.agents
 /idea/
 .DS_Store
-AGENTS.md
 temp.txt
 todo.md
 /third_party/*
