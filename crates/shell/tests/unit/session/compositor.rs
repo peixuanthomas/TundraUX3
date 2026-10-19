@@ -179,7 +179,6 @@ fn page_keyboard_animates_chrome_and_content_together_and_restores_them() {
         );
         state.toggle_input_keyboard();
         let mut previous_top = 3;
-        let mut previous_launcher = original_launcher.y;
         for millis in [0, 55, 110, 165, 220] {
             let prepared = home_frame(&state, millis, false);
             draw(&mut compositor, &mut terminal, &mut state, &prepared);
@@ -191,8 +190,16 @@ fn page_keyboard_animates_chrome_and_content_together_and_restores_them() {
             assert!(top.height <= previous_top);
             previous_top = top.height;
             let launcher = state.keyboard_launcher_area().unwrap();
-            assert!(launcher.y >= previous_launcher);
-            previous_launcher = launcher.y;
+            if let Some(hide) = state
+                .input_keyboard_layout()
+                .buttons
+                .iter()
+                .find(|button| button.action == ui::ScreenKeyboardAction::ToggleKeyboard)
+            {
+                assert_eq!(launcher, hide.area);
+            } else {
+                assert_eq!(launcher.height, 1);
+            }
             assert!(main.bottom() <= state.input_keyboard_layout().keyboard.y);
             assert!(launcher.bottom() <= status.y);
         }
@@ -309,8 +316,8 @@ fn live_aa_keyboard_keeps_dialog_buttons_visible_and_uses_one_layout_for_input()
             state
                 .button_regions
                 .iter()
-                .any(|button| button.id.as_str() == "input.keyboard"
-                    && Some(button.area) == state.keyboard_launcher_area())
+                .any(|button| Some(button.area) == state.keyboard_launcher_area()
+                    && state.button_at((button.area.x, button.area.y)).as_ref() == Some(button))
         );
         if keyboard.usable {
             assert!(text(terminal.backend().buffer(), keyboard.keyboard).contains("CapsLock"));
@@ -1622,7 +1629,7 @@ fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
     let first = state
         .button_regions
         .iter()
-        .find(|r| r.id.as_str() == "input.keyboard")
+        .find(|r| r.id.as_str() == ui::ScreenKeyboardAction::ToggleKeyboard.button_id())
         .unwrap()
         .area;
     assert_eq!(

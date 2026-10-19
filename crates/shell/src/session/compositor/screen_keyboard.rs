@@ -14,9 +14,12 @@ impl ScreenCompositor {
             return;
         };
         let layout = state.input_keyboard_layout();
+        let launcher_focused = state
+            .auto_admin_view()
+            .is_some_and(|model| model.button_focus == Some(0));
         let mut keyboard_context = context.clone();
         if let Some(buttons) = &mut keyboard_context.buttons {
-            buttons.keyboard_focus_visible = false;
+            buttons.keyboard_focus_visible &= launcher_focused;
         }
         if state.input_keyboard_open() || state.screen_keyboard.visibility > 0 {
             ui::render_screen_keyboard_panel(
@@ -42,6 +45,13 @@ impl ScreenCompositor {
                 );
             }
         }
+        if layout
+            .buttons
+            .iter()
+            .any(|button| button.action == ui::ScreenKeyboardAction::ToggleKeyboard)
+        {
+            return;
+        }
         let mut button = ui::components::Button::new(
             "input.keyboard",
             if state.input_keyboard_open() {
@@ -50,11 +60,7 @@ impl ScreenCompositor {
                 i18n::tr!("screen-keyboard-show")
             },
         );
-        button.set_focused(
-            state
-                .auto_admin_view()
-                .is_some_and(|model| model.button_focus == Some(0)),
-        );
+        button.set_focused(launcher_focused);
         frame.render_widget(ratatui::widgets::Clear, launcher);
         button.render_borderless_frame(frame, launcher, &context.compatibility_theme());
     }

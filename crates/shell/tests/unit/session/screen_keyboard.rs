@@ -83,7 +83,27 @@ fn shared_keyboard_launcher_opens_and_closes_with_mouse_or_touch_in_each_input_c
             }
             for open in [true, false] {
                 let area = state.keyboard_launcher_area().unwrap();
-                let point = (area.x, area.y);
+                let point = (area.right() - 1, area.bottom() - 1);
+                if !open {
+                    let keyboard = state.input_keyboard_layout();
+                    let hide = keyboard
+                        .buttons
+                        .iter()
+                        .find(|button| button.action == ui::ScreenKeyboardAction::ToggleKeyboard)
+                        .unwrap();
+                    assert_eq!(area, hide.area);
+                    assert_eq!(state.button_at(point), Some(hide.region()));
+                    assert_eq!(
+                        area.height,
+                        keyboard
+                            .buttons
+                            .iter()
+                            .find(|button| button.action == ui::ScreenKeyboardAction::Letter('q'))
+                            .unwrap()
+                            .area
+                            .height
+                    );
+                }
                 if hover {
                     route(&mut state, InputEvent::mouse_moved(point));
                 }

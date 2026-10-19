@@ -239,6 +239,70 @@ fn function_key_names_and_live_toolbar_follow_language_packages() {
 }
 
 #[test]
+fn live_paste_and_hide_are_regular_keys_at_the_bottom_corners() {
+    use ScreenKeyboardAction::*;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
+        for bounds in [
+            Rect::new(0, 0, 108, 20),
+            Rect::new(5, 3, 140, 40),
+            Rect::new(0, 0, 120, 48),
+        ] {
+            for auto_admin in [false, true] {
+                let layout = ui::screen_keyboard_input_layout(bounds, true, auto_admin);
+                if !layout.usable {
+                    continue;
+                }
+                let paste = key_area(&layout, Paste);
+                let hide = key_area(&layout, ToggleKeyboard);
+                let character = key_area(&layout, Letter('q'));
+                assert_eq!(paste.x, bounds.x);
+                assert_eq!(hide.right(), bounds.right());
+                assert_eq!(paste.y, hide.y);
+                assert_eq!(paste.bottom(), bounds.bottom());
+                assert_eq!(paste.height, character.height);
+                assert_eq!(hide.height, character.height);
+                let mut terminal =
+                    Terminal::new(TestBackend::new(bounds.right(), bounds.bottom())).unwrap();
+                terminal
+                    .draw(|frame| {
+                        ui::render_screen_keyboard_panel(
+                            frame,
+                            &layout,
+                            &view(""),
+                            &RenderContext::default(),
+                        )
+                    })
+                    .unwrap();
+                if layout.bordered_buttons {
+                    for area in [paste, hide] {
+                        assert_eq!(
+                            terminal.backend().buffer()[(area.x, area.y)].symbol(),
+                            terminal.backend().buffer()[(character.x, character.y)].symbol()
+                        );
+                    }
+                }
+                for visibility in [1_000, 750, 500, 1, 0] {
+                    let sliding = ui::screen_keyboard_input_layout_with_visibility(
+                        bounds, true, visibility, auto_admin,
+                    );
+                    for (index, key) in sliding.buttons.iter().enumerate() {
+                        assert_eq!(key.area.intersection(sliding.keyboard), key.area);
+                        for other in sliding.buttons.iter().skip(index + 1) {
+                            assert!(key.area.intersection(other.area).is_empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn aa_dialog_stays_inside_screen_and_above_every_animation_frame() {
     let context = RenderContext::default();
     for width in [0, 1, 12, 40, 59, 60, 80, 120, 160] {

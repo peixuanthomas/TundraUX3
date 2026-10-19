@@ -9,16 +9,6 @@ impl ShellSession {
         &self,
         point: CellPosition,
     ) -> Option<ui::components::ButtonRegion> {
-        if let Some(area) = self
-            .keyboard_launcher_area()
-            .filter(|area| rect_contains(*area, point))
-        {
-            return Some(ui::components::ButtonRegion {
-                id: "input.keyboard".into(),
-                area,
-                disabled: false,
-            });
-        }
         if self.screen_keyboard.visibility > 0 {
             if let Some(button) = self
                 .input_keyboard_layout()
@@ -28,6 +18,16 @@ impl ShellSession {
             {
                 return Some(button.region());
             }
+        }
+        if let Some(area) = self
+            .keyboard_launcher_area()
+            .filter(|area| rect_contains(*area, point))
+        {
+            return Some(ui::components::ButtonRegion {
+                id: "input.keyboard".into(),
+                area,
+                disabled: false,
+            });
         }
         if self.hit_map.target_at(point) == Some(ShellComponent::BackButton)
             && let Some(area) = self.frame_layout.and_then(|layout| layout.back_button)

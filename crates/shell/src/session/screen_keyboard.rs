@@ -185,6 +185,14 @@ impl ShellSession {
         if self.input_keyboard_owner().is_none() {
             return None;
         }
+        if let Some(button) = self
+            .input_keyboard_layout()
+            .buttons
+            .iter()
+            .find(|button| button.action == ui::ScreenKeyboardAction::ToggleKeyboard)
+        {
+            return Some(button.area);
+        }
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let mut footer = bounds;
         if let ui::ShellLayout::Full { status, .. } = ui::compute_shell_layout(bounds) {

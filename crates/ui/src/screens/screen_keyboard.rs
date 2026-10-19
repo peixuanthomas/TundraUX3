@@ -352,6 +352,7 @@ pub fn screen_keyboard_layout_with_visibility(
         visibility,
         bounds.height / 2,
         bounds.width >= 60 && bounds.height >= 14,
+        false,
     )
 }
 
@@ -386,8 +387,8 @@ pub fn screen_keyboard_input_layout_with_visibility(
         if visible { visibility } else { 0 },
         bounds.height.saturating_sub(height),
         usable,
+        true,
     );
-    layout.buttons.retain(|button| !button.action.is_toolbar());
     if !visible {
         layout.keyboard = Rect::new(bounds.x, bounds.bottom(), bounds.width, 0);
         layout.buttons.clear();
@@ -409,21 +410,6 @@ pub fn screen_keyboard_input_layout_with_visibility(
             );
             layout.keyboard.y = layout.hint.y;
         }
-    } else {
-        let width = (crate::components::terminal_width(&i18n::tr!("screen-keyboard-input-paste"))
-            as u16
-            + 2)
-        .min(
-            screen_keyboard_launcher_area(bounds)
-                .x
-                .saturating_sub(bounds.x),
-        );
-        append_row(
-            &mut layout.buttons,
-            Rect::new(bounds.x, bounds.bottom() - 1, width, 1),
-            &[(ScreenKeyboardAction::Paste, 1)],
-            false,
-        );
     }
     layout
 }
@@ -449,11 +435,15 @@ fn keyboard_layout(
     visibility: u16,
     upper_height: u16,
     usable: bool,
+    input: bool,
 ) -> ScreenKeyboardLayout {
     use ScreenKeyboardAction::*;
     let expanded_y = bounds.y + upper_height;
-    let toolbar_y = bounds.bottom().saturating_sub(u16::from(bounds.height > 0));
-    let slide = (u32::from(toolbar_y.saturating_sub(expanded_y))
+    let toolbar_y = bounds
+        .bottom()
+        .saturating_sub(u16::from(bounds.height > 0 && !input));
+    let collapsed_y = bounds.bottom().saturating_sub(1);
+    let slide = (u32::from(collapsed_y.saturating_sub(expanded_y))
         * u32::from(1_000 - visibility.min(1_000))
         / 1_000) as u16;
     let keyboard_y = expanded_y + slide;
@@ -470,10 +460,12 @@ fn keyboard_layout(
     let mut row_heights = [button_height; 6];
     let preferred_character_height = if bordered_buttons { 4 } else { 2 };
     // Give character rows more height when there is room for comfortable keys.
-    if button_height < preferred_character_height
-        && keys_height >= button_height * 2 + preferred_character_height * 4
-    {
-        row_heights[1..5].fill(preferred_character_height);
+    if button_height < preferred_character_height {
+        let mut preferred = row_heights;
+        preferred[1..if input { 6 } else { 5 }].fill(preferred_character_height);
+        if preferred.iter().sum::<u16>() <= keys_height {
+            row_heights = preferred;
+        }
     }
     let mut layout = ScreenKeyboardLayout {
         title: Rect::new(
@@ -537,13 +529,18 @@ fn keyboard_layout(
     let mut shift_row = vec![(Shift, 2)];
     shift_row.extend("zxcvbnm".chars().map(|letter| (Letter(letter), 1)));
     shift_row.extend(",./".chars().map(|character| (Character(character), 1)));
+    let mut bottom_row = vec![(LeftCtrl, 2), (Alt, 2), (Space, 8), (RightCtrl, 2)];
+    if input {
+        bottom_row.insert(0, (Paste, 2));
+        bottom_row.push((ToggleKeyboard, 2));
+    }
     let rows = [
         function_row,
         number_row,
         qwerty_row,
         home_row,
         shift_row,
-        vec![(LeftCtrl, 2), (Alt, 2), (Space, 8), (RightCtrl, 2)],
+        bottom_row,
     ];
     let visible_keys = Rect::new(bounds.x, keyboard_y, bounds.width, toolbar_y - keyboard_y);
     let spare = keys_height.saturating_sub(row_heights.iter().sum());
@@ -562,12 +559,14 @@ fn keyboard_layout(
             bordered_buttons,
         );
     }
-    append_row(
-        &mut layout.buttons,
-        Rect::new(bounds.x, toolbar_y, bounds.width, 1),
-        &toolbar(bounds.width),
-        false,
-    );
+    if !input {
+        append_row(
+            &mut layout.buttons,
+            Rect::new(bounds.x, toolbar_y, bounds.width, 1),
+            &toolbar(bounds.width),
+            false,
+        );
+    }
     layout
 }
 
@@ -593,6 +592,7 @@ pub fn screen_keyboard_aa_layout(
         visibility,
         bounds.height.saturating_sub(height),
         usable,
+        false,
     );
     layout.title = Rect::default();
     if !usable || visibility == 0 {
@@ -829,7 +829,7 @@ fn render_screen_keyboard_keys(
                 || model.physical_pressed.contains(&target.action),
         );
         button.set_focused(target.action == model.focus);
-        if layout.bordered_buttons && !target.action.is_toolbar() {
+        if layout.bordered_buttons && target.area.height >= 3 {
             button.render_frame(frame, target.area, &theme);
         } else {
             button.render_borderless_frame(frame, target.area, &theme);
