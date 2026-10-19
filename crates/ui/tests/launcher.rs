@@ -15,6 +15,35 @@ use ui::{
 struct UnavailableLauncherIconRenderer;
 
 #[test]
+fn selected_launcher_item_keeps_accent_in_mouse_mode_for_both_views() {
+    for view in [LauncherViewMode::LargeIcons, LauncherViewMode::Details] {
+        let model = LauncherViewModel::new(
+            vec![item(0, LauncherItemStatus::Ready)],
+            Some(0),
+            view,
+            true,
+        );
+        let theme = TundraTheme::default().with_accent_color(ratatui::style::Color::Magenta);
+        let mut context =
+            ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+        let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
+        buttons.keyboard_focus_visible = false;
+        context.buttons = Some(buttons);
+        let bounds = Rect::new(0, 0, 120, 40);
+        let layout = launcher_layout(bounds, &model);
+        let area = layout.items[0].area;
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| ui::render_launcher_content(frame, bounds, &model, &context, None))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(area.x, area.y)].fg,
+            theme.accent_color
+        );
+    }
+}
+
+#[test]
 fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
     let model = LauncherViewModel::new(
         (0..30)

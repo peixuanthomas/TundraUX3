@@ -174,16 +174,7 @@ impl DataTable {
         {
             let selected = self.selected == Some(index) || self.selected_rows.contains(&index);
             let style = if selected {
-                Style::default()
-                    .fg(if self.state.focused {
-                        tokens.focus
-                    } else {
-                        tone_color(
-                            self.row_tones.get(index).copied().unwrap_or_default(),
-                            &context.compatibility_theme(),
-                        )
-                    })
-                    .bg(tokens.accent_soft)
+                Style::default().fg(tokens.accent).bg(tokens.accent_soft)
             } else {
                 Style::default()
                     .fg(tone_color(

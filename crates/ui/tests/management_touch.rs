@@ -2,6 +2,32 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn management_selection_stays_visible_while_actions_have_focus_in_mouse_mode() {
+    let model = ManagementViewModel {
+        columns: vec!["Name".into()],
+        rows: vec![vec!["Selected".into()], vec!["Other".into()]],
+        actions_focused: true,
+        actions: vec![("View details".into(), true)],
+        ..Default::default()
+    };
+    let theme = TundraTheme::default().with_accent_color(ratatui::style::Color::Magenta);
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut buttons = components::ButtonFrame::new(None, None, &theme);
+    buttons.keyboard_focus_visible = false;
+    context.buttons = Some(buttons);
+    let bounds = Rect::new(0, 0, 120, 40);
+    let layout = management_layout(bounds, &model);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| render_management_content(frame, bounds, &model, &context))
+        .unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(layout.list_rows.x, layout.list_rows.y)].fg,
+        theme.accent_color
+    );
+}
+
+#[test]
 fn package_actions_remain_visible_in_real_shell_content_areas() {
     let theme = TundraTheme::default_dark();
     let context = RenderContext::from_theme(&theme, Default::default(), Default::default());

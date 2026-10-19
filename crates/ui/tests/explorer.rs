@@ -67,6 +67,7 @@ fn quick_access_current_marker_survives_pointer_focus_and_shared_feedback() {
         TundraTheme::default_dark().with_accent_color(ratatui::style::Color::Rgb(100, 140, 180));
     for (keyboard, hovered, pressed, disabled, expected) in [
         (true, false, false, false, theme.foreground),
+        (false, false, false, false, theme.foreground),
         (
             false,
             true,
@@ -103,14 +104,7 @@ fn quick_access_current_marker_survives_pointer_focus_and_shared_feedback() {
             .unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(current.x, current.y)].symbol(), ">");
-        assert_eq!(
-            buffer[(current.x, current.y)].fg,
-            if keyboard {
-                theme.accent_color
-            } else {
-                theme.foreground
-            }
-        );
+        assert_eq!(buffer[(current.x, current.y)].fg, theme.accent_color);
         assert_eq!(buffer[(trash.x, trash.y)].symbol(), " ");
         assert_eq!(buffer[(trash.x, trash.y)].fg, expected);
         assert!(

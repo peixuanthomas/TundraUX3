@@ -891,18 +891,14 @@ fn render_launcher_grid(
         let Some(item) = model.items.get(item_layout.index) else {
             continue;
         };
-        let focused =
-            theme.keyboard_focus_visible() && model.selected_index == Some(item_layout.index);
-        let selected = focused || (theme.keyboard_focus_visible() && item.selected);
+        let selected = model.selected_index == Some(item_layout.index) || item.selected;
         let style = item_style(item.status, selected, theme).bg(theme.tokens().raised);
-        let mut surface = Button::new(format!("launcher.item.{}", item.id), "");
-        surface.set_focused(focused);
-        surface.state.selected = selected;
+        let mut surface =
+            Button::new(format!("launcher.item.{}", item.id), "").with_current(selected);
         surface.set_disabled(item.status != LauncherItemStatus::Ready);
         if item_layout.area.height < 3 {
-            let mut compact = Button::new(format!("launcher.item.{}", item.id), item.name.clone());
-            compact.set_focused(focused);
-            compact.state.selected = selected;
+            let mut compact = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
+                .with_current(selected);
             compact.set_disabled(item.status != LauncherItemStatus::Ready);
             compact.render_borderless_frame(frame, item_layout.area, theme);
             continue;
@@ -923,7 +919,7 @@ fn render_launcher_grid(
             .max(inner.y);
         frame.render_widget(
             Paragraph::new(fit_text(&item.name, inner.width))
-                .style(if focused && !surface.state.disabled {
+                .style(if selected && !surface.state.disabled {
                     theme.title_style().bg(theme.tokens().raised)
                 } else {
                     style
@@ -1025,11 +1021,7 @@ fn render_launcher_details(
         .iter()
         .enumerate()
         .map(|(index, item)| match item.status {
-            _ if theme.keyboard_focus_visible()
-                && (model.selected_index == Some(index) || item.selected) =>
-            {
-                ComponentTone::Accent
-            }
+            _ if model.selected_index == Some(index) || item.selected => ComponentTone::Accent,
             LauncherItemStatus::Ready => ComponentTone::Default,
             _ => ComponentTone::Warning,
         })
@@ -1039,9 +1031,7 @@ fn render_launcher_details(
         .with_viewport_start(layout.visible_start)
         .with_row_tones(tones)
         .bordered(false);
-    table.selected = model
-        .selected_index
-        .filter(|_| theme.keyboard_focus_visible());
+    table.selected = model.selected_index;
     table.state.focused = false;
     let table_context = RenderContext {
         theme: crate::ThemeTokens {

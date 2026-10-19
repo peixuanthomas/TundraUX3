@@ -573,7 +573,7 @@ fn auto_admin_shares_dialog_motion_speed_reduced_motion_and_exit() {
 }
 
 #[test]
-fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
+fn pointer_input_hides_home_focus_but_keeps_launcher_selection() {
     for mode in 0..3 {
         let launcher = mode != 0;
         let mut state = session();
@@ -634,7 +634,11 @@ fn keyboard_selection_hides_for_pointer_input_and_returns_on_navigation() {
             state.apply_input(pointer);
             assert!(!state.interaction.keyboard_focus_visible());
             render(&mut state, &mut compositor, &mut terminal);
-            assert_ne!(terminal.backend().buffer()[border].fg, focused_color);
+            if launcher {
+                assert_eq!(terminal.backend().buffer()[border].fg, focused_color);
+            } else {
+                assert_ne!(terminal.backend().buffer()[border].fg, focused_color);
+            }
             assert_eq!(
                 if launcher {
                     state.pages.launcher.launcher_selected_index

@@ -210,9 +210,8 @@ fn render_clock_entry_list(
             ),
             usize::from(row.area.width),
         );
-        let mut button = Button::new(format!("clock.entry.{}", row.id), label);
-        button.set_focused(model.selected_entry_id == Some(row.id));
-        button.state.selected = model.selected_entry_id == Some(row.id);
+        let button = Button::new(format!("clock.entry.{}", row.id), label)
+            .with_current(model.selected_entry_id == Some(row.id));
         button.render_borderless_frame(frame, row.area, &context.compatibility_theme());
     }
 }

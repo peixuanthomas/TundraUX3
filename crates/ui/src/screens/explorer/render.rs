@@ -180,9 +180,9 @@ fn render_explorer_sidebar(
             format!("explorer.quick.{}", location_layout.index),
             fit_cell(&label, usize::from(location_layout.area.width)),
         )
-        .with_bracketed_label(false);
+        .with_bracketed_label(false)
+        .with_current(location.current);
         button.set_disabled(!location.enabled);
-        button.set_focused(location.current);
         button.state.selected = location.drop_target;
         button.render_borderless_frame(frame, location_layout.area, theme);
     }

@@ -280,8 +280,8 @@ pub fn render_logs_content(
         } else {
             i18n::tr!("ui-logs-linux-log")
         };
-        let mut button = Button::new(format!("logs.category.{:?}", tab.category), label);
-        button.state.selected = tab.category == model.category;
+        let button = Button::new(format!("logs.category.{:?}", tab.category), label)
+            .with_current(tab.category == model.category);
         button.render_borderless_frame(frame, tab.area, &theme);
     }
     if model.category == LogsCategory::Ux {
@@ -291,8 +291,8 @@ pub fn render_logs_content(
                 LogsSection::Files => i18n::tr!("ui-logs-files"),
                 LogsSection::Incidents => i18n::tr!("ui-logs-incidents"),
             };
-            let mut button = Button::new(format!("logs.section.{:?}", tab.section), label);
-            button.state.selected = tab.section == model.section;
+            let button = Button::new(format!("logs.section.{:?}", tab.section), label)
+                .with_current(tab.section == model.section);
             button.render_borderless_frame(frame, tab.area, &theme);
         }
     }

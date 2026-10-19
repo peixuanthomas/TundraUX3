@@ -1572,8 +1572,7 @@ pub fn render_management_content(
         {
             lines.push(Line::styled(
                 table_line(row),
-                if index == model.selected && (model.workspace.is_some() || !model.actions_focused)
-                {
+                if index == model.selected {
                     selected
                 } else {
                     theme.body_style()

@@ -548,6 +548,30 @@ fn toast_resume_reverses_from_the_visible_progress_in_full_and_reduced_motion() 
 }
 
 #[test]
+fn selected_table_rows_keep_accent_after_pointer_selection_and_focus_loss() {
+    for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
+        let theme = TundraTheme::default().with_accent_color(ratatui::style::Color::Magenta);
+        let mut context = RenderContext::from_theme(&theme, MotionFrame::default(), capabilities);
+        let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
+        buttons.keyboard_focus_visible = false;
+        context.buttons = Some(buttons);
+        let area = Rect::new(0, 0, 20, 5);
+        let mut table = DataTable::new("records", ["Name"], [["First"], ["Second"]]);
+        table.handle_event(
+            InputEvent::mouse(MouseEvent::down(1, 3, MouseButton::Left)),
+            area,
+        );
+        table.handle_event(InputEvent::FocusLost, area);
+        let mut buffer = Buffer::empty(area);
+        table.render(area, &mut buffer, &context);
+        assert_eq!(table.selected, Some(1));
+        assert_eq!(buffer[(1, 3)].fg, context.theme.accent);
+        assert_eq!(buffer[(1, 3)].bg, context.theme.accent_soft);
+        assert_eq!(buffer[(1, 2)].fg, context.theme.text);
+    }
+}
+
+#[test]
 fn data_table_render_and_hit_rows_agree_with_or_without_title() {
     for titled in [false, true] {
         let area = Rect::new(0, 0, 14, 5);

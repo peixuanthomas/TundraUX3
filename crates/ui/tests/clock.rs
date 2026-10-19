@@ -16,6 +16,31 @@ use ui::{
 };
 
 #[test]
+fn selected_clock_entry_keeps_accent_in_mouse_mode() {
+    let model = clock_model();
+    let theme = TundraTheme::default().with_accent_color(Color::Magenta);
+    let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
+    buttons.keyboard_focus_visible = false;
+    context.buttons = Some(buttons);
+    let bounds = Rect::new(0, 0, 120, 40);
+    let layout = clock_page_layout(bounds, &model);
+    let row = layout
+        .entry_rows
+        .iter()
+        .find(|row| Some(row.id) == model.selected_entry_id)
+        .unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| ui::render_clock_content(frame, bounds, &model, &context))
+        .unwrap();
+    assert_eq!(
+        terminal.backend().buffer()[(row.area.x + row.area.width / 2, row.area.y)].fg,
+        theme.accent_color
+    );
+}
+
+#[test]
 fn short_clock_keeps_new_manage_and_scrollbar_without_a_page_back() {
     let mut model = clock_model();
     model.alarms = (0..20)
