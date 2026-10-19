@@ -195,31 +195,36 @@ fn system_and_update_settings_keep_complete_limits_and_errors_in_scrollable_cont
                 SettingsControlKind::ReadOnly,
             )],
         )];
-        let area = Rect::new(0, 0, 60, 15);
-        let layout = settings_layout(area, &model);
-        assert!(layout.scrollbar.is_some());
-        let mut rendered = String::new();
-        for offset in 0..=layout.max_scroll_offset {
-            model.scroll_offset = offset;
+        for (height, needs_scroll) in [(8, true), (15, false)] {
+            model.scroll_offset = 0;
+            let area = Rect::new(0, 0, 60, height);
             let layout = settings_layout(area, &model);
-            let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-            terminal
-                .draw(|frame| render_settings_content(frame, &layout, &model, &context))
-                .unwrap();
-            rendered.push_str(&rectangle_text(&terminal, layout.detail));
-        }
-        for word in [
-            "permission",
-            "configuration",
-            "Critical",
-            "warning.",
-            "percent",
-            "operation.",
-        ] {
-            assert!(
-                rendered.contains(word),
-                "{category:?}: missing complete word {word}: {rendered}"
-            );
+            assert_eq!(layout.scrollbar.is_some(), needs_scroll);
+            assert_eq!(layout.max_scroll_offset > 0, needs_scroll);
+            let mut rendered = String::new();
+            for offset in 0..=layout.max_scroll_offset {
+                model.scroll_offset = offset;
+                let layout = settings_layout(area, &model);
+                let mut terminal =
+                    Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+                terminal
+                    .draw(|frame| render_settings_content(frame, &layout, &model, &context))
+                    .unwrap();
+                rendered.push_str(&rectangle_text(&terminal, layout.detail));
+            }
+            for word in [
+                "permission",
+                "configuration",
+                "Critical",
+                "warning.",
+                "percent",
+                "operation.",
+            ] {
+                assert!(
+                    rendered.contains(word),
+                    "{category:?} at height {height}: missing complete word {word}: {rendered}"
+                );
+            }
         }
     }
 }
