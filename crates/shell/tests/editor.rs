@@ -25,6 +25,35 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn completed_save_updates_the_status_and_the_original_explorer_metadata() {
+    let fixture = FixtureRoot::new("save-refreshes-explorer");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let path = fixture.path().join("Documents/note.txt");
+    fs::write(&path, "old").unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    type_text(&mut state, &platform, "saved prefix ");
+    state.apply_input_with_platform(ctrl('s'), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
+
+    assert!(state.status().starts_with("Saved "), "{}", state.status());
+    assert!(!state.to_editor_view_model().dirty);
+    state.apply_input_with_platform(ctrl('w'), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    let entry = state
+        .app_state()
+        .explorer_state()
+        .unwrap()
+        .selected_entry()
+        .unwrap();
+    let metadata = fs::metadata(&path).unwrap();
+    assert_eq!(entry.path, path);
+    assert_eq!(entry.size, metadata.len());
+    assert_eq!(entry.modified, metadata.modified().ok());
+}
+
+#[test]
 fn new_documents_keep_their_own_text_undo_and_close_confirmations() {
     let fixture = FixtureRoot::new("multiple-documents");
     let platform = mock_platform(fixture.path());

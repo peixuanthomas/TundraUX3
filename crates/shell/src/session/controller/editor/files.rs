@@ -245,7 +245,7 @@ impl ShellSession {
                 }
                 Some(TaskOwner::Session) => {
                     if let EditorTaskEvent::SaveFinished { id, result } = event {
-                        self.finish_detached_editor_save(id, result);
+                        self.finish_detached_editor_save(id, result, platform);
                     }
                 }
                 None => {}
@@ -405,12 +405,14 @@ impl ShellSession {
         &mut self,
         id: u64,
         result: Result<DocumentFingerprint, EditorSaveTaskError>,
+        platform: &dyn Platform,
     ) {
         let Some(completion) = self.editor_task_runtime.take_detached_save(id) else {
             return;
         };
         match result {
             Ok(_) => {
+                self.refresh_explorers_containing(&completion.path, platform);
                 if completion.clear_recovery_on_success
                     && let Some(lease) = completion.recovery
                     && let Err(error) = app::editor_recovery::clear_editor_recovery(&lease)
@@ -424,10 +426,12 @@ impl ShellSession {
                         ui::NotificationTone::Error,
                     );
                 }
-                self.notify_toast(i18n::msg!(
+                let message = i18n::msg!(
                     "shell-saved-arg1",
                     arg1 = completion.path.display().to_string()
-                ));
+                );
+                self.notify_status(message.clone());
+                self.notify_toast(message);
             }
             Err(error) => {
                 let error = match error {
@@ -436,14 +440,13 @@ impl ShellSession {
                     ),
                     EditorSaveTaskError::Write(error) => error,
                 };
-                self.notify_alert_with_tone(
-                    i18n::msg!(
-                        "shell-could-not-save-arg1-error",
-                        arg1 = completion.path.display().to_string(),
-                        error = error
-                    ),
-                    ui::NotificationTone::Error,
+                let message = i18n::msg!(
+                    "shell-could-not-save-arg1-error",
+                    arg1 = completion.path.display().to_string(),
+                    error = error
                 );
+                self.notify_status(message.clone());
+                self.notify_alert_with_tone(message, ui::NotificationTone::Error);
             }
         }
     }
@@ -462,6 +465,7 @@ impl ShellSession {
         let path = save.path;
         match result {
             Ok(fingerprint) => {
+                self.refresh_explorers_containing(&path, platform);
                 self.app.dispatch_at(
                     app::AppCommand::Editor(app::editor::EditorCommand::MarkSaved {
                         path: Some(path.clone()),
@@ -473,14 +477,13 @@ impl ShellSession {
                 self.pages.editor.editor_fingerprint = Some(fingerprint);
                 self.pages.common.error_message = None;
                 self.resolve_page_alert(EDITOR_ALERT_KEY);
-                self.pages.editor.editor_message = Some(i18n::LocalizedText::from(i18n::msg!(
+                let message = i18n::LocalizedText::from(i18n::msg!(
                     "shell-saved-arg1",
                     arg1 = path.display().to_string()
-                )));
-                self.notify_toast(i18n::LocalizedText::from(i18n::msg!(
-                    "shell-saved-arg1",
-                    arg1 = path.display().to_string()
-                )));
+                ));
+                self.pages.editor.editor_message = Some(message.clone());
+                self.notify_status(message.clone());
+                self.notify_toast(message);
                 let close_after_save =
                     std::mem::take(&mut self.pages.editor.editor_close_after_save);
                 let open_after_save = std::mem::take(&mut self.pages.editor.editor_open_after_save);
@@ -512,18 +515,22 @@ impl ShellSession {
             Err(EditorSaveTaskError::ExternalModification) => {
                 self.pages.editor.editor_close_after_save = false;
                 self.pages.editor.editor_open_after_save = false;
-                self.report_editor_error(
-                    i18n::LocalizedText::from(i18n::msg!("shell-the-file-changed-outside-the-editor-use-save-as-or-reload-it-before-saving")),
+                let message = i18n::msg!(
+                    "shell-the-file-changed-outside-the-editor-use-save-as-or-reload-it-before-saving"
                 );
+                self.notify_status(message.clone());
+                self.report_editor_error(message);
             }
             Err(EditorSaveTaskError::Write(error)) => {
                 self.pages.editor.editor_close_after_save = false;
                 self.pages.editor.editor_open_after_save = false;
-                self.report_editor_error(i18n::LocalizedText::from(i18n::msg!(
+                let message = i18n::msg!(
                     "shell-could-not-save-arg1-error",
                     arg1 = path.display().to_string(),
                     error = error.to_string()
-                )));
+                );
+                self.notify_status(message.clone());
+                self.report_editor_error(message);
             }
         }
     }

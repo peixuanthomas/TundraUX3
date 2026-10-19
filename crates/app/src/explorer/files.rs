@@ -25,7 +25,7 @@ impl ExplorerFileService {
                     return Err(error);
                 }
             };
-        commit_location_listing(state, location, entries, warning_count);
+        commit_location_listing(state, location, entries, warning_count, false);
         Ok(())
     }
 
@@ -78,7 +78,7 @@ impl ExplorerFileService {
             state.back_history.push(state.current_location.clone());
             state.forward_history.clear();
         }
-        commit_location_listing(state, target, entries, warning_count);
+        commit_location_listing(state, target, entries, warning_count, true);
         Ok(())
     }
 

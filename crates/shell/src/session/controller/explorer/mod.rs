@@ -401,6 +401,25 @@ impl ShellSession {
         self.apply_explorer_command(command, platform);
     }
 
+    pub(in crate::session) fn refresh_explorers_containing(
+        &mut self,
+        path: &std::path::Path,
+        platform: &dyn Platform,
+    ) {
+        for id in self.pages.explorer.ids() {
+            self.with_page_context(id, |session| {
+                let matching_directory = session.app.explorer_state().is_some_and(|state| {
+                    matches!(&state.current_location,
+                        app::explorer::ExplorerLocation::Directory(directory)
+                            if Some(directory.as_path()) == path.parent())
+                });
+                if matching_directory {
+                    session.apply_explorer_command(ExplorerCommand::Refresh, platform);
+                }
+            });
+        }
+    }
+
     pub(in crate::session) fn apply_explorer_command(
         &mut self,
         command: ExplorerCommand,

@@ -2,6 +2,115 @@ use super::*;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
+fn undersized_runtime_keeps_the_page_draft_dialog_and_countdown() {
+    let platform = platform::mock::UnsupportedPlatform;
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (116, 41),
+        ShellHomeMode::User,
+    );
+    state.open_editor();
+    state.app.dispatch_at(
+        app::AppCommand::Editor(app::editor::EditorCommand::InsertText(
+            "unsaved draft".into(),
+        )),
+        Instant::now(),
+    );
+    state.notify_critical_modal("Keep this dialog", "Read after resizing", vec![]);
+    let page = state.active_page_id();
+    let dialog = state.to_notification_view_model();
+    let now = Instant::now();
+    let mut clock = ClockScheduler::default();
+    let id = clock
+        .create_countdown("00 01 00", &state.app.snapshot().clock, now)
+        .unwrap();
+    state.clock_scheduler = Some(clock);
+    let requirement = ShellTerminalSizeRequirement {
+        width: 108,
+        height: 20,
+    };
+
+    assert!(resize_runtime_session(&mut state, (80, 24), &platform));
+    assert!(requirement.validate(state.terminal_size()).is_err());
+    state.apply_input_with_platform(InputEvent::Tick, &platform);
+    assert_eq!(state.active_page_id(), page);
+    assert_eq!(
+        state.app.editor_state().unwrap().export_text(),
+        "unsaved draft"
+    );
+    assert!(state.app.editor_state().unwrap().is_dirty());
+    assert_eq!(state.to_notification_view_model(), dialog);
+    let countdown = &state
+        .clock_scheduler
+        .as_ref()
+        .unwrap()
+        .entries(now + Duration::from_secs(15))[0];
+    assert_eq!(countdown.id, id);
+    assert_eq!(countdown.display_time, "00:00:45");
+
+    assert!(resize_runtime_session(&mut state, (116, 41), &platform));
+    assert!(requirement.validate(state.terminal_size()).is_ok());
+    assert_eq!(state.active_page_id(), page);
+    assert_eq!(state.to_notification_view_model(), dialog);
+    assert_eq!(
+        state.app.editor_state().unwrap().export_text(),
+        "unsaved draft"
+    );
+}
+
+#[test]
+fn runtime_size_notice_renders_in_english_and_chinese_at_small_sizes() {
+    let assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    let theme = ui::TundraTheme::default_dark();
+    let requirement = ShellTerminalSizeRequirement {
+        width: 108,
+        height: 20,
+    };
+    for (language, expected) in [
+        ("en-US", "Background tasks continue"),
+        ("zh-CN", "后台任务继续运行"),
+    ] {
+        let snapshot = i18n::LanguageSnapshot::load(&assets, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(Arc::new(snapshot));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_terminal_size_notice(
+                    frame,
+                    requirement.validate((80, 24)).unwrap_err(),
+                    &theme,
+                );
+            })
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("108x20"));
+        assert!(text.contains(expected), "{language}: {text}");
+        for size in [(1, 1), (0, 0)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(size.0, size.1)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_terminal_size_notice(
+                        frame,
+                        requirement.validate(size).unwrap_err(),
+                        &theme,
+                    );
+                })
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn panic_details_show_location_and_handle_missing_reports_and_writer_failure() {
     let root = std::env::temp_dir().join(format!("tundra-panic-details-{}", std::process::id()));
     let (runtime, process) =

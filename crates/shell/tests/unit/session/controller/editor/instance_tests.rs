@@ -547,6 +547,7 @@ fn detached_save_completion_keeps_the_new_editor_and_preserves_failed_recovery()
             std::fs::remove_file(&recovery_path).unwrap();
             std::fs::create_dir(&recovery_path).unwrap();
         }
+        state.notify_status("Saving previous document");
         state
             .editor_task_runtime
             .shared
@@ -561,6 +562,7 @@ fn detached_save_completion_keeps_the_new_editor_and_preserves_failed_recovery()
             })
             .unwrap();
         state.poll_editor_background_tasks(&platform::mock::UnsupportedPlatform);
+        assert!(!state.status().starts_with("Saving"));
         assert_eq!(state.active_page_id(), second);
         assert_eq!(
             state.app.editor_state().unwrap().export_text(),
