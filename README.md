@@ -49,6 +49,8 @@ Click the message area of the bottom status bar to read its full text in a popup
 
 Use an interactive terminal with at least **108 columns × 20 rows** for the default interface. Some applications, including the built-in command line, need more vertical space. Mouse and touch support depend on the terminal in use.
 
+Shrinking a running window pauses interaction behind a size reminder and preserves your work until the window is enlarged. First-use setup and management forms support **F10** to finish; search fields show when **Enter** submits a query.
+
 ### Run a Linux portable build
 
 1. Download the Linux x86_64 portable archive from [GitHub Releases](https://github.com/peixuanthomas/TundraUX3/releases).

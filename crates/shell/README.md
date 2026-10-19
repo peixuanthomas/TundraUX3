@@ -32,6 +32,8 @@
 
 终端模式和子终端由 [terminal-runtime](../terminal-runtime/README.md) 管理；批准、密码和任务执行由 [auto-admin](../auto-admin/README.md) 管理。Shell 保留界面控制，不另建任务监督系统。
 
+运行中窗口小于布局下限时显示尺寸提示并暂停页面输入，保留编辑缓冲、弹窗和计时状态；恢复尺寸后继续。编辑器保存完成同步更新状态及相关文件列表。文件名输入复用共享选区控件，首次设置和管理表单提供 F10 完成，管理搜索明确提示 Enter 提交。
+
 ```mermaid
 flowchart LR
     Input[终端输入] --> Route[路由与当前控制器]
