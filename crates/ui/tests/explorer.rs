@@ -20,6 +20,111 @@ use ui::{
 };
 
 #[test]
+fn quick_access_without_a_current_location_does_not_select_the_trash() {
+    let mut model = sample_model();
+    let mut missing =
+        ExplorerQuickLocationViewModel::new("documents", "Documents", "/missing", "documents");
+    missing.enabled = false;
+    model.quick_locations = vec![
+        missing,
+        ExplorerQuickLocationViewModel::new("trash", "Trash", "", "trash"),
+    ];
+    let bounds = Rect::new(0, 0, 110, 28);
+    let layout = explorer_layout(bounds, &model);
+    let theme = TundraTheme::default_dark();
+    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+    terminal
+        .draw(|frame| ui::render_explorer_content(frame, bounds, &model, &context))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let documents = layout.quick_locations[0].area;
+    let trash = layout.quick_locations[1].area;
+    assert_eq!(
+        buffer[(documents.x, documents.y)].fg,
+        ratatui::style::Color::DarkGray
+    );
+    assert_eq!(buffer[(trash.x, trash.y)].fg, theme.foreground);
+    assert_eq!(buffer[(trash.x, trash.y)].bg, theme.background);
+    assert_eq!(buffer[(trash.x, trash.y)].symbol(), " ");
+}
+
+#[test]
+fn quick_access_current_marker_survives_pointer_focus_and_shared_feedback() {
+    let mut model = sample_model();
+    let mut documents =
+        ExplorerQuickLocationViewModel::new("documents", "Documents", "/documents", "documents");
+    documents.current = true;
+    model.quick_locations = vec![
+        documents,
+        ExplorerQuickLocationViewModel::new("trash", "Trash", "", "trash"),
+    ];
+    let bounds = Rect::new(0, 0, 110, 28);
+    let layout = explorer_layout(bounds, &model);
+    let current = layout.quick_locations[0].area;
+    let trash = layout.quick_locations[1].area;
+    let theme =
+        TundraTheme::default_dark().with_accent_color(ratatui::style::Color::Rgb(100, 140, 180));
+    for (keyboard, hovered, pressed, disabled, expected) in [
+        (true, false, false, false, theme.foreground),
+        (
+            false,
+            true,
+            false,
+            false,
+            ratatui::style::Color::Rgb(100, 140, 180),
+        ),
+        (
+            false,
+            true,
+            true,
+            false,
+            ratatui::style::Color::Rgb(154, 180, 206),
+        ),
+        (false, true, true, true, ratatui::style::Color::DarkGray),
+    ] {
+        model.quick_locations[1].enabled = !disabled;
+        let region = ui::components::ButtonRegion {
+            id: "explorer.quick.1".into(),
+            area: trash,
+            disabled,
+        };
+        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        let mut buttons = ui::components::ButtonFrame::new(
+            hovered.then(|| region.clone()),
+            pressed.then(|| region.clone()),
+            &theme,
+        );
+        buttons.keyboard_focus_visible = keyboard;
+        context.buttons = Some(buttons);
+        let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+        terminal
+            .draw(|frame| ui::render_explorer_content(frame, bounds, &model, &context))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(current.x, current.y)].symbol(), ">");
+        assert_eq!(
+            buffer[(current.x, current.y)].fg,
+            if keyboard {
+                theme.accent_color
+            } else {
+                theme.foreground
+            }
+        );
+        assert_eq!(buffer[(trash.x, trash.y)].symbol(), " ");
+        assert_eq!(buffer[(trash.x, trash.y)].fg, expected);
+        assert!(
+            context
+                .buttons
+                .as_ref()
+                .unwrap()
+                .regions()
+                .contains(&region)
+        );
+    }
+}
+
+#[test]
 fn all_selected_files_keep_their_highlight_in_mouse_mode() {
     for theme in [
         TundraTheme::default_dark(),
@@ -630,6 +735,8 @@ fn explorer_name_dialog_renders_clickable_input_and_actions() {
             title: "Rename".to_string(),
             prompt: "Enter a new name".to_string(),
             value: "README-new.md".to_string(),
+            cursor: 10,
+            selection_anchor: Some(0),
             error: None,
             confirm_label: "Save".to_string(),
             cancel_label: "Cancel".to_string(),

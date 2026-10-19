@@ -23,6 +23,61 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn rename_uses_shared_selection_clipboard_and_cursor_editing() {
+    let fixture = FixtureRoot::new("rename-selection");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let documents = fixture.path().join("Documents");
+    let original = documents.join("notes (2).txt");
+    fs::write(&original, "keep").unwrap();
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("F2"), &platform);
+    let dialog = match state.to_explorer_view_model().overlay.unwrap() {
+        ui::ExplorerOverlayViewModel::Name(dialog) => dialog,
+        other => panic!("expected rename input, got {other:?}"),
+    };
+    assert_eq!(dialog.cursor, "notes (2)".chars().count());
+    assert_eq!(dialog.selection_anchor, Some(0));
+    type_text(&mut state, &platform, "renamed");
+    let name = |state: &ShellSession| match state.to_explorer_view_model().overlay.unwrap() {
+        ui::ExplorerOverlayViewModel::Name(dialog) => dialog.value,
+        other => panic!("expected name input, got {other:?}"),
+    };
+    assert_eq!(name(&state), "renamed.txt");
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    type_text(&mut state, &platform, "full.txt");
+    assert_eq!(name(&state), "full.txt");
+    state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::End,
+            InputModifiers::SHIFT,
+        )),
+        &platform,
+    );
+    state.apply_input_with_platform(ctrl_key('c'), &platform);
+    assert_eq!(platform.read_clipboard_text().unwrap(), "full.txt");
+    state.apply_input_with_platform(ctrl_key('x'), &platform);
+    assert_eq!(name(&state), "");
+    state.apply_input_with_platform(ctrl_key('v'), &platform);
+    assert_eq!(name(&state), "full.txt");
+    for key in ["Home", "Delete", "End", "Backspace"] {
+        state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+    }
+    assert_eq!(name(&state), "ull.tx");
+    state.apply_input_with_platform(ctrl_key('a'), &platform);
+    state.apply_input_with_platform(InputEvent::Paste("中文.txt\n".into()), &platform);
+    assert_eq!(name(&state), "中文.txt");
+    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    assert!(!original.exists());
+    assert_eq!(
+        fs::read_to_string(documents.join("中文.txt")).unwrap(),
+        "keep"
+    );
+}
+
+#[test]
 fn context_menu_shortcut_labels_activate_the_named_actions() {
     let fixture = FixtureRoot::new("context-shortcut-labels");
     let platform = mock_platform(fixture.path());
@@ -214,6 +269,69 @@ fn explorer_reports_account_resolution_failure_without_opening_process_directori
             .error
             .unwrap()
             .contains("Account removed")
+    );
+}
+
+#[test]
+fn explorer_prefers_an_existing_personal_directory_when_documents_is_not_a_directory() {
+    let fixture = FixtureRoot::new("default-personal-directory");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    fs::remove_dir(fixture.path().join("Documents")).unwrap();
+    fs::write(fixture.path().join("Documents"), "not a directory").unwrap();
+    fs::create_dir(fixture.path().join("Downloads")).unwrap();
+    fs::write(fixture.path().join("Downloads/visible.txt"), "visible").unwrap();
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let model = state.to_explorer_view_model();
+    assert_eq!(
+        model.current_path,
+        fixture.path().join("Downloads").to_string_lossy()
+    );
+    assert!(
+        model
+            .entries
+            .iter()
+            .any(|entry| entry.name == "visible.txt")
+    );
+    assert!(
+        model
+            .quick_locations
+            .iter()
+            .any(|location| location.id == "downloads" && location.current)
+    );
+    assert!(!model.is_trash);
+}
+
+#[test]
+fn explorer_without_standard_personal_directories_opens_working_directory() {
+    let fixture = FixtureRoot::new("default-working-directory");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    fs::remove_dir(fixture.path().join("Documents")).unwrap();
+    let working_directory = std::env::current_dir().unwrap();
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let model = state.to_explorer_view_model();
+    assert_eq!(model.current_path, working_directory.to_string_lossy());
+    assert_eq!(
+        state.to_shell_chrome_view_model().status.status,
+        i18n::tr!(
+            "shell-explorer-default-directory-fallback",
+            path = working_directory.display().to_string()
+        )
+    );
+    assert!(!model.is_trash);
+    assert!(
+        model
+            .quick_locations
+            .iter()
+            .all(|location| !location.current)
+    );
+    assert!(state.app_state().explorer_state().unwrap().error.is_none());
+    assert_ne!(
+        state.app_state().explorer_state().unwrap().current_path,
+        platform.app_paths().unwrap().data_path()
     );
 }
 
@@ -1663,6 +1781,7 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
             Some(ui::ExplorerOverlayViewModel::Name(dialog)) => dialog.value,
             other => panic!("expected name input, got {other:?}"),
         };
+        state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
         type_text(&mut state, &platform, "cCxXvVdDntro");
         let model = state.to_explorer_view_model();
         assert!(

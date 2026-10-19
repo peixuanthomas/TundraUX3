@@ -205,14 +205,36 @@ impl ShellSession {
                 return;
             }
         };
-        let start_path = user_dirs.documents().to_path_buf();
-        let start_path = if start_path.exists() {
-            start_path
-        } else {
-            storage.layout().data_path.clone()
-        };
+        let working_directory = std::env::current_dir().ok();
+        let start_path = [
+            user_dirs.documents(),
+            user_dirs.desktop(),
+            user_dirs.downloads(),
+            user_dirs.pictures(),
+            user_dirs.videos(),
+            user_dirs.music(),
+        ]
+        .into_iter()
+        .chain(working_directory.as_deref())
+        .find(|path| std::fs::read_dir(path).is_ok())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| {
+            working_directory
+                .clone()
+                .unwrap_or_else(|| user_dirs.documents().to_path_buf())
+        });
+        let used_fallback = start_path != user_dirs.documents();
 
         self.open_explorer_at(platform, &storage, start_path, ExplorerPurpose::Browse);
+        if used_fallback
+            && let Some(explorer) = self.app.explorer_state()
+            && explorer.error.is_none()
+        {
+            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
+                "shell-explorer-default-directory-fallback",
+                path = explorer.current_path.display().to_string()
+            )));
+        }
     }
 
     pub(in crate::session) fn open_explorer_at(

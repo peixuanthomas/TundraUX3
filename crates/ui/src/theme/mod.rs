@@ -942,6 +942,33 @@ impl TundraTheme {
         Style::default().fg(self.foreground).bg(self.background)
     }
 
+    /// Retain a configured text color when it meets normal-text contrast;
+    /// otherwise move it toward readable black or white on the active canvas.
+    pub fn readable_text_color(&self, preferred: Color) -> Color {
+        let (Some(foreground), Some(background)) = (
+            relative_luminance(preferred),
+            relative_luminance(self.background),
+        ) else {
+            return self.foreground;
+        };
+        let contrast = |luminance: f64| {
+            (luminance.max(background) + 0.05) / (luminance.min(background) + 0.05)
+        };
+        if contrast(foreground) >= 4.5 {
+            return preferred;
+        }
+        let target = contrast_text(self.background).unwrap();
+        if self.color_capability == ColorCapability::Ansi {
+            return target;
+        }
+        let (r, g, b) = color_rgb(preferred).unwrap();
+        let (tr, tg, tb) = color_rgb(target).unwrap();
+        (1..=100)
+            .map(|percent| mix(Color::Rgb(tr, tg, tb), Color::Rgb(r, g, b), percent))
+            .find(|color| contrast(relative_luminance(*color).unwrap()) >= 4.5)
+            .unwrap_or(target)
+    }
+
     pub fn surface_style(&self) -> Style {
         let tokens = self.tokens();
         Style::default().fg(tokens.text).bg(tokens.surface)
@@ -974,7 +1001,18 @@ impl Default for TundraTheme {
 }
 
 fn contrast_text(background: Color) -> Option<Color> {
-    let (red, green, blue) = color_rgb(background)?;
+    let luminance = relative_luminance(background)?;
+    let black_contrast = (luminance + 0.05) / 0.05;
+    let white_contrast = 1.05 / (luminance + 0.05);
+    Some(if black_contrast >= white_contrast {
+        Color::Black
+    } else {
+        Color::White
+    })
+}
+
+fn relative_luminance(color: Color) -> Option<f64> {
+    let (red, green, blue) = color_rgb(color)?;
     let linear = |channel: u8| {
         let channel = f64::from(channel) / 255.0;
         if channel <= 0.04045 {
@@ -983,14 +1021,7 @@ fn contrast_text(background: Color) -> Option<Color> {
             ((channel + 0.055) / 1.055).powf(2.4)
         }
     };
-    let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
-    let black_contrast = (luminance + 0.05) / 0.05;
-    let white_contrast = 1.05 / (luminance + 0.05);
-    Some(if black_contrast >= white_contrast {
-        Color::Black
-    } else {
-        Color::White
-    })
+    Some(0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue))
 }
 
 fn color_rgb(color: Color) -> Option<(u8, u8, u8)> {

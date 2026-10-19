@@ -21,6 +21,111 @@ fn view(text: &str) -> ScreenKeyboardViewModel<'_> {
 }
 
 #[test]
+fn ordinary_key_legends_meet_contrast_without_losing_custom_colors_or_feedback() {
+    use ScreenKeyboardAction::*;
+    for (theme, capabilities, ordinary) in [
+        (
+            TundraTheme::default_dark(),
+            ui::RenderCapabilities::default(),
+            Color::Rgb(109, 127, 134),
+        ),
+        (
+            TundraTheme::default_dark().with_border_color(Color::Rgb(140, 160, 180)),
+            ui::RenderCapabilities::default(),
+            Color::Rgb(140, 160, 180),
+        ),
+        (
+            TundraTheme {
+                background: Color::White,
+                border_color: Color::White,
+                ..Default::default()
+            },
+            ui::RenderCapabilities::default(),
+            Color::Rgb(117, 117, 117),
+        ),
+        (
+            TundraTheme::default_dark(),
+            ui::RenderCapabilities::ansi(),
+            Color::DarkGray,
+        ),
+        (
+            TundraTheme::default_dark().with_border_color(Color::Black),
+            ui::RenderCapabilities::ansi(),
+            Color::White,
+        ),
+    ] {
+        for bounds in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 120, 48)] {
+            let mut context = RenderContext::from_theme(&theme, Default::default(), capabilities);
+            let mut model = view("");
+            model.focus = Letter('w');
+            let (layout, buffer) = draw(bounds, false, &model, &context);
+            let q = key_area(&layout, Letter('q'));
+            let w = key_area(&layout, Letter('w'));
+            let center = |area: Rect| {
+                (
+                    area.x + (area.width - 1) / 2,
+                    area.y + (area.height - 1) / 2,
+                )
+            };
+            assert_eq!(buffer[center(q)].fg, ordinary);
+            assert_eq!(buffer[center(q)].bg, context.theme.canvas);
+            assert_eq!(buffer[center(w)].fg, context.theme.accent);
+            let region = layout
+                .buttons
+                .iter()
+                .find(|key| key.action == Letter('q'))
+                .unwrap()
+                .region();
+            let mut buttons = ButtonFrame::new(
+                Some(region.clone()),
+                Some(region),
+                &context.compatibility_theme(),
+            );
+            buttons.keyboard_focus_visible = false;
+            context.buttons = Some(buttons);
+            let (_, pressed) = draw(bounds, false, &model, &context);
+            assert_eq!(pressed[center(q)].bg, context.theme.accent);
+            assert_eq!(
+                pressed[center(q)].fg,
+                context.theme.filled_style(context.theme.accent).fg.unwrap()
+            );
+            context.buttons.as_mut().unwrap().pressed = None;
+            context.buttons.as_mut().unwrap().hovered = None;
+            let (_, released) = draw(bounds, false, &model, &context);
+            assert_eq!(released[center(q)].fg, ordinary);
+            assert_eq!(released[center(q)].bg, context.theme.canvas);
+            if layout.bordered_buttons {
+                assert_eq!(released[(q.x, q.y)].fg, Color::DarkGray);
+            }
+        }
+    }
+}
+
+#[test]
+fn disabled_keycap_clears_focus_press_and_latch_colors() {
+    let mut theme = TundraTheme::default_dark();
+    theme.foreground = theme.readable_text_color(theme.border_color);
+    theme.border_color = Color::DarkGray;
+    let area = Rect::new(0, 0, 7, 3);
+    let mut button = ui::components::Button::new("disabled-key", "q")
+        .with_pressed_fill(true)
+        .with_latched(true);
+    button.set_focused(true);
+    button.state.selected = true;
+    button.set_disabled(true);
+    let mut buffer = Buffer::empty(area);
+    button.render(area, &mut buffer, &theme);
+    assert_eq!(buffer[(3, 1)].fg, Color::DarkGray);
+    assert_eq!(buffer[(3, 1)].bg, theme.background);
+    assert_eq!(buffer[(0, 0)].fg, Color::DarkGray);
+    assert!(
+        !buffer[(3, 1)]
+            .modifier
+            .contains(ratatui::style::Modifier::DIM)
+    );
+}
+
+#[test]
 fn keycap_frames_follow_corner_preferences_and_legends_use_border_color() {
     for (shape, corner) in [
         (ui::BorderShape::Rounded, "╭"),
@@ -70,7 +175,9 @@ fn keycap_frames_follow_corner_preferences_and_legends_use_border_color() {
                     if pressed {
                         context.theme.filled_style(context.theme.accent).fg.unwrap()
                     } else {
-                        context.theme.border
+                        context
+                            .compatibility_theme()
+                            .readable_text_color(context.theme.border)
                     }
                 );
                 for y in key.area.y..key.area.bottom() {
@@ -625,7 +732,9 @@ fn keycaps_are_literal_and_latches_stay_bright_without_pointer_or_keyboard_focus
                     if action.is_latched(model.modifiers) {
                         context.theme.filled_style(context.theme.accent).fg.unwrap()
                     } else {
-                        context.theme.border
+                        context
+                            .compatibility_theme()
+                            .readable_text_color(context.theme.border)
                     }
                 );
                 assert_eq!(
@@ -699,7 +808,12 @@ fn keys_show_only_the_current_character_with_shift_and_caps_lock() {
                     let center_y = inner.y + inner.height.saturating_sub(1) / 2;
                     assert_eq!(row_text(&buffer, inner, center_y).trim(), expected);
                     for x in inner.x..inner.right() {
-                        assert_eq!(buffer[(x, center_y)].fg, context.theme.border);
+                        assert_eq!(
+                            buffer[(x, center_y)].fg,
+                            context
+                                .compatibility_theme()
+                                .readable_text_color(context.theme.border)
+                        );
                     }
                     assert_eq!(
                         action.character(model.modifiers).unwrap().to_string(),
