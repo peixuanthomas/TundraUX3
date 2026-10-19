@@ -485,6 +485,122 @@ def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, 
     print("PASS: crash reason/version/component/location/report, Q exit and saved report")
 
 
+def check_editor_resize(master, slave, output, child, isolated):
+    directory = isolated / "resize-workflow"
+    directory.mkdir()
+    path = directory / "notes.txt"
+    original = "resize baseline\n"
+    addition = " resize regression unsaved"
+    path.write_text(original)
+
+    offset = len(output)
+    os.write(master, b"e")
+    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+        raise SystemExit("Explorer did not open for the resize regression")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle before the resize regression")
+    offset = len(output)
+    os.write(master, b"\x0c")
+    if not wait_for_output(master, output, b"Absolute path", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("Explorer address input did not open for the resize regression")
+    os.write(master, b"\x01\x1b[200~" + str(directory).encode() + b"\x1b[201~\r")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle at the resize fixture")
+    offset = len(output)
+    os.write(master, b"\r")
+    if not wait_for_output(master, output, b"resize baseline", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("Editor did not open the resize fixture")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not settle before typing")
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 116, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not settle at 116x41")
+    os.write(master, b"\x1b[1;5F\x1b[200~" + addition.encode() + b"\x1b[201~")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not accept the unsaved resize text")
+    if path.read_text() != original:
+        raise SystemExit("resize fixture was saved before requesting a save")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Unsaved document", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("dirty Editor did not show its close confirmation")
+
+    offset = len(output)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output(master, output, b"Terminal is too small (80x24)", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("small-terminal overlay did not render")
+    os.write(master, b"UNEXPECTED_SMALL_TERMINAL_INPUT\r")
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    if child.poll() is not None:
+        raise SystemExit("shrinking the terminal exited the shell")
+    if path.read_text() != original:
+        raise SystemExit("small-terminal input submitted the hidden save dialog")
+
+    offset = len(output)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 116, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output(master, output, b"Unsaved document", child, 5.0, offset, ignore_spaces=True):
+        raise SystemExit("restoring the terminal lost the active close confirmation")
+    deadline = time.monotonic() + 0.75
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    os.write(master, b"\x1b")
+    deadline = time.monotonic() + 0.75
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    os.write(master, b"\x13")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and path.read_text() != original + addition:
+        if child.poll() is not None:
+            raise SystemExit("shell exited before saving the preserved edit")
+        read_available(master, output, 0.05)
+    if path.read_text() != original + addition:
+        raise SystemExit(
+            f"resize save mismatch: expected {original + addition!r}, got {path.read_text()!r}; output:\n"
+            + output_diagnostic(output[offset:])
+        )
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Editor did not settle after saving the preserved edit")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+        raise SystemExit("saved Editor did not return to Explorer")
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle after the editor save")
+    offset = len(output)
+    os.write(master, b"\x1bOQ")
+    if not wait_for_output(master, output, b"Rename", child, 5.0, offset):
+        raise SystemExit("Explorer rename did not open")
+    deadline = time.monotonic() + 0.75
+    while time.monotonic() < deadline:
+        read_available(master, output, 0.05)
+    os.write(master, b"\x01renamed.txt\r")
+    renamed = directory / "renamed.txt"
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not renamed.exists():
+        read_available(master, output, 0.05)
+    if path.exists() or not renamed.exists() or renamed.read_text() != original + addition:
+        raise SystemExit(
+            f"Ctrl+A rename did not replace the complete file name: {list(directory.iterdir())}; output:\n"
+            + output_diagnostic(output[offset:])
+        )
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Explorer did not settle after renaming")
+    offset = len(output)
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Launcher", child, 5.0, offset):
+        raise SystemExit("resize workflow did not return to Home")
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
+    os.kill(child.pid, signal.SIGWINCH)
+    if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
+        raise SystemExit("Home did not settle after the resize workflow")
+    print("PASS: 116x41 to 80x24 preserves unsaved text and dialog; restore, save and Ctrl+A rename succeed")
+
+
 def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) == 2 else "target/debug/tundra-shell")
     if not binary.is_file() or not os.access(binary, os.X_OK):
@@ -642,7 +758,7 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Appearance color input did not close")
         home_offset = len(output)
-        os.write(master, b"\t\t\t\r")
+        os.write(master, b"\x1b[21~")
         if not wait_for_output(
             master, output, b"Explorer", child, 10.0, start_offset=home_offset
         ):
@@ -654,6 +770,7 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle before pointer regression")
 
+        check_editor_resize(master, slave, output, child, isolated)
         check_status_details(master, output, child)
 
         # Exercise the companion CLI launched by the real Shell, not just a
