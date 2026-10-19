@@ -9,6 +9,28 @@ use ui::components::{
 use ui::{InputPhase, KeyModifiers, MouseEvent, TundraTheme};
 
 #[test]
+fn text_input_exposes_unicode_selection_without_inserting_clipboard_shortcuts() {
+    let mut input = TextInput::new("name");
+    input.set_value("中文.txt");
+    input.set_cursor(2);
+    input.set_selection_anchor(Some(0));
+    input.set_focused(true);
+    assert_eq!(input.selected_text().as_deref(), Some("中文"));
+    input.handle_event(
+        InputEvent::Key(ui::KeyInput::with_modifiers(
+            Key::Char('c'),
+            KeyModifiers::CTRL,
+        )),
+        Rect::default(),
+    );
+    assert_eq!(input.value(), "中文.txt");
+    assert_eq!(input.selected_text().as_deref(), Some("中文"));
+    input.handle_event(InputEvent::Paste("new".into()), Rect::default());
+    assert_eq!(input.value(), "new.txt");
+    assert_eq!(input.selected_text(), None);
+}
+
+#[test]
 fn overflowing_scrollbars_keep_drag_travel_on_short_tracks() {
     use ui::components::{Scrollbar, ScrollbarOrientation};
     let vertical = Rect::new(4, 5, 1, 3);

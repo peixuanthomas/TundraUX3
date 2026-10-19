@@ -710,8 +710,12 @@ fn render_explorer_name_dialog(
                     input_area.height.saturating_sub(2),
                 );
 
-                let mut input = TextInput::new("explorer.name.input").with_cursor_symbol("_");
+                let mut input = TextInput::new("explorer.name.input")
+                    .with_cursor_symbol("_")
+                    .with_horizontal_scroll(true);
                 input.set_value(&dialog.value);
+                input.set_cursor(dialog.cursor);
+                input.set_selection_anchor(dialog.selection_anchor);
                 input.set_focused(selection == 0);
                 input.state.hovered = selection == 0;
                 input.render_borderless_frame_with_prefix(frame, input_content, theme, "> ");
@@ -905,10 +909,13 @@ fn render_explorer_search(
     };
 
     let mut input = TextInput::new("explorer.search.input")
+        .with_horizontal_scroll(true)
         .with_placeholder(i18n::tr!("ui-explorer-empty"))
         .with_placeholder_when_focused(true)
         .with_cursor_symbol("_");
     input.set_value(&search.query);
+    input.set_cursor(search.cursor);
+    input.set_selection_anchor(search.selection_anchor);
     input.set_focused(search.active);
     input.state.hovered = search.active;
 

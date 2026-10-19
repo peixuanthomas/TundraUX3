@@ -1911,6 +1911,10 @@ impl ShellSession {
         } else {
             None
         };
+        if let Some(search) = model.search.as_mut().filter(|search| search.active) {
+            search.cursor = self.pages.explorer.explorer_address_cursor;
+            search.selection_anchor = self.pages.explorer.explorer_address_selection_anchor;
+        }
         model.pending_dialog = state.pending_dialog.as_ref().map(|dialog| {
             let (confirm, cancel) = match dialog.kind {
                 app::explorer::ExplorerDialogKind::DeleteToTrash => (
@@ -2007,6 +2011,8 @@ impl ShellSession {
                     title: title.to_string(),
                     prompt: prompt.to_string(),
                     value: self.pages.explorer.explorer_input.clone(),
+                    cursor: self.pages.explorer.explorer_address_cursor,
+                    selection_anchor: self.pages.explorer.explorer_address_selection_anchor,
                     error: state
                         .error
                         .as_ref()

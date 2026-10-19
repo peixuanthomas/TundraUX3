@@ -98,6 +98,14 @@ impl ShellSession {
             .filter(|_| self.overlay_interaction_ready)
         {
             Some(ShellComponent::Management) => ShellCommand::ManagementPaste(value.to_owned()),
+            Some(ShellComponent::Explorer)
+                if matches!(
+                    self.resolved_explorer_overlay(),
+                    Some(overlays::ResolvedExplorerOverlay::Input(_))
+                ) && self.pages.explorer.explorer_overlay_selection == 0 =>
+            {
+                ShellCommand::ExplorerEditInput(InputEvent::Paste(value.to_owned()))
+            }
             Some(ShellComponent::Editor) if self.config_editor_form_visible() => {
                 ShellCommand::EditorPaste(value.to_owned())
             }

@@ -195,7 +195,7 @@ pub enum ShellCommand {
     BeginExplorerNewTextFile,
     BeginExplorerRename,
     AppendExplorerChar(char),
-    ExplorerEditAddress(InputEvent),
+    ExplorerEditInput(InputEvent),
     ExplorerBackspace,
     SubmitExplorerInput,
     CancelExplorerInput,
