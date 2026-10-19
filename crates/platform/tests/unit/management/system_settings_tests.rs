@@ -39,6 +39,7 @@ fn a_missing_system_bus_is_an_environment_limit_with_the_original_diagnostic() {
     let problem = problem::OperationProblem::from_error(&error);
     assert_eq!(problem.next_action, "environment");
     assert!(!problem.detail.is_empty());
+    assert!(!problem.detail.contains("[REDACTED]"));
 }
 
 #[test]

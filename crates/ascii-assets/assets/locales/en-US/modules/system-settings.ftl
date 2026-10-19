@@ -38,7 +38,7 @@ system-settings-hostname-invalid = Use a host name of 1–64 lowercase ASCII let
 system-settings-address-invalid = Enter a server host name or IP address, without a URL, port or configuration directive.
 system-settings-tool-failed = { $tool } is unavailable or failed: { $reason }
 system-settings-service-error = System settings service query failed: { $reason }
-system-settings-environment-error = Host name, system timezone and time synchronization settings cannot be read or changed. Use a Linux environment running systemd and the system D-Bus; authorization cannot resolve missing services.
+system-settings-environment-error = Host name, system timezone and time synchronization settings cannot be read or changed. Use a Linux environment running systemd and the system D-Bus; extra permissions cannot provide missing services.
     Cause: { $reason }
 system-settings-tool-exit = { $tool } did not complete successfully: { $status }
     Standard error: { $errors }
