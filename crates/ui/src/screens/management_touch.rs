@@ -1754,7 +1754,8 @@ pub fn render_management_overlay(
                     }
                 })
                 .collect::<String>();
-            let mut button = Button::new(management_choice_id(form, *index), text);
+            let mut button = Button::new(management_choice_id(form, *index), text)
+                .with_current(!is_menu && *index == choice.selected);
             button.bracketed_label = !is_menu;
             button.set_disabled(choice.disabled.get(*index).copied().unwrap_or(false));
             button.state.selected = *index == choice.selected;

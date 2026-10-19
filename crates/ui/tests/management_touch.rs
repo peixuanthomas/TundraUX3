@@ -2,6 +2,43 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn selected_form_choice_keeps_accent_in_mouse_mode() {
+    let model = ManagementViewModel {
+        form: Some(ManagementForm {
+            identity: "choose-user".into(),
+            choice: Some(ManagementChoices {
+                values: vec!["Alice".into(), "Bob".into()],
+                selected: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let theme = TundraTheme::default().with_accent_color(ratatui::style::Color::Magenta);
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut buttons = components::ButtonFrame::new(None, None, &theme);
+    buttons.keyboard_focus_visible = false;
+    context.buttons = Some(buttons);
+    let area = Rect::new(0, 0, 120, 40);
+    let layout = management_layout(area, &model);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| render_management_overlay(frame, area, &model, &context))
+        .unwrap();
+    for (index, row) in layout.choice_rows {
+        assert_eq!(
+            terminal.backend().buffer()[(row.x, row.y)].fg,
+            if index == 1 {
+                theme.accent_color
+            } else {
+                theme.foreground
+            }
+        );
+    }
+}
+
+#[test]
 fn management_selection_stays_visible_while_actions_have_focus_in_mouse_mode() {
     let model = ManagementViewModel {
         columns: vec!["Name".into()],
