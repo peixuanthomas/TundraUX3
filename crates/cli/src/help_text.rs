@@ -1,127 +1,11 @@
 use std::io::Write;
 
 pub(crate) fn write_help(output: &mut impl Write) -> std::io::Result<()> {
-    writeln!(output, "TundraUX3 CLI")?;
-    writeln!(output, "{}", i18n::tr!("cli-administration-root-usage"))?;
-    writeln!(
-        output,
-        "  cls     Clear terminal history and screen, then move the cursor home"
-    )?;
-    writeln!(
-        output,
-        "  config  Read, set, reset, or list values for UX settings; run config help"
-    )?;
-    writeln!(
-        output,
-        "  debug   Diagnostics and test commands; run debug help for details"
-    )?;
-    writeln!(
-        output,
-        "  new     Clear saved TundraUX3 data and recreate initial storage"
-    )?;
-    writeln!(
-        output,
-        "  repl    Enter the interactive command loop; system commands run by default, /<command> runs a UX command, exit leaves"
-    )?;
-    writeln!(
-        output,
-        "          System commands keep exported environment variables and the working directory until you leave this REPL."
-    )?;
-    writeln!(
-        output,
-        "  logs    Query runtime logs and incidents, or export diagnostics; run logs help"
-    )?;
-    writeln!(
-        output,
-        "  launcher  List, pin, or unpin applications; run launcher help"
-    )?;
-    writeln!(
-        output,
-        "  help [command]  Show help, for example: help config or help debug doctor"
-    )?;
-    writeln!(output, "  -h, --help      Show help")?;
-    writeln!(output, "  -V, --version   Show version")?;
-    writeln!(
-        output,
-        "\nUse <command> --help (or -h) for syntax, values, and examples."
-    )?;
-    writeln!(
-        output,
-        "In Command Line / repl, use / for UX commands: /config set motion reduced; /help shows UX help."
-    )?;
-    writeln!(
-        output,
-        "System commands need no prefix there: pwd, ls -la (Linux/macOS), dir (Windows). External CLI calls need no /: tundra-cli config set motion reduced."
-    )?;
-    writeln!(
-        output,
-        "Exit status: 0 success, 1 operation failed, 2 invalid arguments; logs may also return 3/130 (see logs help)."
-    )
+    writeln!(output, "{}", i18n::tr!("startup-cli-help"))
 }
 
 pub(crate) fn write_debug_help(output: &mut impl Write) -> std::io::Result<()> {
-    writeln!(output, "Usage: tundra-cli debug <command>")?;
-    writeln!(
-        output,
-        "  screen-keyboard  Try an English QWERTY keyboard with temporary text"
-    )?;
-    writeln!(
-        output,
-        "  test-aa-style1  AA preview: dimmed page + centered caution frame"
-    )?;
-    writeln!(
-        output,
-        "  test-aa-style2  AA preview: dimmed page + wide hazard banner"
-    )?;
-    writeln!(
-        output,
-        "  test-aa-style3  AA preview: dimmed page + split AA authorization panel"
-    )?;
-    writeln!(
-        output,
-        "  clear-logs <all|TYPE|--file PATH> [--yes]  Preview or clear runtime, incidents, snapshots, or legacy logs"
-    )?;
-    writeln!(
-        output,
-        "  view-ui-style [1|2|3]  Compare interactive UI styles and animations"
-    )?;
-    writeln!(
-        output,
-        "  asset   Print test assets or their original source files"
-    )?;
-    writeln!(
-        output,
-        "  doctor  Diagnose terminal, storage, and Linux runtime/tools; warnings are optional features"
-    )?;
-    writeln!(output, "  paths   Print configured and resolved app paths")?;
-    writeln!(
-        output,
-        "  explain Show CLI startup flow and kernel/UI boundaries"
-    )?;
-    writeln!(
-        output,
-        "  test-frost  Play only the startup frost banner animation"
-    )?;
-    writeln!(
-        output,
-        "  test-matrix Play only the first-run Matrix banner animation"
-    )?;
-    writeln!(
-        output,
-        "  test-watchdog-error    Write an intentional error report"
-    )?;
-    writeln!(
-        output,
-        "  test-watchdog-critical Write an intentional critical error report"
-    )?;
-    writeln!(
-        output,
-        "  test-watchdog-panic    Trigger a real panic; the current session is discarded"
-    )?;
-    writeln!(
-        output,
-        "Error tests print JSON/text report paths. Panic tests enter the normal critical-error flow; embedded tests panic the Shell session."
-    )
+    writeln!(output, "{}", i18n::tr!("startup-cli-debug-help"))
 }
 
 pub(crate) fn write_ui_style_help(output: &mut impl Write) -> std::io::Result<()> {
@@ -284,61 +168,7 @@ pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, cra
 }
 
 pub(crate) fn write_config_help(output: &mut impl Write) -> std::io::Result<()> {
-    writeln!(
-        output,
-        "Usage: tundra-cli config [get [field] | set <field> <value> | reset <field> | options [field]]"
-    )?;
-    writeln!(
-        output,
-        "No arguments prints settings. reset restores only the named field. theme is a read-only color summary."
-    )?;
-    writeln!(output, "Fields and values:")?;
-    writeln!(output, "  border-shape       rounded | square")?;
-    writeln!(
-        output,
-        "  border-color       default | named color (e.g. light-cyan) | #RRGGBB"
-    )?;
-    writeln!(
-        output,
-        "  accent-color       default | named color | #RRGGBB"
-    )?;
-    writeln!(
-        output,
-        "  icon-mode          ascii | image (image needs terminal graphics support)"
-    )?;
-    writeln!(output, "  motion             full | reduced")?;
-    writeln!(
-        output,
-        "  animation-speed    50..200 percent, in steps of 25; default 100"
-    )?;
-    writeln!(
-        output,
-        "  language           installed locale code; config options language lists choices"
-    )?;
-    writeln!(
-        output,
-        "  timezone / address timezone ID or city label; config options timezone lists choices"
-    )?;
-    writeln!(
-        output,
-        "  weather-location   English address in quotes (max 120 chars) | auto (follow timezone location)"
-    )?;
-    writeln!(
-        output,
-        "  update-mode        release | beta (Linux only; saves choice, does not start an update)"
-    )?;
-    writeln!(
-        output,
-        "address changes the timezone. weather-location changes only weather; it does not change system time."
-    )?;
-    writeln!(
-        output,
-        "Examples:\n  tundra-cli config set motion reduced\n  tundra-cli config set animation-speed 125\n  tundra-cli config set weather-location \"Shanghai, China\"\n  tundra-cli config reset weather-location\n  tundra-cli config set accent-color \"#38bdf8\""
-    )?;
-    writeln!(
-        output,
-        "Changes use the current OS user's config. Restart a running TundraUX3 UI to apply them. Identity/password fields are not exposed."
-    )
+    writeln!(output, "{}", i18n::tr!("startup-cli-config-help"))
 }
 
 pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io::Result<()> {
@@ -422,5 +252,47 @@ pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std:
         },
         Some("logs") => crate::logs_command::write_logs_help(output),
         _ => write_help(output),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chinese_root_debug_config_and_packages_help_keep_command_syntax() {
+        let language = i18n::LanguageSnapshotData {
+            code: "zh-CN".into(),
+            generation: 1,
+            current: vec![include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/regression-startup.ftl")).into(), include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/management-cli-administration.ftl")).into()],
+            english: vec![],
+        }.restore().unwrap();
+        i18n::with_snapshot(&std::sync::Arc::new(language), || {
+            for (writer, expected, syntax) in [
+                (
+                    write_help as fn(&mut Vec<u8>) -> std::io::Result<()>,
+                    "命令行",
+                    "/config set motion reduced",
+                ),
+                (write_debug_help, "检查终端", "doctor"),
+                (
+                    write_config_help,
+                    "字段与取值",
+                    "config set animation-speed 125",
+                ),
+            ] {
+                let mut output = Vec::new();
+                writer(&mut output).unwrap();
+                let text = String::from_utf8(output).unwrap();
+                assert!(text.contains(expected), "{text}");
+                assert!(text.contains(syntax), "{text}");
+                assert!(!text.contains("[startup-cli"));
+            }
+            let mut output = Vec::new();
+            crate::management_command::help(&mut output, "packages").unwrap();
+            let text = String::from_utf8(output).unwrap();
+            assert!(text.contains("软件源"));
+            assert!(text.contains("--apply --expected-version"));
+        });
     }
 }

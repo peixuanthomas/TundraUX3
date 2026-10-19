@@ -171,16 +171,20 @@ impl ShellSession {
     pub(in crate::session) fn set_update_error(&mut self, message: impl Into<i18n::LocalizedText>) {
         self.update_restart_requested = false;
         let message = message.into();
+        // Keep backend diagnostics intact while adding context to the UI.
+        let diagnostic = match &message {
+            i18n::LocalizedText::Raw(raw) => raw.clone(),
+            i18n::LocalizedText::Message(message) => format!("{} {:?}", message.id, message.args),
+        };
+        let message = i18n::LocalizedText::from(i18n::msg!(
+            "startup-update-error-explanation",
+            details = message
+        ));
         self.settings_update_state.busy = false;
         self.settings_update_state.phase = Some(app::update::UpdatePhase::Failed);
         self.settings_update_state.status =
             i18n::msg!("settings-update-failed", reason = message.clone()).into();
         self.settings_update_state.error = Some(message.clone());
-        // Diagnostic output uses raw external text or stable message identity, never translated UI text.
-        let diagnostic = match &message {
-            i18n::LocalizedText::Raw(raw) => raw.clone(),
-            i18n::LocalizedText::Message(message) => format!("{} {:?}", message.id, message.args),
-        };
         self.settings_update_state
             .append_output(&format!("ERROR: {diagnostic}"));
         self.notify_status(i18n::msg!("settings-update-failed", reason = message));

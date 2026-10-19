@@ -627,7 +627,33 @@ fn unsupported_default_image_mode_is_persisted_as_ascii_after_login() {
         storage::IconDisplayMode::Ascii
     );
 
+    for probe in [
+        ui::TerminalGraphicsProbeStatus::Unsupported,
+        ui::TerminalGraphicsProbeStatus::NoResponse {
+            reason: "timeout".into(),
+        },
+    ] {
+        let mut restarted = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+        restarted.storage_manager = Some(storage.clone());
+        restarted.pages.login.login_username = "AdminUser".into();
+        restarted.apply_terminal_graphics_startup_policy(&probe);
+        assert!(!restarted.pending_default_ascii_icon_fallback);
+        assert!(restarted.to_notification_view_model().is_none());
+    }
+
     platform::cleanup_temp_path(&root).expect("clean fixture");
+}
+
+#[test]
+fn first_setup_keeps_language_and_appearance_selection_free_of_graphics_dialogs() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+    state.set_navigation_path(vec![ShellScreen::FirstRunSetup]);
+    for step in [ui::SetupStep::Language, ui::SetupStep::Appearance] {
+        state.pages.setup.setup_step = step;
+        state.apply_terminal_graphics_startup_policy(&ui::TerminalGraphicsProbeStatus::Unsupported);
+        assert!(state.to_notification_view_model().is_none());
+        assert!(!state.pending_default_ascii_icon_fallback);
+    }
 }
 
 fn install_temporary_storage(state: &mut ShellSession) -> std::path::PathBuf {

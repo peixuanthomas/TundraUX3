@@ -21,7 +21,7 @@ impl ShellSession {
             Err(error) => {
                 self.app
                     .dispatch_at(app::AppCommand::ApplyTimeSync(Err(error)), Instant::now());
-                self.show_time_sync_failure_dialog(i18n::msg!("time-sync-network-failed"));
+                self.report_time_sync_fallback(i18n::msg!("time-sync-network-failed"));
             }
         }
         self.restore_clock_profile_after_initial_sync();
@@ -48,18 +48,26 @@ impl ShellSession {
         message: impl Into<i18n::LocalizedText>,
     ) {
         self.time_sync_attempted = true;
-        self.last_time_sync_utc = None;
-        let app_snapshot = self.app.snapshot();
-        let timezone_id = app_snapshot.clock_timezone_id.map(str::to_owned);
-        self.app.dispatch_at(
-            app::AppCommand::SetClockTimezone {
-                timezone_id,
-                synchronized_utc: None,
-            },
-            Instant::now(),
-        );
-        self.show_time_sync_failure_dialog(message);
+        if self.last_time_sync_utc.is_none() {
+            let app_snapshot = self.app.snapshot();
+            let timezone_id = app_snapshot.clock_timezone_id.map(str::to_owned);
+            self.app.dispatch_at(
+                app::AppCommand::SetClockTimezone {
+                    timezone_id,
+                    synchronized_utc: None,
+                },
+                Instant::now(),
+            );
+        }
+        self.report_time_sync_fallback(message);
         self.restore_clock_profile_after_initial_sync();
+    }
+
+    fn report_time_sync_fallback(&mut self, message: impl Into<i18n::LocalizedText>) {
+        let message = message.into();
+        let message = i18n::msg!("startup-time-sync-fallback", reason = message);
+        self.time_sync_failure_message = Some(message.clone().into());
+        self.notify_status(message);
     }
 
     pub(in crate::session) fn apply_time_sync_success_utc(&mut self, utc: DateTime<Utc>) {
@@ -82,7 +90,7 @@ impl ShellSession {
             }
         }
 
-        if self.time_sync_dialog_visible {
+        if self.time_sync_failure_message.is_some() {
             self.time_sync_dialog_visible = false;
             self.time_sync_failure_message = None;
             self.notification_dismiss_modal_by_key(TIME_SYNC_NOTIFICATION_KEY);

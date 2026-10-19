@@ -738,3 +738,30 @@ fn overview_shows_usage_graphs_and_preserves_missing_and_stale_states() {
         );
     }
 }
+
+#[test]
+fn overview_summary_labels_unavailable_system_and_os_values() {
+    let mut m = model();
+    m.route = SystemStatusRoute::Detail(SystemStatusDetail::Overview);
+    m.dashboard.overview_metrics = vec![widget(
+        SystemStatusWidgetKind::Cpu,
+        SystemStatusWidgetSize::Small,
+        0,
+        0,
+    )];
+    let mut overview = widget(
+        SystemStatusWidgetKind::SystemOverview,
+        SystemStatusWidgetSize::Large,
+        0,
+        0,
+    );
+    overview.primary = "Healthy".into();
+    overview.compact_rows = vec![
+        vec![i18n::tr!("shell-system"), "Unavailable".into()],
+        vec![i18n::tr!("shell-os"), "Unavailable".into()],
+    ];
+    m.dashboard.wide_widgets = vec![overview];
+    let output = render(120, 40, &m);
+    assert!(output.contains("System: Unavailable"), "{output}");
+    assert!(output.contains("OS: Unavailable"), "{output}");
+}

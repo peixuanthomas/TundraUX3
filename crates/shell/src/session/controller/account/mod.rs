@@ -1066,7 +1066,11 @@ impl ShellSession {
             border_shape: self.pages.setup.setup_border_shape,
             border_color: self.pages.setup.setup_theme_color,
             accent_color: self.pages.setup.setup_accent_color,
-            icon_display_mode: storage::IconDisplayMode::Image,
+            icon_display_mode: if self.terminal_image_support {
+                storage::IconDisplayMode::Image
+            } else {
+                storage::IconDisplayMode::Ascii
+            },
             ..storage::AppearanceConfig::default()
         };
         let users = UserService::with_debug_policy(storage.clone(), self.debug_policy)

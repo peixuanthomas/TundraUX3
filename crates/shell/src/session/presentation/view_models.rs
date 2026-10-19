@@ -867,6 +867,9 @@ impl ShellSession {
                 let (widget_state, sensors) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(sensors) = sensors {
+                    if sensors.is_empty() {
+                        model.primary = i18n::tr!("startup-temperature-unavailable");
+                    }
                     let hottest = sensors
                         .iter()
                         .filter(|sensor| sensor.temperature_celsius.is_finite())
@@ -910,6 +913,9 @@ impl ShellSession {
                 let (widget_state, batteries) = metric_widget_state(state, can_view_all);
                 model.state = widget_state;
                 if let Some(batteries) = batteries {
+                    if batteries.is_empty() {
+                        model.primary = i18n::tr!("startup-battery-unavailable");
+                    }
                     if let Some(battery) = batteries.first() {
                         model.progress_percent =
                             Some(battery.charge_percent.round().clamp(0.0, 100.0) as u16);
@@ -1232,7 +1238,12 @@ impl ShellSession {
                             diagnostics_public_check_summary(check)
                         },
                         detail: if can_view_details {
-                            check.detail.clone()
+                            format!(
+                                "{}: {}\n{}",
+                                check.status.localized_label().render_current(),
+                                check.localized_summary().render_current(),
+                                check.detail
+                            )
                         } else {
                             String::new()
                         },

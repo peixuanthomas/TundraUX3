@@ -810,11 +810,11 @@ fn modal_follow_up_focus_change_is_not_overwritten_by_focus_restore() {
 }
 
 #[test]
-fn time_sync_modal_close_and_programmatic_dismiss_restore_previous_focus() {
+fn automatic_time_sync_failure_and_recovery_preserve_previous_focus() {
     let mut closed = ShellSession::new(debug_config(), (120, 40));
     focus_clock_button(&mut closed);
     closed.apply_time_sync_failure_for_test("Time sync unavailable");
-    closed.apply_input(InputEvent::from_key_label("Esc"));
+    assert!(!closed.time_sync_failure_dialog_visible());
     assert_eq!(closed.focused_component(), ShellComponent::ClockButton);
 
     let mut dismissed = ShellSession::new(debug_config(), (120, 40));
@@ -1047,28 +1047,24 @@ fn keyboard_activation_opens_clock_and_escape_closes_it() {
 }
 
 #[test]
-fn time_sync_failure_helper_shows_and_closes_dialog() {
+fn automatic_time_sync_failure_keeps_navigation_available_and_explains_fallback() {
     let mut state = ShellSession::new(debug_config(), (120, 40));
-
-    state.apply_time_sync_failure_for_test("联网校准时间失败");
-
-    assert!(state.time_sync_failure_dialog_visible());
-    assert_eq!(
-        state.time_sync_failure_message().as_deref(),
-        Some("联网校准时间失败")
-    );
-    assert_eq!(state.status(), "联网校准时间失败");
-    assert_eq!(state.focused_component(), ShellComponent::TimeSyncDialog);
-    assert!(state.to_time_sync_dialog_view_model().is_some());
-
-    state.apply_input(InputEvent::from_key_label("Esc"));
+    let focus = state.focused_component();
+    state.apply_time_sync_failure_for_test("offline");
 
     assert!(!state.time_sync_failure_dialog_visible());
-    assert_eq!(state.time_sync_failure_message(), None);
-    assert_eq!(
-        state.last_command(),
-        Some(&ShellCommand::CloseTimeSyncDialog)
+    assert!(state.to_time_sync_dialog_view_model().is_none());
+    assert_eq!(state.focused_component(), focus);
+    assert!(state.status().contains("system clock"));
+    assert!(state.status().contains("Settings"));
+    assert!(
+        state
+            .time_sync_failure_message()
+            .unwrap()
+            .contains("offline")
     );
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_ne!(state.focused_component(), focus);
 }
 
 #[test]
@@ -1083,6 +1079,7 @@ fn successful_time_sync_clears_failure_dialog_and_updates_anchor() {
     state.apply_time_sync_utc_for_test(utc);
 
     assert!(!state.time_sync_failure_dialog_visible());
+    assert_eq!(state.time_sync_failure_message(), None);
     assert_eq!(state.current_time_label(), "2026-07-09 15:30");
 }
 

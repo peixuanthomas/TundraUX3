@@ -2529,7 +2529,7 @@ fn system_status_modal_focus_traps_and_restores_page_focus() {
         ShellComponent::SystemStatus
     );
 
-    state.apply_time_sync_failure_for_test("offline");
+    state.show_time_sync_failure_dialog("offline");
     state.refresh_hit_map();
     assert_eq!(state.focus_order(), vec![ShellComponent::TimeSyncDialog]);
     state.move_focus(ui::FocusDirection::Previous);
@@ -5248,7 +5248,8 @@ fn cached_time_sync_replays_into_recreated_shell_state() {
     let mut failed_state = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
     CachedTimeSyncResult::Failure.apply_to_state_at(&mut failed_state, replayed_at);
     assert!(failed_state.time_sync_attempted);
-    assert!(failed_state.time_sync_failure_dialog_visible());
+    assert!(!failed_state.time_sync_failure_dialog_visible());
+    assert!(failed_state.status().contains("system clock"));
 }
 
 #[test]

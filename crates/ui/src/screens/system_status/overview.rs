@@ -34,8 +34,7 @@ pub(super) fn render_overview(
                 row.first()
                     .is_some_and(|label| identity_labels.contains(label))
             })
-            .filter_map(|row| row.get(1))
-            .cloned()
+            .filter_map(|row| Some(format!("{}: {}", row.first()?, row.get(1)?)))
             .collect::<Vec<_>>()
             .join(" · ");
         frame.render_widget(
