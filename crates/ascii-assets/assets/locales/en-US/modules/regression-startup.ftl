@@ -26,6 +26,7 @@ startup-cli-help = TundraUX3 CLI
     System commands need no prefix there: pwd, ls -la (Linux/macOS), dir (Windows). External CLI calls need no /: tundra-cli config set motion reduced.
     Exit status: 0 success, 1 operation failed, 2 invalid arguments; logs may also return 3/130 (see logs help).
 startup-cli-debug-help = Usage: tundra-cli debug <command>
+    { "  " }ui-test  { ui-test-summary }
     { "  " }screen-keyboard  Try an English QWERTY keyboard with temporary text
     { "  " }test-aa-style1  AA preview: dimmed page + centered caution frame
     { "  " }test-aa-style2  AA preview: dimmed page + wide hazard banner

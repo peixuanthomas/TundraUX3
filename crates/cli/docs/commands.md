@@ -35,6 +35,7 @@ tundra-cli <command> [options]
 | `debug test-frost` / `debug test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
 | `debug view-ui-style [1\|2\|3]` | 不带数字时列出样式；带数字时进入交互 UI / 动画对比预览，不保存设置。 |
 | `debug screen-keyboard` | 外部终端中的英文屏幕键盘与 AA 输入演示；不连接应用表单。 |
+| `debug ui-test` | 六页共享控件展示，使用内置主题、英文和示例数据，不读写配置、语言文件、日志或状态；F1–F6 翻页，Esc 退出，最小 88 列 × 30 行。 |
 | `debug test-aa-style1` / `debug test-aa-style2` / `debug test-aa-style3` | AA 弹窗样式演示：三种方案都会压暗背景，分别使用居中双线警戒框、宽幅警戒条、带 AA 标识的分栏授权面板；按 B 对比背景遮罩前后。C/R/F 查看确认、执行中、结束状态；Tab/方向键与鼠标选择按钮，Enter 使用，Esc 退出。仅模拟，不执行命令、不保存样式；正式 AA 已采用 style3 的视觉效果，并保留真实操作提示和随内容收缩的布局。 |
 | `debug` / `debug help` | 查看所有调试命令。 |
 | `debug test-watchdog-error` | 主动生成普通错误报告。 |

@@ -2,3 +2,4 @@
 pub(crate) mod auto_admin;
 pub(crate) mod screen_keyboard;
 pub(crate) mod style;
+pub(crate) mod ui_test;

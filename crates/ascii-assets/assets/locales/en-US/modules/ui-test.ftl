@@ -1,0 +1,65 @@
+ui-test-summary = Browse all public shared UI controls with sample data
+ui-test-help = Usage: tundra-cli debug ui-test
+    Show shared controls across six pages using the built-in dark theme and embedded English text.
+    F1-F6 or PageUp/PageDown switch pages; click the bottom buttons to switch with a mouse or touch.
+    Tab/Shift+Tab moves focus; arrows select items; type or paste in the text field and command palette.
+    Esc, Ctrl+C or Exit closes the preview and restores the terminal. Minimum size: 88 columns x 30 rows.
+    All values are temporary samples. No configuration, theme, language files, logs or saved state are read or written.
+ui-test-terminal-required = debug ui-test requires an interactive terminal (stdin and stdout).
+ui-test-title = Shared UI controls — debug ui-test
+ui-test-keys = F1-F6 / PgUp / PgDn: pages · Tab / Shift+Tab: focus · Arrows: select · Esc: exit
+ui-test-small = Enlarge the terminal to at least 88 columns x 30 rows.
+ui-test-safe = Sample data only; actions do not change files or settings.
+ui-test-activated = Demo action activated; no files or settings were changed.
+ui-test-basic = Basic
+ui-test-selection = Selection
+ui-test-navigation = Navigate
+ui-test-feedback = Feedback
+ui-test-popups = Popups
+ui-test-progress = Progress
+ui-test-exit = Exit Esc
+ui-test-buttons = Button · state samples
+ui-test-normal = Normal
+ui-test-focused = Focused
+ui-test-hovered = Hovered
+ui-test-pressed = Pressed
+ui-test-selected = Selected
+ui-test-disabled = Disabled
+ui-test-text-input = TextInput / TextField · editable
+ui-test-type = Type here
+ui-test-input-value = Hello, 世界 — editable text
+ui-test-surface = Surface · raised background and border
+ui-test-surface-detail = Shared surfaces provide the background, title and border used by other controls.
+ui-test-panel = Panel · titled surface
+ui-test-wide-text = Latin ABC · 中文宽字符 · 12345
+ui-test-list = List / ListItem / Scrollbar
+ui-test-table = DataTable
+ui-test-tabs = Tabs / TabItem
+ui-test-picker = Picker
+ui-test-nav-rail = NavRail / NavRailItem
+ui-test-workspace = SidebarWorkspaceLayout
+ui-test-empty = EmptyState
+ui-test-no-items = No items to display
+ui-test-skeleton = Skeleton · CommandStatus
+ui-test-pending = Pending
+ui-test-succeeded = Succeeded
+ui-test-failed = Failed
+ui-test-info = Toast · Information
+ui-test-success = Toast · Success
+ui-test-warning = Toast · Warning
+ui-test-danger = Toast · Danger
+ui-test-dialog = Dialog / DialogAction
+ui-test-confirm = Confirm
+ui-test-cancel = Cancel
+ui-test-context-menu = ContextMenu / ContextMenuItem
+ui-test-gauge = ProgressGauge · 0%, 45%, 100%
+ui-test-metric = MetricCard
+ui-test-sample-data = Simulated values · no real task is running
+ui-test-download = Download 75%
+ui-test-build = Build 30%
+ui-test-update = UpdateActivity / UpdateMeterViewModel
+ui-test-first = First item
+ui-test-second = Second item
+ui-test-third = Third item
+ui-test-name = Name
+ui-test-value = Value

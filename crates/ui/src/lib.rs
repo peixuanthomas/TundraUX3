@@ -16,6 +16,7 @@ pub use table_sort::{
 
 pub mod components;
 pub mod style_preview;
+pub mod ui_test;
 
 pub use assets::*;
 pub use editor_media::{

@@ -94,6 +94,8 @@ cargo run --locked -p cli --bin tundra-cli -- --help
 cargo run --locked -p cli --bin tundra-cli -- debug doctor
 ```
 
+Preview shared controls with `tundra-cli debug ui-test` in a terminal of at least 88 × 30 cells. F1–F6 switch pages; Esc exits. It uses built-in sample data, theme and English text without reading or writing configuration, language files, logs or saved state.
+
 Build both packages: the shell uses the companion CLI for the built-in command line and Linux management tasks. For build, test, and packaging details, see the [technical documentation](docs/README-TECHNICAL.md).
 
 ## Current limits

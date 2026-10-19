@@ -2,6 +2,23 @@
 
 预览由 CLI 命令启动，Shell 和 UI 提供界面；关闭后恢复终端。它们不执行真实管理任务。
 
+## 全部共享控件
+
+运行 `tundra-cli debug ui-test`，或从源码运行 `cargo run --locked -p cli --bin tundra-cli -- debug ui-test`。此命令直接启动演示，跳过 Linux 启动确认、配置和日志初始化；使用内置深色主题及内置英文，不读取或保存用户状态，也不依赖磁盘上的语言和主题资源。
+
+F1–F6、PageUp/PageDown 或底部按钮切换六页；Tab/Shift+Tab 切换焦点，方向键选择，输入框和命令面板可输入或粘贴。Esc、Ctrl+C 或退出按钮结束。终端至少需要 88 列 × 30 行，推荐 120 列 × 36 行；窗口过小时显示尺寸提醒，放大后恢复。弹窗页将三个控件作为并排样例持续显示，操作后保留样例，不执行真实任务。
+
+| 页面 | 控件 |
+| --- | --- |
+| 基础 | Button 的普通、焦点、悬停、按下、选中、禁用状态；TextInput（TextField 别名）、Surface、Panel |
+| 选择 | List、DataTable、Tabs、Picker、垂直和水平 Scrollbar |
+| 导航 | NavRail、SidebarWorkspaceLayout，随宽度改变导航和分栏位置 |
+| 提示 | EmptyState、Skeleton、CommandStatus、四种 Toast |
+| 弹窗 | Dialog、ContextMenu、CommandPalette |
+| 进度 | ProgressGauge、MetricCard、UpdateActivity |
+
+展示范围为 `ui::components` 导出的公共可绘制控件；项目专用页面和编辑器内部绘制不属于此清单。入口为 `crates/shell/src/previews/ui_test.rs`，控件组合为 `crates/ui/src/ui_test.rs`。
+
 ## 屏幕键盘
 
 外部终端运行 `tundra-cli debug screen-keyboard`。此独立演示只操作本次演示文本，不能在内嵌 Command Line 运行；“测试 AA”不执行命令或申请授权。实际 AA 弹窗和命令行页面已有独立的[屏幕键盘入口](session.md#aa-与命令行的屏幕键盘)。

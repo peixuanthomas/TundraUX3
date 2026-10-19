@@ -1,0 +1,65 @@
+ui-test-summary = 使用示例数据展示全部公共 UI 控件
+ui-test-help = 用法：tundra-cli debug ui-test
+    使用内置深色主题和内置英文，在六个页面中展示共享控件。
+    F1-F6 或 PageUp/PageDown 切换页面；鼠标或触屏可点击底部按钮切换。
+    Tab/Shift+Tab 切换焦点；方向键选择项目；输入框和命令面板支持输入与粘贴。
+    Esc、Ctrl+C 或退出按钮关闭演示并恢复终端。最小尺寸：88 列 × 30 行。
+    所有数据都是临时示例，不读写配置、主题、语言文件、日志或保存的状态。
+ui-test-terminal-required = debug ui-test 需要交互式终端（标准输入和标准输出）。
+ui-test-title = 共享 UI 控件 — debug ui-test
+ui-test-keys = F1-F6 / PgUp / PgDn：翻页 · Tab / Shift+Tab：焦点 · 方向键：选择 · Esc：退出
+ui-test-small = 请将终端放大到至少 88 列 × 30 行。
+ui-test-safe = 仅使用示例数据，操作不会改变文件或设置。
+ui-test-activated = 已触发演示操作，没有改变文件或设置。
+ui-test-basic = 基础
+ui-test-selection = 选择
+ui-test-navigation = 导航
+ui-test-feedback = 提示
+ui-test-popups = 弹窗
+ui-test-progress = 进度
+ui-test-exit = 退出 Esc
+ui-test-buttons = Button · 状态示例
+ui-test-normal = 普通
+ui-test-focused = 焦点
+ui-test-hovered = 悬停
+ui-test-pressed = 按下
+ui-test-selected = 选中
+ui-test-disabled = 禁用
+ui-test-text-input = TextInput / TextField · 可编辑
+ui-test-type = 在此输入
+ui-test-input-value = Hello, 世界 — 可编辑文字
+ui-test-surface = Surface · 抬高的背景和边框
+ui-test-surface-detail = 共享背景提供其他控件使用的底色、标题和边框。
+ui-test-panel = Panel · 带标题的背景
+ui-test-wide-text = Latin ABC · 中文宽字符 · 12345
+ui-test-list = List / ListItem / Scrollbar
+ui-test-table = DataTable
+ui-test-tabs = Tabs / TabItem
+ui-test-picker = Picker
+ui-test-nav-rail = NavRail / NavRailItem
+ui-test-workspace = SidebarWorkspaceLayout
+ui-test-empty = EmptyState
+ui-test-no-items = 没有可显示的项目
+ui-test-skeleton = Skeleton · CommandStatus
+ui-test-pending = 等待
+ui-test-succeeded = 成功
+ui-test-failed = 失败
+ui-test-info = Toast · 普通提示
+ui-test-success = Toast · 成功提示
+ui-test-warning = Toast · 警告提示
+ui-test-danger = Toast · 危险提示
+ui-test-dialog = Dialog / DialogAction
+ui-test-confirm = 确认
+ui-test-cancel = 取消
+ui-test-context-menu = ContextMenu / ContextMenuItem
+ui-test-gauge = ProgressGauge · 0%、45%、100%
+ui-test-metric = MetricCard
+ui-test-sample-data = 模拟数值，没有运行真实任务
+ui-test-download = 下载 75%
+ui-test-build = 编译 30%
+ui-test-update = UpdateActivity / UpdateMeterViewModel
+ui-test-first = 第一个项目
+ui-test-second = 第二个项目
+ui-test-third = 第三个项目
+ui-test-name = 名称
+ui-test-value = 数值

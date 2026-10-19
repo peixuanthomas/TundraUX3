@@ -394,6 +394,7 @@ fn next_words(words: &[String]) -> Vec<String> {
                 "test-aa-style2",
                 "test-aa-style3",
                 "screen-keyboard",
+                "ui-test",
                 "test-matrix",
                 "view-ui-style",
                 "test-watchdog-error",

@@ -214,6 +214,13 @@ where
             let _language = i18n::enter_snapshot(std::sync::Arc::new(language.snapshot));
             shell::run_screen_keyboard(stdout, &config.appearance, platform)
         }),
+        Ok(CliCommand::UiTest) => match shell::run_ui_test(stdout) {
+            Ok(()) => 0,
+            Err(error) => {
+                let _ = writeln!(stderr, "{error}");
+                1
+            }
+        },
         Ok(CliCommand::TestMatrix) => {
             run_configured_animation_preview(platform, stderr, "Matrix", |color| {
                 shell::run_matrix_animation_preview_with_color(stdout, color)

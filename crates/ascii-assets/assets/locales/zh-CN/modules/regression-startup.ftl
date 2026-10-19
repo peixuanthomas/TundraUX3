@@ -24,6 +24,7 @@ startup-cli-help = TundraUX3 命令行
     系统命令无需前缀：pwd、ls -la（Linux/macOS）、dir（Windows）。外部 CLI 也无需 /：tundra-cli config set motion reduced。
     退出码：0 成功，1 操作失败，2 参数无效；logs 也可能返回 3/130（见 logs help）。
 startup-cli-debug-help = 用法：tundra-cli debug <command>
+    { "  " }ui-test  { ui-test-summary }
     screen-keyboard：试用英文 QWERTY 屏幕键盘，文字仅临时保存。
     test-aa-style1 / test-aa-style2 / test-aa-style3：预览三种 AA 授权警告样式。
     clear-logs <all|TYPE|--file PATH> [--yes]：预览或清理运行、故障、快照及旧日志。
