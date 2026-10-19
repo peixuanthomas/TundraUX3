@@ -85,13 +85,15 @@ fn runtime_size_notice_renders_in_english_and_chinese_at_small_sizes() {
                 );
             })
             .unwrap();
-        let text = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>();
+        let mut text = String::new();
+        for row in terminal.backend().buffer().content.chunks(80) {
+            let mut column = 0;
+            while let Some(cell) = row.get(column) {
+                text.push_str(cell.symbol());
+                column += ratatui::text::Span::raw(cell.symbol()).width().max(1);
+            }
+            text.push('\n');
+        }
         assert!(text.contains("108x20"));
         assert!(text.contains(expected), "{language}: {text}");
         for size in [(1, 1), (0, 0)] {
@@ -424,7 +426,10 @@ fn fullscreen_runtime_delegates_frame_composition() {
         .find("fn command_line_poll_timeout")
         .unwrap()
         + start;
-    let runtime = &source[start..end];
+    let runtime = source[start..end]
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
     assert!(runtime.contains("compositor.prepare("));
     assert!(runtime.contains("compositor.render(frame,"));
     assert!(
