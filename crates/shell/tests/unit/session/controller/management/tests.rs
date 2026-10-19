@@ -7,6 +7,7 @@ fn failed_empty_management_queries_expose_complete_details_without_retry_or_auth
         ManagementKind::Network,
         ManagementKind::Disks,
         ManagementKind::Ssh,
+        ManagementKind::SystemSettings,
     ] {
         for pointer in [false, true] {
             let mut session = shortcut_action_state(kind, "inspect");
