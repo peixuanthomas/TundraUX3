@@ -365,8 +365,7 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     os.kill(child.pid, signal.SIGWINCH)
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
     # The fixed Linux catalog places Packages seventh and Logs fourth.
-    step(b"\x1b[H" + b"\x1b[B" * 6 + b"\r", b"Search packages", "Packages did not open")
-    step(b"\x1b[18~", b"Installed packages", "Installed page did not open")
+    step(b"\x1b[H" + b"\x1b[B" * 6 + b"\r", b"Installed packages", "Packages did not open on Installed")
     # Installed rows must return after leaving the full detail page, even
     # when a detail query targeted only the first package.
     if Path("/usr/bin/dpkg-query").is_file():

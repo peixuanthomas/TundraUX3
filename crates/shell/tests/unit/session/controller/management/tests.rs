@@ -844,7 +844,7 @@ fn package_navigation_stays_separate_and_disabled_actions_do_not_execute() {
                 .take(3)
                 .map(|(action, _)| action.id.as_str())
                 .collect::<Vec<_>>(),
-            ["scope_search", "scope_updates", "scope_installed"]
+            ["scope_installed", "scope_updates", "scope_search"]
         );
         let index = actions
             .iter()

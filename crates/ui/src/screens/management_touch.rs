@@ -1572,15 +1572,7 @@ pub fn render_management_content(
         {
             lines.push(Line::styled(
                 table_line(row),
-                if index == model.selected
-                    && !model.actions_focused
-                    && model.workspace.as_ref().is_none_or(|workspace| {
-                        workspace.focus == crate::components::WorkspaceFocus::List
-                            && theme
-                                .buttons
-                                .as_ref()
-                                .is_none_or(|buttons| buttons.keyboard_focus_visible)
-                    })
+                if index == model.selected && (model.workspace.is_some() || !model.actions_focused)
                 {
                     selected
                 } else {

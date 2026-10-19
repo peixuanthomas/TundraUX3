@@ -1,5 +1,47 @@
 use super::*;
 
+#[cfg(target_os = "linux")]
+#[test]
+fn opening_packages_defaults_to_installed_with_navigation_in_display_order() {
+    let mut session = state();
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    session.open_management(ManagementKind::Packages);
+    let state = &session.pages.management.management_state;
+    assert_eq!(state.query.as_ref().unwrap().scope, "installed");
+    assert!(!state.filtering);
+    assert_eq!(state.workspace_focus, ui::components::WorkspaceFocus::List);
+    assert_eq!(
+        session
+            .to_management_view_model()
+            .workspace
+            .unwrap()
+            .active_navigation,
+        0
+    );
+    for (key, scope, active) in [(6, "search", 2), (8, "updates", 1), (7, "installed", 0)] {
+        session.handle_management_key(&KeyInput::new(InputKey::F(key)));
+        assert_eq!(
+            session
+                .pages
+                .management
+                .management_state
+                .query
+                .as_ref()
+                .unwrap()
+                .scope,
+            scope
+        );
+        assert_eq!(
+            session
+                .to_management_view_model()
+                .workspace
+                .unwrap()
+                .active_navigation,
+            active
+        );
+    }
+}
+
 #[test]
 fn package_shortcuts_follow_the_actions_on_the_current_page() {
     for scope in ["updates", "installed"] {
@@ -32,9 +74,9 @@ fn package_shortcuts_follow_the_actions_on_the_current_page() {
 fn package_pointer_and_touch_can_switch_pages_and_open_their_advanced_views() {
     for hover in [false, true] {
         for (navigation, scope, advanced_scope) in [
-            (0, "search", "sources"),
+            (0, "installed", "conflicts"),
             (1, "updates", "status"),
-            (2, "installed", "conflicts"),
+            (2, "search", "sources"),
         ] {
             let mut session = package_list_state();
             session.terminal_size = (140, 40);

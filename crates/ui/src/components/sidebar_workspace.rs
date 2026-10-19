@@ -44,7 +44,7 @@ impl SidebarWorkspaceLayout {
         let content = if vertical {
             let width = labels
                 .iter()
-                .map(|label| super::terminal_width(label) as u16 + 6)
+                .map(|label| super::terminal_width(label) as u16 + 7)
                 .max()
                 .unwrap_or(0)
                 .min(area.width / 3);
@@ -118,10 +118,14 @@ impl SidebarWorkspaceLayout {
     ) {
         let theme = context.compatibility_theme();
         for (index, (button, area)) in buttons.iter().zip(&self.navigation).enumerate() {
-            let mut button = button.clone().with_centered_label(true);
+            let mut button = button
+                .clone()
+                .with_centered_label(true)
+                .with_bracketed_label(false)
+                .with_current(index == active);
             button.label = format!(
                 "{} {}",
-                if index == active { "›" } else { " " },
+                if index == active { "->" } else { "  " },
                 button.label
             );
             if self.vertical {

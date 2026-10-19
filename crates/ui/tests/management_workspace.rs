@@ -138,6 +138,48 @@ fn details_focus_border_follows_keyboard_visibility() {
 }
 
 #[test]
+fn selected_package_row_remains_visible_after_pointer_input_and_focus_changes() {
+    use ratatui::style::Modifier;
+    for keyboard in [false, true] {
+        for focus in [
+            WorkspaceFocus::List,
+            WorkspaceFocus::Details,
+            WorkspaceFocus::Actions,
+        ] {
+            let mut model = model(false);
+            model.selected = 1;
+            model.workspace.as_mut().unwrap().focus = focus;
+            model.actions_focused = focus == WorkspaceFocus::Actions;
+            let theme = TundraTheme::default_dark();
+            let mut context =
+                RenderContext::from_theme(&theme, Default::default(), Default::default());
+            let mut buttons = ButtonFrame::new(None, None, &theme);
+            buttons.keyboard_focus_visible = keyboard;
+            context.buttons = Some(buttons);
+            let area = Rect::new(0, 0, 120, 30);
+            let layout = management_layout(area, &model);
+            let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+            terminal
+                .draw(|frame| render_management_content(frame, area, &model, &context))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let row = layout.list_rows.y + 1;
+            assert!(
+                buffer[(layout.list_rows.x, row)]
+                    .modifier
+                    .contains(Modifier::REVERSED),
+                "keyboard={keyboard}, focus={focus:?}"
+            );
+            assert!(
+                !buffer[(layout.list_rows.x, layout.list_rows.y)]
+                    .modifier
+                    .contains(Modifier::REVERSED)
+            );
+        }
+    }
+}
+
+#[test]
 fn workspace_wraps_long_action_labels_without_losing_their_shortcuts() {
     for label in [
         "[U] Upgrade package and the entire system",

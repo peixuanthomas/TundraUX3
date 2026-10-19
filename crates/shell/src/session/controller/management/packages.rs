@@ -42,7 +42,7 @@ impl ShellSession {
 
     pub(super) fn package_actions(&self) -> Vec<(ManagementAction, Option<ManagementRow>)> {
         let all = self.all_management_actions();
-        let mut actions = ["scope_search", "scope_updates", "scope_installed"]
+        let mut actions = ["scope_installed", "scope_updates", "scope_search"]
             .into_iter()
             .filter_map(|id| all.iter().find(|(action, _)| action.id == id).cloned())
             .collect::<Vec<_>>();
@@ -101,9 +101,9 @@ impl ShellSession {
         ui::ManagementWorkspace {
             navigation_actions: vec![0, 1, 2],
             active_navigation: match root_scope(self.package_scope()) {
-                "search" => 0,
+                "search" => 2,
                 "updates" => 1,
-                _ => 2,
+                _ => 0,
             },
             primary_actions: actions
                 .iter()
@@ -176,9 +176,9 @@ impl ShellSession {
         if matches!(key.key, InputKey::F(3 | 6..=8)) && !key.modifiers.shift {
             if key.phase == InputPhase::Press {
                 let index = match key.key {
-                    InputKey::F(6) => 0,
+                    InputKey::F(6) => 2,
                     InputKey::F(8) => 1,
-                    InputKey::F(7) => 2,
+                    InputKey::F(7) => 0,
                     _ => 3,
                 };
                 self.activate_management_action(index);

@@ -89,6 +89,7 @@ pub struct Button {
     pub state: ComponentState,
     pub bracketed_label: bool,
     pub latched: bool,
+    pub current: bool,
     pub centered_label: bool,
     pub pressed_fill: bool,
 }
@@ -110,6 +111,7 @@ impl Button {
             state: ComponentState::default(),
             bracketed_label: true,
             latched: false,
+            current: false,
             centered_label: false,
             pressed_fill: false,
         }
@@ -124,6 +126,12 @@ impl Button {
     /// Persistent pressed feedback, independent of pointer or keyboard focus.
     pub fn with_latched(mut self, latched: bool) -> Self {
         self.latched = latched;
+        self
+    }
+
+    /// Highlights the current page or value independently of input focus.
+    pub fn with_current(mut self, current: bool) -> Self {
+        self.current = current;
         self
     }
 
@@ -368,6 +376,7 @@ impl Button {
             state.active = state.hovered && frame.pressed.as_ref() == Some(&region);
         }
         state.active |= self.latched && !state.disabled;
+        state.selected |= self.current;
         state
     }
 
