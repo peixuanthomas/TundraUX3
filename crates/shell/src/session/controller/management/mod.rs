@@ -1463,6 +1463,8 @@ impl ShellSession {
                     Some("status") => Vec::new(),
                     _ => vec![22, 16, 16, 42],
                 }
+            } else if s.kind == Some(ManagementKind::Processes) {
+                vec![20, 8, 8, 12]
             } else {
                 Vec::new()
             },

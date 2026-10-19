@@ -5,8 +5,8 @@ use crate::{
 use ratatui::{
     Frame,
     layout::{Position, Rect},
-    style::Modifier,
-    text::Line,
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -199,21 +199,45 @@ pub fn management_wrapped_lines(text: &str, width: u16) -> Vec<String> {
     for original in text.split('\n') {
         let mut line = String::new();
         let mut used = 0;
-        for c in original.chars().filter(|c| !c.is_control() || *c == '\t') {
-            let value = if c == '\t' {
-                "    ".to_string()
-            } else {
-                c.to_string()
-            };
-            for c in value.chars() {
-                let next = c.width().unwrap_or(0);
-                if used > 0 && used + next > width {
-                    lines.push(std::mem::take(&mut line));
-                    used = 0;
-                }
-                line.push(c);
-                used += next;
+        let mut wrapped = false;
+        let original = original
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\t')
+            .collect::<String>()
+            .replace('\t', "    ");
+        let span = Span::raw(original);
+        for glyph in span.styled_graphemes(Style::default()) {
+            let next = glyph.symbol.width();
+            let whitespace = glyph.symbol.chars().all(char::is_whitespace);
+            if used > 0 && used + next > width && whitespace {
+                lines.push(std::mem::take(&mut line));
+                used = 0;
+                wrapped = true;
+                continue;
             }
+            if used > 0 && used + next > width {
+                wrapped = true;
+                // Keep words intact when a whitespace boundary fits the viewport.
+                if let Some((boundary, space)) = line
+                    .char_indices()
+                    .rev()
+                    .find(|(index, c)| c.is_whitespace() && !line[..*index].trim().is_empty())
+                {
+                    let remainder = line.split_off(boundary + space.len_utf8());
+                    lines.push(line.trim_end().to_string());
+                    line = remainder;
+                    used = line.width();
+                }
+            }
+            if used > 0 && used + next > width {
+                lines.push(std::mem::take(&mut line));
+                used = 0;
+            }
+            if line.is_empty() && wrapped && whitespace {
+                continue;
+            }
+            line.push_str(glyph.symbol);
+            used += next;
         }
         lines.push(line);
     }

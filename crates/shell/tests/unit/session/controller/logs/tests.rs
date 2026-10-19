@@ -1,5 +1,31 @@
 use super::*;
 
+#[test]
+fn compact_log_times_use_the_configured_timezone_and_keep_full_source_timestamps() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.app.dispatch_at(
+        app::AppCommand::SetClockTimezone {
+            timezone_id: Some("Asia/Shanghai".into()),
+            synchronized_utc: None,
+        },
+        Instant::now(),
+    );
+    let mut event = runtime_log::RuntimeLogEvent::new(
+        runtime_log::LogContext::default(),
+        LogLevel::Info,
+        runtime_log::LogPhase::Observed,
+        "read complete",
+    );
+    event.timestamp = chrono::DateTime::parse_from_rfc3339("2026-10-19T07:34:56Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    state.pages.logs.logs_state.snapshot.result.events = vec![event];
+    let model = state.to_logs_view_model();
+    assert_eq!(model.events[0].time_label, "15:34:56");
+    assert!(model.events[0].timestamp.starts_with("2026-10-19T07:34:56"));
+}
+
 fn pending_snapshot(state: &mut ShellSession, text: &str) -> LogsJob {
     let mut snapshot = LogsSnapshot::default();
     snapshot

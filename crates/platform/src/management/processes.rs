@@ -348,14 +348,14 @@ fn snapshot(
     }
     Ok(ManagementSnapshot {
         columns: [
+            "Name",
             "PID",
+            "CPU %",
+            "Memory",
             "PPID",
             "UID",
             "State",
-            "CPU %",
-            "Memory",
             "Nice (main thread)",
-            "Name",
         ]
         .map(String::from)
         .to_vec(),
@@ -455,23 +455,24 @@ fn row(process: &ProcessRecord, boot_id: &str, depth: usize) -> ManagementRow {
     ManagementRow {
         id: process.pid.to_string(),
         cells: vec![
-            process.pid.to_string(),
-            process.parent.to_string(),
-            process.uid.to_string(),
-            process.state.to_string(),
-            process
-                .cpu
-                .map(|cpu| format!("{cpu:.1}"))
-                .unwrap_or_else(|| "—".into()),
-            format!("{:.1} MiB", process.memory as f64 / 1048576.0),
-            process.nice.to_string(),
             format!(
                 "{}{}",
                 "  ".repeat(depth.min(32)),
                 runtime_log::sanitize_text(&process.name)
             ),
+            process.pid.to_string(),
+            process
+                .cpu
+                .map(|cpu| format!("{cpu:.1}"))
+                .unwrap_or_else(|| "—".into()),
+            format!("{:.1} MiB", process.memory as f64 / 1048576.0),
+            process.parent.to_string(),
+            process.uid.to_string(),
+            process.state.to_string(),
+            process.nice.to_string(),
         ],
         detail: vec![
+            ("Name".into(), runtime_log::sanitize_text(&process.name)),
             (
                 "Command".into(),
                 runtime_log::sanitize_text(&process.command),

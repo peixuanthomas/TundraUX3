@@ -1074,6 +1074,11 @@ impl ShellSession {
     }
     pub(in crate::session) fn to_logs_view_model(&self) -> ui::LogsViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
+        let timezone = self
+            .app
+            .snapshot()
+            .clock_timezone_id
+            .and_then(|timezone| timezone.parse::<chrono_tz::Tz>().ok());
         let state = &self.pages.logs.logs_state;
         let system = matches!(
             self.logs_access(),
@@ -1168,6 +1173,21 @@ impl ShellSession {
                 .map(|event| ui::LogsEventViewModel {
                     id: event.event_id.clone(),
                     timestamp: event.timestamp.to_rfc3339(),
+                    time_label: timezone
+                        .map(|timezone| {
+                            event
+                                .timestamp
+                                .with_timezone(&timezone)
+                                .format("%H:%M:%S")
+                                .to_string()
+                        })
+                        .unwrap_or_else(|| {
+                            event
+                                .timestamp
+                                .with_timezone(&chrono::Local)
+                                .format("%H:%M:%S")
+                                .to_string()
+                        }),
                     level: format!("{:?}", event.level),
                     module: event.context.module.clone(),
                     operation: event.context.operation.clone(),

@@ -21,6 +21,7 @@ fn model() -> LogsViewModel {
         .map(|index| LogsEventViewModel {
             id: format!("event-{index}"),
             timestamp: "2026-09-11T00:00:00Z".into(),
+            time_label: "00:00:00".into(),
             level: "Error".into(),
             module: "ux.explorer".into(),
             operation: "Copy".into(),

@@ -2,6 +2,31 @@ use super::overlays::{ResolvedExplorerOverlay, ShellOverlayCategory};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+#[test]
+fn strong_clock_due_events_keep_reminder_semantics_and_dismiss_actions() {
+    for (kind, title) in [
+        (ScheduledClockEntryKind::DailyAlarm, "Alarm reminder"),
+        (ScheduledClockEntryKind::Countdown, "Countdown reminder"),
+    ] {
+        let mut state = ShellSession::new(ShellLaunchConfig::default(), (116, 41));
+        set_test_auth_role(&mut state, UserRole::User);
+        while state.notification_dismiss_active_modal_without_response() {}
+        let ordinary = state.handle_clock_due_events(vec![DueEvent {
+            id: 1,
+            kind,
+            strong: true,
+            display_time: "07:34:56".into(),
+        }]);
+        assert!(ordinary.is_none());
+        let model = state.to_notification_view_model().unwrap();
+        assert_eq!(model.tone, ui::NotificationTone::Info);
+        assert_eq!(model.title, title);
+        assert!(model.actions.iter().any(|action| action.id == "dismiss"));
+        state.apply_input(InputEvent::from_key_label("Esc"));
+        assert!(state.to_notification_view_model().is_none());
+    }
+}
+
 struct SystemStatusTestWeatherProvider;
 
 impl system_services::WeatherProvider for SystemStatusTestWeatherProvider {

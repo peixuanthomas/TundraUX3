@@ -1009,7 +1009,7 @@ fn render_cards(
             &update_commit_lines(update),
         )) + 1;
     }
-    let reason = settings_unavailable_lines(detail_area.width, model);
+    let reason = settings_detail_lines(detail_area.width, model);
     if let Some((visible, skipped)) = visible_scrolled_rect(
         detail_area.x,
         y,
@@ -1056,7 +1056,7 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
         next_y = content_height.saturating_add(1);
     }
 
-    let reason = settings_unavailable_lines(detail_width, model);
+    let reason = settings_detail_lines(detail_width, model);
     if reason.is_empty() {
         content_height
     } else {
@@ -1064,37 +1064,24 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
     }
 }
 
-/// Keep the complete failure reason inside the draggable detail viewport.
-/// The fixed footer may abbreviate its copy to fit the current width.
-fn settings_unavailable_lines(width: u16, model: &SettingsViewModel) -> Vec<String> {
-    let Some(reason) = model
+/// Keep complete descriptions and status messages in the draggable detail viewport.
+fn settings_detail_lines(width: u16, model: &SettingsViewModel) -> Vec<String> {
+    let selected = model
         .cards
         .iter()
         .flat_map(|card| &card.items)
-        .find(|item| item.field == model.selected_field)
-        .and_then(|item| item.unavailable_reason.as_deref())
-    else {
-        return Vec::new();
-    };
-    let width = usize::from(width.max(1));
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    let mut used = 0;
-    for character in reason.chars() {
-        let character_width = terminal_width(&character.to_string());
-        if character == '\n' || (!line.is_empty() && used + character_width > width) {
-            lines.push(std::mem::take(&mut line));
-            used = 0;
-        }
-        if character != '\n' {
-            line.push(character);
-            used += character_width;
-        }
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
+        .find(|item| item.field == model.selected_field);
+    [
+        selected.map(|item| item.description.as_str()),
+        Some(model.status.as_str()),
+        model.locked_message.as_deref(),
+        selected.and_then(|item| item.unavailable_reason.as_deref()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|text| !text.is_empty())
+    .flat_map(|text| crate::management_wrapped_lines(text, width))
+    .collect()
 }
 
 fn update_commit_lines(update: &SettingsUpdateViewModel) -> Vec<String> {
@@ -1123,7 +1110,7 @@ fn update_commits_height(detail_width: u16, lines: &[String]) -> u16 {
     let width = detail_width.saturating_sub(4).max(1);
     let content_height = lines
         .iter()
-        .map(|line| terminal_width(line).div_ceil(usize::from(width)).max(1))
+        .map(|line| crate::management_wrapped_lines(line, width).len())
         .sum::<usize>();
     u16::try_from(content_height)
         .unwrap_or(u16::MAX)
@@ -1164,10 +1151,17 @@ fn render_update_commits(
         detail_area,
     ) {
         frame.render_widget(
-            Paragraph::new(lines.join("\n"))
-                .style(theme.body_style())
-                .wrap(Wrap { trim: true })
-                .scroll((skipped, 0)),
+            Paragraph::new(
+                lines
+                    .iter()
+                    .flat_map(|line| {
+                        crate::management_wrapped_lines(line, detail_area.width.saturating_sub(4))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+            .style(theme.body_style())
+            .scroll((skipped, 0)),
             content,
         );
     }
