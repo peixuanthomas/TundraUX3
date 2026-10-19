@@ -156,6 +156,13 @@ pub(in crate::session) struct ManagementState {
 }
 
 impl ManagementState {
+    fn can_show_details(&self) -> bool {
+        !self.snapshot.rows.is_empty()
+            || self.problem.is_some()
+            || !self.snapshot.details.is_empty()
+            || !self.snapshot.notices.is_empty()
+    }
+
     fn refresh_command(&self) -> Option<ManagementCommand> {
         let query = self.query.as_ref()?;
         let action = self.snapshot.refresh_action.as_ref()?;
@@ -274,6 +281,7 @@ fn management_action_shortcut(
         "scope_updates" => return Some(("F8", InputKey::F(8))),
         "recover" => return Some(("F9", InputKey::F(9))),
         "cancel_operation" => return Some(("F10", InputKey::F(10))),
+        "query_details" => return Some(("F4", InputKey::F(4))),
         _ => return None,
     };
     let label = match letter {
@@ -1492,7 +1500,9 @@ impl ShellSession {
                 .snapshot
                 .columns
                 .iter()
-                .map(|c| management_text("column", c, c))
+                .map(|c| if s.kind == Some(ManagementKind::Users) && c == "Source" {
+                    i18n::tr!("startup-account-source")
+                } else { management_text("column", c, c) })
                 .collect(),
             rows: s.snapshot.rows.iter().map(|r| r.cells.iter().enumerate().map(|(i,v)| {
                 if s.kind == Some(ManagementKind::Users) && s.snapshot.columns.get(i).is_some_and(|c| c == "Source") {management_detail_value(s.kind,"Source",v)} else if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()}
@@ -1501,24 +1511,30 @@ impl ShellSession {
             scroll: s.scroll,
             table_scroll: s.table_scroll,
             action_scroll: s.action_scroll,
-            details: s
-                .snapshot
-                .rows
-                .get(s.selected)
-                .map(|r| {
-                    r.detail
-                        .iter()
+            details: if let Some(problem) = &s.problem {
+                format!("{}\n\n{}", i18n::tr!(problem.summary_key.clone()), problem.detail)
+            } else {
+                let mut details = s.snapshot.rows.get(s.selected)
+                    .map(|row| row.detail.as_slice()).unwrap_or_default()
+                        .iter().chain(&s.snapshot.details)
                         .map(|(k, v)| {
                             format!(
                                 "{}: {}",
-                                management_text("detail", k, k),
+                                if s.kind == Some(ManagementKind::Users) && k == "Source" {
+                                    i18n::tr!("startup-account-source")
+                                } else { management_text("detail", k, k) },
                                 management_detail_value(s.kind, k, v)
                             )
                         })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_else(|| s.snapshot.notices.join("\n")),
+                        .collect::<Vec<_>>();
+                if s.snapshot.rows.is_empty() {
+                    details.extend(s.snapshot.notices.iter().cloned());
+                }
+                details.join("\n")
+            },
+            empty_message: s.problem.as_ref().map(|problem| i18n::tr!(problem.summary_key.clone()))
+                .or_else(|| (!s.snapshot.notices.is_empty()).then(|| s.snapshot.notices.join("\n")))
+                .unwrap_or_else(|| i18n::tr!("management-empty")),
             actions: actions
                 .iter()
                 .enumerate()
@@ -1630,7 +1646,10 @@ impl ShellSession {
                         .iter()
                         .map(|v| ui::ManagementFormField {
                             id: v.id.clone(),
-                            label: if matches!(f.purpose, FormPurpose::Configuration(_)) { v.label.clone() } else { management_text("field", &v.id, &v.label) },
+                            label: if matches!(f.purpose, FormPurpose::Configuration(_))
+                                || s.kind == Some(ManagementKind::ScheduledTasks) {
+                                v.label.clone()
+                            } else { management_text("field", &v.id, &v.label) },
                             value: if v.secret {
                                 "•".repeat(v.value.chars().count())
                             } else {

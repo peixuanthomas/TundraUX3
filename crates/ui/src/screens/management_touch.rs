@@ -55,6 +55,7 @@ pub struct ManagementViewModel {
     pub sort: Option<crate::TableSort>,
     pub column_width_limits: Vec<usize>,
     pub rows: Vec<Vec<String>>,
+    pub empty_message: String,
     pub selected: usize,
     pub scroll: usize,
     pub table_scroll: usize,
@@ -87,10 +88,16 @@ pub enum ManagementControl {
     Terminal,
 }
 pub fn management_controls() -> Vec<(ManagementControl, String)> {
-    vec![(
-        ManagementControl::Refresh,
-        i18n::tr!("management-control-refresh"),
-    )]
+    vec![
+        (
+            ManagementControl::Refresh,
+            i18n::tr!("management-control-refresh"),
+        ),
+        (
+            ManagementControl::ApplySearch,
+            i18n::tr!("regression-management-search"),
+        ),
+    ]
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagementScrollTarget {
@@ -308,7 +315,7 @@ fn choice_form_inner(form: Rect) -> Rect {
 }
 fn form_submit_text(form: &ManagementForm) -> String {
     format!(
-        "Ctrl+Enter {}",
+        "F10 {}",
         form.submit_label
             .clone()
             .unwrap_or_else(|| i18n::tr!("management-form-submit"))
@@ -556,6 +563,15 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         refresh.height,
     );
     let mut controls = vec![(ManagementControl::Refresh, refresh)];
+    let search_width = (i18n::tr!("regression-management-search-enter").width() as u16 + 2)
+        .min(clear.x.saturating_sub(refresh.right()));
+    let search = Rect::new(
+        clear.x.saturating_sub(search_width),
+        header_y,
+        search_width,
+        refresh.height,
+    );
+    controls.push((ManagementControl::ApplySearch, search));
     if clear_width > 0 {
         controls.push((ManagementControl::ClearSearch, clear));
     }
@@ -563,7 +579,7 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
     let filter = Rect::new(
         filter_x,
         header_y,
-        clear.x.saturating_sub(filter_x),
+        search.x.saturating_sub(filter_x),
         refresh.height,
     );
     let header_end = header_y.saturating_add(refresh.height).min(main.bottom());
@@ -1188,7 +1204,9 @@ pub fn management_button_regions(
         push(
             management_control_id(model, *control),
             *area,
-            *control == ManagementControl::Details && model.rows.is_empty(),
+            *control == ManagementControl::Details
+                && model.rows.is_empty()
+                && model.details.is_empty(),
         );
     }
     push(
@@ -1272,10 +1290,18 @@ pub fn render_management_content(
     for (control, area) in &layout.controls {
         let label = match control {
             ManagementControl::ClearSearch => "× [Ctrl+U]".into(),
+            ManagementControl::ApplySearch if model.filtering => {
+                i18n::tr!("regression-management-search-enter")
+            }
+            ManagementControl::ApplySearch => management_controls()[1].1.clone(),
             _ => management_controls()[0].1.clone(),
         };
         let mut button = Button::new(management_control_id(model, *control), label);
-        button.set_disabled(*control == ManagementControl::Details && model.rows.is_empty());
+        button.set_disabled(
+            *control == ManagementControl::Details
+                && model.rows.is_empty()
+                && model.details.is_empty(),
+        );
         button.render_borderless_frame(frame, *area, &theme);
     }
     let mut filter = TextInput::new(format!("management.filter.{}", model.scope_id))
@@ -1370,7 +1396,11 @@ pub fn render_management_content(
             lines.push(Line::from(if model.loading {
                 i18n::tr!("management-loading")
             } else {
-                i18n::tr!("management-empty")
+                if model.empty_message.is_empty() {
+                    i18n::tr!("management-empty")
+                } else {
+                    model.empty_message.clone()
+                }
             }));
         }
         let area = Rect::new(

@@ -152,6 +152,8 @@ pub struct ManagementSnapshot {
     pub rows: Vec<ManagementRow>,
     pub actions: Vec<ManagementAction>,
     pub notices: Vec<String>,
+    #[serde(default)]
+    pub details: Vec<(String, String)>,
     pub backend: String,
     #[serde(default)]
     pub details_complete: bool,
@@ -302,6 +304,8 @@ pub struct HelperReady {
 #[serde(tag = "error", content = "message", rename_all = "snake_case")]
 pub enum ManagementError {
     Unavailable(String),
+    MissingDependency(String),
+    UnsupportedEnvironment(String),
     PermissionDenied(String),
     InvalidInput(String),
     Conflict(String),
@@ -313,6 +317,8 @@ impl std::fmt::Display for ManagementError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unavailable(s)
+            | Self::MissingDependency(s)
+            | Self::UnsupportedEnvironment(s)
             | Self::PermissionDenied(s)
             | Self::InvalidInput(s)
             | Self::Conflict(s)
@@ -325,6 +331,8 @@ impl std::error::Error for ManagementError {}
 
 #[cfg(target_os = "linux")]
 pub mod authorization;
+#[cfg(target_os = "linux")]
+mod capability;
 pub mod client;
 #[cfg(target_os = "linux")]
 pub mod config_backups;

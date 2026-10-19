@@ -1,5 +1,25 @@
 use super::*;
 #[test]
+fn empty_history_explains_how_to_create_records_and_the_recovery_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("new-history");
+    let query = ManagementQuery::new(ManagementKind::Backups);
+    for create_directory in [false, true] {
+        if create_directory {
+            fs::create_dir_all(root.join("operations")).unwrap();
+        }
+        let snapshot = query_at(&root, &query, &AtomicBool::new(false)).unwrap();
+        assert!(snapshot.rows.is_empty());
+        assert!(!snapshot.needs_authorization);
+        assert_eq!(snapshot.notices, [i18n::tr!("management-backups-empty")]);
+        assert_eq!(snapshot.details.len(), 2);
+        assert_eq!(snapshot.details[0].1, i18n::tr!("management-backups-how"));
+        assert_eq!(snapshot.details[1].1, i18n::tr!("management-backups-scope"));
+        assert!(snapshot.actions.is_empty());
+    }
+}
+
+#[test]
 fn grouped_history_keeps_original_properties_results_and_conflicts() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("history");

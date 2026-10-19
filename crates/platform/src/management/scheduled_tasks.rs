@@ -14,6 +14,9 @@ mod cron;
 #[cfg(test)]
 #[path = "../../tests/unit/management/scheduled_tasks_isolated.rs"]
 mod isolated;
+#[cfg(test)]
+#[path = "../../tests/unit/management/scheduled_tasks_query_tests.rs"]
+mod query_tests;
 mod systemd;
 
 const RESULTS: &str = "/var/lib/tundraux3/scheduled-results";
@@ -71,11 +74,16 @@ fn native(
         .stderr(Stdio::piped())
         .spawn_managed()
         .map_err(|error| {
-            ManagementError::Unavailable(i18n::tr!(
+            let detail = i18n::tr!(
                 "scheduled-task-cannot-start",
                 program = program,
                 error = error.to_string()
-            ))
+            );
+            match error.kind() {
+                std::io::ErrorKind::NotFound => ManagementError::MissingDependency(detail),
+                std::io::ErrorKind::PermissionDenied => ManagementError::PermissionDenied(detail),
+                _ => ManagementError::Failed(detail),
+            }
         })?;
     if let Some(input) = input {
         child
@@ -291,6 +299,24 @@ pub fn query(
     query_as_actor(query, unsafe { libc::getuid() }, flag)
 }
 
+fn append_query_problem(
+    snapshot: &mut ManagementSnapshot,
+    source: String,
+    error: ManagementError,
+) -> Result<(), ManagementError> {
+    if matches!(error, ManagementError::Cancelled) {
+        return Err(error);
+    }
+    let problem = problem::OperationProblem::from_error(&error);
+    snapshot.notices.push(i18n::tr!(
+        "management-source-unavailable",
+        source = source.clone(),
+        reason = i18n::tr!(problem.summary_key)
+    ));
+    snapshot.details.push((source, problem.detail));
+    Ok(())
+}
+
 fn query_as_actor(
     query: &ManagementQuery,
     uid: u32,
@@ -323,11 +349,18 @@ fn query_as_actor(
     ] {
         match systemd::rows(&scope, flag) {
             Ok(rows) => snapshot.rows.extend(rows),
-            Err(error) => snapshot.notices.push(i18n::tr!(
-                "scheduled-task-systemd-unavailable",
-                scope = scope,
-                error = error.to_string()
-            )),
+            Err(error) => {
+                let label = i18n::tr!(if scope == "system" {
+                    "scheduled-task-scope-system"
+                } else {
+                    "scheduled-task-scope-user"
+                });
+                append_query_problem(
+                    &mut snapshot,
+                    i18n::tr!("management-schedule-source", scope = label),
+                    error,
+                )?;
+            }
         }
     }
     cron::append_rows(&mut snapshot, uid, flag)?;
@@ -337,6 +370,13 @@ fn query_as_actor(
         .retain(|row| needle.is_empty() || row.cells.join(" ").to_lowercase().contains(&needle));
     snapshot.rows.sort_by(|a, b| a.id.cmp(&b.id));
     snapshot.actions = systemd::create_actions(uid)?;
+    if let Err(error) = super::capability::system_manager() {
+        for action in &mut snapshot.actions {
+            if action.id == "create_task" {
+                action.disabled_reason = Some(error.to_string());
+            }
+        }
+    }
     snapshot.actions.push(ManagementAction {
         id: "inspect_scheduled_tasks".into(),
         label: i18n::tr!("scheduled-task-inspect").into(),
@@ -345,12 +385,14 @@ fn query_as_actor(
         confirm: true,
         ..Default::default()
     });
-    snapshot
-        .notices
-        .push(i18n::tr!("scheduled-task-cron-results-notice").into());
-    snapshot
-        .notices
-        .push(i18n::tr!("scheduled-task-pause-notice").into());
+    snapshot.details.push((
+        i18n::tr!("management-schedule-limitations"),
+        format!(
+            "{}\n{}",
+            i18n::tr!("scheduled-task-cron-results-notice"),
+            i18n::tr!("scheduled-task-pause-notice")
+        ),
+    ));
     Ok(snapshot)
 }
 

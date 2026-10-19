@@ -118,8 +118,8 @@ impl ShellSession {
             return;
         }
         if self.pages.management.management_state.form.is_some()
-            && management_control_modifier(key)
-            && key.key == InputKey::Enter
+            && ((management_control_modifier(key) && key.key == InputKey::Enter)
+                || (key.key == InputKey::F(10) && key.is_unmodified_action_key()))
         {
             if key.phase == InputPhase::Press {
                 self.submit_management_form();
@@ -231,6 +231,10 @@ impl ShellSession {
                 InputKey::Escape => self.pages.management.management_state.filtering = false,
                 InputKey::Enter => {
                     self.apply_management_filter();
+                }
+                InputKey::Tab | InputKey::BackTab => {
+                    self.apply_management_filter();
+                    self.pages.management.management_state.actions_focused = false;
                 }
                 InputKey::F(5) if key.phase == InputPhase::Press => {
                     self.management_touch_control(ui::ManagementControl::Refresh);
@@ -419,7 +423,15 @@ impl ShellSession {
                         .management
                         .management_state
                         .snapshot
-                        .details_complete)
+                        .details_complete
+                    || self.pages.management.management_state.problem.is_some()
+                    || self
+                        .pages
+                        .management
+                        .management_state
+                        .snapshot
+                        .rows
+                        .is_empty())
                     && self.pages.management.management_state.details_only =>
             {
                 self.toggle_management_details();
@@ -538,13 +550,7 @@ impl ShellSession {
     }
 
     pub(super) fn toggle_management_details(&mut self) {
-        if self
-            .pages
-            .management
-            .management_state
-            .snapshot
-            .rows
-            .is_empty()
+        if !self.pages.management.management_state.can_show_details()
             && !self.pages.management.management_state.details_only
         {
             return;
@@ -555,12 +561,20 @@ impl ShellSession {
         let package_view =
             self.pages.management.management_state.kind == Some(ManagementKind::Packages);
         self.pages.management.management_state.actions_focused = !package_view;
-        if self
-            .pages
-            .management
-            .management_state
-            .snapshot
-            .details_complete
+        if self.pages.management.management_state.problem.is_some()
+            || self
+                .pages
+                .management
+                .management_state
+                .snapshot
+                .rows
+                .is_empty()
+            || self
+                .pages
+                .management
+                .management_state
+                .snapshot
+                .details_complete
         {
             self.clamp_management_scroll();
             return;

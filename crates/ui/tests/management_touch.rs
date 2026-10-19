@@ -293,7 +293,7 @@ fn management_action_labels_fit_touch_regions_in_small_windows() {
                 .collect::<String>();
             assert!(painted.contains(hint), "{width}x{height}: {hint}");
             assert!(painted.contains(if rect == form_layout.submit {
-                "Ctrl+Enter"
+                "F10"
             } else {
                 "Esc"
             }));
@@ -331,7 +331,7 @@ fn compact_toolbar_keeps_every_basic_touch_action_visible() {
     for size in [(64, 14), (60, 18), (80, 24)] {
         let area = Rect::new(0, 0, size.0, size.1);
         let layout = management_layout(area, &model);
-        assert_eq!(layout.controls.len(), 1);
+        assert_eq!(layout.controls.len(), 2);
         assert_eq!(layout.controls[0].0, ManagementControl::Refresh);
         assert_eq!(layout.controls[0].1.x, area.x);
         assert!(layout.controls.iter().all(|(_, rect)| rect.width > 0
@@ -695,18 +695,25 @@ fn search_clear_is_part_of_the_input_and_main_buttons_have_plain_labels() {
         ..Default::default()
     };
     let layout = management_layout(area, &model);
-    assert_eq!(layout.controls.len(), 2);
+    assert_eq!(layout.controls.len(), 3);
     let clear = layout
         .controls
         .iter()
         .find(|(control, _)| *control == ManagementControl::ClearSearch)
         .unwrap()
         .1;
-    assert_eq!(clear.x, layout.filter.right());
+    let search = layout
+        .controls
+        .iter()
+        .find(|(control, _)| *control == ManagementControl::ApplySearch)
+        .unwrap()
+        .1;
+    assert_eq!(clear.x, search.right());
+    assert_eq!(search.x, layout.filter.right());
     assert_eq!(clear.y, layout.filter.y);
     assert!(layout.actions.iter().all(|rect| rect.height == 1));
     model.filter.clear();
-    assert_eq!(management_layout(area, &model).controls.len(), 1);
+    assert_eq!(management_layout(area, &model).controls.len(), 2);
 }
 
 #[test]
@@ -1054,7 +1061,7 @@ fn short_dialogs_follow_content_and_keep_complete_actions_in_narrow_windows() {
                 .collect::<String>()
                 .replace(' ', "");
             assert!(
-                painted.contains(&format!("[Ctrl+Enter{label}]").replace(' ', "")),
+                painted.contains(&format!("[F10{label}]").replace(' ', "")),
                 "{width}x{height}: {painted}"
             );
             for region in management_button_regions(main, &model) {
