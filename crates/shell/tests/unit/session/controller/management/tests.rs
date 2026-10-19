@@ -4,6 +4,56 @@ use super::*;
 mod package_workspace;
 
 #[test]
+fn management_details_expand_animates_without_requery_and_respects_reduced_motion() {
+    for kind in [
+        ManagementKind::Services,
+        ManagementKind::Packages,
+        ManagementKind::Disks,
+    ] {
+        for reduced in [false, true] {
+            let mut session = shortcut_action_state(kind, "inspect");
+            session
+                .pages
+                .management
+                .management_state
+                .snapshot
+                .details_complete = true;
+            session.pages.management.management_state.snapshot.details =
+                vec![("Name".into(), "Selected".into())];
+            let context = ui::RenderContext::default();
+            let bounds = Rect::new(0, 0, 120, 40);
+            let layout = ui::ShellFrameLayout::new(bounds, None, &context);
+            let mut motion = crate::session::motion_effects::ShellMotionEffects::default();
+            motion.update_layout(&session, &layout, context.theme, reduced);
+            assert!(!motion.is_running());
+            session.handle_management_key(&KeyInput::new(InputKey::F(4)));
+            assert!(session.to_management_view_model().details_only);
+            assert!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .query_job
+                    .is_none()
+            );
+            motion.update_layout(&session, &layout, context.theme, reduced);
+            assert_eq!(motion.is_running(), !reduced);
+            let mut cell = ratatui::buffer::Cell::new("X");
+            cell.set_fg(context.theme.text)
+                .set_bg(context.theme.surface);
+            let final_frame = ratatui::buffer::Buffer::filled(bounds, cell);
+            let mut buffer = final_frame.clone();
+            motion.process(Duration::ZERO, &mut buffer, &session);
+            assert_eq!(buffer == final_frame, reduced);
+            buffer = final_frame.clone();
+            motion.process(Duration::from_secs(1), &mut buffer, &session);
+            assert!(!motion.is_running());
+            assert_eq!(buffer, final_frame);
+        }
+    }
+}
+
+#[test]
 fn failed_empty_management_queries_expose_complete_details_without_retry_or_authorization() {
     for kind in [
         ManagementKind::Services,

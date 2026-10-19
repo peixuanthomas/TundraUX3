@@ -28,6 +28,7 @@ pub(super) enum MotionEffectId {
     Focus,
     Toast,
     PreferencePreview,
+    Details,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +105,7 @@ pub(super) struct ShellMotionEffects {
     active_visual_outgoing: Option<ActiveVisualOutgoing>,
     suppress_focus_after_generic_popup: bool,
     exit_confirmation: bool,
+    details_view: Option<(PageInstanceId, bool)>,
 }
 
 impl ShellMotionEffects {
@@ -170,7 +172,11 @@ impl ShellMotionEffects {
         }
 
         let screen = state.content_screen();
-        if self.screen.is_some_and(|previous| previous != screen) {
+        if self.screen.is_some_and(|previous| previous != screen)
+            || self
+                .details_view
+                .is_some_and(|(page, _)| page != state.active_page_id())
+        {
             // Outgoing closures carry old page cells. Drop them before scheduling
             // the new page reveal, even when terminal geometry did not change.
             self.clear();
@@ -202,6 +208,20 @@ impl ShellMotionEffects {
         }
 
         let generic_popup = is_unrendered_generic_popup(state);
+        if screen == ShellScreen::Management && !has_overlay && !exit_confirmation {
+            let model = state.to_management_view_model();
+            if self.details_view.is_some_and(|(page, expanded)| {
+                page == state.active_page_id() && expanded != model.details_only
+            }) {
+                let area = ui::management_layout(page_area, &model).details;
+                if !area.is_empty() {
+                    self.schedule(
+                        MotionEffectId::Details,
+                        crate::spring_style::spring_reveal(area, theme, DIALOG_MS),
+                    );
+                }
+            }
+        }
         let focus = state.focused_component();
         let suppress_focus = if generic_popup {
             self.suppress_focus_after_generic_popup = true;
@@ -773,6 +793,7 @@ impl ShellMotionEffects {
         self.exit_confirmation = false;
         self.completed_exit = None;
         self.covered_page_overlay = None;
+        self.details_view = None;
     }
 
     fn remember(&mut self, state: &ShellSession, bounds: Rect) {
@@ -781,6 +802,12 @@ impl ShellMotionEffects {
         self.overlay = current_overlay(state);
         self.bounds = Some(bounds);
         self.exit_confirmation = state.active_screen() == ShellScreen::ExitConfirm;
+        self.details_view = (state.content_screen() == ShellScreen::Management).then(|| {
+            (
+                state.active_page_id(),
+                state.to_management_view_model().details_only,
+            )
+        });
     }
 }
 
