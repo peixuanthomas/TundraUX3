@@ -193,7 +193,7 @@ fn package_table_long_values_keep_both_version_columns_visible_and_full_details(
 #[test]
 fn management_search_cursor_is_visible_for_empty_chinese_and_long_input() {
     use unicode_width::UnicodeWidthStr;
-    for width in [20, 50] {
+    for width in [5, 12, 20, 50, 108, 116] {
         for filter in [
             String::new(),
             "中文搜索".into(),
@@ -208,6 +208,39 @@ fn management_search_cursor_is_visible_for_empty_chinese_and_long_input() {
             let theme = TundraTheme::default_dark();
             let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
             let layout = management_layout(area, &model);
+            assert!(layout.filter.width >= 5);
+            let buttons = management_button_regions(area, &model);
+            for (control, rect) in &layout.controls {
+                let label = match control {
+                    ManagementControl::Refresh => management_controls()[0].1.clone(),
+                    ManagementControl::ApplySearch => {
+                        i18n::tr!("regression-management-search-enter")
+                    }
+                    ManagementControl::ClearSearch => "× [Ctrl+U]".into(),
+                    _ => unreachable!(),
+                };
+                assert!(
+                    usize::from(rect.width) >= label.width() + 2,
+                    "{width}: {label}"
+                );
+                assert!(rect.intersection(layout.filter).is_empty());
+                let id = management_control_id(&model, *control);
+                assert_eq!(
+                    buttons
+                        .iter()
+                        .find(|button| button.id.as_str() == id)
+                        .unwrap()
+                        .area,
+                    *rect
+                );
+            }
+            assert_eq!(
+                layout
+                    .controls
+                    .iter()
+                    .any(|(control, _)| *control == ManagementControl::ApplySearch),
+                width >= 50
+            );
             let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
             terminal
                 .draw(|frame| render_management_content(frame, area, &model, &context))

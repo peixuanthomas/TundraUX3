@@ -543,39 +543,52 @@ pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementL
         .y
         .saturating_add(u16::from(!compact_actions))
         .min(main.bottom());
-    let refresh_width = (management_controls()[0].1.width() as u16 + 2).min(main.width);
+    let min_filter_width = management_search_prefix(0).width() as u16 + 3;
+    let refresh_width = management_controls()[0].1.width() as u16 + 2;
+    let show_refresh = main.width >= refresh_width + 1 + min_filter_width;
     let refresh = Rect::new(
         main.x,
         header_y,
-        refresh_width,
+        if show_refresh { refresh_width } else { 0 },
         u16::from(header_y < main.bottom()),
     );
-    let clear_width =
-        if model.filter.is_empty() || main.width.saturating_sub(refresh_width + 1) < 20 {
-            0
-        } else {
-            12
-        };
+    let filter_x = if show_refresh {
+        refresh.right().saturating_add(1)
+    } else {
+        main.x
+    };
+    let available = main.right().saturating_sub(filter_x);
+    let clear_width = if model.filter.is_empty() || available < 12 + min_filter_width {
+        0
+    } else {
+        12
+    };
     let clear = Rect::new(
         main.right().saturating_sub(clear_width),
         header_y,
         clear_width,
         refresh.height,
     );
-    let mut controls = vec![(ManagementControl::Refresh, refresh)];
-    let search_width = (i18n::tr!("regression-management-search-enter").width() as u16 + 2)
-        .min(clear.x.saturating_sub(refresh.right()));
+    let mut controls = Vec::new();
+    if show_refresh {
+        controls.push((ManagementControl::Refresh, refresh));
+    }
+    let search_width = i18n::tr!("regression-management-search-enter").width() as u16 + 2;
+    let show_search = clear.x.saturating_sub(filter_x) >= search_width + min_filter_width;
     let search = Rect::new(
-        clear.x.saturating_sub(search_width),
+        clear
+            .x
+            .saturating_sub(if show_search { search_width } else { 0 }),
         header_y,
-        search_width,
+        if show_search { search_width } else { 0 },
         refresh.height,
     );
-    controls.push((ManagementControl::ApplySearch, search));
+    if show_search {
+        controls.push((ManagementControl::ApplySearch, search));
+    }
     if clear_width > 0 {
         controls.push((ManagementControl::ClearSearch, clear));
     }
-    let filter_x = refresh.right().saturating_add(1).min(main.right());
     let filter = Rect::new(
         filter_x,
         header_y,
