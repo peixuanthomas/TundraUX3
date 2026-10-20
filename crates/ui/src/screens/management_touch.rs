@@ -633,10 +633,8 @@ fn management_action_rects(area: Rect, actions: &[(String, bool)], compact: bool
 fn management_search_button_label(model: &ManagementViewModel) -> String {
     if model.filtering {
         i18n::tr!("regression-management-search-enter")
-    } else if model.workspace.is_some() {
-        format!("[Ctrl+Enter] {}", i18n::tr!("regression-management-search"))
     } else {
-        management_controls()[1].1.clone()
+        i18n::tr!("management-touch-search")
     }
 }
 pub fn management_layout(main: Rect, model: &ManagementViewModel) -> ManagementLayout {

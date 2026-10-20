@@ -208,9 +208,12 @@ fn workspace_wraps_long_action_labels_without_losing_their_shortcuts() {
 }
 
 #[test]
-fn search_button_shows_the_key_that_submits_in_each_focus_state() {
-    for filtering in [false, true] {
+fn search_button_shows_slash_to_open_and_enter_to_submit_on_every_layout() {
+    for (workspace, filtering) in [(false, false), (false, true), (true, false), (true, true)] {
         let mut model = model(false);
+        if !workspace {
+            model.workspace = None;
+        }
         model.filtering = filtering;
         let theme = TundraTheme::default_dark();
         let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
@@ -229,7 +232,11 @@ fn search_button_shows_the_key_that_submits_in_each_focus_state() {
         let text = (area.x..area.right())
             .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
             .collect::<String>();
-        assert!(text.contains(if filtering { "[Enter]" } else { "[Ctrl+Enter]" }));
+        assert!(
+            text.contains(if filtering { "[Enter]" } else { "[/]" }),
+            "{text}"
+        );
+        assert!(!text.contains("Ctrl+Enter"));
     }
 }
 

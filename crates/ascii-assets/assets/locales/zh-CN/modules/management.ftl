@@ -109,7 +109,7 @@ management-config-needs-answer = 软件安装正在写入配置，不能强制�
 management-connection-lost = 任务连接已断开。请重新连接查看结果。
 
 management-touch-refresh = [R/F5] 刷新
-management-touch-search = [S] 搜索
+management-touch-search = [/] 搜索
 management-touch-apply = [Ctrl+Enter] 应用
 management-touch-clear = [Ctrl+U] 清除
 management-touch-details = [F4] 详情

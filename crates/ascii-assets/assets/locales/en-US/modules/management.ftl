@@ -109,7 +109,7 @@ management-config-needs-answer = Package configuration cannot be forcibly cancel
 management-connection-lost = Task connection lost. Reconnect to check the result.
 
 management-touch-refresh = [R/F5] Refresh
-management-touch-search = [S] Search
+management-touch-search = [/] Search
 management-touch-apply = [Ctrl+Enter] Apply
 management-touch-clear = [Ctrl+U] Clear
 management-touch-details = [F4] Details
