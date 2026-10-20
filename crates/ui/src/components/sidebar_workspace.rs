@@ -39,7 +39,20 @@ pub struct SidebarWorkspaceLayout {
 
 impl SidebarWorkspaceLayout {
     pub fn new(area: Rect, labels: &[String]) -> Self {
-        let vertical = area.width >= 92 && area.height >= labels.len() as u16 * 3;
+        Self::layout(area, labels, None)
+    }
+
+    /// Keep the active navigation button visible when the sidebar needs scrolling.
+    pub fn scrollable(area: Rect, labels: &[String], active: usize) -> Self {
+        Self::layout(area, labels, Some(active))
+    }
+
+    fn layout(area: Rect, labels: &[String], active: Option<usize>) -> Self {
+        let capacity =
+            usize::from((area.height / 3).max(u16::from(area.height > 0))).min(labels.len());
+        let vertical = area.width >= 92
+            && capacity > 0
+            && (active.is_some() || area.height >= labels.len() as u16 * 3);
         let mut navigation = Vec::new();
         let content = if vertical {
             let width = labels
@@ -48,13 +61,25 @@ impl SidebarWorkspaceLayout {
                 .max()
                 .unwrap_or(0)
                 .min(area.width / 3);
-            let height = (area.height / labels.len().max(1) as u16).min(5);
+            let start = active
+                .unwrap_or(0)
+                .saturating_sub(capacity - 1)
+                .min(labels.len() - capacity);
+            let height = (area.height / capacity as u16).min(5);
             for index in 0..labels.len() {
+                if index < start || index >= start + capacity {
+                    navigation.push(Rect::default());
+                    continue;
+                }
                 navigation.push(Rect::new(
                     area.x,
-                    area.y + index as u16 * height,
+                    area.y + (index - start) as u16 * height,
                     width.saturating_sub(1),
-                    height.saturating_sub(1).max(3),
+                    if height < 3 {
+                        height
+                    } else {
+                        height.saturating_sub(1).max(3)
+                    },
                 ));
             }
             Rect::new(
@@ -118,6 +143,9 @@ impl SidebarWorkspaceLayout {
     ) {
         let theme = context.compatibility_theme();
         for (index, (button, area)) in buttons.iter().zip(&self.navigation).enumerate() {
+            if area.is_empty() {
+                continue;
+            }
             let mut button = button
                 .clone()
                 .with_centered_label(true)
@@ -128,7 +156,7 @@ impl SidebarWorkspaceLayout {
                 if index == active { "->" } else { "  " },
                 button.label
             );
-            if self.vertical {
+            if self.vertical && area.height >= 3 {
                 button.render_frame(frame, *area, &theme);
             } else {
                 button.render_borderless_frame(frame, *area, &theme);

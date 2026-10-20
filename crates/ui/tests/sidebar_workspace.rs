@@ -131,3 +131,48 @@ fn current_page_keeps_accent_and_literal_arrow_in_pointer_mode() {
         assert_ne!(buffer[(inactive.x, inactive.y)].fg, theme.accent_color);
     }
 }
+
+#[test]
+fn scrollable_sidebar_keeps_active_button_and_hit_regions_inside_short_viewports() {
+    let labels = [
+        "Appearance",
+        "Region and time",
+        "System",
+        "File explorer",
+        "Editor",
+        "Update",
+    ]
+    .map(str::to_owned);
+    for height in [1, 3, 8, 15, 30] {
+        for active in 0..labels.len() {
+            let area = Rect::new(2, 1, 110, height);
+            let layout = SidebarWorkspaceLayout::scrollable(area, &labels, active);
+            assert!(layout.vertical);
+            assert!(!layout.navigation[active].is_empty());
+            let theme = TundraTheme::default_dark();
+            let mut context =
+                RenderContext::from_theme(&theme, Default::default(), Default::default());
+            context.buttons = Some(ButtonFrame::new(None, None, &theme));
+            let buttons = labels
+                .iter()
+                .enumerate()
+                .map(|(index, label)| Button::new(format!("category-{index}"), label))
+                .collect::<Vec<_>>();
+            let mut terminal = Terminal::new(TestBackend::new(120, height + 2)).unwrap();
+            terminal
+                .draw(|frame| layout.render_navigation(frame, &buttons, active, &context))
+                .unwrap();
+            let regions = context.buttons.as_ref().unwrap().regions();
+            for (index, rect) in layout.navigation.iter().enumerate() {
+                let region = regions.iter().find(|region| region.id == buttons[index].id);
+                if rect.is_empty() {
+                    assert!(region.is_none());
+                } else {
+                    assert_eq!(rect.intersection(area), *rect);
+                    assert!(!rect.intersects(layout.content));
+                    assert_eq!(region.unwrap().area, *rect);
+                }
+            }
+        }
+    }
+}
