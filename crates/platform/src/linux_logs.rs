@@ -2,8 +2,6 @@
 //!
 //! Call this on a worker: the subprocess deadline is five seconds. No shell,
 //! elevation, pager, persistent collector, or traditional log-file scan is used.
-#[cfg(target_os = "linux")]
-use crate::ManagedCommand;
 use runtime_log::{LogQuery, LogQueryResult, LogSourceState};
 use std::sync::atomic::AtomicBool;
 
@@ -58,6 +56,7 @@ mod implementation {
         deadline: std::time::Instant,
         max_bytes: usize,
     ) -> Capture {
+        use crate::ManagedCommand;
         use std::io::{ErrorKind, Read};
         use std::os::fd::AsRawFd;
         use std::process::{Command, Stdio};
