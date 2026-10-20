@@ -119,6 +119,51 @@ fn quick_access_current_marker_survives_pointer_focus_and_shared_feedback() {
 }
 
 #[test]
+fn quick_access_has_spaced_rows_and_full_height_click_targets() {
+    let mut model = sample_model();
+    model.quick_locations = (0..12)
+        .map(|index| {
+            let mut location = ExplorerQuickLocationViewModel::new(
+                format!("location-{index}"),
+                format!("Location {index}"),
+                format!("/location/{index}"),
+                "folder",
+            );
+            location.current = index == 10;
+            location
+        })
+        .collect();
+    let area = Rect::new(0, 0, 120, 40);
+    let layout = explorer_layout(area, &model);
+    assert!(layout.quick_location_scrollbar.is_some());
+    assert_eq!(layout.quick_locations.last().unwrap().index, 10);
+    for location in &layout.quick_locations {
+        assert_eq!(location.area.height, 3);
+        for row in location.area.y..location.area.bottom() {
+            assert_eq!(
+                layout.hit_test(location.area.x, row),
+                Some(ExplorerHitTarget::QuickLocation(location.index))
+            );
+        }
+        assert!(location.area.right() <= layout.quick_location_scrollbar.unwrap().x);
+    }
+    for pair in layout.quick_locations.windows(2) {
+        assert_eq!(pair[1].area.y - pair[0].area.y, 3);
+    }
+    let theme = TundraTheme::default_dark();
+    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| ui::render_explorer_content(frame, area, &model, &context))
+        .unwrap();
+    let last = layout.quick_locations.last().unwrap().area;
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer[(last.x, last.y)].symbol(), ">");
+    assert_eq!(buffer[(last.x, last.y + 1)].symbol(), " ");
+    assert_eq!(buffer[(last.x, last.y + 2)].symbol(), " ");
+}
+
+#[test]
 fn all_selected_files_keep_their_highlight_in_mouse_mode() {
     for theme in [
         TundraTheme::default_dark(),

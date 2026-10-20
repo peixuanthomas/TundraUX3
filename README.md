@@ -23,7 +23,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
 - **Browse packages:** open Installed by default, cycle Installed/Updates/Search with Tab or Shift+Tab, and select packages with Up/Down. Expanded details scroll with all four arrow keys; existing shortcuts remain available.
-- **Keep track of selections:** selected list rows and the current file shortcut stay highlighted when using a mouse or moving to another control.
+- **Keep track of selections:** selected list rows and the current file shortcut stay highlighted when using a mouse or moving to another control. File Explorer quick access uses the same spacious rows as the application list in Settings.
 - **Follow page changes:** mouse transitions show where pages, dialogs and details open and close, accelerating, cruising and slowing to a stop; keyboard actions are immediate. Settings uses category navigation with controls on the right; overall speed stays on the page, with phase times and reset in an advanced dialog. Reduced-motion support is preserved.
 - **Set up Linux:** the clock follows system time and timezone, including existing installations. Change timezone with the map in Region & Time, and manage system automatic synchronization and timesyncd/chrony servers there. Operating System Settings contains the host name.
 - **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.

@@ -40,7 +40,7 @@ impl SettingsApplicationsLayout {
         ])
         .areas(area);
         let inner = inset(list, 1, 1);
-        let height = if inner.height >= 6 { 3 } else { 1 };
+        let height = SidebarWorkspaceLayout::list_item_height(inner.height);
         let options = SettingsApplication::ALL
             .into_iter()
             .enumerate()

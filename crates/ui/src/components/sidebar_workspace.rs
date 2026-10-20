@@ -38,6 +38,11 @@ pub struct SidebarWorkspaceLayout {
 }
 
 impl SidebarWorkspaceLayout {
+    /// Spaced list items stay compact when fewer than two three-row items fit.
+    pub const fn list_item_height(available_height: u16) -> u16 {
+        if available_height >= 6 { 3 } else { 1 }
+    }
+
     pub fn new(area: Rect, labels: &[String]) -> Self {
         Self::layout(area, labels, None)
     }

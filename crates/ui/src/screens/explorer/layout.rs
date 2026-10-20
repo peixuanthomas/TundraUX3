@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use super::model::*;
-use crate::components::{Scrollbar, terminal_width};
+use crate::components::{Scrollbar, SidebarWorkspaceLayout, terminal_width};
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const EXPLORER_SIDEBAR_MIN_WIDTH: u16 = 96;
@@ -344,8 +344,11 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         (None, body)
     };
     let sidebar_header = sidebar.map(|sidebar| line_in_rect(sidebar, sidebar.y));
+    let location_height = SidebarWorkspaceLayout::list_item_height(
+        sidebar.map_or(0, |sidebar| sidebar.height.saturating_sub(1)),
+    );
     let quick_location_visible_capacity = sidebar
-        .map(|sidebar| usize::from(sidebar.height.saturating_sub(1)))
+        .map(|sidebar| usize::from(sidebar.height.saturating_sub(1) / location_height))
         .unwrap_or_default();
     let quick_location_visible_start =
         explorer_quick_location_visible_start(model, quick_location_visible_capacity);
@@ -371,11 +374,11 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
                     sidebar
                         .y
                         .saturating_add(1)
-                        .saturating_add(usize_to_u16(offset)),
+                        .saturating_add(usize_to_u16(offset).saturating_mul(location_height)),
                     sidebar
                         .width
                         .saturating_sub(u16::from(quick_location_scrollbar.is_some())),
-                    1,
+                    location_height,
                 ),
             })
             .collect()
