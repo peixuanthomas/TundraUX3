@@ -2,6 +2,8 @@
 
 `ascii-assets` 加载和校验主题、ASCII 图案、图标及字体，统计绘制所需尺寸，并提供内置资源用于修复。语言源码也随资源分发；加载和翻译由 `i18n` 负责。
 
+AA 自动策略的显示名称统一为“一律放行” / “Always allow”，帮助文字继续说明其只跳过 AA 确认。
+
 编辑器 Vim 开关、当前模式和按需打开的快捷键帮助位于中英文 `modules/editor-vim.ftl`。
 
 软件包分栏页的主导航、高级区和键盘提示位于中英文 `modules/management-services-process-packages.ftl`；列表与展开详情分别提示菜单切换、列表选择和四向滚动。

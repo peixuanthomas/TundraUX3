@@ -148,10 +148,10 @@ aa-preview-page-content = Accounts                                    Role      
 
     Account changes require administrator authorization.
 aa-preview-safe = DEMO ONLY - no system changes. Click buttons or use the keyboard.
-aa-policy-automatic = Automatically approve
+aa-policy-automatic = Always allow
 aa-policy-manual = Ask every time (default)
 aa-policy-deny = Deny all
-aa-policy-help = AA approves built-in system operations. Automatic approval skips only AA confirmation; system passwords and command questions still require input. When a task belongs to the current page, F12 or the top-right Back button opens its close choices: keep running in the background, cancel the task and close, or stay. Background tasks reopen AA when they need input. F12 also reviews the last operation.
+aa-policy-help = AA approves built-in system operations. Always allow skips only AA confirmation; system passwords and command questions still require input. When a task belongs to the current page, F12 or the top-right Back button opens its close choices: keep running in the background, cancel the task and close, or stay. Background tasks reopen AA when they need input. F12 also reviews the last operation.
 aa-request = Review the operation before approving. No system change has started.
 aa-running = Running; this window shows output and accepts input.
 aa-blocked = AutoAdmin is set to deny, or its settings could not be read. No operation was started.
