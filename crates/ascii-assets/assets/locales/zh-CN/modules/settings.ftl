@@ -312,6 +312,7 @@ settings-category-name =
         [Appearance] { ui-settings-appearance }
         [RegionTime] { ui-settings-region-time }
         [System] { ui-settings-system }
+        [Applications] { ui-settings-applications }
         [FileExplorer] { ui-settings-file-explorer }
         [Editor] { ui-settings-editor }
         [Update] { ui-settings-update }

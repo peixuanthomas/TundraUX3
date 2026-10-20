@@ -32,7 +32,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Manage Linux file access:** edit permissions and ownership for selected files, with separate file/directory permissions and a reviewed recursive range. Toggle permission boxes with Space or Enter.
 - **Open tools:** use the application launcher and built-in command line when a task calls for commands.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
-- **Make the interface your own:** choose English or Simplified Chinese, adjust appearance, and use the clock and weather applications. Cancel new alarms with the visible button or keyboard.
+- **Make the interface your own:** choose English or Simplified Chinese, adjust appearance, and use the clock and weather applications. Application Settings lists File Explorer and Editor on the left and shows the selected application's options on the right. Cancel new alarms with the visible button or keyboard.
 
 See [Linux system management](crates/platform/docs/linux-management.md) for supported operations and their requirements.
 

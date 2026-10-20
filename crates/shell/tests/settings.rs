@@ -14,7 +14,7 @@ use shell::{
     ShellLaunchConfig, ShellScreen, ShellSession, prepare_shell_startup,
 };
 use storage::{BorderShape, IconDisplayMode, MotionPreference, StorageManager, TimeSyncSource};
-use ui::{SettingsCategory, SettingsField, SettingsPickerKind};
+use ui::{SettingsApplication, SettingsCategory, SettingsField, SettingsPickerKind};
 
 fn default_config() -> ShellLaunchConfig {
     ShellLaunchConfig {
@@ -162,8 +162,7 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
     for expected in [
         SettingsCategory::RegionTime,
         SettingsCategory::System,
-        SettingsCategory::FileExplorer,
-        SettingsCategory::Editor,
+        SettingsCategory::Applications,
         SettingsCategory::Update,
         SettingsCategory::Appearance,
     ] {
@@ -191,13 +190,26 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
     );
 
     press(&mut state, &platform, "Shift+Tab");
+    let applications = state.to_settings_view_model().unwrap();
+    assert_eq!(
+        applications.selected_category,
+        SettingsCategory::Applications
+    );
+    assert_eq!(applications.selected_field, SettingsField::ApplicationList);
+    assert_eq!(
+        applications.selected_application,
+        SettingsApplication::FileExplorer
+    );
+    press(&mut state, &platform, "Down");
+    press(&mut state, &platform, "Enter");
     let editor = state.to_settings_view_model().unwrap();
-    assert_eq!(editor.selected_category, SettingsCategory::Editor);
+    assert_eq!(editor.selected_category, SettingsCategory::Applications);
+    assert_eq!(editor.selected_application, SettingsApplication::Editor);
     assert_eq!(editor.selected_field, SettingsField::ExplorerOpenExtensions);
 
     press(&mut state, &platform, "Down");
     let editor = state.to_settings_view_model().unwrap();
-    assert_eq!(editor.selected_category, SettingsCategory::Editor);
+    assert_eq!(editor.selected_category, SettingsCategory::Applications);
     assert_eq!(editor.selected_field, SettingsField::CursorAcceleration);
 }
 
@@ -260,6 +272,88 @@ fn linux_update_mode_saves_keyboard_and_mouse_choices_across_reopen() {
     assert_eq!(
         manager.load_config().unwrap().linux_update_mode,
         storage::LinuxUpdateMode::Release
+    );
+}
+
+#[test]
+fn application_list_switches_with_pointer_without_changing_saved_settings() {
+    let fixture = FixtureRoot::new("application-settings-pointer");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    select_category(&mut state, &platform, SettingsCategory::Applications);
+    let original = manager.load_config().unwrap();
+    let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
+    else {
+        panic!("full layout");
+    };
+    for application in [
+        SettingsApplication::Editor,
+        SettingsApplication::FileExplorer,
+    ] {
+        let model = state.to_settings_view_model().unwrap();
+        let layout = ui::settings_layout(main, &model);
+        let button = layout
+            .applications
+            .as_ref()
+            .unwrap()
+            .options
+            .iter()
+            .find(|(candidate, _)| *candidate == application)
+            .unwrap()
+            .1;
+        let point = (button.x, button.y);
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(ui::MouseButton::Left, point),
+            &platform,
+        );
+        state.apply_input_with_platform(
+            InputEvent::mouse_up(ui::MouseButton::Left, point),
+            &platform,
+        );
+        let model = state.to_settings_view_model().unwrap();
+        assert_eq!(model.selected_application, application);
+        assert_eq!(model.selected_field, SettingsField::ApplicationList);
+        let first = model.cards[0].items[0].field;
+        assert_eq!(
+            first,
+            match application {
+                SettingsApplication::FileExplorer => SettingsField::ShowHidden,
+                SettingsApplication::Editor => SettingsField::ExplorerOpenExtensions,
+            }
+        );
+        assert_eq!(manager.load_config().unwrap(), original);
+    }
+}
+
+#[test]
+fn restore_application_defaults_changes_only_the_selected_application() {
+    let fixture = FixtureRoot::new("application-settings-reset");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut config = manager.load_config().unwrap();
+    config.explorer.show_hidden = true;
+    config.editor.cursor_acceleration_delay_ms += 100;
+    manager.save_config(&config).unwrap();
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    select_category(&mut state, &platform, SettingsCategory::Applications);
+    for key in ["End", "Enter", "R"] {
+        press(&mut state, &platform, key);
+    }
+    let saved = manager.load_config().unwrap();
+    assert_eq!(saved.explorer, storage::ExplorerConfig::default());
+    assert_eq!(saved.editor, config.editor);
+    for key in ["Home", "Down", "Enter", "End", "Enter", "R"] {
+        press(&mut state, &platform, key);
+    }
+    let saved = manager.load_config().unwrap();
+    assert_eq!(saved.editor, storage::EditorConfig::default());
+    assert_eq!(saved.explorer, storage::ExplorerConfig::default());
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_application,
+        SettingsApplication::Editor
     );
 }
 
@@ -489,12 +583,13 @@ fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selectio
         highlighted_timezone
     );
 
-    select_category(&mut state, &platform, SettingsCategory::FileExplorer);
+    select_category(&mut state, &platform, SettingsCategory::Applications);
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_category,
-        SettingsCategory::FileExplorer
+        SettingsCategory::Applications
     );
     assert!(!manager.load_config().unwrap().explorer.show_hidden);
+    press(&mut state, &platform, "Right");
     press(&mut state, &platform, "Enter");
     assert!(manager.load_config().unwrap().explorer.show_hidden);
     assert!(
@@ -622,7 +717,9 @@ fn editor_settings_save_normalized_explorer_open_suffixes() {
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_settings_from_home(&mut state, &platform);
-    select_category(&mut state, &platform, SettingsCategory::Editor);
+    select_category(&mut state, &platform, SettingsCategory::Applications);
+    press(&mut state, &platform, "Down");
+    press(&mut state, &platform, "Enter");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::ExplorerOpenExtensions

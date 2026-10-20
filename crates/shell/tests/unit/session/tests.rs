@@ -3869,6 +3869,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     );
     state.enter_screen(ShellScreen::Settings);
     state.pages.settings.settings_state = Some(SettingsState {
+        application: Default::default(),
         system_time: Default::default(),
         animation_editor: None,
         category: ui::SettingsCategory::Appearance,

@@ -142,6 +142,7 @@ pub(super) struct SettingsAnimationEditorState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
+    pub(super) application: ui::SettingsApplication,
     pub(super) system_time: crate::session::controller::SystemTimeSettings,
     pub(super) animation_editor: Option<SettingsAnimationEditorState>,
     pub(super) category: ui::SettingsCategory,

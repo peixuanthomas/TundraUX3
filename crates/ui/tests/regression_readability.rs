@@ -171,6 +171,7 @@ fn system_and_update_settings_keep_errors_in_footer_without_description_pane() {
     let context = context();
     for category in [SettingsCategory::System, SettingsCategory::Update] {
         let mut model = SettingsViewModel {
+            selected_application: Default::default(),
             selected_category: category,
             selected_field: SettingsField::SystemLowPercentage,
             cards: Vec::new(),

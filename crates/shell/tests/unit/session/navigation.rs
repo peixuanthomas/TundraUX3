@@ -32,6 +32,7 @@ fn prepare_page(state: &mut ShellSession, screen: ShellScreen) {
     }
     if screen == ShellScreen::Settings {
         state.pages.settings.settings_state = Some(SettingsState {
+            application: Default::default(),
             system_time: Default::default(),
             animation_editor: None,
             category: ui::SettingsCategory::Appearance,

@@ -56,3 +56,7 @@ ui-settings-touch-apply = Enter Apply
 ui-settings-touch-cancel = Esc Cancel
 ui-settings-keyboard-help = Enter/Space: open · ←→: adjust · ↑↓: select · Tab: section
 ui-settings-keyboard-help-short = Enter ←→ ↑↓ Tab
+ui-settings-applications = Application settings
+ui-settings-applications-description = Select an application to change its settings.
+ui-settings-application-list = Applications
+ui-settings-applications-keyboard-help = Home: apps | ↑↓: choose | Enter/→: settings | Tab: category

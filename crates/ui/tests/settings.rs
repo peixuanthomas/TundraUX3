@@ -32,6 +32,63 @@ fn settings_catalog_does_not_offer_unavailable_device_pages() {
 }
 
 #[test]
+fn application_list_stays_left_of_settings_and_uses_the_same_hit_areas() {
+    for (width, height) in [(40, 12), (50, 16), (108, 20), (140, 40)] {
+        let mut model = sample_model();
+        model.selected_category = SettingsCategory::Applications;
+        model.selected_application = ui::SettingsApplication::Editor;
+        model.selected_field = SettingsField::ApplicationList;
+        let area = Rect::new(0, 0, width, height);
+        let layout = settings_layout(area, &model);
+        let applications = layout.applications.as_ref().unwrap();
+        assert!(applications.list.right() < layout.detail.x);
+        for (application, button) in &applications.options {
+            assert!(!button.is_empty());
+            assert_eq!(button.intersection(applications.list), *button);
+            assert_eq!(
+                settings_hit_test(&layout, (button.x, button.y)),
+                Some(SettingsHitTarget::Application(*application))
+            );
+        }
+        assert!(
+            layout
+                .fields
+                .iter()
+                .all(|field| field.area.x >= layout.detail.x)
+        );
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_settings(
+                    frame,
+                    frame.area(),
+                    &chrome(),
+                    &model,
+                    &TundraTheme::default_dark(),
+                );
+            })
+            .unwrap();
+        if width >= 108 {
+            let output = terminal_output(&terminal);
+            assert!(output.contains("File Explorer"));
+            assert!(output.contains("Editor"));
+        }
+        let button = applications.options[0].1;
+        model.color_editor = Some(SettingsColorEditorViewModel {
+            title: "Color".into(),
+            value: "#123456".into(),
+            error: None,
+        });
+        assert_ne!(
+            settings_hit_test(&settings_layout(area, &model), (button.x, button.y)),
+            Some(SettingsHitTarget::Application(
+                ui::SettingsApplication::FileExplorer
+            ))
+        );
+    }
+}
+
+#[test]
 fn operating_system_group_has_a_separate_hittable_entry_and_respects_overlays() {
     for (width, height) in [(40, 12), (50, 16), (108, 20), (140, 40)] {
         let mut model = sample_model();
@@ -299,8 +356,8 @@ fn field_and_category_hit_targets_match_their_visible_areas() {
     let category = layout
         .category_cards
         .iter()
-        .find(|entry| entry.category == SettingsCategory::FileExplorer)
-        .expect("file explorer category");
+        .find(|entry| entry.category == SettingsCategory::Applications)
+        .expect("application settings category");
     let field = layout
         .fields
         .iter()
@@ -309,7 +366,7 @@ fn field_and_category_hit_targets_match_their_visible_areas() {
 
     assert_eq!(
         settings_hit_test(&layout, (category.area.x, category.area.y)),
-        Some(SettingsHitTarget::Category(SettingsCategory::FileExplorer))
+        Some(SettingsHitTarget::Category(SettingsCategory::Applications))
     );
     assert_eq!(
         settings_hit_test(&layout, (field.area.x, field.area.y)),
@@ -591,6 +648,7 @@ fn picker_truncates_wide_labels_by_terminal_columns() {
 
 fn sample_model() -> SettingsViewModel {
     SettingsViewModel {
+        selected_application: Default::default(),
         selected_category: SettingsCategory::Appearance,
         selected_field: SettingsField::BorderColor,
         cards: vec![

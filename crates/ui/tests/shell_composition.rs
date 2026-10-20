@@ -316,6 +316,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
     let command_line = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(120, 40));
     let mut editor = EditorViewModel::source("sample.txt", "editor content marker");
     let mut settings = SettingsViewModel {
+        selected_application: Default::default(),
         selected_category: SettingsCategory::Appearance,
         selected_field: SettingsField::BorderColor,
         cards: vec![SettingsCardViewModel::new(

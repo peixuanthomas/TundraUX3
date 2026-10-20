@@ -1,5 +1,7 @@
 mod animation;
 pub use animation::{SettingsAnimationEditorViewModel, SettingsAnimationLayout};
+mod applications;
+pub use applications::{SettingsApplication, SettingsApplicationsLayout};
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
@@ -24,18 +26,16 @@ pub enum SettingsCategory {
     Display,
     Wifi,
     Bluetooth,
-    FileExplorer,
-    Editor,
+    Applications,
     Update,
 }
 
 impl SettingsCategory {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::Appearance,
         Self::RegionTime,
         Self::System,
-        Self::FileExplorer,
-        Self::Editor,
+        Self::Applications,
         Self::Update,
     ];
 
@@ -55,8 +55,7 @@ impl SettingsCategory {
             Self::Display => i18n::tr!("ui-settings-display"),
             Self::Wifi => i18n::tr!("ui-settings-wifi"),
             Self::Bluetooth => i18n::tr!("ui-settings-bluetooth"),
-            Self::FileExplorer => i18n::tr!("ui-settings-file-explorer"),
-            Self::Editor => i18n::tr!("ui-settings-editor"),
+            Self::Applications => i18n::tr!("ui-settings-applications"),
             Self::Update => i18n::tr!("ui-settings-update"),
         }
     }
@@ -70,8 +69,7 @@ impl SettingsCategory {
             Self::Display => i18n::tr!("ui-settings-display-description"),
             Self::Wifi => i18n::tr!("ui-settings-wifi-description"),
             Self::Bluetooth => i18n::tr!("ui-settings-bluetooth-description"),
-            Self::FileExplorer => i18n::tr!("ui-settings-display-sorting-and-safety"),
-            Self::Editor => i18n::tr!("ui-settings-cursor-and-file-associations"),
+            Self::Applications => i18n::tr!("ui-settings-applications-description"),
             Self::Update => i18n::tr!("ui-settings-version-commits-and-source-updates"),
         }
     }
@@ -79,6 +77,7 @@ impl SettingsCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsField {
+    ApplicationList,
     AutoAdmin,
     SoundOutputDevice,
     SoundOutputVolume,
@@ -333,6 +332,7 @@ pub struct SettingsTimeSyncServerEditorViewModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsViewModel {
+    pub selected_application: SettingsApplication,
     pub selected_category: SettingsCategory,
     pub selected_field: SettingsField,
     pub cards: Vec<SettingsCardViewModel>,
@@ -392,6 +392,7 @@ pub struct SettingsPickerOptionLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsHitTarget {
+    Application(SettingsApplication),
     OperatingSystem,
     OverlayApply,
     OverlayCancel,
@@ -409,6 +410,7 @@ pub enum SettingsHitTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsLayout {
+    pub applications: Option<SettingsApplicationsLayout>,
     pub workspace: SidebarWorkspaceLayout,
     pub category: Rect,
     pub operating_system: Rect,
@@ -493,6 +495,11 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             .height
             .saturating_sub(if raw_detail_area.height >= 3 { 2 } else { 1 }),
     );
+    let applications = (model.selected_category == SettingsCategory::Applications)
+        .then(|| SettingsApplicationsLayout::new(detail_area));
+    if let Some(applications) = &applications {
+        detail_area = applications.detail;
+    }
     let mut content_height = settings_content_height(detail_area.width, model);
     let scrollbar = (content_height > usize::from(detail_area.height)
         && detail_area.width > 0
@@ -684,6 +691,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .or(picker_dialog);
     let overlay_buttons = active_editor.map(settings_overlay_buttons);
     SettingsLayout {
+        applications,
         animation_editor: model
             .animation_editor
             .as_ref()
@@ -815,6 +823,14 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
     if contains(layout.operating_system, point) {
         return Some(SettingsHitTarget::OperatingSystem);
     }
+    if let Some(applications) = &layout.applications
+        && let Some((application, _)) = applications
+            .options
+            .iter()
+            .find(|(_, area)| contains(*area, point))
+    {
+        return Some(SettingsHitTarget::Application(*application));
+    }
     if let Some(field) = layout
         .fields
         .iter()
@@ -885,6 +901,9 @@ pub fn render_settings_content(
         .render_frame(frame, track, context);
     }
 
+    if let Some(applications) = &layout.applications {
+        applications.render(frame, model, context);
+    }
     let detail_area = layout.detail;
     if let Some(preview) = model.appearance_preview {
         let preview_y = i32::from(detail_area.y) - i32::from(layout.scroll_offset);
@@ -1297,7 +1316,9 @@ fn render_settings_footer(
         area,
     );
     if detail.height >= 3 {
-        let hint = if detail.width >= 62 {
+        let hint = if model.selected_category == SettingsCategory::Applications {
+            i18n::tr!("ui-settings-applications-keyboard-help")
+        } else if detail.width >= 62 {
             i18n::tr!("ui-settings-keyboard-help")
         } else {
             i18n::tr!("ui-settings-keyboard-help-short")

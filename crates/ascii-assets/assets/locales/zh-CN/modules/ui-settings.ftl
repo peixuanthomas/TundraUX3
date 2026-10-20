@@ -56,3 +56,7 @@ ui-settings-keyboard-help-short = Enter ←→ ↑↓ Tab
 ui-settings-system-time-server-help = 输入服务器名称或 IP 地址。新增和备用服务器可用空格分隔；留空可删除条目。
 ui-settings-system-time-server-save-help = 修改会先显示差异，经过授权后再保存到 Linux 系统配置。
 ui-settings-enter-save-esc-cancel = Enter：保存    Esc：取消
+ui-settings-applications = 应用设置
+ui-settings-applications-description = 选择应用，修改对应设置。
+ui-settings-application-list = 应用
+ui-settings-applications-keyboard-help = Home：应用列表 | ↑↓：选择 | Enter/→：设置 | Tab：分类

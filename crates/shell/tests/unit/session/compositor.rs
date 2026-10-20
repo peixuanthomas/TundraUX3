@@ -179,6 +179,7 @@ fn aa_keyboard_keeps_background_layout_and_places_one_global_launcher_on_every_p
             );
             if screen == ShellScreen::Settings {
                 state.pages.settings.settings_state = Some(SettingsState {
+                    application: Default::default(),
                     system_time: Default::default(),
                     animation_editor: None,
                     category: ui::SettingsCategory::Appearance,

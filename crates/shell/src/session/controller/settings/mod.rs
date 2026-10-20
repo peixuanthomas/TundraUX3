@@ -1,4 +1,5 @@
 mod animation;
+mod applications;
 mod background;
 pub(in crate::session) mod devices;
 mod forms;
@@ -39,30 +40,6 @@ pub(in crate::session) const SYSTEM_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::SystemLowPercentage,
     ui::SettingsField::SystemCriticalAvailable,
     ui::SettingsField::SystemCriticalPercentage,
-    ui::SettingsField::RestoreDefaults,
-];
-pub(in crate::session) const EXPLORER_SETTINGS_FIELDS: &[ui::SettingsField] = &[
-    ui::SettingsField::ShowHidden,
-    ui::SettingsField::ShowSystem,
-    ui::SettingsField::ShowExtensions,
-    ui::SettingsField::FoldersFirst,
-    ui::SettingsField::ShowSidebar,
-    ui::SettingsField::CaseSensitiveSort,
-    ui::SettingsField::SizeFormat,
-    ui::SettingsField::DateZone,
-    ui::SettingsField::SortField,
-    ui::SettingsField::SortDirection,
-    ui::SettingsField::ConfirmDelete,
-    ui::SettingsField::ConfirmNameConflicts,
-    ui::SettingsField::RestoreDefaults,
-];
-pub(in crate::session) const EDITOR_SETTINGS_FIELDS: &[ui::SettingsField] = &[
-    ui::SettingsField::ExplorerOpenExtensions,
-    ui::SettingsField::CursorAcceleration,
-    ui::SettingsField::CursorDelay,
-    ui::SettingsField::CursorRamp,
-    ui::SettingsField::CursorHorizontalStep,
-    ui::SettingsField::CursorVerticalStep,
     ui::SettingsField::RestoreDefaults,
 ];
 pub(in crate::session) const UPDATE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
@@ -135,6 +112,7 @@ impl ShellSession {
         );
         self.enter_new_page(ShellScreen::Settings);
         self.pages.settings.settings_state = Some(SettingsState {
+            application: Default::default(),
             system_time: SystemTimeSettings::default(),
             animation_editor: None,
             category: ui::SettingsCategory::Appearance,
@@ -300,7 +278,22 @@ impl ShellSession {
             return;
         }
 
+        let choosing_application =
+            self.pages
+                .settings
+                .settings_state
+                .as_ref()
+                .is_some_and(|state| {
+                    state.category == ui::SettingsCategory::Applications
+                        && state.selected_field == ui::SettingsField::ApplicationList
+                });
         match &key.key {
+            InputKey::Up if choosing_application => self.select_settings_application_delta(-1),
+            InputKey::Down if choosing_application => self.select_settings_application_delta(1),
+            InputKey::Right | InputKey::Enter | InputKey::Char(' ') if choosing_application => {
+                self.select_settings_field_at(1)
+            }
+            InputKey::Left if choosing_application => {}
             InputKey::F(5)
                 if self.identity_backend == identity::IdentityBackend::Linux
                     && self
@@ -360,6 +353,19 @@ impl ShellSession {
                 .is_some_and(|state| state.animation_editor.is_some())
             {
                 self.scroll_settings_animation(delta as i16);
+                self.refresh_hit_map();
+                return;
+            }
+            if self.active_overlay_descriptor().is_none()
+                && self.current_settings_layout().is_some_and(|layout| {
+                    layout.applications.is_some_and(|applications| {
+                        applications
+                            .list
+                            .contains((input.position.column, input.position.row).into())
+                    })
+                })
+            {
+                self.select_settings_application_delta(if delta < 0 { -1 } else { 1 });
                 self.refresh_hit_map();
                 return;
             }
@@ -425,6 +431,9 @@ impl ShellSession {
             return;
         }
         match ui::settings_hit_test(&layout, coordinates) {
+            Some(ui::SettingsHitTarget::Application(application)) => {
+                self.select_settings_application(application)
+            }
             Some(ui::SettingsHitTarget::OperatingSystem) => self.open_operating_system_settings(),
             Some(ui::SettingsHitTarget::OverlayApply) => {
                 self.handle_settings_key(&KeyInput::new(InputKey::Enter), platform)
@@ -565,11 +574,15 @@ impl ShellSession {
     fn settings_visible_fields(&self) -> Vec<ui::SettingsField> {
         self.to_settings_view_model()
             .map(|model| {
-                model
+                let mut fields: Vec<_> = model
                     .cards
                     .into_iter()
                     .flat_map(|card| card.items.into_iter().map(|item| item.field))
-                    .collect()
+                    .collect();
+                if model.selected_category == ui::SettingsCategory::Applications {
+                    fields.insert(0, ui::SettingsField::ApplicationList);
+                }
+                fields
             })
             .unwrap_or_default()
     }
@@ -997,28 +1010,30 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn request_settings_restore_defaults(&mut self) {
-        let Some(category) = self
+        let Some((category, application)) = self
             .pages
             .settings
             .settings_state
             .as_ref()
-            .map(|state| state.category)
+            .map(|state| (state.category, state.application))
         else {
             return;
         };
         if category.is_system_device() {
             return;
         }
+        let category_name = if category == ui::SettingsCategory::Applications {
+            format!("{application:?}")
+        } else {
+            format!("{category:?}")
+        };
         if category != ui::SettingsCategory::Appearance && !self.can_change_global_settings() {
             self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
         }
         let notification = ShellNotification::modal(
             i18n::msg!("settings-restore-defaults"),
-            i18n::msg!(
-                "settings-restore-confirmation",
-                category = format!("{category:?}")
-            ),
+            i18n::msg!("settings-restore-confirmation", category = category_name),
             ui::NotificationTone::Warning,
             vec![
                 ShellNotificationAction::new("restore", i18n::msg!("settings-restore"))
@@ -1034,12 +1049,12 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn restore_settings_defaults(&mut self) {
-        let Some(category) = self
+        let Some((category, application)) = self
             .pages
             .settings
             .settings_state
             .as_ref()
-            .map(|state| state.category)
+            .map(|state| (state.category, state.application))
         else {
             return;
         };
@@ -1084,8 +1099,10 @@ impl ShellSession {
                 config.system_status = defaults.system_status;
                 config.auto_admin = defaults.auto_admin;
             }
-            ui::SettingsCategory::FileExplorer => config.explorer = defaults.explorer,
-            ui::SettingsCategory::Editor => config.editor = defaults.editor,
+            ui::SettingsCategory::Applications => match application {
+                ui::SettingsApplication::FileExplorer => config.explorer = defaults.explorer,
+                ui::SettingsApplication::Editor => config.editor = defaults.editor,
+            },
             ui::SettingsCategory::Appearance => unreachable!(),
             ui::SettingsCategory::Update
             | ui::SettingsCategory::Sound
@@ -1123,16 +1140,21 @@ impl ShellSession {
         if let Some((catalog, loaded)) = candidate {
             self.publish_language(catalog, loaded);
         }
+        let category_name = if category == ui::SettingsCategory::Applications {
+            format!("{application:?}")
+        } else {
+            format!("{category:?}")
+        };
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.status = i18n::msg!(
                 "settings-restored-category",
-                category = format!("{category:?}")
+                category = category_name.clone()
             )
             .into();
         }
         self.notify_status(i18n::msg!(
             "settings-restored-category",
-            category = format!("{category:?}")
+            category = category_name
         ));
     }
 
@@ -1159,8 +1181,7 @@ pub(in crate::session) fn settings_fields(
         ui::SettingsCategory::Display => DISPLAY_FIELDS,
         ui::SettingsCategory::Wifi => WIFI_FIELDS,
         ui::SettingsCategory::Bluetooth => BLUETOOTH_FIELDS,
-        ui::SettingsCategory::FileExplorer => EXPLORER_SETTINGS_FIELDS,
-        ui::SettingsCategory::Editor => EDITOR_SETTINGS_FIELDS,
+        ui::SettingsCategory::Applications => &[ui::SettingsField::ApplicationList],
         ui::SettingsCategory::Update => UPDATE_SETTINGS_FIELDS,
     }
 }

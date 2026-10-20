@@ -49,12 +49,12 @@ pub use launcher::{
 };
 pub use settings::{
     SettingsAnimationEditorViewModel, SettingsAnimationLayout, SettingsAppearancePreview,
-    SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout, SettingsColorEditorViewModel,
-    SettingsControl, SettingsControlKind, SettingsField, SettingsFieldLayout,
-    SettingsFileExtensionsEditorViewModel, SettingsHitTarget, SettingsItemViewModel,
-    SettingsLayout, SettingsPickerKind, SettingsPickerOptionLayout, SettingsPickerOptionViewModel,
-    SettingsPickerViewModel, SettingsTimeSyncServerEditorViewModel, SettingsUpdateCommitViewModel,
-    SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel, SettingsViewModel,
-    SettingsWeatherLocationEditorViewModel, render_settings_content, render_settings_overlay,
-    settings_hit_test, settings_layout,
+    SettingsApplication, SettingsApplicationsLayout, SettingsCardViewModel, SettingsCategory,
+    SettingsCategoryLayout, SettingsColorEditorViewModel, SettingsControl, SettingsControlKind,
+    SettingsField, SettingsFieldLayout, SettingsFileExtensionsEditorViewModel, SettingsHitTarget,
+    SettingsItemViewModel, SettingsLayout, SettingsPickerKind, SettingsPickerOptionLayout,
+    SettingsPickerOptionViewModel, SettingsPickerViewModel, SettingsTimeSyncServerEditorViewModel,
+    SettingsUpdateCommitViewModel, SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel,
+    SettingsViewModel, SettingsWeatherLocationEditorViewModel, render_settings_content,
+    render_settings_overlay, settings_hit_test, settings_layout,
 };
