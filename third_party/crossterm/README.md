@@ -7,6 +7,8 @@
 Crossterm is a pure-rust, terminal manipulation library that makes it possible to write cross-platform text-based interfaces (see [features](#features)). It supports all UNIX and Windows terminals down to Windows 7 (not all terminals are tested,
 see [Tested Terminals](#tested-terminals) for more info).
 
+TundraUX3's local copy re-arms terminal input before returning a resize event, so input received in the same batch does not wait for another keystroke.
+
 ## Table of Contents
 
 - [Cross-platform Terminal Manipulation Library](#cross-platform-terminal-manipulation-library)

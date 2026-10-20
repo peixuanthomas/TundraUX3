@@ -138,6 +138,13 @@ impl EventSource for UnixInternalEventSource {
                             // it's a really long time from the mio, async-std/tokio executor, ...
                             // point of view.
                             let new_size = crate::terminal::size()?;
+                            // Resize can preempt input in the same readiness batch.
+                            // Re-arm it so unread bytes do not wait for another key.
+                            self.poll.registry().reregister(
+                                &mut SourceFd(&self.tty_fd.raw_fd()),
+                                TTY_TOKEN,
+                                Interest::READABLE,
+                            )?;
                             return Ok(Some(InternalEvent::Event(Event::Resize(
                                 new_size.0, new_size.1,
                             ))));
