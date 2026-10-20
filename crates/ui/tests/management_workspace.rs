@@ -232,3 +232,46 @@ fn search_button_shows_the_key_that_submits_in_each_focus_state() {
         assert!(text.contains(if filtering { "[Enter]" } else { "[Ctrl+Enter]" }));
     }
 }
+
+#[test]
+fn expanded_details_scroll_to_clipped_text_without_covering_it_with_scrollbars() {
+    for (width, height) in [(108, 20), (160, 40)] {
+        let mut model = model(false);
+        model.details_only = true;
+        model.details = (0..80)
+            .map(|index| format!("{} {index:02}END", "软件包".repeat(80)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        model.details_scroll = u16::MAX;
+        model.details_horizontal_scroll = u16::MAX;
+        let theme = TundraTheme::default_dark();
+        let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        let main = Rect::new(0, 0, width, height);
+        let layout = management_layout(main, &model);
+        for target in [
+            ManagementScrollTarget::Details,
+            ManagementScrollTarget::DetailsColumns,
+        ] {
+            let bar = layout
+                .scrollbars
+                .iter()
+                .find(|bar| bar.target == target)
+                .unwrap();
+            assert_eq!(bar.offset, bar.content_len - bar.viewport_len);
+            assert!(bar.track.intersection(layout.details_text).is_empty());
+            assert_eq!(bar.track.intersection(layout.details), bar.track);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_management_content(frame, main, &model, &context))
+            .unwrap();
+        let area = layout.details_text;
+        let last_line = (area.x..area.right())
+            .map(|x| terminal.backend().buffer()[(x, area.bottom() - 1)].symbol())
+            .collect::<String>();
+        assert!(
+            last_line.ends_with("79END"),
+            "{width}x{height}: {last_line}"
+        );
+    }
+}

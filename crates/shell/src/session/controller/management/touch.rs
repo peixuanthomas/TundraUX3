@@ -428,6 +428,12 @@ impl ShellSession {
             ui::ManagementScrollTarget::Details => {
                 self.pages.management.management_state.details_scroll = short
             }
+            ui::ManagementScrollTarget::DetailsColumns => {
+                self.pages
+                    .management
+                    .management_state
+                    .details_horizontal_scroll = short
+            }
             ui::ManagementScrollTarget::Actions => {
                 self.pages.management.management_state.action_scroll = Some(offset)
             }
@@ -514,6 +520,7 @@ impl ShellSession {
                         ui::ManagementScrollTarget::Rows
                             | ui::ManagementScrollTarget::Columns
                             | ui::ManagementScrollTarget::Details
+                            | ui::ManagementScrollTarget::DetailsColumns
                             | ui::ManagementScrollTarget::Actions
                     )
                 }
@@ -561,6 +568,14 @@ impl ShellSession {
             .scrollbars
             .iter()
             .find(|bar| bar.target == ui::ManagementScrollTarget::Details)
+            .map_or(0, |bar| bar.offset.min(u16::MAX as usize) as u16);
+        self.pages
+            .management
+            .management_state
+            .details_horizontal_scroll = layout
+            .scrollbars
+            .iter()
+            .find(|bar| bar.target == ui::ManagementScrollTarget::DetailsColumns)
             .map_or(0, |bar| bar.offset.min(u16::MAX as usize) as u16);
         if let Some(form) = &mut self.pages.management.management_state.form {
             form.message_scroll = layout
@@ -820,6 +835,10 @@ impl ShellSession {
                 );
             self.pages.management.management_state.actions_focused = false;
             self.pages.management.management_state.details_scroll = 0;
+            self.pages
+                .management
+                .management_state
+                .details_horizontal_scroll = 0;
             self.pages.management.management_state.action_scroll = None;
             if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
                 self.focus_package_workspace(ui::components::WorkspaceFocus::List);

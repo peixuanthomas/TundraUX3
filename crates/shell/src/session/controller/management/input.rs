@@ -578,39 +578,6 @@ impl ShellSession {
             }
             _ => {}
         }
-        if self.pages.management.management_state.kind == Some(ManagementKind::Packages)
-            && self.pages.management.management_state.details_only
-            && !self.pages.management.management_state.actions_focused
-            && matches!(
-                key.key,
-                InputKey::Up
-                    | InputKey::Down
-                    | InputKey::PageUp
-                    | InputKey::PageDown
-                    | InputKey::Home
-                    | InputKey::End
-            )
-        {
-            let target = self
-                .pages
-                .management
-                .management_state
-                .snapshot
-                .rows
-                .get(self.pages.management.management_state.selected)
-                .map(|row| row.id.clone());
-            if let Some(query) = &mut self.pages.management.management_state.query {
-                if matches!(
-                    query.scope.as_str(),
-                    "" | "search" | "installed" | "updates"
-                ) && query.target != target
-                {
-                    query.target = target;
-                    self.pages.management.management_state.details_scroll = 0;
-                    self.refresh_management();
-                }
-            }
-        }
         self.clamp_management_scroll();
     }
 
@@ -623,6 +590,10 @@ impl ShellSession {
         self.pages.management.management_state.details_only =
             !self.pages.management.management_state.details_only;
         self.pages.management.management_state.details_scroll = 0;
+        self.pages
+            .management
+            .management_state
+            .details_horizontal_scroll = 0;
         let package_view =
             self.pages.management.management_state.kind == Some(ManagementKind::Packages);
         self.pages.management.management_state.actions_focused = !package_view;

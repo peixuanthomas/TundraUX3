@@ -2992,7 +2992,7 @@ fn package_details_keep_all_rows_and_escape_returns_to_the_list() {
 }
 
 #[test]
-fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_search_text() {
+fn package_detail_scrolling_keeps_the_selection_and_list_views_keep_search_text() {
     let mut session = package_list_state();
     let search_result = session.pages.management.management_state.snapshot.clone();
     session.pages.management.management_state.filter_input = "shell".into();
@@ -3026,7 +3026,7 @@ fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_searc
             .is_empty()
     );
     session.pages.management.management_state.snapshot = search_result;
-    session.handle_management_key(&KeyInput::new(InputKey::Tab));
+    session.handle_management_key(&KeyInput::new(InputKey::Escape));
     assert!(!session.pages.management.management_state.filtering);
     assert_eq!(
         session
@@ -3042,7 +3042,7 @@ fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_searc
     session.pages.management.management_state.selected = 1;
     session.handle_management_key(&KeyInput::new(InputKey::F(4)));
     session.handle_management_key(&KeyInput::new(InputKey::Down));
-    assert_eq!(session.pages.management.management_state.selected, 2);
+    assert_eq!(session.pages.management.management_state.selected, 1);
     assert_eq!(
         session
             .pages
@@ -3053,7 +3053,7 @@ fn package_detail_navigation_queries_the_new_selection_and_list_views_keep_searc
             .unwrap()
             .target
             .as_deref(),
-        Some("omega:amd64")
+        Some("bash:amd64")
     );
     session.handle_management_key(&KeyInput::new(InputKey::Escape));
     assert!(
