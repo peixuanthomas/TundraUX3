@@ -121,14 +121,14 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         }
         ClockPageMode::DigitalOnly => {
             if main.width < 50 {
-                let clock = Rect::new(main.x, main.y, main.width, main.height.min(2));
+                let clock = Rect::new(main.x, main.y, main.width, main.height.min(4));
                 let panel = Rect::new(
                     main.x,
                     clock.bottom(),
                     main.width,
                     main.height.saturating_sub(clock.height),
                 );
-                (clock, None, clock, panel)
+                (clock, None, inset_rect(clock, 1), panel)
             } else {
                 let panel_width = (main.width / 2)
                     .clamp(CLOCK_PANEL_MIN_WIDTH, CLOCK_PANEL_MAX_WIDTH)

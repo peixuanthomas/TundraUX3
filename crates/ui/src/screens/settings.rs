@@ -861,7 +861,7 @@ pub fn render_settings_content(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled(i18n::tr!("ui-settings-settings-padded"))
-        .bordered(false)
+        .bordered(true)
         .render_frame(frame, layout.main, context);
 
     let buttons = SettingsCategory::ALL

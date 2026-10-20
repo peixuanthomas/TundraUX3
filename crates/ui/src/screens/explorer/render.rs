@@ -24,6 +24,7 @@ pub fn render_explorer_content(
     let theme = &context.compatibility_theme();
     Surface::new()
         .titled(i18n::tr!("ui-explorer-explorer"))
+        .bordered(true)
         .render_frame(frame, area, context);
 
     let layout = explorer_layout(area, model);

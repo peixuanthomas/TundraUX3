@@ -23,7 +23,7 @@ pub fn render_system_status_content(
     let l = system_status_layout(main, model);
     Surface::new()
         .titled(i18n::tr!("ui-system-status-system-status"))
-        .bordered(false)
+        .bordered(true)
         .render_frame(frame, l.panel, context);
     match model.route {
         SystemStatusRoute::Dashboard => render_dashboard(frame, &l, model, context),
