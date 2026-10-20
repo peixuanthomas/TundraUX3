@@ -1,4 +1,7 @@
 use super::super::*;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../../tests/unit/session/presentation/view_helpers_tests.rs"]
+mod tests;
 pub(in crate::session) fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
     Rect::new(
         area.x.saturating_add(area.width.saturating_sub(width) / 2),
@@ -139,6 +142,10 @@ pub(in crate::session) fn explorer_system_time_label(
     let utc = DateTime::<Utc>::from(value);
     match zone {
         storage::ExplorerDateZone::Utc => utc.format("%Y-%m-%d %H:%M").to_string(),
+        storage::ExplorerDateZone::ConfiguredTimezone if configured_timezone.is_none() => utc
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
         storage::ExplorerDateZone::ConfiguredTimezone => configured_timezone
             .and_then(|timezone| timezone.parse::<chrono_tz::Tz>().ok())
             .map(|timezone| {
