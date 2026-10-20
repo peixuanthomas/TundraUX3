@@ -798,7 +798,7 @@ pub fn render_launcher_content(
             "ui-launcher-title",
             mode = launcher_view_mode_label(model.view_mode)
         ))
-        .bordered(false)
+        .bordered(true)
         .render_frame(frame, layout.panel, context);
     render_launcher_toolbar(frame, &layout, model, context);
     match model.view_mode {
