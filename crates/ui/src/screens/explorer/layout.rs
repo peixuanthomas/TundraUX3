@@ -861,37 +861,6 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 ],
             })
         }
-        None if model.pending_dialog.is_some() => {
-            let dialog = centered_rect(area, area.width.min(56), area.height.min(7));
-            let content = inset_rect(dialog, 1);
-            let button_y = content.y.saturating_add(content.height.saturating_sub(1));
-            let gap = u16::from(content.width > 2);
-            let confirm_width = content.width.saturating_sub(gap) / 2;
-            Some(ExplorerOverlayLayout {
-                area: dialog,
-                content,
-                controls: vec![
-                    ExplorerOverlayControlLayout {
-                        control: ExplorerOverlayControl::Confirm,
-                        area: Rect::new(content.x, button_y, confirm_width, 1),
-                        enabled: true,
-                    },
-                    ExplorerOverlayControlLayout {
-                        control: ExplorerOverlayControl::Cancel,
-                        area: Rect::new(
-                            content.x.saturating_add(confirm_width).saturating_add(gap),
-                            button_y,
-                            content
-                                .width
-                                .saturating_sub(confirm_width)
-                                .saturating_sub(gap),
-                            1,
-                        ),
-                        enabled: true,
-                    },
-                ],
-            })
-        }
         None => None,
     }
 }

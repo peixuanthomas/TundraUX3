@@ -521,30 +521,6 @@ impl ExplorerSearchViewModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExplorerDialogViewModel {
-    pub title: String,
-    pub message: String,
-    pub confirm_label: String,
-    pub cancel_label: String,
-}
-
-impl ExplorerDialogViewModel {
-    pub fn new(
-        title: impl Into<String>,
-        message: impl Into<String>,
-        confirm_label: impl Into<String>,
-        cancel_label: impl Into<String>,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            message: message.into(),
-            confirm_label: confirm_label.into(),
-            cancel_label: cancel_label.into(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerViewModel {
     pub current_path: String,
     pub address_value: String,
@@ -558,7 +534,6 @@ pub struct ExplorerViewModel {
     pub show_hidden: bool,
     pub message: Option<String>,
     pub error: Option<String>,
-    pub pending_dialog: Option<ExplorerDialogViewModel>,
     pub ascii_assets: Option<RuntimeAsciiAssets>,
     pub entry_presentations: Vec<ExplorerEntryPresentationViewModel>,
     pub toolbar: ExplorerToolbarViewModel,
@@ -625,7 +600,6 @@ impl ExplorerViewModel {
             show_hidden: false,
             message: None,
             error: None,
-            pending_dialog: None,
             ascii_assets: Some(ascii_assets),
             entry_presentations: Vec::new(),
             toolbar: ExplorerToolbarViewModel::standard(false, false),
