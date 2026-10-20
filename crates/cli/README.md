@@ -29,6 +29,6 @@ Linux 内建 Command Line 会继续管理脱离终端会话的后代进程；正
 
 运行 `cargo build --locked -p shell -p cli` 后再验证内嵌命令行。CLI 使用 Shell 提供的界面预览，不能把它描述为完全不依赖界面代码。`firewall`、`ssh`、`backups`、`scheduled-tasks` 的帮助和参数提示使用当前语言，提供英文、简体中文资源；无语言快照时使用内置英文，帮助查询仍不读取配置。
 
-验证：`cargo test --locked -p cli`。
+验证：`cargo test --locked -p cli`。中文帮助测试同时加载启动、共享 UI 和管理命令语言资源，覆盖跨文件的文字引用。
 
 `tundra-cli debug ui-test` 在六页中展示全部公共共享控件，使用内置深色主题和英文，不读写配置、语言文件、日志或状态。F1–F6 或底部按钮翻页，Tab 切换焦点，Esc 退出；最小终端尺寸为 88 列 × 30 行。

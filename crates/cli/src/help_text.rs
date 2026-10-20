@@ -269,7 +269,7 @@ mod tests {
         let language = i18n::LanguageSnapshotData {
             code: "zh-CN".into(),
             generation: 1,
-            current: vec![include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/regression-startup.ftl")).into(), include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/management-cli-administration.ftl")).into()],
+            current: vec![include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/regression-startup.ftl")).into(), include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/management-cli-administration.ftl")).into(), include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ascii-assets/assets/locales/zh-CN/modules/ui-test.ftl")).into()],
             english: vec![],
         }.restore().unwrap();
         i18n::with_snapshot(&std::sync::Arc::new(language), || {
