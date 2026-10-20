@@ -78,7 +78,11 @@ impl ShellSession {
             ShellComponent::SystemStatus => self.route_system_status_mouse(mouse, hit, at),
             ShellComponent::UserManagement => self.route_user_management_mouse(mouse, hit),
             ShellComponent::Editor => (target, ShellCommand::EditorPointer(mouse)),
-            ShellComponent::Settings => (target, ShellCommand::SettingsPointer(mouse)),
+            ShellComponent::Settings => (
+                target,
+                self.route_touch_pages_pointer(mouse)
+                    .unwrap_or(ShellCommand::SettingsPointer(mouse)),
+            ),
             ShellComponent::Logs => (target, ShellCommand::LogsPointer(mouse)),
             ShellComponent::Management => (target, ShellCommand::ManagementPointer(mouse)),
             _ => (target, ShellCommand::CaptureOverlayInput),

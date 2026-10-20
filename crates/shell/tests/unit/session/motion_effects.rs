@@ -474,7 +474,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
-        animation_advanced_open: false,
+        animation_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -1196,7 +1196,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
-        animation_advanced_open: false,
+        animation_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),

@@ -584,16 +584,20 @@ def check_animation_settings(master, output, child):
         raise SystemExit("Settings did not paint the animation percentage")
     os.write(master, b"\x1b[B" * 5 + b"\x1b[C\x1b[B\r")
     if not wait_for_painted_text(master, output, "Acceleration", child):
-        raise SystemExit("Animation advanced options did not expand below the percentage")
-    os.write(master, b"\x1b[B\x1b[C")
+        raise SystemExit("Animation advanced options did not open as a dialog")
+    os.write(master, b"\x1b[C")
     if not wait_for_painted_text(master, output, "56 ms", child):
         raise SystemExit("Page acceleration did not increase by one millisecond")
-    os.write(master, b"\x1b[F\x1b[A\r\x1b[H" + b"\x1b[B" * 5)
+    os.write(master, b"\x1b[F\x1b[A\r\x1b")
+    wait_for_output_quiet(master, output, child, quiet_period=0.2)
+    os.write(master, b"\x1b[H" + b"\x1b[B" * 5)
     if not wait_for_painted_text(master, output, "100%", child):
         raise SystemExit("Restore animation defaults did not restore the percentage")
-    os.write(master, b"\x1b[B\x1b[B")
+    os.write(master, b"\x1b[B\r")
     if not wait_for_painted_text(master, output, "55 ms", child):
         raise SystemExit("Restore animation defaults did not restore phase times")
+    os.write(master, b"\x1b")
+    wait_for_output_quiet(master, output, child, quiet_period=0.2)
     os.write(master, b"\x1b")
     if not wait_for_painted_text(master, output, "Launcher", child):
         raise SystemExit("Animation settings did not return to Home")

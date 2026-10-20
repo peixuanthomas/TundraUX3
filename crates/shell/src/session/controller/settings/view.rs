@@ -160,6 +160,13 @@ impl ShellSession {
                 && !state.category.is_system_device())
             .then_some(i18n::tr!("settings-locked")),
             scroll_offset: state.scroll_offset,
+            animation_editor: state.animation_editor.as_ref().map(|editor| {
+                ui::SettingsAnimationEditorViewModel {
+                    items: super::animation::phase_items(appearance),
+                    selected_index: editor.selected_index,
+                    scroll_offset: editor.scroll_offset,
+                }
+            }),
             picker,
             color_editor,
             weather_location_editor,
@@ -482,7 +489,7 @@ pub(in crate::session) fn settings_cards(
             ),
             Card::new(
                 i18n::tr!("settings-animation"),
-                super::animation::items(state, appearance),
+                super::animation::items(appearance),
             ),
             Card::new(i18n::tr!("settings-reset"), vec![reset(true)]),
         ],

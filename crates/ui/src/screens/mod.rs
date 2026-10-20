@@ -48,12 +48,13 @@ pub use launcher::{
     render_launcher_content, render_launcher_overlay,
 };
 pub use settings::{
-    SettingsAppearancePreview, SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout,
-    SettingsColorEditorViewModel, SettingsControl, SettingsControlKind, SettingsField,
-    SettingsFieldLayout, SettingsFileExtensionsEditorViewModel, SettingsHitTarget,
-    SettingsItemViewModel, SettingsLayout, SettingsPickerKind, SettingsPickerOptionLayout,
-    SettingsPickerOptionViewModel, SettingsPickerViewModel, SettingsTimeSyncServerEditorViewModel,
-    SettingsUpdateCommitViewModel, SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel,
-    SettingsViewModel, SettingsWeatherLocationEditorViewModel, render_settings_content,
-    render_settings_overlay, settings_hit_test, settings_layout,
+    SettingsAnimationEditorViewModel, SettingsAnimationLayout, SettingsAppearancePreview,
+    SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout, SettingsColorEditorViewModel,
+    SettingsControl, SettingsControlKind, SettingsField, SettingsFieldLayout,
+    SettingsFileExtensionsEditorViewModel, SettingsHitTarget, SettingsItemViewModel,
+    SettingsLayout, SettingsPickerKind, SettingsPickerOptionLayout, SettingsPickerOptionViewModel,
+    SettingsPickerViewModel, SettingsTimeSyncServerEditorViewModel, SettingsUpdateCommitViewModel,
+    SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel, SettingsViewModel,
+    SettingsWeatherLocationEditorViewModel, render_settings_content, render_settings_overlay,
+    settings_hit_test, settings_layout,
 };

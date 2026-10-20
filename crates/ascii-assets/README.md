@@ -20,7 +20,7 @@
 
 管理页和文件管理的中英文搜索入口统一提示 `[/]`；管理搜索输入时提示 `[Enter]` 提交。
 
-动画高级选项的阶段名称、毫秒说明和恢复提示位于中英文 `modules/settings.ftl`。
+动画高级选项弹窗的打开、关闭、阶段名称、毫秒说明和恢复提示位于中英文 `modules/settings.ftl`。
 
 重建发布程序后，可运行 `python scripts/check-embedded-assets.py target/release/tundra-shell.exe target/release/tundra-cli.exe` 检查每张默认图片是否恰好嵌入一次；Linux/macOS 使用不带 `.exe` 的程序路径。脚本逐字节匹配源码中的完整 PNG，同时检查遗漏和重复。
 

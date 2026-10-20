@@ -134,8 +134,14 @@ pub(super) struct SettingsTimeSyncServerEditorState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SettingsAnimationEditorState {
+    pub(super) selected_index: usize,
+    pub(super) scroll_offset: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
-    pub(super) animation_advanced_open: bool,
+    pub(super) animation_editor: Option<SettingsAnimationEditorState>,
     pub(super) category: ui::SettingsCategory,
     pub(super) selected_field: ui::SettingsField,
     pub(super) status: i18n::LocalizedText,

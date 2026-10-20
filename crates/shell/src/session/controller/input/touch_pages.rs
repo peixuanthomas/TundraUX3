@@ -3,6 +3,7 @@ use crate::session::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TouchScroll {
     Settings,
+    SettingsAnimation,
     SettingsPicker,
     SettingsCategories,
     Users,
@@ -156,7 +157,15 @@ impl ShellSession {
             ShellScreen::Settings => {
                 if let Some(model) = self.to_settings_view_model() {
                     let layout = ui::settings_layout(self.touch_main(), &model);
-                    if let Some(picker) = model.picker.as_ref() {
+                    if let Some(editor) = layout.animation_editor.as_ref() {
+                        add(
+                            TouchScroll::SettingsAnimation,
+                            editor.scrollbar,
+                            model.animation_editor.as_ref().unwrap().items.len(),
+                            usize::from(editor.viewport.height),
+                            usize::from(editor.scroll_offset),
+                        );
+                    } else if let Some(picker) = model.picker.as_ref() {
                         let list = layout.picker_list.unwrap_or_default();
                         add(
                             TouchScroll::SettingsPicker,
@@ -563,6 +572,17 @@ impl ShellSession {
 
     fn set_touch_offset(&mut self, kind: TouchScroll, offset: usize) {
         match kind {
+            TouchScroll::SettingsAnimation => {
+                if let Some(editor) = self
+                    .pages
+                    .settings
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.animation_editor.as_mut())
+                {
+                    editor.scroll_offset = offset.min(usize::from(u16::MAX)) as u16;
+                }
+            }
             TouchScroll::Settings => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.scroll_offset = offset.min(usize::from(u16::MAX)) as u16;

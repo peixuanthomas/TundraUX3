@@ -394,8 +394,8 @@ settings-release-available = 有更新的正式版可用
 settings-release-different = 当前构建与正式版不同，可选择替换为此正式版
 
 settings-animation-advanced = 高级选项
-settings-animation-expand = 展开
-settings-animation-collapse = 收起
+settings-animation-open = 打开
+settings-animation-close = Esc 关闭
 settings-animation-advanced-help = 分别细调页面、弹窗、菜单的加速、匀速和减速时间。
 settings-animation-page = 页面
 settings-animation-dialog = 弹窗

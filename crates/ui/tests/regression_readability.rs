@@ -167,7 +167,7 @@ fn logs_show_compact_time_in_rows_and_original_timestamp_in_details() {
 }
 
 #[test]
-fn system_and_update_settings_keep_complete_limits_and_errors_in_scrollable_content() {
+fn system_and_update_settings_keep_errors_in_footer_without_description_pane() {
     let context = context();
     for category in [SettingsCategory::System, SettingsCategory::Update] {
         let mut model = SettingsViewModel {
@@ -178,6 +178,7 @@ fn system_and_update_settings_keep_complete_limits_and_errors_in_scrollable_cont
             status: "Backend error: permission denied while reading configuration".into(),
             locked_message: None,
             scroll_offset: 0,
+            animation_editor: None,
             picker: None,
             color_editor: None,
             weather_location_editor: None,
@@ -211,20 +212,18 @@ fn system_and_update_settings_keep_complete_limits_and_errors_in_scrollable_cont
                     .draw(|frame| render_settings_content(frame, &layout, &model, &context))
                     .unwrap();
                 rendered.push_str(&rectangle_text(&terminal, layout.detail));
-            }
-            for word in [
-                "permission",
-                "configuration",
-                "Critical",
-                "warning.",
-                "percent",
-                "operation.",
-            ] {
+                let content = rectangle_text(&terminal, layout.workspace.content);
                 assert!(
-                    rendered.contains(word),
-                    "{category:?} at height {height}: missing complete word {word}: {rendered}"
+                    content.contains("Backend error: permission denied"),
+                    "{content}"
+                );
+                assert!(
+                    !content.contains("Critical must be below warning"),
+                    "{content}"
                 );
             }
+            assert!(rendered.contains("Warning"), "{rendered}");
+            assert!(rendered.contains("15%"), "{rendered}");
         }
     }
 }

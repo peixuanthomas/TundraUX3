@@ -360,6 +360,8 @@ impl ShellSession {
                 Some(("settings-editor:weather-location", ShellComponent::Settings))
             } else if settings.file_extensions_editor.is_some() {
                 Some(("settings-editor:file-extensions", ShellComponent::Settings))
+            } else if settings.animation_editor.is_some() {
+                Some(("settings-editor:animation", ShellComponent::Settings))
             } else if settings.time_sync_server_editor.is_some() {
                 Some(("settings-editor:time-sync-server", ShellComponent::Settings))
             } else {

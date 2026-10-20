@@ -394,8 +394,8 @@ settings-release-available = A newer release is available
 settings-release-different = The installed build differs; you can replace it with this release
 
 settings-animation-advanced = Advanced options
-settings-animation-expand = Expand
-settings-animation-collapse = Collapse
+settings-animation-open = Open
+settings-animation-close = Esc Close
 settings-animation-advanced-help = Fine-tune acceleration, cruise and deceleration times for pages, dialogs and menus.
 settings-animation-page = Page
 settings-animation-dialog = Dialog

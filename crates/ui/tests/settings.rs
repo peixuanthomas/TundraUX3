@@ -183,6 +183,7 @@ fn unavailable_settings_retain_gray_buttons_and_register_disabled_hit_regions() 
                 .filter(|region| {
                     region.id.as_str().starts_with("settings.")
                         && region.id.as_str() != "settings.operating-system"
+                        && !region.id.as_str().starts_with("settings.category.")
                 })
                 .collect();
             assert_eq!(
@@ -217,11 +218,20 @@ fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
     for (width, height) in [(80, 24), (120, 32)] {
         let layout = settings_layout(Rect::new(0, 0, width, height), &model);
         assert_eq!(layout.category_cards.len(), SettingsCategory::ALL.len());
-        for (index, category) in layout.category_cards.iter().enumerate() {
-            assert_eq!(category.category, SettingsCategory::ALL[index]);
-            assert_eq!(category.area, Rect::new(2, 2 + index as u16, 17, 1));
+        assert_eq!(layout.workspace.vertical, width >= 94);
+        for category in &layout.category_cards {
+            let index = SettingsCategory::ALL
+                .iter()
+                .position(|entry| *entry == category.category)
+                .unwrap();
+            assert_eq!(category.area, layout.workspace.navigation[index]);
         }
-        assert!(layout.fields.iter().all(|field| field.area.x == 23));
+        assert!(
+            layout
+                .fields
+                .iter()
+                .all(|field| field.area.x == layout.detail.x + 1)
+        );
         for expected in [SettingsField::BorderColor, SettingsField::ShowHidden] {
             assert!(layout.fields.iter().any(|field| field.field == expected));
         }
@@ -593,6 +603,7 @@ fn sample_model() -> SettingsViewModel {
         status: "Saved".to_string(),
         locked_message: None,
         scroll_offset: 0,
+        animation_editor: None,
         picker: None,
         color_editor: None,
         weather_location_editor: None,
@@ -635,8 +646,26 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
         .expect("render update commits");
     let output = terminal_output(&terminal);
     assert!(output.contains("12345678"));
+    let main = match ui::compute_shell_layout(Rect::new(0, 0, 80, 24)) {
+        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+    };
+    let detail = settings_layout(main, &model).detail;
+    let content = (detail.y..detail.bottom())
+        .map(|y| {
+            (detail.x + 1..detail.right() - 1)
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     for part in ["First line", "second line", "commit message visible"] {
-        assert!(output.contains(part), "missing wrapped commit text: {part}");
+        assert!(
+            content.contains(part),
+            "missing wrapped commit text: {part}: {content}"
+        );
     }
 
     let first_row = terminal
@@ -842,48 +871,49 @@ fn chrome() -> ShellChromeViewModel {
 
 #[test]
 fn scrolled_categories_render_and_hit_the_same_rows() {
-    for category in SettingsCategory::ALL {
-        let mut model = sample_model();
-        model.selected_category = category;
-        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
-        let mut layout = None;
-        terminal
-            .draw(|frame| {
-                layout = Some(render_settings(
-                    frame,
-                    frame.area(),
-                    &chrome(),
-                    &model,
-                    &TundraTheme::default_dark(),
-                ));
-            })
-            .unwrap();
-        let layout = layout.unwrap();
-        assert!(
-            layout
-                .category_cards
-                .iter()
-                .any(|entry| entry.category == category)
-        );
-        for entry in &layout.category_cards {
-            assert_eq!(
-                settings_hit_test(&layout, (entry.area.x, entry.area.y)),
-                Some(SettingsHitTarget::Category(entry.category))
-            );
-            let line = (entry.area.x..entry.area.right())
-                .map(|x| terminal.backend().buffer()[(x, entry.area.y)].symbol())
-                .collect::<String>();
+    for (width, height) in [(80, 12), (120, 18)] {
+        for category in SettingsCategory::ALL {
+            let mut model = sample_model();
+            model.selected_category = category;
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            let mut layout = None;
+            terminal
+                .draw(|frame| {
+                    layout = Some(render_settings(
+                        frame,
+                        frame.area(),
+                        &chrome(),
+                        &model,
+                        &TundraTheme::default_dark(),
+                    ));
+                })
+                .unwrap();
+            let layout = layout.unwrap();
             assert!(
-                line.contains(&entry.category.label()),
-                "{category:?}: {line}"
+                layout
+                    .category_cards
+                    .iter()
+                    .any(|entry| entry.category == category)
             );
+            for entry in &layout.category_cards {
+                assert_eq!(
+                    settings_hit_test(&layout, (entry.area.x, entry.area.y)),
+                    Some(SettingsHitTarget::Category(entry.category))
+                );
+                let line = (entry.area.y..entry.area.bottom())
+                    .flat_map(|y| (entry.area.x..entry.area.right()).map(move |x| (x, y)))
+                    .map(|point| terminal.backend().buffer()[point].symbol())
+                    .collect::<String>();
+                assert!(
+                    line.contains(&entry.category.label()),
+                    "{category:?}: {line}"
+                );
+            }
+            if layout.workspace.vertical {
+                assert!(layout.category_scrollbar.is_some());
+                assert!(layout.category_cards.len() < SettingsCategory::ALL.len());
+            }
         }
-        let last = layout.category_cards.last().unwrap();
-        assert_eq!(
-            settings_hit_test(&layout, (last.area.x, last.area.bottom())),
-            None,
-            "sidebar bottom border cannot select a hidden category"
-        );
     }
 }
 
@@ -963,7 +993,7 @@ fn unavailable_settings_use_localized_reasons_and_theme_without_permission_lock(
 }
 
 #[test]
-fn compact_settings_keep_the_complete_unavailable_reason_in_the_scrollable_detail() {
+fn settings_show_unavailable_status_without_a_description_pane() {
     let reason = "This feature is not supported on this platform yet.";
     let mut model = sample_model();
     model.appearance_preview = None;
@@ -981,9 +1011,9 @@ fn compact_settings_keep_the_complete_unavailable_reason_in_the_scrollable_detai
             .unavailable(reason),
         ],
     )];
-    let area = Rect::new(0, 0, 30, 10);
+    let area = Rect::new(0, 0, 120, 24);
     let layout = settings_layout(area, &model);
-    assert!(layout.scrollbar.is_some());
+    assert!(layout.scrollbar.is_none());
     model.scroll_offset = layout.max_scroll_offset;
     let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
     terminal
@@ -996,17 +1026,8 @@ fn compact_settings_keep_the_complete_unavailable_reason_in_the_scrollable_detai
         })
         .unwrap();
     let output = terminal_output(&terminal);
-    let detail = settings_layout(area, &model).detail;
-    let rendered_reason = (detail.y..detail.bottom())
-        .flat_map(|y| (detail.x..detail.right()).map(move |x| (x, y)))
-        .map(|point| terminal.backend().buffer()[point].symbol())
-        .collect::<String>();
-    assert!(
-        rendered_reason
-            .replace(' ', "")
-            .contains(&reason.replace(' ', "")),
-        "{output}"
-    );
+    assert!(output.contains(reason), "{output}");
+    assert!(!output.contains("Output volume"), "{output}");
     assert!(!output.contains("[Back]"));
 }
 
@@ -1053,4 +1074,80 @@ fn clipped_setting_cards_keep_borders_off_content_rows() {
     }
     assert!(!terminal_output(&terminal).contains("Clipped card"));
     assert!(terminal_output(&terminal).contains("Device 2"));
+}
+
+#[test]
+fn animation_modal_scrolls_and_captures_only_its_visible_controls() {
+    let phases = [
+        SettingsField::PageAcceleration,
+        SettingsField::PageCruise,
+        SettingsField::PageDeceleration,
+        SettingsField::DialogAcceleration,
+        SettingsField::DialogCruise,
+        SettingsField::DialogDeceleration,
+        SettingsField::MenuAcceleration,
+        SettingsField::MenuCruise,
+        SettingsField::MenuDeceleration,
+    ];
+    for label in ["Page acceleration", "页面加速时长"] {
+        for (width, height) in [(120, 32), (80, 12), (46, 11)] {
+            let mut model = sample_model();
+            let mut items = phases
+                .map(|field| {
+                    SettingsItemViewModel::new(
+                        field,
+                        label,
+                        "55 ms",
+                        "",
+                        SettingsControlKind::Stepper,
+                    )
+                })
+                .to_vec();
+            items.push(SettingsItemViewModel::new(
+                SettingsField::ResetAnimationSpeed,
+                "Restore defaults",
+                "Reset",
+                "",
+                SettingsControlKind::Action,
+            ));
+            model.animation_editor = Some(ui::SettingsAnimationEditorViewModel {
+                items,
+                selected_index: 0,
+                scroll_offset: 0,
+            });
+            let area = Rect::new(0, 0, width, height);
+            let layout = settings_layout(area, &model);
+            let editor = layout.animation_editor.as_ref().unwrap();
+            assert_eq!(editor.dialog.intersection(area), editor.dialog);
+            assert!(!editor.fields.is_empty());
+            for (field, delta, button) in &editor.adjustments {
+                assert_eq!(button.intersection(editor.viewport), *button);
+                assert_eq!(
+                    settings_hit_test(&layout, (button.x, button.y)),
+                    Some(SettingsHitTarget::AdjustField(*field, *delta))
+                );
+            }
+            assert_eq!(
+                settings_hit_test(&layout, (editor.close.x, editor.close.y)),
+                Some(SettingsHitTarget::OverlayCancel)
+            );
+            assert_eq!(settings_hit_test(&layout, (area.x, area.y)), None);
+            model.animation_editor.as_mut().unwrap().scroll_offset = u16::MAX;
+            let layout = settings_layout(area, &model);
+            let editor = layout.animation_editor.as_ref().unwrap();
+            assert_eq!(
+                editor.fields.last().unwrap().field,
+                SettingsField::ResetAnimationSpeed
+            );
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    let context = ui::RenderContext::default();
+                    ui::render_settings_content(frame, &layout, &model, &context);
+                    ui::render_settings_overlay(frame, &layout, &model, &context);
+                })
+                .unwrap();
+            assert!(terminal_output(&terminal).contains("[Reset]"));
+        }
+    }
 }

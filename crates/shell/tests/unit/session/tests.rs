@@ -3869,7 +3869,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     );
     state.enter_screen(ShellScreen::Settings);
     state.pages.settings.settings_state = Some(SettingsState {
-        animation_advanced_open: false,
+        animation_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),

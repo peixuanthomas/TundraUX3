@@ -20,15 +20,6 @@ pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = 
     ui::SettingsField::MotionPreference,
     ui::SettingsField::AnimationSpeed,
     ui::SettingsField::AnimationAdvanced,
-    ui::SettingsField::PageAcceleration,
-    ui::SettingsField::PageCruise,
-    ui::SettingsField::PageDeceleration,
-    ui::SettingsField::DialogAcceleration,
-    ui::SettingsField::DialogCruise,
-    ui::SettingsField::DialogDeceleration,
-    ui::SettingsField::MenuAcceleration,
-    ui::SettingsField::MenuCruise,
-    ui::SettingsField::MenuDeceleration,
     ui::SettingsField::ResetAnimationSpeed,
     ui::SettingsField::RestoreDefaults,
 ];
@@ -142,7 +133,7 @@ impl ShellSession {
         );
         self.enter_new_page(ShellScreen::Settings);
         self.pages.settings.settings_state = Some(SettingsState {
-            animation_advanced_open: false,
+            animation_editor: None,
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
             status: i18n::msg!("settings-ready").into(),
@@ -292,6 +283,16 @@ impl ShellSession {
             self.handle_settings_picker_key(key);
             return;
         }
+        if self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| state.animation_editor.is_some())
+        {
+            self.handle_settings_animation_key(key);
+            return;
+        }
         if key.has_non_shift_modifier() {
             return;
         }
@@ -313,11 +314,7 @@ impl ShellSession {
                     .settings
                     .settings_state
                     .as_ref()
-                    .map(|state| {
-                        animation::visible_settings_fields(state)
-                            .len()
-                            .saturating_sub(1)
-                    })
+                    .map(|state| settings_fields(state.category).len().saturating_sub(1))
                     .unwrap_or(0);
                 self.select_settings_field_at(last);
             }
@@ -350,6 +347,28 @@ impl ShellSession {
                 .settings
                 .settings_state
                 .as_ref()
+                .is_some_and(|state| state.animation_editor.is_some())
+            {
+                self.scroll_settings_animation(delta as i16);
+                self.refresh_hit_map();
+                return;
+            }
+            if self.active_overlay_descriptor().is_none()
+                && self.current_settings_layout().is_some_and(|layout| {
+                    layout
+                        .category
+                        .contains((input.position.column, input.position.row).into())
+                })
+            {
+                self.select_settings_category_delta(if delta < 0 { -1 } else { 1 });
+                self.refresh_hit_map();
+                return;
+            }
+            if self
+                .pages
+                .settings
+                .settings_state
+                .as_ref()
                 .is_some_and(|state| state.picker.is_some())
             {
                 self.select_settings_picker_delta(delta);
@@ -377,6 +396,24 @@ impl ShellSession {
             ui::ShellLayout::Full { main, .. } => main,
         };
         let layout = ui::settings_layout(app_area, &model);
+        if model.animation_editor.is_some() {
+            match ui::settings_hit_test(&layout, coordinates) {
+                Some(ui::SettingsHitTarget::OverlayCancel) => self.close_settings_animation(),
+                Some(ui::SettingsHitTarget::AdjustField(field, delta)) => {
+                    self.select_settings_animation_field(field);
+                    self.adjust_animation_phase(field, delta);
+                }
+                Some(ui::SettingsHitTarget::Field(field)) => {
+                    self.select_settings_animation_field(field);
+                    if field == ui::SettingsField::ResetAnimationSpeed {
+                        self.reset_settings_animation_speed();
+                    }
+                }
+                _ => {}
+            }
+            self.refresh_hit_map();
+            return;
+        }
         match ui::settings_hit_test(&layout, coordinates) {
             Some(ui::SettingsHitTarget::OperatingSystem) => self.open_operating_system_settings(),
             Some(ui::SettingsHitTarget::OverlayApply) => {
@@ -447,6 +484,7 @@ impl ShellSession {
             state.category = category;
             state.selected_field = settings_fields(category)[0];
             state.scroll_offset = 0;
+            state.animation_editor = None;
             state.picker = None;
             state.color_editor = None;
             state.weather_location_editor = None;
@@ -468,7 +506,7 @@ impl ShellSession {
         let Some(state) = self.pages.settings.settings_state.as_ref() else {
             return;
         };
-        let fields = animation::visible_settings_fields(state);
+        let fields = settings_fields(state.category);
         let index = fields
             .iter()
             .position(|field| *field == state.selected_field)
@@ -482,7 +520,7 @@ impl ShellSession {
             let Some(state) = self.pages.settings.settings_state.as_mut() else {
                 return;
             };
-            let fields = animation::visible_settings_fields(state);
+            let fields = settings_fields(state.category);
             state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
         }
         if let Some(layout) = self.current_settings_layout()
@@ -549,7 +587,10 @@ impl ShellSession {
         match field {
             ui::SettingsField::AnimationAdvanced => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
-                    state.animation_advanced_open = !state.animation_advanced_open;
+                    state.animation_editor = Some(SettingsAnimationEditorState {
+                        selected_index: 0,
+                        scroll_offset: 0,
+                    });
                 }
             }
             ui::SettingsField::Theme => {

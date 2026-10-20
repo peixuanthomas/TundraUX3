@@ -1,3 +1,6 @@
+mod animation;
+pub use animation::{SettingsAnimationEditorViewModel, SettingsAnimationLayout};
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
 use ratatui::style::Color;
@@ -6,8 +9,8 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
     Button, ComponentTone, DataTable, List as ComponentList, ListItem as ComponentListItem,
-    Scrollbar, Surface, TextInput, UpdateActivity, terminal_width, truncate_to_terminal_width,
-    visible_scrolled_rect,
+    Scrollbar, SidebarWorkspaceLayout, Surface, TextInput, UpdateActivity, terminal_width,
+    truncate_to_terminal_width, visible_scrolled_rect,
 };
 use crate::{BorderShape, RenderContext, TimezoneMapWidget, TundraTheme};
 
@@ -334,6 +337,7 @@ pub struct SettingsViewModel {
     pub status: String,
     pub locked_message: Option<String>,
     pub scroll_offset: u16,
+    pub animation_editor: Option<SettingsAnimationEditorViewModel>,
     pub picker: Option<SettingsPickerViewModel>,
     pub color_editor: Option<SettingsColorEditorViewModel>,
     pub weather_location_editor: Option<SettingsWeatherLocationEditorViewModel>,
@@ -402,6 +406,7 @@ pub enum SettingsHitTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsLayout {
+    pub workspace: SidebarWorkspaceLayout,
     pub category: Rect,
     pub operating_system: Rect,
     pub main: Rect,
@@ -413,6 +418,7 @@ pub struct SettingsLayout {
     pub category_scrollbar: Option<Rect>,
     pub category_window_start: usize,
     pub category_capacity: usize,
+    pub animation_editor: Option<SettingsAnimationLayout>,
     pub picker_list: Option<Rect>,
     pub adjustments: Vec<(SettingsField, i8, Rect)>,
     pub overlay_apply: Option<Rect>,
@@ -433,16 +439,49 @@ pub struct SettingsLayout {
 }
 
 pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout {
-    let (mut category_area, raw_detail_area) = settings_content_areas(area);
-    let operating_system = Rect::new(
-        category_area.x,
-        category_area.bottom().saturating_sub(1),
-        category_area.width,
-        u16::from(category_area.height > 0),
-    );
-    category_area.height = category_area
+    let labels = SettingsCategory::ALL.map(|category| category.label());
+    let active = SettingsCategory::ALL
+        .iter()
+        .position(|category| *category == model.selected_category)
+        .unwrap_or(0);
+    let inner = inset(area, 1, 1);
+    let system_height = if inner.height >= 7 {
+        3
+    } else {
+        inner.height.min(1)
+    };
+    let navigation_height = inner
         .height
-        .saturating_sub(if category_area.height >= 5 { 2 } else { 1 });
+        .saturating_sub(system_height + u16::from(inner.height >= 7));
+    let mut workspace = SidebarWorkspaceLayout::scrollable(
+        Rect::new(inner.x, inner.y, inner.width, navigation_height),
+        &labels,
+        active,
+    );
+    let (category_area, operating_system) = if workspace.vertical {
+        workspace.content.height = inner.height;
+        let width = workspace.content.x.saturating_sub(inner.x);
+        (
+            Rect::new(inner.x, inner.y, width, navigation_height),
+            Rect::new(
+                inner.x,
+                inner.bottom().saturating_sub(system_height),
+                width.saturating_sub(1),
+                system_height,
+            ),
+        )
+    } else {
+        let mut navigation_labels = labels.to_vec();
+        navigation_labels.push(i18n::tr!("system-settings-group-button"));
+        workspace = SidebarWorkspaceLayout::new(inner, &navigation_labels);
+        let top = workspace.content.y;
+        let operating_system = workspace.navigation[labels.len()];
+        (
+            Rect::new(inner.x, inner.y, inner.width, top.saturating_sub(inner.y)),
+            operating_system,
+        )
+    };
+    let raw_detail_area = workspace.content;
     let mut detail_area = Rect::new(
         raw_detail_area.x,
         raw_detail_area.y,
@@ -473,36 +512,32 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         0
     };
     let scroll_offset = model.scroll_offset.min(max_scroll_offset);
-    let category_inner = inset(category_area, 1, 1);
-    let category_start = settings_category_viewport(category_area, model.selected_category);
-    let category_capacity = usize::from(category_inner.height);
-    let category_scrollbar = (SettingsCategory::ALL.len() > category_capacity
-        && category_inner.width > 1
-        && category_inner.height > 0)
-        .then(|| {
-            Rect::new(
-                category_inner.right() - 1,
-                category_inner.y,
-                1,
-                category_inner.height,
-            )
-        });
+    let category_start = workspace
+        .navigation
+        .iter()
+        .position(|area| !area.is_empty())
+        .unwrap_or(0);
+    let category_capacity = workspace
+        .navigation
+        .iter()
+        .take(labels.len())
+        .filter(|area| !area.is_empty())
+        .count();
+    let category_scrollbar = (workspace.vertical && category_capacity < labels.len()).then(|| {
+        Rect::new(
+            category_area.right().saturating_sub(1),
+            category_area.y,
+            1,
+            category_area.height,
+        )
+    });
     let category_cards = SettingsCategory::ALL
         .into_iter()
-        .enumerate()
-        .skip(category_start)
-        .filter_map(|(index, category)| {
-            let row = Rect::new(
-                category_area.x.saturating_add(1),
-                category_area
-                    .y
-                    .saturating_add(1)
-                    .saturating_add((index - category_start) as u16),
-                category_area.width.saturating_sub(2),
-                1,
-            );
-            rect_intersection(row, category_inner)
-                .map(|area| SettingsCategoryLayout { category, area })
+        .zip(&workspace.navigation)
+        .filter(|(_, area)| !area.is_empty())
+        .map(|(category, area)| SettingsCategoryLayout {
+            category,
+            area: *area,
         })
         .collect();
 
@@ -646,6 +681,11 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .or(picker_dialog);
     let overlay_buttons = active_editor.map(settings_overlay_buttons);
     SettingsLayout {
+        animation_editor: model
+            .animation_editor
+            .as_ref()
+            .map(|editor| SettingsAnimationLayout::new(area, editor)),
+        workspace,
         category: category_area,
         operating_system,
         main: area,
@@ -689,6 +729,24 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
 }
 
 pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<SettingsHitTarget> {
+    if let Some(editor) = &layout.animation_editor {
+        if contains(editor.close, point) {
+            return Some(SettingsHitTarget::OverlayCancel);
+        }
+        if let Some((field, delta, _)) = editor
+            .adjustments
+            .iter()
+            .find(|(_, _, area)| contains(*area, point))
+        {
+            return Some(SettingsHitTarget::AdjustField(*field, *delta));
+        }
+        return editor
+            .fields
+            .iter()
+            .find(|field| contains(field.area, point))
+            .map(|field| SettingsHitTarget::Field(field.field));
+    }
+
     if layout.update_confirmation.is_some() {
         if layout
             .update_confirm_button
@@ -787,39 +845,34 @@ pub fn render_settings_content(
         .bordered(false)
         .render_frame(frame, layout.main, context);
 
-    let mut categories = ComponentList::new(
-        "settings.categories",
-        SettingsCategory::ALL
-            .into_iter()
-            .map(|category| {
-                ComponentListItem::new(
-                    format!("settings.category.{category:?}").to_ascii_lowercase(),
-                    category.label(),
-                )
-            })
-            .collect(),
-    )
-    .titled(i18n::tr!("system-settings-tundra-group"));
-    categories.set_selected(
-        SettingsCategory::ALL
-            .iter()
-            .position(|category| *category == model.selected_category),
-    );
-    categories = categories.with_viewport_start(settings_category_viewport(
-        settings_category_area(layout),
-        model.selected_category,
-    ));
-    categories.set_focused(true);
-    categories.render_with_context(settings_category_area(layout), frame.buffer_mut(), context);
+    let buttons = SettingsCategory::ALL
+        .into_iter()
+        .map(|category| {
+            Button::new(
+                format!("settings.category.{category:?}").to_ascii_lowercase(),
+                category.label(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let active = SettingsCategory::ALL
+        .iter()
+        .position(|category| *category == model.selected_category)
+        .unwrap_or(0);
+    layout
+        .workspace
+        .render_navigation(frame, &buttons, active, context);
     let mut system_label = i18n::tr!("system-settings-group-button");
     if terminal_width(&system_label) + 2 > layout.operating_system.width as usize {
         system_label = i18n::tr!("system-settings-group-button-short");
     }
-    Button::new("settings.operating-system", system_label).render_borderless_frame(
-        frame,
-        layout.operating_system,
-        theme,
-    );
+    let button = Button::new("settings.operating-system", system_label)
+        .with_centered_label(true)
+        .with_bracketed_label(false);
+    if layout.workspace.vertical && layout.operating_system.height >= 3 {
+        button.render_frame(frame, layout.operating_system, theme);
+    } else {
+        button.render_borderless_frame(frame, layout.operating_system, theme);
+    }
     if let Some(track) = layout.category_scrollbar {
         Scrollbar::new(
             SettingsCategory::ALL.len(),
@@ -884,6 +937,10 @@ pub fn render_settings_overlay(
     model: &SettingsViewModel,
     context: &RenderContext,
 ) {
+    if let (Some(editor), Some(editor_layout)) = (&model.animation_editor, &layout.animation_editor)
+    {
+        animation::render(frame, editor_layout, editor, context);
+    }
     if let Some(picker) = &model.picker {
         render_picker(frame, layout.main, picker, context);
     }
@@ -1040,25 +1097,6 @@ fn render_cards(
             y += i32::from(UpdateActivity::HEIGHT) + 1;
         }
         render_update_commits(frame, detail_area, y, update, context);
-        y += i32::from(update_commits_height(
-            detail_area.width,
-            &update_commit_lines(update),
-        )) + 1;
-    }
-    let reason = settings_detail_lines(detail_area.width, model);
-    if let Some((visible, skipped)) = visible_scrolled_rect(
-        detail_area.x,
-        y,
-        detail_area.width,
-        u16::try_from(reason.len()).unwrap_or(u16::MAX),
-        detail_area,
-    ) {
-        frame.render_widget(
-            Paragraph::new(reason.join("\n"))
-                .style(theme.muted_style())
-                .scroll((skipped, 0)),
-            visible,
-        );
     }
 }
 
@@ -1089,35 +1127,8 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
         let lines = update_commit_lines(update);
         content_height = content_height
             .max(next_y.saturating_add(usize::from(update_commits_height(detail_width, &lines))));
-        next_y = content_height.saturating_add(1);
     }
-
-    let reason = settings_detail_lines(detail_width, model);
-    if reason.is_empty() {
-        content_height
-    } else {
-        content_height.max(next_y.saturating_add(reason.len()))
-    }
-}
-
-/// Keep complete descriptions and status messages in the draggable detail viewport.
-fn settings_detail_lines(width: u16, model: &SettingsViewModel) -> Vec<String> {
-    let selected = model
-        .cards
-        .iter()
-        .flat_map(|card| &card.items)
-        .find(|item| item.field == model.selected_field);
-    [
-        selected.map(|item| item.description.as_str()),
-        Some(model.status.as_str()),
-        model.locked_message.as_deref(),
-        selected.and_then(|item| item.unavailable_reason.as_deref()),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|text| !text.is_empty())
-    .flat_map(|text| crate::management_wrapped_lines(text, width))
-    .collect()
+    content_height
 }
 
 fn update_commit_lines(update: &SettingsUpdateViewModel) -> Vec<String> {
@@ -1264,14 +1275,11 @@ fn render_settings_footer(
         .iter()
         .flat_map(|card| &card.items)
         .find(|item| item.field == model.selected_field);
-    let description = selected
-        .map(|item| item.description.clone())
-        .unwrap_or_else(|| i18n::tr!("ui-settings-choose-a-setting"));
     let lock = model.locked_message.as_deref().unwrap_or("");
     let status = selected
         .and_then(|item| item.unavailable_reason.as_deref())
         .unwrap_or(&model.status);
-    let text = [status, lock, description.as_str()]
+    let text = [status, lock]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -1623,32 +1631,7 @@ fn render_controlled_text_input(
 }
 
 fn settings_raw_detail_area(layout: &SettingsLayout) -> Rect {
-    settings_content_areas(layout.main).1
-}
-
-fn settings_category_viewport(area: Rect, selected: SettingsCategory) -> usize {
-    let index = SettingsCategory::ALL
-        .iter()
-        .position(|category| *category == selected)
-        .unwrap_or(0);
-    ComponentList::automatic_viewport_start(index, usize::from(area.height.saturating_sub(2)))
-}
-
-fn settings_category_area(layout: &SettingsLayout) -> Rect {
-    layout.category
-}
-
-fn settings_content_areas(area: Rect) -> (Rect, Rect) {
-    let inner = inset(area, 1, 1);
-    let sidebar_width = (if inner.width < 48 { 10 } else { 19 }).min(inner.width.saturating_sub(1));
-    let gap = crate::SpringStyle::CARD_GAP.min(inner.width.saturating_sub(sidebar_width));
-    let [category, _, detail] = Layout::horizontal([
-        Constraint::Length(sidebar_width),
-        Constraint::Length(gap),
-        Constraint::Min(0),
-    ])
-    .areas(inner);
-    (category, detail)
+    layout.workspace.content
 }
 
 fn render_settings_control(
@@ -1822,14 +1805,6 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
-}
-
-fn rect_intersection(first: Rect, second: Rect) -> Option<Rect> {
-    let x = first.x.max(second.x);
-    let y = first.y.max(second.y);
-    let right = first.right().min(second.right());
-    let bottom = first.bottom().min(second.bottom());
-    (right > x && bottom > y).then(|| Rect::new(x, y, right - x, bottom - y))
 }
 
 fn contains(area: Rect, point: (u16, u16)) -> bool {
