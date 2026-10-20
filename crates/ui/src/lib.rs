@@ -7,7 +7,9 @@ pub use screens::timezone_map;
 mod editor_media;
 mod motion;
 mod spring;
-pub use motion::{PanelMotion, RevealOrigin, expand_trailing_pane, reveal_rect};
+pub use motion::{
+    PanelMotion, RevealOrigin, ease_in_out_cruise, expand_trailing_pane, reveal_rect,
+};
 mod table_sort;
 mod theme;
 pub use spring::SpringValue;

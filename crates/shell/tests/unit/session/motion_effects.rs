@@ -198,6 +198,36 @@ fn areas_are_bounded_unions_and_empty_regions_are_ignored() {
 }
 
 #[test]
+fn resumed_overlay_exit_keeps_the_original_speed_curve() {
+    let area = Rect::new(0, 0, 120, 40);
+    let old = Buffer::filled(area, Cell::new("O"));
+    let underlay = Buffer::filled(area, Cell::new("N"));
+    let snapshot = snapshot_normal_cells(&old, area).unwrap();
+    let base = snapshot_normal_cells(&underlay, area).unwrap();
+    let mut uninterrupted = outgoing_snapshot_effect(
+        snapshot.clone(),
+        Some(base.clone()),
+        ui::MotionOverlayKind::Dialog,
+    );
+    let mut resumed = outgoing_snapshot_effect_from(
+        snapshot,
+        Some(base),
+        ui::MotionOverlayKind::Dialog,
+        1.0 / 3.0,
+        Duration::from_millis(120),
+        None,
+        ui::RevealOrigin::Center,
+    );
+    for (full_delta, resumed_delta) in [(60, 0), (30, 30), (45, 45), (45, 45)] {
+        let mut expected = underlay.clone();
+        let mut actual = underlay.clone();
+        uninterrupted.process(Duration::from_millis(full_delta), &mut expected, area);
+        resumed.process(Duration::from_millis(resumed_delta), &mut actual, area);
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
 fn pages_enter_from_the_right_and_return_in_reverse() {
     let area = Rect::new(2, 1, 12, 4);
     let bounds = Rect::new(0, 0, 16, 6);
@@ -250,9 +280,9 @@ fn dialogs_grow_from_center_without_recoloring_text() {
     );
     frame = natural.clone();
     effect.process(Duration::from_millis(60), &mut frame, area);
-    assert_eq!(frame[(6, 3)].symbol(), "D");
+    assert_eq!(frame[(5, 2)].symbol(), "D");
     assert_eq!(frame[(0, 0)].symbol(), "B");
-    assert_eq!(frame[(6, 3)].fg, theme.text);
+    assert_eq!(frame[(5, 2)].fg, theme.text);
     frame = natural.clone();
     effect.process(Duration::from_secs(1), &mut frame, area);
     assert_eq!(frame, natural);

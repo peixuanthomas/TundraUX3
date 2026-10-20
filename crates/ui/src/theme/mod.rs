@@ -477,11 +477,8 @@ pub fn schedule_motion_range(
     } else {
         (elapsed.as_millis().saturating_mul(1_000) / duration.as_millis().max(1)).min(1_000) as u16
     };
-    let phase_progress = match direction {
-        MotionDirection::Entering | MotionDirection::Replacing => ease_out_cubic(normalized),
-        MotionDirection::Exiting => ease_in_cubic(normalized),
-    }
-    .min(if active { 999 } else { 1_000 });
+    let phase_progress =
+        crate::ease_in_out_cruise(normalized).min(if active { 999 } else { 1_000 });
     let progress = interpolate_progress(start_progress, target_progress, phase_progress);
     MotionTransition {
         kind,
@@ -539,9 +536,9 @@ impl FrostMotion {
         let duration = self.duration.as_millis().max(1);
         let normalized = (elapsed.saturating_mul(1_000) / duration).min(1_000) as u16;
         if entering {
-            ease_out_cubic(normalized)
+            crate::ease_in_out_cruise(normalized)
         } else {
-            1_000_u16.saturating_sub(ease_in_cubic(normalized))
+            1_000 - crate::ease_in_out_cruise(normalized)
         }
     }
 }

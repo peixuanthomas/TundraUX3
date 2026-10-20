@@ -210,7 +210,7 @@ fn render_context_exposes_observable_page_and_overlay_frames() {
     assert_eq!(start.theme.border, start.theme.canvas);
     assert!(!start.overlay_interaction_ready());
 
-    let mid_frame = frame(90);
+    let mid_frame = frame(120);
     let mid = RenderContext::from_theme_with_transitions(
         &theme,
         mid_frame,
@@ -323,7 +323,7 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
             )
         };
         assert_eq!(context(0).page_area(area), area);
-        assert_eq!(context(120).page_area(area), Rect::new(0, 1, 80, 23));
+        assert_eq!(context(90).page_area(area), Rect::new(0, 1, 80, 23));
         assert_eq!(context(500).page_area(area), area);
     }
 }
@@ -655,7 +655,7 @@ fn frost_motion_only_requests_redraw_while_active_and_respects_reduced_motion() 
         animation_speed_percent: 100,
     };
     assert!(motion.requests_redraw(halfway));
-    assert!(motion.progress(halfway, true) > 500);
+    assert_eq!(motion.progress(halfway, true), 500);
     motion.begin(halfway, MotionTimings::DIALOG);
     assert!(
         motion.requests_redraw(halfway),

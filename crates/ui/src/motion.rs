@@ -3,6 +3,20 @@ use std::time::Duration;
 
 use crate::{FrostMotion, MotionFrame};
 
+/// Position in thousandths: accelerate for 25% of the time, cruise for 50%,
+/// then decelerate for 25%, with continuous speed and no overshoot.
+pub const fn ease_in_out_cruise(value: u16) -> u16 {
+    let value = if value > 1_000 { 1_000 } else { value } as u32;
+    if value <= 250 {
+        ((value * value + 187) / 375) as u16
+    } else if value < 750 {
+        ((4 * value - 500 + 1) / 3) as u16
+    } else {
+        let remaining = 1_000 - value;
+        1_000 - ((remaining * remaining + 187) / 375) as u16
+    }
+}
+
 /// A reversible panel opening, in thousandths, using the shared motion clock.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PanelMotion {

@@ -317,12 +317,12 @@ impl ShellMotionEffects {
                     if let Some((base, new_underlay, new_area)) = replacement {
                         let consumed = visual.total.saturating_sub(visual.remaining);
                         let linear = consumed.as_secs_f32() / visual.total.as_secs_f32();
-                        let start_alpha = 1.0 - (1.0 - linear.clamp(0.0, 1.0)).powi(2);
+                        let start_progress = linear.clamp(0.0, 1.0);
                         let outgoing = self.outgoing_snapshot_effect_from(
                             visual.old.clone(),
                             Some(base.snapshot),
                             visual.identity.kind,
-                            start_alpha,
+                            start_progress,
                             visual.remaining,
                             visual.origin,
                         );
@@ -684,7 +684,7 @@ impl ShellMotionEffects {
         snapshot: CellSnapshot,
         underlay: Option<CellSnapshot>,
         kind: ui::MotionOverlayKind,
-        start_alpha: f32,
+        start_progress: f32,
         duration: Duration,
         origin: ui::RevealOrigin,
     ) -> Effect {
@@ -692,7 +692,7 @@ impl ShellMotionEffects {
             snapshot,
             underlay,
             kind,
-            start_alpha,
+            start_progress,
             duration,
             Some(self.live_base.clone()),
             origin,
@@ -775,12 +775,12 @@ fn overlay_duration(kind: ui::MotionOverlayKind) -> Duration {
 fn page_effect(area: Rect, old: Option<BaseFrameSnapshot>, returning: bool) -> Effect {
     fx::effect_fn_buf(
         old,
-        (PAGE_MS, Interpolation::QuadOut),
+        (PAGE_MS, Interpolation::Linear),
         move |old, context, buffer| {
             let Some(old) = old else {
                 return;
             };
-            let amount = (context.alpha() * 1_000.0).round() as u16;
+            let amount = ui::ease_in_out_cruise((context.alpha() * 1_000.0).round() as u16);
             let visible = ui::reveal_rect(
                 area,
                 if returning { 1_000 - amount } else { amount },
@@ -829,9 +829,13 @@ fn overlay_enter_effect(
 ) -> Effect {
     fx::effect_fn_buf(
         base,
-        (overlay_duration(kind), Interpolation::QuadOut),
+        (overlay_duration(kind), Interpolation::Linear),
         move |base, context, buffer| {
-            let visible = ui::reveal_rect(area, (context.alpha() * 1_000.0).round() as u16, origin);
+            let visible = ui::reveal_rect(
+                area,
+                ui::ease_in_out_cruise((context.alpha() * 1_000.0).round() as u16),
+                origin,
+            );
             let protected = protected_skip_positions(buffer);
             let base = base.lock().expect("motion base lock");
             let cells = base.as_ref().map(|base| {
@@ -885,7 +889,7 @@ fn outgoing_snapshot_effect_from(
     snapshot: CellSnapshot,
     underlay: Option<CellSnapshot>,
     kind: ui::MotionOverlayKind,
-    start_alpha: f32,
+    start_progress: f32,
     duration: Duration,
     live_base: Option<Arc<Mutex<Option<BaseFrameSnapshot>>>>,
     origin: ui::RevealOrigin,
@@ -923,13 +927,13 @@ fn outgoing_snapshot_effect_from(
     }
     fx::effect_fn_buf(
         state,
-        (duration, Interpolation::QuadOut),
+        (duration, Interpolation::Linear),
         move |state, context, buffer| {
-            let alpha = start_alpha + (1.0 - start_alpha) * context.alpha();
+            let progress = start_progress + (1.0 - start_progress) * context.alpha();
+            let amount = ui::ease_in_out_cruise((progress * 1_000.0).round() as u16);
             let protected = exit_protected_positions(state, buffer);
             restore_underlay(state, buffer, &protected);
-            let visible =
-                ui::reveal_rect(panel_area, ((1.0 - alpha) * 1_000.0).round() as u16, origin);
+            let visible = ui::reveal_rect(panel_area, 1_000 - amount, origin);
             for (position, old) in &state.old {
                 if visible.contains(*position)
                     && buffer.area.contains(*position)
