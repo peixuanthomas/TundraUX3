@@ -24,6 +24,10 @@
 
 `MotionPhases` 接收三段时长并计算对应速度曲线，连接处速度连续。动画时钟和面板支持自定义阶段，默认曲线也使用相同计算。设置的动画百分比下方提供高级弹窗，内含九项毫秒设置，沿用共享步进控件与点击区域。
 
+共享库通过 `ui::animate` 导出 [animate 0.8.0](https://docs.rs/animate/0.8.0)，启用 `macros` 和 `ratatui`，可直接使用 `Tween`、`Spring`、`Clock` 与 `#[animate]`，支持 `Rect`、`Color`、`Style` 等 Ratatui 类型。使用宏时先 `use ui::animate`，再写 `#[animate::animate]`，也可以用 `#[ui::animate::animate(crate = ui::animate)]` 指定路径；可运行示例见 [src/lib.rs](src/lib.rs) 的导出文档。
+
+动画状态由调用方保存，使用本地 `Clock`，每帧传入 `MotionFrame::scaled_delta()`；同一帧只推进一次时钟，所有动画共用返回的时间。实体键盘操作或减少动态效果时调用动画的 `finish()` 直接到达目标，按 `Activity::running()` 决定是否继续请求下一帧。实际页面开合继续遵守统一 UI 要求中的方向、三段速度及绘制与点击位置一致的规则。
+
 共享管理表单支持文件权限九宫格、混合值、勾选项及可查找选项列表。权限标题与格子共用列宽，按共享按钮的居中规则对齐；格子的绘制和鼠标/触摸命中共用布局。
 
 设置侧栏保留原有分类，并在底部提供可点击、可用 F8 打开的“操作系统设置”入口。

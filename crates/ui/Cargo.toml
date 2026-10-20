@@ -9,6 +9,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+animate.workspace = true
 i18n = { path = "../i18n" }
 geojson = "1.0"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }

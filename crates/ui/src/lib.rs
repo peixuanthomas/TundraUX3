@@ -22,6 +22,36 @@ pub mod components;
 pub mod style_preview;
 pub mod ui_test;
 
+/// Animation primitives and macros with support for Ratatui types.
+///
+/// ```
+/// use std::time::Duration;
+/// use ratatui::layout::Rect;
+/// use ui::animate::{self, Clock};
+///
+/// #[animate::animate]
+/// struct Panel {
+///     #[tween(duration = 180)]
+///     area: Rect,
+///     #[tween(duration = 180)]
+///     progress: f32,
+/// }
+///
+/// let mut panel = Panel::new(Rect::new(0, 0, 10, 4), 0.0);
+/// let target = Rect::new(10, 4, 30, 12);
+/// panel.area.to(target);
+/// panel.progress.to(1.0);
+/// let mut clock = Clock::new();
+/// panel.advance(clock.advance(Duration::ZERO));
+/// assert!(panel.advance(clock.advance(Duration::from_millis(90))).running());
+/// assert_eq!(*panel.area, Rect::new(5, 2, 20, 8));
+/// assert_eq!(*panel.progress, 0.5);
+/// assert!(panel.advance(clock.advance(Duration::from_millis(90))).finished());
+/// assert_eq!(*panel.area, target);
+/// assert_eq!(*panel.progress, 1.0);
+/// ```
+pub use animate;
+
 pub use assets::*;
 pub use editor_media::{
     EDITOR_IMAGE_MAX_PIXELS, EditorGraphicsProtocol, EditorImagePicker, EditorMediaError,

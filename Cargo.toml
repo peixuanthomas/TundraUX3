@@ -27,6 +27,7 @@ rust-version = "1.95"
 license = "GPL-3.0-only"
 
 [workspace.dependencies]
+animate = { version = "=0.8.0", features = ["macros", "ratatui"] }
 ratatui = { version = "=0.30.2", default-features = false, features = [
     "all-widgets",
     "crossterm_0_29",
