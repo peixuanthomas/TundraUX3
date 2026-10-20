@@ -117,6 +117,7 @@ impl PanelMotion {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevealOrigin {
+    Button(Rect),
     Right,
     Center,
     TopLeft,
@@ -133,6 +134,10 @@ impl Default for RevealOrigin {
 
 /// Visible rectangle of a panel; closing uses the same origin in reverse.
 pub fn reveal_rect(area: Rect, amount: u16, origin: RevealOrigin) -> Rect {
+    if let RevealOrigin::Button(button) = origin {
+        use animate::Interpolate;
+        return Rect::lerp(&button, &area, f32::from(amount.min(1_000)) / 1_000.0);
+    }
     let amount = u32::from(amount.min(1_000));
     let width = (u32::from(area.width) * amount / 1_000) as u16;
     let height = if origin == RevealOrigin::Right {

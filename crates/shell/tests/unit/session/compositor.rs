@@ -1388,7 +1388,7 @@ fn launcher_click_launches_only_after_matching_release_in_both_views() {
 }
 
 #[test]
-fn home_entry_single_click_opens_on_first_release() {
+fn home_entry_single_click_expands_from_its_border_and_returns_to_it() {
     struct StorageFixtureGuard(PathBuf);
     impl Drop for StorageFixtureGuard {
         fn drop(&mut self) {
@@ -1452,42 +1452,75 @@ fn home_entry_single_click_opens_on_first_release() {
     assert_eq!(keyboard_state.active_screen(), ShellScreen::Launcher);
     assert!(keyboard_state.pages.common.error_message.is_none());
 
-    let mut state = launcher_session();
-    let mut compositor = ScreenCompositor::default();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    let prepared = home_frame(&state, 0, true);
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    let launcher_id = format!("home.entry.{launcher_index}");
-    let area = state
-        .button_regions
-        .iter()
-        .find(|r| r.id.as_str() == launcher_id)
-        .unwrap()
-        .area;
-    let point = (area.x + 1, area.y + 1);
-    assert_eq!(state.home_entry_index_at(point), Some(launcher_index));
-    let pressed_at = Instant::now();
-    state.apply_input_with_platform_at(
-        InputEvent::mouse_down(PointerButton::Left, point),
-        &platform,
-        pressed_at,
-    );
-    assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(
+    for hover in [false, true] {
+        let mut state = launcher_session();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let prepared = home_frame(&state, 0, false);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let launcher_id = format!("home.entry.{launcher_index}");
+        let area = state
+            .button_regions
+            .iter()
+            .find(|r| r.id.as_str() == launcher_id)
+            .unwrap()
+            .area;
+        let point = (area.x + 1, area.y + 1);
+        assert_eq!(state.home_entry_index_at(point), Some(launcher_index));
+        if hover {
+            state.apply_input_with_platform(InputEvent::mouse_moved(point), &platform);
+        }
+        let pressed_at = Instant::now();
+        state.apply_input_with_platform_at(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            &platform,
+            pressed_at,
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert_eq!(
+            state
+                .interaction
+                .button_capture
+                .as_ref()
+                .map(|capture| capture.region.id.as_str()),
+            Some(launcher_id.as_str())
+        );
+        state.apply_input_with_platform_at(
+            InputEvent::mouse_up(PointerButton::Left, point),
+            &platform,
+            pressed_at + Duration::from_millis(10),
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Launcher);
+        assert!(state.pages.common.error_message.is_none());
+        assert_eq!(state.content_opening_button(), Some(area));
+        let mut prepared = home_frame(&state, 1, false);
+        prepared.page = ScreenViewModel::Launcher(Box::new(state.to_launcher_view_model()));
+        assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), "╭");
+        prepared.context.motion.delta = ui::MotionTimings::PAGE;
+        assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        let main = state.frame_layout.unwrap().main;
+        let back = state.frame_layout.unwrap().back_button.unwrap();
+        let point = (back.x + 1, back.y + 1);
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            &platform,
+        );
         state
-            .interaction
-            .button_capture
-            .as_ref()
-            .map(|capture| capture.region.id.as_str()),
-        Some(launcher_id.as_str()),
-    );
-    state.apply_input_with_platform_at(
-        InputEvent::mouse_up(PointerButton::Left, point),
-        &platform,
-        pressed_at + Duration::from_millis(10),
-    );
-    assert_eq!(state.active_screen(), ShellScreen::Launcher);
-    assert!(state.pages.common.error_message.is_none());
+            .apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, point), &platform);
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        let mut prepared = home_frame(&state, 2, false);
+        assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        prepared.context.motion.delta = ui::MotionTimings::PAGE / 2;
+        assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        let current = ui::reveal_rect(main, 500, ui::RevealOrigin::Button(area));
+        assert_eq!(
+            terminal.backend().buffer()[(current.x, current.y)].symbol(),
+            "╭"
+        );
+        assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), "╭");
+    }
 }
 
 #[test]

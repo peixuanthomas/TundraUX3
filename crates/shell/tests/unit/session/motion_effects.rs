@@ -226,11 +226,12 @@ fn saved_page_phases_control_the_deadline_and_painted_position() {
     new = Buffer::filled(full, Cell::new("N"));
     motion.test_frame(Duration::from_millis(100), &mut new, &state);
     let main = shell_main_area(full);
+    let visible = ui::reveal_rect(main, 100, overlay_origin(&state, main));
     assert_eq!(
-        (main.x..main.right())
-            .filter(|x| new[(*x, main.y)].symbol() == "N")
+        main.positions()
+            .filter(|position| new[*position].symbol() == "N")
             .count(),
-        usize::from(main.width / 10)
+        usize::from(visible.width) * usize::from(visible.height)
     );
     assert_eq!(motion.page_gate, Duration::from_millis(300));
     assert_eq!(
@@ -275,7 +276,7 @@ fn resumed_overlay_exit_keeps_the_original_speed_curve() {
 }
 
 #[test]
-fn pages_enter_from_the_right_and_return_in_reverse() {
+fn pages_expand_from_the_button_and_return_in_reverse() {
     let area = Rect::new(2, 1, 12, 4);
     let bounds = Rect::new(0, 0, 16, 6);
     let old = Buffer::filled(bounds, Cell::new("O"));
@@ -284,21 +285,23 @@ fn pages_enter_from_the_right_and_return_in_reverse() {
         bounds,
         cells: snapshot_normal_cells(&old, bounds).unwrap().cells,
     };
+    let origin = ui::RevealOrigin::Button(Rect::new(2, 1, 3, 2));
     for returning in [false, true] {
         let mut effect = page_effect(
             area,
             Some(old.clone()),
             returning,
             ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+            origin,
         );
         let natural = Buffer::filled(bounds, Cell::new("N"));
         let mut frame = natural.clone();
         effect.process(Duration::ZERO, &mut frame, bounds);
-        assert_eq!(frame[(2, 1)].symbol(), "O");
+        assert_eq!(frame[(2, 1)].symbol(), if returning { "O" } else { "N" });
         frame = natural.clone();
         effect.process(Duration::from_millis(70), &mut frame, bounds);
-        assert_eq!(frame[(2, 1)].symbol(), if returning { "N" } else { "O" });
-        assert_eq!(frame[(13, 1)].symbol(), if returning { "O" } else { "N" });
+        assert_eq!(frame[(2, 1)].symbol(), if returning { "O" } else { "N" });
+        assert_eq!(frame[(13, 1)].symbol(), if returning { "N" } else { "O" });
         assert_eq!(frame[(0, 0)].symbol(), "N");
         frame = natural.clone();
         effect.process(Duration::from_secs(1), &mut frame, bounds);
@@ -342,6 +345,104 @@ fn dialogs_grow_from_center_without_recoloring_text() {
 }
 
 #[test]
+fn dialog_border_moves_from_its_button_and_closes_to_the_same_button() {
+    let full = Rect::new(0, 0, 120, 40);
+    let area = Rect::new(25, 8, 60, 20);
+    let button = Rect::new(95, 31, 14, 3);
+    let origin = ui::RevealOrigin::Button(button);
+    let phases = ui::MotionPhases::for_duration(ui::MotionTimings::DIALOG);
+    let context = ui::RenderContext::default();
+    let base = Buffer::filled(full, Cell::new("B"));
+    let mut natural = base.clone();
+    ui::components::Surface::new()
+        .bordered(true)
+        .render(area, &mut natural, &context);
+    let snapshot = snapshot_normal_cells(&natural, area).unwrap();
+    let underlay = snapshot_normal_cells(&base, area.union(button)).unwrap();
+    let mut enter = overlay_enter_effect(
+        ui::MotionOverlayKind::Dialog,
+        area,
+        context.theme,
+        origin,
+        Arc::new(Mutex::new(Some(BaseFrameSnapshot {
+            screen: ShellScreen::Home,
+            bounds: full,
+            cells: snapshot_normal_cells(&base, full).unwrap().cells,
+        }))),
+        phases,
+    );
+    let mut exit = outgoing_snapshot_effect_from(
+        snapshot,
+        Some(underlay),
+        ui::MotionOverlayKind::Dialog,
+        0.0,
+        phases.duration(),
+        None,
+        origin,
+        phases,
+    );
+    for (delta, elapsed) in [(0, 0), (90, 90), (90, 180)] {
+        let mut entering = natural.clone();
+        let mut exiting = base.clone();
+        enter.process(Duration::from_millis(delta), &mut entering, full);
+        exit.process(Duration::from_millis(delta), &mut exiting, full);
+        if elapsed == 180 {
+            assert_eq!(entering, natural);
+            assert_eq!(exiting, base);
+        } else {
+            let amount = phases.progress((elapsed * 1_000 / 180) as u16);
+            for (frame, amount) in [(&entering, amount), (&exiting, 1_000 - amount)] {
+                let current = ui::reveal_rect(area, amount, origin);
+                assert_eq!(
+                    frame[(current.x, current.y)].symbol(),
+                    natural[(area.x, area.y)].symbol()
+                );
+                assert_eq!(
+                    frame[(current.right() - 1, current.bottom() - 1)].symbol(),
+                    natural[(area.right() - 1, area.bottom() - 1)].symbol()
+                );
+                assert_eq!(frame[(current.x, current.y)].fg, context.theme.border);
+                assert_eq!(frame[(0, 0)].symbol(), "B");
+            }
+        }
+    }
+}
+
+#[test]
+fn page_remembers_the_opening_button_after_other_clicks_and_keyboard_actions() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    while state.notification_dismiss_active_modal_without_response() {}
+    let button = Rect::new(10, 8, 20, 7);
+    state.button_regions.push(ui::components::ButtonRegion {
+        id: "home.test".into(),
+        area: button,
+        disabled: false,
+    });
+    let now = Instant::now();
+    state.prepare_input(
+        InputEvent::mouse_down(PointerButton::Left, (15, 10)),
+        &platform::mock::UnsupportedPlatform,
+        now,
+    );
+    assert_eq!(state.interaction.motion_origin, Some(button));
+    state.enter_screen(ShellScreen::Clock);
+    assert_eq!(state.content_opening_button(), Some(button));
+    state.prepare_input(
+        InputEvent::from_key_label("Tab"),
+        &platform::mock::UnsupportedPlatform,
+        now,
+    );
+    assert_eq!(state.interaction.motion_origin, None);
+    assert_eq!(state.content_opening_button(), Some(button));
+    state.terminal_size = (140, 40);
+    assert_eq!(state.content_opening_button(), None);
+}
+
+#[test]
 fn exit_confirmation_preempts_underlying_page_motion() {
     let full = Rect::new(0, 0, 120, 40);
     let main = shell_main_area(full);
@@ -365,6 +466,7 @@ fn exit_confirmation_preempts_underlying_page_motion() {
             None,
             false,
             ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+            ui::RevealOrigin::Right,
         ),
     );
     motion.test_frame(Duration::ZERO, &mut initial, &state);
@@ -930,7 +1032,7 @@ fn asynchronous_overlay_preserves_remaining_visual_outgoing() {
 }
 
 #[test]
-fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
+fn generic_and_explorer_menus_both_animate_and_gate_pointer_input() {
     let full = Rect::new(0, 0, 120, 40);
     let theme = ui::ThemeTokens::glacier_night();
     let mut state = ShellSession::new_for_home_mode(
@@ -943,6 +1045,8 @@ fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
     motion.update(&state, full, full, None, theme, false);
     let mut buffer = Buffer::filled(full, Cell::new("N"));
     let natural = buffer.clone();
+    motion.capture_base(&buffer, &state);
+    state.interaction.motion_origin = Some(Rect::new(20, 10, 1, 1));
     state.pages.common.active_popup = Some(ShellPopup {
         owner: Some(ShellComponent::Home),
         anchor: (20, 10),
@@ -955,17 +1059,20 @@ fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
         .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
     assert_eq!(
         motion.intercept_input(&generic_input),
-        MotionInputDisposition::Apply
+        MotionInputDisposition::Block
     );
     motion.test_frame(Duration::from_millis(16), &mut buffer, &state);
     assert_eq!(buffer, natural);
-    assert!(!motion.manager.is_running());
-    assert_eq!(motion.overlay_gate, Duration::ZERO);
+    assert!(motion.manager.is_running());
+    assert_eq!(motion.overlay_gate, Duration::from_millis(160));
+    motion.test_frame(Duration::from_millis(160), &mut buffer, &state);
     state.pages.common.active_popup = None;
     state.pages.common.focused_component = ShellComponent::Home;
     state.refresh_hit_map();
     motion.update(&state, full, full, None, theme, false);
-    assert!(!motion.manager.is_running());
+    assert!(motion.manager.is_running());
+    motion.test_frame(Duration::ZERO, &mut buffer, &state);
+    motion.test_frame(Duration::from_millis(160), &mut buffer, &state);
 
     state.set_navigation_path(vec![ShellScreen::Explorer]);
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
@@ -1430,6 +1537,7 @@ fn shared_layout_main_is_used_without_a_second_chrome_inset() {
         old_base,
         false,
         ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+        ui::RevealOrigin::Right,
     )
     .process(Duration::ZERO, &mut expected, full);
     motion.process(Duration::ZERO, &mut actual, &state);
@@ -1601,6 +1709,7 @@ fn changing_pages_cancels_old_outgoing_cells_but_keeps_new_page_entry() {
         old_base,
         false,
         ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+        ui::RevealOrigin::Right,
     )
     .process(Duration::ZERO, &mut expected, layout.bounds);
     motion.process(Duration::ZERO, &mut actual, &state);

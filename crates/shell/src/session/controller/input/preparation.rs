@@ -12,6 +12,20 @@ impl ShellSession {
         received_at: Instant,
     ) -> Option<InputEvent> {
         match &input {
+            InputEvent::Mouse(mouse) if matches!(mouse.kind, ui::MouseEventKind::Down(_)) => {
+                self.interaction.motion_origin = Some(
+                    self.button_at(mouse.coordinates())
+                        .map(|button| button.area)
+                        .unwrap_or(Rect::new(mouse.position.column, mouse.position.row, 1, 1)),
+                );
+            }
+            InputEvent::Key(_)
+            | InputEvent::Paste(_)
+            | InputEvent::FocusLost
+            | InputEvent::Resize { .. } => self.interaction.motion_origin = None,
+            _ => {}
+        }
+        match &input {
             InputEvent::Mouse(mouse)
                 if mouse.kind == ui::MouseEventKind::Moved
                     && self.interaction.pointer_position == Some(mouse.coordinates()) => {}

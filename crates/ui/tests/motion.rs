@@ -147,3 +147,41 @@ fn reveal_keeps_its_origin_and_stays_inside_the_panel() {
         }
     }
 }
+
+#[test]
+fn button_border_moves_and_grows_to_the_surface_bounds() {
+    let button = Rect::new(80, 28, 12, 3);
+    let panel = Rect::new(4, 5, 100, 20);
+    let origin = RevealOrigin::Button(button);
+    assert_eq!(reveal_rect(panel, 0, origin), button);
+    assert_eq!(reveal_rect(panel, 500, origin), Rect::new(42, 17, 56, 12));
+    assert_eq!(reveal_rect(panel, 1_000, origin), panel);
+    for amount in 0..=1_000 {
+        let current = reveal_rect(panel, amount, origin);
+        assert_eq!(current.intersection(button.union(panel)), current);
+    }
+}
+
+#[test]
+fn moving_surface_keeps_its_border_style_and_never_splits_chinese() {
+    use ratatui::{buffer::Buffer, style::Color, widgets::Paragraph};
+    use ui::components::Surface;
+    let bounds = Rect::new(0, 0, 12, 5);
+    let mut source = Buffer::empty(bounds);
+    let mut context = ui::RenderContext::default();
+    context.theme.border = Color::Red;
+    Surface::new()
+        .bordered(true)
+        .render(bounds, &mut source, &context);
+    use ratatui::widgets::Widget;
+    Paragraph::new("中中文文本字").render(Rect::new(1, 2, 10, 1), &mut source);
+    let moving = Rect::new(20, 10, 7, 5);
+    let result = ui::morph_surface(&source, moving);
+    assert_eq!(result[(20, 10)].symbol(), source[(0, 0)].symbol());
+    assert_eq!(result[(26, 14)].symbol(), source[(11, 4)].symbol());
+    assert_eq!(result[(21, 10)].symbol(), "─");
+    assert_eq!(result[(20, 12)].symbol(), "│");
+    assert_eq!(result[(20, 12)].fg, Color::Red);
+    assert_eq!(result[(25, 12)].symbol(), " ");
+    assert_eq!(ui::morph_surface(&source, bounds), source);
+}

@@ -4,6 +4,7 @@ use super::*;
 struct NavigationEntry {
     id: PageInstanceId,
     focus: ShellComponent,
+    opening_button: Option<(Rect, (u16, u16))>,
 }
 
 /// Owns the actual opening path. Only this module can change its private storage.
@@ -99,6 +100,7 @@ impl ShellNavigation {
         self.entries.push(NavigationEntry {
             id: PageInstanceId::new(),
             focus: screen_focus(screen),
+            opening_button: None,
         });
     }
 
@@ -213,6 +215,16 @@ impl ShellSession {
         self.navigation.entries[index].id
     }
 
+    pub(super) fn content_opening_button(&self) -> Option<Rect> {
+        self.navigation
+            .entries
+            .iter()
+            .find(|entry| entry.id == self.content_page_id())?
+            .opening_button
+            .filter(|(_, size)| *size == self.terminal_size)
+            .map(|(area, _)| area)
+    }
+
     pub fn live_page_ids(&self) -> Vec<PageInstanceId> {
         self.navigation
             .entries
@@ -245,6 +257,10 @@ impl ShellSession {
         let focus = self.pages.common.focused_component;
         self.navigation.remember_focus(focus);
         self.navigation.push(screen);
+        self.navigation.entries.last_mut().unwrap().opening_button = self
+            .interaction
+            .motion_origin
+            .map(|area| (area, self.terminal_size));
         let id = self.active_page_id();
         self.pages.create(id, screen);
         self.app.select_notification_page(id);

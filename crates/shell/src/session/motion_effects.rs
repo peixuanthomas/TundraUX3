@@ -55,8 +55,8 @@ struct ActiveVisualOutgoing {
 #[derive(Debug, Clone)]
 struct ExitSnapshotState {
     live_base: Option<Arc<Mutex<Option<BaseFrameSnapshot>>>>,
-    old: Vec<(Position, Cell)>,
     underlay: Option<Vec<(Position, Cell)>>,
+    panel: Buffer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +89,7 @@ pub(super) struct ShellMotionEffects {
     page: Option<PageInstanceId>,
     page_gate: Duration,
     page_depth: usize,
+    page_origin: Option<Rect>,
     overlay_origin: ui::RevealOrigin,
     timings: storage::AnimationTimingsConfig,
 }
@@ -153,11 +154,12 @@ impl ShellMotionEffects {
 
         self.reduced = false;
         if self.bounds.is_some_and(|bounds| bounds != full_area) {
-            self.clear();
+            self.cancel_for_bounds_change();
         }
 
         let screen = state.content_screen();
         let previous_base = self.base_snapshot.clone();
+        let previous_origin = self.page_origin;
         let returning = state.screen_stack().len() < self.page_depth;
         let page_changed = self.screen.is_some_and(|previous| previous != screen)
             || self
@@ -195,6 +197,19 @@ impl ShellMotionEffects {
                     previous_base,
                     returning,
                     ui::MotionPhases::from_millis(self.timings.page),
+                    ui::RevealOrigin::Button(
+                        (if returning {
+                            previous_origin
+                        } else {
+                            state.content_opening_button()
+                        })
+                        .unwrap_or(Rect::new(
+                            area.x + area.width / 2,
+                            area.y + area.height / 2,
+                            0,
+                            0,
+                        )),
+                    ),
                 );
                 self.schedule(MotionEffectId::Page, fx);
                 self.page_gate = ui::MotionPhases::from_millis(self.timings.page).duration();
@@ -458,9 +473,9 @@ impl ShellMotionEffects {
                     }
                 }
             }
-            if let (Some(new), Some(area)) = (overlay.as_ref(), overlay_area(state)) {
+            if let (Some(_), Some(area)) = (overlay.as_ref(), overlay_area(state)) {
                 self.overlay_origin =
-                    revealed_origin.unwrap_or_else(|| overlay_origin(state, new.kind, area));
+                    revealed_origin.unwrap_or_else(|| overlay_origin(state, area));
             }
         }
         self.remember(state, full_area);
@@ -539,6 +554,7 @@ impl ShellMotionEffects {
 
     pub(super) fn cancel_for_bounds_change(&mut self) {
         self.clear();
+        self.overlay_origin = ui::RevealOrigin::Center;
     }
 
     pub(super) fn cancel_for_suspend(&mut self, state: &ShellSession) -> Option<RoutedEvent> {
@@ -661,7 +677,7 @@ impl ShellMotionEffects {
             kind,
             area,
             theme,
-            overlay_origin(state, kind, area),
+            overlay_origin(state, area),
             self.live_base.clone(),
             self.overlay_phases(kind),
         )
@@ -727,6 +743,11 @@ impl ShellMotionEffects {
         bounds: Rect,
         area: Rect,
     ) -> Option<FrozenUnderlaySnapshot> {
+        let area = if let ui::RevealOrigin::Button(button) = self.overlay_origin {
+            area.union(button).intersection(bounds)
+        } else {
+            area
+        };
         let base = self.base_snapshot.as_ref()?;
         if base.screen != screen || base.bounds != bounds || area.is_empty() {
             return None;
@@ -761,6 +782,7 @@ impl ShellMotionEffects {
         self.completed_exit = None;
         self.covered_page_overlay = None;
         self.page = None;
+        self.page_origin = None;
         self.page_gate = Duration::ZERO;
     }
 
@@ -771,6 +793,7 @@ impl ShellMotionEffects {
         self.exit_confirmation = state.active_screen() == ShellScreen::ExitConfirm;
         self.page_depth = state.screen_stack().len();
         self.page = Some(state.content_page_id());
+        self.page_origin = state.content_opening_button();
     }
 }
 
@@ -795,6 +818,7 @@ fn page_effect(
     old: Option<BaseFrameSnapshot>,
     returning: bool,
     phases: ui::MotionPhases,
+    origin: ui::RevealOrigin,
 ) -> Effect {
     fx::effect_fn_buf(
         old,
@@ -804,43 +828,49 @@ fn page_effect(
                 return;
             };
             let amount = phases.progress((context.alpha() * 1_000.0).round() as u16);
-            let visible = ui::reveal_rect(
-                area,
-                if returning { 1_000 - amount } else { amount },
-                ui::RevealOrigin::Right,
-            );
+            if amount == 1_000 {
+                return;
+            }
+            let panel = if returning {
+                buffer_from_cells(area, &old.cells)
+            } else {
+                let Some(snapshot) = snapshot_normal_cells(buffer, area) else {
+                    return;
+                };
+                buffer_from_cells(area, &snapshot.cells)
+            };
             let protected = protected_skip_positions(buffer);
-            for (position, cell) in &old.cells {
-                if area.contains(*position)
-                    && (visible.contains(*position) == returning)
-                    && !cell_overlaps_protected(*position, cell, &protected)
-                {
-                    buffer[*position] = cell.clone();
+            if !returning {
+                for (position, cell) in &old.cells {
+                    if area.contains(*position)
+                        && !cell_overlaps_protected(*position, cell, &protected)
+                    {
+                        buffer[*position] = cell.clone();
+                    }
                 }
             }
+            paint_morph(
+                &panel,
+                ui::reveal_rect(
+                    area,
+                    if returning { 1_000 - amount } else { amount },
+                    origin,
+                ),
+                buffer,
+                &protected,
+            );
         },
     )
     .with_area(area)
 }
 
-fn overlay_origin(
-    state: &ShellSession,
-    kind: ui::MotionOverlayKind,
-    area: Rect,
-) -> ui::RevealOrigin {
-    if kind != ui::MotionOverlayKind::Popover {
-        return ui::RevealOrigin::Center;
-    }
-    let (x, y) = state
-        .interaction
-        .pointer_position
-        .unwrap_or((area.x, area.y));
-    match (x > area.x + area.width / 2, y > area.y + area.height / 2) {
-        (false, false) => ui::RevealOrigin::TopLeft,
-        (true, false) => ui::RevealOrigin::TopRight,
-        (false, true) => ui::RevealOrigin::BottomLeft,
-        (true, true) => ui::RevealOrigin::BottomRight,
-    }
+fn overlay_origin(state: &ShellSession, area: Rect) -> ui::RevealOrigin {
+    ui::RevealOrigin::Button(state.interaction.motion_origin.unwrap_or(Rect::new(
+        area.x + area.width / 2,
+        area.y + area.height / 2,
+        0,
+        0,
+    )))
 }
 
 fn overlay_enter_effect(
@@ -855,12 +885,16 @@ fn overlay_enter_effect(
         base,
         (phases.duration(), Interpolation::Linear),
         move |base, context, buffer| {
-            let visible = ui::reveal_rect(
-                area,
-                phases.progress((context.alpha() * 1_000.0).round() as u16),
-                origin,
-            );
+            let amount = phases.progress((context.alpha() * 1_000.0).round() as u16);
+            if amount == 1_000 {
+                return;
+            }
+            let visible = ui::reveal_rect(area, amount, origin);
             let protected = protected_skip_positions(buffer);
+            let Some(snapshot) = snapshot_normal_cells(buffer, area) else {
+                return;
+            };
+            let panel = buffer_from_cells(area, &snapshot.cells);
             let base = base.lock().expect("motion base lock");
             let cells = base.as_ref().map(|base| {
                 base.cells
@@ -869,9 +903,7 @@ fn overlay_enter_effect(
                     .collect::<HashMap<_, _>>()
             });
             for position in area.intersection(buffer.area).positions() {
-                if !visible.contains(position)
-                    && !cell_overlaps_protected(position, &buffer[position], &protected)
-                {
+                if !cell_overlaps_protected(position, &buffer[position], &protected) {
                     if let Some(cell) = cells.as_ref().and_then(|cells| cells.get(&position)) {
                         buffer[position] = (*cell).clone();
                     } else {
@@ -882,6 +914,7 @@ fn overlay_enter_effect(
                     }
                 }
             }
+            paint_morph(&panel, visible, buffer, &protected);
         },
     )
     .with_area(area)
@@ -942,9 +975,9 @@ fn outgoing_snapshot_effect_from(
                     .as_ref()
                     .is_none_or(|positions| positions.contains(position))
         })
-        .collect();
+        .collect::<Vec<_>>();
     let state = ExitSnapshotState {
-        old,
+        panel: buffer_from_cells(panel_area, &old),
         underlay,
         live_base,
     };
@@ -960,17 +993,37 @@ fn outgoing_snapshot_effect_from(
             let protected = exit_protected_positions(state, buffer);
             restore_underlay(state, buffer, &protected);
             let visible = ui::reveal_rect(panel_area, 1_000 - amount, origin);
-            for (position, old) in &state.old {
-                if visible.contains(*position)
-                    && buffer.area.contains(*position)
-                    && !cell_overlaps_protected(*position, old, &protected)
-                {
-                    buffer[*position] = old.clone();
-                }
+            if amount < 1_000 {
+                paint_morph(&state.panel, visible, buffer, &protected);
             }
         },
     )
     .with_area(area)
+}
+
+fn buffer_from_cells(area: Rect, cells: &[(Position, Cell)]) -> Buffer {
+    let mut buffer = Buffer::empty(area);
+    for cell in &mut buffer.content {
+        cell.diff_option = CellDiffOption::Skip;
+    }
+    for (position, cell) in cells {
+        if area.contains(*position) {
+            buffer[*position] = cell.clone();
+        }
+    }
+    buffer
+}
+
+fn paint_morph(source: &Buffer, area: Rect, buffer: &mut Buffer, protected: &HashSet<Position>) {
+    let projected = ui::morph_surface(source, area);
+    for position in area.intersection(buffer.area).positions() {
+        let cell = &projected[position];
+        if cell.diff_option != CellDiffOption::Skip
+            && !cell_overlaps_protected(position, cell, protected)
+        {
+            buffer[position] = cell.clone();
+        }
+    }
 }
 
 fn cell_overlaps_protected(position: Position, cell: &Cell, protected: &HashSet<Position>) -> bool {
@@ -1088,10 +1141,6 @@ fn is_page_overlay(overlay: &OverlayIdentity) -> bool {
 fn current_overlay(state: &ShellSession) -> Option<OverlayIdentity> {
     state
         .active_overlay_descriptor()
-        .filter(|overlay| {
-            !(overlay.category == ShellOverlayCategory::ContextPopup
-                && overlay.component() == Some(ShellComponent::ContextMenu))
-        })
         .map(|overlay| OverlayIdentity {
             category: overlay.category,
             kind: overlay.kind,
