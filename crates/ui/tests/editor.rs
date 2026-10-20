@@ -74,7 +74,7 @@ fn inline_search_layout_and_hit_targets_stay_inside_resized_editor() {
         ..Default::default()
     });
     for width in [30, 50, 80, 140] {
-        for height in [6, 12, 30] {
+        for height in [8, 12, 30] {
             for focus in ui::editor_search_controls(true) {
                 model.search_bar.as_mut().unwrap().focus = Some(focus);
                 let area = Rect::new(3, 4, width, height);
@@ -526,10 +526,10 @@ fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available()
     let model = sample_model();
     let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
 
-    assert_eq!(layout.menu_bar, Rect::new(0, 0, 50, 1));
+    assert_eq!(layout.menu_bar, Rect::new(1, 1, 48, 1));
     assert!(layout.toolbar.is_empty());
-    assert_eq!(layout.status_bar, Rect::new(0, 11, 50, 1));
-    assert!(layout.canvas.height >= 9);
+    assert_eq!(layout.status_bar, Rect::new(1, 10, 48, 1));
+    assert!(layout.canvas.height >= 7);
     assert!(!layout.toolbar_overflow);
     assert!(layout.toolbar_items.is_empty());
     assert!(layout.modes.is_empty());
@@ -543,7 +543,7 @@ fn shell_minimum_main_height_degrades_without_losing_the_editing_canvas() {
     assert!(!layout.canvas_framed);
     assert_eq!(layout.menu_bar.height, 1);
     assert_eq!(layout.toolbar.height, 0);
-    assert_eq!(layout.canvas.height, 4);
+    assert_eq!(layout.canvas.height, 2);
     assert_eq!(layout.status_bar.height, 1);
     assert!(layout.toolbar_items.is_empty());
     assert!(layout.modes.is_empty());
@@ -912,7 +912,7 @@ fn rich_scrollbars_reach_a_fixed_point_without_overlapping() {
         ))],
     );
 
-    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let layout = editor_layout(Rect::new(0, 0, 52, 10), &model);
     let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
     let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
 
@@ -932,7 +932,7 @@ fn source_scrollbars_reach_a_fixed_point_without_overlapping() {
     // bar necessary.
     let source = format!("{}\na\nb\nc\nd\ne\nf", "x".repeat(47));
     let model = EditorViewModel::source("both.log", source);
-    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
+    let layout = editor_layout(Rect::new(0, 0, 52, 10), &model);
     let vertical = layout.vertical_scrollbar.expect("vertical scrollbar");
     let horizontal = layout.horizontal_scrollbar.expect("horizontal scrollbar");
 
@@ -1005,8 +1005,8 @@ fn end_caret_on_an_exactly_fitting_source_line_remains_visible() {
     let mut model = EditorViewModel::source("exact.log", "x".repeat(47));
     model.horizontal_scroll = 1;
     model.cursor = Some(EditorTextPosition::new(0, 47));
-    let layout = editor_layout(Rect::new(0, 0, 50, 8), &model);
-    let mut terminal = render(&model, 50, 8);
+    let layout = editor_layout(Rect::new(0, 0, 52, 10), &model);
+    let mut terminal = render(&model, 52, 10);
 
     assert_eq!(model.horizontal_content_width, 48);
     assert!(layout.horizontal_scrollbar.is_some());
@@ -1136,7 +1136,7 @@ fn wrapped_rich_lines_keep_exact_source_offsets() {
         EditorBlockSourceMap::new(EditorSourceRange::new(0, source.len()))
             .with_content_range(EditorSourceRange::new(0, source.len())),
     ];
-    let layout = editor_layout(Rect::new(0, 0, 20, 10), &model);
+    let layout = editor_layout(Rect::new(0, 0, 22, 12), &model);
     let continuation = line_area(&layout, 1);
 
     assert_eq!(layout.canvas.width, 20);

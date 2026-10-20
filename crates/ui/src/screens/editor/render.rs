@@ -26,7 +26,9 @@ pub fn render_editor_contextual(
     let theme = &context.compatibility_theme();
     let layout = editor_layout(area, model);
     frame.render_widget(Clear, area);
-    Surface::new().render_frame(frame, area, context);
+    Surface::new()
+        .bordered(true)
+        .render_frame(frame, area, context);
     render_menu_bar(frame, &layout, model, theme, context);
     render_toolbar(frame, &layout, model, theme, context);
     render_search_bar(frame, &layout, model, theme);

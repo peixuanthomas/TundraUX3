@@ -134,7 +134,7 @@ mod rich_layout_measurement_tests {
         // would wrap it and incorrectly make the scrollbar self-fulfilling.
         let fitting =
             EditorViewModel::new("fit.md", vec![EditorRenderBlock::paragraph("x".repeat(20))]);
-        let fitting_layout = editor_layout(Rect::new(0, 0, 20, 4), &fitting);
+        let fitting_layout = editor_layout(Rect::new(0, 0, 22, 6), &fitting);
         assert_eq!(fitting_layout.canvas.width, 20);
         assert_eq!(fitting_layout.document_line_count, 1);
         assert!(fitting_layout.vertical_scrollbar.is_none());
@@ -143,7 +143,7 @@ mod rich_layout_measurement_tests {
             "overflow.md",
             vec![EditorRenderBlock::paragraph("x".repeat(41))],
         );
-        let overflowing_layout = editor_layout(Rect::new(0, 0, 20, 4), &overflowing);
+        let overflowing_layout = editor_layout(Rect::new(0, 0, 22, 6), &overflowing);
         assert_eq!(overflowing_layout.canvas.width, 19);
         assert_eq!(overflowing_layout.document_line_count, 3);
         assert!(overflowing_layout.vertical_scrollbar.is_some());

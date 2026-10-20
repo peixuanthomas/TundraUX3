@@ -1,7 +1,7 @@
 use super::document::*;
 use super::source::*;
 use super::*;
-use crate::components::{Scrollbar, ScrollbarOrientation, terminal_width};
+use crate::components::{Scrollbar, ScrollbarOrientation, Surface, terminal_width};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorMenuLayout {
@@ -513,16 +513,17 @@ impl EditorLayout {
 }
 
 pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
-    let menu_height = u16::from(area.height > 0);
+    let inner = Surface::new().bordered(true).inner(area);
+    let menu_height = u16::from(inner.height > 0);
     let toolbar_height = 0;
-    let status_height = u16::from(area.height >= 3);
-    let menu_bar = Rect::new(area.x, area.y, area.width, menu_height);
+    let status_height = u16::from(inner.height >= 3);
+    let menu_bar = Rect::new(inner.x, inner.y, inner.width, menu_height);
     let search_items = editor_search_layout(
         Rect::new(
-            area.x,
-            area.y.saturating_add(menu_height),
-            area.width,
-            area.height.saturating_sub(menu_height + status_height),
+            inner.x,
+            inner.y.saturating_add(menu_height),
+            inner.width,
+            inner.height.saturating_sub(menu_height + status_height),
         ),
         model.search_bar.as_ref(),
     );
@@ -532,28 +533,29 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         .max()
         .unwrap_or(0);
     let toolbar = Rect::new(
-        area.x,
-        area.y.saturating_add(menu_height),
-        area.width,
+        inner.x,
+        inner.y.saturating_add(menu_height),
+        inner.width,
         toolbar_height,
     );
-    let canvas_panel_y = area
+    let canvas_panel_y = inner
         .y
         .saturating_add(menu_height)
         .saturating_add(search_height)
         .saturating_add(toolbar_height);
-    let canvas_panel_height = area
+    let canvas_panel_height = inner
         .height
         .saturating_sub(menu_height)
         .saturating_sub(search_height)
         .saturating_sub(toolbar_height)
         .saturating_sub(status_height);
-    let canvas_panel = Rect::new(area.x, canvas_panel_y, area.width, canvas_panel_height);
+    let canvas_panel = Rect::new(inner.x, canvas_panel_y, inner.width, canvas_panel_height);
     let status_bar = Rect::new(
-        area.x,
-        area.y
-            .saturating_add(area.height.saturating_sub(status_height)),
-        area.width,
+        inner.x,
+        inner
+            .y
+            .saturating_add(inner.height.saturating_sub(status_height)),
+        inner.width,
         status_height,
     );
 
