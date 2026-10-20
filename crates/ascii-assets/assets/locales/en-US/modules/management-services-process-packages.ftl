@@ -1,5 +1,6 @@
 management-package-nav-search = Search
-management-package-keyboard-hint = Tab: region · ↑↓: select · Enter/Space: activate
+management-package-keyboard-hint = Tab/Shift+Tab: menu · ↑↓: select · Enter/F4: details
+management-package-details-keyboard-hint = Tab/Shift+Tab: menu · ↑↓←→: scroll · Esc/F4: list
 management-package-nav-updates = Updates
 management-package-nav-installed = Installed
 management-package-advanced-sources = Advanced · Software sources

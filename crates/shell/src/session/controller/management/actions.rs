@@ -623,6 +623,10 @@ impl ShellSession {
                 self.pages.management.management_state.details_only = false;
                 self.pages.management.management_state.terminal_mode = false;
                 self.pages.management.management_state.details_scroll = 0;
+                self.pages
+                    .management
+                    .management_state
+                    .details_horizontal_scroll = 0;
                 self.pages.management.management_state.selected = 0;
                 self.pages.management.management_state.scroll = 0;
                 self.pages.management.management_state.table_scroll = 0;
@@ -642,7 +646,6 @@ impl ShellSession {
                 ) {
                     self.pages.management.management_state.package_advanced_open = false;
                 }
-                let focus = self.pages.management.management_state.workspace_focus;
                 let focus = if self
                     .pages
                     .management
@@ -653,7 +656,7 @@ impl ShellSession {
                 {
                     ui::components::WorkspaceFocus::Search
                 } else {
-                    focus
+                    ui::components::WorkspaceFocus::List
                 };
                 self.focus_package_workspace(focus);
             }

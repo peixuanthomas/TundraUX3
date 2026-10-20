@@ -164,13 +164,11 @@ impl ShellSession {
             return false;
         }
         if matches!(key.key, InputKey::Tab | InputKey::BackTab) {
-            let focus = self
-                .pages
-                .management
-                .management_state
-                .workspace_focus
-                .step(key.key == InputKey::BackTab || key.modifiers.shift);
-            self.focus_package_workspace(focus);
+            let actions = self.management_actions();
+            let workspace = self.package_workspace_model(&actions);
+            let backwards = key.key == InputKey::BackTab || key.modifiers.shift;
+            let next = (workspace.active_navigation + if backwards { 2 } else { 1 }) % 3;
+            self.activate_management_action(workspace.navigation_actions[next]);
             return true;
         }
         if matches!(key.key, InputKey::F(3 | 6..=8)) && !key.modifiers.shift {
@@ -185,13 +183,10 @@ impl ShellSession {
             }
             return true;
         }
-        if self.pages.management.management_state.filtering {
-            return false;
-        }
-        let focus = self.pages.management.management_state.workspace_focus;
-        if matches!(key.key, InputKey::Enter | InputKey::Space)
+        if !self.pages.management.management_state.filtering
+            && matches!(key.key, InputKey::Enter | InputKey::Space)
             && matches!(
-                focus,
+                self.pages.management.management_state.workspace_focus,
                 WorkspaceFocus::Navigation | WorkspaceFocus::Actions | WorkspaceFocus::Advanced
             )
         {
@@ -206,6 +201,8 @@ impl ShellSession {
             key.key,
             InputKey::Up
                 | InputKey::Down
+                | InputKey::Left
+                | InputKey::Right
                 | InputKey::Home
                 | InputKey::End
                 | InputKey::PageUp
@@ -213,14 +210,20 @@ impl ShellSession {
         ) {
             return false;
         }
-        if focus == WorkspaceFocus::Details {
-            if self.pages.management.management_state.details_only {
-                return false;
-            }
-            let scroll = &mut self.pages.management.management_state.details_scroll;
+        if self.pages.management.management_state.details_only {
+            self.focus_package_workspace(WorkspaceFocus::Details);
+            let scroll = if matches!(key.key, InputKey::Left | InputKey::Right) {
+                &mut self
+                    .pages
+                    .management
+                    .management_state
+                    .details_horizontal_scroll
+            } else {
+                &mut self.pages.management.management_state.details_scroll
+            };
             *scroll = match key.key {
-                InputKey::Up => scroll.saturating_sub(1),
-                InputKey::Down => scroll.saturating_add(1),
+                InputKey::Up | InputKey::Left => scroll.saturating_sub(1),
+                InputKey::Down | InputKey::Right => scroll.saturating_add(1),
                 InputKey::PageUp => scroll.saturating_sub(5),
                 InputKey::PageDown => scroll.saturating_add(5),
                 InputKey::Home => 0,
@@ -229,29 +232,9 @@ impl ShellSession {
             self.clamp_management_scroll();
             return true;
         }
-        let actions = self.management_actions();
-        let workspace = self.package_workspace_model(&actions);
-        let group = workspace
-            .action_group(focus)
-            .into_iter()
-            .filter(|index| self.management_action_enabled(&actions[*index].0))
-            .collect::<Vec<_>>();
-        if group.is_empty() {
-            return false;
+        if !matches!(key.key, InputKey::Left | InputKey::Right) {
+            self.focus_package_workspace(WorkspaceFocus::List);
         }
-        let current = group
-            .iter()
-            .position(|index| *index == self.pages.management.management_state.selected_action)
-            .unwrap_or(0);
-        let next = match key.key {
-            InputKey::Up | InputKey::PageUp => current.saturating_sub(1),
-            InputKey::Down | InputKey::PageDown => (current + 1).min(group.len().saturating_sub(1)),
-            InputKey::Home => 0,
-            _ => group.len().saturating_sub(1),
-        };
-        if let Some(index) = group.get(next) {
-            self.pages.management.management_state.selected_action = *index;
-        }
-        true
+        false
     }
 }

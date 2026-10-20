@@ -77,6 +77,7 @@ pub struct ManagementViewModel {
     pub table_scroll: usize,
     pub details: String,
     pub details_scroll: u16,
+    pub details_horizontal_scroll: u16,
     pub details_only: bool,
     pub actions: Vec<(String, bool)>,
     pub action_help: Vec<String>,
@@ -120,6 +121,7 @@ pub enum ManagementScrollTarget {
     Rows,
     Columns,
     Details,
+    DetailsColumns,
     Actions,
     Output,
     FormMessage,
@@ -931,7 +933,7 @@ fn management_content_layout(
         offset += width;
     }
     let list_capacity = usize::from(list_rows.height);
-    let details_text = text_area(inner(details));
+    let mut details_text = text_area(inner(details));
     let output_text = text_area(content);
     let mut scrollbars = Vec::new();
     if let Some(bar) = management_scrollbar(
@@ -961,13 +963,44 @@ fn management_content_layout(
             scrollbars.push(bar);
         }
     }
-    add_text_bar(
-        &mut scrollbars,
-        ManagementScrollTarget::Details,
-        inner(details),
-        &model.details,
-        usize::from(model.details_scroll),
-    );
+    if model.workspace.is_some() && model.details_only {
+        let lines = management_wrapped_lines(&model.details, u16::MAX);
+        let width = lines.iter().map(|line| line.width()).max().unwrap_or(0);
+        if let Some(bar) = management_scrollbar(
+            ManagementScrollTarget::DetailsColumns,
+            bottom_track(details_text),
+            width,
+            usize::from(details_text.width),
+            usize::from(model.details_horizontal_scroll),
+            true,
+        ) {
+            details_text.height = details_text.height.saturating_sub(1);
+            scrollbars.push(bar);
+        }
+        if let Some(bar) = management_scrollbar(
+            ManagementScrollTarget::Details,
+            Rect::new(
+                details_text.right(),
+                details_text.y,
+                u16::from(inner(details).width > 0),
+                details_text.height,
+            ),
+            lines.len(),
+            usize::from(details_text.height),
+            usize::from(model.details_scroll),
+            false,
+        ) {
+            scrollbars.push(bar);
+        }
+    } else {
+        add_text_bar(
+            &mut scrollbars,
+            ManagementScrollTarget::Details,
+            inner(details),
+            &model.details,
+            usize::from(model.details_scroll),
+        );
+    }
     if model.terminal {
         if let Some(snapshot) = &model.terminal_snapshot {
             let total = snapshot.scrollback_rows + usize::from(snapshot.rows);
@@ -1624,13 +1657,37 @@ pub fn render_management_content(
             .with_bracketed_label(false)
             .render_borderless_frame(frame, *area, &theme);
         }
-        render_text(
-            frame,
-            layout.details_text,
-            &model.details,
-            usize::from(model.details_scroll),
-            context,
-        );
+        if model.workspace.is_some() && model.details_only {
+            let offset = |target| {
+                layout
+                    .scrollbars
+                    .iter()
+                    .find(|bar| bar.target == target)
+                    .map_or(0, |bar| bar.offset.min(u16::MAX as usize) as u16)
+            };
+            frame.render_widget(
+                Paragraph::new(
+                    management_wrapped_lines(&model.details, u16::MAX)
+                        .into_iter()
+                        .map(Line::from)
+                        .collect::<Vec<_>>(),
+                )
+                .scroll((
+                    offset(ManagementScrollTarget::Details),
+                    offset(ManagementScrollTarget::DetailsColumns),
+                ))
+                .style(theme.body_style()),
+                layout.details_text,
+            );
+        } else {
+            render_text(
+                frame,
+                layout.details_text,
+                &model.details,
+                usize::from(model.details_scroll),
+                context,
+            );
+        }
         for (offset, area) in layout.actions.iter().enumerate() {
             let index = layout.action_start + offset;
             if model
@@ -1684,6 +1741,7 @@ pub fn render_management_content(
                 ManagementScrollTarget::Rows
                     | ManagementScrollTarget::Columns
                     | ManagementScrollTarget::Details
+                    | ManagementScrollTarget::DetailsColumns
                     | ManagementScrollTarget::Actions
             )
         };

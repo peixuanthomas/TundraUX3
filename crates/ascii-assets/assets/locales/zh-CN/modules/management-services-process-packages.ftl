@@ -1,5 +1,6 @@
 management-package-nav-search = 搜索
-management-package-keyboard-hint = Tab 切换区域 · ↑↓ 选择 · Enter/空格 执行
+management-package-keyboard-hint = Tab/Shift+Tab 切换菜单 · ↑↓ 选择 · Enter/F4 详情
+management-package-details-keyboard-hint = Tab/Shift+Tab 切换菜单 · ↑↓←→ 滚动 · Esc/F4 返回列表
 management-package-nav-updates = 更新
 management-package-nav-installed = 已安装
 management-package-advanced-sources = 高级功能 · 软件源

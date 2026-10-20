@@ -129,36 +129,17 @@ fn package_pointer_and_touch_can_switch_pages_and_open_their_advanced_views() {
 }
 
 #[test]
-fn package_keyboard_reaches_primary_actions_and_advanced_pages_without_pointer_input() {
-    use ui::components::WorkspaceFocus;
+fn package_shortcuts_reach_primary_actions_and_advanced_pages_without_pointer_input() {
     let mut session = shortcut_action_state(ManagementKind::Packages, "install");
     session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
     session.terminal_size = (140, 40);
-    for expected in [WorkspaceFocus::Details, WorkspaceFocus::Actions] {
-        session.handle_management_key(&KeyInput::new(InputKey::Tab));
-        assert_eq!(
-            session.pages.management.management_state.workspace_focus,
-            expected
-        );
-    }
-    session.handle_management_key(&KeyInput::new(InputKey::Space));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('i')));
     assert!(
         matches!(session.pages.management.management_state.form.as_ref().map(|form| &form.purpose), Some(FormPurpose::Action(action, Some(row))) if action.id == "install" && row.id == "mock-selected-item")
     );
     session.handle_management_key(&KeyInput::new(InputKey::Escape));
     assert!(session.pages.management.management_state.form.is_none());
-    assert_eq!(
-        session.pages.management.management_state.workspace_focus,
-        WorkspaceFocus::Actions
-    );
-    session.handle_management_key(&KeyInput::new(InputKey::Tab));
-    assert_eq!(
-        session.pages.management.management_state.workspace_focus,
-        WorkspaceFocus::Advanced
-    );
-    session.handle_management_key(&KeyInput::new(InputKey::End));
-    assert_eq!(session.pages.management.management_state.selected_action, 3);
-    session.handle_management_key(&KeyInput::new(InputKey::Space));
+    session.handle_management_key(&KeyInput::new(InputKey::F(3)));
     assert!(
         session
             .pages
@@ -166,8 +147,7 @@ fn package_keyboard_reaches_primary_actions_and_advanced_pages_without_pointer_i
             .management_state
             .package_advanced_open
     );
-    session.handle_management_key(&KeyInput::new(InputKey::Down));
-    session.handle_management_key(&KeyInput::new(InputKey::Enter));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('5')));
     assert_eq!(
         session
             .pages
@@ -202,19 +182,13 @@ fn package_keyboard_reaches_primary_actions_and_advanced_pages_without_pointer_i
 fn package_navigation_and_shortcuts_work_while_the_search_field_is_focused() {
     use ui::components::WorkspaceFocus;
     let mut session = package_list_state();
-    session.handle_management_key(&KeyInput::new(InputKey::BackTab));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('/')));
     assert_eq!(
         session.pages.management.management_state.workspace_focus,
         WorkspaceFocus::Search
     );
     assert!(session.pages.management.management_state.filtering);
-    session.handle_management_key(&KeyInput::new(InputKey::BackTab));
-    assert_eq!(
-        session.pages.management.management_state.workspace_focus,
-        WorkspaceFocus::Navigation
-    );
-    session.handle_management_key(&KeyInput::new(InputKey::Down));
-    session.handle_management_key(&KeyInput::new(InputKey::Space));
+    session.handle_management_key(&KeyInput::new(InputKey::Tab));
     assert_eq!(
         session
             .pages
@@ -278,23 +252,160 @@ fn package_details_have_independent_keyboard_scrolling_and_return_to_the_list() 
     use ui::components::WorkspaceFocus;
     let mut session = package_list_state();
     session.terminal_size = (140, 40);
-    session.pages.management.management_state.snapshot.rows[1].detail =
-        vec![("Description".into(), "Long description\n".repeat(80))];
-    session.handle_management_key(&KeyInput::new(InputKey::Tab));
+    session.pages.management.management_state.snapshot.rows[1].detail = vec![(
+        "Description".into(),
+        format!("{}\n", "长描述".repeat(100)).repeat(80),
+    )];
+    session.handle_management_key(&KeyInput::new(InputKey::F(4)));
     assert_eq!(
         session.pages.management.management_state.workspace_focus,
         WorkspaceFocus::Details
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::Down));
+    session.handle_management_key(&KeyInput::new(InputKey::Right));
+    assert_eq!(session.pages.management.management_state.details_scroll, 1);
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .details_horizontal_scroll,
+        1
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::Up));
+    session.handle_management_key(&KeyInput::new(InputKey::Left));
+    assert_eq!(session.pages.management.management_state.details_scroll, 0);
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .details_horizontal_scroll,
+        0
     );
     session.handle_management_key(&KeyInput::new(InputKey::End));
     assert!(session.pages.management.management_state.details_scroll > 0);
     assert_eq!(session.pages.management.management_state.selected, 1);
     session.handle_management_key(&KeyInput::new(InputKey::Home));
     assert_eq!(session.pages.management.management_state.details_scroll, 0);
-    session.handle_management_key(&KeyInput::new(InputKey::BackTab));
+    session
+        .pages
+        .management
+        .management_state
+        .details_horizontal_scroll = u16::MAX;
+    session.handle_management_key(&KeyInput::new(InputKey::Right));
+    let horizontal_end = session
+        .pages
+        .management
+        .management_state
+        .details_horizontal_scroll;
+    assert!(horizontal_end > 0 && horizontal_end < u16::MAX);
+    session.handle_management_key(&KeyInput::new(InputKey::Right));
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .details_horizontal_scroll,
+        horizontal_end
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::Escape));
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .details_horizontal_scroll,
+        0
+    );
     session.handle_management_key(&KeyInput::new(InputKey::Down));
     assert_eq!(
         session.pages.management.management_state.workspace_focus,
         WorkspaceFocus::List
     );
     assert_eq!(session.pages.management.management_state.selected, 2);
+}
+
+#[test]
+fn package_details_without_overflow_keep_scroll_and_selection_unchanged() {
+    let mut session = package_list_state();
+    session.terminal_size = (140, 40);
+    session.handle_management_key(&KeyInput::new(InputKey::F(4)));
+    for key in [
+        InputKey::Up,
+        InputKey::Down,
+        InputKey::Left,
+        InputKey::Right,
+    ] {
+        session.handle_management_key(&KeyInput::new(key));
+        let state = &session.pages.management.management_state;
+        assert_eq!(state.selected, 1);
+        assert_eq!(
+            state.query.as_ref().unwrap().target.as_deref(),
+            Some("bash:amd64")
+        );
+        assert_eq!(state.details_scroll, 0);
+        assert_eq!(state.details_horizontal_scroll, 0);
+    }
+}
+
+#[test]
+fn package_tab_cycles_main_pages_in_both_directions_from_every_region() {
+    use ui::components::WorkspaceFocus;
+    for focus in [
+        WorkspaceFocus::Navigation,
+        WorkspaceFocus::Search,
+        WorkspaceFocus::List,
+        WorkspaceFocus::Details,
+        WorkspaceFocus::Actions,
+        WorkspaceFocus::Advanced,
+    ] {
+        for key in [
+            KeyInput::new(InputKey::Tab),
+            KeyInput::new(InputKey::BackTab),
+            KeyInput::with_modifiers(InputKey::Tab, ui::KeyModifiers::SHIFT),
+        ] {
+            let mut session = package_list_state();
+            session.focus_package_workspace(focus);
+            let scopes = if key.key == InputKey::Tab && !key.modifiers.shift {
+                ["updates", "search", "installed"]
+            } else {
+                ["search", "updates", "installed"]
+            };
+            for scope in scopes {
+                session.handle_management_key(&key);
+                let state = &session.pages.management.management_state;
+                assert_eq!(state.query.as_ref().unwrap().scope, scope);
+                assert_eq!(state.filtering, scope == "search");
+                assert!(!state.actions_focused);
+                assert!(!state.details_only);
+            }
+        }
+    }
+}
+
+#[test]
+fn package_arrows_select_rows_regardless_of_previous_focus() {
+    use ui::components::WorkspaceFocus;
+    for focus in [
+        WorkspaceFocus::Navigation,
+        WorkspaceFocus::Search,
+        WorkspaceFocus::List,
+        WorkspaceFocus::Details,
+        WorkspaceFocus::Actions,
+        WorkspaceFocus::Advanced,
+    ] {
+        let mut session = package_list_state();
+        session.focus_package_workspace(focus);
+        session.handle_management_key(&KeyInput::new(InputKey::Down));
+        assert_eq!(session.pages.management.management_state.selected, 2);
+        assert_eq!(
+            session.pages.management.management_state.workspace_focus,
+            WorkspaceFocus::List
+        );
+        assert!(!session.pages.management.management_state.filtering);
+        assert!(!session.pages.management.management_state.actions_focused);
+        session.handle_management_key(&KeyInput::new(InputKey::Up));
+        assert_eq!(session.pages.management.management_state.selected, 1);
+    }
 }
