@@ -272,6 +272,7 @@ impl MotionTimings {
 pub struct FrostMotion {
     started_at: Option<Duration>,
     duration: Duration,
+    phases: crate::MotionPhases,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -504,9 +505,14 @@ fn interpolate_progress(start: u16, target: u16, phase: u16) -> u16 {
 
 impl FrostMotion {
     pub fn begin(&mut self, frame: MotionFrame, duration: Duration) {
-        let duration = MotionTimings::resolve(frame, duration);
+        self.begin_with_phases(frame, crate::MotionPhases::for_duration(duration));
+    }
+
+    pub fn begin_with_phases(&mut self, frame: MotionFrame, phases: crate::MotionPhases) {
+        let duration = MotionTimings::resolve(frame, phases.duration());
         self.started_at = (!duration.is_zero()).then_some(frame.now);
         self.duration = duration;
+        self.phases = phases;
     }
 
     pub fn cancel(&mut self) {
@@ -536,9 +542,9 @@ impl FrostMotion {
         let duration = self.duration.as_millis().max(1);
         let normalized = (elapsed.saturating_mul(1_000) / duration).min(1_000) as u16;
         if entering {
-            crate::ease_in_out_cruise(normalized)
+            self.phases.progress(normalized)
         } else {
-            1_000 - crate::ease_in_out_cruise(normalized)
+            1_000 - self.phases.progress(normalized)
         }
     }
 }

@@ -578,6 +578,29 @@ def check_permission_draft(master, slave, output, child, path):
     print("PASS: physical Space and Enter toggle permission drafts; cancel preserves draft and discard leaves metadata unchanged")
 
 
+def check_animation_settings(master, output, child):
+    os.write(master, b"s")
+    if not wait_for_painted_text(master, output, "Animation speed", child):
+        raise SystemExit("Settings did not paint the animation percentage")
+    os.write(master, b"\x1b[B" * 5 + b"\x1b[C\x1b[B\r")
+    if not wait_for_painted_text(master, output, "Acceleration", child):
+        raise SystemExit("Animation advanced options did not expand below the percentage")
+    os.write(master, b"\x1b[B\x1b[C")
+    if not wait_for_painted_text(master, output, "56 ms", child):
+        raise SystemExit("Page acceleration did not increase by one millisecond")
+    os.write(master, b"\x1b[F\x1b[A\r\x1b[H" + b"\x1b[B" * 5)
+    if not wait_for_painted_text(master, output, "100%", child):
+        raise SystemExit("Restore animation defaults did not restore the percentage")
+    os.write(master, b"\x1b[B\x1b[B")
+    if not wait_for_painted_text(master, output, "55 ms", child):
+        raise SystemExit("Restore animation defaults did not restore phase times")
+    os.write(master, b"\x1b")
+    if not wait_for_painted_text(master, output, "Launcher", child):
+        raise SystemExit("Animation settings did not return to Home")
+    wait_for_output_quiet(master, output, child, quiet_period=0.2)
+    print("PASS: animation advanced options adjust milliseconds and restore phase times and percentage")
+
+
 def check_system_settings_environment(master, output, child):
     if Path("/proc/1/comm").read_text().strip() == "systemd":
         return
@@ -905,6 +928,7 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle before pointer regression")
 
+        check_animation_settings(master, output, child)
         check_editor_resize(master, slave, output, child, isolated)
         check_system_settings_environment(master, output, child)
         check_status_details(master, output, child)

@@ -26,10 +26,9 @@ impl ShellSession {
     pub(super) fn advance_input_keyboard(&mut self, frame: ui::MotionFrame) -> bool {
         let target = if self.input_keyboard_open() { 1_000 } else { 0 };
         let frame = self.interaction_motion_frame(frame);
+        let phases = ui::MotionPhases::from_millis(self.animation_timings().page);
         let keyboard = &mut self.screen_keyboard;
-        let animating = keyboard
-            .motion
-            .update(target, frame, ui::MotionTimings::PAGE);
+        let animating = keyboard.motion.update_with_phases(target, frame, phases);
         let visibility = keyboard.motion.value();
         let moved = keyboard.visibility != visibility;
         if moved {

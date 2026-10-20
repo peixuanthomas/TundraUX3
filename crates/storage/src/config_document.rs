@@ -262,6 +262,11 @@ pub struct AppearanceConfig {
         deserialize_with = "deserialize_animation_speed_percent"
     )]
     pub animation_speed_percent: u16,
+    #[serde(
+        deserialize_with = "crate::animation::deserialize_timings",
+        skip_serializing_if = "crate::AnimationTimingsConfig::is_default"
+    )]
+    pub animation_timings: crate::AnimationTimingsConfig,
 }
 
 impl Default for AppearanceConfig {
@@ -273,6 +278,7 @@ impl Default for AppearanceConfig {
             icon_display_mode: IconDisplayMode::Image,
             motion_preference: MotionPreference::Full,
             animation_speed_percent: DEFAULT_ANIMATION_SPEED_PERCENT,
+            animation_timings: crate::AnimationTimingsConfig::DEFAULT,
         }
     }
 }
@@ -288,6 +294,7 @@ impl AppearanceConfig {
             && matches!(self.icon_display_mode, IconDisplayMode::Image)
             && matches!(self.motion_preference, MotionPreference::Full)
             && self.animation_speed_percent == DEFAULT_ANIMATION_SPEED_PERCENT
+            && self.animation_timings.is_default()
     }
 
     pub fn normalized_animation_speed_percent(&self) -> u16 {
@@ -304,6 +311,7 @@ const fn legacy_appearance_default() -> AppearanceConfig {
         icon_display_mode: IconDisplayMode::Image,
         motion_preference: MotionPreference::Full,
         animation_speed_percent: DEFAULT_ANIMATION_SPEED_PERCENT,
+        animation_timings: crate::AnimationTimingsConfig::DEFAULT,
     }
 }
 

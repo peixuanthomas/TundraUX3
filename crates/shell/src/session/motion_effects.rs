@@ -7,10 +7,6 @@ use ratatui::{
 use std::sync::{Arc, Mutex};
 use tachyonfx::{Effect, EffectManager, Interpolation, fx};
 
-const PAGE_MS: u32 = ui::MotionTimings::PAGE.as_millis() as u32;
-const DIALOG_MS: u32 = ui::MotionTimings::DIALOG.as_millis() as u32;
-const POPOVER_MS: u32 = ui::MotionTimings::POPOVER.as_millis() as u32;
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum MotionEffectId {
     #[default]
@@ -94,6 +90,7 @@ pub(super) struct ShellMotionEffects {
     page_gate: Duration,
     page_depth: usize,
     overlay_origin: ui::RevealOrigin,
+    timings: storage::AnimationTimingsConfig,
 }
 
 impl ShellMotionEffects {
@@ -143,6 +140,7 @@ impl ShellMotionEffects {
         theme: ui::ThemeTokens,
         reduced: bool,
     ) {
+        self.timings = state.animation_timings();
         if reduced {
             if !self.reduced || self.manager.is_running() {
                 self.clear();
@@ -192,9 +190,14 @@ impl ShellMotionEffects {
         if !exit_confirmation && !has_overlay && page_changed {
             let area = page_area;
             if !area.is_empty() {
-                let fx = page_effect(area, previous_base, returning);
+                let fx = page_effect(
+                    area,
+                    previous_base,
+                    returning,
+                    ui::MotionPhases::from_millis(self.timings.page),
+                );
                 self.schedule(MotionEffectId::Page, fx);
-                self.page_gate = Duration::from_millis(u64::from(PAGE_MS));
+                self.page_gate = ui::MotionPhases::from_millis(self.timings.page).duration();
             }
         }
 
@@ -269,7 +272,7 @@ impl ShellMotionEffects {
                         MotionEffectId::Overlay,
                         self.enter_overlay(state, new.kind, area, theme),
                     );
-                    self.overlay_gate = overlay_duration(new.kind);
+                    self.overlay_gate = self.overlay_duration(new.kind);
                 }
             } else if critical {
                 self.manager.cancel_unique_effect(MotionEffectId::Overlay);
@@ -294,7 +297,7 @@ impl ShellMotionEffects {
                         MotionEffectId::Overlay,
                         self.enter_overlay(state, new.kind, area, theme),
                     );
-                    self.overlay_gate = overlay_duration(new.kind);
+                    self.overlay_gate = self.overlay_duration(new.kind);
                 }
             } else if restoring_deferred {
                 self.manager.cancel_unique_effect(MotionEffectId::Overlay);
@@ -334,7 +337,7 @@ impl ShellMotionEffects {
                             ]),
                         );
                         self.overlay_underlay_snapshot = Some(new_underlay);
-                        self.overlay_gate = visual.remaining + overlay_duration(new.kind);
+                        self.overlay_gate = visual.remaining + self.overlay_duration(new.kind);
                         self.outgoing_block_remaining = visual.remaining;
                     } else {
                         self.manager.cancel_unique_effect(MotionEffectId::Overlay);
@@ -391,15 +394,15 @@ impl ShellMotionEffects {
                                     fx::sequence(&[outgoing, incoming]),
                                 );
                                 self.overlay_underlay_snapshot = Some(new_underlay);
-                                self.overlay_gate =
-                                    overlay_duration(old.kind) + overlay_duration(new.kind);
-                                self.outgoing_block_remaining = overlay_duration(old.kind);
+                                self.overlay_gate = self.overlay_duration(old.kind)
+                                    + self.overlay_duration(new.kind);
+                                self.outgoing_block_remaining = self.overlay_duration(old.kind);
                                 self.active_visual_outgoing = Some(ActiveVisualOutgoing {
                                     identity: old.clone(),
                                     old: old_snapshot,
                                     underlay: old_underlay,
-                                    total: overlay_duration(old.kind),
-                                    remaining: overlay_duration(old.kind),
+                                    total: self.overlay_duration(old.kind),
+                                    remaining: self.overlay_duration(old.kind),
                                     origin: self.overlay_origin,
                                 });
                             } else {
@@ -424,14 +427,14 @@ impl ShellMotionEffects {
                                         old.kind,
                                     ),
                                 );
-                                self.overlay_gate = overlay_duration(old.kind);
-                                self.outgoing_block_remaining = overlay_duration(old.kind);
+                                self.overlay_gate = self.overlay_duration(old.kind);
+                                self.outgoing_block_remaining = self.overlay_duration(old.kind);
                                 self.active_visual_outgoing = Some(ActiveVisualOutgoing {
                                     identity: old.clone(),
                                     old: snapshot,
                                     underlay,
-                                    total: overlay_duration(old.kind),
-                                    remaining: overlay_duration(old.kind),
+                                    total: self.overlay_duration(old.kind),
+                                    remaining: self.overlay_duration(old.kind),
                                     origin: self.overlay_origin,
                                 });
                             } else {
@@ -448,7 +451,7 @@ impl ShellMotionEffects {
                                     MotionEffectId::Overlay,
                                     self.enter_overlay(state, new.kind, area, theme),
                                 );
-                                self.overlay_gate = overlay_duration(new.kind);
+                                self.overlay_gate = self.overlay_duration(new.kind);
                             }
                         }
                         _ => {}
@@ -614,8 +617,8 @@ impl ShellMotionEffects {
                 routed: routed.clone(),
                 overlay: overlay.clone(),
             });
-            self.overlay_gate = overlay_duration(overlay.kind);
-            self.outgoing_block_remaining = overlay_duration(overlay.kind);
+            self.overlay_gate = self.overlay_duration(overlay.kind);
+            self.outgoing_block_remaining = self.overlay_duration(overlay.kind);
             self.exiting = true;
             let exit =
                 self.outgoing_snapshot_effect(snapshot, Some(underlay.snapshot), overlay.kind);
@@ -660,6 +663,7 @@ impl ShellMotionEffects {
             theme,
             overlay_origin(state, kind, area),
             self.live_base.clone(),
+            self.overlay_phases(kind),
         )
     }
 
@@ -674,7 +678,7 @@ impl ShellMotionEffects {
             underlay,
             kind,
             0.0,
-            overlay_duration(kind),
+            self.overlay_duration(kind),
             self.overlay_origin,
         )
     }
@@ -696,7 +700,20 @@ impl ShellMotionEffects {
             duration,
             Some(self.live_base.clone()),
             origin,
+            self.overlay_phases(kind),
         )
+    }
+
+    fn overlay_phases(&self, kind: ui::MotionOverlayKind) -> ui::MotionPhases {
+        ui::MotionPhases::from_millis(match kind {
+            ui::MotionOverlayKind::Dialog => self.timings.dialog,
+            ui::MotionOverlayKind::Popover => self.timings.menu,
+            ui::MotionOverlayKind::Toast => [0; 3],
+        })
+    }
+
+    fn overlay_duration(&self, kind: ui::MotionOverlayKind) -> Duration {
+        self.overlay_phases(kind).duration()
     }
 
     fn schedule(&mut self, id: MotionEffectId, effect: Effect) {
@@ -764,23 +781,29 @@ pub(super) enum MotionInputDisposition {
     Block,
 }
 
+#[cfg(test)]
 fn overlay_duration(kind: ui::MotionOverlayKind) -> Duration {
     Duration::from_millis(match kind {
-        ui::MotionOverlayKind::Dialog => u64::from(DIALOG_MS),
-        ui::MotionOverlayKind::Popover => u64::from(POPOVER_MS),
+        ui::MotionOverlayKind::Dialog => 180,
+        ui::MotionOverlayKind::Popover => 160,
         ui::MotionOverlayKind::Toast => 0,
     })
 }
 
-fn page_effect(area: Rect, old: Option<BaseFrameSnapshot>, returning: bool) -> Effect {
+fn page_effect(
+    area: Rect,
+    old: Option<BaseFrameSnapshot>,
+    returning: bool,
+    phases: ui::MotionPhases,
+) -> Effect {
     fx::effect_fn_buf(
         old,
-        (PAGE_MS, Interpolation::Linear),
+        (phases.duration(), Interpolation::Linear),
         move |old, context, buffer| {
             let Some(old) = old else {
                 return;
             };
-            let amount = ui::ease_in_out_cruise((context.alpha() * 1_000.0).round() as u16);
+            let amount = phases.progress((context.alpha() * 1_000.0).round() as u16);
             let visible = ui::reveal_rect(
                 area,
                 if returning { 1_000 - amount } else { amount },
@@ -821,19 +844,20 @@ fn overlay_origin(
 }
 
 fn overlay_enter_effect(
-    kind: ui::MotionOverlayKind,
+    _kind: ui::MotionOverlayKind,
     area: Rect,
     theme: ui::ThemeTokens,
     origin: ui::RevealOrigin,
     base: Arc<Mutex<Option<BaseFrameSnapshot>>>,
+    phases: ui::MotionPhases,
 ) -> Effect {
     fx::effect_fn_buf(
         base,
-        (overlay_duration(kind), Interpolation::Linear),
+        (phases.duration(), Interpolation::Linear),
         move |base, context, buffer| {
             let visible = ui::reveal_rect(
                 area,
-                ui::ease_in_out_cruise((context.alpha() * 1_000.0).round() as u16),
+                phases.progress((context.alpha() * 1_000.0).round() as u16),
                 origin,
             );
             let protected = protected_skip_positions(buffer);
@@ -882,6 +906,7 @@ fn outgoing_snapshot_effect(
         overlay_duration(kind),
         None,
         origin,
+        ui::MotionPhases::for_duration(overlay_duration(kind)),
     )
 }
 
@@ -893,6 +918,7 @@ fn outgoing_snapshot_effect_from(
     duration: Duration,
     live_base: Option<Arc<Mutex<Option<BaseFrameSnapshot>>>>,
     origin: ui::RevealOrigin,
+    phases: ui::MotionPhases,
 ) -> Effect {
     let panel_area = snapshot.area;
     let duration = u32::try_from(duration.as_millis()).unwrap_or(u32::MAX);
@@ -930,7 +956,7 @@ fn outgoing_snapshot_effect_from(
         (duration, Interpolation::Linear),
         move |state, context, buffer| {
             let progress = start_progress + (1.0 - start_progress) * context.alpha();
-            let amount = ui::ease_in_out_cruise((progress * 1_000.0).round() as u16);
+            let amount = phases.progress((progress * 1_000.0).round() as u16);
             let protected = exit_protected_positions(state, buffer);
             restore_underlay(state, buffer, &protected);
             let visible = ui::reveal_rect(panel_area, 1_000 - amount, origin);

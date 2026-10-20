@@ -8,7 +8,7 @@ mod editor_media;
 mod motion;
 mod spring;
 pub use motion::{
-    PanelMotion, RevealOrigin, ease_in_out_cruise, expand_trailing_pane, reveal_rect,
+    MotionPhases, PanelMotion, RevealOrigin, ease_in_out_cruise, expand_trailing_pane, reveal_rect,
 };
 mod table_sort;
 mod theme;

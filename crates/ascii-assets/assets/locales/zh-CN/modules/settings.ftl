@@ -99,9 +99,9 @@ settings-reduced = 减少
 settings-motion-help = 选择“减少”可关闭界面过渡动画，同时保留必要刷新。
 settings-animation-speed = 动画速度
 settings-animation-speed-help = 以 25% 为步长，在 50% 到 200% 之间调整过渡动画速度。
-settings-restore-speed = 恢复默认速度
+settings-restore-speed = 恢复动画默认值
 settings-reset = 重置
-settings-restore-speed-help = 将动画速度恢复为默认的 100%。
+settings-restore-speed-help = 恢复 100% 速度，以及全部默认阶段时长和速度曲线。
 settings-language-timezone = 语言与时区
 settings-language = 语言
 settings-language-help = 从可扩展的语言目录中选择。
@@ -193,7 +193,7 @@ settings-conflict-confirmation = 冲突确认
 settings-explorer-suffixes = 文件管理器的文件后缀
 settings-cursor-delay = 光标延迟
 settings-cursor-ramp = 光标加速时间
-settings-speed-default = 默认动画速度
+settings-speed-default = 动画默认值
 settings-time-server = 时间同步服务器
 settings-defaults = 默认设置
 settings-installed-version = 已安装版本
@@ -274,6 +274,16 @@ settings-field-name =
         [AccentColor] { settings-accent-color }
         [MotionPreference] { settings-motion }
         [AnimationSpeed] { settings-animation-speed }
+        [AnimationAdvanced] { settings-animation-advanced }
+        [PageAcceleration] { settings-animation-page } · { settings-animation-acceleration }
+        [PageCruise] { settings-animation-page } · { settings-animation-cruise }
+        [PageDeceleration] { settings-animation-page } · { settings-animation-deceleration }
+        [DialogAcceleration] { settings-animation-dialog } · { settings-animation-acceleration }
+        [DialogCruise] { settings-animation-dialog } · { settings-animation-cruise }
+        [DialogDeceleration] { settings-animation-dialog } · { settings-animation-deceleration }
+        [MenuAcceleration] { settings-animation-menu } · { settings-animation-acceleration }
+        [MenuCruise] { settings-animation-menu } · { settings-animation-cruise }
+        [MenuDeceleration] { settings-animation-menu } · { settings-animation-deceleration }
         [ResetAnimationSpeed] { settings-speed-default }
         [Language] { settings-language }
         [Timezone] { settings-timezone }
@@ -382,3 +392,17 @@ settings-release-install-body = 下载并校验 Linux 便携包，替换 Shell �
 settings-check-mode-description = 检查所选更新模式，显示发布说明或 master 提交记录。
 settings-release-available = 有更新的正式版可用
 settings-release-different = 当前构建与正式版不同，可选择替换为此正式版
+
+settings-animation-advanced = 高级选项
+settings-animation-expand = 展开
+settings-animation-collapse = 收起
+settings-animation-advanced-help = 分别细调页面、弹窗、菜单的加速、匀速和减速时间。
+settings-animation-page = 页面
+settings-animation-dialog = 弹窗
+settings-animation-menu = 菜单
+settings-animation-acceleration = 加速
+settings-animation-cruise = 匀速
+settings-animation-deceleration = 减速
+settings-animation-phase-label = { $kind } · { $phase }
+settings-animation-ms = { $value } ms
+settings-animation-phase-help = 按 1ms 调整（1～2000ms），表示 100% 速度下的时长。改变各阶段时长也会改变速度曲线。

@@ -54,6 +54,7 @@ fn users_schema_two_exact_default_migrates_but_custom_value_does_not() {
         icon_display_mode: IconDisplayMode::Image,
         motion_preference: MotionPreference::Full,
         animation_speed_percent: crate::DEFAULT_ANIMATION_SPEED_PERCENT,
+        animation_timings: crate::AnimationTimingsConfig::default(),
     };
     let custom = AppearanceConfig {
         accent_color: BorderColor::Blue,

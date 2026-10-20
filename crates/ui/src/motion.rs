@@ -3,18 +3,64 @@ use std::time::Duration;
 
 use crate::{FrostMotion, MotionFrame};
 
+/// Stage durations before applying the user's overall speed percentage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MotionPhases {
+    pub acceleration: Duration,
+    pub cruise: Duration,
+    pub deceleration: Duration,
+}
+
+impl MotionPhases {
+    pub fn from_millis(phases: [u16; 3]) -> Self {
+        Self {
+            acceleration: Duration::from_millis(u64::from(phases[0])),
+            cruise: Duration::from_millis(u64::from(phases[1])),
+            deceleration: Duration::from_millis(u64::from(phases[2])),
+        }
+    }
+
+    pub fn for_duration(duration: Duration) -> Self {
+        Self {
+            acceleration: duration / 4,
+            cruise: duration / 2,
+            deceleration: duration / 4,
+        }
+    }
+
+    pub fn duration(self) -> Duration {
+        self.acceleration + self.cruise + self.deceleration
+    }
+
+    pub fn progress(self, value: u16) -> u16 {
+        if value == 0 {
+            return 0;
+        }
+        if value >= 1_000 || self.duration().is_zero() {
+            return 1_000;
+        }
+        let acceleration = self.acceleration.as_secs_f64();
+        let cruise = self.cruise.as_secs_f64();
+        let deceleration = self.deceleration.as_secs_f64();
+        let total = acceleration + cruise + deceleration;
+        let elapsed = total * f64::from(value) / 1_000.0;
+        let speed = 1.0 / (cruise + (acceleration + deceleration) / 2.0);
+        let position = if elapsed < acceleration {
+            speed * elapsed * elapsed / (2.0 * acceleration)
+        } else if elapsed < acceleration + cruise {
+            speed * (acceleration / 2.0 + elapsed - acceleration)
+        } else {
+            let remaining = total - elapsed;
+            1.0 - speed * remaining * remaining / (2.0 * deceleration)
+        };
+        (position * 1_000.0).round() as u16
+    }
+}
+
 /// Position in thousandths: accelerate for 25% of the time, cruise for 50%,
 /// then decelerate for 25%, with continuous speed and no overshoot.
-pub const fn ease_in_out_cruise(value: u16) -> u16 {
-    let value = if value > 1_000 { 1_000 } else { value } as u32;
-    if value <= 250 {
-        ((value * value + 187) / 375) as u16
-    } else if value < 750 {
-        ((4 * value - 500 + 1) / 3) as u16
-    } else {
-        let remaining = 1_000 - value;
-        1_000 - ((remaining * remaining + 187) / 375) as u16
-    }
+pub fn ease_in_out_cruise(value: u16) -> u16 {
+    MotionPhases::from_millis([250, 500, 250]).progress(value)
 }
 
 /// A reversible panel opening, in thousandths, using the shared motion clock.
@@ -42,6 +88,15 @@ impl PanelMotion {
     }
 
     pub fn update(&mut self, target: u16, frame: MotionFrame, duration: Duration) -> bool {
+        self.update_with_phases(target, frame, MotionPhases::for_duration(duration))
+    }
+
+    pub fn update_with_phases(
+        &mut self,
+        target: u16,
+        frame: MotionFrame,
+        phases: MotionPhases,
+    ) -> bool {
         let target = target.min(1_000);
         if frame.reduced_motion {
             *self = Self::new(target);
@@ -50,7 +105,7 @@ impl PanelMotion {
         if target != self.target {
             self.start = self.value;
             self.target = target;
-            self.motion.begin(frame, duration);
+            self.motion.begin_with_phases(frame, phases);
         }
         let phase = i32::from(self.motion.progress(frame, true));
         self.value = (i32::from(self.start)

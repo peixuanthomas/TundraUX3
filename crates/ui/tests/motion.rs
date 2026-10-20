@@ -3,6 +3,36 @@ use std::time::Duration;
 use ui::{MotionFrame, MotionTimings, PanelMotion, RevealOrigin, reveal_rect};
 
 #[test]
+fn phase_times_change_the_curve_and_duration_while_speed_scales_all_stages() {
+    let long_start = ui::MotionPhases::from_millis([80, 40, 80]);
+    let short_start = ui::MotionPhases::from_millis([20, 160, 20]);
+    assert_eq!(long_start.duration(), short_start.duration());
+    assert!(long_start.progress(250) < short_start.progress(250));
+    for phases in [
+        long_start,
+        short_start,
+        ui::MotionPhases::from_millis([100, 30, 70]),
+    ] {
+        assert_eq!((phases.progress(0), phases.progress(1_000)), (0, 1_000));
+        assert!((0..1_000).all(|time| phases.progress(time) <= phases.progress(time + 1)));
+        for speed in [50, 100, 200] {
+            let frame = |now| MotionFrame {
+                now: Duration::from_millis(now),
+                animation_speed_percent: speed,
+                ..Default::default()
+            };
+            let mut panel = PanelMotion::default();
+            panel.update_with_phases(1_000, frame(0), phases);
+            let total = 200 * 100 / u64::from(speed);
+            assert!(panel.update_with_phases(1_000, frame(total / 4), phases));
+            assert_eq!(panel.value(), phases.progress(250));
+            assert!(!panel.update_with_phases(1_000, frame(total), phases));
+            assert_eq!(panel.value(), 1_000);
+        }
+    }
+}
+
+#[test]
 fn motion_accelerates_cruises_and_decelerates_without_overshoot() {
     let curve = ui::ease_in_out_cruise;
     assert_eq!((curve(0), curve(500), curve(1_000)), (0, 500, 1_000));

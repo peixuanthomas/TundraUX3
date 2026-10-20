@@ -423,7 +423,6 @@ pub(in crate::session) fn settings_cards(
         )
         .enabled(enabled)
     };
-    let motion_enabled = !appearance.motion_preference.reduced();
     match state.category {
         ui::SettingsCategory::Appearance => vec![
             Card::new(
@@ -483,37 +482,7 @@ pub(in crate::session) fn settings_cards(
             ),
             Card::new(
                 i18n::tr!("settings-animation"),
-                vec![
-                    Item::new(
-                        Field::MotionPreference,
-                        i18n::tr!("settings-motion"),
-                        match appearance.motion_preference {
-                            storage::MotionPreference::Full => i18n::tr!("settings-full"),
-                            storage::MotionPreference::Reduced => i18n::tr!("settings-reduced"),
-                        },
-                        i18n::tr!("settings-motion-help"),
-                        Kind::Cycle,
-                    ),
-                    Item::new(
-                        Field::AnimationSpeed,
-                        i18n::tr!("settings-animation-speed"),
-                        i18n::tr!(
-                            "settings-value-percent",
-                            value = appearance.normalized_animation_speed_percent()
-                        ),
-                        i18n::tr!("settings-animation-speed-help"),
-                        Kind::Stepper,
-                    )
-                    .enabled(motion_enabled),
-                    Item::new(
-                        Field::ResetAnimationSpeed,
-                        i18n::tr!("settings-restore-speed"),
-                        i18n::tr!("settings-reset"),
-                        i18n::tr!("settings-restore-speed-help"),
-                        Kind::Action,
-                    )
-                    .enabled(motion_enabled),
-                ],
+                super::animation::items(state, appearance),
             ),
             Card::new(i18n::tr!("settings-reset"), vec![reset(true)]),
         ],

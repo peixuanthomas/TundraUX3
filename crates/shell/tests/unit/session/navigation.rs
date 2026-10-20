@@ -32,6 +32,7 @@ fn prepare_page(state: &mut ShellSession, screen: ShellScreen) {
     }
     if screen == ShellScreen::Settings {
         state.pages.settings.settings_state = Some(SettingsState {
+            animation_advanced_open: false,
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
             status: i18n::msg!("settings-ready").into(),

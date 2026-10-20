@@ -37,6 +37,7 @@ fn keyboard_motion_frame(appearance: &storage::AppearanceConfig, now: Duration) 
 
 struct KeyboardMotion {
     transition: FrostMotion,
+    phases: ui::MotionPhases,
     start: u16,
     target: u16,
 }
@@ -45,6 +46,7 @@ impl Default for KeyboardMotion {
     fn default() -> Self {
         Self {
             transition: FrostMotion::default(),
+            phases: ui::MotionPhases::for_duration(MotionTimings::PAGE),
             start: 1_000,
             target: 1_000,
         }
@@ -64,7 +66,7 @@ impl KeyboardMotion {
     fn retarget(&mut self, collapsed: bool, frame: MotionFrame) {
         self.start = self.visibility(frame);
         self.target = if collapsed { 0 } else { 1_000 };
-        self.transition.begin(frame, MotionTimings::PAGE);
+        self.transition.begin_with_phases(frame, self.phases);
     }
 }
 
@@ -90,7 +92,10 @@ pub fn run_screen_keyboard(
     let mut layout = ui::screen_keyboard_layout(bounds, model.collapsed);
     let mut dirty = true;
     let origin = Instant::now();
-    let mut motion = KeyboardMotion::default();
+    let mut motion = KeyboardMotion {
+        phases: ui::MotionPhases::from_millis(appearance.animation_timings.normalized().page),
+        ..Default::default()
+    };
     let mut next_frame = origin;
     let mut finishing_animation = false;
     let mut clock_tick = origin;

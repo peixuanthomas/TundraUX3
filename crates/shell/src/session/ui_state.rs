@@ -135,6 +135,7 @@ pub(super) struct SettingsTimeSyncServerEditorState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
+    pub(super) animation_advanced_open: bool,
     pub(super) category: ui::SettingsCategory,
     pub(super) selected_field: ui::SettingsField,
     pub(super) status: i18n::LocalizedText,

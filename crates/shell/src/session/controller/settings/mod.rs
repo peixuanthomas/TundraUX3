@@ -1,3 +1,4 @@
+mod animation;
 mod background;
 pub(in crate::session) mod devices;
 mod forms;
@@ -18,6 +19,16 @@ pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = 
     ui::SettingsField::AccentColor,
     ui::SettingsField::MotionPreference,
     ui::SettingsField::AnimationSpeed,
+    ui::SettingsField::AnimationAdvanced,
+    ui::SettingsField::PageAcceleration,
+    ui::SettingsField::PageCruise,
+    ui::SettingsField::PageDeceleration,
+    ui::SettingsField::DialogAcceleration,
+    ui::SettingsField::DialogCruise,
+    ui::SettingsField::DialogDeceleration,
+    ui::SettingsField::MenuAcceleration,
+    ui::SettingsField::MenuCruise,
+    ui::SettingsField::MenuDeceleration,
     ui::SettingsField::ResetAnimationSpeed,
     ui::SettingsField::RestoreDefaults,
 ];
@@ -131,6 +142,7 @@ impl ShellSession {
         );
         self.enter_new_page(ShellScreen::Settings);
         self.pages.settings.settings_state = Some(SettingsState {
+            animation_advanced_open: false,
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
             status: i18n::msg!("settings-ready").into(),
@@ -301,7 +313,11 @@ impl ShellSession {
                     .settings
                     .settings_state
                     .as_ref()
-                    .map(|state| settings_fields(state.category).len().saturating_sub(1))
+                    .map(|state| {
+                        animation::visible_settings_fields(state)
+                            .len()
+                            .saturating_sub(1)
+                    })
                     .unwrap_or(0);
                 self.select_settings_field_at(last);
             }
@@ -452,7 +468,7 @@ impl ShellSession {
         let Some(state) = self.pages.settings.settings_state.as_ref() else {
             return;
         };
-        let fields = settings_fields(state.category);
+        let fields = animation::visible_settings_fields(state);
         let index = fields
             .iter()
             .position(|field| *field == state.selected_field)
@@ -466,7 +482,7 @@ impl ShellSession {
             let Some(state) = self.pages.settings.settings_state.as_mut() else {
                 return;
             };
-            let fields = settings_fields(state.category);
+            let fields = animation::visible_settings_fields(state);
             state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
         }
         if let Some(layout) = self.current_settings_layout()
@@ -531,6 +547,11 @@ impl ShellSession {
             return;
         };
         match field {
+            ui::SettingsField::AnimationAdvanced => {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
+                    state.animation_advanced_open = !state.animation_advanced_open;
+                }
+            }
             ui::SettingsField::Theme => {
                 if self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID {
                     self.open_settings_picker(ui::SettingsPickerKind::Theme)
@@ -580,6 +601,9 @@ impl ShellSession {
         else {
             return;
         };
+        if self.adjust_animation_phase(field, direction) {
+            return;
+        }
         if matches!(
             field,
             ui::SettingsField::Theme
@@ -592,6 +616,7 @@ impl ShellSession {
                 | ui::SettingsField::TimeSyncServer
                 | ui::SettingsField::UpdateMode
                 | ui::SettingsField::CheckUpdates
+                | ui::SettingsField::AnimationAdvanced
                 | ui::SettingsField::StartUpdate
         ) {
             self.activate_selected_setting(platform);
@@ -877,11 +902,8 @@ impl ShellSession {
         let Some(mut appearance) = self.app.active_appearance().cloned() else {
             return;
         };
-        if appearance.motion_preference.reduced() {
-            self.set_settings_error(i18n::msg!("settings-full-motion-reset"));
-            return;
-        }
         appearance.animation_speed_percent = storage::DEFAULT_ANIMATION_SPEED_PERCENT;
+        appearance.animation_timings = storage::AnimationTimingsConfig::default();
         self.save_settings_appearance(
             appearance,
             settings_saved_field(ui::SettingsField::ResetAnimationSpeed),

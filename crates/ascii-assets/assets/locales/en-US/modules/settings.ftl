@@ -99,9 +99,9 @@ settings-reduced = Reduced
 settings-motion-help = Use Reduced to disable interface transitions while preserving essential refreshes.
 settings-animation-speed = Animation speed
 settings-animation-speed-help = Adjust transition speed from 50% to 200% in 25% steps.
-settings-restore-speed = Restore speed default
+settings-restore-speed = Restore animation defaults
 settings-reset = Reset
-settings-restore-speed-help = Restore animation speed to the 100% default.
+settings-restore-speed-help = Restore 100% speed and all default phase times and speed curves.
 settings-language-timezone = Language and timezone
 settings-language = Language
 settings-language-help = Choose from the extensible language catalogue.
@@ -193,7 +193,7 @@ settings-conflict-confirmation = Conflict confirmation
 settings-explorer-suffixes = Explorer file suffixes
 settings-cursor-delay = Cursor delay
 settings-cursor-ramp = Cursor ramp
-settings-speed-default = Animation speed default
+settings-speed-default = Animation defaults
 settings-time-server = Time synchronization server
 settings-defaults = Defaults
 settings-installed-version = Installed version
@@ -274,6 +274,16 @@ settings-field-name =
         [AccentColor] { settings-accent-color }
         [MotionPreference] { settings-motion }
         [AnimationSpeed] { settings-animation-speed }
+        [AnimationAdvanced] { settings-animation-advanced }
+        [PageAcceleration] { settings-animation-page } · { settings-animation-acceleration }
+        [PageCruise] { settings-animation-page } · { settings-animation-cruise }
+        [PageDeceleration] { settings-animation-page } · { settings-animation-deceleration }
+        [DialogAcceleration] { settings-animation-dialog } · { settings-animation-acceleration }
+        [DialogCruise] { settings-animation-dialog } · { settings-animation-cruise }
+        [DialogDeceleration] { settings-animation-dialog } · { settings-animation-deceleration }
+        [MenuAcceleration] { settings-animation-menu } · { settings-animation-acceleration }
+        [MenuCruise] { settings-animation-menu } · { settings-animation-cruise }
+        [MenuDeceleration] { settings-animation-menu } · { settings-animation-deceleration }
         [ResetAnimationSpeed] { settings-speed-default }
         [Language] { settings-language }
         [Timezone] { settings-timezone }
@@ -382,3 +392,17 @@ settings-release-install-body = Download and verify the Linux portable release, 
 settings-check-mode-description = Refresh the selected update mode and its release notes or master commits.
 settings-release-available = A newer release is available
 settings-release-different = The installed build differs; you can replace it with this release
+
+settings-animation-advanced = Advanced options
+settings-animation-expand = Expand
+settings-animation-collapse = Collapse
+settings-animation-advanced-help = Fine-tune acceleration, cruise and deceleration times for pages, dialogs and menus.
+settings-animation-page = Page
+settings-animation-dialog = Dialog
+settings-animation-menu = Menu
+settings-animation-acceleration = Acceleration
+settings-animation-cruise = Cruise
+settings-animation-deceleration = Deceleration
+settings-animation-phase-label = { $kind } · { $phase }
+settings-animation-ms = { $value } ms
+settings-animation-phase-help = Adjust by 1 ms (1–2000 ms). Times apply at 100% speed. Changing stages also changes the speed curve.

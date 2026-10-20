@@ -736,6 +736,98 @@ fn normal_user_can_change_only_their_appearance() {
 }
 
 #[test]
+fn advanced_animation_phases_save_per_user_and_restore_with_speed_defaults() {
+    let fixture = FixtureRoot::new("animation-phases");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, true, false);
+    let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
+    open_settings_from_home(&mut state, &platform);
+    for _ in 0..5 {
+        press(&mut state, &platform, "Down");
+    }
+    press(&mut state, &platform, "Right");
+    press(&mut state, &platform, "Down");
+    let phases = [
+        SettingsField::PageAcceleration,
+        SettingsField::PageCruise,
+        SettingsField::PageDeceleration,
+        SettingsField::DialogAcceleration,
+        SettingsField::DialogCruise,
+        SettingsField::DialogDeceleration,
+        SettingsField::MenuAcceleration,
+        SettingsField::MenuCruise,
+        SettingsField::MenuDeceleration,
+    ];
+    let model = state.to_settings_view_model().unwrap();
+    assert_eq!(model.selected_field, SettingsField::AnimationAdvanced);
+    assert!(
+        !model
+            .cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .any(|item| phases.contains(&item.field))
+    );
+    press(&mut state, &platform, "Enter");
+    for field in phases {
+        press(&mut state, &platform, "Down");
+        assert_eq!(
+            state.to_settings_view_model().unwrap().selected_field,
+            field
+        );
+        press(&mut state, &platform, "Right");
+    }
+    let users = manager.load_users().unwrap();
+    let saved = &users
+        .users
+        .iter()
+        .find(|user| user.username == "NormalUser")
+        .unwrap()
+        .appearance;
+    assert_eq!(saved.animation_speed_percent, 125);
+    assert_eq!(saved.animation_timings.page, [56, 111, 56]);
+    assert_eq!(saved.animation_timings.dialog, [46, 91, 46]);
+    assert_eq!(saved.animation_timings.menu, [41, 81, 41]);
+    assert_eq!(
+        users
+            .users
+            .iter()
+            .find(|user| user.username == "AdminUser")
+            .unwrap()
+            .appearance
+            .animation_timings,
+        storage::AnimationTimingsConfig::default()
+    );
+
+    let mut reopened = logged_in_state(&platform, "NormalUser", "NormalPass123");
+    open_settings_from_home(&mut reopened, &platform);
+    press(&mut reopened, &platform, "Home");
+    for _ in 0..4 {
+        press(&mut reopened, &platform, "Down");
+    }
+    press(&mut reopened, &platform, "Enter");
+    press(&mut reopened, &platform, "End");
+    press(&mut reopened, &platform, "Up");
+    assert_eq!(
+        reopened.to_settings_view_model().unwrap().selected_field,
+        SettingsField::ResetAnimationSpeed
+    );
+    press(&mut reopened, &platform, "Enter");
+    let users = manager.load_users().unwrap();
+    let restored = &users
+        .users
+        .iter()
+        .find(|user| user.username == "NormalUser")
+        .unwrap()
+        .appearance;
+    assert_eq!(restored.animation_speed_percent, 100);
+    assert_eq!(
+        restored.animation_timings,
+        storage::AnimationTimingsConfig::default()
+    );
+    assert_eq!(restored.motion_preference, MotionPreference::Reduced);
+}
+
+#[test]
 fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
     let fixture = FixtureRoot::new("animation-speed");
     let platform = mock_platform(fixture.path());
@@ -827,11 +919,17 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
     press(&mut state, &platform, "Down");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::AnimationAdvanced
+    );
+    press(&mut state, &platform, "Down");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
         SettingsField::ResetAnimationSpeed
     );
     press(&mut state, &platform, "Enter");
     assert_eq!(normal_appearance().animation_speed_percent, 100);
 
+    press(&mut state, &platform, "Up");
     press(&mut state, &platform, "Up");
     press(&mut state, &platform, "Up");
     assert_eq!(
@@ -844,10 +942,7 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
         MotionPreference::Reduced
     );
     let reduced = state.to_settings_view_model().unwrap();
-    for field in [
-        SettingsField::AnimationSpeed,
-        SettingsField::ResetAnimationSpeed,
-    ] {
+    for field in [SettingsField::AnimationSpeed] {
         assert!(
             !reduced
                 .cards
@@ -858,6 +953,15 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
                 .enabled
         );
     }
+    assert!(
+        reduced
+            .cards
+            .iter()
+            .flat_map(|card| &card.items)
+            .find(|item| item.field == SettingsField::ResetAnimationSpeed)
+            .unwrap()
+            .enabled
+    );
 }
 
 #[test]

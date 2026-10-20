@@ -24,7 +24,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
 - **Browse packages:** open Installed by default, cycle Installed/Updates/Search with Tab or Shift+Tab, and select packages with Up/Down. Expanded details scroll with all four arrow keys; existing shortcuts remain available.
 - **Keep track of selections:** selected list rows and the current file shortcut stay highlighted when using a mouse or moving to another control.
-- **Follow page changes:** mouse transitions show where pages, dialogs and details open and close, accelerating, cruising and slowing to a stop; keyboard actions are immediate. Animation speed and reduced-motion preferences apply.
+- **Follow page changes:** mouse transitions show where pages, dialogs and details open and close, accelerating, cruising and slowing to a stop; keyboard actions are immediate. Settings offers overall speed, advanced phase times and a restore button, with reduced-motion support.
 - **Set up Linux:** change the host name, system timezone and automatic time synchronization, with reviewed timesyncd/chrony server configuration separate from Tundra preferences.
 - **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.
 - **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.

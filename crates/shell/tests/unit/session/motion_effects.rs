@@ -1,6 +1,9 @@
 use super::*;
 use crate::session::runtime::dispatch_motion_aware_input;
 
+const DIALOG_MS: u32 = ui::MotionTimings::DIALOG.as_millis() as u32;
+const POPOVER_MS: u32 = ui::MotionTimings::POPOVER.as_millis() as u32;
+
 impl ShellMotionEffects {
     // Legacy fixtures provide a completed synthetic frame. Capture its base only
     // when no overlay is painted; phase-specific regressions call captures directly.
@@ -198,6 +201,49 @@ fn areas_are_bounded_unions_and_empty_regions_are_ignored() {
 }
 
 #[test]
+fn saved_page_phases_control_the_deadline_and_painted_position() {
+    let full = Rect::new(0, 0, 200, 20);
+    let theme = ui::ThemeTokens::glacier_night();
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (200, 20));
+    while state.notification_dismiss_active_modal_without_response() {}
+    let mut appearance = storage::AppearanceConfig::default();
+    appearance.animation_timings.page = [200, 100, 100];
+    appearance.animation_timings.dialog = [100, 40, 60];
+    appearance.animation_timings.menu = [20, 60, 20];
+    state.app.dispatch_at(
+        app::AppCommand::SetActiveAppearance(Some(appearance)),
+        Instant::now(),
+    );
+    let mut motion = ShellMotionEffects::default();
+    motion.update(&state, full, full, None, theme, false);
+    let mut old = Buffer::filled(full, Cell::new("O"));
+    motion.test_frame(Duration::ZERO, &mut old, &state);
+    state.enter_screen(ShellScreen::Clock);
+    motion.update(&state, full, full, None, theme, false);
+    assert_eq!(motion.page_gate, Duration::from_millis(400));
+    let mut new = Buffer::filled(full, Cell::new("N"));
+    motion.test_frame(Duration::ZERO, &mut new, &state);
+    new = Buffer::filled(full, Cell::new("N"));
+    motion.test_frame(Duration::from_millis(100), &mut new, &state);
+    let main = shell_main_area(full);
+    assert_eq!(
+        (main.x..main.right())
+            .filter(|x| new[(*x, main.y)].symbol() == "N")
+            .count(),
+        usize::from(main.width / 10)
+    );
+    assert_eq!(motion.page_gate, Duration::from_millis(300));
+    assert_eq!(
+        motion.overlay_duration(ui::MotionOverlayKind::Dialog),
+        Duration::from_millis(200)
+    );
+    assert_eq!(
+        motion.overlay_duration(ui::MotionOverlayKind::Popover),
+        Duration::from_millis(100)
+    );
+}
+
+#[test]
 fn resumed_overlay_exit_keeps_the_original_speed_curve() {
     let area = Rect::new(0, 0, 120, 40);
     let old = Buffer::filled(area, Cell::new("O"));
@@ -217,6 +263,7 @@ fn resumed_overlay_exit_keeps_the_original_speed_curve() {
         Duration::from_millis(120),
         None,
         ui::RevealOrigin::Center,
+        ui::MotionPhases::for_duration(ui::MotionTimings::DIALOG),
     );
     for (full_delta, resumed_delta) in [(60, 0), (30, 30), (45, 45), (45, 45)] {
         let mut expected = underlay.clone();
@@ -238,7 +285,12 @@ fn pages_enter_from_the_right_and_return_in_reverse() {
         cells: snapshot_normal_cells(&old, bounds).unwrap().cells,
     };
     for returning in [false, true] {
-        let mut effect = page_effect(area, Some(old.clone()), returning);
+        let mut effect = page_effect(
+            area,
+            Some(old.clone()),
+            returning,
+            ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+        );
         let natural = Buffer::filled(bounds, Cell::new("N"));
         let mut frame = natural.clone();
         effect.process(Duration::ZERO, &mut frame, bounds);
@@ -270,6 +322,7 @@ fn dialogs_grow_from_center_without_recoloring_text() {
         theme,
         ui::RevealOrigin::Center,
         Arc::new(Mutex::new(Some(base))),
+        ui::MotionPhases::for_duration(ui::MotionTimings::DIALOG),
     );
     let natural = Buffer::filled(area, Cell::new("D").set_fg(theme.text).clone());
     let mut frame = natural.clone();
@@ -305,7 +358,15 @@ fn exit_confirmation_preempts_underlying_page_motion() {
     motion.update(&state, full, full, None, theme, false);
     let mut initial = Buffer::empty(full);
     motion.test_frame(Duration::ZERO, &mut initial, &state);
-    motion.schedule(MotionEffectId::Page, page_effect(main, None, false));
+    motion.schedule(
+        MotionEffectId::Page,
+        page_effect(
+            main,
+            None,
+            false,
+            ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+        ),
+    );
     motion.test_frame(Duration::ZERO, &mut initial, &state);
 
     state.apply_input_with_platform(
@@ -413,6 +474,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        animation_advanced_open: false,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -1134,6 +1196,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        animation_advanced_open: false,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -1356,7 +1419,13 @@ fn shared_layout_main_is_used_without_a_second_chrome_inset() {
     motion.update_layout(&state, &layout, theme, false);
     let mut actual = Buffer::filled(full, Cell::new("X"));
     let mut expected = actual.clone();
-    page_effect(layout.main, old_base, false).process(Duration::ZERO, &mut expected, full);
+    page_effect(
+        layout.main,
+        old_base,
+        false,
+        ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+    )
+    .process(Duration::ZERO, &mut expected, full);
     motion.process(Duration::ZERO, &mut actual, &state);
     assert_eq!(actual, expected);
 }
@@ -1521,7 +1590,13 @@ fn changing_pages_cancels_old_outgoing_cells_but_keeps_new_page_entry() {
     assert!(motion.overlay_snapshot.is_none());
     let mut actual = Buffer::filled(layout.bounds, Cell::new("N"));
     let mut expected = actual.clone();
-    page_effect(layout.main, old_base, false).process(Duration::ZERO, &mut expected, layout.bounds);
+    page_effect(
+        layout.main,
+        old_base,
+        false,
+        ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+    )
+    .process(Duration::ZERO, &mut expected, layout.bounds);
     motion.process(Duration::ZERO, &mut actual, &state);
     assert_eq!(actual, expected);
 }

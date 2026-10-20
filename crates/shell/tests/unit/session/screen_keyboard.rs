@@ -12,6 +12,30 @@ fn session() -> ShellSession {
 }
 
 #[test]
+fn keyboard_reads_custom_page_phase_times() {
+    let mut state = session();
+    let mut appearance = storage::AppearanceConfig::default();
+    appearance.animation_timings.page = [200, 100, 100];
+    state.app.dispatch_at(
+        app::AppCommand::SetActiveAppearance(Some(appearance)),
+        Instant::now(),
+    );
+    state.interaction.pointer_motion = true;
+    state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::default());
+    state.advance_input_keyboard(ui::MotionFrame {
+        now: Duration::from_millis(100),
+        ..Default::default()
+    });
+    assert_eq!(state.screen_keyboard.visibility, 100);
+    assert!(!state.advance_input_keyboard(ui::MotionFrame {
+        now: Duration::from_millis(400),
+        ..Default::default()
+    }));
+    assert_eq!(state.screen_keyboard.visibility, 1_000);
+}
+
+#[test]
 fn keyboard_animation_reverses_without_jumping_and_honors_speed_and_reduced_motion() {
     let frame = |millis, speed| ui::MotionFrame {
         now: Duration::from_millis(millis),

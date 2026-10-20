@@ -1,6 +1,13 @@
 use super::*;
 
 impl ShellSession {
+    pub(super) fn animation_timings(&self) -> storage::AnimationTimingsConfig {
+        self.app
+            .active_appearance()
+            .map(|appearance| appearance.animation_timings.normalized())
+            .unwrap_or_default()
+    }
+
     pub(super) fn interaction_motion_frame(&self, mut frame: ui::MotionFrame) -> ui::MotionFrame {
         frame.reduced_motion |= !self.interaction.pointer_motion;
         frame
@@ -25,9 +32,10 @@ impl ShellSession {
             self.details_motion = Some((page, ui::PanelMotion::new(target)));
         }
         let frame = self.interaction_motion_frame(frame);
+        let phases = ui::MotionPhases::from_millis(self.animation_timings().dialog);
         let motion = &mut self.details_motion.as_mut().unwrap().1;
         let previous = motion.value();
-        let running = motion.update(target, frame, ui::MotionTimings::DIALOG);
+        let running = motion.update_with_phases(target, frame, phases);
         if motion.value() != previous {
             self.cancel_pointer_gestures_for_modal();
         }

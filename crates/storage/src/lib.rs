@@ -1,3 +1,4 @@
+mod animation;
 mod atomic_write;
 mod clock_document;
 mod config_document;
@@ -16,6 +17,7 @@ mod system_status_dashboard;
 mod trash_document;
 mod user_document;
 
+pub use animation::{AnimationTimingsConfig, MAX_ANIMATION_PHASE_MS, MIN_ANIMATION_PHASE_MS};
 pub use clock_document::{ClockDocument, ClockEntryRecord, ClockProfile};
 pub use config_document::{
     ANIMATION_SPEED_STEP_PERCENT, AccentColor, AppearanceConfig, AutoAdminPolicy, BorderColor,
