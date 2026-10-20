@@ -26,6 +26,8 @@
 
 共享库通过 `ui::animate` 导出 [animate 0.8.0](https://docs.rs/animate/0.8.0)，启用 `macros` 和 `ratatui`，可直接使用 `Tween`、`Spring`、`Clock` 与 `#[animate]`，支持 `Rect`、`Color`、`Style` 等 Ratatui 类型。使用宏时先 `use ui::animate`，再写 `#[animate::animate]`，也可以用 `#[ui::animate::animate(crate = ui::animate)]` 指定路径；可运行示例见 [src/lib.rs](src/lib.rs) 的导出文档。
 
+`components::RainbowText::new(text, elapsed)` 是可直接绘制的 Ratatui 控件，复用 tachyonfx 的颜色转换，让彩虹颜色每三秒循环。按终端字符宽度着色，保留中文、组合字符、背景和字体样式。调用方传入累计动画时间，减少动态效果时传 `Duration::ZERO` 显示静态彩虹。独立演示入口为 `tundra-cli debug test-rainbow-text`。
+
 动画状态由调用方保存，使用本地 `Clock`，每帧传入 `MotionFrame::scaled_delta()`；同一帧只推进一次时钟，所有动画共用返回的时间。实体键盘操作或减少动态效果时调用动画的 `finish()` 直接到达目标，按 `Activity::running()` 决定是否继续请求下一帧。实际页面开合继续遵守统一 UI 要求中的方向、三段速度及绘制与点击位置一致的规则。
 
 共享管理表单支持文件权限九宫格、混合值、勾选项及可查找选项列表。权限标题与格子共用列宽，按共享按钮的居中规则对齐；格子的绘制和鼠标/触摸命中共用布局。
@@ -54,6 +56,6 @@ AA 输出区为共享滚动条预留一列，避免遮住文字或在出现历�
 
 验证：`cargo test --locked -p ui`；交互变化还应验证键盘、鼠标/触摸命中及真实终端绘制。
 
-`src/ui_test.rs` 将全部公共共享控件组合为六页演示，由 `tundra-cli debug ui-test` 启动。样例包含按钮状态、输入、列表、表格、导航、提示、弹窗和进度，数据仅保存在本次演示中。
+`src/ui_test.rs` 将基础共享控件组合为六页演示，由 `tundra-cli debug ui-test` 启动。样例包含按钮状态、输入、列表、表格、导航、提示、弹窗和进度，数据仅保存在本次演示中。彩虹文本使用单独的 `debug test-rainbow-text` 演示。
 
 动画高级选项使用居中弹窗，复用设置的毫秒调节按钮、滚动条及恢复默认操作；弹窗绘制与点击区域使用同一布局，背景不可操作。

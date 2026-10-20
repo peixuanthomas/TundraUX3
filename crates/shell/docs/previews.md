@@ -17,7 +17,11 @@ F1–F6、PageUp/PageDown 或底部按钮切换六页；Tab/Shift+Tab 切换焦�
 | 弹窗 | Dialog、ContextMenu、CommandPalette |
 | 进度 | ProgressGauge、MetricCard、UpdateActivity |
 
-展示范围为 `ui::components` 导出的公共可绘制控件；项目专用页面和编辑器内部绘制不属于此清单。入口为 `crates/shell/src/previews/ui_test.rs`，控件组合为 `crates/ui/src/ui_test.rs`。
+六页展示上述基础公共控件；彩虹文本使用下方独立演示。项目专用页面和编辑器内部绘制不属于此清单。入口为 `crates/shell/src/previews/ui_test.rs`，控件组合为 `crates/ui/src/ui_test.rs`。
+
+## 彩虹文本
+
+运行 `tundra-cli debug test-rainbow-text`，使用共享 `RainbowText` 控件展示逐字着色、持续循环的彩虹文本。示例包含中文、组合字符和 emoji。使用内置主题和英文，无需启动确认，不读写配置、语言文件或日志。Esc、Ctrl+C、Enter 或可点击的退出按钮结束，随后恢复终端。
 
 ## 屏幕键盘
 

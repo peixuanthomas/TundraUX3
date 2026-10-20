@@ -32,3 +32,5 @@ Linux 内建 Command Line 会继续管理脱离终端会话的后代进程；正
 验证：`cargo test --locked -p cli`。中文帮助测试同时加载启动、共享 UI 和管理命令语言资源，覆盖跨文件的文字引用。
 
 `tundra-cli debug ui-test` 在六页中展示全部公共共享控件，使用内置深色主题和英文，不读写配置、语言文件、日志或状态。F1–F6 或底部按钮翻页，Tab 切换焦点，Esc 退出；最小终端尺寸为 88 列 × 30 行。
+
+`tundra-cli debug test-rainbow-text` 独立演示持续变色的彩虹文字，使用内置示例，跳过启动确认、配置和日志初始化；Esc、Ctrl+C、Enter 或退出按钮结束。命令支持帮助和 REPL 补全。

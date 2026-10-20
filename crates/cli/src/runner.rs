@@ -221,6 +221,13 @@ where
                 1
             }
         },
+        Ok(CliCommand::TestRainbowText) => match shell::run_rainbow_text_preview(stdout) {
+            Ok(()) => 0,
+            Err(error) => {
+                let _ = writeln!(stderr, "{error}");
+                1
+            }
+        },
         Ok(CliCommand::TestMatrix) => {
             run_configured_animation_preview(platform, stderr, "Matrix", |color| {
                 shell::run_matrix_animation_preview_with_color(stdout, color)

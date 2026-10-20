@@ -15,6 +15,7 @@ geojson = "1.0"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 ratatui.workspace = true
 ratatui-image.workspace = true
+tachyonfx.workspace = true
 unicode-width = "0.2"
 app = { path = "../app" }
 ascii-assets = { path = "../ascii-assets" }

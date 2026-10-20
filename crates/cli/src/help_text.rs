@@ -160,6 +160,7 @@ pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, cra
         | "debug test-aa-style3"
         | "debug screen-keyboard"
         | "debug ui-test"
+        | "debug test-rainbow-text"
         | "debug test-matrix"
         | "debug test-watchdog-error"
         | "debug test-watchdog-critical"
@@ -173,6 +174,9 @@ pub(crate) fn write_config_help(output: &mut impl Write) -> std::io::Result<()> 
 }
 
 pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io::Result<()> {
+    if topic == "debug test-rainbow-text" {
+        return writeln!(output, "{}", i18n::tr!("rainbow-text-help"));
+    }
     if topic == "debug ui-test" {
         return writeln!(output, "{}", i18n::tr!("ui-test-help"));
     }
@@ -248,6 +252,7 @@ pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std:
                 | "test-aa-style3"
                 | "screen-keyboard"
                 | "ui-test"
+                | "test-rainbow-text"
                 | "test-matrix"
                 | "test-watchdog-error"
                 | "test-watchdog-critical"

@@ -12,9 +12,13 @@ fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     // Help, version and the UI catalogue must work without startup prompts,
     // storage or watchdog initialization.
-    if cli::parse_args(&args)
-        .is_ok_and(|command| command.is_help_or_version() || command == cli::CliCommand::UiTest)
-    {
+    if cli::parse_args(&args).is_ok_and(|command| {
+        command.is_help_or_version()
+            || matches!(
+                command,
+                cli::CliCommand::UiTest | cli::CliCommand::TestRainbowText
+            )
+    }) {
         std::process::exit(cli::run(
             &args,
             &mut std::io::stdout(),

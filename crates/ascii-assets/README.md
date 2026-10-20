@@ -39,3 +39,5 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 资源根可由 `TUNDRA_ASCII_ASSETS_DIR` 指定，也会从二进制同目录查找；Linux 在前两者未命中时再回退至 `/usr/share/tundraux3/assets`。所有资源都会参与尺寸统计，因此资源更新可能改变启动时的最小终端要求。
 
 中英文 `modules/ui-test.ftl` 保存共享控件展示页的文字；`debug ui-test` 固定使用编译进程序的英文，不读取磁盘上的语言资源。
+
+同一资源文件也保存 `debug test-rainbow-text` 的帮助、标题、示例和退出提示，中英文命令目录均包含此入口。

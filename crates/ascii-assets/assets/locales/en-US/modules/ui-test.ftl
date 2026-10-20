@@ -63,3 +63,11 @@ ui-test-second = Second item
 ui-test-third = Third item
 ui-test-name = Name
 ui-test-value = Value
+rainbow-text-summary = Preview continuously changing rainbow text
+rainbow-text-help = Usage: tundra-cli debug test-rainbow-text
+    Preview rainbow text using built-in sample data. Esc, Ctrl+C, Enter or the Exit button closes the demo.
+rainbow-text-terminal-required = debug test-rainbow-text requires an interactive terminal (stdin and stdout).
+rainbow-text-title = Rainbow text — debug test-rainbow-text
+rainbow-text-sample = Rainbow text · 彩虹文字 · é · 🌈
+rainbow-text-description = Colors flow through the text in a three-second cycle. Esc / Ctrl+C: exit.
+rainbow-text-exit = Exit [Esc]

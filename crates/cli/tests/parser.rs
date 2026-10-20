@@ -31,6 +31,7 @@ fn simple_commands_dispatch_from_a_table() {
         (&["debug", "test-frost"], CliCommand::TestFrost),
         (&["debug", "test-matrix"], CliCommand::TestMatrix),
         (&["debug", "screen-keyboard"], CliCommand::ScreenKeyboard),
+        (&["debug", "test-rainbow-text"], CliCommand::TestRainbowText),
         (
             &["debug", "test-aa-style1"],
             CliCommand::TestAaStyle(shell::AutoAdminPreviewStyle::Caution),
@@ -64,6 +65,31 @@ fn simple_commands_dispatch_from_a_table() {
             "unexpected dispatch for {args:?}"
         );
     }
+}
+
+#[test]
+fn rainbow_text_help_is_available_without_platform_initialization() {
+    assert!(matches!(
+        parse_args(["debug", "test-rainbow-text", "unexpected"]),
+        Err(CliError::UnexpectedArgument(_))
+    ));
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["debug", "test-rainbow-text", "--help"],
+            &UnsupportedPlatform,
+            &mut stdout,
+            &mut stderr
+        ),
+        0
+    );
+    assert!(
+        String::from_utf8(stdout)
+            .unwrap()
+            .contains("tundra-cli debug test-rainbow-text")
+    );
+    assert!(stderr.is_empty());
 }
 
 #[test]

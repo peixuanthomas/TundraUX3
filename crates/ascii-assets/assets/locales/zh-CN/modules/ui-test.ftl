@@ -63,3 +63,11 @@ ui-test-second = 第二个项目
 ui-test-third = 第三个项目
 ui-test-name = 名称
 ui-test-value = 数值
+rainbow-text-summary = 预览持续变色的彩虹文本
+rainbow-text-help = 用法：tundra-cli debug test-rainbow-text
+    使用内置示例预览彩虹文本。Esc、Ctrl+C、Enter 或退出按钮结束演示。
+rainbow-text-terminal-required = debug test-rainbow-text 需要交互式终端（标准输入和标准输出）。
+rainbow-text-title = 彩虹文本 — debug test-rainbow-text
+rainbow-text-sample = Rainbow text · 彩虹文字 · é · 🌈
+rainbow-text-description = 颜色在文字中流动，每三秒循环一次。Esc / Ctrl+C：退出。
+rainbow-text-exit = 退出 [Esc]

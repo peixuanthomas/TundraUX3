@@ -3,6 +3,7 @@ mod previews;
 pub(crate) use app::clock as clock_scheduler;
 pub use auto_admin_preview::run_auto_admin_style_preview;
 pub(crate) use previews::auto_admin as auto_admin_preview;
+pub use previews::rainbow_text::run_rainbow_text_preview;
 pub(crate) use previews::screen_keyboard;
 pub use previews::ui_test::run_ui_test;
 pub use screen_keyboard::run_screen_keyboard;

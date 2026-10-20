@@ -19,6 +19,7 @@ pub use table_sort::{
 };
 
 pub mod components;
+pub mod rainbow_text_preview;
 pub mod style_preview;
 pub mod ui_test;
 
