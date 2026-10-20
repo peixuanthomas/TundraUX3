@@ -128,6 +128,7 @@ pub enum SettingsField {
     Timezone,
     TimeSyncSource,
     TimeSyncServer,
+    RefreshSystemTime,
     WeatherLocation,
     SystemLowAvailable,
     SystemLowPercentage,
@@ -247,6 +248,7 @@ pub enum SettingsPickerKind {
     AnimationSpeed,
     Language,
     Timezone,
+    SystemTimeServers,
     BorderColor,
     AccentColor,
 }
@@ -323,6 +325,7 @@ pub struct SettingsFileExtensionsEditorViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsTimeSyncServerEditorViewModel {
+    pub system_server_label: Option<String>,
     pub value: String,
     pub error: Option<String>,
     pub validating: bool,
@@ -1537,7 +1540,11 @@ fn render_time_sync_server_editor(
     let dialog = centered(area, area.width.min(76), area.height.min(11));
     frame.render_widget(Clear, dialog);
     let status = if editor.validating {
-        i18n::tr!("ui-settings-synchronizing-with-this-server")
+        i18n::tr!(if editor.system_server_label.is_some() {
+            "management-working"
+        } else {
+            "ui-settings-synchronizing-with-this-server"
+        })
     } else {
         editor.error.clone().unwrap_or_default()
     };
@@ -1547,24 +1554,37 @@ fn render_time_sync_server_editor(
         theme.error_style()
     };
     let lines = vec![
-        Line::from(i18n::tr!(
+        Line::from(i18n::tr!(if editor.system_server_label.is_some() {
+            "ui-settings-system-time-server-help"
+        } else {
             "ui-settings-enter-an-http-s-endpoint-that-returns-a-valid-date-response-header"
-        )),
+        })),
         Line::from(""),
         Line::styled(status, status_style),
         Line::styled(
-            i18n::tr!(
+            i18n::tr!(if editor.system_server_label.is_some() {
+                "ui-settings-system-time-server-save-help"
+            } else {
                 "ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test"
-            ),
+            }),
             theme.muted_style(),
         ),
         Line::styled(
-            i18n::tr!("ui-settings-enter-test-and-save-esc-cancel"),
+            i18n::tr!(if editor.system_server_label.is_some() {
+                "ui-settings-enter-save-esc-cancel"
+            } else {
+                "ui-settings-enter-test-and-save-esc-cancel"
+            }),
             theme.muted_style(),
         ),
     ];
     let surface = Surface::new()
-        .titled(i18n::tr!("ui-settings-time-synchronization-server-padded"))
+        .titled(
+            editor
+                .system_server_label
+                .clone()
+                .unwrap_or_else(|| i18n::tr!("ui-settings-time-synchronization-server-padded")),
+        )
         .bordered(true)
         .raised(true);
     let inner = surface.inner(dialog);

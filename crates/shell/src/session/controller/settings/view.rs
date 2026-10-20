@@ -28,6 +28,8 @@ impl ShellSession {
                 self.ascii_assets.theme_id(),
                 self.terminal_image_support,
                 &self.language_options(),
+                (self.identity_backend == identity::IdentityBackend::Linux)
+                    .then_some(&state.system_time),
             )
         };
         let appearance_preview = (state.category == ui::SettingsCategory::Appearance).then_some(
@@ -87,6 +89,13 @@ impl ShellSession {
         });
         let time_sync_server_editor = state.time_sync_server_editor.as_ref().map(|editor| {
             ui::SettingsTimeSyncServerEditorViewModel {
+                system_server_label: state.system_time.server_field.as_ref().and_then(|id| {
+                    state
+                        .system_time
+                        .action("set_system_ntp_servers")
+                        .and_then(|(_, action)| action.fields.iter().find(|field| &field.id == id))
+                        .map(|field| field.label.clone())
+                }),
                 value: editor.value.clone(),
                 error: editor
                     .error
@@ -401,6 +410,7 @@ pub(in crate::session) fn settings_cards(
     asset_theme_id: &str,
     image_icons_supported: bool,
     languages: &[app::SetupLanguageOption],
+    native_time: Option<&SystemTimeSettings>,
 ) -> Vec<ui::SettingsCardViewModel> {
     use ui::{
         SettingsCardViewModel as Card, SettingsControlKind as Kind, SettingsField as Field,
@@ -505,14 +515,30 @@ pub(in crate::session) fn settings_cards(
                         Kind::Picker,
                     )
                     .enabled(global_enabled),
-                    Item::new(
-                        Field::Timezone,
-                        i18n::tr!("settings-city-timezone"),
-                        timezone_label(&config.timezone),
-                        i18n::tr!("settings-timezone-help"),
-                        Kind::Picker,
-                    )
-                    .enabled(global_enabled),
+                    if let Some(time) = native_time {
+                        time.configure_item(
+                            Item::new(
+                                Field::Timezone,
+                                i18n::tr!("settings-city-timezone"),
+                                time.timezone()
+                                    .map(timezone_label)
+                                    .unwrap_or_else(|| i18n::tr!("settings-operating-system")),
+                                i18n::tr!("settings-system-timezone-help"),
+                                Kind::Picker,
+                            )
+                            .enabled(global_enabled),
+                            "set_system_timezone",
+                        )
+                    } else {
+                        Item::new(
+                            Field::Timezone,
+                            i18n::tr!("settings-city-timezone"),
+                            timezone_label(&config.timezone),
+                            i18n::tr!("settings-timezone-help"),
+                            Kind::Picker,
+                        )
+                        .enabled(global_enabled)
+                    },
                     Item::new(
                         Field::WeatherLocation,
                         i18n::tr!("settings-weather-location"),
@@ -528,31 +554,99 @@ pub(in crate::session) fn settings_cards(
             ),
             Card::new(
                 i18n::tr!("settings-time-sync"),
-                vec![
-                    Item::new(
-                        Field::TimeSyncSource,
-                        i18n::tr!("settings-time-source"),
-                        time_sync_source_label(config.time_sync.source),
-                        i18n::tr!("settings-time-source-help"),
-                        Kind::Cycle,
-                    )
-                    .enabled(global_enabled),
-                    Item::new(
-                        Field::TimeSyncServer,
-                        i18n::tr!("settings-sync-server"),
-                        config
-                            .time_sync
-                            .server_url
-                            .clone()
-                            .unwrap_or_else(|| i18n::tr!("settings-automatic-servers")),
-                        i18n::tr!("settings-time-server-help"),
-                        Kind::Picker,
-                    )
-                    .enabled(
-                        global_enabled
-                            && config.time_sync.source == storage::TimeSyncSource::NetworkServer,
-                    ),
-                ],
+                if let Some(time) = native_time {
+                    let automatic = time
+                        .action("set_system_ntp")
+                        .and_then(|(_, action)| {
+                            action.fields.iter().find(|field| field.id == "enabled")
+                        })
+                        .map(|field| {
+                            i18n::tr!(if field.value == "true" {
+                                "settings-on"
+                            } else {
+                                "settings-off"
+                            })
+                        })
+                        .unwrap_or_else(|| i18n::tr!("management-loading"));
+                    let servers = time
+                        .action("set_system_ntp_servers")
+                        .map(|(_, action)| {
+                            action
+                                .fields
+                                .iter()
+                                .filter(|field| {
+                                    field.id.starts_with("source_") && !field.value.is_empty()
+                                })
+                                .map(|field| field.value.clone())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| i18n::tr!("settings-automatic-servers"));
+                    vec![
+                        time.configure_item(
+                            Item::new(
+                                Field::TimeSyncSource,
+                                i18n::tr!("system-settings-automatic"),
+                                automatic,
+                                i18n::tr!("settings-system-time-help"),
+                                Kind::Toggle,
+                            )
+                            .enabled(global_enabled),
+                            "set_system_ntp",
+                        ),
+                        time.configure_item(
+                            Item::new(
+                                Field::TimeSyncServer,
+                                i18n::tr!("settings-sync-server"),
+                                servers,
+                                i18n::tr!("settings-system-time-server-help"),
+                                Kind::Picker,
+                            )
+                            .enabled(global_enabled),
+                            if time.action("set_system_ntp_servers").is_some() {
+                                "set_system_ntp_servers"
+                            } else {
+                                "inspect_system_settings"
+                            },
+                        ),
+                        Item::new(
+                            Field::RefreshSystemTime,
+                            i18n::tr!("settings-system-time-refresh"),
+                            i18n::tr!("management-control-refresh"),
+                            i18n::tr!("settings-system-time-refresh-help"),
+                            Kind::Action,
+                        )
+                        .enabled(!time.busy()),
+                    ]
+                } else {
+                    vec![
+                        Item::new(
+                            Field::TimeSyncSource,
+                            i18n::tr!("settings-time-source"),
+                            time_sync_source_label(config.time_sync.source),
+                            i18n::tr!("settings-time-source-help"),
+                            Kind::Cycle,
+                        )
+                        .enabled(global_enabled),
+                        Item::new(
+                            Field::TimeSyncServer,
+                            i18n::tr!("settings-sync-server"),
+                            config
+                                .time_sync
+                                .server_url
+                                .clone()
+                                .unwrap_or_else(|| i18n::tr!("settings-automatic-servers")),
+                            i18n::tr!("settings-time-server-help"),
+                            Kind::Picker,
+                        )
+                        .enabled(
+                            global_enabled
+                                && config.time_sync.source
+                                    == storage::TimeSyncSource::NetworkServer,
+                        ),
+                    ]
+                },
             ),
             Card::new(i18n::tr!("settings-reset"), vec![reset(global_enabled)]),
         ],
@@ -813,6 +907,13 @@ pub(in crate::session) fn settings_picker_options(
 ) -> Vec<ui::SettingsPickerOptionViewModel> {
     let query = picker.query.trim().to_ascii_lowercase();
     match picker.kind {
+        ui::SettingsPickerKind::SystemTimeServers => picker
+            .options
+            .iter()
+            .map(|(label, value)| {
+                ui::SettingsPickerOptionViewModel::new(label.clone(), value.clone())
+            })
+            .collect(),
         ui::SettingsPickerKind::Theme => vec![ui::SettingsPickerOptionViewModel::new(
             i18n::tr!("settings-default-theme"),
             i18n::tr!("settings-built-in-theme"),
@@ -930,6 +1031,7 @@ pub(in crate::session) fn settings_picker_visible_rows(terminal_height: u16) -> 
 
 pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> String {
     match kind {
+        ui::SettingsPickerKind::SystemTimeServers => i18n::tr!("system-settings-edit-servers"),
         ui::SettingsPickerKind::Theme => i18n::tr!("settings-choose-theme"),
         ui::SettingsPickerKind::DefaultThemeIcons => i18n::tr!("settings-default-theme"),
         ui::SettingsPickerKind::AnimationSpeed => i18n::tr!("settings-choose-speed"),
@@ -942,6 +1044,7 @@ pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> String {
 
 pub(in crate::session) fn picker_label(kind: ui::SettingsPickerKind) -> String {
     match kind {
+        ui::SettingsPickerKind::SystemTimeServers => i18n::tr!("system-settings-servers"),
         ui::SettingsPickerKind::Theme => i18n::tr!("settings-theme"),
         ui::SettingsPickerKind::DefaultThemeIcons => i18n::tr!("settings-default-icon-mode"),
         ui::SettingsPickerKind::AnimationSpeed => i18n::tr!("settings-animation-speed"),

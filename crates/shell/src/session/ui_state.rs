@@ -100,6 +100,7 @@ pub(super) struct EditorSettingsDialogState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsPickerState {
+    pub(super) options: Vec<(String, String)>,
     pub(super) kind: ui::SettingsPickerKind,
     pub(super) query: String,
     pub(super) selected_index: usize,
@@ -141,6 +142,7 @@ pub(super) struct SettingsAnimationEditorState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
+    pub(super) system_time: crate::session::controller::SystemTimeSettings,
     pub(super) animation_editor: Option<SettingsAnimationEditorState>,
     pub(super) category: ui::SettingsCategory,
     pub(super) selected_field: ui::SettingsField,

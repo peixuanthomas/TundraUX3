@@ -199,6 +199,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn poll_settings_background_tasks(&mut self) {
+        self.poll_system_time_settings();
         let events = self
             .settings_task_runtime
             .drain_time_sync_validation_events();
@@ -358,6 +359,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn change_time_sync_source(&mut self, platform: &dyn Platform) {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            self.toggle_system_time_sync();
+            return;
+        }
         if !self.can_change_global_settings() {
             self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;

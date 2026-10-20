@@ -119,11 +119,15 @@ impl ShellSession {
             .get(login_selected_user)
             .map(|user| user.username.clone())
             .unwrap_or_default();
-        let storage_config = startup
+        let mut storage_config = startup
             .storage_manager
             .as_ref()
             .and_then(|storage| storage.load_config().ok())
             .unwrap_or_default();
+        if startup.platform_kind == PlatformKind::Linux {
+            storage_config.time_sync.source = storage::TimeSyncSource::OperatingSystem;
+            storage_config.time_sync.server_url = None;
+        }
         let prepared_language = runtime_services.language.unwrap_or_else(|| {
             PreparedLanguage::load(ascii_assets.store().root(), &storage_config.language)
         });
@@ -131,6 +135,15 @@ impl ShellSession {
         let language = prepared_language.snapshot;
         let _language = i18n::enter_snapshot(language.clone());
         let mut app = app::AppState::with_storage_config(storage_config);
+        if startup.platform_kind == PlatformKind::Linux {
+            app.dispatch_at(
+                app::AppCommand::SetClockTimezone {
+                    timezone_id: None,
+                    synchronized_utc: None,
+                },
+                Instant::now(),
+            );
+        }
         if startup.storage_report.has_recovery_warnings() {
             app.dispatch_at(
                 app::AppCommand::Notification(app::NotificationCommand::ShowToast(

@@ -1953,6 +1953,9 @@ pub(super) fn system_services_config_for_startup(
     startup: &ShellStartupState,
 ) -> system_services::SystemServicesConfig {
     let mut services = system_services::SystemServicesConfig::default();
+    if startup.platform_kind == PlatformKind::Linux {
+        services.time_sync_mode = system_services::TimeSyncMode::OperatingSystem;
+    }
     let Some(config) = startup
         .storage_manager
         .as_ref()
@@ -1963,11 +1966,15 @@ pub(super) fn system_services_config_for_startup(
     services.weather_location = config.weather_location;
     services.storage_thresholds = system_status_thresholds_from_storage(&config.system_status);
     services.timezone_id = config.timezone.clone();
-    services.time_sync_mode = match config.time_sync.source {
-        storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,
-        storage::TimeSyncSource::OperatingSystem => system_services::TimeSyncMode::OperatingSystem,
-    };
-    services.time_server_url = config.time_sync.server_url;
+    if startup.platform_kind != PlatformKind::Linux {
+        services.time_sync_mode = match config.time_sync.source {
+            storage::TimeSyncSource::NetworkServer => system_services::TimeSyncMode::Network,
+            storage::TimeSyncSource::OperatingSystem => {
+                system_services::TimeSyncMode::OperatingSystem
+            }
+        };
+        services.time_server_url = config.time_sync.server_url;
+    }
     services.timezone_location = app::setup_timezone_options()
         .into_iter()
         .find(|timezone| timezone.id == config.timezone)

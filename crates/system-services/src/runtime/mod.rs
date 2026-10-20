@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, mpsc as std_mpsc};
 use std::time::{Duration, Instant};
 use system_status::refresh_due_system_sources;
 use thiserror::Error;
-use time_sync::{TimeAnchor, current_time_state, local_time_at, synchronize_time, validate_time};
+use time_sync::{TimeAnchor, current_time_state, synchronize_time, validate_time};
 use tokio::sync::{mpsc, watch};
 use watchdog::{
     AppWatchdog, ManagedThreadHandle, PanicAction, ReplaySafety, RestartPolicy, TaskId, TaskKind,
@@ -172,9 +172,7 @@ impl SystemServicesRuntime {
         let initial = snapshot(
             0,
             WeatherState::Loading,
-            TimeState::Local {
-                local_time: local_time_at(&config.timezone_id, Utc::now()),
-            },
+            current_time_state(&config, None, None, Instant::now()),
             StorageState::Loading,
             NetworkState::Loading,
             SystemMetricsSnapshot::loading(),

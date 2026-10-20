@@ -855,10 +855,10 @@ def main() -> int:
             while time.monotonic() < deadline:
                 read_available(master, output, 0.05)
 
-        # Linux onboarding reuses Language and Timezone, skipping account creation.
+        # Linux onboarding uses the system timezone and skips account creation.
         # Match page-specific controls: incremental rendering can split the
         # step title into multiple cursor writes when letters are unchanged.
-        for next_page, marker in (("Timezone", b"Timezone"), ("Appearance", b"Frame shape")):
+        for next_page, marker in (("Appearance", b"Frame shape"),):
             page_offset = len(output)
             os.write(master, b"\r")
             if not wait_for_output(master, output, marker, child, 5.0, start_offset=page_offset):

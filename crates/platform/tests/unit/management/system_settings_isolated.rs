@@ -41,6 +41,9 @@ impl OperationInteraction for Review {
 }
 fn command(action: &str, provider: Option<&str>) -> ManagementCommand {
     let mut request = ManagementQuery::new(ManagementKind::SystemSettings);
+    if action != "set_system_hostname" {
+        request.scope = "time".into();
+    }
     if let Some(provider) = provider {
         request.options.insert("provider".into(), provider.into());
     }
@@ -179,6 +182,19 @@ fn private_system_settings_and_time_configuration() {
         .unwrap();
     let connection = crate::linux::dbus::system().unwrap();
     systemctl(&["enable", "--now", "systemd-timesyncd.service"]);
+    let settings = query(
+        &ManagementQuery::new(ManagementKind::SystemSettings),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(settings.rows.len(), 1);
+    assert_eq!(settings.rows[0].id, "hostname");
+    let mut time_query = ManagementQuery::new(ManagementKind::SystemSettings);
+    time_query.scope = "time".into();
+    let time = query(&time_query, &AtomicBool::new(false)).unwrap();
+    assert!(time.rows.iter().all(|row| row.id != "hostname"));
+    assert!(time.rows.iter().any(|row| row.id == "time"));
+    assert!(time.rows.iter().any(|row| row.id == "ntp"));
     let mut review = Review::default();
     verify_file_ownership(&mut review);
     let mut hostname = command("set_system_hostname", None);

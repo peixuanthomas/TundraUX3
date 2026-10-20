@@ -456,6 +456,7 @@ fn reduced_motion_cancels_effects_and_flushes_pending_close() {
 fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     fn theme_picker() -> SettingsPickerState {
         SettingsPickerState {
+            options: Vec::new(),
             kind: ui::SettingsPickerKind::Theme,
             query: String::new(),
             selected_index: 0,
@@ -474,6 +475,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        system_time: Default::default(),
         animation_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
@@ -1196,12 +1198,14 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        system_time: Default::default(),
         animation_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
         scroll_offset: 0,
         picker: Some(SettingsPickerState {
+            options: Vec::new(),
             kind: ui::SettingsPickerKind::Theme,
             query: String::new(),
             selected_index: 0,

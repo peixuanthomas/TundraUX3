@@ -423,6 +423,7 @@ fn file_extensions_editor_captures_clicks_and_shows_examples() {
 fn time_sync_server_editor_shows_validation_state_and_captures_clicks() {
     let mut model = sample_model();
     model.time_sync_server_editor = Some(SettingsTimeSyncServerEditorViewModel {
+        system_server_label: None,
         value: "https://time.example.test/".to_string(),
         error: None,
         validating: true,
@@ -487,6 +488,34 @@ fn weather_location_editor_captures_clicks_and_explains_timezone_fallback() {
     let output = terminal_output(&terminal);
     assert!(output.contains("> Cambridge, Massachusetts, USA_"));
     assert!(output.contains("Leave empty to use the timezone location."));
+}
+
+#[test]
+fn system_time_server_editor_uses_native_configuration_help() {
+    let mut model = sample_model();
+    model.time_sync_server_editor = Some(SettingsTimeSyncServerEditorViewModel {
+        system_server_label: Some("chrony pool".into()),
+        value: "pool.example".into(),
+        error: None,
+        validating: false,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .unwrap();
+    let output = terminal_output(&terminal);
+    assert!(output.contains("chrony pool"));
+    assert!(output.contains("pool.example"));
+    assert!(output.contains("Enter: save"));
+    assert!(!output.contains("HTTP(S)"));
 }
 
 #[test]

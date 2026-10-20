@@ -28,6 +28,7 @@ impl ShellSession {
         let image_icons_supported = self.terminal_image_support;
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.picker = Some(SettingsPickerState {
+                options: Vec::new(),
                 kind,
                 query: String::new(),
                 selected_index,
@@ -52,6 +53,7 @@ impl ShellSession {
         }
         let config = self.app.storage_config();
         match kind {
+            ui::SettingsPickerKind::SystemTimeServers => 0,
             ui::SettingsPickerKind::Theme => 0,
             ui::SettingsPickerKind::DefaultThemeIcons => {
                 if !self.terminal_image_support {
@@ -80,7 +82,16 @@ impl ShellSession {
                 .unwrap_or(0),
             ui::SettingsPickerKind::Timezone => app::setup_timezone_options()
                 .iter()
-                .position(|option| option.id == config.timezone)
+                .position(|option| {
+                    option.id
+                        == self
+                            .pages
+                            .settings
+                            .settings_state
+                            .as_ref()
+                            .and_then(|state| state.system_time.timezone())
+                            .unwrap_or(&config.timezone)
+                })
                 .unwrap_or(0),
             ui::SettingsPickerKind::BorderColor => self
                 .app
@@ -249,6 +260,9 @@ impl ShellSession {
             return;
         }
         match picker.kind {
+            ui::SettingsPickerKind::SystemTimeServers => {
+                self.edit_system_time_server(picker.selected_index);
+            }
             ui::SettingsPickerKind::Theme => {
                 if self.ascii_assets.theme_id() != ui::DEFAULT_THEME_ID {
                     self.set_settings_error(i18n::msg!("settings-icon-theme-only"));
@@ -305,7 +319,13 @@ impl ShellSession {
                 self.save_region_picker_value(Some(option.detail), None)
             }
             ui::SettingsPickerKind::Timezone => {
-                self.save_region_picker_value(None, option.timezone_id)
+                if self.identity_backend == identity::IdentityBackend::Linux {
+                    if let Some(timezone) = option.timezone_id {
+                        self.set_system_timezone(timezone);
+                    }
+                } else {
+                    self.save_region_picker_value(None, option.timezone_id)
+                }
             }
             ui::SettingsPickerKind::BorderColor | ui::SettingsPickerKind::AccentColor => {
                 if option.detail == "#RRGGBB" {
@@ -467,6 +487,10 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_settings_time_sync_server(&mut self) {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            self.open_system_time_servers();
+            return;
+        }
         if !self.can_change_global_settings() {
             self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
@@ -513,6 +537,7 @@ impl ShellSession {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.time_sync_server_editor = None;
                     state.time_sync_validation_request_id = None;
+                    state.system_time.server_field = None;
                     state.status = i18n::msg!("settings-ready").into();
                 }
             }
@@ -567,6 +592,10 @@ impl ShellSession {
         else {
             return;
         };
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            self.save_system_time_server(value);
+            return;
+        }
         let server_url = match time::normalize_time_server_url(&value) {
             Ok(server_url) => server_url,
             Err(error) => {

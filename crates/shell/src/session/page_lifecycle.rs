@@ -130,6 +130,7 @@ impl ShellSession {
         self.tasks.transfer_operations(id);
         self.finish_auto_admin_close_choice(id, false);
         self.tasks.close_queries(id);
+        self.detach_system_time_page(id);
         self.detach_management_page(id);
         self.detach_user_management_page(id);
         self.detach_diagnostics_page(id);

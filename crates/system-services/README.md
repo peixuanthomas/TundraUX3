@@ -23,6 +23,8 @@ Linux 按当前进程权限显示数据；Windows/macOS 本地管理员和普通
 
 天气提供方支持 Open-Meteo 和 Met Office，但应用和启动预取目前固定使用 Open-Meteo。天气内存和磁盘缓存为 300 秒，位置、地址及地理编码缓存为 24 小时；显式刷新绕过缓存。
 
+系统时间模式每次生成快照都读取当前系统时间，Linux 同时使用系统本地时区，因此系统校时后无需重启。网络时间模式仍按最近成功同步的时间推进。
+
 ```sh
 cargo test --locked -p system-services --no-default-features
 cargo test --locked -p system-services --features runtime

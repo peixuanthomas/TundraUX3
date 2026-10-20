@@ -180,6 +180,40 @@ fn cancelling_exit_hides_the_confirmation() {
 }
 
 #[test]
+fn system_clock_ignores_saved_timezone_and_synchronized_anchors() {
+    let mut state = AppState::new(Some("Asia/Shanghai".into()));
+    let old_utc = Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+    state.dispatch_at(
+        AppCommand::SetClockTimezone {
+            timezone_id: None,
+            synchronized_utc: Some(old_utc),
+        },
+        Instant::now(),
+    );
+    assert_eq!(state.snapshot().clock_timezone_id, None);
+
+    let mut config = state.storage_config().clone();
+    config.timezone = "America/New_York".into();
+    state.dispatch_at(
+        AppCommand::SetStorageConfig {
+            config,
+            synchronized_utc: Some(old_utc),
+        },
+        Instant::now(),
+    );
+    state.dispatch_at(AppCommand::ApplyTimeSync(Ok(old_utc)), Instant::now());
+    let before = Utc::now();
+    let snapshot = state.snapshot();
+    let after = Utc::now();
+    assert_eq!(snapshot.clock_timezone_id, None);
+    assert!(snapshot.clock.utc >= before && snapshot.clock.utc <= after);
+    let local = snapshot.clock.utc.with_timezone(&chrono::Local);
+    assert_eq!(snapshot.clock.date, local.date_naive());
+    assert_eq!(snapshot.clock.time, local.time());
+    assert!(snapshot.clock.warning.is_none());
+}
+
+#[test]
 fn snapshot_keeps_timezone_identity_and_dst_projection_together() {
     let mut state = AppState::new(Some("America/New_York".to_string()));
     let now = Instant::now();

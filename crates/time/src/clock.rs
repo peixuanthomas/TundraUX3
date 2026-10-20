@@ -49,6 +49,13 @@ pub struct NetworkClock {
 }
 
 impl NetworkClock {
+    /// Reads the operating system's current time and local timezone on every snapshot.
+    pub fn operating_system() -> Self {
+        let mut clock = Self::new(None);
+        clock.timezone = None;
+        clock
+    }
+
     pub fn new(timezone_id: Option<String>) -> Self {
         let mut timezone = Some(chrono_tz::UTC);
         let mut timezone_error = None;

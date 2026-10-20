@@ -20,8 +20,16 @@ pub(super) fn current_time_state(
     error: Option<&str>,
     now: Instant,
 ) -> TimeState {
-    let utc = anchor.map_or_else(Utc::now, |anchor| anchor.utc_at(now));
-    let local = local_time_at(&config.timezone_id, utc);
+    let utc = match config.time_sync_mode {
+        TimeSyncMode::OperatingSystem => Utc::now(),
+        TimeSyncMode::Network => anchor.map_or_else(Utc::now, |anchor| anchor.utc_at(now)),
+    };
+    let local =
+        if cfg!(target_os = "linux") && config.time_sync_mode == TimeSyncMode::OperatingSystem {
+            utc.with_timezone(&chrono::Local).fixed_offset()
+        } else {
+            local_time_at(&config.timezone_id, utc)
+        };
     if let Some(error) = error {
         return TimeState::Degraded {
             local_time: local,

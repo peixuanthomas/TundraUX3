@@ -56,6 +56,7 @@ pub enum AppCommand {
     Editor(EditorCommand),
     SetEditorViewport(EditorViewport),
     SetClockTimezone {
+        /// `None` follows the operating system's clock and local timezone.
         timezone_id: Option<String>,
         synchronized_utc: Option<chrono::DateTime<chrono::Utc>>,
     },
@@ -164,7 +165,9 @@ impl AppState {
                 config,
                 synchronized_utc,
             } => {
-                if self.storage_config.timezone != config.timezone {
+                if self.clock_timezone_id.is_some()
+                    && self.storage_config.timezone != config.timezone
+                {
                     self.replace_clock_timezone(Some(config.timezone.clone()), synchronized_utc);
                 }
                 self.storage_config = config;
@@ -216,8 +219,6 @@ impl AppState {
                 timezone_id,
                 synchronized_utc,
             } => {
-                let timezone_id =
-                    timezone_id.or_else(|| Some(self.storage_config.timezone.clone()));
                 if let Some(timezone_id) = timezone_id.as_ref() {
                     self.storage_config.timezone = timezone_id.clone();
                 }
@@ -458,7 +459,10 @@ impl AppState {
         timezone_id: Option<String>,
         synchronized_utc: Option<chrono::DateTime<chrono::Utc>>,
     ) {
-        let mut network_clock = NetworkClock::new(timezone_id.clone());
+        let mut network_clock = match timezone_id.as_ref() {
+            Some(_) => NetworkClock::new(timezone_id.clone()),
+            None => NetworkClock::operating_system(),
+        };
         if let Some(utc) = synchronized_utc {
             network_clock.apply_sync(Ok(utc));
         }

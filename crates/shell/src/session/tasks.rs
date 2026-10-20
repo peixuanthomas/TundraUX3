@@ -8,6 +8,7 @@ pub(in crate::session) enum TaskDomain {
     Explorer,
     Diagnostics,
     SettingsTimeSync,
+    SettingsSystemTime,
     Update,
     Logs,
     ManagementQuery,

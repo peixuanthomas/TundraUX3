@@ -111,10 +111,6 @@ fn advance_to_appearance(state: &mut ShellSession) {
     assert_eq!(state.focused_component(), ShellComponent::SetupLanguage);
     state.apply_input(InputEvent::from_key_label("Down"));
     state.apply_input(InputEvent::from_key_label("Enter"));
-    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Timezone);
-    assert_eq!(state.focused_component(), ShellComponent::SetupTimezone);
-    state.apply_input(InputEvent::from_key_label("Down"));
-    state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
     assert_eq!(
         state.focused_component(),
@@ -145,7 +141,6 @@ fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices
         assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
         advance_to_appearance(&mut state);
         expected_config.language = state.selected_setup_language_value();
-        expected_config.timezone = state.selected_setup_timezone_value();
         assert!(state.auth_session().is_none());
         assert!(state.app.active_appearance().is_none());
         assert!(state.pages.login.login_password.is_empty());
@@ -236,7 +231,7 @@ fn config_save_failure_keeps_linux_setup_pending_and_allows_retry() {
     let backup = config_path.with_extension("test-backup");
     std::fs::rename(config_path, &backup).unwrap();
     std::fs::create_dir(config_path).unwrap();
-    let selected_timezone = state.selected_setup_timezone_value();
+    let saved_timezone = state.app.storage_config().timezone.clone();
     submit(&mut state);
     assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
     assert!(state.auth_session().is_none());
@@ -246,8 +241,26 @@ fn config_save_failure_keeps_linux_setup_pending_and_allows_retry() {
     std::fs::rename(backup, config_path).unwrap();
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(manager.load_config().unwrap().timezone, selected_timezone);
+    assert_eq!(manager.load_config().unwrap().timezone, saved_timezone);
     assert!(!manager.load_users().unwrap().users[0].personalization_pending);
+}
+
+#[test]
+fn linux_ignores_existing_independent_time_preferences() {
+    let (_guard, manager, _) = fixture(false);
+    let mut saved = manager.load_config().unwrap();
+    saved.timezone = "Pacific/Honolulu".into();
+    saved.time_sync.source = storage::TimeSyncSource::NetworkServer;
+    saved.time_sync.server_url = Some("https://old-clock.example".into());
+    manager.save_config(&saved).unwrap();
+    let state = linux_state(&manager, false);
+    assert!(state.app.snapshot().clock_timezone_id.is_none());
+    assert_eq!(
+        state.app.storage_config().time_sync.source,
+        storage::TimeSyncSource::OperatingSystem
+    );
+    assert!(state.app.storage_config().time_sync.server_url.is_none());
+    assert_eq!(manager.load_config().unwrap(), saved);
 }
 
 #[test]

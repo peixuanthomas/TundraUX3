@@ -1207,6 +1207,36 @@ async fn system_location_detection_obeys_the_request_timeout() {
 }
 
 #[test]
+fn operating_system_time_ignores_old_anchor() {
+    let config = SystemServicesConfig {
+        time_sync_mode: TimeSyncMode::OperatingSystem,
+        timezone_id: "Asia/Shanghai".into(),
+        ..Default::default()
+    };
+    let old_utc = DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let anchor = TimeAnchor {
+        utc: old_utc,
+        sampled_at: old_utc,
+        instant: Instant::now(),
+        source: TimeSource::OperatingSystem,
+    };
+    let before = Utc::now();
+    let state = current_time_state(&config, Some(&anchor), None, Instant::now());
+    let after = Utc::now();
+    let TimeState::Synced {
+        utc, local_time, ..
+    } = state
+    else {
+        panic!("operating system time should be available");
+    };
+    assert!(utc >= before && utc <= after);
+    #[cfg(target_os = "linux")]
+    assert_eq!(local_time, utc.with_timezone(&chrono::Local).fixed_offset());
+}
+
+#[test]
 fn monotonic_anchor_advances_and_error_remains_degraded() {
     let instant = Instant::now();
     let utc = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")

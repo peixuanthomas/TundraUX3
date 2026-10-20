@@ -2,6 +2,8 @@ mod animation;
 mod background;
 pub(in crate::session) mod devices;
 mod forms;
+mod system_time;
+pub(in crate::session) use system_time::SystemTimeSettings;
 pub(in crate::session) mod tasks;
 mod view;
 use crate::session::*;
@@ -133,6 +135,7 @@ impl ShellSession {
         );
         self.enter_new_page(ShellScreen::Settings);
         self.pages.settings.settings_state = Some(SettingsState {
+            system_time: SystemTimeSettings::default(),
             animation_editor: None,
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
@@ -298,6 +301,19 @@ impl ShellSession {
         }
 
         match &key.key {
+            InputKey::F(5)
+                if self.identity_backend == identity::IdentityBackend::Linux
+                    && self
+                        .pages
+                        .settings
+                        .settings_state
+                        .as_ref()
+                        .is_some_and(|state| {
+                            state.category == ui::SettingsCategory::RegionTime
+                        }) =>
+            {
+                self.refresh_system_time_settings();
+            }
             InputKey::F(8) if key.phase == InputPhase::Press => {
                 self.open_operating_system_settings()
             }
@@ -309,13 +325,7 @@ impl ShellSession {
             InputKey::Down => self.select_settings_field_delta(1),
             InputKey::Home => self.select_settings_field_at(0),
             InputKey::End => {
-                let last = self
-                    .pages
-                    .settings
-                    .settings_state
-                    .as_ref()
-                    .map(|state| settings_fields(state.category).len().saturating_sub(1))
-                    .unwrap_or(0);
+                let last = self.settings_visible_fields().len().saturating_sub(1);
                 self.select_settings_field_at(last);
             }
             InputKey::PageUp => self.scroll_settings(-6),
@@ -500,13 +510,23 @@ impl ShellSession {
         if category == ui::SettingsCategory::Update && !self.settings_update_state.checked_once {
             self.begin_update_check();
         }
+        if category == ui::SettingsCategory::RegionTime
+            && self
+                .pages
+                .settings
+                .settings_state
+                .as_ref()
+                .is_some_and(|state| state.system_time.snapshot.is_none())
+        {
+            self.refresh_system_time_settings();
+        }
     }
 
     pub(in crate::session) fn select_settings_field_delta(&mut self, delta: isize) {
         let Some(state) = self.pages.settings.settings_state.as_ref() else {
             return;
         };
-        let fields = settings_fields(state.category);
+        let fields = self.settings_visible_fields();
         let index = fields
             .iter()
             .position(|field| *field == state.selected_field)
@@ -516,11 +536,14 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_settings_field_at(&mut self, index: usize) {
+        let fields = self.settings_visible_fields();
+        if fields.is_empty() {
+            return;
+        }
         {
             let Some(state) = self.pages.settings.settings_state.as_mut() else {
                 return;
             };
-            let fields = settings_fields(state.category);
             state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
         }
         if let Some(layout) = self.current_settings_layout()
@@ -537,6 +560,18 @@ impl ShellSession {
             .min(layout.max_scroll_offset);
         }
         self.clamp_settings_scroll();
+    }
+
+    fn settings_visible_fields(&self) -> Vec<ui::SettingsField> {
+        self.to_settings_view_model()
+            .map(|model| {
+                model
+                    .cards
+                    .into_iter()
+                    .flat_map(|card| card.items.into_iter().map(|item| item.field))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(in crate::session) fn scroll_settings(&mut self, delta: i16) {
@@ -585,6 +620,7 @@ impl ShellSession {
             return;
         };
         match field {
+            ui::SettingsField::RefreshSystemTime => self.refresh_system_time_settings(),
             ui::SettingsField::AnimationAdvanced => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.animation_editor = Some(SettingsAnimationEditorState {

@@ -1,4 +1,4 @@
-//! Operating-system settings; Tundra's display and clock preferences stay separate.
+//! Native host and time settings queried separately by their settings pages.
 use super::network::io_error;
 use super::*;
 use crate::ManagedCommand;
@@ -223,6 +223,38 @@ pub fn query(
 ) -> Result<ManagementSnapshot, ManagementError> {
     check(flag)?;
     let connection = connection()?;
+    if query.scope != "time" {
+        let host = host(&connection)?;
+        let hostname: String = host.get_property("Hostname").map_err(dbus_error)?;
+        let static_hostname: String = host.get_property("StaticHostname").map_err(dbus_error)?;
+        return Ok(ManagementSnapshot {
+            columns: vec![
+                i18n::tr!("system-settings-setting"),
+                i18n::tr!("system-settings-value"),
+            ],
+            rows: vec![ManagementRow {
+                id: "hostname".into(),
+                cells: vec![i18n::tr!("system-settings-hostname"), hostname],
+                detail: vec![(
+                    i18n::tr!("system-settings-hostname"),
+                    static_hostname.clone(),
+                )],
+                identity: BTreeMap::from([("hostname".into(), static_hostname.clone())]),
+                actions: vec![action(
+                    "set_system_hostname",
+                    "system-settings-edit-hostname",
+                    vec![field(
+                        "hostname",
+                        "system-settings-hostname",
+                        static_hostname,
+                    )],
+                )],
+            }],
+            details_complete: true,
+            backend: "systemd".into(),
+            ..Default::default()
+        });
+    }
     let current = state(&connection)?;
     let identity = BTreeMap::from([
         ("hostname".into(), current.static_hostname.clone()),
@@ -345,24 +377,6 @@ pub fn query(
         .map(|time| time.trim().to_string())
         .unwrap_or_else(|_| current.time_utc.clone());
     let mut rows = vec![
-        ManagementRow {
-            id: "hostname".into(),
-            cells: vec![i18n::tr!("system-settings-hostname"), current.hostname],
-            detail: vec![(
-                i18n::tr!("system-settings-hostname"),
-                current.static_hostname.clone(),
-            )],
-            actions: vec![action(
-                "set_system_hostname",
-                "system-settings-edit-hostname",
-                vec![field(
-                    "hostname",
-                    "system-settings-hostname",
-                    current.static_hostname,
-                )],
-            )],
-            identity: identity.clone(),
-        },
         ManagementRow {
             id: "time".into(),
             cells: vec![
@@ -522,6 +536,9 @@ pub fn execute(
         _ => return Err(invalid()),
     }
     let mut refresh = ManagementQuery::new(ManagementKind::SystemSettings);
+    if command.action != "set_system_hostname" {
+        refresh.scope = "time".into();
+    }
     if let Some(unit) = command.values.get("unit") {
         refresh.options.insert("provider".into(), unit.clone());
     }

@@ -221,6 +221,7 @@ fn update_cards_and_picker_labels_rerender_without_changing_action_or_color_valu
     };
     let update = checked_update_state(app::update::UpdateRelation::Behind { remote_ahead: 1 });
     let picker = SettingsPickerState {
+        options: Vec::new(),
         kind: ui::SettingsPickerKind::BorderColor,
         query: String::new(),
         selected_index: 0,

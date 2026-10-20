@@ -145,7 +145,14 @@ impl ShellSession {
             || self.content_screen() == ShellScreen::Clock
     }
 
-    pub(in crate::session) fn replace_storage_config(&mut self, config: storage::StorageConfig) {
+    pub(in crate::session) fn replace_storage_config(
+        &mut self,
+        mut config: storage::StorageConfig,
+    ) {
+        if self.identity_backend == identity::IdentityBackend::Linux {
+            config.time_sync.source = storage::TimeSyncSource::OperatingSystem;
+            config.time_sync.server_url = None;
+        }
         self.settings_task_runtime
             .reconfigure_system_services(&config);
         self.app.dispatch_at(

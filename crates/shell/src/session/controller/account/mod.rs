@@ -383,10 +383,16 @@ impl ShellSession {
                         return;
                     }
                 }
-                self.pages.setup.setup_step = ui::SetupStep::Timezone;
-                self.pages.setup.setup_focused_field = ui::SetupField::TimezoneList;
-                self.pages.common.focused_component = ShellComponent::SetupTimezone;
-                self.sync_setup_timezone_window();
+                if self.identity_backend == identity::IdentityBackend::Linux {
+                    self.pages.setup.setup_step = ui::SetupStep::Appearance;
+                    self.pages.setup.setup_focused_field = ui::SetupField::AppearanceShape;
+                    self.pages.common.focused_component = ShellComponent::SetupAppearanceShape;
+                } else {
+                    self.pages.setup.setup_step = ui::SetupStep::Timezone;
+                    self.pages.setup.setup_focused_field = ui::SetupField::TimezoneList;
+                    self.pages.common.focused_component = ShellComponent::SetupTimezone;
+                    self.sync_setup_timezone_window();
+                }
             }
             ui::SetupStep::Timezone => {
                 if self.pending_personalization_session.is_some() {
@@ -1080,7 +1086,9 @@ impl ShellSession {
             // failed write leaves the onboarding flow available for retry.
             let result = storage.load_config().and_then(|mut config| {
                 config.language = self.selected_setup_language_value();
-                config.timezone = self.selected_setup_timezone_value();
+                if self.identity_backend != identity::IdentityBackend::Linux {
+                    config.timezone = self.selected_setup_timezone_value();
+                }
                 storage.save_config(&config)?;
                 Ok(config)
             });

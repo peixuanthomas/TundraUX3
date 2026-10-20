@@ -10,6 +10,7 @@ mod explorer;
 mod launcher;
 mod notifications;
 mod settings;
+pub(in crate::session) use settings::SystemTimeSettings;
 pub(super) mod system_status;
 pub(super) use account::tasks::*;
 pub(super) use input::touch_pages::*;
