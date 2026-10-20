@@ -1926,25 +1926,6 @@ impl ShellSession {
             search.cursor = self.pages.explorer.explorer_address_cursor;
             search.selection_anchor = self.pages.explorer.explorer_address_selection_anchor;
         }
-        model.pending_dialog = state.pending_dialog.as_ref().map(|dialog| {
-            let (confirm, cancel) = match dialog.kind {
-                app::explorer::ExplorerDialogKind::DeleteToTrash => (
-                    i18n::tr!("shell-y-enter-move"),
-                    i18n::tr!("shell-n-esc-cancel"),
-                ),
-                app::explorer::ExplorerDialogKind::DumpTrash => (
-                    i18n::tr!("shell-y-enter-empty-permanently"),
-                    i18n::tr!("shell-n-esc-cancel"),
-                ),
-            };
-            ui::ExplorerDialogViewModel::new(
-                dialog.title.render_current(),
-                dialog.message.render_current(),
-                confirm,
-                cancel,
-            )
-        });
-
         model.overlay_selection = self.pages.explorer.explorer_overlay_selection;
         model.overlay = if let Some(conflict) = state.pending_restore.as_ref() {
             Some(ui::ExplorerOverlayViewModel::Conflict(

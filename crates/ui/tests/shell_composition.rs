@@ -400,8 +400,12 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
         error: None,
     });
     assert_page_leaves_shell_chrome_untouched(ScreenContent::UserManagement(&users));
-    explorer.pending_dialog = Some(ExplorerDialogViewModel::new(
-        "Confirm", "Message", "Yes", "No",
+    explorer.overlay = Some(ExplorerOverlayViewModel::Properties(
+        ExplorerPropertiesViewModel {
+            title: "Properties".into(),
+            properties: Vec::new(),
+            close_label: "Close".into(),
+        },
     ));
     assert_page_leaves_shell_chrome_untouched(ScreenContent::Explorer(&explorer));
     launcher.confirmation = Some(LauncherConfirmationViewModel {
