@@ -64,6 +64,81 @@ fn text(buffer: &Buffer, area: Rect) -> String {
 }
 
 #[test]
+fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() {
+    let platform = platform::mock::UnsupportedPlatform;
+    for (pointer, aa) in [(false, false), (true, false), (true, true)] {
+        let mut state = session();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let frame = home_frame(&state, 0, false);
+        draw(&mut compositor, &mut terminal, &mut state, &frame);
+        let send = |state: &mut ShellSession, compositor: &mut ScreenCompositor, input| {
+            let now = Instant::now();
+            if let Some(input) = compositor.prepare_input(state, input, &platform, now) {
+                let (_, blocked) = compositor.dispatch_input(state, input, &platform, now);
+                assert!(!blocked);
+            }
+        };
+        if aa {
+            state.apply_input(InputEvent::mouse_moved((0, 0)));
+            let (tx, _rx) = mpsc::channel();
+            state
+                .begin_auto_admin("Keyboard interruption".into(), false, tx)
+                .unwrap();
+        } else if pointer {
+            let area = state.frame_layout.unwrap().back_button.unwrap();
+            let point = (area.x + 1, area.y + 1);
+            send(
+                &mut state,
+                &mut compositor,
+                InputEvent::mouse_down(PointerButton::Left, point),
+            );
+            send(
+                &mut state,
+                &mut compositor,
+                InputEvent::mouse_up(PointerButton::Left, point),
+            );
+        } else {
+            send(
+                &mut state,
+                &mut compositor,
+                InputEvent::key(InputKey::Escape),
+            );
+        }
+        if aa {
+            assert!(state.auto_admin_visible());
+        } else {
+            assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
+        }
+        let mut frame = home_frame(&state, 1, false);
+        frame.notification = state.to_notification_view_model();
+        assert_eq!(
+            draw(&mut compositor, &mut terminal, &mut state, &frame),
+            pointer
+        );
+        send(&mut state, &mut compositor, InputEvent::key(InputKey::Tab));
+        send(&mut state, &mut compositor, InputEvent::mouse_moved((1, 0)));
+        let mut frame = home_frame(&state, 2, false);
+        frame.notification = state.to_notification_view_model();
+        assert!(!draw(&mut compositor, &mut terminal, &mut state, &frame));
+        assert!(!compositor.motion.is_running());
+        send(
+            &mut state,
+            &mut compositor,
+            InputEvent::key(if aa {
+                InputKey::F(12)
+            } else {
+                InputKey::Escape
+            }),
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Home);
+        assert!(!state.auto_admin_visible());
+        assert_eq!(state.notification_has_active_modal(), aa);
+        assert!(!compositor.motion.is_running());
+    }
+}
+
+#[test]
 fn aa_keyboard_keeps_background_layout_and_places_one_global_launcher_on_every_page() {
     let host = CommandLineHost::new(default_editor_watchdog().unwrap());
     for screen in [
@@ -248,6 +323,7 @@ fn status_details_capture_the_drawn_debug_text_before_click_diagnostics_change()
 #[test]
 fn status_details_keep_a_toast_visible_during_its_exit_animation() {
     let mut state = session();
+    state.interaction.pointer_motion = true;
     state.notify_toast("Read this disappearing toast 中文");
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let mut compositor = ScreenCompositor::default();
@@ -394,6 +470,7 @@ fn command_line_keyboard_render_and_pty_viewport_agree_and_restore() {
 fn live_keyboard_animation_keeps_aa_and_cli_content_above_visible_keys() {
     for aa in [false, true] {
         let mut state = session();
+        state.interaction.pointer_motion = true;
         if aa {
             let (tx, _rx) = mpsc::channel();
             state
@@ -506,9 +583,10 @@ fn command_line_keyboard_launcher_uses_the_selected_language() {
 }
 
 #[test]
-fn auto_admin_shares_dialog_motion_speed_reduced_motion_and_exit() {
+fn auto_admin_pointer_entry_honors_speed_and_keyboard_close_is_immediate() {
     for (speed, reduced) in [(50, false), (100, false), (200, false), (100, true)] {
         let mut state = session();
+        state.interaction.pointer_motion = true;
         let mut compositor = ScreenCompositor::default();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         let mut prepared = home_frame(&state, 0, reduced);
@@ -528,6 +606,16 @@ fn auto_admin_shares_dialog_motion_speed_reduced_motion_and_exit() {
             !reduced
         );
         let entering = terminal.backend().buffer().clone();
+        if !reduced {
+            let position = state.interaction.pointer_position;
+            compositor.prepare_input(
+                &mut state,
+                InputEvent::mouse_down(PointerButton::Left, (dialog.x + 1, dialog.y + 1)),
+                &platform::mock::UnsupportedPlatform,
+                Instant::now(),
+            );
+            assert_eq!(state.interaction.pointer_position, position);
+        }
         let mut frames = 0;
         while compositor.motion.is_running() {
             frames += 1;
@@ -553,16 +641,7 @@ fn auto_admin_shares_dialog_motion_speed_reduced_motion_and_exit() {
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
         state.apply_input(InputEvent::key(InputKey::F(12)));
         assert!(!state.auto_admin_visible());
-        assert_eq!(
-            draw(&mut compositor, &mut terminal, &mut state, &prepared),
-            !reduced
-        );
-        for _ in 0..10 {
-            if !compositor.motion.is_running() {
-                break;
-            }
-            draw(&mut compositor, &mut terminal, &mut state, &prepared);
-        }
+        assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
         assert!(!compositor.motion.is_running());
         assert_eq!(
             terminal.backend().buffer(),

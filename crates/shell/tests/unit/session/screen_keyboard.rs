@@ -20,6 +20,7 @@ fn keyboard_animation_reverses_without_jumping_and_honors_speed_and_reduced_moti
     };
     for speed in [50, 100, 200] {
         let mut state = session();
+        state.interaction.pointer_motion = true;
         let original = state.command_line_input_area();
         state.toggle_input_keyboard();
         assert!(state.advance_input_keyboard(frame(0, speed)));

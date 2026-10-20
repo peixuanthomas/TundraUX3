@@ -1136,6 +1136,14 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 let mut animation_running = false;
                 guard.terminal_mut().draw(|frame| {
                     let bounds = frame.area();
+                    // The terminal can resize after polling but before drawing.
+                    if resize_runtime_session(
+                        &mut state,
+                        (bounds.width, bounds.height),
+                        platform.as_ref(),
+                    ) {
+                        compositor.cancel_for_bounds_change();
+                    }
                     if let Err(error) =
                         terminal_size_requirement.validate((bounds.width, bounds.height))
                     {
@@ -1213,6 +1221,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     let identity_before_input = RedrawIdentity::from_session(&state);
                     if let event::Event::Resize(width, height) = &terminal_event {
                         compositor.cancel_for_bounds_change();
+                        state.details_motion = None;
+                        state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
                         resize_runtime_session(&mut state, (*width, *height), platform.as_ref());
                         redraw.request_redraw();
                         continue;
@@ -1230,7 +1240,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         state.screen_keyboard.physical.observe(*key, received_at);
                     }
                     let input = crossterm_event_to_input(terminal_event);
-                    let Some(input) = state.prepare_input(input, platform.as_ref(), received_at)
+                    let Some(input) =
+                        compositor.prepare_input(&mut state, input, platform.as_ref(), received_at)
                     else {
                         action = Some(ShellAction::Redraw);
                         redraw.request_redraw();
@@ -1476,6 +1487,21 @@ pub(super) fn dispatch_motion_aware_input(
     platform: &dyn Platform,
     received_at: Instant,
 ) -> (ShellAction, bool) {
+    if let InputEvent::Mouse(mouse) = &input
+        && (mouse.kind != ui::MouseEventKind::Moved
+            || state.interaction.pointer_position != Some(mouse.coordinates()))
+    {
+        state.interaction.pointer_motion = true;
+    }
+    if !state.interaction.pointer_motion {
+        if let Some(close) = motion.cancel_for_suspend(state) {
+            state.apply_routed_event(close, platform, received_at);
+        }
+        motion.remember(
+            state,
+            Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1),
+        );
+    }
     if state.handle_auto_admin_input_at(&input, received_at) {
         return (ShellAction::Redraw, false);
     }

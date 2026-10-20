@@ -201,6 +201,7 @@ impl ShellSession {
 
             auto_admin: AutoAdminState::default(),
             screen_keyboard: Default::default(),
+            details_motion: None,
             #[cfg(target_os = "linux")]
             privilege_session: Default::default(),
             detached_management_operations: Vec::new(),

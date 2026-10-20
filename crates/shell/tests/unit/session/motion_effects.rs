@@ -113,12 +113,13 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         &platform,
         now,
     );
-    assert!(motion_blocked);
+    assert!(!motion_blocked);
     assert_eq!(
         active.pages.login.login_idle_deadline,
         now + LOGIN_IDLE_TIMEOUT
     );
-    assert!(active_motion.deferred_close.is_some());
+    assert!(active_motion.deferred_close.is_none());
+    assert_ne!(active.active_screen(), ShellScreen::ExitConfirm);
 
     let (mut clicked, mut clicked_motion) = login_exit_fixture(now);
     let back = clicked
@@ -140,10 +141,7 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         clicked.pages.login.login_idle_deadline,
         now + LOGIN_IDLE_TIMEOUT
     );
-    assert_eq!(
-        clicked_motion.deferred_close.as_ref().unwrap().routed,
-        active_motion.deferred_close.as_ref().unwrap().routed
-    );
+    assert!(clicked_motion.deferred_close.is_some());
 
     active_motion.deferred_close = None;
     active_motion.exiting = false;
@@ -200,65 +198,64 @@ fn areas_are_bounded_unions_and_empty_regions_are_ignored() {
 }
 
 #[test]
-fn editor_page_recipe_never_changes_symbols() {
-    let area = Rect::new(0, 0, 4, 1);
-    let mut buffer = Buffer::with_lines(["rust"]);
-    let before: Vec<_> = area
-        .positions()
-        .map(|p| buffer[p].symbol().to_owned())
-        .collect();
-    let theme = ui::ThemeTokens::glacier_night();
-    let mut fx = page_effect(ShellScreen::Editor, area, theme);
-    fx.process(Duration::from_millis(100), &mut buffer, area);
-    let after: Vec<_> = area
-        .positions()
-        .map(|p| buffer[p].symbol().to_owned())
-        .collect();
-    assert_eq!(before, after);
+fn pages_enter_from_the_right_and_return_in_reverse() {
+    let area = Rect::new(2, 1, 12, 4);
+    let bounds = Rect::new(0, 0, 16, 6);
+    let old = Buffer::filled(bounds, Cell::new("O"));
+    let old = BaseFrameSnapshot {
+        screen: ShellScreen::Home,
+        bounds,
+        cells: snapshot_normal_cells(&old, bounds).unwrap().cells,
+    };
+    for returning in [false, true] {
+        let mut effect = page_effect(area, Some(old.clone()), returning);
+        let natural = Buffer::filled(bounds, Cell::new("N"));
+        let mut frame = natural.clone();
+        effect.process(Duration::ZERO, &mut frame, bounds);
+        assert_eq!(frame[(2, 1)].symbol(), "O");
+        frame = natural.clone();
+        effect.process(Duration::from_millis(70), &mut frame, bounds);
+        assert_eq!(frame[(2, 1)].symbol(), if returning { "N" } else { "O" });
+        assert_eq!(frame[(13, 1)].symbol(), if returning { "O" } else { "N" });
+        assert_eq!(frame[(0, 0)].symbol(), "N");
+        frame = natural.clone();
+        effect.process(Duration::from_secs(1), &mut frame, bounds);
+        assert_eq!(frame, natural);
+    }
 }
 
 #[test]
-fn page_and_dialog_recipes_animate_their_surface_borders() {
-    fn bordered_buffer(area: Rect, border: ratatui::style::Color) -> Buffer {
-        let mut buffer = Buffer::empty(area);
-        for position in area.positions() {
-            if position.x == area.x
-                || position.x == area.right().saturating_sub(1)
-                || position.y == area.y
-                || position.y == area.bottom().saturating_sub(1)
-            {
-                buffer[position].set_symbol("─").set_fg(border);
-            }
-        }
-        buffer
-    }
-
+fn dialogs_grow_from_center_without_recoloring_text() {
     let area = Rect::new(0, 0, 12, 6);
     let theme = ui::ThemeTokens::glacier_night();
-    for mut effect in [
-        page_effect(ShellScreen::Home, area, theme),
-        overlay_enter_effect(ui::MotionOverlayKind::Dialog, area, theme),
-    ] {
-        let mut buffer = bordered_buffer(area, theme.border);
-        effect.process(Duration::from_millis(60), &mut buffer, area);
-        assert!(area.positions().any(|position| {
-            let outer = position.x == area.x
-                || position.x == area.right().saturating_sub(1)
-                || position.y == area.y
-                || position.y == area.bottom().saturating_sub(1);
-            outer && buffer[position].fg != theme.border
-        }));
-        assert!(
-            area.positions()
-                .filter(|position| {
-                    position.x == area.x
-                        || position.x == area.right().saturating_sub(1)
-                        || position.y == area.y
-                        || position.y == area.bottom().saturating_sub(1)
-                })
-                .all(|position| buffer[position].symbol() == "─")
-        );
-    }
+    let base = Buffer::filled(area, Cell::new("B"));
+    let base = BaseFrameSnapshot {
+        screen: ShellScreen::Home,
+        bounds: area,
+        cells: snapshot_normal_cells(&base, area).unwrap().cells,
+    };
+    let mut effect = overlay_enter_effect(
+        ui::MotionOverlayKind::Dialog,
+        area,
+        theme,
+        ui::RevealOrigin::Center,
+        Arc::new(Mutex::new(Some(base))),
+    );
+    let natural = Buffer::filled(area, Cell::new("D").set_fg(theme.text).clone());
+    let mut frame = natural.clone();
+    effect.process(Duration::ZERO, &mut frame, area);
+    assert!(
+        area.positions()
+            .all(|position| frame[position].symbol() == "B")
+    );
+    frame = natural.clone();
+    effect.process(Duration::from_millis(60), &mut frame, area);
+    assert_eq!(frame[(6, 3)].symbol(), "D");
+    assert_eq!(frame[(0, 0)].symbol(), "B");
+    assert_eq!(frame[(6, 3)].fg, theme.text);
+    frame = natural.clone();
+    effect.process(Duration::from_secs(1), &mut frame, area);
+    assert_eq!(frame, natural);
 }
 
 #[test]
@@ -278,10 +275,7 @@ fn exit_confirmation_preempts_underlying_page_motion() {
     motion.update(&state, full, full, None, theme, false);
     let mut initial = Buffer::empty(full);
     motion.test_frame(Duration::ZERO, &mut initial, &state);
-    motion.schedule(
-        MotionEffectId::Page,
-        page_effect(ShellScreen::Home, main, theme),
-    );
+    motion.schedule(MotionEffectId::Page, page_effect(main, None, false));
     motion.test_frame(Duration::ZERO, &mut initial, &state);
 
     state.apply_input_with_platform(
@@ -290,7 +284,7 @@ fn exit_confirmation_preempts_underlying_page_motion() {
     );
     assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
     motion.update(&state, full, full, None, theme, false);
-    assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(180));
 
     let corner = Position::new(main.x, main.y);
     let exit_area = overlay_area(&state).expect("exit confirmation area");
@@ -358,7 +352,7 @@ fn reduced_motion_cancels_effects_and_flushes_pending_close() {
         overlay: Some(overlay.clone()),
         deferred_close: Some(DeferredClose { routed, overlay }),
         exiting: true,
-        overlay_gate: Duration::from_millis(80),
+        overlay_gate: Duration::from_millis(160),
         ..ShellMotionEffects::default()
     };
     motion.clear();
@@ -535,7 +529,7 @@ fn resize_bypasses_exit_gate_and_flushes_original_route_once() {
             overlay,
         }),
         exiting: true,
-        overlay_gate: Duration::from_millis(90),
+        overlay_gate: Duration::from_millis(180),
         ..ShellMotionEffects::default()
     };
     assert_eq!(
@@ -775,7 +769,7 @@ fn completed_notification_exit_schedules_promoted_notification_enter() {
 
     motion.update(&state, full, full, None, theme, false);
     assert!(motion.manager.is_running());
-    assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(180));
     assert!(motion.completed_exit.is_none());
     let activate = state
         .clone()
@@ -787,7 +781,7 @@ fn completed_notification_exit_schedules_promoted_notification_enter() {
     let mut second_frame = Buffer::filled(full, Cell::new("B"));
     motion.test_frame(Duration::from_secs(1), &mut second_frame, &state);
     assert!(motion.manager.is_running());
-    assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(180));
     assert!(motion.take_deferred_close(&state).is_none());
 }
 
@@ -830,14 +824,14 @@ fn asynchronous_overlay_preserves_remaining_visual_outgoing() {
         Duration::from_millis(120)
     );
     assert_eq!(motion.outgoing_block_remaining, Duration::from_millis(120));
-    assert_eq!(motion.overlay_gate, Duration::from_millis(210));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(300));
     motion.test_frame(Duration::from_secs(1), &mut buffer, &state);
     assert_eq!(motion.outgoing_block_remaining, Duration::from_millis(120));
     motion.test_frame(Duration::from_millis(120), &mut buffer, &state);
     assert!(motion.active_visual_outgoing.is_none());
     assert_eq!(motion.outgoing_block_remaining, Duration::ZERO);
     assert!(motion.manager.is_running());
-    assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(180));
 }
 
 #[test]
@@ -897,7 +891,7 @@ fn generic_context_popup_is_motion_neutral_but_explorer_overlay_is_not() {
     assert_eq!(overlay_area(&state), Some(expected));
     motion.update(&state, full, full, None, theme, false);
     assert!(motion.manager.is_running());
-    assert_eq!(motion.overlay_gate, Duration::from_millis(80));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(160));
 }
 
 #[test]
@@ -1053,32 +1047,6 @@ fn dialog_and_popover_snapshot_exits_are_spatial_single_stage_and_end_natural() 
 }
 
 #[test]
-fn radial_preference_preview_has_center_weight_and_finishes_natural() {
-    let area = Rect::new(0, 0, 15, 9);
-    let theme = ui::ThemeTokens::glacier_night();
-    let mut natural = Buffer::filled(area, Cell::new("T"));
-    natural.set_style(area, Style::default().fg(ratatui::style::Color::White));
-
-    let mut start = natural.clone();
-    preference_preview_effect(area, theme).process(Duration::ZERO, &mut start, area);
-    let mut mid = natural.clone();
-    preference_preview_effect(area, theme).process(
-        Duration::from_millis(u64::from(PREVIEW_MS / 2)),
-        &mut mid,
-        area,
-    );
-    let mut end = natural.clone();
-    preference_preview_effect(area, theme).process(
-        Duration::from_millis(u64::from(PREVIEW_MS)),
-        &mut end,
-        area,
-    );
-    assert_ne!(start, natural);
-    assert_ne!(mid[(7, 4)], mid[(7, 0)]);
-    assert_eq!(end, natural);
-}
-
-#[test]
 fn newly_scheduled_effects_ignore_idle_delta_then_advance_normally() {
     let state = ShellSession::new(ShellLaunchConfig::default(), (40, 12));
     let area = Rect::new(0, 0, 40, 12);
@@ -1094,10 +1062,10 @@ fn newly_scheduled_effects_ignore_idle_delta_then_advance_normally() {
         .with_area(area),
     );
     motion.schedule(
-        MotionEffectId::Focus,
+        MotionEffectId::Page,
         fx::fade_from_fg(
             ui::ThemeTokens::glacier_night().accent_soft,
-            (FOCUS_MS, Interpolation::Linear),
+            (120, Interpolation::Linear),
         )
         .with_area(area),
     );
@@ -1354,15 +1322,11 @@ fn shared_layout_main_is_used_without_a_second_chrome_inset() {
     motion.update_layout(&state, &layout, theme, false);
     state.set_navigation_path(vec![ShellScreen::Editor]);
     state.refresh_hit_map();
-    motion.focus = None;
+    let old_base = motion.base_snapshot.clone();
     motion.update_layout(&state, &layout, theme, false);
     let mut actual = Buffer::filled(full, Cell::new("X"));
     let mut expected = actual.clone();
-    page_effect(ShellScreen::Editor, layout.main, theme).process(
-        Duration::ZERO,
-        &mut expected,
-        full,
-    );
+    page_effect(layout.main, old_base, false).process(Duration::ZERO, &mut expected, full);
     motion.process(Duration::ZERO, &mut actual, &state);
     assert_eq!(actual, expected);
 }
@@ -1441,7 +1405,7 @@ fn page_overlay_covered_by_shell_modal(
     );
     state.refresh_hit_map();
     motion.update_layout(&state, &layout, theme, false);
-    assert_eq!(motion.overlay_gate, Duration::from_millis(90));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(180));
     assert!(
         motion.active_visual_outgoing.is_none(),
         "covering does not close the page overlay"
@@ -1503,7 +1467,7 @@ fn new_page_overlay_after_shell_close_still_enters() {
     state.pages.editor.editor_open_menu = Some(ui::EditorMenu::Edit);
     state.refresh_hit_map();
     motion.update_layout(&state, &layout, ui::ThemeTokens::glacier_night(), false);
-    assert_eq!(motion.overlay_gate, Duration::from_millis(260));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(340));
     assert!(motion.active_visual_outgoing.is_some());
 }
 
@@ -1520,18 +1484,14 @@ fn changing_pages_cancels_old_outgoing_cells_but_keeps_new_page_entry() {
     state.pages.clock.clock_create_state = None;
     state.set_navigation_path(vec![ShellScreen::Editor]);
     state.refresh_hit_map();
-    motion.focus = None;
+    let old_base = motion.base_snapshot.clone();
     motion.update_layout(&state, &layout, theme, false);
     assert!(motion.active_visual_outgoing.is_none());
     assert!(motion.base_snapshot.is_none());
     assert!(motion.overlay_snapshot.is_none());
     let mut actual = Buffer::filled(layout.bounds, Cell::new("N"));
     let mut expected = actual.clone();
-    page_effect(ShellScreen::Editor, layout.main, theme).process(
-        Duration::ZERO,
-        &mut expected,
-        layout.bounds,
-    );
+    page_effect(layout.main, old_base, false).process(Duration::ZERO, &mut expected, layout.bounds);
     motion.process(Duration::ZERO, &mut actual, &state);
     assert_eq!(actual, expected);
 }

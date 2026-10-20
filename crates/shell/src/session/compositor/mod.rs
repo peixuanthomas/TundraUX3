@@ -120,7 +120,7 @@ impl ScreenCompositor {
         let context = page.content().render_context(&context);
         self.synchronize_appearance(state, &context);
         let chrome = state.to_shell_chrome_view_model();
-        self.synchronize_toast(&chrome, context.motion);
+        self.synchronize_toast(&chrome, state.interaction_motion_frame(context.motion));
         let progress_running = match &mut page {
             ScreenViewModel::Settings(model) => {
                 self.progress.update(Some(model), None, context.motion)
@@ -171,6 +171,7 @@ impl ScreenCompositor {
     ) -> bool {
         let bounds = frame.area();
         if state.terminal_size != (bounds.width, bounds.height) {
+            state.details_motion = None;
             state.screen_keyboard.pressed = None;
             state.screen_keyboard.physical.clear();
         }
@@ -178,6 +179,7 @@ impl ScreenCompositor {
         state.sync_input_keyboard();
         let previous_keyboard = state.input_keyboard_layout().keyboard;
         let keyboard_animating = state.advance_input_keyboard(prepared.context.motion);
+        let details_animating = state.advance_management_details(prepared.context.motion);
         if self.keyboard_open != state.input_keyboard_open() {
             self.keyboard_open = state.input_keyboard_open();
             self.motion.cancel_for_bounds_change();
@@ -186,6 +188,7 @@ impl ScreenCompositor {
             self.motion.cancel_for_bounds_change();
         }
         let mut frame_context = prepared.context.clone();
+        frame_context.motion = state.interaction_motion_frame(frame_context.motion);
         let hovered = state
             .interaction
             .hover_position()
@@ -221,7 +224,11 @@ impl ScreenCompositor {
         self.motion
             .update_layout(state, &layout, context.theme, context.motion.reduced_motion);
         ui::components::Surface::new().render_frame(frame, bounds, context);
-        let content = prepared.page.content();
+        let management = matches!(prepared.page, ScreenViewModel::Management(_))
+            .then(|| state.to_management_view_model());
+        let content = management
+            .as_ref()
+            .map_or_else(|| prepared.page.content(), ui::ScreenContent::Management);
         let visible_content = !layout.is_compact() || content.renders_in_compact();
         let icons = icons.filter(|_| state.graphical_icons_enabled());
         if visible_content {
@@ -301,6 +308,7 @@ impl ScreenCompositor {
         state.button_regions = buttons.regions();
         prepared.progress_running
             || keyboard_animating
+            || details_animating
             || self.motion.is_running()
             || self
                 .toast
@@ -358,7 +366,9 @@ impl ScreenCompositor {
             state,
             &state.input_keyboard_content_layout(layout),
             context.theme,
-            context.motion.reduced_motion,
+            state
+                .interaction_motion_frame(context.motion)
+                .reduced_motion,
         );
     }
     pub(super) fn cancel_for_suspend(&mut self, state: &ShellSession) -> Option<RoutedEvent> {
@@ -369,6 +379,31 @@ impl ScreenCompositor {
     }
     pub(super) fn take_deferred_close(&mut self, state: &ShellSession) -> Option<RoutedEvent> {
         self.motion.take_deferred_close(state)
+    }
+    pub(super) fn prepare_input(
+        &mut self,
+        state: &mut ShellSession,
+        input: InputEvent,
+        platform: &dyn Platform,
+        received_at: Instant,
+    ) -> Option<InputEvent> {
+        if matches!(
+            input,
+            InputEvent::Key(_) | InputEvent::Paste(_) | InputEvent::FocusLost
+        ) {
+            if let Some(close) = self.motion.cancel_for_suspend(state) {
+                state.apply_routed_event(close, platform, received_at);
+            }
+            self.motion.remember(
+                state,
+                Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1),
+            );
+        }
+        // AA consumes pointer events before ordinary routing, so gate them here.
+        if input.is_mouse() && self.motion.blocks_before_route(&input) {
+            return None;
+        }
+        state.prepare_input(input, platform, received_at)
     }
     pub(super) fn dispatch_input(
         &mut self,

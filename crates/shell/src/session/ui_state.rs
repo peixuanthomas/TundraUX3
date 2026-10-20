@@ -580,6 +580,7 @@ pub struct UiSessionState {
 
     pub(super) auto_admin: AutoAdminState,
     pub(super) screen_keyboard: super::screen_keyboard::InputKeyboard,
+    pub(super) details_motion: Option<(PageInstanceId, ui::PanelMotion)>,
     #[cfg(target_os = "linux")]
     pub(super) privilege_session: super::controller::privilege_session::PrivilegeSession,
     pub(super) detached_management_operations: Vec<DetachedManagementOperation>,

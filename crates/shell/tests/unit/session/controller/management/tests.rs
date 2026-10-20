@@ -4,14 +4,37 @@ use super::*;
 mod package_workspace;
 
 #[test]
-fn management_details_expand_animates_without_requery_and_respects_reduced_motion() {
+fn mouse_movement_before_redraw_does_not_animate_keyboard_details() {
+    let mut session = shortcut_action_state(ManagementKind::Services, "inspect");
+    session
+        .pages
+        .management
+        .management_state
+        .snapshot
+        .details_complete = true;
+    session.apply_input(InputEvent::mouse_moved((0, 0)));
+    session.advance_management_details(ui::MotionFrame::default());
+    session.apply_input(InputEvent::key(InputKey::F(4)));
+    assert!(session.to_management_view_model().details_only);
+    session.apply_input(InputEvent::mouse_moved((1, 0)));
+    assert!(!session.advance_management_details(ui::MotionFrame::default()));
+    let layout = ui::management_layout(
+        session.management_main(),
+        &session.to_management_view_model(),
+    );
+    assert!(layout.list.is_empty());
+}
+
+#[test]
+fn management_details_only_animate_pointer_actions_without_requery() {
     for kind in [
         ManagementKind::Services,
         ManagementKind::Packages,
         ManagementKind::Disks,
     ] {
-        for reduced in [false, true] {
+        for (pointer, reduced) in [(false, false), (true, false), (true, true)] {
             let mut session = shortcut_action_state(kind, "inspect");
+            session.interaction.pointer_motion = pointer;
             session
                 .pages
                 .management
@@ -20,12 +43,15 @@ fn management_details_expand_animates_without_requery_and_respects_reduced_motio
                 .details_complete = true;
             session.pages.management.management_state.snapshot.details =
                 vec![("Name".into(), "Selected".into())];
-            let context = ui::RenderContext::default();
-            let bounds = Rect::new(0, 0, 120, 40);
-            let layout = ui::ShellFrameLayout::new(bounds, None, &context);
-            let mut motion = crate::session::motion_effects::ShellMotionEffects::default();
-            motion.update_layout(&session, &layout, context.theme, reduced);
-            assert!(!motion.is_running());
+            let mut frame = ui::MotionFrame {
+                reduced_motion: reduced,
+                ..Default::default()
+            };
+            session.advance_management_details(frame);
+            let original = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            );
             session.handle_management_key(&KeyInput::new(InputKey::F(4)));
             assert!(session.to_management_view_model().details_only);
             assert!(
@@ -36,19 +62,37 @@ fn management_details_expand_animates_without_requery_and_respects_reduced_motio
                     .query_job
                     .is_none()
             );
-            motion.update_layout(&session, &layout, context.theme, reduced);
-            assert_eq!(motion.is_running(), !reduced);
-            let mut cell = ratatui::buffer::Cell::new("X");
-            cell.set_fg(context.theme.text)
-                .set_bg(context.theme.surface);
-            let final_frame = ratatui::buffer::Buffer::filled(bounds, cell);
-            let mut buffer = final_frame.clone();
-            motion.process(Duration::ZERO, &mut buffer, &session);
-            assert_eq!(buffer == final_frame, reduced);
-            buffer = final_frame.clone();
-            motion.process(Duration::from_secs(1), &mut buffer, &session);
-            assert!(!motion.is_running());
-            assert_eq!(buffer, final_frame);
+            assert_eq!(
+                session.advance_management_details(frame),
+                pointer && !reduced
+            );
+            frame.now = Duration::from_millis(60);
+            session.advance_management_details(frame);
+            let mid = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            );
+            if pointer && !reduced {
+                assert!(mid.details.x < original.details.x);
+                assert!(mid.list.width > 0 && mid.list.width < original.list.width);
+            } else {
+                assert!(mid.list.is_empty());
+            }
+            frame.now = Duration::from_secs(1);
+            assert!(!session.advance_management_details(frame));
+            let end = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            );
+            assert!(end.list.is_empty());
+            assert!(
+                session
+                    .pages
+                    .management
+                    .management_state
+                    .query_job
+                    .is_none()
+            );
         }
     }
 }

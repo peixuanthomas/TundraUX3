@@ -256,6 +256,18 @@ def painted_label_position(data: bytes, label: str, columns: int, rows: int, fir
     raise SystemExit(f"Button {label!r} was not painted:\n" + "\n".join(screen))
 
 
+def wait_for_painted_text(fd, output, label, child, present=True, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    columns, rows = os.get_terminal_size(fd)
+    while True:
+        visible = any(label in line for line in painted_screen_lines(output, columns, rows))
+        if visible == present:
+            return True
+        if child.poll() is not None or time.monotonic() >= deadline:
+            return False
+        read_available(fd, output, 0.1)
+
+
 def check_management_menu(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
     """Exercise the real Network UI without submitting any system operation."""
     interfaces = json.loads(subprocess.check_output(["ip", "-j", "address", "show"]))
@@ -556,7 +568,7 @@ def check_permission_draft(master, slave, output, child, path):
     screen_after(b"\r")
     offset = len(output)
     os.write(master, b"\x1b")
-    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+    if not wait_for_painted_text(master, output, "Quick access", child):
         raise SystemExit("discarded permission draft did not return to Explorer")
     current = path.stat()
     if (current.st_mode, current.st_uid, current.st_gid, current.st_ctime_ns) != (
@@ -607,13 +619,13 @@ def check_editor_resize(master, slave, output, child, isolated):
 
     offset = len(output)
     os.write(master, b"e")
-    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+    if not wait_for_painted_text(master, output, "Quick access", child):
         raise SystemExit("Explorer did not open for the resize regression")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("Explorer did not settle before the resize regression")
     offset = len(output)
     os.write(master, b"\x0c")
-    if not wait_for_output(master, output, b"Absolute path", child, 5.0, offset, ignore_spaces=True):
+    if not wait_for_painted_text(master, output, "Absolute path", child):
         raise SystemExit("Explorer address input did not open for the resize regression")
     os.write(master, b"\x01\x1b[200~" + str(directory).encode() + b"\x1b[201~\r")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -691,7 +703,7 @@ def check_editor_resize(master, slave, output, child, isolated):
         raise SystemExit("Editor did not settle after saving the preserved edit")
     offset = len(output)
     os.write(master, b"\x1b")
-    if not wait_for_output(master, output, b"Quick access", child, 5.0, offset):
+    if not wait_for_painted_text(master, output, "Quick access", child):
         raise SystemExit("saved Editor did not return to Explorer")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
         raise SystemExit("Explorer did not settle after the editor save")
@@ -831,7 +843,7 @@ def main() -> int:
                 raise SystemExit("setup page did not settle")
 
         os.write(master, b"\t\t\r")
-        if not wait_for_output(master, output, b"Custom theme color", child, 5.0):
+        if not wait_for_painted_text(master, output, "Custom theme color", child):
             raise SystemExit("Appearance color input did not open")
         os.write(master, b"\x7f" * 32)
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -871,13 +883,11 @@ def main() -> int:
 
         # Cancel the temporary color, then complete the real first-use workflow.
         # Saving a profile is a separate assertion, not an input dispatch timer.
-        cancel_offset = len(output)
         os.write(master, b"\x1b")
-        # A quiet output interval can occur while Escape is being disambiguated
-        # or an overlay is closing. Wait for the underlying control to return
-        # before sending keys which the closing overlay would otherwise block.
-        if not wait_for_output(
-            master, output, b"Use a custom theme color...", child, 5.0, cancel_offset
+        # Instant transitions can reuse title cells instead of re-emitting a line.
+        # Check the painted dialog rather than requiring contiguous output bytes.
+        if not wait_for_painted_text(
+            master, output, "Custom theme color", child, present=False
         ):
             raise SystemExit("Appearance color input did not return to its control")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -972,7 +982,7 @@ def main() -> int:
         # name: this entry sets the child cwd rather than typing a cd command.
         explorer_offset = len(output)
         os.write(master, b"e")
-        if not wait_for_output(master, output, b"Quick access", child, 5.0, explorer_offset):
+        if not wait_for_painted_text(master, output, "Quick access", child):
             raise SystemExit("Explorer did not open before terminal directory verification")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Explorer did not settle before editing its directory")
@@ -985,7 +995,7 @@ def main() -> int:
             raise SystemExit("Explorer did not settle at the requested directory")
         menu_offset = len(output)
         os.write(master, b"\x1b[<2;80;20M")
-        if not wait_for_output(master, output, b"Open Terminal Here", child, 5.0, menu_offset):
+        if not wait_for_painted_text(master, output, "Open Terminal Here", child):
             raise SystemExit("Explorer blank-space menu did not offer Open Terminal Here:\n" + output_diagnostic(output[menu_offset:]))
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Explorer context menu did not settle")
@@ -1011,7 +1021,7 @@ def main() -> int:
             raise SystemExit("Explorer terminal child had the wrong working directory:\n" + output_diagnostic(output[cwd_offset:]))
         explorer_offset = len(output)
         os.write(master, b"exit\r")
-        if not wait_for_output(master, output, b"Quick access", child, 5.0, explorer_offset):
+        if not wait_for_painted_text(master, output, "Quick access", child):
             raise SystemExit("Explorer terminal did not return to Explorer")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Explorer did not settle after terminal exit")
@@ -1029,7 +1039,7 @@ def main() -> int:
         for report in (b"\x1b[<35;45;12M", b"\x1b[<35;90;22M"):
             explorer_offset = len(output)
             os.write(master, b"e")
-            if not wait_for_output(master, output, b"Quick access", child, 5.0, explorer_offset):
+            if not wait_for_painted_text(master, output, "Quick access", child):
                 raise SystemExit("Explorer did not open before Escape/mouse regression")
             if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
                 raise SystemExit("Explorer did not settle")
@@ -1080,19 +1090,19 @@ def main() -> int:
         read_available(master, output, 0.2)
         os.write(master, b"\x1b[<0;137;2M")
         read_available(master, output, 0.2)
-        if b"Exit TundraUX" in output[pointer_offset:]:
+        if not wait_for_painted_text(master, output, "Exit TundraUX", child, present=False, timeout=0):
             raise SystemExit("Back activated on mouse-down instead of release")
         os.write(master, b"\x1b[<32;1;4M\x1b[<0;1;4m")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("drag cancellation did not settle")
-        if b"Exit TundraUX" in output[pointer_offset:]:
+        if not wait_for_painted_text(master, output, "Exit TundraUX", child, present=False, timeout=0):
             raise SystemExit("dragging out of Back activated it")
         os.write(master, b"\x1b[<0;137;2M")
         read_available(master, output, 0.2)
-        if b"Exit TundraUX" in output[pointer_offset:]:
+        if not wait_for_painted_text(master, output, "Exit TundraUX", child, present=False, timeout=0):
             raise SystemExit("second press activated Back before release")
         os.write(master, b"\x1b[<0;137;2m")
-        if not wait_for_output(master, output, b"Exit TundraUX", child, 5.0, pointer_offset):
+        if not wait_for_painted_text(master, output, "Exit TundraUX", child):
             raise SystemExit("releasing Back did not open the power dialog")
 
         if CHECK_CRASH_SCREEN:

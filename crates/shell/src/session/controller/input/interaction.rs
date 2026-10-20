@@ -22,6 +22,7 @@ pub(in crate::session) struct ButtonPointerCapture {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(in crate::session) struct InteractionState {
+    pub pointer_motion: bool,
     mode: InputMode,
     hover_suppressed: bool,
     opening_key: Option<InputKey>,

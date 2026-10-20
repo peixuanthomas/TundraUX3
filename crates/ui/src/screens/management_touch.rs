@@ -79,6 +79,7 @@ pub struct ManagementViewModel {
     pub details_scroll: u16,
     pub details_horizontal_scroll: u16,
     pub details_only: bool,
+    pub details_expansion: Option<u16>,
     pub actions: Vec<(String, bool)>,
     pub action_help: Vec<String>,
     pub selected_action: usize,
@@ -814,11 +815,8 @@ fn management_content_layout(
         })
     };
     let (mut list, mut details) = if model.workspace.is_some() {
-        crate::components::SidebarWorkspaceLayout::panes(
-            content,
-            model.details_only || compact_actions,
-        )
-    } else if model.details_only || compact_actions {
+        crate::components::SidebarWorkspaceLayout::panes(content, compact_actions)
+    } else if compact_actions {
         (Rect::default(), content)
     } else if main.width >= 90 {
         let left = content.width * 58 / 100;
@@ -849,6 +847,15 @@ fn management_content_layout(
             ),
         )
     };
+    if !compact_actions {
+        (list, details) = crate::expand_trailing_pane(
+            list,
+            details,
+            model
+                .details_expansion
+                .unwrap_or(if model.details_only { 1_000 } else { 0 }),
+        );
+    }
     list.height = list.height.saturating_sub(workspace_footer);
     let mut detail_actions_panel = Rect::default();
     if let Some(start) = detail_start.filter(|_| !model.terminal) {

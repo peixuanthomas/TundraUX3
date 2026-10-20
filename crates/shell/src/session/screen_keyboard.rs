@@ -15,9 +15,7 @@ pub(super) struct InputKeyboard {
     owner: Option<KeyboardOwner>,
     pub open: bool,
     pub visibility: u16,
-    motion: ui::FrostMotion,
-    motion_start: u16,
-    motion_target: u16,
+    motion: ui::PanelMotion,
     pub modifiers: ScreenKeyboardModifiers,
     pub physical: PhysicalKeyboard,
     pub pressed: Option<(ui::components::ButtonRegion, Instant)>,
@@ -27,29 +25,18 @@ impl ShellSession {
     /// Advance once per rendered frame. Input uses the last painted geometry.
     pub(super) fn advance_input_keyboard(&mut self, frame: ui::MotionFrame) -> bool {
         let target = if self.input_keyboard_open() { 1_000 } else { 0 };
+        let frame = self.interaction_motion_frame(frame);
         let keyboard = &mut self.screen_keyboard;
-        if keyboard.motion_target != target {
-            keyboard.motion_start = keyboard.visibility;
-            keyboard.motion_target = target;
-            keyboard.motion.begin(frame, ui::MotionTimings::PAGE);
-        }
-        let progress = i32::from(keyboard.motion.progress(frame, true));
-        let visibility = if frame.reduced_motion {
-            keyboard.motion.cancel();
-            keyboard.motion_start = target;
-            target
-        } else {
-            (i32::from(keyboard.motion_start)
-                + (i32::from(target) - i32::from(keyboard.motion_start)) * progress / 1_000)
-                as u16
-        };
+        let animating = keyboard
+            .motion
+            .update(target, frame, ui::MotionTimings::PAGE);
+        let visibility = keyboard.motion.value();
         let moved = keyboard.visibility != visibility;
         if moved {
             // A moving key must not finish a press at its former position.
             keyboard.pressed = None;
         }
         keyboard.visibility = visibility;
-        let animating = keyboard.motion.requests_redraw(frame);
         if moved {
             self.cancel_auto_admin_pointer();
             self.cancel_management_pointer_gesture();
