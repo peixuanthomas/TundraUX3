@@ -1,12 +1,12 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph};
 
 use super::{
-    ExplorerConflictChoice, ExplorerDialogViewModel, ExplorerEntryViewModel, ExplorerLayout,
-    ExplorerOverlayControl, ExplorerOverlayLayout, ExplorerOverlayViewModel,
-    ExplorerSearchViewModel, ExplorerSortColumn, ExplorerViewModel, explorer_layout,
+    ExplorerConflictChoice, ExplorerEntryViewModel, ExplorerLayout, ExplorerOverlayControl,
+    ExplorerOverlayLayout, ExplorerOverlayViewModel, ExplorerSearchViewModel, ExplorerSortColumn,
+    ExplorerViewModel, explorer_layout,
 };
 use crate::components::{
     Button, ComponentTone, DataTable, List, ListItem, Panel, Scrollbar, Surface, TextInput,
@@ -476,26 +476,22 @@ pub fn render_explorer_overlay(
     theme: &TundraTheme,
 ) {
     let layout = explorer_layout(area, model);
-    let Some(overlay_layout) = layout.overlay.as_ref() else {
+    let (Some(overlay_layout), Some(overlay)) = (layout.overlay.as_ref(), model.overlay.as_ref())
+    else {
         return;
     };
-    let title = match model.overlay.as_ref() {
-        Some(ExplorerOverlayViewModel::ContextMenu(menu)) => menu.title.clone(),
-        Some(ExplorerOverlayViewModel::Name(dialog)) => dialog.title.clone(),
-        Some(ExplorerOverlayViewModel::Options(options)) => options.title.clone(),
-        Some(ExplorerOverlayViewModel::Conflict(conflict)) => conflict.title.clone(),
-        Some(ExplorerOverlayViewModel::Properties(properties)) => properties.title.clone(),
-        None => model
-            .pending_dialog
-            .as_ref()
-            .map(|dialog| dialog.title.clone())
-            .unwrap_or_else(|| i18n::tr!("ui-explorer-explorer")),
+    let title = match overlay {
+        ExplorerOverlayViewModel::ContextMenu(menu) => menu.title.clone(),
+        ExplorerOverlayViewModel::Name(dialog) => dialog.title.clone(),
+        ExplorerOverlayViewModel::Options(options) => options.title.clone(),
+        ExplorerOverlayViewModel::Conflict(conflict) => conflict.title.clone(),
+        ExplorerOverlayViewModel::Properties(properties) => properties.title.clone(),
     };
     frame.render_widget(Clear, overlay_layout.area);
     Panel::new(title).render_frame(frame, overlay_layout.area, context);
 
-    match model.overlay.as_ref() {
-        Some(ExplorerOverlayViewModel::ContextMenu(menu)) => {
+    match overlay {
+        ExplorerOverlayViewModel::ContextMenu(menu) => {
             let rows = overlay_layout
                 .controls
                 .iter()
@@ -549,7 +545,7 @@ pub fn render_explorer_overlay(
                 );
             }
         }
-        Some(ExplorerOverlayViewModel::Name(dialog)) => {
+        ExplorerOverlayViewModel::Name(dialog) => {
             render_explorer_name_dialog(
                 frame,
                 overlay_layout,
@@ -559,7 +555,7 @@ pub fn render_explorer_overlay(
                 theme,
             );
         }
-        Some(ExplorerOverlayViewModel::Options(options)) => {
+        ExplorerOverlayViewModel::Options(options) => {
             for control in &overlay_layout.controls {
                 match control.control {
                     ExplorerOverlayControl::Option(index) => {
@@ -595,7 +591,7 @@ pub fn render_explorer_overlay(
                 }
             }
         }
-        Some(ExplorerOverlayViewModel::Conflict(conflict)) => {
+        ExplorerOverlayViewModel::Conflict(conflict) => {
             render_explorer_conflict_dialog(
                 frame,
                 overlay_layout,
@@ -604,7 +600,7 @@ pub fn render_explorer_overlay(
                 theme,
             );
         }
-        Some(ExplorerOverlayViewModel::Properties(properties)) => {
+        ExplorerOverlayViewModel::Properties(properties) => {
             for (index, property) in properties
                 .properties
                 .iter()
@@ -645,17 +641,6 @@ pub fn render_explorer_overlay(
                         || (control.control == ExplorerOverlayControl::PropertiesClose
                             && model.overlay_selection == 1),
                     control.enabled,
-                    theme,
-                );
-            }
-        }
-        None => {
-            if let Some(dialog) = &model.pending_dialog {
-                render_legacy_explorer_dialog(
-                    frame,
-                    overlay_layout,
-                    dialog,
-                    model.overlay_selection,
                     theme,
                 );
             }
@@ -812,43 +797,6 @@ fn render_explorer_conflict_dialog(
                 button.render_borderless_frame(frame, control.area, theme);
             }
             _ => {}
-        }
-    }
-}
-
-fn render_legacy_explorer_dialog(
-    frame: &mut Frame<'_>,
-    layout: &ExplorerOverlayLayout,
-    dialog: &ExplorerDialogViewModel,
-    selection: usize,
-    theme: &TundraTheme,
-) {
-    frame.render_widget(
-        Paragraph::new(dialog.message.clone())
-            .alignment(HorizontalAlignment::Center)
-            .wrap(Wrap { trim: true }),
-        layout.content,
-    );
-    for control in &layout.controls {
-        let label = match control.control {
-            ExplorerOverlayControl::Confirm => Some(format!("Y {}", dialog.confirm_label)),
-            ExplorerOverlayControl::Cancel => Some(format!("Esc/N {}", dialog.cancel_label)),
-            _ => None,
-        };
-        if let Some(label) = label {
-            render_explorer_button(
-                frame,
-                control.area,
-                match control.control {
-                    ExplorerOverlayControl::Confirm => "explorer.dialog.confirm",
-                    ExplorerOverlayControl::Cancel => "explorer.dialog.cancel",
-                    _ => unreachable!("legacy Explorer dialog has only action controls"),
-                },
-                label,
-                (selection == 0) == (control.control == ExplorerOverlayControl::Confirm),
-                control.enabled,
-                theme,
-            );
         }
     }
 }

@@ -389,7 +389,7 @@ fn explorer_arrow_history_and_toolbar_keys_perform_actions() {
     ));
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
-    assert!(state.to_explorer_view_model().pending_dialog.is_some());
+    assert!(state.to_notification_view_model().is_some());
     assert!(
         folder.join("selected.txt").exists(),
         "delete still requires confirmation"
@@ -1260,24 +1260,35 @@ fn delete_key_moves_selection_to_system_trash() {
     state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
 
     state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
+    let confirmation = state
+        .to_notification_view_model()
+        .expect("delete confirmation");
+    assert!(confirmation.title.contains("Delete"));
+    let (width, height) = state.terminal_size();
+    let ui::ShellLayout::Full { main, .. } =
+        ui::compute_shell_layout(Rect::new(0, 0, width, height))
+    else {
+        panic!("Explorer uses the full shell layout");
+    };
     assert!(
-        state
-            .to_explorer_view_model()
-            .pending_dialog
-            .as_ref()
-            .map(|dialog| dialog.title.as_str())
-            .unwrap_or_default()
-            .contains("Delete")
+        ui::explorer_layout(main, &state.to_explorer_view_model())
+            .overlay
+            .is_none(),
+        "the global delete confirmation must not also render a legacy Explorer dialog"
     );
     state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
 
-    assert!(platform.calls().iter().any(|call| matches!(
-        call,
-        platform::mock::MockCall::MoveToTrash(paths)
-            if paths == &vec![target.clone()]
-    )));
+    let deleted = platform
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            MockCall::MoveToTrash(paths) => Some(paths),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(deleted, vec![vec![target.clone()]]);
     let explorer = state.to_explorer_view_model();
-    assert!(explorer.pending_dialog.is_none());
+    assert!(state.to_notification_view_model().is_none());
     assert!(explorer.operation.is_none());
     assert!(
         target.exists(),
@@ -1308,7 +1319,7 @@ fn failed_system_trash_delete_reports_a_stable_operation_error() {
     state.apply_input_with_platform(InputEvent::from_key_label("y"), &platform);
     drive_explorer_tasks_until(&mut state, &platform, |state| {
         let explorer = state.to_explorer_view_model();
-        explorer.pending_dialog.is_none()
+        state.to_notification_view_model().is_none()
             && explorer.operation.is_none()
             && explorer.error.as_deref().is_some_and(|error| {
                 error.contains("failed") || error.contains("error") || error.contains("missing")
@@ -1575,8 +1586,10 @@ fn batch_copy_cut_paste_and_delete_use_the_selected_files() {
     }
     state.apply_input_with_platform(ctrl_key('a'), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
-    assert!(state.to_explorer_view_model().pending_dialog.is_some());
+    assert!(state.to_notification_view_model().is_some());
     state.apply_input_with_platform(InputEvent::from_key_label("n"), &platform);
+    assert!(state.to_notification_view_model().is_none());
+    assert!(state.to_explorer_view_model().overlay.is_none());
     assert!(
         !platform
             .calls()
@@ -1788,7 +1801,7 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
             matches!(model.overlay, Some(ui::ExplorerOverlayViewModel::Name(dialog))
             if dialog.value == format!("{initial}cCxXvVdDntro"))
         );
-        assert!(model.pending_dialog.is_none());
+        assert!(state.to_notification_view_model().is_none());
         assert!(model.operation.is_none());
         state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     }
@@ -1797,7 +1810,7 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
     let model = state.to_explorer_view_model();
     assert_eq!(model.search.unwrap().query, "cxvd");
     assert_eq!(model.entries.len(), 1);
-    assert!(model.pending_dialog.is_none());
+    assert!(state.to_notification_view_model().is_none());
     assert!(model.operation.is_none());
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     state.apply_input_with_platform(ctrl_key('l'), &platform);
@@ -1808,7 +1821,7 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
         model.address_value,
         format!("{}cCxXvVdDntro", documents.display())
     );
-    assert!(model.pending_dialog.is_none());
+    assert!(state.to_notification_view_model().is_none());
     assert!(model.operation.is_none());
     assert!(!model.entry_presentations.iter().any(|entry| entry.cut));
     assert!(!state.shutdown_requested());
@@ -1879,7 +1892,10 @@ fn drive_explorer_tasks_until(
     let explorer = state.to_explorer_view_model();
     panic!(
         "Explorer background task did not finish in time: operation={:?}, dialog={:?}, error={:?}, message={:?}",
-        explorer.operation, explorer.pending_dialog, explorer.error, explorer.message
+        explorer.operation,
+        state.to_notification_view_model(),
+        explorer.error,
+        explorer.message
     );
 }
 
