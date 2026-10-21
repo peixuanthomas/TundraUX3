@@ -1359,6 +1359,41 @@ fn failed_system_trash_delete_reports_a_stable_operation_error() {
 }
 
 #[test]
+fn explorer_error_details_remain_in_status_after_selection_changes() {
+    let fixture = FixtureRoot::new("error-status-details");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    for key in ["e", "v"] {
+        state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+    }
+    let error = state.to_explorer_view_model().error.unwrap();
+    assert!(error.contains("clipboard is empty"));
+    assert!(
+        state
+            .to_shell_chrome_view_model()
+            .status
+            .full_message()
+            .contains(&error)
+    );
+
+    for input in [
+        InputEvent::Tick,
+        InputEvent::from_key_label("Down"),
+        InputEvent::Tick,
+    ] {
+        state.apply_input_with_platform(input, &platform);
+        let status = state.to_shell_chrome_view_model().status.full_message();
+        assert!(status.contains(&error), "error was replaced by {status:?}");
+    }
+
+    state.apply_input_with_platform(InputEvent::from_key_label("h"), &platform);
+    let recovered = state.to_shell_chrome_view_model().status;
+    assert!(recovered.error.is_none());
+    assert!(!recovered.full_message().contains(&error));
+}
+
+#[test]
 fn explorer_alert_resolves_after_success_and_close_without_clearing_unrelated_alert() {
     let fixture = FixtureRoot::new("alert-lifecycle");
     let platform = mock_platform(fixture.path());

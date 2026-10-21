@@ -521,10 +521,8 @@ impl ShellSession {
             .unwrap_or((None, None, None, None));
         if let Some(error) = explorer_error {
             self.pages.common.error_message = Some(error.clone());
+            self.notify_status(error.clone());
             self.notify_page_alert_with_key(EXPLORER_ALERT_KEY, error, ui::NotificationTone::Error);
-            self.notify_status(i18n::LocalizedText::from(i18n::msg!(
-                "shell-explorer-error"
-            )));
         } else {
             self.pages.common.error_message = None;
             self.resolve_explorer_alert();
