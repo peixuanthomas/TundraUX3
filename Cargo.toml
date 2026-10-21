@@ -21,7 +21,7 @@ resolver = "3"
 exclude = ["third_party/crossterm", "third_party/lsh"]
 
 [workspace.package]
-version = "1.3.4"
+version = "1.4.0"
 edition = "2024"
 rust-version = "1.95"
 license = "GPL-3.0-only"

@@ -32,7 +32,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 - **管理端口和登录：**查看监听端口及所属进程，管理 UFW/firewalld 放行规则，修改 SSH 设置后在新连接中确认保留。
 - **管理定时任务：**查看 systemd 和 cron 任务，创建、暂停、恢复和立即执行任务，查看上次结果与下次时间。
 - **查看和恢复配置：**按操作查看原件、时间和差异，恢复配置、账户和用户组；密码以受保护的哈希保存，不在界面展示。
-- **处理文件：**浏览目录、执行文件操作、编辑纯文本，也可以编辑 Markdown 源文。
+- **处理文件：**浏览目录并执行文件操作；编辑器提供语法着色、查找与替换、软换行和 JSON 格式化，可选用已保存的 Vim 快捷键（F8），并默认打开 106 种源码和配置后缀。
 - **打开工具：**通过应用启动器打开工具，需要命令时使用内置命令行。
 - **了解系统运行情况：**查看系统状态、资源使用、日志、通知和诊断信息。
 - **调整使用体验：**选择英文或简体中文、调整外观，以及使用时钟和天气应用。
@@ -111,6 +111,7 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 
 - [English README](../README.md)
 - [技术文档](README-TECHNICAL.md)：架构、构建、测试和打包。
+- [源码编辑器](source-editor.md)：查找、替换、软换行、JSON 格式化和支持的文本格式。
 - [Linux 系统管理](../crates/platform/docs/linux-management.md)：服务、进程、软件包、网络和磁盘。
 - [正式运维 CLI](../crates/cli/docs/operations.md)：脚本命令、授权、任务编号和退出码。
 - [系统配置编辑器](../crates/platform/docs/system-config.md)与[用户管理](../crates/platform/docs/user-management.md)。

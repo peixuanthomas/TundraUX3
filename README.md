@@ -28,7 +28,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Set up Linux:** the clock follows system time and timezone, including existing installations. Change timezone with the map in Region & Time, and manage system automatic synchronization and timesyncd/chrony servers there. Operating System Settings contains the host name.
 - **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.
 - **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.
-- **Work with files:** browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with optional Vim-style keys (F8; the choice is saved). All source and configuration suffixes supported by syntax highlighting open in the editor by default. File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
+- **Work with files:** browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with syntax highlighting, search and replace, soft wrap, JSON formatting, and optional saved Vim-style keys (F8). The editor opens 106 source and configuration suffixes by default. File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
 - **Manage Linux file access:** edit permissions and ownership for selected files, with separate file/directory permissions and a reviewed recursive range. Toggle permission boxes with Space or Enter.
 - **Open tools:** use the application launcher and built-in command line when a task calls for commands. Move between launcher icon rows with Up/Down and between adjacent items with Left/Right.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
@@ -118,6 +118,7 @@ Most detailed documentation is currently in Chinese. Start with the [documentati
 
 - [简体中文 README](docs/README.zh-CN.md)
 - [Technical documentation](docs/README-TECHNICAL.md) — architecture, building, testing, and packaging.
+- [Source editor](docs/source-editor.md) — search, replace, soft wrap, JSON formatting, and supported text formats.
 - [Linux system management](crates/platform/docs/linux-management.md) — services, processes, packages, networks, and disks.
 - [Operations CLI](crates/cli/docs/operations.md) — reusable commands, authorization, task IDs and exit codes.
 - [System configuration editor](crates/platform/docs/system-config.md) and [user management](crates/platform/docs/user-management.md).
