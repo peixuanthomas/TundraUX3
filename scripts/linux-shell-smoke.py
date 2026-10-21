@@ -280,7 +280,7 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
     offset = len(output)
     # The fixed catalog orders Network eighth; Home removes any previous
     # Command Line selection. This isolated profile has no external entries.
-    os.write(master, b"\x1b[H" + b"\x1b[B" * 7 + b"\r")
+    os.write(master, b"\x1b[H" + b"\x1b[C" * 7 + b"\r")
     if not wait_for_output(master, output, b"More actions", child, 10.0, offset):
         raise SystemExit("Network did not load its operation menu:\n" + output_diagnostic(output[offset:]))
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -376,8 +376,8 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
-    # The fixed Linux catalog places Packages seventh and Logs fourth.
-    step(b"\x1b[H" + b"\x1b[B" * 6 + b"\r", b"Installed packages", "Packages did not open on Installed")
+    # At 140 columns, Packages is directly below Command Line; Up returns to it.
+    step(b"\x1b[H\x1b[B\x1b[A\x1b[B\r", b"Installed packages", "Launcher row navigation did not open Packages")
     # Installed rows must return after leaving the full detail page, even
     # when a detail query targeted only the first package.
     if Path("/usr/bin/dpkg-query").is_file():
@@ -406,7 +406,7 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
              "Package auxiliary view did not open", timeout=45.0)
         step(b"\x1b[18~", b"Installed packages", "Auxiliary view could not return to packages")
     step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Packages did not return to Launcher")
-    step(b"\x1b[H" + b"\x1b[B" * 3 + b"\r", b"UX log", "Logs did not open")
+    step(b"\x1b[H" + b"\x1b[C" * 3 + b"\r", b"UX log", "Logs did not open")
     step(b"f", b"Service scope", "Visible log filter shortcut did not open its form")
     step(b"\x1b", b"UX events", "Log filter cancellation did not restore its page")
     step(b"\x1b[21~", b"L Level", "Log More actions did not open")

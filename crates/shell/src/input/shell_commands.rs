@@ -98,6 +98,8 @@ pub enum ShellCommand {
     CommandLinePaste(String),
     LauncherNext,
     LauncherPrevious,
+    LauncherDown,
+    LauncherUp,
     LauncherPageUp,
     LauncherPageDown,
     LauncherFirst,

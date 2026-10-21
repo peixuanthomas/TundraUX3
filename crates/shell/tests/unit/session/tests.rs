@@ -6984,6 +6984,80 @@ fn linux_personal_apps_use_process_permissions_without_admin_role() {
 }
 
 #[test]
+fn launcher_arrow_keys_follow_grid_rows_and_columns() {
+    for size in [(116, 41), (144, 24), (108, 20)] {
+        let layout = |state: &ShellSession| {
+            let ui::ShellLayout::Full { main, .. } =
+                state.shell_layout_for(Rect::new(0, 0, size.0, size.1))
+            else {
+                panic!("launcher navigation requires a full layout");
+            };
+            ui::launcher_layout(main, &state.to_launcher_view_model())
+        };
+        for view in [
+            ui::LauncherViewMode::LargeIcons,
+            ui::LauncherViewMode::Details,
+        ] {
+            for sorted in [false, true] {
+                let mut state = ShellSession::new(ShellLaunchConfig::default(), size);
+                set_test_auth_role(&mut state, UserRole::Admin);
+                state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Launcher]);
+                state.pages.common.focused_component = ShellComponent::Launcher;
+                state.pages.launcher.launcher_view_mode = view;
+                state.app.dispatch_at(
+                    app::AppCommand::SetLauncherState(Some(LauncherState {
+                        items: (0..18)
+                            .map(|index| app::launcher::LauncherItem {
+                                record: storage::LauncherEntryRecord {
+                                    id: format!("navigation-{index}"),
+                                    path: format!("/navigation/app-{index}"),
+                                    executable_kind: None,
+                                    fingerprint: None,
+                                    added_by_user_id: "admin".into(),
+                                    added_at_epoch_ms: 0,
+                                },
+                                status: app::launcher::LauncherItemStatus::Ready,
+                            })
+                            .collect(),
+                        ..LauncherState::default()
+                    })),
+                    Instant::now(),
+                );
+                if sorted {
+                    state.sort_active_table(0);
+                }
+                let columns = layout(&state).columns;
+                let last = state.launcher_item_count() - 1;
+                for (start, key, expected) in [
+                    (0, "Down", columns),
+                    (columns, "Up", 0),
+                    (0, "Right", 1),
+                    (1, "Left", 0),
+                    (columns - 1, "Up", columns - 1),
+                    (last, "Down", last),
+                    (last / columns * columns - 1, "Down", last),
+                ] {
+                    state.select_launcher_index(start);
+                    state.apply_input(InputEvent::from_key_label(key));
+                    assert_eq!(
+                        state.to_launcher_view_model().selected_index,
+                        Some(expected),
+                        "size={size:?}, view={view:?}, sorted={sorted}, start={start}, key={key}"
+                    );
+                    assert!(
+                        layout(&state)
+                            .items
+                            .iter()
+                            .any(|item| item.index == expected),
+                        "selected item must remain visible"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn launcher_sort_preserves_builtin_identity_and_keyboard_order() {
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
     set_test_auth_role(&mut state, UserRole::Admin);

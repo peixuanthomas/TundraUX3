@@ -30,7 +30,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.
 - **Work with files:** browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with optional Vim-style keys (F8; the choice is saved). File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
 - **Manage Linux file access:** edit permissions and ownership for selected files, with separate file/directory permissions and a reviewed recursive range. Toggle permission boxes with Space or Enter.
-- **Open tools:** use the application launcher and built-in command line when a task calls for commands.
+- **Open tools:** use the application launcher and built-in command line when a task calls for commands. Move between launcher icon rows with Up/Down and between adjacent items with Left/Right.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
 - **Make the interface your own:** choose English or Simplified Chinese, adjust appearance, and use the clock and weather applications. Application Settings lists File Explorer and Editor on the left and shows the selected application's options on the right. Cancel new alarms with the visible button or keyboard.
 

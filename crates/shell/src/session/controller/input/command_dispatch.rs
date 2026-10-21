@@ -850,6 +850,14 @@ impl ShellSession {
                 self.select_launcher_delta(-1);
                 ShellAction::Redraw
             }
+            ShellCommand::LauncherDown => {
+                self.select_launcher_row(1);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherUp => {
+                self.select_launcher_row(-1);
+                ShellAction::Redraw
+            }
             ShellCommand::LauncherPageUp => {
                 self.select_launcher_delta(-6);
                 ShellAction::Redraw

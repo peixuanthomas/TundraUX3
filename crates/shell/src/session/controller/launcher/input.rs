@@ -40,8 +40,10 @@ impl ShellSession {
         }
         match key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseLauncher),
-            InputKey::Left | InputKey::Up => (target, ShellCommand::LauncherPrevious),
-            InputKey::Right | InputKey::Down => (target, ShellCommand::LauncherNext),
+            InputKey::Left => (target, ShellCommand::LauncherPrevious),
+            InputKey::Right => (target, ShellCommand::LauncherNext),
+            InputKey::Up => (target, ShellCommand::LauncherUp),
+            InputKey::Down => (target, ShellCommand::LauncherDown),
             InputKey::PageUp => (target, ShellCommand::LauncherPageUp),
             InputKey::PageDown => (target, ShellCommand::LauncherPageDown),
             InputKey::Home => (target, ShellCommand::LauncherFirst),

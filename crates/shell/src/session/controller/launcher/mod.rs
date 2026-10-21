@@ -242,6 +242,22 @@ impl ShellSession {
         self.sync_launcher_viewport();
     }
 
+    pub(in crate::session) fn select_launcher_row(&mut self, delta: isize) {
+        let Some(layout) = self.launcher_content_layout() else {
+            return;
+        };
+        let model = self.to_launcher_view_model();
+        let Some(index) = model.selected_index else {
+            return;
+        };
+        let row = index / layout.columns;
+        let last_row = model.items.len().saturating_sub(1) / layout.columns;
+        if (delta < 0 && row == 0) || (delta > 0 && row == last_row) {
+            return;
+        }
+        self.select_launcher_delta(delta * layout.columns as isize);
+    }
+
     pub(in crate::session) fn select_launcher_last(&mut self) {
         let last = self.launcher_item_count().saturating_sub(1);
         self.select_launcher_index(last);
