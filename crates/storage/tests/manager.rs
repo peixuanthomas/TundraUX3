@@ -104,6 +104,54 @@ fn reopening_storage_tightens_only_owned_paths() {
 }
 
 #[test]
+fn editor_suffixes_upgrade_old_defaults_and_preserve_custom_lists() {
+    let legacy = [
+        "md", "markdown", "mdown", "mkd", "txt", "log", "json", "jsonl", "toml", "yaml", "yml",
+        "ini", "cfg", "conf", "xml", "csv", "tsv", "c", "h",
+    ]
+    .map(str::to_string)
+    .to_vec();
+    let defaults = EditorConfig::default().explorer_open_extensions;
+    let custom = vec!["txt".to_string(), "rs".to_string()];
+    for (case, extensions, expected, migrated) in [
+        ("legacy", legacy, defaults.clone(), true),
+        ("custom", custom.clone(), custom, false),
+        ("empty", Vec::new(), Vec::new(), false),
+        ("expanded", defaults.clone(), defaults, false),
+    ] {
+        let base = unique_temp_root(case);
+        let paths = app_paths(&base);
+        let layout = StorageLayout::from_app_paths(&paths);
+        fs::create_dir_all(layout.config_path.parent().unwrap()).unwrap();
+        let mut config = StorageConfig::default();
+        config.editor.vim_mode_enabled = true;
+        config.editor.cursor_acceleration_delay_ms = 1_234;
+        config.editor.explorer_open_extensions = extensions;
+        fs::write(&layout.config_path, toml::to_string(&config).unwrap()).unwrap();
+
+        let opened = StorageManager::open(paths).unwrap();
+        config.editor.explorer_open_extensions = expected;
+        assert_eq!(opened.manager.load_config().unwrap(), config, "{case}");
+        let persisted: StorageConfig =
+            toml::from_str(&fs::read_to_string(&layout.config_path).unwrap()).unwrap();
+        assert_eq!(persisted, config, "{case}");
+        assert_eq!(
+            opened.report.migrated_files.contains(&layout.config_path),
+            migrated,
+            "{case}"
+        );
+        assert!(
+            StorageManager::open(app_paths(&base))
+                .unwrap()
+                .report
+                .migrated_files
+                .is_empty()
+        );
+        cleanup(&base);
+    }
+}
+
+#[test]
 fn toml_and_json_documents_round_trip() {
     let base = unique_temp_root("round-trip");
     let opened = StorageManager::open(app_paths(&base)).expect("storage should open");

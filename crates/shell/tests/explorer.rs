@@ -632,6 +632,30 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
 }
 
 #[test]
+fn default_rust_suffix_opens_in_editor_from_explorer() {
+    let fixture = FixtureRoot::new("default-editor-rust-suffix");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let target = fixture.path().join("Documents").join("main.rs");
+    fs::write(&target, "fn main() {}\n").unwrap();
+
+    let mut state = logged_in_state(&platform);
+    for key in ["e", "Enter"] {
+        state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
+    }
+    drive_editor_tasks_until_idle(&mut state, &platform);
+
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert_eq!(state.to_editor_view_model().file_name, "main.rs");
+    assert!(
+        !platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::OpenPath(path) if path == &target))
+    );
+}
+
+#[test]
 fn configured_suffix_opens_in_editor_from_explorer() {
     let fixture = FixtureRoot::new("configured-editor-suffix");
     let platform = mock_platform(fixture.path());

@@ -235,3 +235,7 @@ struct Discard;
 impl lsh::runtime::ExtendOne<lsh::runtime::Highlight<HighlightKind>> for Discard {
     fn extend_one(&mut self, _: lsh::runtime::Highlight<HighlightKind>) {}
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/editor/syntax/tests.rs"]
+mod tests;

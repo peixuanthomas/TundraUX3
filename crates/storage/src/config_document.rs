@@ -396,11 +396,119 @@ impl Default for ExplorerConfig {
     }
 }
 
-pub const DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS: &[&str] = &[
+const LEGACY_EDITOR_EXPLORER_OPEN_EXTENSIONS: &[&str] = &[
     "md", "markdown", "mdown", "mkd", "txt", "log", "json", "jsonl", "toml", "yaml", "yml", "ini",
     "cfg", "conf", "xml", "csv", "tsv", "c", "h",
 ];
-pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS: usize = 64;
+pub const DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS: &[&str] = &[
+    "md",
+    "markdown",
+    "mdown",
+    "mkd",
+    "txt",
+    "log",
+    "json",
+    "jsonl",
+    "toml",
+    "yaml",
+    "yml",
+    "ini",
+    "cfg",
+    "conf",
+    "xml",
+    "csv",
+    "tsv",
+    "c",
+    "h",
+    "automount",
+    "bash",
+    "bash_profile",
+    "bashrc",
+    "cc",
+    "cjs",
+    "cpp",
+    "cs",
+    "csproj",
+    "csproj.user",
+    "csx",
+    "cxx",
+    "diff",
+    "directory",
+    "dnssd",
+    "editorconfig",
+    "fs",
+    "fsi",
+    "fsscript",
+    "fsx",
+    "gemspec",
+    "gitattributes",
+    "gitconfig",
+    "gitmodules",
+    "go",
+    "hh",
+    "hpp",
+    "html",
+    "hxx",
+    "i",
+    "ixx",
+    "java",
+    "js",
+    "jsonc",
+    "jsx",
+    "link",
+    "lsh",
+    "lua",
+    "luau",
+    "mjs",
+    "mount",
+    "mssql",
+    "ndjson",
+    "netdev",
+    "network",
+    "nspawn",
+    "nuspec",
+    "odin",
+    "patch",
+    "path",
+    "pgsql",
+    "profile",
+    "proj",
+    "properties",
+    "props",
+    "ps1",
+    "psd1",
+    "psm1",
+    "py",
+    "pyi",
+    "pyw",
+    "rake",
+    "rb",
+    "repo",
+    "rs",
+    "rss",
+    "ru",
+    "service",
+    "sh",
+    "slice",
+    "slnx",
+    "socket",
+    "sql",
+    "svg",
+    "swap",
+    "systemd",
+    "target",
+    "targets",
+    "timer",
+    "vcxproj",
+    "vcxproj.filters",
+    "xaml",
+    "xhtml",
+    "zig",
+    "zon",
+    "zsh",
+    "zshrc",
+];
+pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS: usize = 128;
 pub const MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -438,7 +546,7 @@ impl Default for EditorConfig {
 
 impl EditorConfig {
     fn normalize(&mut self) -> bool {
-        let normalized = self
+        let mut normalized = self
             .explorer_open_extensions
             .iter()
             .filter_map(|extension| normalize_editor_explorer_open_extension(extension))
@@ -450,6 +558,17 @@ impl EditorConfig {
                 }
                 extensions
             });
+        // Only the unchanged old default can be upgraded without replacing a custom list.
+        if normalized
+            .iter()
+            .map(String::as_str)
+            .eq(LEGACY_EDITOR_EXPLORER_OPEN_EXTENSIONS.iter().copied())
+        {
+            normalized = DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS
+                .iter()
+                .map(|extension| (*extension).to_string())
+                .collect();
+        }
         if normalized == self.explorer_open_extensions {
             false
         } else {

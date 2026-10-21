@@ -2395,6 +2395,14 @@ fn explorer_editor_resolver_routes_supported_text_extensions() {
             ExplorerOpenTarget::SystemDefault
         );
     }
+    for extension in storage::DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS {
+        let path = PathBuf::from(format!("document.{}", extension.to_ascii_uppercase()));
+        assert_eq!(
+            resolver.route(&path, &attributes),
+            ExplorerOpenTarget::Editor,
+            "{extension}"
+        );
+    }
 }
 
 #[test]
