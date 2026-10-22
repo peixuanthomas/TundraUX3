@@ -59,7 +59,13 @@ impl SystemTimeSettings {
                 self.error
                     .as_ref()
                     .map(i18n::LocalizedText::render_current)
-                    .unwrap_or_else(|| i18n::tr!("management-loading")),
+                    .unwrap_or_else(|| {
+                        i18n::tr!(if self.snapshot.is_some() {
+                            "settings-device-unavailable"
+                        } else {
+                            "management-loading"
+                        })
+                    }),
             ),
         }
     }
@@ -226,7 +232,13 @@ impl ShellSession {
                     state.status = i18n::msg!("management-working").into();
                 }
             }
-            Err(error) => self.set_settings_error(error.to_string()),
+            Err(error) => {
+                let message = error.to_string();
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
+                    state.system_time.error = Some(message.clone().into());
+                }
+                self.set_settings_error(message);
+            }
         }
     }
 

@@ -568,7 +568,15 @@ pub(in crate::session) fn settings_cards(
                                 "settings-off"
                             })
                         })
-                        .unwrap_or_else(|| i18n::tr!("management-loading"));
+                        .unwrap_or_else(|| {
+                            i18n::tr!(if time.busy()
+                                || (time.snapshot.is_none() && time.error.is_none())
+                            {
+                                "management-loading"
+                            } else {
+                                "settings-device-unavailable"
+                            })
+                        });
                     let servers = time
                         .action("set_system_ntp_servers")
                         .map(|(_, action)| {
