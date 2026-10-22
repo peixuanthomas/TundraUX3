@@ -459,14 +459,107 @@ fn cursor_position_request_is_replied_to_across_reads_without_matching_other_csi
 #[test]
 fn snapshot_keeps_terminal_attributes() {
     let mut parser = vt100::Parser::new(2, 8, 0);
-    parser.process(b"\x1b[31;1;4;7mX");
+    parser.process(b"\x1b[31;1;3;4;7mX\x1b[6 q\x1b[?1002h\x1b[?1006h");
     let snapshot = TerminalSnapshot::from_parser(&mut parser);
     let cell = &snapshot.cells[0][0];
     assert_eq!(cell.text, "X");
     assert_eq!(cell.foreground, TerminalColor::Indexed(1));
     assert!(cell.bold);
+    assert!(cell.italic);
     assert!(cell.underline);
     assert!(cell.inverse);
+    assert_eq!(snapshot.cursor_style, TerminalCursorStyle::SteadyBar);
+    assert_eq!(
+        snapshot.mouse_protocol_mode,
+        MouseProtocolMode::ButtonMotion
+    );
+    assert_eq!(snapshot.mouse_protocol_encoding, MouseProtocolEncoding::Sgr);
+    let rendered = to_ui_snapshot(&snapshot);
+    assert!(rendered.cell(0, 0).unwrap().style.italic);
+    assert_eq!(rendered.cursor_style, ui::CommandLineCursorStyle::SteadyBar);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn child_selected_mouse_mode_receives_content_relative_drag_and_release() {
+    use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
+
+    let root = std::env::temp_dir().join(format!(
+        "tundra-child-mouse-test-{}-{}",
+        std::process::id(),
+        NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+        root.join("reports"),
+        root.join("fallback"),
+        root.join("data"),
+        "child-mouse-test",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .unwrap();
+    let app = process
+        .register_app(AppDescriptor::new(
+            AppId::from_static("terminal.mouse-test"),
+            "Child mouse test",
+            env!("CARGO_PKG_VERSION"),
+            AppCriticality::Optional,
+        ))
+        .unwrap();
+    let tasks = app.task_group("pty-reader");
+    let pty = CommandLinePty::spawn(
+        CommandLinePtyConfig {
+            program: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                r"stty raw -echo; printf '\033[?1002h\033[?1006hREADY'; dd bs=1 count=28 2>/dev/null | od -An -v -tx1 | tr -d ' \n'; printf DONE".into(),
+            ],
+            env: Vec::new(),
+            cwd: None,
+            columns: 100,
+            rows: 10,
+            scrollback_lines: 0,
+        },
+        &tasks,
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = pty.snapshot();
+        if snapshot.mouse_protocol_mode == MouseProtocolMode::ButtonMotion
+            && snapshot.mouse_protocol_encoding == MouseProtocolEncoding::Sgr
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child did not enable tracking"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let area = ratatui::layout::Rect::new(10, 5, 100, 10);
+    assert!(
+        !pty.send_mouse(&ui::MouseEvent::down(9, 8, ui::MouseButton::Left), area)
+            .unwrap()
+    );
+    for event in [
+        ui::MouseEvent::down(12, 8, ui::MouseButton::Left),
+        ui::MouseEvent::drag(14, 9, ui::MouseButton::Left),
+        ui::MouseEvent::up(14, 9, ui::MouseButton::Left),
+    ] {
+        assert!(pty.send_mouse(&event, area).unwrap());
+    }
+    assert_snapshot_contains(
+        &pty,
+        "1b5b3c303b333b344d1b5b3c33323b353b354d1b5b3c303b353b356dDONE",
+        Duration::from_secs(5),
+        "child mouse reports",
+    );
+    drop(pty);
+    drop(tasks);
+    drop(app);
+    drop(process);
+    runtime.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

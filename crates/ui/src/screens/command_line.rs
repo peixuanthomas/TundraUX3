@@ -41,8 +41,21 @@ pub struct CommandLineCellStyle {
     pub foreground: CommandLineColor,
     pub background: CommandLineColor,
     pub bold: bool,
+    pub italic: bool,
     pub underline: bool,
     pub inverse: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CommandLineCursorStyle {
+    #[default]
+    Default,
+    BlinkingBlock,
+    SteadyBlock,
+    BlinkingUnderline,
+    SteadyUnderline,
+    BlinkingBar,
+    SteadyBar,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +82,7 @@ impl Default for CommandLineCell {
 pub struct CommandLineTerminalSnapshot {
     pub columns: u16,
     pub rows: u16,
+    pub cursor_style: CommandLineCursorStyle,
     /// Number of retained rows above the live terminal screen.
     pub scrollback_rows: usize,
     /// Current distance from the live screen. Zero means the newest output is
@@ -84,6 +98,7 @@ impl CommandLineTerminalSnapshot {
         Self {
             columns,
             rows,
+            cursor_style: CommandLineCursorStyle::Default,
             scrollback_rows: 0,
             scrollback_offset: 0,
             cells: vec![CommandLineCell::default(); usize::from(columns) * usize::from(rows)],
@@ -303,7 +318,7 @@ pub(crate) fn render_terminal_snapshot(
     theme: &TundraTheme,
 ) {
     let lines = (0..snapshot.rows)
-        .map(|row| terminal_snapshot_line(snapshot, row, theme))
+        .map(|row| terminal_snapshot_line(snapshot, row, theme, true))
         .collect::<Vec<_>>();
     frame.render_widget(
         Paragraph::new(lines)
@@ -313,10 +328,32 @@ pub(crate) fn render_terminal_snapshot(
     );
 }
 
+pub(crate) fn render_native_terminal_snapshot(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    snapshot: &CommandLineTerminalSnapshot,
+    theme: &TundraTheme,
+) {
+    let lines = (0..snapshot.rows.min(area.height))
+        .map(|row| terminal_snapshot_line(snapshot, row, theme, false))
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines), area);
+    if snapshot.scrollback_offset == 0
+        && let Some((column, row)) = (0..snapshot.rows.min(area.height)).find_map(|row| {
+            (0..snapshot.columns.min(area.width))
+                .find(|column| snapshot.cell(*column, row).is_some_and(|cell| cell.cursor))
+                .map(|column| (column, row))
+        })
+    {
+        frame.set_cursor_position((area.x + column, area.y + row));
+    }
+}
+
 fn terminal_snapshot_line(
     snapshot: &CommandLineTerminalSnapshot,
     row: u16,
     theme: &TundraTheme,
+    software_cursor: bool,
 ) -> Line<'static> {
     let row_end = terminal_row_end(snapshot, row);
     if row_end == 0 {
@@ -337,7 +374,7 @@ fn terminal_snapshot_line(
         );
         let style = marker
             .as_ref()
-            .map_or_else(|| cell_style(cell), |span| span.style);
+            .map_or_else(|| cell_style(cell, software_cursor), |span| span.style);
         if text_style.is_some_and(|current| current != style) {
             spans.push(Span::styled(
                 std::mem::take(&mut text),
@@ -374,26 +411,24 @@ fn terminal_row_end(snapshot: &CommandLineTerminalSnapshot, row: u16) -> u16 {
         .map_or(0, |column| column.saturating_add(1))
 }
 
-fn cell_style(cell: &CommandLineCell) -> Style {
-    let mut foreground = cell.style.foreground;
-    let mut background = cell.style.background;
-    if cell.style.inverse {
-        std::mem::swap(&mut foreground, &mut background);
-    }
+fn cell_style(cell: &CommandLineCell, software_cursor: bool) -> Style {
     let mut style = Style::default();
-    if let Some(color) = foreground.into_ratatui() {
+    if let Some(color) = cell.style.foreground.into_ratatui() {
         style = style.fg(color);
     }
-    if let Some(color) = background.into_ratatui() {
+    if let Some(color) = cell.style.background.into_ratatui() {
         style = style.bg(color);
     }
     if cell.style.bold {
         style = style.add_modifier(Modifier::BOLD);
     }
+    if cell.style.italic {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
     if cell.style.underline {
         style = style.add_modifier(Modifier::UNDERLINED);
     }
-    if cell.cursor {
+    if cell.style.inverse ^ (software_cursor && cell.cursor) {
         style = style.add_modifier(Modifier::REVERSED);
     }
     style

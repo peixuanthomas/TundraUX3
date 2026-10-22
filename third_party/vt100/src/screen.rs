@@ -7,6 +7,45 @@ const MODE_HIDE_CURSOR: u8 = 0b0000_0100;
 const MODE_ALTERNATE_SCREEN: u8 = 0b0000_1000;
 const MODE_BRACKETED_PASTE: u8 = 0b0001_0000;
 
+/// The cursor appearance selected by the xterm DECSCUSR sequence.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum CursorStyle {
+    /// Restore the terminal's default cursor appearance.
+    Default,
+    /// A blinking block cursor.
+    BlinkingBlock,
+    /// A steady block cursor.
+    SteadyBlock,
+    /// A blinking underline cursor.
+    BlinkingUnderline,
+    /// A steady underline cursor.
+    SteadyUnderline,
+    /// A blinking vertical bar cursor.
+    BlinkingBar,
+    /// A steady vertical bar cursor.
+    SteadyBar,
+}
+
+impl Default for CursorStyle {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl CursorStyle {
+    fn sequence(self) -> &'static [u8] {
+        match self {
+            Self::Default => b"\x1b[0 q",
+            Self::BlinkingBlock => b"\x1b[1 q",
+            Self::SteadyBlock => b"\x1b[2 q",
+            Self::BlinkingUnderline => b"\x1b[3 q",
+            Self::SteadyUnderline => b"\x1b[4 q",
+            Self::BlinkingBar => b"\x1b[5 q",
+            Self::SteadyBar => b"\x1b[6 q",
+        }
+    }
+}
+
 /// The xterm mouse handling mode currently in use.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MouseProtocolMode {
@@ -73,6 +112,7 @@ pub struct Screen {
     icon_name: String,
 
     modes: u8,
+    cursor_style: CursorStyle,
     mouse_protocol_mode: MouseProtocolMode,
     mouse_protocol_encoding: MouseProtocolEncoding,
 
@@ -101,6 +141,7 @@ impl Screen {
             icon_name: String::default(),
 
             modes: 0,
+            cursor_style: CursorStyle::default(),
             mouse_protocol_mode: MouseProtocolMode::default(),
             mouse_protocol_encoding: MouseProtocolEncoding::default(),
 
@@ -273,6 +314,7 @@ impl Screen {
 
     fn write_contents_formatted(&self, contents: &mut Vec<u8>) {
         crate::term::HideCursor::new(self.hide_cursor()).write_buf(contents);
+        contents.extend_from_slice(self.cursor_style.sequence());
         let prev_attrs = self.grid().write_contents_formatted(contents);
         self.attrs.write_escape_code_diff(contents, &prev_attrs);
     }
@@ -337,6 +379,9 @@ impl Screen {
         if self.hide_cursor() != prev.hide_cursor() {
             crate::term::HideCursor::new(self.hide_cursor())
                 .write_buf(contents);
+        }
+        if self.cursor_style != prev.cursor_style {
+            contents.extend_from_slice(self.cursor_style.sequence());
         }
         let prev_attrs = self.grid().write_contents_diff(
             contents,
@@ -561,6 +606,12 @@ impl Screen {
         (pos.row, pos.col)
     }
 
+    /// Returns the cursor appearance requested by the terminal application.
+    #[must_use]
+    pub fn cursor_style(&self) -> CursorStyle {
+        self.cursor_style
+    }
+
     /// Returns terminal escape sequences sufficient to set the current
     /// cursor state of the terminal.
     ///
@@ -585,6 +636,7 @@ impl Screen {
 
     fn write_cursor_state_formatted(&self, contents: &mut Vec<u8>) {
         crate::term::HideCursor::new(self.hide_cursor()).write_buf(contents);
+        contents.extend_from_slice(self.cursor_style.sequence());
         self.grid()
             .write_cursor_position_formatted(contents, None, None);
 
@@ -1115,6 +1167,26 @@ impl Screen {
     }
 
     // escape codes
+
+    // CSI Ps SP q
+    fn decscusr(&mut self, params: &vte::Params) {
+        let mut params = params.iter();
+        let value = match (params.next(), params.next()) {
+            (None, None) => 0,
+            (Some([value]), None) => *value,
+            _ => return,
+        };
+        self.cursor_style = match value {
+            0 => CursorStyle::Default,
+            1 => CursorStyle::BlinkingBlock,
+            2 => CursorStyle::SteadyBlock,
+            3 => CursorStyle::BlinkingUnderline,
+            4 => CursorStyle::SteadyUnderline,
+            5 => CursorStyle::BlinkingBar,
+            6 => CursorStyle::SteadyBar,
+            _ => return,
+        };
+    }
 
     // ESC 7
     fn decsc(&mut self) {
@@ -1677,6 +1749,9 @@ impl vte::Perform for Screen {
                     }
                 }
             },
+            Some(b' ') if intermediates == b" " && !_ignore && c == 'q' => {
+                self.decscusr(params);
+            }
             Some(b'?') => match c {
                 'J' => self.decsed(canonicalize_params_1(params, 0)),
                 'K' => self.decsel(canonicalize_params_1(params, 0)),

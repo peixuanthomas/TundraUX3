@@ -16,6 +16,7 @@ fn snapshot_handles_partial_cell_vectors_without_panicking() {
     let snapshot = CommandLineTerminalSnapshot {
         columns: 2,
         rows: 1,
+        cursor_style: CommandLineCursorStyle::Default,
         scrollback_rows: 0,
         scrollback_offset: 0,
         cells: vec![CommandLineCell {

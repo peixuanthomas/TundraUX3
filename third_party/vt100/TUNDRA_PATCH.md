@@ -46,3 +46,12 @@ Without this cleanup, clearing or overwriting the last column can access a
 missing continuation cell and crash the PTY reader. Regression coverage for
 erase/write operations after resizing is in
 `crates/terminal-runtime/tests/unit/pty.rs`.
+
+`src/screen.rs` retains DECSCUSR (`CSI Ps SP q`) cursor appearance separately
+from cursor visibility. `Screen::cursor_style()` reports the requested default,
+block, underline or bar appearance and its blinking setting. Cursor-state
+serialization, full output and diffs carry this state; a terminal reset restores
+the default. Invalid parameters and other `q` sequences leave it unchanged.
+Regression coverage is in
+`crates/terminal-runtime/tests/unit/cursor_style.rs` and its snapshot tests,
+which run with the workspace tests.

@@ -5,8 +5,13 @@
 //! structured snapshot instead.  In particular, OSC sequences (including
 //! OSC 52 clipboard requests) are discarded before they reach the parser.
 
-pub use crate::input::{TerminalInput, encode_terminal_input, key_event_bytes, paste_bytes};
-pub use crate::snapshot::{TerminalCell, TerminalColor, TerminalSnapshot, to_ui_snapshot};
+pub use crate::input::{
+    MouseProtocolEncoding, MouseProtocolMode, TerminalInput, encode_terminal_input,
+    key_event_bytes, mouse_event_bytes, paste_bytes,
+};
+pub use crate::snapshot::{
+    TerminalCell, TerminalColor, TerminalCursorStyle, TerminalSnapshot, to_ui_snapshot,
+};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -286,6 +291,37 @@ impl CommandLinePty {
     pub fn send(&self, input: &TerminalInput) -> io::Result<()> {
         let application_cursor = self.snapshot().application_cursor;
         self.write(&encode_terminal_input(input, application_cursor))
+    }
+
+    /// Returns false when the child has not requested mouse input or the event
+    /// belongs to the host controls outside its terminal content.
+    pub fn send_mouse(
+        &self,
+        mouse: &ui::MouseEvent,
+        content_area: ratatui::layout::Rect,
+    ) -> io::Result<bool> {
+        let bytes = {
+            let parser = lock_io(&self.parser)?;
+            let screen = parser.screen();
+            if screen.mouse_protocol_mode() == MouseProtocolMode::None
+                || mouse.column() < content_area.x
+                || mouse.column() >= content_area.right()
+                || mouse.row() < content_area.y
+                || mouse.row() >= content_area.bottom()
+            {
+                return Ok(false);
+            }
+            mouse_event_bytes(
+                mouse,
+                content_area,
+                screen.mouse_protocol_mode(),
+                screen.mouse_protocol_encoding(),
+            )
+        };
+        if let Some(bytes) = bytes {
+            self.write(&bytes)?;
+        }
+        Ok(true)
     }
 
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {

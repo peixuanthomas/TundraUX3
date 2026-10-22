@@ -1,5 +1,9 @@
 //! Encoding keys and paste according to the child terminal mode.
-use ui::{Key as InputKey, KeyEvent as KeyInput};
+use ratatui::layout::Rect;
+use ui::{
+    Key as InputKey, KeyEvent as KeyInput, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
+};
+pub use vt100::{MouseProtocolEncoding, MouseProtocolMode};
 /// A key-independent input representation.  The controller can use this
 /// instead of leaking terminal escape sequences into UI code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,8 +40,8 @@ pub fn encode_terminal_input(input: &TerminalInput, application_cursor: bool) ->
         TerminalInput::Down => cursor_sequence(b'B', application_cursor),
         TerminalInput::Right => cursor_sequence(b'C', application_cursor),
         TerminalInput::Left => cursor_sequence(b'D', application_cursor),
-        TerminalInput::Home => b"\x1b[H".to_vec(),
-        TerminalInput::End => b"\x1b[F".to_vec(),
+        TerminalInput::Home => cursor_sequence(b'H', application_cursor),
+        TerminalInput::End => cursor_sequence(b'F', application_cursor),
         TerminalInput::Delete => b"\x1b[3~".to_vec(),
         TerminalInput::PageUp => b"\x1b[5~".to_vec(),
         TerminalInput::PageDown => b"\x1b[6~".to_vec(),
@@ -53,7 +57,39 @@ fn cursor_sequence(final_byte: u8, application_cursor: bool) -> Vec<u8> {
 }
 
 pub fn key_event_bytes(key: &KeyInput, application_cursor: bool) -> Option<Vec<u8>> {
+    if !key.phase.is_press_like() {
+        return None;
+    }
     let control = key.modifiers.is_control();
+    let modifier =
+        1 + u8::from(key.modifiers.shift) + 2 * u8::from(key.modifiers.alt) + 4 * u8::from(control);
+    if modifier > 1 {
+        let sequence = match key.key {
+            InputKey::Left => Some(format!("\x1b[1;{modifier}D")),
+            InputKey::Right => Some(format!("\x1b[1;{modifier}C")),
+            InputKey::Up => Some(format!("\x1b[1;{modifier}A")),
+            InputKey::Down => Some(format!("\x1b[1;{modifier}B")),
+            InputKey::Home => Some(format!("\x1b[1;{modifier}H")),
+            InputKey::End => Some(format!("\x1b[1;{modifier}F")),
+            InputKey::Insert => Some(format!("\x1b[2;{modifier}~")),
+            InputKey::Delete => Some(format!("\x1b[3;{modifier}~")),
+            InputKey::PageUp => Some(format!("\x1b[5;{modifier}~")),
+            InputKey::PageDown => Some(format!("\x1b[6;{modifier}~")),
+            InputKey::F(number @ 1..=4) => Some(format!(
+                "\x1b[1;{modifier}{}",
+                char::from(b'P' + number - 1)
+            )),
+            InputKey::F(number @ 5..=12) => {
+                let parameter = [15, 17, 18, 19, 20, 21, 23, 24][usize::from(number - 5)];
+                Some(format!("\x1b[{parameter};{modifier}~"))
+            }
+            InputKey::Tab if modifier == 2 => Some("\x1b[Z".to_owned()),
+            _ => None,
+        };
+        if let Some(sequence) = sequence {
+            return Some(sequence.into_bytes());
+        }
+    }
     let mut bytes = match &key.key {
         InputKey::Char(character) if control => {
             control_character(*character).map(|byte| vec![byte])?
@@ -124,3 +160,101 @@ pub fn paste_bytes(text: &str, bracketed_paste: bool) -> Vec<u8> {
     bytes.extend_from_slice(b"\x1b[201~");
     bytes
 }
+
+/// Encodes physical terminal mouse events in the mode selected by the child.
+/// Synthetic Click/DoubleClick events must not duplicate their Down/Up reports.
+pub fn mouse_event_bytes(
+    mouse: &MouseEvent,
+    content_area: Rect,
+    mode: MouseProtocolMode,
+    encoding: MouseProtocolEncoding,
+) -> Option<Vec<u8>> {
+    if mode == MouseProtocolMode::None
+        || mouse.column() < content_area.x
+        || mouse.column() >= content_area.right()
+        || mouse.row() < content_area.y
+        || mouse.row() >= content_area.bottom()
+    {
+        return None;
+    }
+    let button_code = |button| match button {
+        MouseButton::Left => 0_u8,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    };
+    let (mut code, released) = match mouse.kind {
+        MouseEventKind::Down(button) => (button_code(button), false),
+        MouseEventKind::Up(button) if mode != MouseProtocolMode::Press => {
+            (button_code(button), true)
+        }
+        MouseEventKind::Drag(button)
+            if matches!(
+                mode,
+                MouseProtocolMode::ButtonMotion | MouseProtocolMode::AnyMotion
+            ) =>
+        {
+            (button_code(button) | 32, false)
+        }
+        MouseEventKind::Moved if mode == MouseProtocolMode::AnyMotion => (35, false),
+        MouseEventKind::Scroll(direction) => (
+            match direction {
+                ScrollDirection::Up => 64,
+                ScrollDirection::Down => 65,
+                ScrollDirection::Left => 66,
+                ScrollDirection::Right => 67,
+            },
+            false,
+        ),
+        _ => return None,
+    };
+    if mouse.modifiers.shift {
+        code |= 4;
+    }
+    if mouse.modifiers.alt {
+        code |= 8;
+    }
+    if mouse.modifiers.is_control() {
+        code |= 16;
+    }
+    let column = u32::from(mouse.column() - content_area.x) + 1;
+    let row = u32::from(mouse.row() - content_area.y) + 1;
+    if encoding == MouseProtocolEncoding::Sgr {
+        return Some(
+            format!(
+                "\x1b[<{code};{column};{row}{}",
+                if released { 'm' } else { 'M' }
+            )
+            .into_bytes(),
+        );
+    }
+    if released {
+        code = (code & !3) | 3;
+    }
+    let mut bytes = b"\x1b[M".to_vec();
+    bytes.push(code + 32);
+    let limit = if encoding == MouseProtocolEncoding::Utf8 {
+        2015
+    } else {
+        223
+    };
+    if column > limit || row > limit {
+        return None;
+    }
+    for coordinate in [column, row] {
+        if encoding == MouseProtocolEncoding::Utf8 {
+            let mut buffer = [0; 4];
+            bytes.extend_from_slice(
+                char::from_u32(coordinate + 32)?
+                    .encode_utf8(&mut buffer)
+                    .as_bytes(),
+            );
+        } else {
+            bytes.push(u8::try_from(coordinate + 32).ok()?);
+        }
+    }
+    Some(bytes)
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/input.rs"]
+mod tests;

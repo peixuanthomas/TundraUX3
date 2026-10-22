@@ -27,10 +27,15 @@ let screen = parser.screen().clone();
 parser.process(b"\x1b[3D\x1b[32mGREEN");
 assert_eq!(
     parser.screen().contents_formatted(),
-    &b"\x1b[?25h\x1b[m\x1b[H\x1b[Jthis text is \x1b[32mGREEN"[..],
+    &b"\x1b[?25h\x1b[0 q\x1b[m\x1b[H\x1b[Jthis text is \x1b[32mGREEN"[..],
 );
 assert_eq!(
     parser.screen().contents_diff(&screen),
     &b"\x1b[1;14H\x1b[32mGREEN"[..],
 );
 ```
+
+The vendored parser retains DECSCUSR cursor shapes through
+`Screen::cursor_style()`, including the block, underline and vertical bar
+variants and their blinking settings. Formatted output and diffs preserve this
+state alongside cursor position and visibility.

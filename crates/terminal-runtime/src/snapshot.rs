@@ -1,4 +1,5 @@
 //! Safe structured output for terminal rendering.
+pub use vt100::CursorStyle as TerminalCursorStyle;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalColor {
     Default,
@@ -40,8 +41,11 @@ pub struct TerminalSnapshot {
     pub cursor_row: u16,
     pub cursor_column: u16,
     pub cursor_visible: bool,
+    pub cursor_style: TerminalCursorStyle,
     pub application_cursor: bool,
     pub bracketed_paste: bool,
+    pub mouse_protocol_mode: vt100::MouseProtocolMode,
+    pub mouse_protocol_encoding: vt100::MouseProtocolEncoding,
     pub title: String,
 }
 
@@ -97,8 +101,11 @@ impl TerminalSnapshot {
             cursor_row,
             cursor_column,
             cursor_visible: scrollback_offset == 0 && !screen.hide_cursor(),
+            cursor_style: screen.cursor_style(),
             application_cursor: screen.application_cursor(),
             bracketed_paste: screen.bracketed_paste(),
+            mouse_protocol_mode: screen.mouse_protocol_mode(),
+            mouse_protocol_encoding: screen.mouse_protocol_encoding(),
             // OSC is filtered, so this will remain empty unless a future
             // parser API supplies a title from another safe source.
             title: screen.title().to_owned(),
@@ -110,6 +117,15 @@ pub fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSna
     let mut result = ui::CommandLineTerminalSnapshot::blank(snapshot.columns, snapshot.rows);
     result.scrollback_rows = snapshot.scrollback_rows;
     result.scrollback_offset = snapshot.scrollback_offset;
+    result.cursor_style = match snapshot.cursor_style {
+        TerminalCursorStyle::Default => ui::CommandLineCursorStyle::Default,
+        TerminalCursorStyle::BlinkingBlock => ui::CommandLineCursorStyle::BlinkingBlock,
+        TerminalCursorStyle::SteadyBlock => ui::CommandLineCursorStyle::SteadyBlock,
+        TerminalCursorStyle::BlinkingUnderline => ui::CommandLineCursorStyle::BlinkingUnderline,
+        TerminalCursorStyle::SteadyUnderline => ui::CommandLineCursorStyle::SteadyUnderline,
+        TerminalCursorStyle::BlinkingBar => ui::CommandLineCursorStyle::BlinkingBar,
+        TerminalCursorStyle::SteadyBar => ui::CommandLineCursorStyle::SteadyBar,
+    };
     for (row, cells) in snapshot.cells.iter().enumerate() {
         let Ok(row) = u16::try_from(row) else {
             break;
@@ -130,6 +146,7 @@ pub fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSna
                         foreground: to_ui_color(&cell.foreground),
                         background: to_ui_color(&cell.background),
                         bold: cell.bold,
+                        italic: cell.italic,
                         underline: cell.underline,
                         inverse: cell.inverse,
                     },
@@ -155,3 +172,7 @@ fn to_ui_color(color: &TerminalColor) -> ui::CommandLineColor {
         TerminalColor::Rgb(red, green, blue) => ui::CommandLineColor::Rgb(red, green, blue),
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/cursor_style.rs"]
+mod cursor_style_tests;

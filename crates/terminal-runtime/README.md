@@ -27,3 +27,7 @@ Windows Terminal 下的 WSL 优先使用 win32-input-mode 区分 Ctrl+Enter 与 
 Shell 从自身二进制目录启动 `tundra-cli repl --embedded`，使用 `xterm-256color` 和带 2,000 行回滚的 vt100 内存屏幕，再把单元格画在 Shell 内容区。每个页面实例拥有独立 PTY，覆盖时仍读取输出。Ctrl+C、Esc 和 Ctrl+Shift+X 发给子 CLI；右上角按钮确认后仅结束当前实例的子进程树（Windows Job Object、Unix 进程组和后代进程）。`exit` 返回原来的 Launcher 或 Explorer；退出码 75 通知 Shell 重置存储并重启。
 
 输入模式的拆包、Unicode、粘贴和鼠标验证位于 `third_party/crossterm/tests/escape_input.rs`；模式开关及组合键区分位于 `crates/terminal-runtime/tests/unit/terminal_keyboard_pty.rs`。
+
+子终端快照保留逐格斜体和子进程通过 DECSCUSR 选择的光标形状、闪烁状态；形状由 vt100 解析，不按应用名称或文字推断。按键保留 Ctrl+W/N/P/R/V、F1–F12 和带修饰键的导航序列；松键事件不重复发送字符，粘贴继续遵守子终端的 bracketed-paste 模式。
+
+`CommandLinePty::send_mouse` 按子进程当前启用的鼠标跟踪模式和 Default、UTF-8、SGR 编码发送物理按下、释放、拖动和滚轮事件，并将坐标转换为内容区内的坐标。没有启用子终端鼠标或事件落在内容区外时返回 `false`，宿主可以继续处理自己的控件和回滚；子终端已接管内容区时返回 `true`，不会把 Vim 等终端程序的滚轮再送入宿主回滚。合成的 Click/DoubleClick 不重复生成已有的按下/释放报告。协议、边界和快照回归位于 `tests/unit/input.rs`、`tests/unit/pty.rs`。
