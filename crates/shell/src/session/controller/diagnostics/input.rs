@@ -159,6 +159,9 @@ impl ShellSession {
                 (routed, ShellCommand::DiagnosticsNext)
             }
             ui::MouseEventKind::Down(PointerButton::Left) => match diagnostic_target {
+                Some(ui::DiagnosticsHitTarget::Action(key)) => {
+                    self.route_diagnostics_key(&KeyInput::new(InputKey::Char(key)))
+                }
                 Some(ui::DiagnosticsHitTarget::Tab(ui::DiagnosticsTab::Health)) => {
                     (routed, ShellCommand::DiagnosticsHealthTab)
                 }

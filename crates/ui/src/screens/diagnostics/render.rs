@@ -11,7 +11,10 @@ use super::model::{
     DiagnosticsCheckViewModel, DiagnosticsIncidentViewModel, DiagnosticsRepairDialogViewModel,
     DiagnosticsStatus, DiagnosticsTab, DiagnosticsViewModel,
 };
-use crate::components::{Button, ComponentTone, List, ListItem, Scrollbar, Surface};
+use crate::components::{
+    Button, ComponentTone, List, ListItem, PageAction, PageActionBar, PageActionStatus, Scrollbar,
+    Surface,
+};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
 use crate::{RenderContext, TundraTheme};
@@ -31,7 +34,7 @@ pub fn render_diagnostics_page_content(
     render_diagnostics_header(frame, layout.header, model, theme);
     render_diagnostics_tabs(frame, &layout, model, context);
     render_diagnostics_content(frame, &layout.content_layout(), model, theme, context);
-    render_diagnostics_footer(frame, layout.footer, model, theme);
+    render_diagnostics_footer(frame, layout.footer, model, context);
 }
 
 pub(crate) fn render_diagnostics_header(
@@ -478,7 +481,7 @@ fn diagnostics_check_detail_lines(
             )
         } else if model.can_repair {
             (
-                i18n::tr!("ui-diagnostics-repair-available-press-f"),
+                i18n::tr!("ui-diagnostics-repair-available"),
                 theme.title_style(),
             )
         } else {
@@ -555,36 +558,31 @@ pub(crate) fn render_diagnostics_footer(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
-    let mut actions_area = area;
-    if let Some(feedback) = &model.feedback {
-        frame.render_widget(
-            Paragraph::new(feedback.as_str()).style(theme.title_style()),
-            Rect::new(area.x, area.y, area.width, u16::from(area.height > 0)),
-        );
-        actions_area.y = actions_area.y.saturating_add(1);
-        actions_area.height = actions_area.height.saturating_sub(1);
-    }
-    for (key, label, rect) in diagnostics_toolbar_buttons(actions_area, model) {
-        let mut button = Button::new(format!("diagnostics.toolbar.{}", key as u32), label);
-        button.set_disabled(model.scanning);
-        button.render_borderless_frame(frame, rect, theme);
-    }
+    diagnostics_action_bar(model).render(frame, area, context);
 }
 
 pub fn diagnostics_toolbar_height(width: u16, model: &DiagnosticsViewModel) -> u16 {
-    diagnostics_toolbar_buttons(Rect::new(0, 0, width, u16::MAX), model)
-        .last()
-        .map_or(1, |(_, _, r)| r.bottom())
-        .saturating_add(u16::from(model.feedback.is_some()))
+    diagnostics_action_bar(model).height(width)
 }
 
 pub fn diagnostics_toolbar_buttons(
     area: Rect,
     model: &DiagnosticsViewModel,
 ) -> Vec<(char, String, Rect)> {
-    use unicode_width::UnicodeWidthStr;
+    let bar = diagnostics_action_bar(model);
+    bar.layout(area)
+        .actions
+        .into_iter()
+        .map(|action| {
+            let key = char::from_u32(action.id.as_str().parse().unwrap()).unwrap();
+            (key, bar.actions[action.index].label.clone(), action.area)
+        })
+        .collect()
+}
+
+pub(super) fn diagnostics_action_bar(model: &DiagnosticsViewModel) -> PageActionBar {
     let mut actions = if model.restart_required {
         vec![
             ('r', i18n::tr!("ui-diagnostics-r-restart")),
@@ -614,15 +612,45 @@ pub fn diagnostics_toolbar_buttons(
     if !model.restart_required {
         actions.push(('x', i18n::tr!("ui-diagnostics-x-restart")));
     }
-    let widths = actions
-        .iter()
-        .map(|(_, label)| label.width().saturating_add(2).min(u16::MAX as usize) as u16)
-        .collect::<Vec<_>>();
-    actions
+    let repairable = model.can_repair
+        && model.tab == DiagnosticsTab::Health
+        && model.selected_check().is_some_and(|check| check.repairable);
+    let primary = if repairable { 'f' } else { 'r' };
+    actions.sort_by_key(|(key, _)| *key != primary);
+    let actions = actions
         .into_iter()
-        .zip(crate::right_aligned_actions(area, &widths))
-        .filter_map(|((key, label), rect)| (!rect.is_empty()).then_some((key, label, rect)))
-        .collect()
+        .map(|(key, label)| {
+            let disabled = model.scanning
+                || match key {
+                    'f' => !repairable,
+                    'a' => !model.checks.iter().any(|check| check.repairable),
+                    'c' => model.item_count() == 0,
+                    'o' => model.item_count() == 0,
+                    _ => false,
+                };
+            let action = PageAction::new((key as u32).to_string(), label).disabled(disabled);
+            if key == 'x' || model.restart_required {
+                action.danger()
+            } else if key == primary {
+                action.primary()
+            } else {
+                action
+            }
+        })
+        .collect();
+    PageActionBar::new("diagnostics.toolbar")
+        .with_actions(actions)
+        .with_status(
+            model
+                .feedback
+                .as_ref()
+                .map(|text| PageActionStatus {
+                    text: text.clone(),
+                    tone: ComponentTone::Default,
+                })
+                .into_iter()
+                .collect(),
+        )
 }
 pub(crate) fn render_diagnostics_repair_dialog(
     frame: &mut Frame<'_>,
@@ -687,15 +715,6 @@ pub(crate) fn render_diagnostics_repair_dialog(
         list.set_focused(true);
         list.render_borderless_frame(frame, layout.items_area, theme);
     }
-    render_clock_line(
-        frame,
-        layout.help,
-        i18n::tr!(
-            "ui-diagnostics-r-restart-repairs-run-in-order-completed-independent-repairs-are-kept"
-        ),
-        theme.muted_style(),
-        HorizontalAlignment::Left,
-    );
     render_diagnostics_button(
         frame,
         layout.confirm,

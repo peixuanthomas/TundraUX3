@@ -297,7 +297,7 @@ fn render_detail(
             if let Some(dl) = &l.diagnostics_content {
                 render_diagnostics_content(frame, dl, &diagnostics, theme, context)
             }
-            render_diagnostics_footer(frame, l.footer, &diagnostics, theme);
+            render_diagnostics_footer(frame, l.footer, &diagnostics, context);
         }
         _ => {
             if let Some(vm) = model.detail_widget(d) {

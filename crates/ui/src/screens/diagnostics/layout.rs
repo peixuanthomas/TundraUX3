@@ -62,6 +62,7 @@ impl DiagnosticsContentLayout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticsHitTarget {
     Tab(DiagnosticsTab),
+    Action(char),
     Check(usize),
     Incident(usize),
     Log(usize),
@@ -87,6 +88,8 @@ pub struct DiagnosticsLayout {
     pub rows: Vec<DiagnosticsRowLayout>,
     pub detail_panel: Rect,
     pub footer: Rect,
+    pub action_bar: crate::components::PageActionBarLayout,
+    pub action_targets: Vec<(char, Rect)>,
     pub visible_start: usize,
     pub visible_capacity: usize,
     pub repair_dialog: Option<DiagnosticsRepairDialogLayout>,
@@ -112,6 +115,13 @@ impl DiagnosticsLayout {
             return diagnostics_repair_dialog_hit_test(dialog, (x, y));
         }
 
+        if let Some((key, _)) = self
+            .action_targets
+            .iter()
+            .find(|(_, area)| rect_contains(*area, x, y))
+        {
+            return Some(DiagnosticsHitTarget::Action(*key));
+        }
         if let Some(tab) = self.tabs.iter().find(|tab| rect_contains(tab.area, x, y)) {
             return Some(DiagnosticsHitTarget::Tab(tab.tab));
         }
@@ -165,32 +175,43 @@ fn diagnostics_content_hit_test_parts(
 pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> DiagnosticsLayout {
     let panel = main;
     let inner = inset_rect(panel, 1);
-    let inner_bottom = inner.y.saturating_add(inner.height);
     let header = line_in_rect(inner, inner.y);
     let content_y = header.bottom();
+    let bar = super::render::diagnostics_action_bar(model);
+    let footer_height = bar.height(inner.width).min(inner.height.saturating_sub(1));
+    let footer = Rect::new(
+        inner.x,
+        inner.bottom().saturating_sub(footer_height),
+        inner.width,
+        footer_height,
+    );
+    let action_bar = bar.layout(footer);
+    let action_targets = action_bar
+        .actions
+        .iter()
+        .filter(|action| action.enabled)
+        .map(|action| {
+            (
+                char::from_u32(action.id.as_str().parse().unwrap()).unwrap(),
+                action.area,
+            )
+        })
+        .collect();
     let mut content_layout = diagnostics_content_layout(
         Rect::new(
             inner.x,
             content_y,
             inner.width,
-            inner_bottom.saturating_sub(content_y),
+            footer.y.saturating_sub(content_y),
         ),
         model,
     );
     let right = content_layout.detail_panel;
-    let footer_height = super::render::diagnostics_toolbar_height(right.width, model)
-        .min(right.height.saturating_sub(1));
-    let footer = Rect::new(
-        right.x,
-        right.bottom().saturating_sub(footer_height),
-        right.width,
-        footer_height,
-    );
     let tabs_area = Rect::new(
         right.x,
-        footer.y.saturating_sub(1).max(right.y),
+        right.bottom().saturating_sub(1),
         right.width,
-        u16::from(right.height > footer_height),
+        u16::from(right.height > 0),
     );
     content_layout.detail_panel.height = tabs_area.y.saturating_sub(right.y);
 
@@ -224,6 +245,8 @@ pub fn diagnostics_layout(main: Rect, model: &DiagnosticsViewModel) -> Diagnosti
         rows: content_layout.rows,
         detail_panel: content_layout.detail_panel,
         footer,
+        action_bar,
+        action_targets,
         visible_start: content_layout.visible_start,
         visible_capacity: content_layout.visible_capacity,
         repair_dialog: model
@@ -392,7 +415,7 @@ pub fn diagnostics_repair_dialog_layout(
     model: &DiagnosticsRepairDialogViewModel,
 ) -> DiagnosticsRepairDialogLayout {
     let desired_height = usize_to_u16(model.items.len().min(6))
-        .saturating_add(7)
+        .saturating_add(6)
         .min(DIAGNOSTICS_REPAIR_DIALOG_MAX_HEIGHT);
     let dialog = centered_rect(
         main,
@@ -404,14 +427,13 @@ pub fn diagnostics_repair_dialog_layout(
     let prompt_height = inner.height.min(2);
     let prompt = Rect::new(inner.x, inner.y, inner.width, prompt_height);
     let button_y = inner_bottom.saturating_sub(1);
-    let help_y = button_y.saturating_sub(1).max(prompt.bottom());
-    let help = line_in_rect(inner, help_y);
+    let help = Rect::default();
     let items_y = prompt.bottom();
     let items_area = Rect::new(
         inner.x,
         items_y,
         inner.width,
-        help_y.saturating_sub(items_y),
+        button_y.saturating_sub(items_y),
     );
     let visible_capacity = usize::from(items_area.height);
     let visible_start = diagnostics_visible_start(

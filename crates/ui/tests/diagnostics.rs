@@ -7,6 +7,37 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use support::terminal_output;
+
+#[test]
+fn diagnostics_actions_fill_the_page_bottom_and_emphasize_repair() {
+    let mut model = health_model();
+    model.can_repair = true;
+    model.checks = vec![check(1, DiagnosticsStatus::Fail)];
+    for width in [50, 108, 160] {
+        let layout = diagnostics_layout(Rect::new(0, 0, width, 24), &model);
+        assert_eq!(layout.footer.x, layout.panel.x + 1);
+        assert_eq!(layout.footer.right(), layout.panel.right() - 1);
+        let repair = layout
+            .action_bar
+            .actions
+            .iter()
+            .find(|action| action.id.as_str() == "102")
+            .unwrap();
+        assert_eq!(repair.emphasis, ui::components::ButtonEmphasis::Primary);
+        assert_eq!(
+            layout.hit_test(repair.area.x, repair.area.y),
+            Some(DiagnosticsHitTarget::Action('f'))
+        );
+        assert!(
+            layout
+                .action_bar
+                .actions
+                .iter()
+                .any(|action| action.emphasis == ui::components::ButtonEmphasis::Danger)
+        );
+        assert!(layout.list_panel.bottom() <= layout.footer.y);
+    }
+}
 use ui::components::Scrollbar as GlacierScrollbar;
 use ui::{
     DiagnosticsCheckViewModel, DiagnosticsHitTarget, DiagnosticsIncidentViewModel,
@@ -96,9 +127,9 @@ fn diagnostic_toolbar_keeps_operations_without_a_page_escape_button() {
     model.can_repair = false;
     assert_eq!(ui::diagnostics_toolbar_height(38, &model), 1);
     let layout = diagnostics_layout(Rect::new(0, 0, 40, 20), &model);
-    assert_eq!(layout.footer.height, 3);
+    assert_eq!(layout.footer.height, 1);
     assert!(layout.footer.y >= layout.detail_panel.bottom());
-    assert!(layout.footer.x >= layout.list_panel.right());
+    assert_eq!(layout.footer.x, layout.list_panel.x);
 }
 
 #[test]
@@ -115,8 +146,8 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
 
     assert!(layout.list_panel.width >= 28);
     assert!(layout.detail_panel.width > layout.list_panel.width);
-    assert_eq!(layout.visible_capacity, 8);
-    assert_eq!(layout.visible_start, 3);
+    assert_eq!(layout.visible_capacity, 7);
+    assert_eq!(layout.visible_start, 4);
     assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
     let health_tab = layout
         .tabs
@@ -148,10 +179,10 @@ fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
         .list_scrollbar
         .expect("an overflowing checks list should expose a scrollbar");
 
-    assert_eq!(layout.visible_capacity, 8);
-    assert_eq!(layout.visible_start, 3);
-    assert_eq!(scrollbar.track.height, 8);
-    assert_eq!(scrollbar.thumb.height, 6);
+    assert_eq!(layout.visible_capacity, 7);
+    assert_eq!(layout.visible_start, 4);
+    assert_eq!(scrollbar.track.height, 7);
+    assert_eq!(scrollbar.thumb.height, 5);
     assert_eq!(scrollbar.thumb.y, scrollbar.track.y.saturating_add(1));
     assert_eq!(
         diagnostics_hit_test(&layout, (scrollbar.thumb.x, scrollbar.thumb.y)),
@@ -194,7 +225,7 @@ fn checks_that_fit_do_not_reserve_a_scrollbar_column() {
     let layout = diagnostics_layout(full_main(108, 20), &model);
 
     assert!(layout.list_scrollbar.is_none());
-    assert_eq!(layout.list_rows_area, Rect::new(2, 7, 40, 8));
+    assert_eq!(layout.list_rows_area, Rect::new(2, 7, 40, 7));
 }
 
 #[test]
