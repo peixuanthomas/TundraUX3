@@ -282,3 +282,25 @@ fn expanded_details_scroll_to_clipped_text_without_covering_it_with_scrollbars()
         );
     }
 }
+
+#[test]
+fn primary_action_bar_keeps_primary_and_danger_styles() {
+    let mut model = model(false);
+    model.action_tones = vec![ui::components::ComponentTone::Default; 8];
+    model.action_tones[7] = ui::components::ComponentTone::Danger;
+    let layout = management_layout(Rect::new(0, 0, 160, 40), &model);
+    assert!(
+        layout
+            .primary_action_bar
+            .actions
+            .iter()
+            .any(|action| action.emphasis == ui::components::ButtonEmphasis::Primary)
+    );
+    assert!(
+        layout
+            .primary_action_bar
+            .actions
+            .iter()
+            .any(|action| action.emphasis == ui::components::ButtonEmphasis::Danger)
+    );
+}

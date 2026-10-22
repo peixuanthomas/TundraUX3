@@ -1506,6 +1506,7 @@ impl ShellSession {
         ui::ManagementViewModel {
             workspace: (s.kind == Some(ManagementKind::Packages)).then(|| self.package_workspace_model(&actions)),
             scope_id: format!("{:?}", s.kind),
+            action_tones: actions.iter().map(|(action, _)| if action.confirm { ui::components::ComponentTone::Danger } else { ui::components::ComponentTone::Default }).collect(),
             detail_action_start: Some(0),
             sort: s.sort,
             column_width_limits: if s.kind == Some(ManagementKind::Packages) {
@@ -1625,7 +1626,7 @@ impl ShellSession {
             actions_focused: s.actions_focused,
             filter: s.filter_input.clone(),
             filtering: s.filtering,
-            status: if s.kind == Some(ManagementKind::Packages) { format!("{} | {}", if s.details_only { i18n::tr!("management-package-details-keyboard-hint") } else { i18n::tr!("management-package-keyboard-hint") }, s.status) } else { s.status.clone() },
+            status: s.status.clone(),
             loading: s.query_job.is_some() || s.draft_job.is_some(),
             running: s.operation_job.is_some(),
             output: s.output.clone(),

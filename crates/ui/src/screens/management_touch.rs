@@ -82,6 +82,7 @@ pub struct ManagementViewModel {
     pub details_expansion: Option<u16>,
     pub actions: Vec<(String, bool)>,
     pub action_help: Vec<String>,
+    pub action_tones: Vec<crate::components::ComponentTone>,
     pub selected_action: usize,
     pub action_scroll: Option<usize>,
     pub actions_focused: bool,
@@ -577,6 +578,7 @@ pub struct ManagementLayout {
     pub detail_actions_panel: Rect,
     pub actions_panel: Rect,
     pub actions: Vec<Rect>,
+    pub primary_action_bar: crate::components::PageActionBarLayout,
     pub action_start: usize,
     pub action_previous: Rect,
     pub action_next: Rect,
@@ -797,6 +799,13 @@ fn management_content_layout(
         status.y.saturating_sub(actions_panel.bottom()),
     );
     let detail_button_rows = |width: u16| {
+        if model.workspace.is_some() {
+            return workspace::primary_action_bar(
+                model,
+                &(0..model.actions.len()).collect::<Vec<_>>(),
+            )
+            .height(width.saturating_sub(if compact_actions { 0 } else { 2 }));
+        }
         detail_start.map_or(0, |start| {
             let area = Rect::new(
                 0,
@@ -1257,6 +1266,7 @@ fn management_content_layout(
     }
     ManagementLayout {
         workspace: None,
+        primary_action_bar: Default::default(),
         compact_actions,
         filter,
         controls,
@@ -1693,13 +1703,19 @@ pub fn render_management_content(
                 context,
             );
         }
+        if let Some(workspace) = &model.workspace {
+            workspace::primary_action_bar(model, &workspace.primary_actions).render(
+                frame,
+                layout.primary_action_bar.area,
+                context,
+            );
+        }
         for (offset, area) in layout.actions.iter().enumerate() {
             let index = layout.action_start + offset;
-            if model
-                .workspace
-                .as_ref()
-                .is_some_and(|workspace| workspace.navigation_actions.contains(&index))
-                && layout.workspace.is_some()
+            if model.workspace.as_ref().is_some_and(|workspace| {
+                workspace.navigation_actions.contains(&index)
+                    || workspace.primary_actions.contains(&index)
+            }) && layout.workspace.is_some()
             {
                 continue;
             }
@@ -1713,6 +1729,10 @@ pub fn render_management_content(
                 } else {
                     Button::new(management_action_id(model, index), label.clone())
                 };
+                if model.action_tones.get(index) == Some(&crate::components::ComponentTone::Danger)
+                {
+                    button = button.with_emphasis(crate::components::ButtonEmphasis::Danger);
+                }
                 button.set_disabled(!enabled);
                 button.state.selected =
                     model.form.is_none() && model.actions_focused && model.selected_action == index;

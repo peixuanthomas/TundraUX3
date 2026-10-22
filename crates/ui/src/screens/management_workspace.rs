@@ -137,8 +137,15 @@ pub(super) fn layout(
         )
     };
     let mut actions = vec![Rect::default(); model.actions.len()];
-    for (index, rect) in workspace.primary_actions.iter().zip(&layout.actions) {
-        actions[*index] = *rect;
+    let bar = primary_action_bar(model, &workspace.primary_actions);
+    let bar_area = if layout.compact_actions {
+        layout.detail_actions_panel
+    } else {
+        inner(layout.detail_actions_panel)
+    };
+    layout.primary_action_bar = bar.layout(bar_area);
+    for rect in &layout.primary_action_bar.actions {
+        actions[workspace.primary_actions[rect.index]] = rect.area;
     }
     for (index, rect) in workspace
         .navigation_actions
@@ -165,4 +172,35 @@ pub(super) fn layout(
     );
     layout.workspace = Some(navigation);
     layout
+}
+
+pub(super) fn primary_action_bar(
+    model: &ManagementViewModel,
+    indices: &[usize],
+) -> crate::components::PageActionBar {
+    use crate::components::{ComponentTone, PageAction, PageActionBar};
+    let actions = indices
+        .iter()
+        .map(|index| {
+            let (label, enabled) = &model.actions[*index];
+            let id = management_action_id(model, *index);
+            let action = PageAction::new(id, label.clone())
+                .with_bracketed_label(false)
+                .disabled(!*enabled);
+            if model.action_tones.get(*index) == Some(&ComponentTone::Danger) {
+                action.danger()
+            } else if Some(index) == indices.first() {
+                action.primary()
+            } else {
+                action
+            }
+        })
+        .collect();
+    let selected = model.actions_focused.then(|| {
+        let id = management_action_id(model, model.selected_action);
+        crate::components::ComponentId::from(id)
+    });
+    PageActionBar::new("")
+        .with_actions(actions)
+        .with_selected(selected)
 }
