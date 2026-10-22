@@ -390,6 +390,8 @@ impl ScreenCompositor {
         self.render_input_keyboard(frame, state, context);
         state.button_regions = buttons.regions();
         let animation_running = prepared.progress_running
+            || (!context.motion.reduced_motion
+                && matches!(&prepared.page, ScreenViewModel::Editor(model) if model.vim_mode.is_some()))
             || keyboard_animating
             || details_animating
             || self.motion.is_running()

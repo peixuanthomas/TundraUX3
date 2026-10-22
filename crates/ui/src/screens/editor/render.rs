@@ -186,15 +186,18 @@ fn render_menu_bar(
             layout.menu_bar.height,
         ),
     );
-    render_editor_button(
-        frame,
-        layout.vim_toggle,
-        "editor.vim-toggle",
-        vim_mode_label(model.vim_mode),
-        model.vim_mode.is_some(),
-        false,
-        theme,
-    );
+    let mut vim_toggle = Button::new("editor.vim-toggle", vim_mode_label(model.vim_mode))
+        .with_bracketed_label(false);
+    vim_toggle.state.selected = model.vim_mode.is_some();
+    if model.vim_mode.is_some() {
+        let elapsed = if context.motion.reduced_motion {
+            std::time::Duration::ZERO
+        } else {
+            context.motion.now
+        };
+        vim_toggle = vim_toggle.with_rainbow_label(elapsed);
+    }
+    vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
 }
 
 fn render_menu_popup(
