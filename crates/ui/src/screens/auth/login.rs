@@ -95,12 +95,7 @@ fn render_login_unscrolled(
         theme,
     );
     if layout.help.height > 0 {
-        let mut lines = vec![
-            Line::from(i18n::tr!(
-                "ui-auth-users-up-down-home-end-tab-password-show"
-            )),
-            Line::from(i18n::tr!("ui-auth-enter-activate-f2-show-hide-esc-exit")),
-        ];
+        let mut lines = Vec::new();
         if model.system_users {
             lines.insert(
                 0,
@@ -113,7 +108,6 @@ fn render_login_unscrolled(
             }
         }
         if let Some(error) = &model.error {
-            // A failed sign-in must remain visible ahead of optional key hints.
             lines.insert(0, Line::styled(error.clone(), theme.error_style()));
         }
         frame.render_widget(

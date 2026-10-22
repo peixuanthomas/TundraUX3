@@ -107,9 +107,7 @@ fn render_bootstrap_input(
 
 fn bootstrap_lines(model: &BootstrapAdminViewModel) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from(i18n::tr!(
-            "ui-auth-tab-down-password-enter-on-password-create-admin-esc-exit"
-        )),
+        Line::from(""),
         Line::from(""),
         Line::from(""),
         Line::from(""),

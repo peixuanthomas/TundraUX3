@@ -453,3 +453,13 @@ fn map_cells_with_fg(terminal: &Terminal<TestBackend>, fg: Color) -> Vec<(u16, u
 
     cells
 }
+
+#[test]
+fn setup_keeps_password_rules_and_errors_without_keyboard_instructions() {
+    let model = sample_model(SetupStep::Admin, Some("Test validation error".into()));
+    let terminal = render_terminal(&model, 120, 40, TundraTheme::default_dark());
+    let text = terminal_output(&terminal);
+    assert!(text.contains("Test validation error"));
+    assert!(!text.contains("Enter on Submit"));
+    assert!(!text.contains("Shift+Tab / Up"));
+}

@@ -12,36 +12,36 @@ use crate::{RenderContext, TundraTheme, setup_standard_color_options};
 const SETUP_WIDE_MAP_MIN_WIDTH: u16 = 90;
 const SETUP_WIDE_MAP_MIN_HEIGHT: u16 = 14;
 const SETUP_CONTROLS_WIDTH: u16 = 48;
-const SETUP_TIMEZONE_HEADER_HEIGHT: u16 = 5;
+const SETUP_TIMEZONE_HEADER_HEIGHT: u16 = 4;
 const SETUP_TIMEZONE_TOP_GAP_HEIGHT: u16 = 1;
 const SETUP_TIMEZONE_BOTTOM_GAP_HEIGHT: u16 = 1;
 const SETUP_TIMEZONE_FOOTER_HEIGHT: u16 = 3;
-const SETUP_LANGUAGE_LIST_LINE: u16 = 4;
-const SETUP_ADMIN_HEADER_HEIGHT: u16 = 3;
+const SETUP_LANGUAGE_LIST_LINE: u16 = 3;
+const SETUP_ADMIN_HEADER_HEIGHT: u16 = 2;
 const SETUP_ADMIN_FIELD_HEIGHT: u16 = 3;
 const SETUP_ADMIN_CHECKLIST_HEIGHT: u16 = 7;
 const SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH: u16 = 68;
 const SETUP_ADMIN_CHECKLIST_WIDTH: u16 = 32;
 const SETUP_ADMIN_COLUMN_GAP: u16 = 2;
-const SETUP_ADMIN_USERNAME_LINE: u16 = 3;
-const SETUP_ADMIN_PASSWORD_LINE: u16 = 7;
-const SETUP_ADMIN_CONFIRM_PASSWORD_LINE: u16 = 11;
-const SETUP_ADMIN_HINT_LINE: u16 = 15;
-const SETUP_ADMIN_SUBMIT_LINE: u16 = 19;
-const SETUP_ADMIN_ERROR_LINE: u16 = 21;
-const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 21;
-const SETUP_APPEARANCE_HEADER_HEIGHT: u16 = 3;
-const SETUP_APPEARANCE_SHAPE_LINE: u16 = 3;
+const SETUP_ADMIN_USERNAME_LINE: u16 = 2;
+const SETUP_ADMIN_PASSWORD_LINE: u16 = 6;
+const SETUP_ADMIN_CONFIRM_PASSWORD_LINE: u16 = 10;
+const SETUP_ADMIN_HINT_LINE: u16 = 14;
+const SETUP_ADMIN_SUBMIT_LINE: u16 = 18;
+const SETUP_ADMIN_ERROR_LINE: u16 = 20;
+const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 20;
+const SETUP_APPEARANCE_HEADER_HEIGHT: u16 = 2;
+const SETUP_APPEARANCE_SHAPE_LINE: u16 = 2;
 const SETUP_APPEARANCE_SHAPE_HEIGHT: u16 = 3;
-const SETUP_APPEARANCE_THEME_LINE: u16 = 6;
+const SETUP_APPEARANCE_THEME_LINE: u16 = 5;
 const SETUP_APPEARANCE_PALETTE_HEIGHT: u16 = 4;
-const SETUP_APPEARANCE_THEME_CUSTOM_LINE: u16 = 10;
-const SETUP_APPEARANCE_ACCENT_LINE: u16 = 12;
-const SETUP_APPEARANCE_ACCENT_CUSTOM_LINE: u16 = 16;
-const SETUP_APPEARANCE_PREVIEW_LINE: u16 = 18;
+const SETUP_APPEARANCE_THEME_CUSTOM_LINE: u16 = 9;
+const SETUP_APPEARANCE_ACCENT_LINE: u16 = 11;
+const SETUP_APPEARANCE_ACCENT_CUSTOM_LINE: u16 = 15;
+const SETUP_APPEARANCE_PREVIEW_LINE: u16 = 17;
 const SETUP_APPEARANCE_PREVIEW_HEIGHT: u16 = 4;
-const SETUP_APPEARANCE_SUBMIT_LINE: u16 = 23;
-const SETUP_APPEARANCE_ERROR_LINE: u16 = 25;
+const SETUP_APPEARANCE_SUBMIT_LINE: u16 = 22;
+const SETUP_APPEARANCE_ERROR_LINE: u16 = 24;
 const SETUP_APPEARANCE_BUTTON_GAP: u16 = 1;
 
 pub fn setup_render_context(model: &SetupViewModel, context: &RenderContext) -> RenderContext {
@@ -477,10 +477,6 @@ fn render_setup_appearance_page(
             Line::from(i18n::tr!(
                 "ui-auth-choose-the-frame-shape-theme-color-and-accent-color"
             )),
-            Line::styled(
-                i18n::tr!("ui-auth-tab-up-down-move-left-right-choose-enter-activate"),
-                theme.muted_style(),
-            ),
         ])
         .alignment(HorizontalAlignment::Left)
         .wrap(Wrap { trim: true }),
@@ -838,10 +834,6 @@ fn setup_language_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> V
             theme.title_style(),
         ),
         Line::from(i18n::tr!("ui-auth-choose-a-language-then-continue")),
-        Line::styled(
-            i18n::tr!("ui-auth-enter-space-continue-up-down-choose-f1-help"),
-            theme.muted_style(),
-        ),
         Line::from(""),
     ]
 }
@@ -864,10 +856,6 @@ fn setup_timezone_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> V
         Line::from(i18n::tr!(
             "ui-auth-choose-a-city-or-iana-zone-then-continue"
         )),
-        Line::styled(
-            i18n::tr!("ui-auth-enter-continue-up-down-choose-pgup-pgdn-jump-f1-help"),
-            theme.muted_style(),
-        ),
         Line::from(selected_timezone_id_summary(model)),
         Line::styled(
             selected_timezone_description_summary(model),
@@ -894,10 +882,6 @@ fn setup_admin_header_lines(model: &SetupViewModel, theme: &TundraTheme) -> Vec<
             theme.title_style(),
         ),
         Line::from(i18n::tr!("ui-auth-create-the-first-administrator-account")),
-        Line::styled(
-            i18n::tr!("ui-auth-tab-down-enter-next-shift-tab-up-previous-enter-on-submit-finish"),
-            theme.muted_style(),
-        ),
     ]
 }
 

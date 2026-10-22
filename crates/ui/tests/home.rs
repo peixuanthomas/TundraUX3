@@ -940,15 +940,25 @@ fn linux_login_labels_system_identity_and_keeps_errors_visible() {
 
 #[test]
 fn logout_uses_shared_danger_button_with_matching_hit_area() {
-    let model = HomeViewModel::user("Strix", "09:30", Vec::new()).with_account_logout("Strix", true);
+    let model =
+        HomeViewModel::user("Strix", "09:30", Vec::new()).with_account_logout("Strix", true);
     let theme = TundraTheme::default_dark();
     let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
     let buttons = ui::components::ButtonFrame::new(None, None, &theme);
     context.buttons = Some(buttons.clone());
     let bounds = Rect::new(0, 0, 100, 30);
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| ui::render_home_content(frame, bounds, &model, &context, None)).unwrap();
-    let region = buttons.regions().into_iter().find(|b| b.id.as_str() == "home.logout").unwrap();
+    terminal
+        .draw(|frame| ui::render_home_content(frame, bounds, &model, &context, None))
+        .unwrap();
+    let region = buttons
+        .regions()
+        .into_iter()
+        .find(|b| b.id.as_str() == "home.logout")
+        .unwrap();
     assert_eq!(region.area, home_logout_area(bounds, &model));
-    assert_eq!(terminal.backend().buffer()[(region.area.x, region.area.y)].fg, theme.error);
+    assert_eq!(
+        terminal.backend().buffer()[(region.area.x, region.area.y)].fg,
+        theme.error
+    );
 }
