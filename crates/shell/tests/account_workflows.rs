@@ -1553,13 +1553,19 @@ fn user_management_create_role_and_action_focus_use_one_keyboard_flow() {
     state.apply_input(InputEvent::from_key_label("Shift+Tab"));
     assert_eq!(
         state.to_user_management_view_model().focus,
+        ui::UserManagementFocus::Action(ui::UserManagementAction::EditInfo)
+    );
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
+    assert_eq!(
+        state.to_user_management_view_model().focus,
         ui::UserManagementFocus::UserList
     );
+    state.apply_input(InputEvent::from_key_label("Tab"));
     state.apply_input(InputEvent::from_key_label("Tab"));
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert!(state.to_user_management_view_model().form.is_some());
     state.apply_input(InputEvent::from_key_label("Esc"));
-    state.apply_input(InputEvent::from_key_label("Tab"));
+    state.apply_input(InputEvent::from_key_label("Shift+Tab"));
     state.apply_input(InputEvent::from_key_label(" "));
     assert_eq!(
         state
@@ -1628,6 +1634,11 @@ fn user_management_mouse_uses_shared_rows_actions_forms_and_scroll_geometry() {
         .find(|action| action.action == ui::UserManagementAction::NewUser)
         .expect("new user action");
     state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(new_user.area),
+    ));
+    assert!(state.to_user_management_view_model().form.is_none());
+    state.apply_input(InputEvent::mouse_up(
         PointerButton::Left,
         rect_center(new_user.area),
     ));
@@ -1731,7 +1742,7 @@ fn last_admin_actions_are_skipped_and_self_delete_can_be_cancelled() {
         assert!(!action.enabled);
         assert!(action.disabled_reason.is_some());
     }
-    for _ in 0..4 {
+    for _ in 0..5 {
         state.apply_input(InputEvent::from_key_label("Tab"));
     }
     assert_eq!(
