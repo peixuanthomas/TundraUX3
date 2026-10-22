@@ -205,7 +205,8 @@ pub fn render_shell_chrome_with_status_focus(
         top.x,
         top.y,
         layout
-            .back_button
+            .help_button
+            .or(layout.back_button)
             // Share the separator with the button instead of drawing two borders.
             .map_or(top.width, |button| {
                 button.x.saturating_sub(top.x).saturating_add(1)
