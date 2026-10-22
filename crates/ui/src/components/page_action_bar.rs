@@ -5,7 +5,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use crate::RenderContext;
 
-use super::{Button, ButtonEmphasis, ComponentId, ComponentTone, terminal_width, tone_color};
+use super::{Button, ButtonEmphasis, ComponentId, ComponentTone, contains_point, tone_color};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageActionStatus {
@@ -54,6 +54,7 @@ impl PageAction {
     }
 }
 
+/// Renders at most 5 caller-supplied actions within 3 rows at the minimum supported width.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageActionBar {
     pub page_id: ComponentId,
@@ -88,8 +89,10 @@ impl PageActionBar {
     }
 
     pub fn height(&self, width: u16) -> u16 {
-        let status = self.status.len().min(3) as u16;
-        status.saturating_add(self.action_rows(width).len() as u16)
+        let action_rows = self.action_rows(width).len() as u16;
+        let status_capacity = 4u16.saturating_sub(action_rows);
+        let status = (self.status.len() as u16).min(3).min(status_capacity);
+        status.saturating_add(action_rows)
     }
 
     pub fn layout(&self, area: Rect) -> PageActionBarLayout {
@@ -101,15 +104,20 @@ impl PageActionBar {
             wanted,
         );
         let rows = self.action_rows(area.width);
-        let action_rows = rows.len() as u16;
-        let status_count = self.status.len().min(3).min(usize::from(
-            bar.height.saturating_sub(action_rows.min(bar.height)),
-        )) as u16;
+        let visible_rows = rows.len().min(usize::from(bar.height));
+        let status_capacity = 4usize.saturating_sub(rows.len());
+        // Callers order status lines by priority, so keep the leading ones.
+        let status_count =
+            self.status
+                .len()
+                .min(3)
+                .min(status_capacity)
+                .min(usize::from(bar.height).saturating_sub(visible_rows)) as u16;
         let status = (0..status_count)
             .map(|index| Rect::new(bar.x, bar.y.saturating_add(index), bar.width, 1))
             .collect::<Vec<_>>();
         let mut actions = Vec::new();
-        for (row_index, row) in rows.iter().enumerate() {
+        for (row_index, row) in rows.iter().take(visible_rows).enumerate() {
             let y = bar
                 .bottom()
                 .saturating_sub(1)
@@ -122,7 +130,7 @@ impl PageActionBar {
                 actions.push(PageActionLayout {
                     index,
                     id: action.id.clone(),
-                    area: Rect::new(x, y, width, u16::from(y >= bar.y && y < bar.bottom())),
+                    area: Rect::new(x, y, width, 1),
                     enabled: action.enabled,
                     emphasis: action.emphasis,
                 });
@@ -172,7 +180,7 @@ impl PageActionBar {
         layout
             .actions
             .iter()
-            .find(|action| action.area.width > 0 && contains(action.area, x, y))
+            .find(|action| action.area.width > 0 && contains_point(action.area, x, y))
             .map(|action| PageActionHit {
                 id: action.id.clone(),
                 enabled: action.enabled,
@@ -203,17 +211,17 @@ impl PageActionBar {
         if !row.is_empty() {
             rows.push(row);
         }
+        debug_assert!(
+            rows.len() <= 3,
+            "PageActionBar accepts at most 5 actions fitting 3 rows at the minimum width"
+        );
+        rows.truncate(3);
         rows
     }
 
     fn action_width(&self, index: usize) -> u16 {
-        let action = &self.actions[index];
-        let label = if action.label.starts_with('[') && action.label.ends_with(']') {
-            action.label.clone()
-        } else {
-            format!("[{}]", action.label)
-        };
-        u16::try_from(terminal_width(&label)).unwrap_or(u16::MAX)
+        let button = Button::new("measure", self.actions[index].label.as_str());
+        u16::try_from(button.rendered_label_width()).unwrap_or(u16::MAX)
     }
 }
 
@@ -237,10 +245,6 @@ pub struct PageActionLayout {
 pub struct PageActionHit {
     pub id: ComponentId,
     pub enabled: bool,
-}
-
-fn contains(area: Rect, x: u16, y: u16) -> bool {
-    x >= area.x && x < area.right() && y >= area.y && y < area.bottom()
 }
 
 #[cfg(test)]

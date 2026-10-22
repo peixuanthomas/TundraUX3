@@ -12,6 +12,16 @@ fn bar(actions: Vec<PageAction>) -> PageActionBar {
         .with_actions(actions)
 }
 
+fn five_actions() -> Vec<PageAction> {
+    vec![
+        PageAction::new("open", "Enter Open").primary(),
+        PageAction::new("new", "N New"),
+        PageAction::new("rename", "F2 Rename"),
+        PageAction::new("delete", "Del Delete").danger(),
+        PageAction::new("menu", "Shift+F10 Menu"),
+    ]
+}
+
 #[test]
 fn actions_are_right_aligned_and_primary_is_rightmost() {
     let bar = bar(vec![
@@ -81,4 +91,57 @@ fn height_matches_layout_area_for_status_and_actions() {
     assert_eq!(layout.area.height, 2);
     assert_eq!(layout.status.len(), 1);
     assert_eq!(layout.actions.len(), 1);
+}
+
+#[test]
+fn total_height_is_capped_and_keeps_leading_status_lines() {
+    let status = ["error", "progress", "metadata"]
+        .into_iter()
+        .map(|text| PageActionStatus {
+            text: text.into(),
+            tone: ComponentTone::Muted,
+        })
+        .collect();
+    let bar = PageActionBar::new("explorer")
+        .with_status(status)
+        .with_actions(five_actions());
+    assert!(bar.height(50) <= 4);
+    let layout = bar.layout(Rect::new(0, 0, 50, 5));
+    assert_eq!(layout.area.height, 4);
+    assert_eq!(layout.status.len(), 2);
+    assert_eq!(layout.status[0].y, layout.area.y);
+    assert_eq!(layout.status[1].y, layout.area.y + 1);
+    assert_eq!(layout.actions.len(), 5);
+}
+
+#[test]
+fn five_actions_fit_three_rows_at_minimum_width() {
+    let bar = bar(five_actions());
+    let layout = bar.layout(Rect::new(0, 0, 50, 5));
+    assert_eq!(layout.actions.len(), 5);
+    let mut rows: Vec<u16> = layout.actions.iter().map(|action| action.area.y).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    assert!(rows.len() <= 3);
+}
+
+#[test]
+fn short_area_skips_action_rows_that_do_not_fit() {
+    let bar = bar(five_actions());
+    let layout = bar.layout(Rect::new(0, 0, 50, 1));
+    assert_eq!(layout.area.height, 1);
+    assert!(layout.status.is_empty());
+    assert!(layout.actions.iter().all(|action| action.area.height == 1));
+    assert!(
+        layout
+            .actions
+            .iter()
+            .all(|action| action.id.as_str() != "menu")
+    );
+    for action in &layout.actions {
+        let hit = bar
+            .hit(&layout, action.area.x, action.area.y)
+            .expect("visible action hit");
+        assert_eq!(hit.id, action.id);
+    }
 }
