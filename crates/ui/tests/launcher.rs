@@ -69,7 +69,7 @@ fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
             .all(|button| button.action.shortcut() != "Esc")
     );
     assert_eq!(
-        layout.toolbar.height, 2,
+        layout.action_bar.actions.iter().map(|action| action.area.y).max().unwrap() - layout.action_bar.actions.iter().map(|action| action.area.y).min().unwrap() + 1, 2,
         "three bottom actions wrap to two rows; refresh stays above the list"
     );
     assert!(
@@ -503,5 +503,20 @@ fn confirmation_overlay_takes_precedence_in_hit_testing_and_rendering() {
         let output = render(&model, width, 30);
         assert!(output.contains("[Y Launch]"));
         assert!(output.contains("[Esc Cancel]"));
+    }
+}
+
+#[test]
+fn launcher_empty_state_has_a_primary_explorer_button() {
+    let model = LauncherViewModel::new(Vec::new(), None, LauncherViewMode::Details, true);
+    let text = render(&model, 100, 30);
+    assert!(text.contains("Open File Explorer"));
+    assert!(!text.contains("right-click"));
+    for width in [50, 72, 110] {
+        let layout = launcher_layout(Rect::new(0, 0, width, 20), &model);
+        let action = layout.action_bar.actions.iter().find(|action| action.id.as_str() == "empty.explorer").unwrap();
+        assert_eq!(action.emphasis, ui::components::ButtonEmphasis::Primary);
+        assert_eq!(layout.hit_test(action.area.x, action.area.y), Some(LauncherHitTarget::EmptyOpenExplorer));
+        assert_eq!(action.area.right(), layout.footer.right());
     }
 }

@@ -4,7 +4,7 @@ use ratatui::style::Style;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
-    Button, ComponentTone, DataTable, Scrollbar, Surface, terminal_width,
+    Button, ComponentTone, DataTable, PageAction, PageActionBar, PageActionStatus, Scrollbar, Surface, terminal_width,
     truncate_to_terminal_width,
 };
 use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
@@ -12,9 +12,7 @@ use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
 const GRID_TILE_MIN_WIDTH: u16 = 20;
 const GRID_TILE_HEIGHT: u16 = 9;
 fn empty_message() -> String {
-    i18n::tr!(
-        "ui-launcher-no-launcher-items-go-to-explorer-select-a-file-then-right-click-and-choose-add-to-launcher"
-    )
+    i18n::tr!("ui-launcher-empty")
 }
 
 pub use app::launcher::{LauncherItemStatus, LauncherViewMode};
@@ -346,6 +344,7 @@ pub enum LauncherHitTarget {
     Cancel,
     OverlaySurface,
     EmptyContent,
+    EmptyOpenExplorer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -376,6 +375,7 @@ pub struct LauncherLayout {
     pub content: Rect,
     pub footer: Rect,
     pub toolbar_buttons: Vec<LauncherToolbarButtonLayout>,
+    pub action_bar: crate::components::PageActionBarLayout,
     pub items: Vec<LauncherItemLayout>,
     pub visible_start: usize,
     pub visible_capacity: usize,
@@ -396,6 +396,9 @@ impl LauncherLayout {
                 return Some(LauncherHitTarget::Cancel);
             }
             return contains(confirmation.area, x, y).then_some(LauncherHitTarget::OverlaySurface);
+        }
+        if self.action_bar.actions.iter().any(|action| action.id.as_str() == "empty.explorer" && contains(action.area, x, y)) {
+            return Some(LauncherHitTarget::EmptyOpenExplorer);
         }
         if let Some(button) = self
             .toolbar_buttons
@@ -461,32 +464,16 @@ impl LauncherLayout {
 pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout {
     let panel = main;
     let inner = inset(panel, 1);
-    let desired_footer_height = if inner.height >= 7 { 2 } else { 1 };
-    let toolbar_height = launcher_toolbar_layout(Rect::new(0, 0, inner.width, u16::MAX), model)
-        .iter()
-        .map(|b| b.area.bottom())
-        .max()
-        .unwrap_or(0)
-        .min(inner.height.saturating_sub(desired_footer_height + 1));
-    let mut toolbar = Rect::new(inner.x, inner.y, inner.width, toolbar_height);
-    let footer_height = desired_footer_height.min(inner.height.saturating_sub(toolbar.height));
-    let footer = Rect::new(
-        inner.x,
-        inner
-            .y
-            .saturating_add(inner.height.saturating_sub(footer_height)),
-        inner.width,
-        footer_height,
-    );
-    toolbar.y = footer.y.saturating_sub(toolbar.height).max(inner.y);
+    let bar = launcher_action_bar(model);
+    let bar_height = bar.height(inner.width).min(inner.height.saturating_sub(1));
+    let footer = Rect::new(inner.x, inner.bottom().saturating_sub(bar_height), inner.width, bar_height);
+    let action_bar = bar.layout(footer);
+    let toolbar = footer;
     let content_y = inner.y.saturating_add(u16::from(inner.height > 0));
-    let content = Rect::new(
-        inner.x,
-        content_y,
-        inner.width,
-        toolbar.y.saturating_sub(content_y),
-    );
-    let mut toolbar_buttons = launcher_toolbar_layout(toolbar, model);
+    let content = Rect::new(inner.x, content_y, inner.width, footer.y.saturating_sub(content_y));
+    let mut toolbar_buttons = action_bar.actions.iter().filter_map(|action| {
+        model.toolbar.iter().find(|button| action.id.as_str() == format!("toolbar.{:?}", button.action)).map(|button| LauncherToolbarButtonLayout { action: button.action, area: action.area })
+    }).collect::<Vec<_>>();
     if let Some(refresh) = model
         .toolbar
         .iter()
@@ -550,6 +537,7 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         content,
         footer,
         toolbar_buttons,
+        action_bar,
         items,
         visible_start,
         visible_capacity,
@@ -561,27 +549,27 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
     }
 }
 
-fn launcher_toolbar_layout(
-    area: Rect,
-    model: &LauncherViewModel,
-) -> Vec<LauncherToolbarButtonLayout> {
-    let buttons = model
-        .toolbar
-        .iter()
-        .filter(|b| b.action != LauncherToolbarAction::Refresh)
-        .collect::<Vec<_>>();
-    let widths = buttons
-        .iter()
-        .map(|b| (terminal_width(&format!("[{} {}]", b.action.shortcut(), b.label)) + 2) as u16)
-        .collect::<Vec<_>>();
-    buttons
-        .into_iter()
-        .zip(crate::right_aligned_actions(area, &widths))
-        .map(|(button, area)| LauncherToolbarButtonLayout {
-            action: button.action,
-            area,
-        })
-        .collect()
+fn launcher_action_bar(model: &LauncherViewModel) -> PageActionBar {
+    let mut actions = Vec::new();
+    if model.items.is_empty() {
+        actions.push(PageAction::new("empty.explorer", i18n::tr!("ui-launcher-empty-open-explorer")).primary());
+    }
+    for action in [LauncherToolbarAction::Open, LauncherToolbarAction::ToggleView, LauncherToolbarAction::Remove] {
+        if let Some(button) = model.toolbar.iter().find(|button| button.action == action) {
+            let page = PageAction::new(format!("toolbar.{action:?}"), format!("{} {}", action.shortcut(), button.label)).disabled(!button.enabled);
+            actions.push(match action {
+                LauncherToolbarAction::Open if !model.items.is_empty() => page.primary(),
+                LauncherToolbarAction::Remove => page.danger(),
+                _ => page,
+            });
+        }
+    }
+    let (text, tone) = if let Some(error) = &model.error { (error.clone(), ComponentTone::Danger) }
+        else if let Some(message) = &model.message { (message.clone(), ComponentTone::Default) }
+        else { (i18n::tr!("ui-launcher-item-count", count = model.items.len()), ComponentTone::Muted) };
+    let mut status = vec![PageActionStatus { text, tone }];
+    if let Some(item) = model.selected_item() { status.push(PageActionStatus { text: item.path.clone(), tone: ComponentTone::Muted }); }
+    PageActionBar::new("launcher").with_status(status).with_actions(actions)
 }
 
 fn launcher_grid_layout(
@@ -817,7 +805,7 @@ pub fn render_launcher_content(
     if let Some(indicator) = layout.drop_indicator {
         render_launcher_drop_indicator(frame, indicator, theme);
     }
-    render_launcher_footer(frame, layout.footer, model, context);
+    launcher_action_bar(model).render(frame, layout.footer, context);
     if let Some(scrollbar) = layout.scrollbar {
         render_launcher_scrollbar(frame, scrollbar, &layout, model, context);
     }
@@ -841,7 +829,7 @@ fn render_launcher_toolbar(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    for button_layout in &layout.toolbar_buttons {
+    for button_layout in layout.toolbar_buttons.iter().filter(|button| button.action == LauncherToolbarAction::Refresh) {
         let Some(button) = model
             .toolbar
             .iter()
@@ -1071,42 +1059,6 @@ fn detail_widths(width: u16) -> [u16; 4] {
     let integrity = (width.saturating_mul(18) / 100).max(8);
     let used = name.saturating_add(kind).saturating_add(integrity);
     [name, kind, integrity, width.saturating_sub(used)]
-}
-
-fn render_launcher_footer(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    model: &LauncherViewModel,
-    context: &RenderContext,
-) {
-    let theme = &context.compatibility_theme();
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let (text, style) = if let Some(error) = &model.error {
-        (error.clone(), theme.error_style())
-    } else if let Some(message) = &model.message {
-        (message.clone(), theme.body_style())
-    } else {
-        (
-            i18n::tr!("ui-launcher-item-count", count = model.items.len()),
-            theme.muted_style(),
-        )
-    };
-    frame.render_widget(
-        Paragraph::new(fit_text(&text, area.width))
-            .alignment(HorizontalAlignment::Left)
-            .style(style),
-        Rect::new(area.x, area.y, area.width, 1),
-    );
-    if area.height > 1
-        && let Some(item) = model.selected_item()
-    {
-        frame.render_widget(
-            Paragraph::new(fit_text(&item.path, area.width)).style(theme.muted_style()),
-            Rect::new(area.x, area.y.saturating_add(1), area.width, 1),
-        );
-    }
 }
 
 fn render_launcher_scrollbar(

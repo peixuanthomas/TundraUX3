@@ -605,6 +605,7 @@ impl ShellSession {
                 ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
                 ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
             },
+            Some(ui::LauncherHitTarget::EmptyOpenExplorer) => self.open_explorer(platform),
             Some(ui::LauncherHitTarget::Confirm) => self.confirm_launcher_action(platform),
             Some(ui::LauncherHitTarget::Cancel) => {
                 self.pages.launcher.launcher_pending_confirmation = None

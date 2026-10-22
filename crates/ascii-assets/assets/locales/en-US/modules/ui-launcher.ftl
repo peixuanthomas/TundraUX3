@@ -28,3 +28,6 @@ ui-launcher-item-count = { $count ->
         [one] { $count } item · Enter launch · Esc back
        *[other] { $count } items · Enter launch · Esc back
     }
+
+ui-launcher-empty = No launcher shortcuts yet
+ui-launcher-empty-open-explorer = Enter Open File Explorer

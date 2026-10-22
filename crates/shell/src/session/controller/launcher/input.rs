@@ -49,7 +49,7 @@ impl ShellSession {
             InputKey::Home => (target, ShellCommand::LauncherFirst),
             InputKey::End => (target, ShellCommand::LauncherLast),
             InputKey::Enter | InputKey::Char(' ') if key.phase == InputPhase::Press => {
-                (target, ShellCommand::LauncherActivate)
+                (target, if self.to_launcher_view_model().items.is_empty() { ShellCommand::OpenExplorer } else { ShellCommand::LauncherActivate })
             }
             InputKey::Delete if key.phase == InputPhase::Press => {
                 (target, ShellCommand::LauncherRemove)

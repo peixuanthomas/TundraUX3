@@ -41,3 +41,5 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 中英文 `modules/ui-test.ftl` 保存共享控件展示页的文字；`debug ui-test` 固定使用编译进程序的英文，不读取磁盘上的语言资源。
 
 同一资源文件也保存 `debug test-rainbow-text` 的帮助、标题、示例和退出提示，中英文命令目录均包含此入口。
+
+`modules/help.ftl` 保存各页 F1 帮助；启动器空列表使用简短说明和文件浏览器按钮，中英文同步提供。
