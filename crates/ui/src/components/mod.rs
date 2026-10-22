@@ -30,7 +30,7 @@ mod text_input;
 mod toast;
 mod update_activity;
 
-pub use button::{Button, ButtonFrame, ButtonRegion};
+pub use button::{Button, ButtonEmphasis, ButtonFrame, ButtonRegion};
 pub use command_palette::{CommandPalette, CommandPaletteCommand};
 pub use command_status::CommandStatus;
 pub use context_menu::{ContextMenu, ContextMenuItem};

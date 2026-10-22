@@ -82,6 +82,14 @@ impl ButtonFrame {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ButtonEmphasis {
+    #[default]
+    Normal,
+    Primary,
+    Danger,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Button {
     pub id: ComponentId,
@@ -92,6 +100,8 @@ pub struct Button {
     pub current: bool,
     pub centered_label: bool,
     pub pressed_fill: bool,
+    pub emphasis: ButtonEmphasis,
+    pub focus_fill: Option<ratatui::style::Color>,
 }
 
 impl Button {
@@ -114,6 +124,8 @@ impl Button {
             current: false,
             centered_label: false,
             pressed_fill: false,
+            emphasis: ButtonEmphasis::Normal,
+            focus_fill: None,
         }
     }
 
@@ -143,6 +155,16 @@ impl Button {
     /// Fill held or latched keycaps and keep their legends readable.
     pub fn with_pressed_fill(mut self, filled: bool) -> Self {
         self.pressed_fill = filled;
+        self
+    }
+
+    pub fn with_emphasis(mut self, emphasis: ButtonEmphasis) -> Self {
+        self.emphasis = emphasis;
+        self
+    }
+
+    pub fn with_focus_fill(mut self, fill: Option<ratatui::style::Color>) -> Self {
+        self.focus_fill = fill;
         self
     }
 
@@ -396,7 +418,11 @@ impl Button {
         if state.hovered || state.focused || state.selected {
             return theme.border_style().fg(theme.button_accent_color());
         }
-        theme.border_style()
+        match self.emphasis {
+            ButtonEmphasis::Primary => theme.border_style().fg(theme.button_accent_color()),
+            ButtonEmphasis::Danger => theme.border_style().fg(theme.error),
+            ButtonEmphasis::Normal => theme.border_style(),
+        }
     }
 
     fn style_for_state(&self, state: ComponentState, theme: &TundraTheme) -> Style {
@@ -412,6 +438,12 @@ impl Button {
             // shared accent. Use the frame canvas so emphasized text stays visible.
             style = style.bg(frame.background);
         }
+        if (state.hovered || state.focused || state.selected)
+            && !state.active
+            && let Some(fill) = self.focus_fill
+        {
+            style = style.bg(fill);
+        }
         if state.active {
             style = if self.pressed_fill {
                 theme.tokens().filled_style(theme.button_pressed_color())
@@ -419,7 +451,21 @@ impl Button {
                 style.fg(theme.button_pressed_color())
             };
         } else if state.hovered || state.focused || state.selected {
-            style = style.fg(theme.button_accent_color());
+            style = style.fg(if self.emphasis == ButtonEmphasis::Danger {
+                theme.error
+            } else {
+                theme.button_accent_color()
+            });
+        } else {
+            match self.emphasis {
+                ButtonEmphasis::Primary => {
+                    style = style
+                        .fg(theme.button_accent_color())
+                        .add_modifier(Modifier::BOLD);
+                }
+                ButtonEmphasis::Danger => style = style.fg(theme.error),
+                ButtonEmphasis::Normal => {}
+            }
         }
         if state.selected || state.focused || state.active {
             style = style.add_modifier(Modifier::BOLD);
@@ -427,3 +473,7 @@ impl Button {
         style
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/components/button_emphasis/tests.rs"]
+mod emphasis_tests;
