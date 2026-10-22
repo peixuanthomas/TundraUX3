@@ -48,9 +48,14 @@ impl ShellSession {
             InputKey::PageDown => (target, ShellCommand::LauncherPageDown),
             InputKey::Home => (target, ShellCommand::LauncherFirst),
             InputKey::End => (target, ShellCommand::LauncherLast),
-            InputKey::Enter | InputKey::Char(' ') if key.phase == InputPhase::Press => {
-                (target, if self.to_launcher_view_model().items.is_empty() { ShellCommand::OpenExplorer } else { ShellCommand::LauncherActivate })
-            }
+            InputKey::Enter | InputKey::Char(' ') if key.phase == InputPhase::Press => (
+                target,
+                if self.to_launcher_view_model().items.is_empty() {
+                    ShellCommand::OpenExplorer
+                } else {
+                    ShellCommand::LauncherActivate
+                },
+            ),
             InputKey::Delete if key.phase == InputPhase::Press => {
                 (target, ShellCommand::LauncherRemove)
             }

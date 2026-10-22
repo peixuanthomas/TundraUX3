@@ -205,7 +205,8 @@ fn render_home_account_summary(
         Rect::new(summary.x, summary.y, user_width, summary.height),
     );
     if logout.width > 0 {
-        let mut button = Button::new("home.logout", i18n::tr!("ui-home-logout-button")).with_emphasis(ButtonEmphasis::Danger);
+        let mut button = Button::new("home.logout", i18n::tr!("ui-home-logout-button"))
+            .with_emphasis(ButtonEmphasis::Danger);
         button.state.selected = home.logout_selected();
         button.render_borderless_frame(frame, logout, theme);
     }

@@ -4,8 +4,8 @@ use ratatui::style::Style;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
-    Button, ComponentTone, DataTable, PageAction, PageActionBar, PageActionStatus, Scrollbar, Surface, terminal_width,
-    truncate_to_terminal_width,
+    Button, ComponentTone, DataTable, PageAction, PageActionBar, PageActionStatus, Scrollbar,
+    Surface, terminal_width, truncate_to_terminal_width,
 };
 use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
 
@@ -397,7 +397,12 @@ impl LauncherLayout {
             }
             return contains(confirmation.area, x, y).then_some(LauncherHitTarget::OverlaySurface);
         }
-        if self.action_bar.actions.iter().any(|action| action.id.as_str() == "empty.explorer" && contains(action.area, x, y)) {
+        if self
+            .action_bar
+            .actions
+            .iter()
+            .any(|action| action.id.as_str() == "empty.explorer" && contains(action.area, x, y))
+        {
             return Some(LauncherHitTarget::EmptyOpenExplorer);
         }
         if let Some(button) = self
@@ -466,14 +471,35 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
     let inner = inset(panel, 1);
     let bar = launcher_action_bar(model);
     let bar_height = bar.height(inner.width).min(inner.height.saturating_sub(1));
-    let footer = Rect::new(inner.x, inner.bottom().saturating_sub(bar_height), inner.width, bar_height);
+    let footer = Rect::new(
+        inner.x,
+        inner.bottom().saturating_sub(bar_height),
+        inner.width,
+        bar_height,
+    );
     let action_bar = bar.layout(footer);
     let toolbar = footer;
     let content_y = inner.y.saturating_add(u16::from(inner.height > 0));
-    let content = Rect::new(inner.x, content_y, inner.width, footer.y.saturating_sub(content_y));
-    let mut toolbar_buttons = action_bar.actions.iter().filter_map(|action| {
-        model.toolbar.iter().find(|button| action.id.as_str() == format!("toolbar.{:?}", button.action)).map(|button| LauncherToolbarButtonLayout { action: button.action, area: action.area })
-    }).collect::<Vec<_>>();
+    let content = Rect::new(
+        inner.x,
+        content_y,
+        inner.width,
+        footer.y.saturating_sub(content_y),
+    );
+    let mut toolbar_buttons = action_bar
+        .actions
+        .iter()
+        .filter_map(|action| {
+            model
+                .toolbar
+                .iter()
+                .find(|button| action.id.as_str() == format!("toolbar.{:?}", button.action))
+                .map(|button| LauncherToolbarButtonLayout {
+                    action: button.action,
+                    area: action.area,
+                })
+        })
+        .collect::<Vec<_>>();
     if let Some(refresh) = model
         .toolbar
         .iter()
@@ -552,11 +578,25 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
 fn launcher_action_bar(model: &LauncherViewModel) -> PageActionBar {
     let mut actions = Vec::new();
     if model.items.is_empty() {
-        actions.push(PageAction::new("empty.explorer", i18n::tr!("ui-launcher-empty-open-explorer")).primary());
+        actions.push(
+            PageAction::new(
+                "empty.explorer",
+                i18n::tr!("ui-launcher-empty-open-explorer"),
+            )
+            .primary(),
+        );
     }
-    for action in [LauncherToolbarAction::Open, LauncherToolbarAction::ToggleView, LauncherToolbarAction::Remove] {
+    for action in [
+        LauncherToolbarAction::Open,
+        LauncherToolbarAction::ToggleView,
+        LauncherToolbarAction::Remove,
+    ] {
         if let Some(button) = model.toolbar.iter().find(|button| button.action == action) {
-            let page = PageAction::new(format!("toolbar.{action:?}"), format!("{} {}", action.shortcut(), button.label)).disabled(!button.enabled);
+            let page = PageAction::new(
+                format!("toolbar.{action:?}"),
+                format!("{} {}", action.shortcut(), button.label),
+            )
+            .disabled(!button.enabled);
             actions.push(match action {
                 LauncherToolbarAction::Open if !model.items.is_empty() => page.primary(),
                 LauncherToolbarAction::Remove => page.danger(),
@@ -564,12 +604,26 @@ fn launcher_action_bar(model: &LauncherViewModel) -> PageActionBar {
             });
         }
     }
-    let (text, tone) = if let Some(error) = &model.error { (error.clone(), ComponentTone::Danger) }
-        else if let Some(message) = &model.message { (message.clone(), ComponentTone::Default) }
-        else { (i18n::tr!("ui-launcher-item-count", count = model.items.len()), ComponentTone::Muted) };
+    let (text, tone) = if let Some(error) = &model.error {
+        (error.clone(), ComponentTone::Danger)
+    } else if let Some(message) = &model.message {
+        (message.clone(), ComponentTone::Default)
+    } else {
+        (
+            i18n::tr!("ui-launcher-item-count", count = model.items.len()),
+            ComponentTone::Muted,
+        )
+    };
     let mut status = vec![PageActionStatus { text, tone }];
-    if let Some(item) = model.selected_item() { status.push(PageActionStatus { text: item.path.clone(), tone: ComponentTone::Muted }); }
-    PageActionBar::new("launcher").with_status(status).with_actions(actions)
+    if let Some(item) = model.selected_item() {
+        status.push(PageActionStatus {
+            text: item.path.clone(),
+            tone: ComponentTone::Muted,
+        });
+    }
+    PageActionBar::new("launcher")
+        .with_status(status)
+        .with_actions(actions)
 }
 
 fn launcher_grid_layout(
@@ -829,7 +883,11 @@ fn render_launcher_toolbar(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    for button_layout in layout.toolbar_buttons.iter().filter(|button| button.action == LauncherToolbarAction::Refresh) {
+    for button_layout in layout
+        .toolbar_buttons
+        .iter()
+        .filter(|button| button.action == LauncherToolbarAction::Refresh)
+    {
         let Some(button) = model
             .toolbar
             .iter()
