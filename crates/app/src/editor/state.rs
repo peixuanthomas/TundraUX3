@@ -475,6 +475,51 @@ impl EditorState {
         self.install_dirty_recovery_checkpoint();
     }
 
+    /// Mirrors a live external editor. Its process remains the owner of undo history.
+    pub fn synchronize_external_source(
+        &mut self,
+        text: &str,
+        path: Option<PathBuf>,
+        metadata: TextMetadata,
+        cursor: usize,
+        modified: bool,
+    ) {
+        let content_changed = self.source().as_ref() != text;
+        if content_changed || self.document.metadata != metadata || self.mode != EditorMode::Source
+        {
+            self.buffer = EditorBuffer::Source(SourceBuffer::from_text(text));
+            self.mode = EditorMode::Source;
+            self.revision = self.next_revision;
+            self.next_revision = self.revision.saturating_add(1);
+        }
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.source_session = None;
+        self.pending_saves.clear();
+        self.document.path = path;
+        self.document.metadata = metadata;
+        self.cursor = Cursor {
+            byte_offset: cursor,
+            preferred_column: None,
+        };
+        self.selection = None;
+        self.clamp_positions();
+        if modified {
+            if self.revision == self.saved_revision {
+                self.revision = self.next_revision;
+                self.next_revision = self.revision.saturating_add(1);
+            }
+        } else if self.is_dirty() || content_changed || self.document.source().as_ref() != text {
+            self.document = EditorDocument::from_text(
+                self.document.path.clone(),
+                self.document.kind,
+                text.to_owned(),
+            );
+            self.document.metadata = metadata;
+            self.saved_revision = self.revision;
+        }
+    }
+
     pub(super) fn install_dirty_recovery_checkpoint(&mut self) {
         self.undo_stack.clear();
         self.redo_stack.clear();

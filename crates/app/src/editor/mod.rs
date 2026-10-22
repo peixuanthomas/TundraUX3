@@ -23,6 +23,10 @@ mod state;
 
 mod controller;
 
+#[cfg(test)]
+#[path = "../../tests/unit/editor/external.rs"]
+mod external_tests;
+
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -538,6 +542,7 @@ impl Eq for SaveSnapshot {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SavePayload {
+    ExternalBytes(Arc<[u8]>),
     Source {
         encoding: TextEncoding,
         text: Rope,
@@ -559,6 +564,16 @@ struct PreparedSave {
 }
 
 impl SaveSnapshot {
+    /// Captures bytes already encoded by an external editor without registering
+    /// a built-in editor save or changing its buffer, metadata, or history.
+    pub fn external_bytes(revision: u64, bytes: Vec<u8>) -> Self {
+        Self {
+            revision,
+            payload: Arc::new(SavePayload::ExternalBytes(bytes.into())),
+            prepared: Arc::new(OnceLock::new()),
+        }
+    }
+
     fn source(
         revision: u64,
         text: Rope,
@@ -597,6 +612,7 @@ impl SaveSnapshot {
     /// callers to invoke this method on a background worker.
     pub fn write_to(&self, writer: &mut dyn Write) -> io::Result<()> {
         match self.payload.as_ref() {
+            SavePayload::ExternalBytes(bytes) => writer.write_all(bytes)?,
             SavePayload::Source {
                 text,
                 utf8_bom,
@@ -661,7 +677,7 @@ impl SaveSnapshot {
 
     fn prepared(&self) -> &PreparedSave {
         self.prepared.get_or_init(|| match self.payload.as_ref() {
-            SavePayload::Source { .. } => PreparedSave {
+            SavePayload::ExternalBytes(_) | SavePayload::Source { .. } => PreparedSave {
                 source: None,
                 export: None,
             },

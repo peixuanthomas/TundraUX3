@@ -300,7 +300,7 @@ impl SourceBuffer {
 
     pub(super) fn normalize_position(&self, position: usize) -> usize {
         let mut position = position.min(self.len_bytes());
-        while self.text.try_byte_to_char(position).is_err() {
+        while position < self.len_bytes() && self.text.byte(position) & 0xc0 == 0x80 {
             position = position.saturating_sub(1);
         }
         if position > 0
