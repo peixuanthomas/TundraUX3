@@ -1273,7 +1273,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     update_ready_marked = true;
                 }
                 redraw.did_draw(frame_now);
-                if animation_running {
+                if prepared
+                    .as_ref()
+                    .is_some_and(|frame| frame.rainbow_running())
+                {
+                    redraw.request_continuous_frame(frame_now);
+                } else if animation_running {
                     redraw.request_animation_frame(frame_now);
                 }
             }

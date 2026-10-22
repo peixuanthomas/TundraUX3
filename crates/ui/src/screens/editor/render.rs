@@ -30,14 +30,9 @@ pub fn render_editor_contextual(
         .bordered(true)
         .render_frame(frame, area, context);
     if let Some(terminal) = &model.vim_terminal {
-        let elapsed = if context.motion.reduced_motion {
-            std::time::Duration::ZERO
-        } else {
-            context.motion.now
-        };
         let mut vim_toggle = Button::new("editor.vim-toggle", i18n::tr!("ui-editor-vim-return"))
             .with_bracketed_label(false)
-            .with_rainbow_label(elapsed);
+            .with_rainbow_label(context.motion.now);
         vim_toggle.state.selected = true;
         vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
         crate::screens::command_line::render_native_terminal_snapshot(
@@ -209,12 +204,7 @@ fn render_menu_bar(
         .with_bracketed_label(false);
     vim_toggle.state.selected = model.vim_mode.is_some();
     if model.vim_mode.is_some() {
-        let elapsed = if context.motion.reduced_motion {
-            std::time::Duration::ZERO
-        } else {
-            context.motion.now
-        };
-        vim_toggle = vim_toggle.with_rainbow_label(elapsed);
+        vim_toggle = vim_toggle.with_rainbow_label(context.motion.now);
     }
     vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
 }

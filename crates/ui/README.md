@@ -36,7 +36,7 @@
 
 共享库通过 `ui::animate` 导出 [animate 0.8.0](https://docs.rs/animate/0.8.0)，启用 `macros` 和 `ratatui`，可直接使用 `Tween`、`Spring`、`Clock` 与 `#[animate]`，支持 `Rect`、`Color`、`Style` 等 Ratatui 类型。使用宏时先 `use ui::animate`，再写 `#[animate::animate]`，也可以用 `#[ui::animate::animate(crate = ui::animate)]` 指定路径；可运行示例见 [src/lib.rs](src/lib.rs) 的导出文档。
 
-`components::RainbowText::new(text, elapsed)` 是可直接绘制的 Ratatui 控件，复用 tachyonfx 的颜色转换，让彩虹颜色每三秒循环。按终端字符宽度着色，保留中文、组合字符、背景和字体样式。调用方传入累计动画时间，减少动态效果时传 `Duration::ZERO` 显示静态彩虹。独立演示入口为 `tundra-cli debug test-rainbow-text`。
+`components::RainbowText::new(text, elapsed)` 是可直接绘制的 Ratatui 控件，复用 tachyonfx 的颜色转换，让彩虹颜色每三秒循环。按终端字符宽度着色，保留中文、组合字符、背景和字体样式。调用方传入实际经过时间，如 `MotionFrame::now`；彩虹持续播放，不受减少动态效果、动画速度或动画暂停影响。独立演示入口为 `tundra-cli debug test-rainbow-text`。
 
 动画状态由调用方保存，使用本地 `Clock`，每帧传入 `MotionFrame::scaled_delta()`；同一帧只推进一次时钟，所有动画共用返回的时间。实体键盘操作或减少动态效果时调用动画的 `finish()` 直接到达目标，按 `Activity::running()` 决定是否继续请求下一帧。实际页面开合继续遵守统一 UI 要求中的方向、三段速度及绘制与点击位置一致的规则。
 
@@ -62,7 +62,7 @@ AA 输出区为共享滚动条预留一列，避免遮住文字或在出现历�
 
 普通编辑器菜单栏提供 F8 Vim 开关。Vim 开启后，原菜单、正文和内部状态栏由原生 Vim 终端画面取代，只在上方保留 F8 返回编辑器按钮；模式、待完成命令、Ex 命令行、查找、错误和状态行均由 Vim 自身显示。`editor_vim_terminal_area` 统一绘制、PTY 尺寸与鼠标坐标，终端快照保留斜体和原生光标形状。
 
-共享 `Button::with_rainbow_label` 为 Vim 开关及返回按钮提供彩虹文字，减少动态效果时显示静态彩虹；悬停、按下和禁用沿用共享按钮样式。原生终端参与实际画面的自动化采集。普通编辑器的 Vim 说明从帮助菜单打开，原生 Vim 帮助使用 `:help`。
+共享 `Button::with_rainbow_label` 为 Vim 开关及返回按钮提供持续播放的彩虹文字，悬停、按下和禁用时也继续变色，按钮边框、背景及交互状态沿用共享样式。原生终端参与实际画面的自动化采集。普通编辑器的 Vim 说明从帮助菜单打开，原生 Vim 帮助使用 `:help`。
 
 文件管理的路径导航单独放在搜索框上方一行，路径按钮、地址编辑和点击区域共用同一布局。删除和清空回收站只使用 Shell 的全局确认框，页面不再绘制旧确认框。
 

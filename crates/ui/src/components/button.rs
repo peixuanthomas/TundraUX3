@@ -164,7 +164,8 @@ impl Button {
         self
     }
 
-    /// Uses rainbow text while retaining disabled, hover and pressed feedback.
+    /// Cycles rainbow text from real elapsed time in every interaction state.
+    /// Background, border, modifiers and input handling retain their usual feedback.
     pub fn with_rainbow_label(mut self, elapsed: Duration) -> Self {
         self.rainbow_elapsed = Some(elapsed);
         self
@@ -340,7 +341,7 @@ impl Button {
     fn bordered_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let state = self.render_state(area, theme);
         let style = self.style_for_state(state, theme);
-        Paragraph::new(self.label_text(area.height.saturating_sub(2), state))
+        Paragraph::new(self.label_text(area.height.saturating_sub(2)))
             .alignment(HorizontalAlignment::Center)
             .style(style)
             .block(
@@ -355,12 +356,12 @@ impl Button {
     fn borderless_widget<'a>(&'a self, area: Rect, theme: &TundraTheme) -> Paragraph<'a> {
         let state = self.render_state(area, theme);
         let style = self.style_for_state(state, theme);
-        Paragraph::new(self.label_text(area.height, state))
+        Paragraph::new(self.label_text(area.height))
             .alignment(HorizontalAlignment::Center)
             .style(style)
     }
 
-    fn label_text(&self, height: u16, state: ComponentState) -> Text<'_> {
+    fn label_text(&self, height: u16) -> Text<'_> {
         let mut lines = Text::from(self.display_label()).lines;
         if self.centered_label {
             let padding = usize::from(height).saturating_sub(lines.len()) / 2;
@@ -368,10 +369,8 @@ impl Button {
         }
         let text = Text::from(lines);
         match self.rainbow_elapsed {
-            Some(elapsed) if !state.disabled && !state.hovered && !state.active => {
-                RainbowText::new(text, elapsed).into_text()
-            }
-            _ => text,
+            Some(elapsed) => RainbowText::new(text, elapsed).into_text(),
+            None => text,
         }
     }
 

@@ -120,7 +120,7 @@ fn native_vim_layout_keeps_its_viewport_and_exit_button_inside_resized_panels() 
 }
 
 #[test]
-fn native_vim_return_button_preserves_rainbow_motion_and_shared_pointer_feedback() {
+fn vim_buttons_keep_real_time_rainbow_under_all_motion_and_pointer_settings() {
     use ui::components::{ButtonFrame, ButtonRegion};
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
     for locale in ["en-US", "zh-CN"] {
@@ -128,81 +128,93 @@ fn native_vim_return_button_preserves_rainbow_motion_and_shared_pointer_feedback
             .unwrap()
             .snapshot;
         let _language = i18n::enter_snapshot(std::sync::Arc::new(language));
-        let area = Rect::new(0, 0, 80, 24);
-        let mut model = EditorViewModel::source("note.txt", "host contents stay hidden");
-        model.vim_terminal = Some(std::sync::Arc::new(ui::CommandLineTerminalSnapshot::blank(
-            78, 21,
-        )));
-        let toggle = editor_layout(area, &model).vim_toggle;
-        let render = |now, reduced_motion, pointer: Option<bool>| {
-            let mut theme = TundraTheme::default_dark();
-            if let Some(pressed) = pointer {
-                let region = ButtonRegion {
-                    id: "editor.vim-toggle".into(),
-                    area: toggle,
-                    disabled: false,
-                };
-                let mut buttons =
-                    ButtonFrame::new(Some(region.clone()), pressed.then_some(region), &theme);
-                buttons.keyboard_focus_visible = false;
-                theme.buttons = Some(buttons);
+        for native in [false, true] {
+            let area = Rect::new(0, 0, 80, 24);
+            let mut model = EditorViewModel::source("note.txt", "host contents stay hidden");
+            model.vim_mode = Some(ui::EditorVimMode::Normal);
+            if native {
+                model.vim_terminal = Some(std::sync::Arc::new(
+                    ui::CommandLineTerminalSnapshot::blank(78, 21),
+                ));
             }
-            let context = ui::RenderContext::from_theme(
-                &theme,
-                ui::MotionFrame {
-                    now,
-                    reduced_motion,
-                    ..Default::default()
-                },
-                Default::default(),
-            );
-            let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-            terminal
-                .draw(|frame| {
-                    ui::render_editor_contextual(frame, area, &model, &context);
-                })
-                .unwrap();
-            let text = support::terminal_output(&terminal);
-            let mut column = toggle.x;
-            for character in i18n::tr!("ui-editor-vim-return").chars() {
-                let symbol = character.to_string();
-                assert_eq!(
-                    terminal.backend().buffer()[(column, toggle.y)].symbol(),
-                    symbol
-                );
-                column += ratatui::text::Line::from(symbol).width() as u16;
-            }
-            assert!(!text.contains("host contents stay hidden"));
-            terminal.backend().buffer().clone()
-        };
-        let colors = |buffer: &ratatui::buffer::Buffer| {
-            (toggle.x..toggle.right())
-                .map(|x| buffer[(x, toggle.y)].fg)
-                .collect::<Vec<_>>()
-        };
-        let zero = std::time::Duration::ZERO;
-        let later = std::time::Duration::from_secs(1);
-        let first = render(zero, false, None);
-        assert_ne!(
-            first[(toggle.x, toggle.y)].fg,
-            first[(toggle.x + 1, toggle.y)].fg
-        );
-        assert_ne!(colors(&first), colors(&render(later, false, None)));
-        assert_eq!(
-            colors(&render(zero, true, None)),
-            colors(&render(later, true, None))
-        );
-        for pressed in [false, true] {
-            let buffer = render(later, false, Some(pressed));
-            let theme = TundraTheme::default_dark();
-            assert_eq!(
-                buffer[(toggle.x, toggle.y)].fg,
-                if pressed {
-                    theme.button_pressed_color()
-                } else {
-                    theme.accent_color
+            let toggle = editor_layout(area, &model).vim_toggle;
+            let render = |now, reduced_motion, animation_speed_percent, pointer: Option<bool>| {
+                let mut theme = TundraTheme::default_dark();
+                if let Some(pressed) = pointer {
+                    let region = ButtonRegion {
+                        id: "editor.vim-toggle".into(),
+                        area: toggle,
+                        disabled: false,
+                    };
+                    let mut buttons =
+                        ButtonFrame::new(Some(region.clone()), pressed.then_some(region), &theme);
+                    buttons.keyboard_focus_visible = false;
+                    theme.buttons = Some(buttons);
                 }
+                let context = ui::RenderContext::from_theme(
+                    &theme,
+                    ui::MotionFrame {
+                        now,
+                        reduced_motion,
+                        animation_speed_percent,
+                        ..Default::default()
+                    },
+                    Default::default(),
+                );
+                let mut terminal =
+                    Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        ui::render_editor_contextual(frame, area, &model, &context);
+                    })
+                    .unwrap();
+                let text = support::terminal_output(&terminal);
+                if native {
+                    let mut column = toggle.x;
+                    for character in i18n::tr!("ui-editor-vim-return").chars() {
+                        let symbol = character.to_string();
+                        assert_eq!(
+                            terminal.backend().buffer()[(column, toggle.y)].symbol(),
+                            symbol
+                        );
+                        column += ratatui::text::Line::from(symbol).width() as u16;
+                    }
+                    assert!(!text.contains("host contents stay hidden"));
+                } else {
+                    assert!(text.contains("VIM_mode"));
+                }
+                terminal.backend().buffer().clone()
+            };
+            let colors = |buffer: &ratatui::buffer::Buffer| {
+                (toggle.x..toggle.right())
+                    .map(|x| buffer[(x, toggle.y)].fg)
+                    .collect::<Vec<_>>()
+            };
+            let zero = std::time::Duration::ZERO;
+            let later = std::time::Duration::from_secs(1);
+            let first = render(zero, false, 100, None);
+            assert_ne!(
+                first[(toggle.x, toggle.y)].fg,
+                first[(toggle.x + 1, toggle.y)].fg
             );
+            let later_colors = colors(&render(later, false, 100, None));
+            for reduced in [false, true] {
+                for speed in [0, 25, 100, 200] {
+                    for pointer in [None, Some(false), Some(true)] {
+                        let earlier = render(zero, reduced, speed, pointer);
+                        let later = render(later, reduced, speed, pointer);
+                        assert_ne!(colors(&earlier), colors(&later));
+                        assert_eq!(colors(&later), later_colors);
+                        if pointer == Some(true) {
+                            assert!(
+                                later[(toggle.x, toggle.y)]
+                                    .modifier
+                                    .contains(Modifier::BOLD)
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -259,14 +271,28 @@ fn vim_toggle_is_localized_visible_and_uses_shared_pointer_feedback() {
                     !text.contains("h/j/k/l"),
                     "Vim help stays hidden until requested"
                 );
-                assert_eq!(
-                    buffer[(toggle.x + 1, toggle.y)].fg,
+                if mode.is_some() {
+                    assert_ne!(
+                        buffer[(toggle.x + 1, toggle.y)].fg,
+                        buffer[(toggle.x + 2, toggle.y)].fg
+                    );
                     if pressed {
-                        theme.button_pressed_color()
-                    } else {
-                        theme.accent_color
+                        assert!(
+                            buffer[(toggle.x + 1, toggle.y)]
+                                .modifier
+                                .contains(Modifier::BOLD)
+                        );
                     }
-                );
+                } else {
+                    assert_eq!(
+                        buffer[(toggle.x + 1, toggle.y)].fg,
+                        if pressed {
+                            theme.button_pressed_color()
+                        } else {
+                            theme.accent_color
+                        }
+                    );
+                }
             }
         }
     }

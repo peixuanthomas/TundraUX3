@@ -9,7 +9,7 @@ use ratatui::{
 
 /// Rainbow foreground colors that cycle every three seconds.
 ///
-/// The caller supplies elapsed animation time; pass zero for a static rainbow.
+/// The caller supplies real elapsed time, independent of animation preferences.
 /// Existing text layout, background colors and modifiers are preserved.
 pub struct RainbowText<'a> {
     text: Text<'a>,

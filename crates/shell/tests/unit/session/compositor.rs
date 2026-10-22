@@ -930,6 +930,22 @@ fn alert_preempts_an_exiting_toast_and_reduced_motion_has_no_animation_demand() 
 }
 
 #[test]
+fn vim_rainbow_keeps_requesting_frames_with_reduced_motion() {
+    let mut state = session();
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut prepared = home_frame(&state, 0, true);
+    let mut editor = ui::EditorViewModel::source("note.txt", "text");
+    editor.vim_mode = Some(ui::EditorVimMode::Normal);
+    prepared.page = ScreenViewModel::Editor(Box::new(editor));
+    assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
+    if let ScreenViewModel::Editor(model) = &mut prepared.page {
+        model.vim_mode = None;
+    }
+    assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
+}
+
+#[test]
 fn compositor_resize_uses_actual_frame_geometry_for_chrome_and_hit_map() {
     let mut state = session();
     let mut compositor = ScreenCompositor::default();

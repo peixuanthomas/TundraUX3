@@ -44,6 +44,7 @@ pub(super) struct RedrawScheduler {
     current: RedrawIdentity,
     last_frame_at: Duration,
     next_motion_frame: Option<Duration>,
+    next_continuous_frame: Option<Duration>,
     next_state_clock: Duration,
     needs_redraw: bool,
     reduced_motion: bool,
@@ -56,6 +57,7 @@ impl RedrawScheduler {
             current: identity,
             last_frame_at: Duration::ZERO,
             next_motion_frame: None,
+            next_continuous_frame: None,
             next_state_clock: STATE_CLOCK_INTERVAL,
             needs_redraw: true,
             reduced_motion,
@@ -82,6 +84,17 @@ impl RedrawScheduler {
         );
     }
 
+    pub(super) fn request_continuous_frame(&mut self, now: Instant) {
+        self.next_continuous_frame = Some(self.elapsed(now).saturating_add(FRAME_INTERVAL));
+    }
+
+    fn next_frame(&self) -> Option<Duration> {
+        [self.next_motion_frame, self.next_continuous_frame]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
     pub(super) fn observe(
         &mut self,
         _now: Instant,
@@ -92,6 +105,7 @@ impl RedrawScheduler {
         if self.current != identity {
             self.current = identity;
             self.next_motion_frame = None;
+            self.next_continuous_frame = None;
             self.needs_redraw = true;
         } else if reduced_motion {
             self.next_motion_frame = None;
@@ -100,15 +114,12 @@ impl RedrawScheduler {
 
     pub(super) fn is_due(&self, now: Instant) -> bool {
         let now = self.elapsed(now);
-        let redraw_request_due = self.needs_redraw
-            && self
-                .next_motion_frame
-                .is_none_or(|deadline| now >= deadline);
+        let next_frame = self.next_frame();
+        let redraw_request_due =
+            self.needs_redraw && next_frame.is_none_or(|deadline| now >= deadline);
         redraw_request_due
             || now >= self.next_state_clock
-            || self
-                .next_motion_frame
-                .is_some_and(|deadline| now >= deadline)
+            || next_frame.is_some_and(|deadline| now >= deadline)
     }
 
     pub(super) fn frame(&self, now: Instant, animation_speed_percent: u16) -> ui::MotionFrame {
@@ -132,6 +143,7 @@ impl RedrawScheduler {
         self.needs_redraw = false;
         self.last_frame_at = now;
         self.next_motion_frame = None;
+        self.next_continuous_frame = None;
         while self.next_state_clock <= now {
             self.next_state_clock = self
                 .next_state_clock
@@ -142,11 +154,11 @@ impl RedrawScheduler {
 
     pub(super) fn poll_timeout(&self, now: Instant, maximum: Duration) -> Duration {
         let now = self.elapsed(now);
-        if self.needs_redraw && self.next_motion_frame.is_none() {
+        if self.needs_redraw && self.next_frame().is_none() {
             return Duration::ZERO;
         }
         let deadline = self
-            .next_motion_frame
+            .next_frame()
             .unwrap_or(Duration::MAX)
             .min(self.next_state_clock);
         maximum.min(deadline.saturating_sub(now))

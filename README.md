@@ -113,7 +113,7 @@ Preview shared controls with `tundra-cli debug ui-test` in a terminal of at leas
 
 The [shared UI library](crates/ui/README.md) exposes `animate` for value and Ratatui layout/style animations, including its attribute macro. Animated pages share frame snapshots and skip unnecessary image checks to reduce CPU work.
 
-Run `tundra-cli debug test-rainbow-text` to preview flowing rainbow text. Esc or the Exit button closes the demo; it uses built-in samples without saving settings.
+Run `tundra-cli debug test-rainbow-text` to preview flowing rainbow text. Rainbow text keeps flowing at a fixed speed regardless of animation settings or button state. Esc or the Exit button closes the demo; it uses built-in samples without saving settings.
 
 Build both packages: the shell uses the companion CLI for the built-in command line and Linux management tasks. For build, test, and packaging details, see the [technical documentation](docs/README-TECHNICAL.md).
 
