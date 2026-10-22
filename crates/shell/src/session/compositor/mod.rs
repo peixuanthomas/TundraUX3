@@ -111,6 +111,36 @@ pub(crate) struct ScreenCompositor {
 }
 
 impl ScreenCompositor {
+    pub(super) fn render_screen_saver(
+        &mut self,
+        frame: &mut Frame<'_>,
+        display: &mut weathr::EmbeddedDisplay,
+    ) -> io::Result<()> {
+        let bounds = frame.area();
+        let buffer = display.render((bounds.width, bounds.height))?;
+        frame.buffer_mut().merge(buffer);
+        self.snapshot = self.capture_enabled.then(|| {
+            let capture = ui::automation::FrameCapture::begin(bounds, "screen_saver");
+            let mut snapshot = capture.finish(frame.buffer_mut());
+            let mut resume = shell_control::Node::new(
+                "screen_saver/resume",
+                "button",
+                i18n::tr!("weathr-resume-prompt"),
+                shell_control::Rect {
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: bounds.height,
+                },
+            );
+            resume.actions = vec!["click".into(), "key".into()];
+            resume.parent = Some("screen".into());
+            snapshot.nodes.push(resume);
+            snapshot
+        });
+        Ok(())
+    }
+
     pub(super) fn prepare(
         &mut self,
         state: &ShellSession,
@@ -515,6 +545,9 @@ impl ScreenCompositor {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> Option<InputEvent> {
+        if state.screen_saver.active {
+            return state.prepare_input(input, platform, received_at);
+        }
         if matches!(
             input,
             InputEvent::Key(_) | InputEvent::Paste(_) | InputEvent::FocusLost

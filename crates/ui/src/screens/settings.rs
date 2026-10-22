@@ -80,6 +80,7 @@ pub enum SettingsField {
     ApplicationList,
     AutoAdmin,
     AutomationEnabled,
+    ScreenTimeout,
     SoundOutputDevice,
     SoundOutputVolume,
     SoundOutputMute,

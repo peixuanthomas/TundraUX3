@@ -9,17 +9,6 @@ use crossterm::event::{
 };
 use ui::{MouseEventKind, Point};
 
-pub(crate) fn resets_login_idle_timeout(input: &InputEvent) -> bool {
-    matches!(
-        input,
-        InputEvent::Key(_)
-            | InputEvent::Mouse(_)
-            | InputEvent::Resize { .. }
-            | InputEvent::FocusGained
-            | InputEvent::Paste(_)
-    )
-}
-
 pub fn crossterm_event_to_input(event: Event) -> InputEvent {
     match event {
         Event::Key(key_event) => InputEvent::Key(key_event_to_input(key_event)),

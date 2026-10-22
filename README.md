@@ -21,6 +21,8 @@ System-management development focuses on Linux. Windows and macOS builds let you
 
 ## What you can do
 
+- **Show weather while idle:** Settings → System lets you choose Never, 30 seconds, or 1/2/5/10/30 minutes (default: 5 minutes). Press a key or tap to return to the same page without signing in again.
+
 - **Let agents operate the interface:** enable external CLI control in Settings → System, then use `tundra-cli ui` to inspect the live UI tree and text screen, click, drag, scroll, or type. Connections are local and restricted to the same OS user. See [CLI control](crates/cli/docs/ui-control.md).
 
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.

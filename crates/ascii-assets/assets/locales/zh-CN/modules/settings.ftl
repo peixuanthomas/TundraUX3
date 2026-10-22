@@ -447,3 +447,8 @@ ui-control-input-failed = 无法从标准输入读取文字。
 ui-control-busy = 另一个外部输入正在执行，请稍后重试。
 
 ui-control-lockscreen = 进入 Shell
+settings-screen-timeout = 屏幕超时时间
+settings-screen-timeout-never = 永不
+settings-screen-timeout-seconds = { $value } 秒
+settings-screen-timeout-minutes = { $value } 分钟
+settings-screen-timeout-help = 无操作后显示天气；按键或点按返回原页面，已登录时无需密码。

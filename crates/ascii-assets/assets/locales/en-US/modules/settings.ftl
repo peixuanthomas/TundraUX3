@@ -447,3 +447,12 @@ ui-control-input-failed = Could not read text from standard input.
 ui-control-busy = Another external input is in progress. Try again after it completes.
 
 ui-control-lockscreen = Enter Shell
+settings-screen-timeout = Screen timeout
+settings-screen-timeout-never = Never
+settings-screen-timeout-seconds = { $value } seconds
+settings-screen-timeout-minutes =
+    { $value ->
+        [one] { $value } minute
+       *[other] { $value } minutes
+    }
+settings-screen-timeout-help = Show weather after inactivity. Press a key or tap to resume without signing in again.

@@ -999,6 +999,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         reduced_motion_enabled(&state),
     );
     let mut compositor = ScreenCompositor::default();
+    let mut screen_saver_display = None;
+    let mut next_weather_frame = runtime_origin;
     control.invalidate();
     let mut terminal_suspended = false;
     let mut last_background_poll = runtime_origin;
@@ -1121,6 +1123,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 ..RuntimeSnapshot::default()
             });
             let frame_now = Instant::now();
+            state.advance_screen_saver_at(frame_now);
+            if !state.screen_saver_active() {
+                screen_saver_display = None;
+                next_weather_frame = frame_now;
+            }
             if launcher_icons
                 .as_mut()
                 .is_some_and(LauncherIconRuntime::poll_results)
@@ -1140,7 +1147,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 RedrawIdentity::from_session(&state),
                 reduced_motion_enabled(&state),
             );
-            if redraw.is_due(frame_now) {
+            if if state.screen_saver_active() {
+                frame_now >= next_weather_frame
+            } else {
+                redraw.is_due(frame_now)
+            } {
                 let _language = i18n::enter_snapshot(state.language.clone());
                 let motion_frame = redraw.frame(frame_now, animation_speed_percent(&state));
                 let motion_transitions = redraw.transitions(frame_now);
@@ -1164,15 +1175,18 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 } else {
                     ui::TerminalCellAspectRatio::default()
                 };
-                let prepared = compositor.prepare(
-                    &state,
-                    command_line_hosts.visible_host(&state),
-                    frame_now,
-                    aspect,
-                    render_context,
-                    launcher_icons.as_mut(),
-                );
+                let prepared = (!state.screen_saver_active()).then(|| {
+                    compositor.prepare(
+                        &state,
+                        command_line_hosts.visible_host(&state),
+                        frame_now,
+                        aspect,
+                        render_context,
+                        launcher_icons.as_mut(),
+                    )
+                });
                 let mut animation_running = false;
+                let mut weather_error = None;
                 guard.terminal_mut().draw(|frame| {
                     let bounds = frame.area();
                     // The terminal can resize after polling but before drawing.
@@ -1187,15 +1201,43 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         terminal_size_requirement.validate((bounds.width, bounds.height))
                     {
                         compositor.render_size_notice(frame, error, &theme);
+                    } else if state.screen_saver_active() {
+                        if screen_saver_display.is_none() {
+                            compositor.cancel_for_bounds_change();
+                            let language = state.language.clone();
+                            match weathr::EmbeddedDisplay::new(
+                                system_services.subscribe(),
+                                Arc::new(move |id, args| {
+                                    let mut message = i18n::LocalizedMessage::new(id);
+                                    for (name, value) in args {
+                                        message = message.with_arg(*name, value.clone());
+                                    }
+                                    language.render(&message)
+                                }),
+                                (bounds.width, bounds.height),
+                            ) {
+                                Ok(display) => screen_saver_display = Some(display),
+                                Err(error) => weather_error = Some(io::Error::other(error)),
+                            }
+                        }
+                        if let Some(display) = screen_saver_display.as_mut()
+                            && let Err(error) = compositor.render_screen_saver(frame, display)
+                        {
+                            weather_error = Some(error);
+                        }
                     } else {
                         animation_running = compositor.render(
                             frame,
                             &mut state,
-                            &prepared,
+                            prepared.as_ref().expect("normal frame was prepared"),
                             launcher_icons.as_ref(),
                         );
                     }
                 })?;
+                if let Some(error) = weather_error {
+                    return Err(error);
+                }
+                next_weather_frame = frame_now + Duration::from_millis(33);
                 if let Some(mut snapshot) = compositor.snapshot.take() {
                     snapshot.background_tasks_running |= command_line_hosts.has_running_processes();
                     control.publish(snapshot);
@@ -1242,11 +1284,18 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 background_work_outstanding,
                 poll_now.saturating_duration_since(last_background_poll),
             );
-            let state_poll_timeout = state.auth_poll_timeout(
+            let state_poll_timeout = state.screen_saver_poll_timeout(
                 poll_now,
-                state.notification_poll_timeout(poll_now, background_poll_timeout),
+                state.auth_poll_timeout(
+                    poll_now,
+                    state.notification_poll_timeout(poll_now, background_poll_timeout),
+                ),
             );
-            let redraw_timeout = redraw.poll_timeout(poll_now, Duration::MAX);
+            let redraw_timeout = if state.screen_saver_active() {
+                next_weather_frame.saturating_duration_since(poll_now)
+            } else {
+                redraw.poll_timeout(poll_now, Duration::MAX)
+            };
             let combined_timeout = state_poll_timeout.min(redraw_timeout);
             let (poll_timeout, command_line_timeout_is_state) = command_line_poll_timeout(
                 command_line_hosts.has_running_processes()

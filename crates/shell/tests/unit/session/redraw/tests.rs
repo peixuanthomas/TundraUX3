@@ -2,6 +2,7 @@ use super::*;
 
 fn id(screen: &str, focus: &str, overlay: Option<&str>) -> RedrawIdentity {
     RedrawIdentity {
+        screen_saver_active: false,
         language_generation: 1,
         screen: screen.into(),
         focus: focus.into(),

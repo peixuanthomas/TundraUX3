@@ -204,6 +204,209 @@ impl App {
         })
     }
 
+    pub(crate) fn render_frame(&mut self, renderer: &mut TerminalRenderer) -> io::Result<()> {
+        let mut rng = rand::rng();
+        let snapshot = self.snapshots.borrow_and_update().clone();
+        let attribution: String;
+        match snapshot.weather {
+            WeatherState::Ready(weather_snapshot) => {
+                let weather_data = weather_snapshot.weather;
+                {
+                    let weather = &weather_data;
+                    let rain_intensity = weather.condition.rain_intensity();
+                    let snow_intensity = weather.condition.snow_intensity();
+                    let fog_intensity = weather.condition.fog_intensity();
+                    let wind_speed = weather.wind_speed;
+                    let wind_direction = weather.wind_direction;
+                    attribution = weather.attribution.clone();
+
+                    if let Some(moon_phase) = weather.moon_phase {
+                        self.animations.update_moon_phase(moon_phase);
+                    }
+
+                    self.state.update_snapshot(
+                        weather_data,
+                        weather_snapshot.location,
+                        weather_snapshot.city,
+                        weather_snapshot.units,
+                    );
+                    self.animations.update_rain_intensity(rain_intensity);
+                    self.animations.update_snow_intensity(snow_intensity);
+                    self.animations.update_fog_intensity(fog_intensity);
+                    self.animations
+                        .update_wind(wind_speed as f32, wind_direction as f32);
+                }
+            }
+            WeatherState::Stale { last_good, error } => {
+                let weather_data = last_good.weather;
+                let weather = &weather_data;
+                let rain_intensity = weather.condition.rain_intensity();
+                let snow_intensity = weather.condition.snow_intensity();
+                let fog_intensity = weather.condition.fog_intensity();
+                let wind_speed = weather.wind_speed;
+                let wind_direction = weather.wind_direction;
+                self.state.update_snapshot(
+                    weather_data,
+                    last_good.location,
+                    last_good.city,
+                    last_good.units,
+                );
+                self.animations.update_rain_intensity(rain_intensity);
+                self.animations.update_snow_intensity(snow_intensity);
+                self.animations.update_fog_intensity(fog_intensity);
+                self.animations
+                    .update_wind(wind_speed as f32, wind_direction as f32);
+                attribution = localize!(self.state.localize, "weathr-stale", error = error);
+            }
+            WeatherState::Loading => {
+                self.state.clear_weather_for_offline();
+                attribution = localize!(self.state.localize, "weathr-awaiting-data");
+            }
+            WeatherState::Unavailable { reason } => {
+                self.state.clear_weather_for_offline();
+                attribution = localize!(self.state.localize, "weathr-unavailable", reason = reason);
+            }
+        }
+        let (date, time, warning) = match snapshot.time {
+            TimeState::Local { local_time } => (local_time.date_naive(), local_time.time(), None),
+            TimeState::Synced { local_time, .. } => {
+                (local_time.date_naive(), local_time.time(), None)
+            }
+            TimeState::Degraded {
+                local_time, error, ..
+            } => (local_time.date_naive(), local_time.time(), Some(error)),
+        };
+
+        renderer.clear()?;
+
+        let theme = self.themes.active();
+        let palette = &theme.palette;
+
+        let (term_width, term_height) = renderer.get_size();
+        let scene = self
+            .scenes
+            .get_mut(self.active_scene_id)
+            .expect("active scene must be registered");
+        scene.update_size(term_width, term_height);
+
+        let layout = scene.layout();
+        let ctx = SceneContext {
+            conditions: &self.state.weather_conditions,
+            palette,
+        };
+
+        self.animations.render_background(
+            renderer,
+            &self.state.weather_conditions,
+            &self.state,
+            &layout,
+            &mut rng,
+        )?;
+
+        scene.render(renderer, &ctx)?;
+
+        if let Some(ov_id) = self.active_overlay_id
+            && let Some(overlay) = self.overlays.get_mut(ov_id)
+        {
+            overlay.update_size(term_width, term_height);
+            overlay.render(renderer, &ctx, &layout)?;
+        }
+
+        self.animations.render_chimney_smoke(
+            renderer,
+            &self.state.weather_conditions,
+            &self.state,
+            &layout,
+            &mut rng,
+        )?;
+
+        self.animations.render_foreground(
+            renderer,
+            &self.state.weather_conditions,
+            &self.state,
+            &layout,
+            &mut rng,
+        )?;
+
+        let time_text = clock::format_time(time, self.clock_format);
+        let clock_font = self.ascii_assets.clock_font();
+        let clock_lines = clock::ascii_lines(&time_text, clock_font);
+        let clock_layout = clock::separator_anchored_layout(
+            &time_text,
+            &clock_lines,
+            clock_font,
+            term_width,
+            term_height,
+        );
+
+        let date_text = format!("{:04}-{:02}-{:02}", date.year(), date.month(), date.day());
+        render_centered_line(
+            renderer,
+            term_width,
+            clock_layout.row.saturating_sub(2),
+            &date_text,
+            crossterm::style::Color::Grey,
+        )?;
+
+        for (idx, line) in clock_lines.iter().enumerate() {
+            renderer.render_line_colored(
+                clock_layout.col,
+                clock_layout.row + idx as u16,
+                line,
+                crossterm::style::Color::White,
+            )?;
+        }
+
+        let weather_row = clock_layout
+            .row
+            .saturating_add(clock_lines.len() as u16)
+            .saturating_add(1);
+        if weather_row < term_height.saturating_sub(1)
+            && let Some(weather_summary) = self.state.weather_summary_text()
+        {
+            render_centered_line(
+                renderer,
+                term_width,
+                weather_row,
+                &weather_summary,
+                crossterm::style::Color::Cyan,
+            )?;
+        }
+
+        self.state.update_loading_animation();
+        self.state.update_cached_info();
+
+        if !self.hide_hud {
+            renderer.render_line_colored(
+                2,
+                term_height.saturating_sub(1),
+                &self.state.cached_weather_info,
+                crossterm::style::Color::Cyan,
+            )?;
+        }
+
+        let mut next_status_row = 0;
+        if !attribution.is_empty() {
+            renderer.render_line_colored(2, 0, &attribution, crossterm::style::Color::DarkGrey)?;
+            next_status_row = 1;
+        }
+
+        if let Some(warning) = warning {
+            renderer.render_line_colored(
+                2,
+                next_status_row,
+                &warning,
+                crossterm::style::Color::Yellow,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn resize_animations(&mut self, width: u16, height: u16) {
+        self.animations.on_resize(width, height);
+    }
+
     pub async fn run(&mut self, renderer: &mut TerminalRenderer) -> io::Result<()> {
         self.run_with_outcome(renderer).await.map(|_| ())
     }
@@ -228,214 +431,12 @@ impl App {
         mut first_frame_callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
         mut control: Option<&mut dyn crate::launch::DisplayControl>,
     ) -> io::Result<AppRunOutcome> {
-        let mut rng = rand::rng();
-
         loop {
             if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
                 return Ok(AppRunOutcome::Cancelled);
             }
             let next_frame = Instant::now() + FRAME_DURATION;
-            let snapshot = self.snapshots.borrow_and_update().clone();
-            let attribution: String;
-            match snapshot.weather {
-                WeatherState::Ready(weather_snapshot) => {
-                    let weather_data = weather_snapshot.weather;
-                    {
-                        let weather = &weather_data;
-                        let rain_intensity = weather.condition.rain_intensity();
-                        let snow_intensity = weather.condition.snow_intensity();
-                        let fog_intensity = weather.condition.fog_intensity();
-                        let wind_speed = weather.wind_speed;
-                        let wind_direction = weather.wind_direction;
-                        attribution = weather.attribution.clone();
-
-                        if let Some(moon_phase) = weather.moon_phase {
-                            self.animations.update_moon_phase(moon_phase);
-                        }
-
-                        self.state.update_snapshot(
-                            weather_data,
-                            weather_snapshot.location,
-                            weather_snapshot.city,
-                            weather_snapshot.units,
-                        );
-                        self.animations.update_rain_intensity(rain_intensity);
-                        self.animations.update_snow_intensity(snow_intensity);
-                        self.animations.update_fog_intensity(fog_intensity);
-                        self.animations
-                            .update_wind(wind_speed as f32, wind_direction as f32);
-                    }
-                }
-                WeatherState::Stale { last_good, error } => {
-                    let weather_data = last_good.weather;
-                    let weather = &weather_data;
-                    let rain_intensity = weather.condition.rain_intensity();
-                    let snow_intensity = weather.condition.snow_intensity();
-                    let fog_intensity = weather.condition.fog_intensity();
-                    let wind_speed = weather.wind_speed;
-                    let wind_direction = weather.wind_direction;
-                    self.state.update_snapshot(
-                        weather_data,
-                        last_good.location,
-                        last_good.city,
-                        last_good.units,
-                    );
-                    self.animations.update_rain_intensity(rain_intensity);
-                    self.animations.update_snow_intensity(snow_intensity);
-                    self.animations.update_fog_intensity(fog_intensity);
-                    self.animations
-                        .update_wind(wind_speed as f32, wind_direction as f32);
-                    attribution = localize!(self.state.localize, "weathr-stale", error = error);
-                }
-                WeatherState::Loading => {
-                    self.state.clear_weather_for_offline();
-                    attribution = localize!(self.state.localize, "weathr-awaiting-data");
-                }
-                WeatherState::Unavailable { reason } => {
-                    self.state.clear_weather_for_offline();
-                    attribution =
-                        localize!(self.state.localize, "weathr-unavailable", reason = reason);
-                }
-            }
-            let (date, time, warning) = match snapshot.time {
-                TimeState::Local { local_time } => {
-                    (local_time.date_naive(), local_time.time(), None)
-                }
-                TimeState::Synced { local_time, .. } => {
-                    (local_time.date_naive(), local_time.time(), None)
-                }
-                TimeState::Degraded {
-                    local_time, error, ..
-                } => (local_time.date_naive(), local_time.time(), Some(error)),
-            };
-
-            renderer.clear()?;
-
-            let theme = self.themes.active();
-            let palette = &theme.palette;
-
-            let (term_width, term_height) = renderer.get_size();
-            let scene = self
-                .scenes
-                .get_mut(self.active_scene_id)
-                .expect("active scene must be registered");
-            scene.update_size(term_width, term_height);
-
-            let layout = scene.layout();
-            let ctx = SceneContext {
-                conditions: &self.state.weather_conditions,
-                palette,
-            };
-
-            self.animations.render_background(
-                renderer,
-                &self.state.weather_conditions,
-                &self.state,
-                &layout,
-                &mut rng,
-            )?;
-
-            scene.render(renderer, &ctx)?;
-
-            if let Some(ov_id) = self.active_overlay_id
-                && let Some(overlay) = self.overlays.get_mut(ov_id)
-            {
-                overlay.update_size(term_width, term_height);
-                overlay.render(renderer, &ctx, &layout)?;
-            }
-
-            self.animations.render_chimney_smoke(
-                renderer,
-                &self.state.weather_conditions,
-                &self.state,
-                &layout,
-                &mut rng,
-            )?;
-
-            self.animations.render_foreground(
-                renderer,
-                &self.state.weather_conditions,
-                &self.state,
-                &layout,
-                &mut rng,
-            )?;
-
-            let time_text = clock::format_time(time, self.clock_format);
-            let clock_font = self.ascii_assets.clock_font();
-            let clock_lines = clock::ascii_lines(&time_text, clock_font);
-            let clock_layout = clock::separator_anchored_layout(
-                &time_text,
-                &clock_lines,
-                clock_font,
-                term_width,
-                term_height,
-            );
-
-            let date_text = format!("{:04}-{:02}-{:02}", date.year(), date.month(), date.day());
-            render_centered_line(
-                renderer,
-                term_width,
-                clock_layout.row.saturating_sub(2),
-                &date_text,
-                crossterm::style::Color::Grey,
-            )?;
-
-            for (idx, line) in clock_lines.iter().enumerate() {
-                renderer.render_line_colored(
-                    clock_layout.col,
-                    clock_layout.row + idx as u16,
-                    line,
-                    crossterm::style::Color::White,
-                )?;
-            }
-
-            let weather_row = clock_layout
-                .row
-                .saturating_add(clock_lines.len() as u16)
-                .saturating_add(1);
-            if weather_row < term_height.saturating_sub(1)
-                && let Some(weather_summary) = self.state.weather_summary_text()
-            {
-                render_centered_line(
-                    renderer,
-                    term_width,
-                    weather_row,
-                    &weather_summary,
-                    crossterm::style::Color::Cyan,
-                )?;
-            }
-
-            self.state.update_loading_animation();
-            self.state.update_cached_info();
-
-            if !self.hide_hud {
-                renderer.render_line_colored(
-                    2,
-                    term_height.saturating_sub(1),
-                    &self.state.cached_weather_info,
-                    crossterm::style::Color::Cyan,
-                )?;
-            }
-
-            let mut next_status_row = 0;
-            if !attribution.is_empty() {
-                renderer.render_line_colored(
-                    2,
-                    0,
-                    &attribution,
-                    crossterm::style::Color::DarkGrey,
-                )?;
-                next_status_row = 1;
-            }
-
-            if let Some(warning) = warning {
-                renderer.render_line_colored(
-                    2,
-                    next_status_row,
-                    &warning,
-                    crossterm::style::Color::Yellow,
-                )?;
-            }
+            self.render_frame(renderer)?;
 
             flush_and_notify_first_frame(&mut first_frame_callback, || renderer.flush())?;
 

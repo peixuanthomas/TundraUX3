@@ -143,11 +143,6 @@ impl ShellSession {
     }
 
     #[doc(hidden)]
-    pub fn login_idle_deadline_for_test(&self) -> Instant {
-        self.pages.login.login_idle_deadline
-    }
-
-    #[doc(hidden)]
     pub fn login_password_visible_until_for_test(&self) -> Option<Instant> {
         self.pages.login.login_password_visible_until
     }

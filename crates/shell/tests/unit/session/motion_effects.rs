@@ -72,7 +72,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
 }
 
 #[test]
-fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() {
+fn motion_dispatch_consumes_weather_wakeup_before_deferral_and_pre_route_blocking() {
     fn login_exit_fixture(now: Instant) -> (ShellSession, ShellMotionEffects) {
         let full = Rect::new(0, 0, 120, 40);
         let theme = ui::ThemeTokens::glacier_night();
@@ -89,14 +89,16 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         motion.update(&state, full, full, None, theme, false);
         buffer = Buffer::filled(full, Cell::new("A"));
         motion.test_frame(Duration::ZERO, &mut buffer, &state);
-        state.pages.login.login_idle_deadline = now + Duration::from_secs(1);
+        state.screen_saver.last_activity = now;
         (state, motion)
     }
 
     let platform = platform::mock::UnsupportedPlatform;
     let now = Instant::now();
     let (mut expired, mut expired_motion) = login_exit_fixture(now);
-    expired.pages.login.login_idle_deadline = now - Duration::from_millis(1);
+    expired.screen_saver.last_activity =
+        now - Duration::from_secs(storage::DEFAULT_SCREEN_TIMEOUT_SECONDS);
+    expired.advance_screen_saver_at(now);
     let (_, motion_blocked) = dispatch_motion_aware_input(
         &mut expired,
         &mut expired_motion,
@@ -105,7 +107,9 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(!motion_blocked);
-    assert!(expired.return_to_lockscreen_requested());
+    assert!(!expired.return_to_lockscreen_requested());
+    assert!(!expired.screen_saver_active());
+    assert_eq!(expired.active_screen(), ShellScreen::ExitConfirm);
     assert!(expired_motion.deferred_close.is_none());
 
     let (mut active, mut active_motion) = login_exit_fixture(now);
@@ -117,10 +121,7 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(!motion_blocked);
-    assert_eq!(
-        active.pages.login.login_idle_deadline,
-        now + LOGIN_IDLE_TIMEOUT
-    );
+    assert_eq!(active.screen_saver.last_activity, now);
     assert!(active_motion.deferred_close.is_none());
     assert_ne!(active.active_screen(), ShellScreen::ExitConfirm);
 
@@ -140,10 +141,7 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(motion_blocked);
-    assert_eq!(
-        clicked.pages.login.login_idle_deadline,
-        now + LOGIN_IDLE_TIMEOUT
-    );
+    assert_eq!(clicked.screen_saver.last_activity, now);
     assert!(clicked_motion.deferred_close.is_some());
 
     active_motion.deferred_close = None;

@@ -1,5 +1,7 @@
 # ascii-assets
 
+中英文 `modules/settings.ftl` 保存屏幕超时时间及说明，`modules/weathr.ftl` 保存空闲天气画面的返回提示。
+
 `ascii-assets` 加载和校验主题、ASCII 图案、图标及字体，统计绘制所需尺寸，并提供内置资源用于修复。语言源码也随资源分发；加载和翻译由 `i18n` 负责。
 
 AA 自动策略的显示名称统一为“一律放行” / “Always allow”，帮助文字继续说明其只跳过 AA 确认。

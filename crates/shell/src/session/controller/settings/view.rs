@@ -684,6 +684,27 @@ pub(in crate::session) fn settings_cards(
                 )],
             ),
             Card::new(
+                i18n::tr!("settings-screen-timeout"),
+                vec![
+                    Item::new(
+                        Field::ScreenTimeout,
+                        i18n::tr!("settings-screen-timeout"),
+                        match config.screen_timeout_seconds {
+                            0 => i18n::tr!("settings-screen-timeout-never"),
+                            seconds if seconds % 60 == 0 => {
+                                i18n::tr!("settings-screen-timeout-minutes", value = seconds / 60)
+                            }
+                            seconds => {
+                                i18n::tr!("settings-screen-timeout-seconds", value = seconds)
+                            }
+                        },
+                        i18n::tr!("settings-screen-timeout-help"),
+                        Kind::Cycle,
+                    )
+                    .enabled(global_enabled),
+                ],
+            ),
+            Card::new(
                 i18n::tr!("settings-storage-pressure"),
                 vec![
                     Item::new(

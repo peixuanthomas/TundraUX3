@@ -11,6 +11,12 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> Option<InputEvent> {
+        if self.consume_screen_saver_input(&input, received_at) {
+            return None;
+        }
+        if self.screen_saver.active {
+            return Some(input);
+        }
         match &input {
             InputEvent::Mouse(mouse) if matches!(mouse.kind, ui::MouseEventKind::Down(_)) => {
                 self.interaction.motion_origin = Some(

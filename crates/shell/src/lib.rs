@@ -18,7 +18,6 @@ pub const BANNER_ENTER_DURATION: Duration = Duration::from_millis(720);
 pub const BANNER_HOLD_DURATION: Duration = Duration::from_secs(2);
 pub const BANNER_EXIT_DURATION: Duration = Duration::from_millis(560);
 pub const BANNER_DISPLAY_DURATION: Duration = Duration::from_secs(2);
-pub const LOGIN_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const PASSWORD_REVEAL_DURATION: Duration = Duration::from_secs(5);
 /// Internal CLI-to-Shell request to exercise the real fullscreen panic boundary.
 pub const COMMAND_LINE_PANIC_EXIT_CODE: u32 = 76;
@@ -64,7 +63,6 @@ pub use terminal_session::{
 pub use terminal_size::{ShellTerminalSizeError, ShellTerminalSizeRequirement};
 
 pub(crate) use banner::asset_io_error;
-pub(crate) use terminal_events::resets_login_idle_timeout;
 #[cfg(test)]
 pub(crate) use terminal_events::{key_event_to_label, mouse_event_to_input};
 pub(crate) use terminal_size::checked_current_terminal_size;
