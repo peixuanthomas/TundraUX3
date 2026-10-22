@@ -26,6 +26,8 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
         terminal_size: (80, 24),
         screen_stack: vec![],
         back_button_hovered: false,
+        help_available: false,
+        help_button_hovered: false,
         back_shortcut: "Esc",
         status: StatusViewModel {
             status: "Complete status message".into(),
@@ -89,6 +91,23 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
             assert_eq!(row.trim(), expected);
         }
     }
+}
+
+#[test]
+fn help_button_sits_left_of_back_and_hides_in_compact() {
+    use crate::{RenderContext, ShellFrameLayout};
+    use ratatui::layout::Rect;
+    let context = RenderContext::default();
+    let layout = ShellFrameLayout::new(Rect::new(0, 0, 80, 24), Some("12:00"), &context)
+        .with_back_shortcut("Esc")
+        .with_help_button(true);
+    let back = layout.back_button.unwrap();
+    let help = layout.help_button.unwrap();
+    assert_eq!(help.right() + 1, back.x);
+    assert_eq!(help.y, back.y);
+    let compact =
+        ShellFrameLayout::new(Rect::new(0, 0, 40, 10), None, &context).with_help_button(true);
+    assert!(compact.help_button.is_none());
 }
 
 #[test]

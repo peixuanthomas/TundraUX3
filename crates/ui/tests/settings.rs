@@ -943,6 +943,8 @@ fn chrome() -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::User,
         terminal_size: (120, 32),
         back_button_hovered: false,
+        help_available: false,
+        help_button_hovered: false,
         back_shortcut: "Esc",
         screen_stack: vec!["Settings".to_string()],
         status: StatusViewModel {

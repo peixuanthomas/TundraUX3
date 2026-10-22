@@ -882,6 +882,8 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::User,
         terminal_size: (110, 32),
         back_button_hovered: false,
+        help_available: false,
+        help_button_hovered: false,
         back_shortcut: "Esc",
         screen_stack: vec![screen.to_string()],
         status: StatusViewModel {

@@ -1,6 +1,7 @@
 # UI shell messages.
 
 ui-shell-tundraux-3-needs-at-least-50x12-terminal-cells = TundraUX 3 needs at least 50x12 terminal cells.
+ui-shell-help-button = F1 Help
 ui-shell-time-sync = Time Sync
 ui-shell-home = Home
 ui-shell-status = Status
@@ -11,3 +12,5 @@ ui-shell-r-restart-tundraux = R: Restart TundraUX
 ui-shell-n-esc-cancel = N / Esc: Cancel
 
 ui-shell-time-sync-failed = Time synchronization failed
+shell-component-help-button = Help button
+shell-component-help-dialog = Help dialog

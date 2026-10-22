@@ -1,6 +1,7 @@
 # UI shell messages.
 
 ui-shell-tundraux-3-needs-at-least-50x12-terminal-cells = TundraUX 3 至少需要 50x12 个终端单元格。
+ui-shell-help-button = F1 帮助
 ui-shell-time-sync = 时间同步
 ui-shell-home = 主页
 ui-shell-status = 状态
@@ -11,3 +12,5 @@ ui-shell-r-restart-tundraux = R：重启 TundraUX
 ui-shell-n-esc-cancel = N / Esc：取消
 
 ui-shell-time-sync-failed = 联网校准时间失败
+shell-component-help-button = 帮助按钮
+shell-component-help-dialog = 帮助弹窗

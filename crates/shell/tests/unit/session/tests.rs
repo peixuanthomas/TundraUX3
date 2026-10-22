@@ -5105,6 +5105,7 @@ fn focus_navigation_cycles_the_dynamic_home_order_in_both_directions() {
         vec![
             ShellComponent::Home,
             ShellComponent::ClockButton,
+            ShellComponent::HelpButton,
             ShellComponent::StatusBar,
             ShellComponent::TopBar,
         ]

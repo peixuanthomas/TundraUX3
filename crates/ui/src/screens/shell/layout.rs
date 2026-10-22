@@ -84,6 +84,7 @@ pub struct ShellFrameLayout {
     pub shell: ShellLayout,
     pub main: Rect,
     pub back_button: Option<Rect>,
+    pub help_button: Option<Rect>,
     pub status_message: Option<Rect>,
     pub time_button: Option<Rect>,
 }
@@ -126,6 +127,7 @@ impl ShellFrameLayout {
             shell,
             main,
             back_button,
+            help_button: None,
             status_message,
             time_button,
         }
@@ -159,6 +161,9 @@ impl ShellFrameLayout {
                     status,
                 };
                 if let Some(button) = &mut self.back_button {
+                    button.height = if top.height < 3 { 1 } else { 3 };
+                }
+                if let Some(button) = &mut self.help_button {
                     button.height = if top.height < 3 { 1 } else { 3 };
                 }
                 self.status_message = self
@@ -201,6 +206,31 @@ impl ShellFrameLayout {
             button.width = usize_to_u16(width).min(self.bounds.width);
             button.x = self.bounds.right().saturating_sub(button.width);
         }
+        if let Some(help) = self.help_button.as_mut() {
+            let gap = 1;
+            help.x = self.back_button.map_or(help.x, |back| {
+                back.x.saturating_sub(help.width.saturating_add(gap))
+            });
+        }
+        self
+    }
+
+    pub fn with_help_button(mut self, available: bool) -> Self {
+        if !available || self.is_compact() {
+            self.help_button = None;
+            return self;
+        }
+        let Some(back) = self.back_button else {
+            self.help_button = None;
+            return self;
+        };
+        let label = i18n::tr!("ui-shell-help-button");
+        let width = self.bounds.width.min(usize_to_u16(
+            crate::components::terminal_width(&label).saturating_add(4),
+        ));
+        let x = back.x.saturating_sub(width.saturating_add(1));
+        self.help_button =
+            (width > 0 && x >= self.bounds.x).then(|| Rect::new(x, back.y, width, back.height));
         self
     }
 

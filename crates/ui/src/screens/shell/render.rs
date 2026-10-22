@@ -212,7 +212,7 @@ pub fn render_shell_chrome_with_status_focus(
             }),
         top.height,
     );
-    render_top(frame, title_area, chrome, context);
+    render_top(frame, title_area, layout.help_button, chrome, context);
     if let Some(area) = layout.back_button {
         let mut button = Button::new(
             "shell.back",
@@ -225,12 +225,18 @@ pub fn render_shell_chrome_with_status_focus(
         button.state.hovered = chrome.back_button_hovered;
         button.render_frame(frame, area, &context.compatibility_theme());
     }
+    if let Some(area) = layout.help_button {
+        let mut button = Button::new("shell.help", i18n::tr!("ui-shell-help-button"));
+        button.state.hovered = chrome.help_button_hovered;
+        button.render_frame(frame, area, &context.compatibility_theme());
+    }
     render_status(frame, status, layout, chrome, context, status_focused);
 }
 
 fn render_top(
     frame: &mut Frame<'_>,
     area: Rect,
+    help_button: Option<Rect>,
     chrome: &ShellChromeViewModel,
     context: &RenderContext,
 ) {
@@ -241,15 +247,21 @@ fn render_top(
     if inner.is_empty() {
         return;
     }
-    let title = truncate_status_text(&chrome.app_name, inner.width);
+    let title_limit = help_button.map_or(inner.width, |help| {
+        inner.width.min(help.x.saturating_sub(inner.x))
+    });
+    let title = truncate_status_text(&chrome.app_name, title_limit);
     let title_width = u16::try_from(terminal_width(&title))
-        .unwrap_or(inner.width)
-        .min(inner.width);
+        .unwrap_or(title_limit)
+        .min(title_limit);
     frame.render_widget(
         Paragraph::new(Line::styled(title, theme.title_style())),
         Rect::new(inner.x, inner.y, title_width, 1),
     );
-    let info_width = inner.width.saturating_sub(title_width.saturating_add(2));
+    let content_right = help_button.map_or(inner.right(), |help| inner.right().min(help.x));
+    let info_width = content_right
+        .saturating_sub(inner.x)
+        .saturating_sub(title_width.saturating_add(2));
     if !cfg!(debug_assertions) || info_width == 0 {
         return;
     }
@@ -273,7 +285,7 @@ fn render_top(
         ))
         .alignment(HorizontalAlignment::Right),
         Rect::new(
-            inner.right().saturating_sub(info_width),
+            content_right.saturating_sub(info_width),
             inner.y,
             info_width,
             1,

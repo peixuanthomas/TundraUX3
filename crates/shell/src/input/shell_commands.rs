@@ -88,6 +88,7 @@ pub enum ShellCommand {
     SelectHomeEntryAt(CellPosition),
     ActivateHomeEntryAt(CellPosition, ClickKind),
     OpenExplorer,
+    OpenPageHelp,
     CloseExplorer,
     OpenLauncher,
     CloseLauncher,

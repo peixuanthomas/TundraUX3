@@ -17,6 +17,10 @@ impl ShellSession {
             .unwrap_or(ShellScreen::Home)
     }
 
+    pub(in crate::session) fn help_button_available(&self) -> bool {
+        self.content_screen() != ShellScreen::CommandLine
+    }
+
     pub fn home_mode(&self) -> ShellHomeMode {
         self.home_mode
     }

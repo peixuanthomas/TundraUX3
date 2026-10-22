@@ -22,6 +22,13 @@ impl ShellSession {
             );
         }
 
+        if key.phase == InputPhase::Press
+            && key.key == InputKey::F(1)
+            && self.active_screen() != ShellScreen::CommandLine
+        {
+            return (RoutedTarget::Global, ShellCommand::OpenPageHelp);
+        }
+
         if !key.phase.is_press_like() {
             if self.active_screen() == ShellScreen::Editor
                 && matches!(
@@ -198,6 +205,14 @@ impl ShellSession {
                 (
                     RoutedTarget::Component(ShellComponent::ClockButton),
                     self.clock_button_activation_command(),
+                )
+            }
+            _ if self.pages.common.focused_component == ShellComponent::HelpButton
+                && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::HelpButton),
+                    ShellCommand::OpenPageHelp,
                 )
             }
             _ if self.pages.common.focused_component == ShellComponent::StatusBar
@@ -641,6 +656,11 @@ impl ShellSession {
             {
                 self.last_click = None;
                 (target, self.clock_button_activation_command())
+            }
+            ui::MouseEventKind::Down(PointerButton::Left)
+                if hit_target == Some(ShellComponent::HelpButton) =>
+            {
+                (target, ShellCommand::OpenPageHelp)
             }
             ui::MouseEventKind::Down(_)
             | ui::MouseEventKind::Up(_)

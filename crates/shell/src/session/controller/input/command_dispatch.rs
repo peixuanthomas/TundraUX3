@@ -815,6 +815,8 @@ impl ShellSession {
                 self.open_explorer(platform);
                 ShellAction::Redraw
             }
+            // Task 5 supplies the help modal; keep the entry point inert until then.
+            ShellCommand::OpenPageHelp => ShellAction::Redraw,
             ShellCommand::CloseExplorer => {
                 self.close_explorer();
                 ShellAction::Redraw

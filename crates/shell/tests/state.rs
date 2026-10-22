@@ -161,7 +161,7 @@ fn tab_and_shift_tab_route_to_focus_commands() {
     assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
 
     state.apply_input(InputEvent::from_key_label("Tab"));
-    assert_eq!(state.focused_component(), ShellComponent::StatusBar);
+    assert_eq!(state.focused_component(), ShellComponent::HelpButton);
     assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
 
     state.apply_input(InputEvent::from_key_label("Shift+Tab"));
@@ -806,7 +806,7 @@ fn modal_follow_up_focus_change_is_not_overwritten_by_focus_restore() {
     state.apply_input(InputEvent::from_key_label("Enter"));
 
     assert_eq!(state.active_screen(), ShellScreen::Home);
-    assert_eq!(state.focused_component(), ShellComponent::StatusBar);
+    assert_eq!(state.focused_component(), ShellComponent::HelpButton);
 }
 
 #[test]

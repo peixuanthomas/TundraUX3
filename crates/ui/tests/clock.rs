@@ -450,6 +450,8 @@ fn chrome(width: u16, height: u16) -> ShellChromeViewModel {
         display_mode: HomeDisplayMode::User,
         terminal_size: (width, height),
         back_button_hovered: false,
+        help_available: false,
+        help_button_hovered: false,
         back_shortcut: "Esc",
         screen_stack: vec!["Clock".to_string()],
         status: StatusViewModel {
