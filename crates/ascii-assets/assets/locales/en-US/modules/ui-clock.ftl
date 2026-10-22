@@ -11,12 +11,10 @@ ui-clock-new-alarm-or-countdown = New Alarm or Countdown
 ui-clock-create-alarm-button = { "[" } Create Alarm ]
 ui-clock-create-countdown-button = { "[" } Create Countdown ]
 
-ui-clock-time-help = ←→/Tab: select · ↑↓/click: adjust · 0–9: type
 ui-clock-hours = Hours
 ui-clock-minutes = Minutes
 ui-clock-seconds = Seconds
 ui-clock-touch-manage = M Manage
-ui-clock-touch-help = Manage: delete/strong
 ui-clock-touch-cancel = Esc Cancel
 ui-clock-touch-new = N New
 ui-clock-touch-alarm = F3 Alarm

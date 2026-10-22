@@ -90,21 +90,7 @@ fn render_clock_panel(
         .bordered(true)
         .render_frame(frame, layout.panel, context);
 
-    render_clock_button(
-        frame,
-        layout.new_button,
-        "clock.new",
-        &i18n::tr!("ui-clock-touch-new"),
-        model.selected_entry_id.is_none() && model.create_dialog.is_none(),
-        theme,
-    );
-    render_clock_line(
-        frame,
-        layout.help,
-        i18n::tr!("ui-clock-touch-help"),
-        theme.muted_style(),
-        HorizontalAlignment::Left,
-    );
+    super::layout::clock_action_bar(model).render(frame, layout.action_bar.area, context);
     for (id, area, label, sort) in [
         (
             "alarm",
@@ -137,9 +123,6 @@ fn render_clock_panel(
 
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Alarm, context);
     render_clock_entry_list(frame, layout, model, ClockEntryKind::Countdown, context);
-    let mut manage = Button::new("clock.manage", i18n::tr!("ui-clock-touch-manage"));
-    manage.set_disabled(model.selected_entry_id.is_none());
-    manage.render_inline_frame(frame, layout.manage_button, theme);
     if let Some(track) = layout.scrollbar {
         Scrollbar::new(
             model.alarms.len() + model.countdowns.len(),
@@ -241,13 +224,6 @@ fn render_clock_create_dialog(
         .raised(true)
         .render_frame(frame, layout.dialog, context);
 
-    render_clock_line(
-        frame,
-        layout.prompt,
-        i18n::tr!("ui-clock-time-help"),
-        theme.body_style(),
-        HorizontalAlignment::Center,
-    );
     render_clock_create_input(frame, layout, model, theme);
     if let Some(error) = &model.error {
         render_clock_line(

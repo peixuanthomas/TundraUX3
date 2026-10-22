@@ -57,6 +57,7 @@ pub struct ClockPageLayout {
     pub new_button: Rect,
     pub manage_button: Rect,
     pub help: Rect,
+    pub action_bar: crate::components::PageActionBarLayout,
     pub scrollbar: Option<Rect>,
     pub alarms_heading: Rect,
     pub countdowns_heading: Rect,
@@ -153,69 +154,40 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
     };
 
     let mut panel_inner = inset_rect(panel, 1);
-    let initial_capacity =
-        usize::from(panel_inner.height.saturating_sub(if model.is_read_only() {
-            2
-        } else if panel_inner.height < 7 {
-            3
-        } else {
-            4
-        }));
-    let scrollbar = (model.alarms.len().saturating_add(model.countdowns.len()) > initial_capacity
-        && initial_capacity > 0
-        && panel_inner.width > 1
-        && panel_inner.height > 1)
+    let bar = clock_action_bar(model);
+    let bar_height = bar.height(panel_inner.width).min(panel_inner.height);
+    let action_bar = bar.layout(Rect::new(
+        panel_inner.x,
+        panel_inner.bottom().saturating_sub(bar_height),
+        panel_inner.width,
+        bar_height,
+    ));
+    let action_rect = |id: &str| {
+        action_bar
+            .actions
+            .iter()
+            .find(|action| action.id.as_str() == id)
+            .map_or(Rect::default(), |action| action.area)
+    };
+    let new_button = action_rect("new");
+    let manage_button = action_rect("manage");
+    panel_inner.height = panel_inner.height.saturating_sub(bar_height);
+    let entry_capacity = usize::from(panel_inner.height.saturating_sub(2));
+    let scrollbar = (model.alarms.len().saturating_add(model.countdowns.len()) > entry_capacity
+        && entry_capacity > 0
+        && panel_inner.width > 1)
         .then(|| {
             Rect::new(
                 panel_inner.right() - 1,
                 panel_inner.y,
                 1,
-                panel_inner.height.saturating_sub(if model.is_read_only() {
-                    0
-                } else if panel_inner.height < 7 {
-                    1
-                } else {
-                    2
-                }),
+                panel_inner.height,
             )
         });
     panel_inner.width = panel_inner
         .width
         .saturating_sub(u16::from(scrollbar.is_some()));
-    let new_button = if model.is_read_only() {
-        Rect::new(panel_inner.x, panel_inner.y, 0, 0)
-    } else {
-        Rect::new(
-            panel_inner.x,
-            panel_inner.bottom().saturating_sub(1),
-            panel_inner.width / 2,
-            u16::from(panel_inner.height > 0),
-        )
-    };
-    let condensed_panel = panel_inner.height < 7;
-    let reserved_lines = if model.is_read_only() {
-        2
-    } else if condensed_panel {
-        3
-    } else {
-        4
-    };
-    let manage_button = if model.is_read_only() {
-        Rect::default()
-    } else {
-        Rect::new(
-            new_button.right(),
-            new_button.y,
-            panel_inner.width.saturating_sub(new_button.width),
-            new_button.height,
-        )
-    };
-    let entry_capacity = usize::from(panel_inner.height.saturating_sub(reserved_lines));
-    let help = if !condensed_panel && !model.is_read_only() {
-        line_in_rect(panel_inner, panel_inner.bottom().saturating_sub(2))
-    } else {
-        Rect::default()
-    };
+    let help = Rect::default();
     let total_entries = model.alarms.len().saturating_add(model.countdowns.len());
     let entry_window_start = model
         .entry_window_start
@@ -274,6 +246,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         new_button,
         manage_button,
         help,
+        action_bar,
         scrollbar,
         alarms_heading,
         countdowns_heading,
@@ -308,7 +281,7 @@ fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
         area.height.min(CLOCK_CREATE_DIALOG_HEIGHT),
     );
     let inner = inset_rect(dialog, 1);
-    let prompt_height = u16::from(inner.height >= 7);
+    let prompt_height = 0;
     let prompt = Rect::new(inner.x, inner.y, inner.width, prompt_height);
     let input_y = inner.y.saturating_add(prompt_height);
     let stacked_buttons = inner.width < 36 && inner.height >= 6;
@@ -409,5 +382,21 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
             .saturating_add(area.height.saturating_sub(height) / 2),
         width,
         height,
+    )
+}
+
+pub(super) fn clock_action_bar(model: &ClockViewModel) -> crate::components::PageActionBar {
+    use crate::components::{PageAction, PageActionBar};
+    let bar = PageActionBar::new("clock");
+    if model.is_read_only() {
+        return bar;
+    }
+    bar.with_actions(vec![
+        PageAction::new("new", i18n::tr!("ui-clock-touch-new")).primary(),
+        PageAction::new("manage", i18n::tr!("ui-clock-touch-manage"))
+            .disabled(model.selected_entry_id.is_none()),
+    ])
+    .with_selected(
+        (model.selected_entry_id.is_none() && model.create_dialog.is_none()).then(|| "new".into()),
     )
 }

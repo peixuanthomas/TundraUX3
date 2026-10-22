@@ -8,6 +8,28 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use support::terminal_output;
+
+#[test]
+fn clock_new_is_primary_and_create_keeps_three_numeric_fields_without_help() {
+    let mut model = clock_model();
+    model.create_dialog = Some(ClockCreateDialogViewModel::default());
+    let layout = clock_page_layout(Rect::new(0, 0, 100, 30), &model);
+    assert!(layout.help.is_empty());
+    let new = layout
+        .action_bar
+        .actions
+        .iter()
+        .find(|action| action.id.as_str() == "new")
+        .unwrap();
+    assert_eq!(new.emphasis, ui::components::ButtonEmphasis::Primary);
+    let dialog = layout.create_dialog.unwrap();
+    assert!(dialog.prompt.is_empty());
+    assert!(dialog.values.iter().all(|field| !field.is_empty()));
+    let (terminal, _) = render(100, 30, &model);
+    let text = terminal_output(&terminal);
+    assert!(!text.contains("Manage: delete/strong"));
+    assert!(!text.contains("HH:MM:SS"));
+}
 use ui::{
     ClockCreateDialogFocus, ClockCreateDialogViewModel, ClockEntryKind, ClockEntryViewModel,
     ClockPageMode, ClockViewModel, HomeDisplayMode, NotificationTone, RuntimeAsciiAssets,
@@ -52,8 +74,8 @@ fn short_clock_keeps_new_manage_and_scrollbar_without_a_page_back() {
         assert!(!button.is_empty());
         assert!(button.right() <= area.right() && button.bottom() <= area.bottom());
     }
-    assert_eq!(layout.new_button.right(), layout.manage_button.x);
-    assert_eq!(layout.manage_button.right(), layout.panel.right() - 2);
+    assert!(layout.manage_button.right() < layout.new_button.x);
+    assert_eq!(layout.new_button.right(), layout.panel.right() - 1);
     assert!(layout.scrollbar.is_some());
     model.create_dialog = Some(ClockCreateDialogViewModel::default());
     let dialog = clock_page_layout(area, &model).create_dialog.unwrap();
@@ -136,9 +158,9 @@ fn entry_window_slices_alarms_then_countdowns_and_preserves_ids() {
         .map(|row| row.id)
         .collect::<Vec<_>>();
 
-    assert_eq!(layout.entry_capacity, 12);
+    assert_eq!(layout.entry_capacity, 13);
     assert_eq!(layout.entry_window_start, 7);
-    assert_eq!(ids, (8..=19).collect::<Vec<_>>());
+    assert_eq!(ids, (8..=20).collect::<Vec<_>>());
     assert_eq!(layout.entry_rows[0].kind, ClockEntryKind::Alarm);
     assert_eq!(layout.entry_rows[3].kind, ClockEntryKind::Countdown);
     assert!(layout.alarms_heading.y < layout.countdowns_heading.y);
@@ -244,7 +266,7 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
         .expect("dialog layout");
 
     assert!(output.contains("New Alarm or Countdown"));
-    assert!(output.contains("↑↓/click: adjust"));
+    assert!(!output.contains("↑↓/click: adjust"));
     assert_eq!(output.matches("[ 00 ]").count(), 3);
     assert!(output.contains("Use hh mm ss"));
     assert!(output.contains("[F3 Alarm]"));
@@ -296,15 +318,7 @@ fn create_dialog_highlights_only_the_selected_module_in_both_languages() {
                 });
                 let (terminal, main) = render(100, 30, &model);
                 let layout = clock_page_layout(main, &model).create_dialog.unwrap();
-                assert!(
-                    region_text(&terminal, layout.prompt)
-                        .replace(' ', "")
-                        .contains(if locale == "zh-CN" {
-                            "数字输入"
-                        } else {
-                            "0–9:type"
-                        })
-                );
+                assert!(layout.prompt.is_empty());
                 for field in 0..3 {
                     for area in [
                         layout.values[field],
