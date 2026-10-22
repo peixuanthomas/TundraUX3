@@ -77,7 +77,7 @@ Shrinking a running window pauses interaction behind a size reminder and preserv
 To check the environment:
 
 ```sh
-./tundra-cli debug doctor
+./tundra-cli doctor
 ```
 
 Linux uses the account that launched the program and that account's system permissions. Run it as your normal user; operations that need additional permission request authorization through the relevant system tools. Exiting TundraUX3 closes the application and returns to your terminal.
@@ -99,7 +99,7 @@ Explore the companion CLI:
 
 ```sh
 cargo run --locked -p cli --bin tundra-cli -- --help
-cargo run --locked -p cli --bin tundra-cli -- debug doctor
+cargo run --locked -p cli --bin tundra-cli -- doctor
 ```
 
 Preview shared controls with `tundra-cli debug ui-test` in a terminal of at least 88 × 30 cells. F1–F6 switch pages; Esc exits. It uses built-in sample data, theme and English text without reading or writing configuration, language files, logs or saved state.

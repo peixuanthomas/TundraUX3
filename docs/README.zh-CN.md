@@ -76,7 +76,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 检查运行环境：
 
 ```sh
-./tundra-cli debug doctor
+./tundra-cli doctor
 ```
 
 Linux 版本使用启动程序的系统账户及其权限。日常使用普通用户运行；需要额外权限的操作，会通过相应的系统工具请求授权。退出 TundraUX3 会关闭应用并返回终端。
@@ -98,7 +98,7 @@ cargo run --locked -p shell --bin tundra-shell
 
 ```sh
 cargo run --locked -p cli --bin tundra-cli -- --help
-cargo run --locked -p cli --bin tundra-cli -- debug doctor
+cargo run --locked -p cli --bin tundra-cli -- doctor
 ```
 
 请同时构建这两个包：Shell 的内置命令行和 Linux 管理任务会使用配套 CLI。构建、测试和打包细节见 [技术文档](README-TECHNICAL.md)。

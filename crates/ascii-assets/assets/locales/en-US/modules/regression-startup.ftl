@@ -9,23 +9,31 @@ startup-temperature-unavailable = Temperature unavailable: no sensors detected
 startup-battery-unavailable = Battery unavailable: no battery detected
 startup-cli-help = TundraUX3 CLI
     { cli-administration-root-usage }
-    { "  " }cls     Clear terminal history and screen, then move the cursor home
-    { "  " }config  Read, set, reset, or list values for UX settings; run config help
-    { "  " }debug   Diagnostics and test commands; run debug help for details
-    { "  " }new     Clear saved TundraUX3 data and recreate initial storage
-    { "  " }repl    Enter the interactive command loop; system commands run by default, /<command> runs a UX command, exit leaves
-    { "          " }System commands keep exported environment variables and the working directory until you leave this REPL.
-    { "  " }logs    Query runtime logs and incidents, or export diagnostics; run logs help
-    { "  " }ui      Read and operate a running Shell; run ui --help
-    { "  " }launcher  List, pin, or unpin applications; run launcher help
-    { "  " }help [command]  Show help, for example: help config or help debug doctor
-    { "  " }-h, --help      Show help
-    { "  " }-V, --version   Show version
-
-    Use <command> --help (or -h) for syntax, values, and examples.
-    In Command Line / repl, use / for UX commands: /config set motion reduced; /help shows UX help.
-    System commands need no prefix there: pwd, ls -la (Linux/macOS), dir (Windows). External CLI calls need no /: tundra-cli config set motion reduced.
-    Exit status: 0 success, 1 operation failed, 2 invalid arguments; logs may also return 3/130 (see logs help).
+    { "  " }config [get|set|reset|options]  Settings
+    { "  " }doctor                        Check the runtime environment
+    { "  " }launcher [list|pin|unpin]       Application shortcuts
+    { "  " }services                      System services
+    { "  " }processes                     Running processes
+    { "  " }packages                      Installed packages, updates and sources
+    { "  " }network                       Network connections
+    { "  " }disks                         Disks and mount points
+    { "  " }users                         Accounts and groups
+    { "  " }firewall                      Ports and firewall rules
+    { "  " }ssh                           SSH settings and keys
+    { "  " }backups                       Configuration backups and restore
+    { "  " }scheduled-tasks               Scheduled tasks
+    { "  " }system-config                 System configuration files
+    { "  " }operations                    Operation status and authorization
+    { "  " }logs [query|incidents|export|follow]  Logs and diagnostics
+    { "  " }ui [sessions|snapshot|click|move|drag|scroll|key|text|wait]  Shell control
+    { "  " }debug <command>               Debug tools; see debug --help
+    { "  " }cls                           Clear the terminal
+    { "  " }new                           Reset saved TundraUX3 data
+    { "  " }repl                          Interactive command line
+    { "  " }help [command ...]            Command help
+    { "  " }-h, --help                    Help
+    { "  " }-V, --version                 Version
+    Use <command> --help for subcommands and options.
 startup-cli-debug-help = Usage: tundra-cli debug <command>
     { "  " }ui-test  { ui-test-summary }
     { "  " }test-rainbow-text  { rainbow-text-summary }
@@ -36,7 +44,6 @@ startup-cli-debug-help = Usage: tundra-cli debug <command>
     { "  " }clear-logs <all|TYPE|--file PATH> [--yes]  Preview or clear runtime, incidents, snapshots, or legacy logs
     { "  " }view-ui-style [1|2|3]  Compare interactive UI styles and animations
     { "  " }asset   Print test assets or their original source files
-    { "  " }doctor  Diagnose terminal, storage, and Linux runtime/tools; warnings are optional features
     { "  " }paths   Print configured and resolved app paths
     { "  " }explain Show CLI startup flow and kernel/UI boundaries
     { "  " }test-frost  Play only the startup frost banner animation
@@ -44,7 +51,6 @@ startup-cli-debug-help = Usage: tundra-cli debug <command>
     { "  " }test-watchdog-error    Write an intentional error report
     { "  " }test-watchdog-critical Write an intentional critical error report
     { "  " }test-watchdog-panic    Trigger a real panic; the current session is discarded
-    Error tests print JSON/text report paths. Panic tests enter the normal critical-error flow; embedded tests panic the Shell session.
 startup-cli-config-help = Usage: tundra-cli config [get [field] | set <field> <value> | reset <field> | options [field]]
     No arguments prints settings. reset restores only the named field. theme is a read-only color summary.
     Fields and values:
@@ -68,3 +74,18 @@ startup-cli-config-help = Usage: tundra-cli config [get [field] | set <field> <v
     { "  " }tundra-cli config set accent-color "#38bdf8"
     Changes use the current OS user's config. Restart a running TundraUX3 UI to apply them. Identity/password fields are not exposed.
 startup-cli-packages-help = list [--scope installed|search|updates]; search TEXT; source-add --name NAME --url URL [APT: --suite SUITE --components main --signed-by /key; DNF: --gpgkey URL]. sources add/enable/disable/remove are aliases. Source changes output drafts; --apply --expected-version saves. Script changes retain current config; --config-policy replace is APT-only. Arch install/upgrade always upgrades the full system.
+
+startup-cli-doctor-help = Usage: tundra-cli doctor
+    Check terminal, permissions, paths, storage and assets.
+    Storage checks may create or recover application files. Exit: 0 passed, 1 failed.
+startup-cli-explain-commands = { "  " }2. tundra-cli provides configuration, applications and logs; doctor checks the environment; debug contains test tools.
+startup-cli-repl-help = Usage: tundra-cli repl
+    /help  Commands
+    exit   Exit (or EOF)
+startup-cli-launcher-help = Usage: tundra-cli launcher [list | pin <path> | unpin <id>]
+    list          List saved applications
+    pin <path>    Save an executable shortcut
+    unpin <id>    Remove a shortcut; keep the file
+startup-cli-screen-keyboard-help = Usage: tundra-cli debug screen-keyboard
+    Keyboard and AA input preview in an external interactive terminal.
+    Tab/arrow keys select; Enter/Space activate; Esc exits.

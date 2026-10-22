@@ -8,11 +8,13 @@
 
 | 用法 | 示例 |
 | --- | --- |
-| 外部终端 | `tundra-cli debug doctor` |
-| 内建 Command Line 或 `repl` 中的 UX 命令 | `/debug doctor` |
+| 外部终端 | `tundra-cli doctor` |
+| 内建 Command Line 或 `repl` 中的 UX 命令 | `/doctor` |
 | 内建 Command Line 或 `repl` 中的系统命令 | `ls -la` 或 `dir` |
 | 查询帮助 | `tundra-cli help`、`tundra-cli users --help` |
 | 查询版本 | `tundra-cli --version` 或 `tundra-cli -V` |
+
+`doctor` 是顶层命令，支持 `doctor --help` 和 REPL 补全。根帮助逐项列出全部公开命令，子命令通过各组 `--help` 查看。
 
 帮助（含子命令帮助和无参数启动）与版本查询无需启动 watchdog 或读取配置，日志和数据目录不可写时也能使用。
 

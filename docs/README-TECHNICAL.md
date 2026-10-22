@@ -11,7 +11,7 @@
 ```sh
 cargo build --locked -p shell -p cli
 cargo run --locked -p shell --bin tundra-shell
-cargo run --locked -p cli --bin tundra-cli -- debug doctor
+cargo run --locked -p cli --bin tundra-cli -- doctor
 ```
 
 更新源码后仍需一起构建 Shell 和 CLI。`cargo run -p shell` 不会重建它使用的 CLI 可执行文件；发布模式为上述构建命令添加 `--release`。
@@ -140,7 +140,7 @@ bash scripts/package-linux.sh
 | --- | --- |
 | 终端太小 | 按错误给出的尺寸放大窗口；自定义资源会改变下限 |
 | Command Line 像是旧版本 | 同时重新构建并放置 Shell、CLI，debug/release 目录保持一致 |
-| 路径、权限或某项系统功能失败 | 运行 `tundra-cli debug doctor` 和 `tundra-cli debug paths`，检查具体依赖和权限 |
+| 路径、权限或某项系统功能失败 | 运行 `tundra-cli doctor` 和 `tundra-cli debug paths`，检查具体依赖和权限 |
 | 异常退出后终端显示不正常 | 重置当前终端，查看日志目录中的 `crashes` 报告和下次启动提示 |
 | 配置或状态损坏 | 先备份报告中的路径，查看恢复提示；不要直接执行会清空数据的 `tundra-cli new` |
 | Linux 图形打开或剪贴板不可用 | 检查 `xdg-utils`、gio、D-Bus/portal 及终端会话条件；只有依赖它的功能受影响 |

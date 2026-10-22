@@ -66,7 +66,7 @@ fn help_and_version_work_without_startup_or_writable_watchdog_paths() {
     }
     for args in [
         &["new"][..],
-        &["debug", "doctor"],
+        &["doctor"],
         &["debug", "test-watchdog-panic"],
         &["repl"],
         &["config", "get"],

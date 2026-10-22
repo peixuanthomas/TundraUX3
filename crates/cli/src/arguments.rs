@@ -229,6 +229,7 @@ where
         "launcher" => crate::launcher_command::parse_launcher(&args).map(CliCommand::Launcher),
         "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
         "debug" => parse_debug_args(&args),
+        "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),
         "config" => parse_config_args(&args).map(CliCommand::Config),
         "new" => parse_no_extra_args(&args, CliCommand::New),
@@ -252,7 +253,6 @@ fn parse_debug_args(args: &[String]) -> Result<CliCommand, CliError> {
         "clear-logs" => {
             return crate::clear_logs_command::parse_clear_logs(rest).map(CliCommand::ClearLogs);
         }
-        "doctor" => CliCommand::Doctor,
         "paths" => CliCommand::Paths,
         "explain" => CliCommand::Explain,
         "test-frost" => CliCommand::TestFrost,

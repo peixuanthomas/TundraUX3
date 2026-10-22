@@ -274,7 +274,7 @@ fn embedded_prompt_cursor_tracks_visible_text_and_editing() {
         ("hell", "Did you mean: help"),
         ("/hell", "Did you mean: /help"),
         ("git statsu", "Did you mean: git status"),
-        ("/debug", "Suggestions: asset | clear-logs | doctor"),
+        ("/debug", "Suggestions: asset | clear-logs | paths"),
     ] {
         send(input.as_bytes());
         wait_for(&format!(">> {input}"), 0);

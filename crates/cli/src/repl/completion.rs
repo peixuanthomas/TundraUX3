@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "help",
     "ui",
     "config",
+    "doctor",
     "launcher",
     "services",
     "processes",
@@ -393,7 +394,6 @@ fn next_words(words: &[String]) -> Vec<String> {
             "debug" => strings(&[
                 "asset",
                 "clear-logs",
-                "doctor",
                 "paths",
                 "explain",
                 "test-frost",
