@@ -197,7 +197,7 @@ fn system_and_update_settings_keep_errors_in_footer_without_description_pane() {
                 SettingsControlKind::ReadOnly,
             )],
         )];
-        for (height, needs_scroll) in [(8, true), (15, false)] {
+        for (height, needs_scroll) in [(7, true), (15, false)] {
             model.scroll_offset = 0;
             let area = Rect::new(0, 0, 60, height);
             let layout = settings_layout(area, &model);

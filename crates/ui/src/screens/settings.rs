@@ -491,9 +491,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         raw_detail_area.x,
         raw_detail_area.y,
         raw_detail_area.width,
-        raw_detail_area
-            .height
-            .saturating_sub(if raw_detail_area.height >= 3 { 2 } else { 1 }),
+        raw_detail_area.height.saturating_sub(1),
     );
     let applications = (model.selected_category == SettingsCategory::Applications)
         .then(|| SettingsApplicationsLayout::new(detail_area));
@@ -1288,8 +1286,7 @@ fn render_settings_footer(
     model: &SettingsViewModel,
     context: &RenderContext,
 ) {
-    let theme = &context.compatibility_theme();
-    if detail.height < 2 {
+    if detail.height == 0 {
         return;
     }
     let selected = model
@@ -1307,27 +1304,16 @@ fn render_settings_footer(
         .collect::<Vec<_>>()
         .join("  |  ");
     let area = Rect::new(detail.x, detail.bottom().saturating_sub(1), detail.width, 1);
-    frame.render_widget(
-        Paragraph::new(Line::styled(
-            truncate(&text, usize::from(area.width)),
-            theme.muted_style(),
-        ))
-        .alignment(HorizontalAlignment::Left),
-        area,
-    );
-    if detail.height >= 3 {
-        let hint = if model.selected_category == SettingsCategory::Applications {
-            i18n::tr!("ui-settings-applications-keyboard-help")
-        } else if detail.width >= 62 {
-            i18n::tr!("ui-settings-keyboard-help")
-        } else {
-            i18n::tr!("ui-settings-keyboard-help-short")
-        };
-        frame.render_widget(
-            Paragraph::new(hint).style(theme.muted_style()),
-            Rect::new(detail.x, area.y.saturating_sub(1), detail.width, 1),
-        );
-    }
+    crate::components::PageActionBar::new("settings")
+        .with_status(vec![crate::components::PageActionStatus {
+            text,
+            tone: if selected.is_some_and(|item| item.unavailable_reason.is_some()) {
+                crate::components::ComponentTone::Warning
+            } else {
+                crate::components::ComponentTone::Muted
+            },
+        }])
+        .render(frame, area, context);
 }
 
 fn render_picker(

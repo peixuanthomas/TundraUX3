@@ -1241,3 +1241,25 @@ fn animation_modal_scrolls_and_captures_only_its_visible_controls() {
         }
     }
 }
+
+#[test]
+fn settings_footer_preserves_status_without_keyboard_help() {
+    let mut model = sample_model();
+    model.status = "Saved settings".into();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            render_settings(
+                frame,
+                frame.area(),
+                &chrome(),
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .unwrap();
+    let text = terminal_output(&terminal);
+    assert!(text.contains("Saved settings"));
+    assert!(!text.contains("Tab: section"));
+    assert!(!text.contains("Enter/Space"));
+}
