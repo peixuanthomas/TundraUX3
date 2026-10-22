@@ -82,3 +82,33 @@ fn help_scrolls_and_touch_close_requires_matching_release() {
     );
     assert!(!state.help_open);
 }
+
+#[test]
+fn command_line_f1_stays_with_the_child_terminal() {
+    let mut state = session();
+    state.enter_screen(ShellScreen::CommandLine);
+    let input = InputEvent::key(InputKey::F(1));
+    let routed = state.route_input_at(input, Instant::now());
+    assert!(matches!(
+        routed.command,
+        ShellCommand::CommandLineKey(KeyInput {
+            key: InputKey::F(1),
+            ..
+        })
+    ));
+    assert!(!state.help_open);
+}
+
+#[test]
+fn releasing_a_help_scroll_key_does_not_scroll_again() {
+    let mut state = session();
+    state.terminal_size = (50, 12);
+    state.open_page_help();
+    let mut key = KeyInput::new(InputKey::Down);
+    key.phase = InputPhase::Release;
+    assert!(matches!(
+        state.route_help_key(&key).1,
+        ShellCommand::CaptureOverlayInput
+    ));
+    assert_eq!(state.help_scroll, 0);
+}

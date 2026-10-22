@@ -7,13 +7,17 @@ impl ShellSession {
             || !self.help_button_available()
             || self.auto_admin_visible()
             || self.input_keyboard_open()
-            || self.interactive_overlays().iter().any(|overlay| overlay.target.is_some())
+            || self
+                .interactive_overlays()
+                .iter()
+                .any(|overlay| overlay.target.is_some())
         {
             return ShellAction::Redraw;
         }
         self.capture_modal_focus_context();
         self.help_open = true;
         self.help_scroll = 0;
+        self.help_scrollbar_drag = None;
         self.synchronize_overlay_focus();
         self.refresh_hit_map();
         ShellAction::Redraw
@@ -22,6 +26,7 @@ impl ShellSession {
     pub(in crate::session) fn close_page_help(&mut self) -> ShellAction {
         self.help_open = false;
         self.help_scroll = 0;
+        self.help_scrollbar_drag = None;
         self.synchronize_overlay_focus();
         self.refresh_hit_map();
         ShellAction::Redraw

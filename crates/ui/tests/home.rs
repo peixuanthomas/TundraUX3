@@ -245,6 +245,7 @@ fn debug_status_returns_after_a_notification_clears() {
         back_button_hovered: false,
         help_available: false,
         help_button_hovered: false,
+        help_button_focused: false,
         back_shortcut: "Esc",
         screen_stack: vec!["Home".to_string()],
         status: StatusViewModel {
@@ -787,6 +788,7 @@ fn chrome_for(screen: &str) -> ShellChromeViewModel {
         back_button_hovered: false,
         help_available: false,
         help_button_hovered: false,
+        help_button_focused: false,
         back_shortcut: "Esc",
         screen_stack: vec![screen.to_string()],
         status: StatusViewModel {

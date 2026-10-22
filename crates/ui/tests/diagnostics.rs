@@ -379,6 +379,7 @@ fn render(width: u16, height: u16, model: &DiagnosticsViewModel) -> Terminal<Tes
         back_button_hovered: false,
         help_available: false,
         help_button_hovered: false,
+        help_button_focused: false,
         back_shortcut: "Esc",
         screen_stack: vec!["Diagnostics".to_string()],
         status: StatusViewModel {

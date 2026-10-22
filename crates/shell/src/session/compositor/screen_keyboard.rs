@@ -100,6 +100,7 @@ impl ScreenCompositor {
             back_button_hovered: false,
             help_available: false,
             help_button_hovered: false,
+            help_button_focused: false,
             back_shortcut: "Esc",
             status: ui::StatusViewModel {
                 status: i18n::tr!("screen-keyboard-aa-safe"),

@@ -5,6 +5,12 @@ impl ShellSession {
         &self,
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
+        if !key.phase.is_press_like() || key.has_non_shift_modifier() {
+            return (
+                RoutedTarget::Modal(ShellComponent::HelpDialog),
+                ShellCommand::CaptureOverlayInput,
+            );
+        }
         let command = match key.key {
             InputKey::Escape | InputKey::F(1) if key.phase == InputPhase::Press => {
                 ShellCommand::ClosePageHelp

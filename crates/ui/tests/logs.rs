@@ -229,6 +229,7 @@ fn render(
         back_button_hovered: false,
         help_available: false,
         help_button_hovered: false,
+        help_button_focused: false,
         back_shortcut: "Esc",
         screen_stack: vec!["Logs".into()],
         status: StatusViewModel {

@@ -461,3 +461,12 @@ fn keyboard_closes_for_an_overlay_and_never_reappears_for_a_different_page() {
     state.sync_input_keyboard();
     assert!(!state.input_keyboard_open());
 }
+
+#[test]
+fn physical_f1_does_not_open_help_over_the_screen_keyboard() {
+    let mut state = session();
+    state.toggle_input_keyboard();
+    state.apply_input(InputEvent::key(InputKey::F(1)));
+    assert!(state.input_keyboard_open());
+    assert!(!state.help_open);
+}

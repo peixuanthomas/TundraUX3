@@ -228,6 +228,7 @@ pub fn render_shell_chrome_with_status_focus(
     if let Some(area) = layout.help_button {
         let mut button = Button::new("shell.help", i18n::tr!("ui-shell-help-button"));
         button.state.hovered = chrome.help_button_hovered;
+        button.state.focused = chrome.help_button_focused;
         button.render_frame(frame, area, &context.compatibility_theme());
     }
     render_status(frame, status, layout, chrome, context, status_focused);
