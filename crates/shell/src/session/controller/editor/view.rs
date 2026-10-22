@@ -4,6 +4,30 @@ use crate::session::*;
 impl ShellSession {
     pub fn to_editor_view_model(&self) -> ui::EditorViewModel {
         let _language = i18n::enter_snapshot(self.language.clone());
+        if let Some(terminal) = &self.editor_vim_terminal {
+            let mut model = ui::EditorViewModel::source(
+                self.app
+                    .editor_state()
+                    .map_or_else(String::new, |s| s.document.display_name()),
+                "",
+            );
+            model.vim_terminal = Some(
+                if self.interactive_overlays().is_empty() && !self.config_editor_form_visible() {
+                    terminal.clone()
+                } else {
+                    let mut terminal = terminal.as_ref().clone();
+                    for cell in &mut terminal.cells {
+                        cell.cursor = false;
+                    }
+                    Arc::new(terminal)
+                },
+            );
+            model.vim_mode = Some(ui::EditorVimMode::Normal);
+            if self.config_editor_form_visible() {
+                model.config_form = Some(Box::new(self.to_management_view_model()));
+            }
+            return model;
+        }
         if let Some(load) = self.pages.editor.editor_load_state.as_ref()
             && matches!(load.operation, EditorLoadOperation::Open { .. })
         {
@@ -280,7 +304,7 @@ impl ShellSession {
             .storage_config()
             .editor
             .vim_mode_enabled
-            .then_some(self.pages.editor.editor_vim_mode);
+            .then_some(ui::EditorVimMode::Normal);
         model.scroll_line = state.viewport.top_line;
         model.horizontal_scroll = state.viewport.left_column;
         model.toolbar.can_save =

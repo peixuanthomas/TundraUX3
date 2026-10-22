@@ -1,12 +1,24 @@
 ui-editor-vim-toggle = VIM_mode
+ui-editor-vim-return = F8 Return to editor
 ui-editor-vim-off = { " F8 VIM_mode: Off " }
 ui-editor-vim-normal = { " F8 VIM_mode: Normal " }
 ui-editor-vim-insert = { " F8 VIM_mode: Insert " }
-ui-editor-vim-help = Vim shortcuts
+ui-editor-vim-help = Vim help
 ui-editor-vim-help-text =
-    F8: toggle Vim mode (saved for next time).
-    Normal mode: h/j/k/l move; w/b move by word; 0/$ move to line start/end; gg/G move to document start/end.
-    i/a insert before/after; I/A insert at line start/end; o/O open a line below/above. Esc returns to Normal mode.
-    x deletes a character; dd deletes a line; yy copies a line; p/P paste after/before using Vim's register.
-    u undoes; Ctrl+R redoes; / opens search; n/N find the next/previous match.
-    Ctrl+S saves; Ctrl+W or the Back button closes the document.
+    Vim mode runs the bundled Vim editor. Use :help or F1 for Vim's complete help.
+    Normal, Insert, Replace, Visual and command-line modes, motions, operators, text objects, registers, macros and undo follow Vim.
+    :write saves; :wq saves and quits; :quit quits; :quit! discards changes. Ctrl+W operates Vim windows.
+    F8 returns to the regular editor. F8 again resumes Vim with its registers and undo history. The preference is saved for next time.
+shell-vim-runtime-error = Vim could not continue: { $reason }. Your synchronized documents remain in the editor.
+shell-vim-startup-failed = Vim did not connect to the editor. A full Vim build with channel, eval, autocmd and timer support is required.
+shell-vim-exited-unexpectedly = Vim stopped unexpectedly (exit { $code }). Synchronized unsaved text is retained.
+shell-vim-buffer-unavailable = The document for this Vim buffer is no longer available.
+shell-vim-file-name-required = E32: No file name. Use :write with a path.
+shell-vim-save-failed = The editor could not start this write. The Vim buffer remains modified.
+shell-vim-save-cancelled = The configuration write was cancelled. The Vim buffer remains modified.
+shell-vim-engine-missing = The bundled Vim engine is missing at { $path }. Build it with scripts/build-vim.py or use a complete portable package.
+shell-vim-config-whole-write = Configuration files require a whole-buffer write through preview, validation and authorization.
+shell-vim-unsupported-editor-encoding = The regular editor cannot preserve { $encoding }. Continue in Vim or use :set fileencoding=utf-8 before F8.
+shell-vim-save-suspended = Vim writes are paused while the regular editor owns the documents. Press F8 to resume Vim before writing.
+shell-vim-config-text-write = Configuration validation requires the current UTF-8 text without a BOM or write-time byte conversion. Use a regular file for an encoded copy.
+shell-vim-unsupported-editor-bom = The regular editor requires a BOM for UTF-16. Continue in Vim or use :set bomb before F8.

@@ -383,7 +383,6 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn handle_editor_paste(&mut self, value: String) {
-        self.pages.editor.editor_vim_pending = None;
         if self.config_editor_form_visible() {
             self.handle_management_paste(&value);
             return;
@@ -402,9 +401,6 @@ impl ShellSession {
         mouse: MouseInput,
         platform: &dyn Platform,
     ) {
-        if matches!(mouse.kind, ui::MouseEventKind::Down(_)) {
-            self.pages.editor.editor_vim_pending = None;
-        }
         if self.config_editor_form_visible() {
             self.handle_management_pointer(mouse);
             return;

@@ -74,6 +74,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path package | Out-Null
+          python scripts/build-vim.py --output package/vim
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item target/x86_64-pc-windows-msvc/release/tundra-shell.exe package/
           Copy-Item target/x86_64-pc-windows-msvc/release/tundra-cli.exe package/
           Copy-Item -Recurse crates/ascii-assets/assets package/assets
@@ -148,10 +150,12 @@ jobs:
           done
           cp LICENSE package/
           cp crates/weathr/LICENSE.weathr package/
+          python3 scripts/build-vim.py --macos-universal --output package/vim
           lipo -info package/tundra-shell
           lipo -info package/tundra-cli
+          lipo -info package/vim/vim
           tar -C package -czf TundraUX3-v1.4.1-macos-universal.tar.gz \
-            tundra-shell tundra-cli assets LICENSE LICENSE.weathr
+            tundra-shell tundra-cli assets vim LICENSE LICENSE.weathr
           shasum -a 256 TundraUX3-v1.4.1-macos-universal.tar.gz \
             > TundraUX3-v1.4.1-macos-universal.sha256
 
@@ -191,6 +195,9 @@ jobs:
           TUNDRAUX3_VERSION: 1.4.1
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libncurses-dev
+          python3 scripts/build-vim.py --output target/release/vim
           bash scripts/package-linux.sh --tar-only
           mv dist/tundraux3-1.4.1-linux-x86_64.tar.gz \
             dist/TundraUX3-v1.4.1-linux-x86_64.tar.gz

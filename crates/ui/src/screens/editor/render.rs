@@ -29,6 +29,24 @@ pub fn render_editor_contextual(
     Surface::new()
         .bordered(true)
         .render_frame(frame, area, context);
+    if let Some(terminal) = &model.vim_terminal {
+        render_editor_button(
+            frame,
+            layout.vim_toggle,
+            "editor.vim-toggle",
+            i18n::tr!("ui-editor-vim-return"),
+            false,
+            false,
+            theme,
+        );
+        crate::screens::command_line::render_native_terminal_snapshot(
+            frame,
+            layout.canvas,
+            terminal,
+            theme,
+        );
+        return layout;
+    }
     render_menu_bar(frame, &layout, model, theme, context);
     render_toolbar(frame, &layout, model, theme, context);
     render_search_bar(frame, &layout, model, theme);

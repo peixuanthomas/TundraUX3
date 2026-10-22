@@ -4,7 +4,7 @@
 
 AA 自动策略的显示名称统一为“一律放行” / “Always allow”，帮助文字继续说明其只跳过 AA 确认。
 
-编辑器 Vim 开关、当前模式和按需打开的快捷键帮助位于中英文 `modules/editor-vim.ftl`。
+编辑器 Vim 开关、返回编辑器按钮和按需打开的使用帮助位于中英文 `modules/editor-vim.ftl`；模式、命令行和错误提示保留原生 Vim 的显示。
 
 软件包分栏页的主导航和高级区文字位于中英文 `modules/management-services-process-packages.ftl`；键盘操作统一放在 F1 帮助。
 

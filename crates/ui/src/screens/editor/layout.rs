@@ -232,7 +232,7 @@ pub struct EditorSourceLineMap {
     pub boundaries: Vec<EditorSourceBoundary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EditorLayout {
     pub vim_toggle: Rect,
     pub menu_scrollbar: Option<Rect>,
@@ -517,9 +517,41 @@ impl EditorLayout {
     }
 }
 
+pub fn editor_vim_terminal_area(area: Rect) -> Rect {
+    let inner = Surface::new().bordered(true).inner(area);
+    let header_height = u16::from(inner.height > 0);
+    Rect::new(
+        inner.x,
+        inner.y.saturating_add(header_height),
+        inner.width,
+        inner.height.saturating_sub(header_height),
+    )
+}
+
 pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     let inner = Surface::new().bordered(true).inner(area);
     let menu_height = u16::from(inner.height > 0);
+    if let Some(terminal) = &model.vim_terminal {
+        let canvas = editor_vim_terminal_area(area);
+        let width = to_u16(terminal_width(&i18n::tr!("ui-editor-vim-return"))).min(inner.width);
+        return EditorLayout {
+            vim_toggle: Rect::new(
+                inner.right().saturating_sub(width),
+                inner.y,
+                width,
+                menu_height,
+            ),
+            area,
+            menu_bar: Rect::new(inner.x, inner.y, inner.width, menu_height),
+            canvas_panel: canvas,
+            canvas,
+            mode: model.mode,
+            visible_capacity: usize::from(canvas.height),
+            document_line_count: usize::from(terminal.rows),
+            horizontal_content_width: usize::from(terminal.columns),
+            ..Default::default()
+        };
+    }
     let toolbar_height = 0;
     let status_height = u16::from(inner.height >= 3);
     let menu_bar = Rect::new(inner.x, inner.y, inner.width, menu_height);

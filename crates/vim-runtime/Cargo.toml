@@ -1,0 +1,19 @@
+[package]
+name = "vim-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+terminal-runtime = { path = "../terminal-runtime" }
+watchdog = { path = "../watchdog" }
+ui = { path = "../ui" }
+ratatui.workspace = true
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+tempfile = "3"
+getrandom = "0.3"
+
+[dev-dependencies]
+watchdog = { path = "../watchdog", features = ["test-support"] }

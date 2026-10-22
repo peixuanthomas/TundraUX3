@@ -29,13 +29,15 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Set up Linux:** the clock follows system time and timezone, including existing installations. Change timezone with the map in Region & Time, and manage system automatic synchronization and timesyncd/chrony servers there. Operating System Settings contains the host name.
 - **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.
 - **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.
-- **Work with files:** browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with syntax highlighting, search and replace, soft wrap, JSON formatting, and optional saved Vim-style keys (F8). The editor opens 106 source and configuration suffixes by default. File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
+- **Work with files:** browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with syntax highlighting, search and replace, soft wrap and JSON formatting. F8 switches to the bundled real Vim. The editor opens 106 source and configuration suffixes by default. File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
 - **Manage Linux file access:** edit permissions and ownership for selected files, with separate file/directory permissions and a reviewed recursive range. Toggle permission boxes with Space or Enter.
 - **Open tools:** use the application launcher and built-in command line when a task calls for commands. Move between launcher icon rows with Up/Down and between adjacent items with Left/Right.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
 - **Make the interface your own:** choose English or Simplified Chinese, adjust appearance, and use the clock and weather applications. Application Settings lists File Explorer and Editor on the left and shows the selected application's options on the right. Cancel new alarms with the visible button or keyboard.
 
 See [Linux system management](crates/platform/docs/linux-management.md) for supported operations and their requirements.
+
+Vim mode displays Vim's own terminal interface, including Visual modes, counts, registers, macros, windows, command line and `:help`. `Ctrl+W` operates Vim windows. F8 returns to the ordinary editor without saving the document; F8 again resumes the same Vim process and its existing state. Document writes such as `:w` and `:wq` use Tundra's existing save workers and protected-configuration checks; `:q!` follows Vim's discard behavior. See the [editor guide](docs/source-editor.md#真实-vim-模式).
 
 ## Keyboard, mouse, or touchscreen
 
@@ -63,7 +65,7 @@ Shrinking a running window pauses interaction behind a size reminder and preserv
 
 1. Download the Linux x86_64 portable archive from [GitHub Releases](https://github.com/peixuanthomas/TundraUX3/releases).
 2. Extract it into a directory owned by your normal Linux user.
-3. Keep `tundra-shell`, `tundra-cli`, `assets/`, and `tundra-installation.json` together.
+3. Keep `tundra-shell`, `tundra-cli`, `assets/`, `vim/`, and `tundra-installation.json` together.
 4. Open a terminal in the extracted directory and run:
 
 ```sh
@@ -80,16 +82,21 @@ Linux uses the account that launched the program and that account's system permi
 
 Linux releases use portable archives. In **Settings → Update**, **Release** downloads a stable portable release, while **Beta** builds the latest `master` commit with a local Rust toolchain. Self-updates require a writable, user-owned portable installation and preserve personal data and themes. See the [Linux runtime notes](docs/packaging/linux/README-LINUX.txt) for dependencies and update details.
 
+For the first upgrade from an older build using update protocol v2, fully extract the new portable archive once. Those updaters reject protocol v3, which also deploys the bundled Vim runtime.
+
 ### Build from source
 
 Install Rust **1.95 or newer** with Cargo and the build tools required by your platform. From the repository root:
 
 ```sh
 cargo build --locked -p shell -p cli
+python3 scripts/build-vim.py --output target/debug/vim
 cargo run --locked -p shell --bin tundra-shell
 ```
 
-Repeat both commands after pulling updates. `cargo run -p shell` alone does not rebuild the companion `tundra-cli` executable used by Command Line.
+Rebuild Shell and CLI after pulling updates, and rerun the Vim step when `packaging/vim.json` changes. `cargo run -p shell` alone does not rebuild the companion `tundra-cli` executable used by Command Line.
+
+The Vim step explicitly downloads and builds the pinned upstream version; ordinary Cargo builds do not download Vim. It needs Python 3.12+ and native C build tools; Windows can use `python` instead of `python3`. Build prerequisites, release paths and offline source archives are described in [bundled Vim](docs/packaging/vim.md). `TUNDRA_VIM` can select another compatible full Vim executable; `TUNDRA_VIM_CLEAN=1` disables personal Vim configuration and plugins for isolated tests.
 
 Explore the companion CLI:
 
@@ -112,6 +119,7 @@ Build both packages: the shell uses the companion CLI for the built-in command l
 - Linux management features have specific requirements, such as systemd for service control and supported distribution tools for package management. Operating-system settings explain missing systemd or system DBus capabilities in the failure details.
 - Network operations are in Launcher → Network. The unavailable Sound, Display, Wi-Fi and Bluetooth settings pages have been removed; account management is in Launcher → Users.
 - Input coverage and real-device behavior are still being refined. The project does not claim complete support for every terminal, touchscreen, or Linux distribution.
+- Vim runs as a terminal program. Linux has real PTY regression coverage; the Windows and macOS builds and runtime checks require their corresponding CI runners. Linux validation does not establish results on those platforms.
 
 ## Documentation
 
@@ -133,3 +141,5 @@ Most detailed documentation is currently in Chinese. Start with the [documentati
 ## License
 
 Copyright (c) 2026 HanPeixuan. The project's own code is licensed under [GNU GPL v3 only](LICENSE) (`GPL-3.0-only`). The Weathr component retains its [GPL-3.0-or-later license](crates/weathr/LICENSE.weathr). Check the applicable component and third-party asset licenses when redistributing or reusing them.
+
+Bundled Vim retains its upstream Vim License in `vim/LICENSE`, with its source and version recorded in `vim/UPSTREAM.json`.

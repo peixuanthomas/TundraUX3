@@ -3,11 +3,45 @@ use crossterm::event;
 use std::{io, time::Duration};
 
 const MAX_READY_TERMINAL_EVENTS_PER_FRAME: usize = 4_096;
+const MAX_READY_CHILD_TERMINAL_EVENTS_PER_FRAME: usize = 256;
 
 pub(crate) fn read_ready_terminal_event_batch(
     first: event::Event,
 ) -> io::Result<Vec<event::Event>> {
     collect_ready_terminal_event_batch(first, || event::poll(Duration::ZERO), event::read)
+}
+
+pub(crate) fn read_ready_child_terminal_event_batch(
+    first: event::Event,
+) -> io::Result<Vec<event::Event>> {
+    collect_ready_child_terminal_event_batch(first, || event::poll(Duration::ZERO), event::read)
+}
+
+fn collect_ready_child_terminal_event_batch(
+    first: event::Event,
+    mut poll_ready: impl FnMut() -> io::Result<bool>,
+    mut read_ready: impl FnMut() -> io::Result<event::Event>,
+) -> io::Result<Vec<event::Event>> {
+    let mut events = Vec::new();
+    let mut next = first;
+    loop {
+        let host_boundary = match &next {
+            event::Event::Key(key) => key.code == event::KeyCode::F(8) && key.modifiers.is_empty(),
+            event::Event::Paste(_) => false,
+            _ => true,
+        };
+        events.push(next);
+        // The host must apply navigation and toggles before acquiring keys for
+        // the next page; native text and commands can share one render frame.
+        if host_boundary
+            || events.len() == MAX_READY_CHILD_TERMINAL_EVENTS_PER_FRAME
+            || !poll_ready()?
+        {
+            break;
+        }
+        next = read_ready()?;
+    }
+    Ok(events)
 }
 
 fn collect_ready_terminal_event_batch(

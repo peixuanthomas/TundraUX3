@@ -37,8 +37,16 @@ mkdir -p "$stage_root/$portable_name"
 
 cargo build --release --locked -p shell -p cli
 
+vim_dir="${TUNDRAUX3_VIM_DIR:-$release_dir/vim}"
+if [[ ! -x "$vim_dir/vim" ]]; then
+  echo "Build bundled Vim first: python3 scripts/build-vim.py --output '$vim_dir'" >&2
+  exit 1
+fi
+python3 scripts/build-vim.py --output "$vim_dir" --verify-only
+
 install -Dm755 "$release_dir/tundra-shell" "$stage_root/$portable_name/tundra-shell"
 install -Dm755 "$release_dir/tundra-cli" "$stage_root/$portable_name/tundra-cli"
+cp -a "$vim_dir" "$stage_root/$portable_name/vim"
 cp -a crates/ascii-assets/assets "$stage_root/$portable_name/assets"
 for locale in en-US zh-CN; do
   test -s "$stage_root/$portable_name/assets/locales/$locale/manifest.toml"

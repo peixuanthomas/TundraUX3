@@ -1,6 +1,125 @@
 mod support;
 
 #[test]
+fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
+    use ui::{
+        CommandLineCell, CommandLineCellStyle, CommandLineColor, CommandLineCursorStyle,
+        CommandLineTerminalSnapshot,
+    };
+    let area = Rect::new(2, 3, 40, 12);
+    let canvas = ui::editor_vim_terminal_area(area);
+    assert_eq!(canvas, Rect::new(3, 5, 38, 9));
+    let mut snapshot = CommandLineTerminalSnapshot::blank(canvas.width, canvas.height);
+    snapshot.cursor_style = CommandLineCursorStyle::SteadyBar;
+    for (row, text) in [
+        (0, "Vim buffer"),
+        (6, "-- INSERT --"),
+        (7, "E486: Pattern not found"),
+        (8, ":%s/old/new/g"),
+    ] {
+        for (column, character) in text.chars().enumerate() {
+            snapshot.set_cell(
+                column as u16,
+                row,
+                CommandLineCell {
+                    symbol: character.to_string(),
+                    style: CommandLineCellStyle {
+                        foreground: CommandLineColor::Indexed(3),
+                        italic: row == 8,
+                        ..Default::default()
+                    },
+                    cursor: row == 8 && column == 7,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    snapshot.set_cell(
+        0,
+        0,
+        CommandLineCell {
+            symbol: "V".into(),
+            style: CommandLineCellStyle {
+                inverse: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    let mut model = EditorViewModel::source("legacy.txt", "hidden host buffer");
+    model.status_message = Some("hidden host status".into());
+    model.vim_terminal = Some(std::sync::Arc::new(snapshot));
+    let layout = editor_layout(area, &model);
+    assert_eq!(layout.canvas, canvas);
+    assert!(layout.menus.is_empty() && layout.toolbar_items.is_empty());
+    assert!(layout.status_bar.is_empty() && layout.status_items.is_empty());
+    assert!(layout.vertical_scrollbar.is_none() && layout.horizontal_scrollbar.is_none());
+    assert_eq!(
+        layout.hit_test(layout.vim_toggle.x, layout.vim_toggle.y),
+        Some(EditorHitTarget::MenuAction(ui::EditorMenuAction::ToggleVim))
+    );
+    let mut terminal = Terminal::new(TestBackend::new(48, 18)).unwrap();
+    terminal
+        .draw(|frame| {
+            render_editor(frame, area, &model, &TundraTheme::default_dark());
+        })
+        .unwrap();
+    let text = support::terminal_output(&terminal);
+    for visible in [
+        "F8 Return to editor",
+        "Vim buffer",
+        "-- INSERT --",
+        "E486: Pattern not found",
+        ":%s/old/new/g",
+    ] {
+        assert!(text.contains(visible), "{visible}: {text}");
+    }
+    for hidden in [
+        "File(F)",
+        "hidden host buffer",
+        "hidden host status",
+        "UTF-8",
+    ] {
+        assert!(!text.contains(hidden), "{hidden}: {text}");
+    }
+    let cell = &terminal.backend().buffer()[(canvas.x + 7, canvas.y + 8)];
+    assert!(cell.modifier.contains(Modifier::ITALIC));
+    assert!(!cell.modifier.contains(Modifier::REVERSED));
+    assert!(
+        terminal.backend().buffer()[(canvas.x, canvas.y)]
+            .modifier
+            .contains(Modifier::REVERSED)
+    );
+    assert_eq!(
+        terminal.get_cursor_position().unwrap(),
+        (canvas.x + 7, canvas.y + 8).into()
+    );
+}
+
+#[test]
+fn native_vim_layout_keeps_its_viewport_and_exit_button_inside_resized_panels() {
+    let mut model = EditorViewModel::source("note.txt", "unused");
+    model.vim_terminal = Some(std::sync::Arc::new(ui::CommandLineTerminalSnapshot::blank(
+        120, 40,
+    )));
+    for (width, height) in [(120, 40), (80, 24), (8, 4), (2, 2), (1, 1), (0, 0)] {
+        let area = Rect::new(5, 7, width, height);
+        let layout = editor_layout(area, &model);
+        assert_eq!(layout.canvas, ui::editor_vim_terminal_area(area));
+        for child in [layout.canvas, layout.vim_toggle] {
+            assert!(
+                child.is_empty()
+                    || (child.x >= area.x
+                        && child.y >= area.y
+                        && child.right() <= area.right()
+                        && child.bottom() <= area.bottom())
+            );
+        }
+        assert!(layout.canvas.is_empty() || layout.canvas.y > layout.vim_toggle.y);
+    }
+}
+
+#[test]
 fn vim_toggle_is_localized_visible_and_uses_shared_pointer_feedback() {
     use ui::components::{ButtonFrame, ButtonRegion};
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");

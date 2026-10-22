@@ -205,3 +205,114 @@ fn ready_event_drain_is_bounded_when_the_source_never_goes_idle() {
     assert_eq!(reads.get() + 1, MAX_READY_TERMINAL_EVENTS_PER_FRAME);
     assert_eq!(batch.len(), 1);
 }
+
+#[test]
+fn child_terminal_batches_preserve_long_commands_and_paste_order() {
+    let mut expected = ":echo '"
+        .chars()
+        .chain(std::iter::repeat_n('x', 200))
+        .chain("'".chars())
+        .map(|value| Event::Key(KeyEvent::new(KeyCode::Char(value), KeyModifiers::NONE)))
+        .collect::<Vec<_>>();
+    expected.extend([
+        Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Event::Paste("中\nwhole paste".into()),
+        Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::SHIFT)),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::CONTROL)),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::ALT)),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::SUPER)),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::HYPER)),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::META)),
+    ]);
+    let source = RefCell::new(VecDeque::from(expected.clone()));
+    let first = source.borrow_mut().pop_front().unwrap();
+    let batch = collect_ready_child_terminal_event_batch(
+        first,
+        || Ok(!source.borrow().is_empty()),
+        || Ok(source.borrow_mut().pop_front().unwrap()),
+    )
+    .unwrap();
+
+    assert_eq!(batch, expected);
+    assert!(source.borrow().is_empty());
+}
+
+#[test]
+fn child_terminal_batches_stop_after_including_host_boundaries() {
+    for boundary in [
+        Event::FocusLost,
+        Event::FocusGained,
+        Event::Resize(90, 30),
+        mouse_event(MouseEventKind::Moved, 2, 3, KeyModifiers::NONE),
+        mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            2,
+            3,
+            KeyModifiers::NONE,
+        ),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE)),
+        Event::Key(KeyEvent::new_with_kind(
+            KeyCode::F(8),
+            KeyModifiers::NONE,
+            event::KeyEventKind::Repeat,
+        )),
+        Event::Key(KeyEvent::new_with_kind(
+            KeyCode::F(8),
+            KeyModifiers::NONE,
+            event::KeyEventKind::Release,
+        )),
+    ] {
+        let first = Event::Key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        let after = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        let source = RefCell::new(VecDeque::from([boundary.clone(), after.clone()]));
+        let batch = collect_ready_child_terminal_event_batch(
+            first.clone(),
+            || Ok(!source.borrow().is_empty()),
+            || Ok(source.borrow_mut().pop_front().unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(batch, vec![first, boundary]);
+        assert_eq!(*source.borrow(), VecDeque::from([after]));
+    }
+}
+
+#[test]
+fn child_terminal_host_boundary_as_first_event_does_not_poll_or_read() {
+    for first in [
+        Event::Resize(90, 30),
+        Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE)),
+    ] {
+        let batch = collect_ready_child_terminal_event_batch(
+            first.clone(),
+            || panic!("a host boundary must dispatch before polling more input"),
+            || panic!("a host boundary must not read keys for the next page"),
+        )
+        .unwrap();
+        assert_eq!(batch, vec![first]);
+    }
+}
+
+#[test]
+fn child_terminal_batches_remain_bounded_for_continuously_ready_keys() {
+    let reads = Cell::new(0);
+    let polls = Cell::new(0);
+    let key = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+    let batch = collect_ready_child_terminal_event_batch(
+        key.clone(),
+        || {
+            polls.set(polls.get() + 1);
+            Ok(true)
+        },
+        || {
+            reads.set(reads.get() + 1);
+            Ok(key.clone())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(batch, vec![key; MAX_READY_CHILD_TERMINAL_EVENTS_PER_FRAME]);
+    assert_eq!(reads.get() + 1, MAX_READY_CHILD_TERMINAL_EVENTS_PER_FRAME);
+    assert_eq!(polls.get(), reads.get());
+}

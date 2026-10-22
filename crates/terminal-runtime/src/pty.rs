@@ -289,8 +289,18 @@ impl CommandLinePty {
     }
 
     pub fn send(&self, input: &TerminalInput) -> io::Result<()> {
-        let application_cursor = self.snapshot().application_cursor;
+        let application_cursor = self.input_modes().0;
         self.write(&encode_terminal_input(input, application_cursor))
+    }
+
+    /// Reads input encoding modes without cloning terminal cells or scrollback.
+    pub fn input_modes(&self) -> (bool, bool) {
+        let parser = self
+            .parser
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let screen = parser.screen();
+        (screen.application_cursor(), screen.bracketed_paste())
     }
 
     /// Returns false when the child has not requested mouse input or the event

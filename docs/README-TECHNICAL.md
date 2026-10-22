@@ -10,11 +10,14 @@
 
 ```sh
 cargo build --locked -p shell -p cli
+python3 scripts/build-vim.py --output target/debug/vim
 cargo run --locked -p shell --bin tundra-shell
 cargo run --locked -p cli --bin tundra-cli -- debug doctor
 ```
 
 更新源码后仍需一起构建 Shell 和 CLI。`cargo run -p shell` 不会重建它使用的 CLI 可执行文件；发布模式为上述构建命令添加 `--release`。
+
+编辑器 Vim 模式使用固定版本的完整 Vim。显式构建步骤将引擎和 runtime 放在 Shell 旁；普通 Cargo 构建不联网获取 Vim。依赖、离线构建和三平台发布方法见[随包 Vim](packaging/vim.md)。
 
 默认主题需要至少 **108 × 20** 个终端单元格；内建 Command Line 还需要额外垂直空间。实际下限由资源和布局共同计算，自定义大图案可能提高要求。鼠标和触摸输入取决于终端能否转发事件。
 
@@ -47,6 +50,7 @@ Linux 使用当前进程的 NSS 系统用户，首次完成语言、时区和外
 | [app](../crates/app/README.md) | 应用状态、命令、文件工作流、时钟调度和更新 |
 | [ui](../crates/ui/README.md) | 界面数据模型、布局、绘制和通用控件 |
 | [terminal-runtime](../crates/terminal-runtime/README.md) | 宿主终端模式、子终端、输入编码和终端快照 |
+| [vim-runtime](../crates/vim-runtime/README.md) | 真实 Vim 进程、缓冲同步、受控保存和终端快照 |
 | [auto-admin](../crates/auto-admin/README.md) | 操作批准、密码和选项输入、任务收尾及授权连接 |
 | [platform](../crates/platform/README.md) | 操作系统路径、文件、进程和系统管理接口 |
 | [storage](../crates/storage/README.md) | 应用文档、格式校验、原子保存、迁移和损坏恢复 |
@@ -118,12 +122,13 @@ bash scripts/check-weathr-dependency-boundary.sh
 ## Linux 打包
 
 ```sh
+python3 scripts/build-vim.py --output target/release/vim
 bash scripts/package-linux.sh
 ```
 
 脚本仅在 Linux x86_64 运行，构建 `shell` 与 `cli` 的 release 版本，默认输出到 `dist/`。版本来自 workspace，可用 `TUNDRAUX3_VERSION` 覆盖；`--tar-only` 仍接受且行为相同。发行只提供便携包，不生成 DEB/RPM 安装包。
 
-归档包含两个程序、完整 `assets/`、`tundra-installation.json`、许可证和运行说明，并写入 `SHA256SUMS`。标记须与两个程序一起保留。更新只替换程序，完整恢复规则见 [app 更新说明](../crates/app/docs/update.md)。系统软件包管理与程序自身更新是独立功能。
+归档包含两个程序、完整 `assets/`、随包 `vim/`、`tundra-installation.json`、许可证和运行说明，并写入 `SHA256SUMS`。标记与 `vim/` 须和两个程序一起保留。更新的替换与恢复规则见 [app 更新说明](../crates/app/docs/update.md)。系统软件包管理与程序自身更新是独立功能。
 
 ## 第三方代码和许可证
 
@@ -133,6 +138,8 @@ bash scripts/package-linux.sh
 - [vt100 补丁](../third_party/vt100/TUNDRA_PATCH.md)：终端滚动历史和 `CSI 3 J`。
 
 项目代码为 [GPL-3.0-only](../LICENSE)，Weathr 保留 [GPL-3.0-or-later](../crates/weathr/LICENSE.weathr)。资源和第三方代码的许可分别以其说明为准。
+
+随包 Vim 从固定上游源码构建，保留 `vim/LICENSE` 和含来源/校验值的 `vim/UPSTREAM.json`；详情见[随包 Vim](packaging/vim.md)。
 
 ## 故障排查
 

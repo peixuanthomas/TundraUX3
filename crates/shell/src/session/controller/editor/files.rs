@@ -463,6 +463,27 @@ impl ShellSession {
             return;
         }
         let path = save.path;
+        self.pages.editor.editor_vim_save_result = Some(match &result {
+            Ok(_) => Ok(path.clone()),
+            Err(EditorSaveTaskError::ExternalModification) => Err(i18n::tr!(
+                "shell-the-file-changed-outside-the-editor-use-save-as-or-reload-it-before-saving"
+            )),
+            Err(EditorSaveTaskError::Write(error)) => Err(error.clone()),
+        });
+        if self.pages.editor.editor_vim_write_pending {
+            if let Ok(fingerprint) = result {
+                if self
+                    .app
+                    .editor_state()
+                    .and_then(|s| s.document.path.as_ref())
+                    == Some(&path)
+                {
+                    self.pages.editor.editor_fingerprint = Some(fingerprint);
+                }
+                self.refresh_explorers_containing(&path, platform);
+            }
+            return;
+        }
         match result {
             Ok(fingerprint) => {
                 self.refresh_explorers_containing(&path, platform);
@@ -843,7 +864,9 @@ impl ShellSession {
         _platform: &dyn Platform,
         picker: Option<PageInstanceId>,
     ) -> bool {
-        if self.config_editor_active() {
+        if self.config_editor_active()
+            && self.pages.editor.editor_config.path.as_ref() == Some(&path)
+        {
             self.config_editor_action(ui::EditorConfigAction::Preview);
             return false;
         }
@@ -866,9 +889,16 @@ impl ShellSession {
             .editor_state()
             .and_then(|state| state.document.path.as_ref())
             == Some(&path);
-        let expected = is_current_path
-            .then_some(self.pages.editor.editor_fingerprint)
-            .flatten();
+        let expected = self
+            .pages
+            .editor
+            .editor_vim_expected
+            .take()
+            .unwrap_or_else(|| {
+                is_current_path
+                    .then_some(self.pages.editor.editor_fingerprint)
+                    .flatten()
+            });
         let id = next_editor_task_id();
         let revision = snapshot.revision;
         if let Err(error) = self.editor_task_runtime.submit_save_with_owner(

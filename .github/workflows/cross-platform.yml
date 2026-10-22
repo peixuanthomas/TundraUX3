@@ -59,6 +59,17 @@ jobs:
       - name: Compile workspace
         shell: bash
         run: cargo build --workspace --locked
+      - name: Build bundled Vim for editor tests
+        shell: bash
+        run: python3 scripts/build-vim.py --output target/debug/vim
+      - name: Test real Vim runtime
+        shell: bash
+        run: |
+          vim_binary="$PWD/target/debug/vim/vim"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            vim_binary="${vim_binary}.exe"
+          fi
+          TUNDRA_TEST_VIM="$vim_binary" cargo test --locked -p vim-runtime -- --include-ignored
       - name: Test document and Explorer file safety
         shell: bash
         run: |

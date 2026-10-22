@@ -33,12 +33,14 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 - **管理端口和登录：**查看监听端口及所属进程，管理 UFW/firewalld 放行规则，修改 SSH 设置后在新连接中确认保留。
 - **管理定时任务：**查看 systemd 和 cron 任务，创建、暂停、恢复和立即执行任务，查看上次结果与下次时间。
 - **查看和恢复配置：**按操作查看原件、时间和差异，恢复配置、账户和用户组；密码以受保护的哈希保存，不在界面展示。
-- **处理文件：**浏览目录并执行文件操作；编辑器提供语法着色、查找与替换、软换行和 JSON 格式化，可选用已保存的 Vim 快捷键（F8），并默认打开 106 种源码和配置后缀。
+- **处理文件：**浏览目录并执行文件操作；编辑器提供语法着色、查找与替换、软换行和 JSON 格式化，F8 可切换到随包提供的真实 Vim，并默认打开 106 种源码和配置后缀。
 - **打开工具：**通过应用启动器打开工具，需要命令时使用内置命令行。
 - **了解系统运行情况：**查看系统状态、资源使用、日志、通知和诊断信息。
 - **调整使用体验：**选择英文或简体中文、调整外观，以及使用时钟和天气应用。
 
 具体支持的操作和所需条件见 [Linux 系统管理](../crates/platform/docs/linux-management.md)。
+
+Vim 模式显示 Vim 自己的终端界面，包括 Visual 模式、次数、寄存器、宏、窗口、命令行和 `:help`；`Ctrl+W` 处理 Vim 窗口。F8 返回普通编辑器，不自动保存文件，再按 F8 继续原 Vim 进程及其已有状态。`:w`、`:wq` 等文档保存仍使用 Tundra 既有的保存任务和受保护配置检查；`:q!` 按 Vim 规则放弃修改。具体操作见[编辑器说明](source-editor.md#真实-vim-模式)。
 
 ## 键盘、鼠标或触摸屏
 
@@ -62,7 +64,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 
 1. 从 [GitHub Releases](https://github.com/peixuanthomas/TundraUX3/releases) 下载 Linux x86_64 便携压缩包。
 2. 解压到属于当前普通 Linux 用户的目录。
-3. 将 `tundra-shell`、`tundra-cli`、`assets/` 和 `tundra-installation.json` 保留在同一目录中。
+3. 将 `tundra-shell`、`tundra-cli`、`assets/`、`vim/` 和 `tundra-installation.json` 保留在同一目录中。
 4. 在解压目录打开终端并运行：
 
 ```sh
@@ -79,16 +81,21 @@ Linux 版本使用启动程序的系统账户及其权限。日常使用普通�
 
 Linux 版本以便携包发布。在**设置 → 更新**中，**正式版（Release）**下载稳定的便携版本，**测试版（Beta）**使用本机 Rust 工具链编译 `master` 的最新提交。程序自更新要求便携目录属于当前用户且可写，并保留个人数据和主题。依赖与更新细节见 [Linux 运行说明](packaging/linux/README-LINUX.txt)。
 
+从使用更新协议 v2 的旧版首次升级时，需完整解压一次新便携包。旧版更新器会拒绝新协议 v3；新协议同时部署随包 Vim 运行目录。
+
 ### 从源码构建
 
 安装 **Rust 1.95 或更新的稳定版**工具链、Cargo 和所用平台需要的构建工具。在仓库根目录执行：
 
 ```sh
 cargo build --locked -p shell -p cli
+python3 scripts/build-vim.py --output target/debug/vim
 cargo run --locked -p shell --bin tundra-shell
 ```
 
-更新源码后也要依次执行这两条命令。单独运行 `cargo run -p shell` 不会重新构建 Command Line 使用的 `tundra-cli` 可执行文件。
+更新源码后也要重新构建 Shell 和 CLI；`packaging/vim.json` 变化时重新构建 Vim。单独运行 `cargo run -p shell` 不会重新构建 Command Line 使用的 `tundra-cli` 可执行文件。
+
+Vim 构建步骤显式下载并编译固定的上游版本，普通 Cargo 构建不会下载 Vim。该步骤需要 Python 3.12 或更新版本及本机 C 构建工具，Windows 可使用 `python`。构建依赖、发布路径和离线归档用法见[随包 Vim](packaging/vim.md)。`TUNDRA_VIM` 可指定其他兼容的完整 Vim 可执行文件；隔离测试可设置 `TUNDRA_VIM_CLEAN=1`，跳过个人 Vim 配置和插件。
 
 查看配套命令行工具：
 
@@ -105,6 +112,7 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 - Linux 管理功能各有运行条件，例如服务管理需要 systemd，软件包管理需要受支持的发行版工具。缺少组件时，界面会说明原因。
 - 网络操作位于“启动器 → 网络”。设置中不可用的声音、显示、Wi-Fi 和蓝牙页面已移除；用户管理移至“启动器 → 用户管理”。
 - 各种输入方式的操作覆盖和真实设备上的表现仍在完善，项目尚不承诺支持所有终端、触摸屏或 Linux 发行版。
+- Vim 使用终端界面。Linux 有真实 PTY 回归；Windows/macOS 的构建和运行时检查仍需在各自 CI runner 执行，不能以 Linux 结果代替。
 
 ## 文档
 
@@ -125,3 +133,5 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 ## 许可证
 
 Copyright (c) 2026 HanPeixuan。项目自身代码采用 [GNU GPL v3](../LICENSE)，仅第 3 版（`GPL-3.0-only`）。Weathr 组件保留 [GPL-3.0-or-later 许可证](../crates/weathr/LICENSE.weathr)。分发或再使用时，请检查对应组件及第三方资源的许可要求。
+
+随包 Vim 保留原始 Vim 许可证 `vim/LICENSE`，固定来源和版本记录在 `vim/UPSTREAM.json`。

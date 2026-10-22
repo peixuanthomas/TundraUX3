@@ -511,6 +511,10 @@ pub(in crate::session) fn editor_rich_spans_in(
 
 impl ShellSession {
     pub(in crate::session) fn request_editor_close(&mut self, _platform: &dyn Platform) {
+        if self.editor_vim_terminal.is_some() {
+            self.editor_vim_close_requested = true;
+            return;
+        }
         if let Some(owner) = self.pages.editor.selected_id() {
             self.request_page_close(owner);
         }

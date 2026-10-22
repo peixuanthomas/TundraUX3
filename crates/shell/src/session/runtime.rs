@@ -1,5 +1,7 @@
 use super::*;
-use crate::input::terminal_batch::read_ready_terminal_event_batch;
+use crate::input::terminal_batch::{
+    read_ready_child_terminal_event_batch, read_ready_terminal_event_batch,
+};
 use std::panic::AssertUnwindSafe;
 use watchdog::{
     AppCriticality, AppDescriptor, AppId, AppWatchdog, BoundaryKind, BoundarySpec, CaughtPanic,
@@ -961,6 +963,8 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         shell_watchdog.clone(),
     ));
     let mut command_line_hosts = CommandLineHosts::new(shell_watchdog.clone());
+    let mut editor_vim = super::vim_host::EditorVimHost::new(shell_watchdog.clone());
+    let mut vim_cursor_style = ui::CommandLineCursorStyle::Default;
     let mut reset_requested = false;
     if let Some(cached) = cached_time_sync.as_ref() {
         cached.apply_to_state_at(&mut state, Instant::now());
@@ -1071,6 +1075,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             if terminal_changed {
                 redraw.request_redraw();
             }
+            if editor_vim.poll(&mut state, platform.as_ref()) {
+                redraw.request_redraw();
+            }
 
             drain_time_sync_results(&mut state, time_sync_receiver, cached_time_sync);
             if let Some(message) = drain_watchdog_incidents(&mut state, process_watchdog) {
@@ -1157,6 +1164,23 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         );
                     }
                 })?;
+                let cursor_style = state
+                    .editor_vim_terminal
+                    .as_ref()
+                    .filter(|_| {
+                        state.active_screen() == ShellScreen::Editor
+                            && state.interactive_overlays().is_empty()
+                    })
+                    .map_or(ui::CommandLineCursorStyle::Default, |terminal| {
+                        terminal.cursor_style
+                    });
+                if cursor_style != vim_cursor_style {
+                    crossterm::execute!(
+                        guard.terminal_mut().backend_mut(),
+                        vim_terminal_cursor_style(cursor_style)
+                    )?;
+                    vim_cursor_style = cursor_style;
+                }
                 if !update_ready_marked {
                     app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
                     update_ready_marked = true;
@@ -1207,6 +1231,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let combined_timeout = state_poll_timeout.min(redraw_timeout);
             let (poll_timeout, command_line_timeout_is_state) = command_line_poll_timeout(
                 command_line_hosts.has_running_processes()
+                    || editor_vim.running()
                     || (state.auto_admin_visible() && state.auto_admin_running()),
                 combined_timeout,
             );
@@ -1216,7 +1241,15 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let mut terminal_event_received = false;
             if event::poll(poll_timeout)? {
                 terminal_event_received = true;
-                let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
+                let first = event::read()?;
+                let native_input = matches!(&first, event::Event::Key(_) | event::Event::Paste(_))
+                    && !state.input_keyboard_open()
+                    && editor_vim.captures_input(&state, &crossterm_event_to_input(first.clone()));
+                let terminal_events = if native_input {
+                    read_ready_child_terminal_event_batch(first)?
+                } else {
+                    read_ready_terminal_event_batch(first)?
+                };
                 for terminal_event in terminal_events {
                     let identity_before_input = RedrawIdentity::from_session(&state);
                     if let event::Event::Resize(width, height) = &terminal_event {
@@ -1248,7 +1281,15 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         continue;
                     };
                     let command_line_captures = command_line_captures_input(&state, &input);
-                    if command_line_captures {
+                    if editor_vim.captures_input(&state, &input) {
+                        if let Err(error) = editor_vim.handle_input(&state, &input) {
+                            state.report_editor_error(i18n::msg!(
+                                "shell-vim-runtime-error",
+                                reason = error.to_string()
+                            ));
+                        }
+                        action = Some(ShellAction::Redraw);
+                    } else if command_line_captures {
                         let terminal_area = state.command_line_input_area();
                         match command_line_hosts.handle_input(&state, &input, terminal_area) {
                             CommandLineHostEvent::None => {}
@@ -1331,6 +1372,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         Ok(None)
     }));
 
+    editor_vim.stop(&mut state);
     if !matches!(&execution, Ok(Ok(None))) {
         let _ = state.persist_all_editor_recovery_now(Instant::now());
     }
@@ -1343,9 +1385,14 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         shell_watchdog,
         preserve_prepared_update,
     );
+    let cursor_restore = crossterm::execute!(
+        guard.terminal_mut().backend_mut(),
+        crossterm::cursor::SetCursorStyle::DefaultUserShape
+    );
     let restore = guard.restore();
     drop(guard);
-    let panic_message = finish_session_execution(execution, cleanup.and(restore))?;
+    let panic_message =
+        finish_session_execution(execution, cleanup.and(cursor_restore).and(restore))?;
 
     if let Some(message) = panic_message {
         return Ok((
@@ -1658,6 +1705,22 @@ fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool
                 || state.hit_map().layer_at(mouse.coordinates()) != Some(ShellHitLayer::ShellChrome)
         }
         _ => false,
+    }
+}
+
+fn vim_terminal_cursor_style(
+    style: ui::CommandLineCursorStyle,
+) -> crossterm::cursor::SetCursorStyle {
+    use crossterm::cursor::SetCursorStyle as Native;
+    use ui::CommandLineCursorStyle as Shape;
+    match style {
+        Shape::Default => Native::DefaultUserShape,
+        Shape::BlinkingBlock => Native::BlinkingBlock,
+        Shape::SteadyBlock => Native::SteadyBlock,
+        Shape::BlinkingUnderline => Native::BlinkingUnderScore,
+        Shape::SteadyUnderline => Native::SteadyUnderScore,
+        Shape::BlinkingBar => Native::BlinkingBar,
+        Shape::SteadyBar => Native::SteadyBar,
     }
 }
 

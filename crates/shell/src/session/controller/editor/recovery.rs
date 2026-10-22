@@ -202,6 +202,11 @@ impl ShellSession {
                 .app
                 .editor_state()
                 .is_some_and(EditorState::is_read_only)
+            || self
+                .app
+                .editor_state()
+                .and_then(|s| s.document.path.as_deref())
+                .is_some_and(Self::is_system_config_path)
         {
             return None;
         }

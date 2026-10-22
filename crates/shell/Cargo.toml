@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 auto-admin = { path = "../auto-admin" }
 terminal-runtime = { path = "../terminal-runtime" }
+vim-runtime = { path = "../vim-runtime" }
 serde_json = "1"
 zeroize = "1"
 ascii-assets = { path = "../ascii-assets" }

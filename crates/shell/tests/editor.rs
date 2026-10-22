@@ -25,7 +25,7 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
-fn vim_toggle_persists_and_normal_keys_do_not_insert_or_close_the_document() {
+fn vim_toggle_persists_without_interpreting_keys_before_the_engine_starts() {
     let fixture = FixtureRoot::new("vim-mode");
     let platform = mock_platform(fixture.path());
     let mut state = new_user_home_state(&platform);
@@ -37,7 +37,7 @@ fn vim_toggle_persists_and_normal_keys_do_not_insert_or_close_the_document() {
         state.to_editor_view_model().vim_mode,
         Some(ui::EditorVimMode::Normal)
     );
-    type_text(&mut state, &platform, "ggi中");
+    type_text(&mut state, &platform, "ggi中0xddp");
     state.apply_input_with_platform(InputEvent::key(InputKey::Escape), &platform);
     assert_eq!(state.active_screen(), ShellScreen::Editor);
     assert!(state.to_notification_view_model().is_none());
@@ -47,47 +47,8 @@ fn vim_toggle_persists_and_normal_keys_do_not_insert_or_close_the_document() {
     );
     assert_eq!(
         state.to_editor_view_model().source_lines,
-        vec!["中hello", "world"]
-    );
-    type_text(&mut state, &platform, "0x");
-    assert_eq!(
-        state.to_editor_view_model().source_lines,
-        vec!["hello", "world"]
-    );
-    type_text(&mut state, &platform, "u");
-    assert_eq!(
-        state.to_editor_view_model().source_lines,
-        vec!["中hello", "world"]
-    );
-    type_text(&mut state, &platform, "dd");
-    assert_eq!(state.to_editor_view_model().source_lines, vec!["world"]);
-    type_text(&mut state, &platform, "u");
-    assert_eq!(
-        state.to_editor_view_model().source_lines,
-        vec!["中hello", "world"]
-    );
-    type_text(&mut state, &platform, "ggyyp");
-    assert_eq!(
-        state.to_editor_view_model().source_lines,
-        vec!["中hello", "中hello", "world"]
-    );
-    let frame = ui::ShellFrameLayout::new(
-        Rect::new(0, 0, 120, 40),
-        None,
-        &ui::RenderContext::default(),
-    );
-    let back = frame.back_button.unwrap();
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(PointerButton::Left, (back.x, back.y)),
-        &platform,
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_up(PointerButton::Left, (back.x, back.y)),
-        &platform,
-    );
-    assert!(
-        state.to_notification_view_model().is_some(),
-        "Back must still ask to close a dirty document"
+        vec!["hello", "world"],
+        "the real runtime owns Vim commands; a pending engine must not edit the source"
     );
 
     let mut reopened = logged_in_state(&platform);

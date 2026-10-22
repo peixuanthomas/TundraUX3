@@ -634,6 +634,7 @@ impl EditorToolbarState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorViewModel {
     pub vim_mode: Option<EditorVimMode>,
+    pub vim_terminal: Option<Arc<crate::CommandLineTerminalSnapshot>>,
     pub search_bar: Option<EditorSearchBar>,
     pub selected_menu: EditorMenu,
     pub selected_menu_action: usize,
@@ -721,6 +722,7 @@ impl EditorViewModel {
     pub fn new(file_name: impl Into<String>, blocks: Vec<EditorRenderBlock>) -> Self {
         Self {
             vim_mode: None,
+            vim_terminal: None,
             search_bar: None,
             selected_menu: EditorMenu::File,
             selected_menu_action: 0,

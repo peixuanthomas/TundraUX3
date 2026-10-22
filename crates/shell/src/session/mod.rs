@@ -55,6 +55,7 @@ const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
 const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
 mod command_line_runtime;
 mod compositor;
+mod vim_host;
 pub(crate) use compositor::ScreenCompositor;
 #[cfg(test)]
 use compositor::sync_shell_toast;

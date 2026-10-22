@@ -17,6 +17,13 @@ jobs:
         run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Locked build
         run: cargo build --workspace --locked
+      - name: Build bundled Vim for editor tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libncurses-dev
+          python3 scripts/build-vim.py --output target/debug/vim
+      - name: Test real Vim runtime
+        run: TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime -- --include-ignored
       - name: Test Explorer file safety
         run: |
           cargo test --locked -p app --lib explorer::tasks::

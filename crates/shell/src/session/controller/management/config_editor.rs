@@ -7,7 +7,7 @@ pub(in crate::session) struct ConfigEditorState {
     pub(super) received: Option<ConfigDocument>,
     pub(in crate::session) pending_action: Option<String>,
     draft: Option<ConfigDraft>,
-    path: Option<PathBuf>,
+    pub(in crate::session) path: Option<PathBuf>,
     properties: std::collections::BTreeMap<String, String>,
     service: Option<String>,
     scope: String,
@@ -930,6 +930,13 @@ impl ShellSession {
                 return;
             }
             self.pages.editor.editor_message = Some(i18n::tr!(problem.summary_key.clone()).into());
+            if self.pages.editor.editor_vim_write_pending {
+                self.pages.editor.editor_vim_save_result = Some(Err(format!(
+                    "{}\n{}",
+                    i18n::tr!(problem.summary_key.clone()),
+                    problem.detail,
+                )));
+            }
             if problem.exit_code == 5 {
                 self.config_form("conflict", i18n::tr!("config-editor-conflict-help"), vec![]);
             } else {
@@ -977,6 +984,10 @@ impl ShellSession {
             return;
         }
         let Some(document) = self.pages.editor.editor_config.received.take() else {
+            if self.pages.editor.editor_vim_write_pending {
+                self.pages.editor.editor_vim_save_result =
+                    Some(Err(self.pages.management.management_state.status.clone()));
+            }
             self.pages.editor.editor_message =
                 Some(self.pages.management.management_state.status.clone().into());
             if self.pages.editor.editor_config.document.is_none() {
@@ -1122,6 +1133,9 @@ impl ShellSession {
                 self.config_form("check", format!("{message}\n\n{preview}"), fields);
             }
             "apply" | "permissions" | "restore" => {
+                if self.pages.editor.editor_vim_write_pending {
+                    self.pages.editor.editor_vim_save_result = Some(Ok(document.path.clone()));
+                }
                 let old = self.pages.editor.editor_config.document.as_ref();
                 let content_changed = old.is_none_or(|old| {
                     old.content != document.content || old.existed != document.existed
@@ -1161,6 +1175,10 @@ impl ShellSession {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/session/controller/management/config_editor_save_tests.rs"]
+mod save_tests;
 
 #[cfg(test)]
 mod tests {

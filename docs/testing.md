@@ -42,8 +42,8 @@ CI 配置以 [cross-platform.yml](../.github/workflows/cross-platform.yml)、[li
 | 常规工作流 | 当前检查 |
 | --- | --- |
 | 最低 Rust 版本（Linux / Windows / macOS） | 从根 `Cargo.toml` 读取最低版本，检查 workspace 全部 targets 和 features |
-| Windows / macOS | workspace 构建；文件安全、语言资源、日志和系统指标定向测试 |
-| Ubuntu | workspace 构建；身份、平台、语言资源、日志、系统指标与本地软件包构建测试 |
+| Windows / macOS | workspace 与固定 Vim 构建；真实 Vim runtime、文件安全、语言资源、日志和系统指标定向测试 |
+| Ubuntu | workspace 与固定 Vim 构建；真实 Vim runtime、身份、平台、语言资源、日志、系统指标与本地软件包构建测试 |
 | Fedora | 普通用户 workspace 构建；身份、平台、日志与系统指标定向测试 |
 | Arch | 普通用户软件包参数/查询测试、显式只读 pacman smoke 和本地软件包构建测试 |
 
@@ -67,7 +67,7 @@ PTY smoke 使用隔离的 XDG 目录和 140 × 40 的真实 PTY 进入 Shell。L
 
 页面标题和首次外观设置中的颜色弹窗按实际终端画面判断。键盘操作立即切换时，标题可能分成多次增量绘制，不能要求输出包含一段连续的完整标题。
 
-文件工作流也通过真实 F8、gg、i、Esc 和 u 字节验证 Vim 开关、输入与撤销，再关闭 Vim 完成保存；测试始终使用隔离配置和临时文档。
+Vim 的真实进程、原生画面及 F8 同步流程由下文独立的 Vim 回归覆盖，测试使用隔离配置和临时文档。
 
 同一临时文件从属性进入权限表单，验证真实空格字节和 Enter 切换权限格、Tab 到递归复选框后用空格切换，取消放弃时保留草稿。最后放弃退出，核对文件权限、归属和元数据变更时间均未改变；不提交权限变更或递归操作。
 
@@ -105,6 +105,25 @@ scripts/tests/                     打包、授权 PTY 和系统服务测试夹�
 单元测试由原业务模块通过 `#[cfg(test)]` 与 `#[path = ".../tests/unit/..."] mod tests;` 引入，仍位于原来的 Rust 模块作用域，可访问私有实现，无需为了测试扩大生产 API。`tests/unit/` 不设置独立的 `main.rs` 测试入口，避免 Cargo 重复发现和执行；`cargo test --workspace --locked` 同时运行这些单元测试及集成测试。二进制测试保留原来的平台条件，共享构建脚本仍放在原位置。不要在 `src/` 内重新添加测试函数或整段测试夹具。
 
 测试优先保留核心工作流、数据安全、授权边界、错误恢复及明确的用户可见回归。新增测试前先检查已有下层测试和上层工作流；相同操作的不同输入优先用表格循环检查。界面集成测试共用的输出读取函数放在 `crates/ui/tests/support`。
+
+## 真实 Vim 回归
+
+普通 `cargo test --workspace` 会跳过需要完整 Vim 的 ignored 用例。先构建同目录引擎，再显式运行它们；需要真实 PTY 和本机回环连接，受限沙箱也须允许该回环连接：
+
+```console
+cargo build --locked -p shell -p cli
+python3 scripts/build-vim.py --output target/debug/vim
+TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime --test real_vim -- --ignored --nocapture
+python3 scripts/tests/editor-vim-smoke.py target/debug/tundra-shell target/debug/vim/vim
+```
+
+Windows 可用 `python scripts/build-vim.py --output target/debug/vim`，并用 `$env:TUNDRA_TEST_VIM = (Resolve-Path target/debug/vim/vim.exe).Path` 设置绝对路径后运行同一个 Rust 集成测试。`editor-vim-smoke.py` 使用 Unix PTY，不能直接作为 Windows ConPTY 验收。构建依赖见[随包 Vim](packaging/vim.md)。
+
+Runtime 集成测试隔离个人配置，检查导入不产生用户撤销记录、跨缓冲撤销、编码/换行、宿主确认前不写文件、保存失败、`:wq` 等待、强制放弃和只读保护。Shell smoke 使用独立 XDG 目录和临时文件，并设置 `TUNDRA_VIM_CLEAN=1`；它通过真实按键检查行末移动、次数和重复、text object、Visual 模式、插入会话撤销/重做、原生命令与错误显示、寄存器/宏、多缓冲、缩放、F8 未保存同步及 `:q`/`:q!`/`:wq`，退出后检查终端恢复。
+
+`TUNDRA_VIM` 可覆盖 Shell 使用的完整 Vim 可执行路径；未设置时使用 Shell 同目录的随包引擎。`TUNDRA_VIM_CLEAN` 仅在需要隔离用户 Vim 配置/插件的测试中设置，正常运行不设置。`TUNDRA_TEST_VIM` 是 Rust 回归的可执行路径，不是 Shell 的配置项。
+
+Linux 使用真实 PTY 验证；Windows/macOS 的构建和 runtime 回归已加入对应 CI，仍需在各自 runner 实跑。仅编译通过、系统 tiny Vim 或 Linux 检查不能代替这些运行时结果。
 
 ## 页面实例与任务关闭
 

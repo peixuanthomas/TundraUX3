@@ -1,0 +1,9 @@
+{
+  "name": "Vim",
+  "version": "9.2.1225",
+  "commit": "e9ced3cf4a029dd3816d81fcbd36422c372030d1",
+  "source_url": "https://codeload.github.com/vim/vim/tar.gz/e9ced3cf4a029dd3816d81fcbd36422c372030d1",
+  "source_sha256": "b9ee1dc93f79c9c2444a8d57b1615adf478b2d548290c9ba85df6ec496cded57",
+  "license": "Vim License",
+  "required_features": ["eval", "channel", "autocmd", "timers", "multi_byte"]
+}
