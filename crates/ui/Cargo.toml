@@ -9,6 +9,7 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+shell-control = { path = "../shell-control" }
 animate.workspace = true
 i18n = { path = "../i18n" }
 geojson = "1.0"

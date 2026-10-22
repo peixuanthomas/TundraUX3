@@ -666,6 +666,7 @@ dependencies = [
  "rustyline",
  "serde_json",
  "shell",
+ "shell-control",
  "shlex",
  "storage",
  "terminal-runtime",
@@ -1151,6 +1152,12 @@ dependencies = [
  "quote",
  "syn 2.0.118",
 ]
+
+[[package]]
+name = "doctest-file"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2db04e74f0a9a93103b50e90b96024c9b2bdca8bce6a632ec71b88736d3d359"
 
 [[package]]
 name = "document-features"
@@ -2238,6 +2245,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "interprocess"
+version = "2.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7529951166d4dd4d2a6b9f0bb97919b810623f75eeb76e81ee9e6644886cae37"
+dependencies = [
+ "doctest-file",
+ "libc",
+ "recvmsg",
+ "widestring",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "intl-memoizer"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3222,6 +3242,7 @@ dependencies = [
  "futures-lite",
  "i18n",
  "image",
+ "interprocess",
  "libc",
  "portable-pty",
  "ratatui-image",
@@ -3232,12 +3253,14 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "shell-control",
  "shlex",
  "signal-hook",
  "starship-battery",
  "sysinfo",
  "tempfile",
  "watchdog",
+ "widestring",
  "windows-sys 0.61.2",
  "xxhash-rust",
  "zbus",
@@ -3707,6 +3730,12 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width 0.2.0",
 ]
+
+[[package]]
+name = "recvmsg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "redox_syscall"
@@ -4324,6 +4353,7 @@ dependencies = [
  "ratatui",
  "runtime-log",
  "serde_json",
+ "shell-control",
  "storage",
  "system-services",
  "tachyonfx",
@@ -4335,6 +4365,14 @@ dependencies = [
  "watchdog",
  "weathr",
  "zeroize",
+]
+
+[[package]]
+name = "shell-control"
+version = "1.4.1"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5272,6 +5310,7 @@ dependencies = [
  "image",
  "ratatui",
  "ratatui-image",
+ "shell-control",
  "tachyonfx",
  "unicode-width 0.2.0",
  "zip",
