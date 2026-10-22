@@ -1359,11 +1359,21 @@ fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
     state.move_system_status_dashboard_focus(-1);
     assert_eq!(
         state.pages.system_status.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Cancel
+    );
+    state.move_system_status_dashboard_focus(-1);
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_focus,
         ui::SystemStatusDashboardFocus::Remove,
         "focusing a widget enables Size and Remove; clean Save remains skipped"
     );
     state.pages.system_status.system_status_selected_widget = None;
     state.pages.system_status.system_status_dashboard_focus = first_edit_focus;
+    state.move_system_status_dashboard_focus(-1);
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Cancel
+    );
     state.move_system_status_dashboard_focus(-1);
     assert_eq!(
         state.pages.system_status.system_status_dashboard_focus,
