@@ -302,6 +302,7 @@ pub fn page_help_notification(
         )],
     );
     model.stacked_actions = true;
+    model.actions[0].selected = true;
     model.scroll_offset = scroll_offset;
     model.align_left = true;
     model.show_tone_prefix = false;

@@ -127,6 +127,13 @@ impl ShellSession {
             overlays.push(page);
         }
         let dialog = ShellOverlayDescriptor::dialog;
+        if self.help_open {
+            overlays.push(dialog(
+                "page-help".into(),
+                ShellOverlayCategory::ShellModal,
+                ShellComponent::HelpDialog,
+            ));
+        }
         if let Some(notification) = self.to_notification_view_model() {
             if let Some(component) = self.notification_active_modal_component() {
                 let mut descriptor = dialog(

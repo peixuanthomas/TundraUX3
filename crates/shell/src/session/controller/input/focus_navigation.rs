@@ -79,7 +79,11 @@ impl ShellSession {
         if content_screen == ShellScreen::Login {
             self.sync_login_selection();
         }
-        let notification_model = self.notification_active_modal_view_model();
+        let notification_model = self.notification_active_modal_view_model().or_else(|| {
+            self.help_open.then(|| {
+                ui::page_help_notification(&self.to_page_help_view_model(), self.help_scroll)
+            })
+        });
         let home_model = (content_screen == ShellScreen::Home).then(|| self.to_home_view_model());
         let clock_model =
             (content_screen == ShellScreen::Clock).then(|| self.to_clock_view_model());
@@ -121,7 +125,8 @@ impl ShellSession {
             self.pages.setup.setup_custom_color_target.is_some(),
             self.hit_map_generation,
             self.time_sync_dialog_visible,
-            self.notification_active_modal_component(),
+            self.notification_active_modal_component()
+                .or(self.help_open.then_some(ShellComponent::HelpDialog)),
             notification_model.as_ref(),
             home_model.as_ref(),
             clock_model.as_ref(),

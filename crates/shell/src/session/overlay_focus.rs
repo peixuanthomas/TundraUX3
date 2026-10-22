@@ -126,6 +126,7 @@ impl ShellSession {
         self.interaction.button_capture = None;
         self.notification_pointer_capture = None;
         self.notification_scrollbar_drag = None;
+        self.help_scrollbar_drag = None;
         self.pages.diagnostics.diagnostics_detail_drag = None;
         self.scrollbar_drag = None;
         self.pages.launcher.launcher_drag = None;

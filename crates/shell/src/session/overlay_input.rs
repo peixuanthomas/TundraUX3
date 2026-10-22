@@ -25,6 +25,7 @@ impl ShellSession {
             return Some(self.route_exit_confirm_key(key));
         }
         Some(match overlay.component()? {
+            ShellComponent::HelpDialog => self.route_help_key(key),
             ShellComponent::ContextMenu => self.route_popup_key(key),
             ShellComponent::Explorer => self.route_explorer_key(key),
             ShellComponent::Launcher => self.route_launcher_key(key),
@@ -64,6 +65,7 @@ impl ShellSession {
             return Some(self.route_time_sync_dialog_mouse(mouse, hit));
         }
         Some(match overlay.component()? {
+            ShellComponent::HelpDialog => self.route_help_mouse(mouse),
             ShellComponent::ContextMenu => self.route_popup_mouse(mouse, hit, at),
             ShellComponent::Explorer => self.route_explorer_mouse(mouse, hit, at),
             ShellComponent::Launcher => self.route_launcher_mouse(mouse, at),

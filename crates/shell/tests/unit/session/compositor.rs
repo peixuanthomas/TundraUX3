@@ -28,6 +28,7 @@ fn home_frame(state: &ShellSession, millis: u64, reduced: bool) -> PreparedFrame
             Default::default(),
         ),
         notification: None,
+        help: None,
         time_sync: None,
         progress_running: false,
     }

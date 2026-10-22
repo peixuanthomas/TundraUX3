@@ -62,6 +62,20 @@ impl ShellSession {
                 })
                 .cloned();
         }
+        if self.help_open {
+            let ui::NotificationLayout::Dialog(layout) = self.page_help_layout() else {
+                return None;
+            };
+            return layout
+                .actions
+                .iter()
+                .find(|action| rect_contains(action.area, point))
+                .map(|action| ui::components::ButtonRegion {
+                    id: "notification.page-help.action.close".into(),
+                    area: action.area,
+                    disabled: false,
+                });
+        }
         if self.resolved_overlay_owner() == Some(ShellComponent::Explorer)
             && matches!(
                 self.resolved_explorer_overlay(),
@@ -192,6 +206,13 @@ impl ShellSession {
             self.interaction.button_capture = None;
             return None;
         }
+        if self.help_open
+            && !self.notification_has_active_modal()
+            && self.handle_help_scrollbar(mouse)
+        {
+            self.interaction.button_capture = None;
+            return None;
+        }
         if self.interactive_overlays().is_empty()
             && (self.handle_home_pointer_scrollbar(&mouse)
                 || self.handle_launcher_pointer_scrollbar(&mouse)
@@ -211,6 +232,7 @@ impl ShellSession {
                     // Notifications already validate releases; launcher cards
                     // need the original stream to support drag and drop.
                     let native_release = region.id.as_str().starts_with("notification.")
+                        && region.id.as_str() != "notification.page-help.action.close"
                         || region.id.as_str().starts_with("launcher.item.");
                     self.interaction.button_capture = Some(ButtonPointerCapture {
                         region,

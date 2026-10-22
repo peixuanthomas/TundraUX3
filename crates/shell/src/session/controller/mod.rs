@@ -7,6 +7,7 @@ mod command_line;
 mod diagnostics;
 mod editor;
 mod explorer;
+mod help;
 mod launcher;
 mod notifications;
 mod settings;

@@ -552,6 +552,9 @@ pub struct UiSessionState {
     pub(super) clock_profile_pending_sync: Option<ClockProfile>,
     pub(super) time_sync_attempted: bool,
     pub(super) time_sync_dialog_visible: bool,
+    pub(super) help_open: bool,
+    pub(super) help_scroll: usize,
+    pub(super) help_scrollbar_drag: Option<u16>,
     pub(super) time_sync_failure_message: Option<i18n::LocalizedText>,
     /// Retains the build-policy-selected debug home across authentication.
     /// This is internal session state and is not configurable by process args.

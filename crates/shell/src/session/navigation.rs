@@ -520,6 +520,9 @@ impl ShellSession {
         if self.notification_has_active_modal() {
             return self.route_notification_key(key);
         }
+        if self.help_open {
+            return self.route_help_key(key);
+        }
         if key.phase != InputPhase::Press {
             return (RoutedTarget::Global, ShellCommand::Noop);
         }

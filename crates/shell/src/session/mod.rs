@@ -72,6 +72,9 @@ mod overlay_input;
 mod overlays;
 use overlay_focus::ShellOverlayManager;
 #[cfg(test)]
+#[path = "../../tests/unit/session/help.rs"]
+mod help_tests;
+#[cfg(test)]
 #[path = "../../tests/unit/session/personalization.rs"]
 mod personalization_tests;
 mod presentation;

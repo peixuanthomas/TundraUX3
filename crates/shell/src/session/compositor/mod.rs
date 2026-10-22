@@ -93,6 +93,7 @@ pub(super) struct PreparedFrame {
     chrome: ui::ShellChromeViewModel,
     context: ui::RenderContext,
     notification: Option<ui::NotificationViewModel>,
+    help: Option<ui::PageHelpViewModel>,
     time_sync: Option<ui::TimeSyncDialogViewModel>,
     progress_running: bool,
 }
@@ -157,6 +158,7 @@ impl ScreenCompositor {
             chrome,
             context,
             notification,
+            help: state.help_open.then(|| state.to_page_help_view_model()),
             time_sync,
             progress_running,
         }
@@ -284,6 +286,14 @@ impl ScreenCompositor {
                 frame,
                 layout.modal_area(),
                 notification,
+                context,
+            );
+        } else if let Some(help) = &prepared.help {
+            ui::render_page_help_overlay(
+                frame,
+                layout.modal_area(),
+                help,
+                state.help_scroll,
                 context,
             );
         } else if let Some(dialog) = &prepared.time_sync {
