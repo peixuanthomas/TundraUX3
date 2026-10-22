@@ -18,6 +18,7 @@ mod foundation;
 mod list;
 mod metric_card;
 mod nav_rail;
+mod page_action_bar;
 mod picker;
 mod progress_gauge;
 mod rainbow_text;
@@ -44,6 +45,10 @@ pub use foundation::{
 pub use list::{List, ListItem};
 pub use metric_card::MetricCard;
 pub use nav_rail::{NavRail, NavRailItem};
+pub use page_action_bar::{
+    PageAction, PageActionBar, PageActionBarLayout, PageActionHit, PageActionLayout,
+    PageActionStatus,
+};
 pub use picker::Picker;
 pub use progress_gauge::ProgressGauge;
 pub use rainbow_text::RainbowText;
