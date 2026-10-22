@@ -554,3 +554,22 @@ fn log_buttons_use_the_same_record_identity_for_rendering_and_pressed_color() {
         theme.button_pressed_color()
     );
 }
+
+#[test]
+fn page_action_bar_is_full_width_and_has_no_shortcut_sentence() {
+    let model = model();
+    for width in [50, 72, 110] {
+        let layout = logs_layout(Rect::new(0, 0, width, 24), &model);
+        assert_eq!(layout.action_bar.area.width, width - 2);
+        assert_eq!(layout.action_bar.actions.len(), 4);
+        assert!(
+            layout
+                .action_bar
+                .actions
+                .iter()
+                .all(|action| action.area.y >= layout.content.list_panel.bottom())
+        );
+    }
+    let terminal = render(120, 40, &model, &TundraTheme::default_dark());
+    assert!(!support::terminal_output(&terminal).contains("Tab: section"));
+}

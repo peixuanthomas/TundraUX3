@@ -1,7 +1,9 @@
 use ratatui::layout::Rect;
 
 use super::{LogsCategory, LogsSection, LogsViewModel};
-use crate::components::{TabItem, Tabs};
+use crate::components::{
+    ComponentTone, PageAction, PageActionBar, PageActionStatus, TabItem, Tabs,
+};
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains};
 use crate::{DiagnosticsContentLayout, DiagnosticsHitTarget, diagnostics_content_layout};
 
@@ -54,6 +56,7 @@ pub struct LogsLayout {
     pub section_tabs_area: Rect,
     pub section_tabs: Vec<LogsSectionTabLayout>,
     pub controls: Vec<LogsControlLayout>,
+    pub action_bar: crate::components::PageActionBarLayout,
     pub filter_summary: Rect,
     pub content: DiagnosticsContentLayout,
     pub footer: Rect,
@@ -125,7 +128,14 @@ pub fn logs_more_controls() -> Vec<(LogsHitTarget, String)> {
 /// Geometry is derived from the same Tabs and diagnostics composition used to render.
 pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     let inner = inset_rect(main, 1);
-    let footer = line_in_rect(inner, inner.bottom().saturating_sub(1));
+    let bar = logs_action_bar(model);
+    let bar_height = bar.height(inner.width).min(inner.height);
+    let footer = Rect::new(
+        inner.x,
+        inner.bottom().saturating_sub(bar_height),
+        inner.width,
+        bar_height,
+    );
     let refresh_label = i18n::tr!("ui-logs-refresh");
     let refresh_width =
         (crate::components::terminal_width(&refresh_label) as u16 + 2).min(inner.width);
@@ -144,22 +154,9 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     );
     let mut content =
         diagnostics_content_layout(content_area, &super::render::logs_content_model(model));
-    let action_labels = controls(model)
-        .into_iter()
-        .filter(|(target, _)| *target != LogsHitTarget::Refresh)
-        .collect::<Vec<_>>();
-    let widths = action_labels
-        .iter()
-        .map(|(_, label)| (crate::components::terminal_width(label) as u16).saturating_add(2))
-        .collect::<Vec<_>>();
     let right = content.detail_panel;
-    let rows = crate::right_aligned_actions(Rect::new(0, 0, right.width, u16::MAX), &widths)
-        .iter()
-        .map(|r| r.bottom())
-        .max()
-        .unwrap_or(0);
     let tabs_height = 1 + u16::from(model.category == LogsCategory::Ux);
-    let action_height = rows.saturating_add(tabs_height).min(right.height);
+    let action_height = tabs_height.min(right.height);
     let actions = Rect::new(
         right.x,
         right.bottom().saturating_sub(action_height),
@@ -193,22 +190,20 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     } else {
         Vec::new()
     };
-    let buttons_area = Rect::new(
-        actions.x,
-        section_tabs_area.bottom(),
-        actions.width,
-        actions.bottom().saturating_sub(section_tabs_area.bottom()),
-    );
     let mut controls = vec![LogsControlLayout {
         target: LogsHitTarget::Refresh,
         area: refresh,
     }];
-    controls.extend(
-        action_labels
+    let action_bar = bar.layout(footer);
+    controls.extend(action_bar.actions.iter().filter_map(|action| {
+        crate::screens::logs::layout::controls(model)
             .into_iter()
-            .zip(crate::right_aligned_actions(buttons_area, &widths))
-            .map(|((target, _), area)| LogsControlLayout { target, area }),
-    );
+            .find(|(target, _)| logs_action_id(model, *target) == action.id.as_str())
+            .map(|(target, _)| LogsControlLayout {
+                target,
+                area: action.area,
+            })
+    }));
     let detail_inner = crate::components::Surface::new()
         .bordered(true)
         .inner(content.detail_panel);
@@ -316,6 +311,7 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         section_tabs_area,
         section_tabs,
         controls,
+        action_bar,
         filter_summary,
         footer,
         visible_start: content.visible_start,
@@ -413,4 +409,47 @@ pub fn logs_hit_test(
             DiagnosticsHitTarget::Scrollbar => Some(LogsHitTarget::Scrollbar),
             _ => None,
         })
+}
+
+fn logs_action_id(model: &LogsViewModel, target: LogsHitTarget) -> String {
+    super::render::logs_control_id(model, target)
+        .trim_start_matches("logs.")
+        .to_owned()
+}
+
+pub(super) fn logs_action_bar(model: &LogsViewModel) -> PageActionBar {
+    let primary = if super::render::logs_control_enabled(model, LogsHitTarget::Open) {
+        LogsHitTarget::Open
+    } else {
+        LogsHitTarget::Follow
+    };
+    let mut labels = controls(model)
+        .into_iter()
+        .filter(|(target, _)| *target != LogsHitTarget::Refresh)
+        .collect::<Vec<_>>();
+    labels.sort_by_key(|(target, _)| *target != primary);
+    let actions = labels
+        .into_iter()
+        .map(|(target, label)| {
+            let action = PageAction::new(logs_action_id(model, target), label)
+                .disabled(!super::render::logs_control_enabled(model, target))
+                .latched(target == LogsHitTarget::Follow && model.following);
+            if target == primary {
+                action.primary()
+            } else {
+                action
+            }
+        })
+        .collect();
+    let status = model
+        .feedback
+        .iter()
+        .map(|text| PageActionStatus {
+            text: text.clone(),
+            tone: ComponentTone::Muted,
+        })
+        .collect();
+    PageActionBar::new("logs")
+        .with_actions(actions)
+        .with_status(status)
 }

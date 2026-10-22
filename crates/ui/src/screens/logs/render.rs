@@ -1,4 +1,4 @@
-use super::layout::controls;
+use super::layout::{controls, logs_action_bar};
 use super::{LogsCategory, LogsHitTarget, LogsSection, LogsViewModel, logs_layout};
 use crate::components::{Button, Surface};
 use crate::screens::diagnostics::render_diagnostics_content_titled;
@@ -298,11 +298,21 @@ pub fn render_logs_content(
     }
     let unavailable = unavailable_reason(model);
     let content = logs_content_model(model);
-    for (control, (target, label)) in layout.controls.iter().zip(controls(model)) {
-        let mut button = Button::new(logs_control_id(model, target), label);
-        button.set_disabled(!logs_control_enabled(model, target));
+    for control in layout
+        .controls
+        .iter()
+        .filter(|control| control.target == LogsHitTarget::Refresh)
+    {
+        let label = controls(model)
+            .into_iter()
+            .find(|(target, _)| *target == control.target)
+            .unwrap()
+            .1;
+        let mut button = Button::new(logs_control_id(model, control.target), label);
+        button.set_disabled(!logs_control_enabled(model, control.target));
         button.render_borderless_frame(frame, control.area, &theme);
     }
+    logs_action_bar(model).render(frame, layout.action_bar.area, &background_context);
     frame.render_widget(
         Paragraph::new(if model.loading {
             i18n::tr!("ui-logs-loading-logs")
@@ -379,13 +389,6 @@ pub fn render_logs_content(
             bar.render(frame, context);
         }
     }
-    frame.render_widget(
-        Paragraph::new(model.feedback.as_deref().unwrap_or(&i18n::tr!(
-            "ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link"
-        )))
-        .style(theme.muted_style()),
-        layout.footer,
-    );
     if let Some(selected) = model.more_selected {
         let theme = context.compatibility_theme();
         frame.render_widget(Clear, layout.menu);

@@ -50,7 +50,6 @@ ui-logs-log-files = Log files
 ui-logs-loading-events = Loading events...
 ui-logs-no-events-match-the-current-query = No events match the current query
 ui-logs-select-an-event-to-inspect-its-operation-and-correlation-identifiers = Select an event to inspect its operation and correlation identifiers.
-ui-logs-esc-back-category-tab-section-enter-o-open-read-only-r-refresh-i-e-link = ←/→ Category · Tab Section · Enter/O Open · R/F5 Refresh · Esc Back
 
 ui-logs-event-detail = Time: { $time }
     Level: { $level }
