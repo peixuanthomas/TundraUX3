@@ -145,3 +145,40 @@ fn short_area_skips_action_rows_that_do_not_fit() {
         assert_eq!(hit.id, action.id);
     }
 }
+
+#[test]
+fn long_literal_labels_wrap_without_changing_the_existing_button_id() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let label = "[U] 更新所选软件包并升级整个系统";
+    let bar = PageActionBar::new("").with_actions(vec![
+        PageAction::new("package-upgrade", label)
+            .with_bracketed_label(false)
+            .primary(),
+    ]);
+    let theme = crate::TundraTheme::default_dark();
+    let mut context =
+        crate::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let buttons = crate::components::ButtonFrame::new(None, None, &theme);
+    context.buttons = Some(buttons.clone());
+    let bounds = Rect::new(0, 0, 20, 4);
+    let mut terminal = Terminal::new(TestBackend::new(20, 4)).unwrap();
+    let mut layout = bar.layout(bounds);
+    terminal
+        .draw(|frame| {
+            layout = bar.render(frame, bounds, &context);
+        })
+        .unwrap();
+    assert!(layout.actions[0].area.height > 1);
+    assert_eq!(buttons.regions()[0].id.as_str(), "package-upgrade");
+    let text = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert_eq!(
+        text.split_whitespace().collect::<String>(),
+        label.split_whitespace().collect::<String>()
+    );
+}

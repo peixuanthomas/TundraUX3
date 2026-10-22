@@ -20,6 +20,7 @@ pub struct PageAction {
     pub enabled: bool,
     pub emphasis: ButtonEmphasis,
     pub latched: bool,
+    pub bracketed_label: bool,
 }
 
 impl PageAction {
@@ -30,7 +31,13 @@ impl PageAction {
             enabled: true,
             emphasis: ButtonEmphasis::Normal,
             latched: false,
+            bracketed_label: true,
         }
+    }
+
+    pub fn with_bracketed_label(mut self, bracketed: bool) -> Self {
+        self.bracketed_label = bracketed;
+        self
     }
 
     pub fn primary(mut self) -> Self {
@@ -89,7 +96,12 @@ impl PageActionBar {
     }
 
     pub fn height(&self, width: u16) -> u16 {
-        let action_rows = self.action_rows(width).len() as u16;
+        let action_rows = self
+            .action_rows(width)
+            .iter()
+            .map(|row| self.row_height(row, width))
+            .sum::<u16>()
+            .min(4);
         let status_capacity = 4u16.saturating_sub(action_rows);
         let status = (self.status.len() as u16).min(3).min(status_capacity);
         status.saturating_add(action_rows)
@@ -104,24 +116,33 @@ impl PageActionBar {
             wanted,
         );
         let rows = self.action_rows(area.width);
-        let visible_rows = rows.len().min(usize::from(bar.height));
-        let status_capacity = 4usize.saturating_sub(rows.len());
+        let action_height = rows
+            .iter()
+            .map(|row| self.row_height(row, area.width))
+            .sum::<u16>()
+            .min(bar.height);
+        let status_capacity = 4usize.saturating_sub(usize::from(action_height));
         // Callers order status lines by priority, so keep the leading ones.
         let status_count =
             self.status
                 .len()
                 .min(3)
                 .min(status_capacity)
-                .min(usize::from(bar.height).saturating_sub(visible_rows)) as u16;
+                .min(usize::from(bar.height.saturating_sub(action_height))) as u16;
         let status = (0..status_count)
             .map(|index| Rect::new(bar.x, bar.y.saturating_add(index), bar.width, 1))
             .collect::<Vec<_>>();
         let mut actions = Vec::new();
-        for (row_index, row) in rows.iter().take(visible_rows).enumerate() {
-            let y = bar
-                .bottom()
-                .saturating_sub(1)
-                .saturating_sub(row_index as u16);
+        let mut bottom = bar.bottom();
+        for row in &rows {
+            let height = self
+                .row_height(row, area.width)
+                .min(bottom.saturating_sub(bar.y));
+            if height == 0 {
+                break;
+            }
+            let y = bottom - height;
+            bottom = y;
             let mut right = bar.right();
             for &index in row {
                 let width = self.action_width(index).min(bar.width);
@@ -130,7 +151,7 @@ impl PageActionBar {
                 actions.push(PageActionLayout {
                     index,
                     id: action.id.clone(),
-                    area: Rect::new(x, y, width, 1),
+                    area: Rect::new(x, y, width, height),
                     enabled: action.enabled,
                     emphasis: action.emphasis,
                 });
@@ -163,9 +184,15 @@ impl PageActionBar {
         for action_layout in &layout.actions {
             let action = &self.actions[action_layout.index];
             let mut button = Button::new(
-                format!("{}.{}", self.page_id, action.id),
-                action.label.clone(),
+                if self.page_id.as_str().is_empty() {
+                    action.id.clone()
+                } else {
+                    format!("{}.{}", self.page_id, action.id).into()
+                },
+                self.action_label(action_layout.index, action_layout.area.width)
+                    .join("\n"),
             )
+            .with_bracketed_label(false)
             .with_emphasis(action.emphasis)
             .with_latched(action.latched)
             .with_focus_fill(Some(context.theme.accent_soft));
@@ -212,20 +239,39 @@ impl PageActionBar {
             rows.push(row);
         }
         debug_assert!(
-            rows.len() <= 3,
+            rows.len() <= 3 || width < 48,
             "PageActionBar accepts at most 5 actions fitting 3 rows at the minimum width"
         );
         rows.truncate(3);
         rows
     }
 
+    fn action_label(&self, index: usize, width: u16) -> Vec<String> {
+        let action = &self.actions[index];
+        let label = action.label.trim();
+        let text = if action.bracketed_label && !(label.starts_with('[') && label.ends_with(']')) {
+            format!("[{label}]")
+        } else {
+            action.label.clone()
+        };
+        crate::management_wrapped_lines(&text, width)
+    }
+
+    fn row_height(&self, row: &[usize], width: u16) -> u16 {
+        row.iter()
+            .map(|index| self.action_label(*index, width).len() as u16)
+            .max()
+            .unwrap_or(0)
+    }
+
     fn action_width(&self, index: usize) -> u16 {
-        let button = Button::new("measure", self.actions[index].label.as_str());
+        let button = Button::new("measure", self.actions[index].label.as_str())
+            .with_bracketed_label(self.actions[index].bracketed_label);
         u16::try_from(button.rendered_label_width()).unwrap_or(u16::MAX)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PageActionBarLayout {
     pub area: Rect,
     pub status: Vec<Rect>,
