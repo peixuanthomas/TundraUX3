@@ -7,14 +7,19 @@ KDE, under Wayland or X11.  Run the two binaries from a real terminal:
   ./tundra-shell
   ./tundra-cli debug doctor
 
-The portable archive keeps `assets` next to the binaries.  Do not move the
-binaries without moving that directory too.  It includes the root GNU GPL v3
-and the Weathr component license. Future releases provide only portable archives.
+The portable archive keeps `assets` and `vim` next to the binaries. Do not move
+the binaries without moving those directories too. Vim mode uses the bundled
+full Vim executable and runtime, with its upstream license in vim/LICENSE and
+fixed source/version details in vim/UPSTREAM.json; it does not use vim-tiny.
+The archive also includes the root GNU GPL v3 and the Weathr component license.
+Future releases provide only portable archives.
 
 Required: xdg-open (xdg-utils) and gio (libglib2.0-bin on Debian/Ubuntu,
 glib2 on Fedora/Arch).  Recommended for full
 desktop integration: a session D-Bus bus, xdg-desktop-portal, polkit, and
 XWayland when the Wayland compositor does not expose a data-control clipboard.
+Vim mode additionally needs libtinfo.so.6 from the ncurses runtime (libtinfo6 on
+Debian/Ubuntu); the complete Vim program and its scripts are provided in vim/.
 
 Use `tundra-cli debug doctor` after installation.  It reports missing optional desktop
 services and gives the relevant package/service hint; a missing desktop helper
@@ -27,7 +32,12 @@ This release provides only the Linux x86_64 portable archive, built on Ubuntu
 assets/ and tundra-installation.json beside the binaries. No DEB or RPM
 installer is published for V1.3.4.
 
-For local builds, scripts/package-linux.sh produces only a portable archive.
+For local builds, first run:
+  python3 scripts/build-vim.py --output target/release/vim
+Then scripts/package-linux.sh produces only a portable archive, including Vim.
+Building Vim needs Python 3.12+, a C compiler, make and ncurses development
+headers (libncurses-dev on Debian/Ubuntu). Ordinary cargo builds do not download
+or compile Vim; debug builds use --output target/debug/vim.
 
 Ordinary Linux user session
 --------------------------
@@ -117,15 +127,26 @@ Release checks the latest published stable GitHub release, downloads the Linux
 x86_64 portable archive and verifies its SHA-256 checksum. Rust is not required.
 Beta checks the latest master commit and displays its hash as the build identifier.
 It downloads that exact source commit and builds locally with your existing Rust
-compiler and development libraries. Neither mode installs Rust or invokes sudo.
+compiler and development libraries, then explicitly builds the pinned bundled Vim.
+Beta also requires Python 3.12+, a C compiler, make and ncurses development headers;
+missing build tools stop preparation and are reported in the build output.
+Neither mode installs Rust or invokes sudo.
 Switching modes clears the previous check and checks the new source. Switching is
 disabled during an update. A beta build can explicitly return to the stable release.
 
-Both modes replace only Shell and CLI, preserving personal data and themes. The
-helper retains the previous executables until the new Shell reports readiness.
-Failed replacement, first startup failure or timeout restores the previous build.
-Interrupted updates are recovered on the next launch. Downloads/builds use the
-user cache. Keep assets/ and the portable marker beside the executables.
+Both modes stage and validate Shell, CLI and the complete bundled Vim directory,
+preserving personal data and themes. An archive without the required Vim runtime,
+license or upstream metadata is rejected before installation. The helper retains
+the previous executables and Vim directory until the new Shell reports readiness.
+Failed replacement, first startup failure or timeout restores the previous build
+and engine together. Interrupted updates are recovered on the next launch.
+Downloads/builds use the user cache. Keep assets/, vim/ and the portable marker
+beside the executables.
+
+This update uses protocol v3. Older v2 updaters reject the new executables before
+replacement, so users of those versions must fully extract the new portable
+archive once for this transition. Existing v2 transaction records may only be
+recovered, rolled back or cleaned up; their two-program payloads are not applied.
 
 An existing system authentication agent is
 used first. Only a required authorization with no available agent and a safe

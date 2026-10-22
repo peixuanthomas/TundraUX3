@@ -151,71 +151,151 @@ fn checksums_reject_wrong_file_duplicate_and_corrupt_download() {
     );
 }
 
-fn archive(files: &[(&str, tar::EntryType)]) -> Vec<u8> {
+fn archive(files: &[(&str, tar::EntryType, &[u8])]) -> Vec<u8> {
     let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
     let mut tar = tar::Builder::new(encoder);
-    for (name, kind) in files {
+    for (name, kind, contents) in files {
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(*kind);
-        header.set_mode(0o755);
-        header.set_size(7);
+        header.set_mode(0o777);
+        let contents = if kind.is_file() { *contents } else { &[] };
+        if kind.is_symlink() || kind.is_hard_link() {
+            header.set_link_name("../../outside").unwrap();
+        }
+        header.set_size(contents.len() as u64);
         header.set_cksum();
-        tar.append_data(&mut header, name, &b"fixture"[..]).unwrap();
+        tar.append_data(&mut header, name, contents).unwrap();
     }
     tar.into_inner().unwrap().finish().unwrap()
 }
 
-#[test]
-fn extracts_only_binaries_and_rejects_missing_duplicate_or_linked_binary() {
+fn portable_payload() -> Vec<(&'static str, tar::EntryType, &'static [u8])> {
     let regular = tar::EntryType::Regular;
-    for (files, success) in [
+    vec![
+        ("portable/tundra-shell", regular, b"fixture"),
+        ("portable/tundra-cli", regular, b"fixture"),
+        ("portable/vim/vim", regular, b"vim executable"),
+        ("portable/vim/LICENSE", regular, b"Vim License"),
         (
-            vec![
-                ("portable/tundra-shell", regular),
-                ("portable/tundra-cli", regular),
-                ("portable/assets/user.txt", regular),
-            ],
-            true,
+            "portable/vim/runtime/defaults.vim",
+            regular,
+            b"set compatible",
         ),
-        (vec![("portable/tundra-shell", regular)], false),
+        ("portable/vim/runtime/doc/help.txt", regular, b"Vim help"),
         (
-            vec![
-                ("portable/tundra-shell", regular),
-                ("portable/tundra-shell", regular),
-            ],
-            false,
-        ),
-        (
-            vec![("portable/tundra-shell", tar::EntryType::Symlink)],
-            false,
+            "portable/vim/runtime/syntax",
+            tar::EntryType::Directory,
+            b"",
         ),
         (
-            vec![
-                ("portable/tundra-shell", regular),
-                ("other/tundra-cli", regular),
-            ],
-            false,
+            "portable/vim/runtime/syntax/rust.vim",
+            regular,
+            b"syntax keyword",
         ),
+        (
+            "portable/vim/UPSTREAM.json",
+            regular,
+            super::super::vim::UPSTREAM_MANIFEST.as_bytes(),
+        ),
+        (
+            "portable/assets/user.txt",
+            regular,
+            b"must not overwrite assets",
+        ),
+    ]
+}
+
+#[test]
+fn extracts_binaries_and_complete_vim_runtime_without_replacing_assets() {
+    let root = super::super::tests::update_test_root("release-complete-runtime");
+    fs::create_dir_all(&root).unwrap();
+    extract_executables(
+        &archive(&portable_payload())[..],
+        &root,
+        &UpdateCancellation::default(),
+    )
+    .unwrap();
+    assert!(!root.join("assets").exists());
+    assert_eq!(fs::read(root.join(SHELL_FILE)).unwrap(), b"fixture");
+    assert_eq!(
+        fs::read(root.join("vim/runtime/syntax/rust.vim")).unwrap(),
+        b"syntax keyword"
+    );
+    for (path, mode) in [
+        (SHELL_FILE, 0o755),
+        (CLI_FILE, 0o755),
+        ("vim/vim", 0o755),
+        ("vim/runtime/doc/help.txt", 0o644),
+        ("vim/runtime/syntax", 0o755),
+    ] {
+        assert_eq!(
+            fs::metadata(root.join(path)).unwrap().permissions().mode() & 0o777,
+            mode,
+            "{path}"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejects_incomplete_duplicated_linked_or_mixed_root_release_payloads() {
+    let regular = tar::EntryType::Regular;
+    let valid = portable_payload();
+    let mut duplicate = valid.clone();
+    duplicate.push(("portable/vim/runtime/defaults.vim", regular, b"duplicate"));
+    let mut duplicate_directory = valid.clone();
+    duplicate_directory.push((
+        "portable/vim/runtime/syntax",
+        tar::EntryType::Directory,
+        b"",
+    ));
+    let mut linked_vim = valid.clone();
+    linked_vim[2].1 = tar::EntryType::Symlink;
+    let mut hard_linked_runtime = valid.clone();
+    hard_linked_runtime[5].1 = tar::EntryType::Link;
+    let mut wrong_vim_root = valid.clone();
+    wrong_vim_root[2].0 = "other/vim/vim";
+    let mut wrong_cli_root = valid.clone();
+    wrong_cli_root[1].0 = "other/tundra-cli";
+    let mut invalid_manifest = valid.clone();
+    invalid_manifest[8].2 = b"{}";
+    let mut duplicate_shell = valid.clone();
+    duplicate_shell.push(("portable/tundra-shell", regular, b"duplicate"));
+    let mut linked_shell = valid.clone();
+    linked_shell[0].1 = tar::EntryType::Symlink;
+    for files in [
+        valid
+            .iter()
+            .copied()
+            .filter(|(name, _, _)| !name.starts_with("portable/vim/"))
+            .collect(),
+        valid
+            .iter()
+            .copied()
+            .filter(|(name, _, _)| *name != "portable/vim/runtime/defaults.vim")
+            .collect(),
+        valid
+            .iter()
+            .copied()
+            .filter(|(name, _, _)| *name != "portable/tundra-shell")
+            .collect(),
+        duplicate,
+        duplicate_directory,
+        duplicate_shell,
+        linked_shell,
+        linked_vim,
+        hard_linked_runtime,
+        wrong_vim_root,
+        wrong_cli_root,
+        invalid_manifest,
     ] {
         let root = super::super::tests::update_test_root("release-archive");
         fs::create_dir_all(&root).unwrap();
-        assert_eq!(
+        assert!(
             extract_executables(&archive(&files)[..], &root, &UpdateCancellation::default())
-                .is_ok(),
-            success
+                .is_err()
         );
         assert!(!root.join("assets").exists());
-        if success {
-            assert_eq!(fs::read(root.join(SHELL_FILE)).unwrap(), b"fixture");
-            assert_ne!(
-                fs::metadata(root.join(SHELL_FILE))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o111,
-                0
-            );
-        }
         fs::remove_dir_all(root).unwrap();
     }
 }

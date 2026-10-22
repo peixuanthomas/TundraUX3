@@ -16,6 +16,8 @@
 
 外部 Vim 的原始保存字节通过 `SaveSnapshot::external_bytes` 交给现有异步原子保存流程，不重新编码、不改换行或 BOM；Vim 继续负责缓冲的修改标记、撤销和路径，快照不会认领普通编辑器的待保存记录。`synchronize_external_source` 仅镜像文本、元数据、光标和修改状态，保留只读保存边界。
 
+更新同时准备 Shell、CLI 和完整 `vim/` 目录，校验 Vim 的运行资源、许可和上游构建信息；发布失败、启动失败或中断恢复时一并回退。旧版没有 Vim 目录时，回退会移除本次新增目录。Beta 在 Cargo 构建后显式运行 `scripts/build-vim.py`，需要 Python 3.12 及 Vim 的 C 构建依赖；普通 Cargo 构建不会下载 Vim。默认主题、自定义资源和用户文件继续保留。
+
 调用方通过 `AppCommand` 修改状态，通过 `AppSnapshot` 读取状态。`AppAction` 返回重绘、退出或电源请求，Shell 执行终端恢复与进程操作。
 
 `SetClockTimezone` 的 `timezone_id: None` 让时钟直接跟随系统时间和时区。此模式忽略旧的同步时间，保存其他设置也不会重新套用配置中的独立时区。

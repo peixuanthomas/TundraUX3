@@ -8,6 +8,9 @@ use std::io::Write;
 #[path = "update_marker_failure.rs"]
 mod marker_write_failure;
 
+#[path = "update_vim.rs"]
+mod vim_bundle;
+
 fn mark_portable_fixture(install: &Path) {
     #[cfg(target_os = "linux")]
     {
@@ -96,6 +99,8 @@ fn update_product_validation_requires_both_programs_without_assets() {
     fs::write(root.join("target/release").join(SHELL_FILE), b"shell").unwrap();
     assert!(validate_product_paths(&root, &root.join("target"), "abc").is_err());
     fs::write(root.join("target/release").join(CLI_FILE), b"cli").unwrap();
+    assert!(validate_product_paths(&root, &root.join("target"), "abc").is_err());
+    vim_bundle::write_bundle(&root.join("target/release/vim"), b"new Vim");
     assert!(validate_product_paths(&root, &root.join("target"), "abc").is_ok());
     fs::remove_dir_all(root).unwrap();
 }
@@ -107,6 +112,7 @@ enum PreparationFailure {
     RustcTooOld,
     Locked,
     Compile,
+    VimBuild,
     MissingProduct,
     CliProbe,
     ShellProbe,
@@ -139,6 +145,9 @@ impl PreparationOperations for FakePreparationOperations {
             Vec::new()
         };
         assert!(name != "cargo build" || spec.args_slice().iter().any(|arg| arg == "--locked"));
+        if name == "Vim build" && matches!(self.failure, PreparationFailure::VimBuild) {
+            return Err(UpdateError::new("Vim build failed: missing compiler"));
+        }
         if failed_build {
             return Err(UpdateError::new(
                 if matches!(self.failure, PreparationFailure::Locked) {
@@ -177,6 +186,7 @@ fn update_preparation_failures_never_touch_installation() {
         PreparationFailure::RustcTooOld,
         PreparationFailure::Locked,
         PreparationFailure::Compile,
+        PreparationFailure::VimBuild,
         PreparationFailure::MissingProduct,
         PreparationFailure::CliProbe,
         PreparationFailure::ShellProbe,
@@ -200,6 +210,7 @@ fn update_preparation_failures_never_touch_installation() {
         if !matches!(failure, PreparationFailure::MissingProduct) {
             fs::write(target.join(SHELL_FILE), b"shell").unwrap();
             fs::write(target.join(CLI_FILE), b"cli").unwrap();
+            vim_bundle::write_bundle(&target.join("vim"), b"new Vim");
         }
         let check = UpdateCheckResult {
             release: None,
@@ -252,6 +263,10 @@ fn update_manifest_must_stay_below_the_install_update_directory() {
         state: TransactionState::Prepared,
         cli_replaced: false,
         shell_replaced: false,
+        vim: Some(VimTransaction {
+            had_previous: false,
+            replaced: false,
+        }),
     };
     write_manifest(&path, &manifest).unwrap();
     assert_eq!(load_manifest(&path).unwrap(), manifest);
@@ -403,6 +418,8 @@ fn update_replacement_and_rollback_preserve_default_and_custom_assets() {
     .unwrap();
     fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
     fs::write(new.join(CLI_FILE), b"new cli").unwrap();
+    vim_bundle::write_bundle(&install.join("vim"), b"old Vim");
+    vim_bundle::write_bundle(&new.join("vim"), b"new Vim");
     let path = transaction_dir.join("transaction.json");
     let mut manifest = TransactionManifest {
         protocol: UPDATE_PROTOCOL_VERSION,
@@ -412,6 +429,10 @@ fn update_replacement_and_rollback_preserve_default_and_custom_assets() {
         state: TransactionState::Prepared,
         cli_replaced: false,
         shell_replaced: false,
+        vim: Some(VimTransaction {
+            had_previous: true,
+            replaced: false,
+        }),
     };
     write_manifest(&path, &manifest).unwrap();
     apply_prepared_files(&path, &mut manifest).unwrap();
@@ -526,6 +547,8 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
     .unwrap();
     fs::write(new.join(SHELL_FILE), b"new shell").unwrap();
     fs::write(new.join(CLI_FILE), b"new cli").unwrap();
+    vim_bundle::write_bundle(&install.join("vim"), b"old Vim");
+    vim_bundle::write_bundle(&new.join("vim"), b"new Vim");
     mark_portable_fixture(&install);
     let manifest_path = transaction_dir.join("transaction.json");
     let manifest = TransactionManifest {
@@ -536,6 +559,10 @@ fn transaction_fixture(name: &str) -> (PathBuf, PathBuf, TransactionManifest) {
         state: TransactionState::Prepared,
         cli_replaced: false,
         shell_replaced: false,
+        vim: Some(VimTransaction {
+            had_previous: true,
+            replaced: false,
+        }),
     };
     write_manifest(&manifest_path, &manifest).unwrap();
     (root, manifest_path, manifest)
@@ -630,13 +657,14 @@ fn recovery_scan_fixture(name: &str, state: TransactionState) -> (PathBuf, PathB
     mark_portable_fixture(&canonical_install);
     let manifest_path = transaction_dir.join("transaction.json");
     let manifest = TransactionManifest {
-        protocol: UPDATE_PROTOCOL_VERSION,
+        protocol: 2,
         target_sha: "abc".to_owned(),
         install_dir: canonical_install,
         transaction_dir,
         state,
         cli_replaced: false,
         shell_replaced: false,
+        vim: None,
     };
     write_manifest(&manifest_path, &manifest).unwrap();
     (root, install, manifest_path)
@@ -719,6 +747,7 @@ fn update_rejects_old_transactions_before_replacing_programs() {
         state: TransactionState::Prepared,
         cli_replaced: false,
         shell_replaced: false,
+        vim: None,
     };
     write_manifest(&path, &manifest).unwrap();
     assert!(

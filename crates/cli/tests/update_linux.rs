@@ -7,6 +7,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "support/update_vim.rs"]
+mod vim;
+
 const HELPER_TEST_MANIFEST: &str = "TUNDRAUX3_TEST_HELPER_MANIFEST";
 
 fn executable(path: &Path, contents: &str) {
@@ -38,6 +41,9 @@ fn linux_update_helper_replaces_or_restores_and_waits_for_shell() {
         .unwrap();
         fs::write(install.join("assets/themes/default/version"), "old").unwrap();
         fs::write(install.join("assets/themes/custom/version"), "custom").unwrap();
+        vim::write_bundle(&install.join("vim"), b"old Vim");
+        fs::write(install.join("vim/runtime/old-only.vim"), b"old runtime").unwrap();
+        vim::write_bundle(&prepared_dir.join("vim"), b"new Vim");
         fs::copy(env!("CARGO_BIN_EXE_tundra-cli"), install.join("tundra-cli")).unwrap();
         executable(
             &install.join("tundra-shell"),
@@ -119,6 +125,21 @@ fn linux_update_helper_replaces_or_restores_and_waits_for_shell() {
         assert_eq!(
             fs::read_to_string(install.join("assets/themes/custom/version")).unwrap(),
             "custom"
+        );
+        for path in ["vim/vim", "vim/runtime/syntax/test.vim"] {
+            assert_eq!(
+                fs::read(install.join(path)).unwrap(),
+                if fail_start {
+                    &b"old Vim"[..]
+                } else {
+                    &b"new Vim"[..]
+                },
+                "{path}"
+            );
+        }
+        assert_eq!(
+            install.join("vim/runtime/old-only.vim").exists(),
+            fail_start
         );
         assert_ne!(
             fs::metadata(install.join("tundra-shell"))

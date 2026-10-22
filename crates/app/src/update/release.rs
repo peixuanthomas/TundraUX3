@@ -206,7 +206,7 @@ fn prepare_in(
     notify(
         progress,
         UpdatePhase::Staging,
-        "Verifying release executables",
+        "Verifying release executables and Vim runtime",
     );
     extract_executables(File::open(archive)?, work, cancel)?;
     let prepared = PreparedUpdate {
@@ -317,37 +317,70 @@ fn extract_executables(
                 "Expanded release archive exceeds the size limit",
             ));
         }
+        let components: Vec<_> = path.components().collect();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if ![SHELL_FILE, CLI_FILE].contains(&name) {
+        let executable = [SHELL_FILE, CLI_FILE].contains(&name);
+        let vim = components
+            .get(1)
+            .is_some_and(|part| part.as_os_str() == "vim");
+        if !executable && !vim {
             copy_stream(&mut entry, &mut io::sink(), cancel)?;
             continue;
         }
-        if path.components().count() != 2
-            || !entry.header().entry_type().is_file()
-            || !found.insert(name.to_owned())
+        let kind = entry.header().entry_type();
+        if executable && (components.len() != 2 || !kind.is_file())
+            || vim && !(kind.is_file() || kind.is_dir())
+            || kind.is_dir() && entry.size() != 0
         {
-            return Err(UpdateError::new("Invalid or duplicate release executable"));
-        }
-        let parent = path.parent().unwrap().to_owned();
-        if root.as_ref().is_some_and(|value| value != &parent) {
             return Err(UpdateError::new(
-                "Release executables have different archive roots",
+                "Invalid release executable or Vim runtime entry",
             ));
         }
-        root = Some(parent);
-        let output = destination.join(name);
+        let archive_root = PathBuf::from(components[0].as_os_str());
+        if root.as_ref().is_some_and(|value| value != &archive_root) {
+            return Err(UpdateError::new(
+                "Release executables and Vim runtime have different archive roots",
+            ));
+        }
+        root = Some(archive_root);
+        let relative: PathBuf = components[1..]
+            .iter()
+            .map(|part| part.as_os_str())
+            .collect();
+        if !found.insert(relative.clone()) {
+            return Err(UpdateError::new(
+                "Duplicate release executable or Vim runtime entry",
+            ));
+        }
+        let output = destination.join(&relative);
+        let mut parent = destination.to_owned();
+        for component in relative.parent().unwrap().components() {
+            parent.push(component.as_os_str());
+            fs::create_dir_all(&parent)?;
+            fs::set_permissions(&parent, fs::Permissions::from_mode(0o755))?;
+        }
+        if kind.is_dir() {
+            fs::create_dir_all(&output)?;
+            fs::set_permissions(output, fs::Permissions::from_mode(0o755))?;
+            continue;
+        }
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&output)?;
         copy_stream(&mut entry, &mut file, cancel)?;
         file.sync_all()?;
-        fs::set_permissions(output, fs::Permissions::from_mode(0o755))?;
+        let mode = if executable || relative == Path::new("vim/vim") {
+            0o755
+        } else {
+            0o644
+        };
+        fs::set_permissions(output, fs::Permissions::from_mode(mode))?;
     }
-    if found.len() != 2 {
+    if !found.contains(Path::new(SHELL_FILE)) || !found.contains(Path::new(CLI_FILE)) {
         return Err(UpdateError::new("Release is missing Shell or CLI"));
     }
-    Ok(())
+    super::vim::validate_bundle(&destination.join("vim"))
 }
 
 #[cfg(test)]

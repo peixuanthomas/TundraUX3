@@ -98,6 +98,7 @@ fn staged_manifest(root: &Path) -> PathBuf {
     std::fs::write(&manifest, serde_json::to_vec(&serde_json::json!({
         "protocol": app::update::UPDATE_PROTOCOL_VERSION, "target_sha": "a".repeat(40), "install_dir": install,
         "transaction_dir": transaction, "state": "prepared", "cli_replaced": false, "shell_replaced": false,
+        "vim": {"had_previous": false, "replaced": false},
     })).unwrap()).unwrap();
     manifest
 }

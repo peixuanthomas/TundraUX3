@@ -18,7 +18,7 @@ use cancellation::{WorkDirectory, copy_stream};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-pub const UPDATE_PROTOCOL_VERSION: u32 = 2;
+pub const UPDATE_PROTOCOL_VERSION: u32 = 3;
 pub const GITHUB_OWNER: &str = "peixuanthomas";
 pub const GITHUB_REPO: &str = "TundraUX3";
 pub const UPDATE_READY_FILE_ENV: &str = "TUNDRAUX3_UPDATE_READY_FILE";
@@ -30,6 +30,7 @@ mod git;
 #[cfg(target_os = "linux")]
 mod release;
 mod toolchain;
+mod vim;
 const SHELL_FILE: &str = if cfg!(windows) {
     "tundra-shell.exe"
 } else {
@@ -260,6 +261,14 @@ struct TransactionManifest {
     state: TransactionState,
     cli_replaced: bool,
     shell_replaced: bool,
+    #[serde(default)]
+    vim: Option<VimTransaction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct VimTransaction {
+    had_previous: bool,
+    replaced: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -727,6 +736,17 @@ fn prepare_extracted_with_operations(
         },
     });
     operations.run_live(&build, "cargo build", progress)?;
+    notify(
+        progress,
+        UpdatePhase::Compiling,
+        "Building bundled Vim runtime",
+    );
+    let build_vim = ProcessSpec::new(if cfg!(windows) { "python" } else { "python3" })
+        .arg(source_root.join("scripts/build-vim.py").to_string_lossy())
+        .arg("--output")
+        .arg(target.join("release/vim").to_string_lossy())
+        .current_dir(source_root);
+    operations.run_live(&build_vim, "Vim build", progress)?;
     progress(UpdateProgress {
         phase: UpdatePhase::Compiling,
         message: "Compilation complete".into(),
@@ -995,6 +1015,7 @@ fn validate_product_paths(
             )));
         }
     }
+    vim::validate_bundle(&target.join("release/vim"))?;
     Ok(PreparedUpdate {
         work_dir: work_dir.to_owned(),
         target_sha: sha.to_owned(),
@@ -1042,11 +1063,20 @@ pub fn stage_update_for_apply_cancellable(
     #[cfg(any(windows, target_os = "linux"))]
     {
         validate_update_probe(&prepared.cli_exe, &prepared.target_sha, cancel)?;
+        let prepared_vim = vim::prepared_directory(prepared)?;
+        vim::validate_bundle(&prepared_vim)?;
         let install_dir = fs::canonicalize(install_dir).map_err(|error| {
             UpdateError::new(format!("could not resolve installation directory: {error}"))
         })?;
         let installed_shell = install_dir.join(SHELL_FILE);
         let installed_cli = install_dir.join(CLI_FILE);
+        let installed_vim = install_dir.join("vim");
+        platform::validate_no_follow_path(&installed_vim, false).map_err(|error| {
+            UpdateError::new(format!("unsafe installed Vim directory: {error}"))
+        })?;
+        if installed_vim.exists() && !installed_vim.is_dir() {
+            return Err(UpdateError::new("installed Vim path is not a directory"));
+        }
         for (label, path) in [
             ("installed Shell", &installed_shell),
             ("installed CLI", &installed_cli),
@@ -1089,6 +1119,8 @@ pub fn stage_update_for_apply_cancellable(
             fs::create_dir_all(&backup_dir)?;
             copy_file(&prepared.shell_exe, &new_dir.join(SHELL_FILE), cancel)?;
             copy_file(&prepared.cli_exe, &new_dir.join(CLI_FILE), cancel)?;
+            vim::copy_directory(&prepared_vim, &new_dir.join("vim"), cancel)?;
+            vim::validate_bundle(&new_dir.join("vim"))?;
             // Run the validated new helper: an installed older CLI may still expect assets.
             copy_file(
                 &prepared.cli_exe,
@@ -1105,6 +1137,10 @@ pub fn stage_update_for_apply_cancellable(
                 state: TransactionState::Prepared,
                 cli_replaced: false,
                 shell_replaced: false,
+                vim: Some(VimTransaction {
+                    had_previous: installed_vim.is_dir(),
+                    replaced: false,
+                }),
             };
             write_manifest(&manifest_path, &manifest)?;
             cancel.check()?;
@@ -1279,6 +1315,14 @@ pub fn apply_update_transaction(
 trait TransactionOperations {
     fn stop_new_shell(&self) {}
     fn replace(&self, target: &Path, replacement: &Path, backup: &Path) -> Result<(), UpdateError>;
+    fn replace_directory(
+        &self,
+        target: &Path,
+        replacement: &Path,
+        backup: &Path,
+    ) -> Result<(), UpdateError> {
+        vim::replace_directory(target, replacement, backup)
+    }
     fn launch_new_and_wait(
         &self,
         paths: &TransactionPaths,
@@ -1372,6 +1416,14 @@ fn run_update_transaction(
             operations,
         );
     }
+    if manifest.protocol != UPDATE_PROTOCOL_VERSION {
+        return rollback_and_restart_with_operations(
+            manifest_path,
+            manifest,
+            "legacy update requires a complete portable installation with bundled Vim",
+            operations,
+        );
+    }
     if manifest.state != TransactionState::Prepared {
         return rollback_and_restart_with_operations(
             manifest_path,
@@ -1441,10 +1493,16 @@ fn apply_prepared_files_with_operations(
     manifest: &mut TransactionManifest,
     operations: &dyn TransactionOperations,
 ) -> Result<(), UpdateError> {
+    if manifest.protocol != UPDATE_PROTOCOL_VERSION || manifest.vim.is_none() {
+        return Err(UpdateError::new(
+            "new update transactions require the bundled Vim payload",
+        ));
+    }
     let paths = transaction_paths(manifest);
     if paths.ready.exists() {
         fs::remove_file(&paths.ready)?;
     }
+    vim::validate_bundle(&paths.new_vim)?;
 
     operations
         .replace(&paths.installed_cli, &paths.new_cli, &paths.backup_cli)
@@ -1460,6 +1518,13 @@ fn apply_prepared_files_with_operations(
         )
         .map_err(|error| UpdateError::new(format!("could not replace TundraUX Shell: {error}")))?;
     manifest.shell_replaced = true;
+    write_manifest(manifest_path, manifest)?;
+    if let Some(vim) = &mut manifest.vim {
+        operations
+            .replace_directory(&paths.installed_vim, &paths.new_vim, &paths.backup_vim)
+            .map_err(|error| UpdateError::new(format!("could not replace bundled Vim: {error}")))?;
+        vim.replaced = true;
+    }
     manifest.state = TransactionState::AwaitingReady;
     write_manifest(manifest_path, manifest)
 }
@@ -1489,6 +1554,9 @@ fn cleanup_committed_payload(manifest: &TransactionManifest) {
         paths.ready,
     ] {
         let _ = fs::remove_file(file);
+    }
+    for directory in [paths.backup_vim, paths.new_vim] {
+        let _ = fs::remove_dir_all(directory);
     }
 }
 
@@ -1532,6 +1600,29 @@ fn rollback_files_with_operations(
     write_manifest(manifest_path, manifest)?;
     let paths = transaction_paths(manifest);
     fs::create_dir_all(manifest.transaction_dir.join("failed"))?;
+
+    if let Some(vim) = &mut manifest.vim {
+        if paths.backup_vim.is_dir() {
+            operations
+                .replace_directory(&paths.installed_vim, &paths.backup_vim, &paths.failed_vim)
+                .map_err(|error| {
+                    UpdateError::new(format!("could not restore bundled Vim: {error}"))
+                })?;
+            vim.replaced = false;
+            write_manifest(manifest_path, manifest)?;
+        } else if vim.replaced || (!vim.had_previous && !paths.new_vim.exists()) {
+            if vim.had_previous && !paths.failed_vim.is_dir() {
+                return Err(UpdateError::new(
+                    "the Vim rollback backup is missing; transaction files were retained",
+                ));
+            }
+            if !vim.had_previous && paths.installed_vim.exists() {
+                fs::rename(&paths.installed_vim, &paths.failed_vim)?;
+            }
+            vim.replaced = false;
+            write_manifest(manifest_path, manifest)?;
+        }
+    }
 
     if paths.backup_shell.is_file() {
         let source = rollback_source(&paths.backup_shell)?;
@@ -1708,11 +1799,16 @@ fn validate_manifest_location(
     path: &Path,
     manifest: &TransactionManifest,
 ) -> Result<(), UpdateError> {
-    if manifest.protocol != UPDATE_PROTOCOL_VERSION {
+    if manifest.protocol != UPDATE_PROTOCOL_VERSION && manifest.protocol != 2 {
         return Err(UpdateError::new(format!(
             "unsupported update protocol {}",
             manifest.protocol
         )));
+    }
+    if manifest.protocol == UPDATE_PROTOCOL_VERSION && manifest.vim.is_none() {
+        return Err(UpdateError::new(
+            "update transaction is missing bundled Vim state",
+        ));
     }
     let expected = manifest.transaction_dir.join("transaction.json");
     let expected_root = manifest.install_dir.join(".tundra-update");
@@ -1752,6 +1848,10 @@ struct TransactionPaths {
     backup_cli: PathBuf,
     failed_shell: PathBuf,
     failed_cli: PathBuf,
+    installed_vim: PathBuf,
+    new_vim: PathBuf,
+    backup_vim: PathBuf,
+    failed_vim: PathBuf,
     ready: PathBuf,
 }
 
@@ -1769,6 +1869,10 @@ fn transaction_paths(manifest: &TransactionManifest) -> TransactionPaths {
         backup_cli: backup.join(CLI_FILE),
         failed_shell: failed.join(SHELL_FILE),
         failed_cli: failed.join(CLI_FILE),
+        installed_vim: manifest.install_dir.join("vim"),
+        new_vim: new.join("vim"),
+        backup_vim: backup.join("vim"),
+        failed_vim: failed.join("vim"),
         ready: manifest.transaction_dir.join("ready"),
     }
 }

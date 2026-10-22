@@ -3,8 +3,11 @@
 use std::fs;
 use std::process::Command;
 
+#[path = "support/update_vim.rs"]
+mod vim;
+
 #[test]
-fn update_staging_requires_only_programs_and_uses_the_validated_new_helper() {
+fn update_staging_requires_complete_vim_and_uses_the_validated_new_helper() {
     let identity = app::update::current_build_identity();
     let sha = identity.commit_sha.as_deref().unwrap_or("unknown");
     let suffix = std::env::consts::EXE_SUFFIX;
@@ -39,16 +42,16 @@ fn update_staging_requires_only_programs_and_uses_the_validated_new_helper() {
         let cli_exe = prepared_dir.join(&cli_name);
         fs::write(&shell_exe, b"new shell").unwrap();
         fs::copy(env!("CARGO_BIN_EXE_tundra-cli"), &cli_exe).unwrap();
-        let staged = app::update::stage_update_for_apply(
-            &app::update::PreparedUpdate {
-                work_dir: prepared_dir,
-                target_sha: sha.into(),
-                shell_exe,
-                cli_exe,
-            },
-            &install,
-        )
-        .unwrap();
+        let prepared = app::update::PreparedUpdate {
+            work_dir: prepared_dir.clone(),
+            target_sha: sha.into(),
+            shell_exe,
+            cli_exe,
+        };
+        assert!(app::update::stage_update_for_apply(&prepared, &install).is_err());
+        vim::write_bundle(&install.join("vim"), b"old Vim");
+        vim::write_bundle(&prepared_dir.join("vim"), b"new Vim");
+        let staged = app::update::stage_update_for_apply(&prepared, &install).unwrap();
         let transaction = staged.manifest_path.parent().unwrap();
         let mut payload = fs::read_dir(transaction.join("new"))
             .unwrap()
@@ -58,9 +61,18 @@ fn update_staging_requires_only_programs_and_uses_the_validated_new_helper() {
         let mut expected = vec![
             std::ffi::OsString::from(cli_name),
             std::ffi::OsString::from(shell_name),
+            std::ffi::OsString::from("vim"),
         ];
         expected.sort();
         assert_eq!(payload, expected);
+        assert_eq!(
+            fs::read(transaction.join("new/vim/runtime/syntax/test.vim")).unwrap(),
+            b"new Vim"
+        );
+        assert_eq!(
+            fs::read(install.join("vim/runtime/syntax/test.vim")).unwrap(),
+            b"old Vim"
+        );
         let output = Command::new(transaction.join(format!("update-helper{suffix}")))
             .arg("__update-probe")
             .output()
