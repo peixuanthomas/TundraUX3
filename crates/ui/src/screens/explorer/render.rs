@@ -10,7 +10,7 @@ use super::{
 };
 use crate::components::{
     Button, ComponentTone, DataTable, List, ListItem, Panel, Scrollbar, Surface, TextInput,
-    terminal_width,
+    PageAction, PageActionBar, PageActionStatus, terminal_width,
 };
 use crate::screens::shell::fit_cell;
 use crate::{RuntimeAsciiAssets, TundraTheme};
@@ -44,7 +44,7 @@ pub fn render_explorer_content(
     render_explorer_path_bar(frame, &layout, model, theme);
     render_explorer_sidebar(frame, &layout, model, assets, context, theme);
     render_explorer_table(frame, &layout, model, assets, context);
-    render_explorer_footer(frame, &layout, model, assets, theme);
+    render_explorer_footer(frame, &layout, model, assets, context);
 }
 
 fn render_explorer_toolbar(
@@ -359,113 +359,42 @@ fn render_explorer_table(
     }
 }
 
-fn render_explorer_footer(
-    frame: &mut Frame<'_>,
-    layout: &ExplorerLayout,
-    model: &ExplorerViewModel,
-    assets: &RuntimeAsciiAssets,
-    theme: &TundraTheme,
-) {
-    if layout.footer.height == 0 {
-        return;
-    }
-    let selected_names = selected_entry_names(model);
-    let selected_summary = if selected_names.is_empty() {
-        i18n::tr!(
-            "ui-explorer-selected-count",
-            count = model.effective_selected_count()
-        )
-    } else {
-        i18n::tr!(
-            "ui-explorer-selected-names",
-            names = selected_names.join(", ")
-        )
-    };
-    let mut lines = vec![Line::from(selected_summary)];
-    if let Some(entry) = model.selected_entry() {
-        lines.push(Line::from(i18n::tr!(
-            "ui-explorer-entry-details",
-            name = entry.name.clone(),
-            kind = entry.kind.clone(),
-            size = entry.size.as_deref().unwrap_or("-")
-        )));
-        lines.push(Line::from(i18n::tr!(
-            "ui-explorer-entry-metadata",
-            modified = entry.modified.as_deref().unwrap_or("-"),
-            attributes = format_attributes(&entry.attributes)
-        )));
-    } else {
-        lines.push(Line::from(i18n::tr!("ui-explorer-no-entry-selected")));
-        lines.push(Line::from(""));
-    }
-
-    let feedback = if let Some(error) = &model.error {
-        Line::styled(
-            i18n::tr!("ui-explorer-error", error = error),
-            theme.error_style(),
-        )
+pub(super) fn explorer_action_bar(model: &ExplorerViewModel) -> PageActionBar {
+    let actions = super::layout::explorer_page_action_buttons(model).into_iter().map(|button| {
+        let action = button.action;
+        let page = PageAction::new(format!("toolbar.{action:?}"), format!("{} {}", action.shortcut_label(), button.label)).disabled(!button.enabled);
+        if matches!(action, super::ExplorerToolbarAction::Delete | super::ExplorerToolbarAction::DumpTrash) {
+            page.danger()
+        } else if (action == super::ExplorerToolbarAction::Open && model.selected_entry().is_some())
+            || (action == super::ExplorerToolbarAction::New && model.selected_entry().is_none())
+            || action == super::ExplorerToolbarAction::Restore {
+            page.primary()
+        } else { page }
+    }).collect();
+    let mut status = Vec::new();
+    if let Some(error) = &model.error {
+        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-error", error = error), tone: ComponentTone::Danger });
     } else if let Some(operation) = &model.operation {
-        let progress = operation.percent().map_or_else(
-            || {
-                i18n::tr!(
-                    "ui-explorer-operation-items",
-                    operation = operation.label.clone(),
-                    count = operation.completed_items.clone()
-                )
-            },
-            |percent| format!("{}: {percent}%", operation.label),
-        );
-        Line::styled(progress, theme.title_style())
-    } else if let Some(message) = &model.message {
-        Line::styled(message.clone(), theme.muted_style())
+        let text = operation.percent().map_or_else(|| i18n::tr!("ui-explorer-operation-items", operation = operation.label.clone(), count = operation.completed_items.clone()), |percent| format!("{}: {percent}%", operation.label));
+        status.push(PageActionStatus { text, tone: ComponentTone::Accent });
     } else if model.listing_warning_count > 0 {
-        Line::styled(
-            i18n::tr!(
-                "ui-explorer-metadata-warnings",
-                count = model.listing_warning_count.clone()
-            ),
-            theme.muted_style(),
-        )
-    } else {
-        Line::from("")
-    };
-    lines.push(feedback);
-    lines.push(Line::styled(
-        i18n::tr!(
-            "ui-explorer-compact-help",
-            hidden = if model.show_hidden {
-                i18n::tr!("ui-explorer-shown")
-            } else {
-                i18n::tr!("ui-explorer-hidden")
-            },
-            quick = if model.quick_locations.is_empty() {
-                String::new()
-            } else {
-                i18n::tr!("ui-explorer-quick-access-help")
-            }
-        ),
-        theme.muted_style(),
-    ));
-    lines.truncate(usize::from(layout.footer.height));
-    frame.render_widget(
-        Paragraph::new(lines).alignment(HorizontalAlignment::Left),
-        layout.footer,
-    );
+        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-metadata-warnings", count = model.listing_warning_count.clone()), tone: ComponentTone::Muted });
+    }
+    let names = selected_entry_names(model);
+    let text = if names.is_empty() { i18n::tr!("ui-explorer-selected-count", count = model.effective_selected_count()) } else { i18n::tr!("ui-explorer-selected-names", names = names.join(", ")) };
+    status.push(PageActionStatus { text, tone: ComponentTone::Muted });
+    if let Some(entry) = model.selected_entry() {
+        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-entry-details", name = entry.name.clone(), kind = entry.kind.clone(), size = entry.size.as_deref().unwrap_or("-")), tone: ComponentTone::Muted });
+        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-entry-metadata", modified = entry.modified.as_deref().unwrap_or("-"), attributes = format_attributes(&entry.attributes)), tone: ComponentTone::Muted });
+    }
+    PageActionBar::new("explorer").with_status(status).with_actions(actions)
+}
 
+fn render_explorer_footer(frame: &mut Frame<'_>, layout: &ExplorerLayout, model: &ExplorerViewModel, assets: &RuntimeAsciiAssets, context: &crate::RenderContext) {
+    explorer_action_bar(model).render(frame, layout.footer, context);
     if let (Some(cancel), Some(operation)) = (layout.cancel_operation, model.operation.as_ref()) {
         let icon = explorer_icon_line(assets, "cancel");
-        render_explorer_button(
-            frame,
-            cancel,
-            "explorer.operation.cancel",
-            fit_cell(
-                &format!("{icon} {}", operation.cancel_label),
-                usize::from(cancel.width),
-            ),
-            true,
-            true,
-            theme,
-        );
+        render_explorer_button(frame, cancel, "explorer.operation.cancel", fit_cell(&format!("{icon} {}", operation.cancel_label), usize::from(cancel.width)), true, true, &context.compatibility_theme());
     }
 }
 
@@ -969,7 +898,6 @@ pub fn explorer_first_entry_content_line(model: &ExplorerViewModel, content_widt
     if let Some(search) = &model.search {
         line += wrapped_line_count(&explorer_search_line(search), width);
     }
-    line += wrapped_line_count(&i18n::tr!("ui-explorer-help"), width);
     line += 1;
     line += wrapped_line_count(&i18n::tr!("ui-explorer-entries"), width);
     line

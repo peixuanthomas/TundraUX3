@@ -9,7 +9,7 @@ use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contai
 const EXPLORER_SIDEBAR_MIN_WIDTH: u16 = 96;
 const EXPLORER_DETAILED_MIN_WIDTH: u16 = 72;
 const EXPLORER_SIDEBAR_WIDTH: u16 = 20;
-const EXPLORER_FOOTER_TALL_HEIGHT: u16 = 5;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExplorerScrollbarLayout {
@@ -97,6 +97,7 @@ pub struct ExplorerOverlayLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerHitTarget {
     Toolbar(ExplorerToolbarAction),
+    PageAction(ExplorerToolbarAction),
     Address,
     Breadcrumb(usize),
     Search,
@@ -116,6 +117,8 @@ pub struct ExplorerLayout {
     pub panel: Rect,
     pub toolbar: Rect,
     pub toolbar_buttons: Vec<ExplorerToolbarButtonLayout>,
+    pub page_actions: Vec<ExplorerToolbarButtonLayout>,
+    pub action_bar: crate::components::PageActionBarLayout,
     pub path_bar: Rect,
     pub address_button: Rect,
     pub address_input: Rect,
@@ -159,6 +162,9 @@ impl ExplorerLayout {
             .find(|button| button.enabled && rect_contains(button.area, x, y))
         {
             return Some(ExplorerHitTarget::Toolbar(button.action));
+        }
+        if let Some(button) = self.page_actions.iter().find(|button| button.enabled && rect_contains(button.area, x, y)) {
+            return Some(ExplorerHitTarget::PageAction(button.action));
         }
         if rect_contains(self.search, x, y) {
             return Some(ExplorerHitTarget::Search);
@@ -235,13 +241,8 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         toolbar_rows.min(inner.height.saturating_sub(3).max(1)),
     );
     let remaining_height = inner.height.saturating_sub(toolbar.height + 2);
-    let footer_height = if remaining_height >= 11 {
-        EXPLORER_FOOTER_TALL_HEIGHT
-    } else if remaining_height >= 4 {
-        2
-    } else {
-        u16::from(remaining_height > 0)
-    };
+    let bar = super::render::explorer_action_bar(model);
+    let footer_height = bar.height(inner.width).min(remaining_height);
     let footer = Rect::new(
         inner.x,
         inner.bottom().saturating_sub(footer_height),
@@ -458,6 +459,14 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
             1,
         ))
     });
+    let action_bar = bar.layout(footer);
+    let page_buttons = explorer_page_action_buttons(model);
+    let page_actions = action_bar.actions.iter().map(|action| ExplorerToolbarButtonLayout {
+        action: page_buttons[action.index].action,
+        area: action.area,
+        show_label: true,
+        enabled: action.enabled,
+    }).collect();
     let overlay = explorer_overlay_layout(area, model);
 
     ExplorerLayout {
@@ -465,6 +474,8 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         panel,
         toolbar,
         toolbar_buttons,
+        page_actions,
+        action_bar,
         path_bar,
         address_button,
         address_input,
@@ -524,7 +535,7 @@ fn explorer_toolbar_rows(width: u16, model: &ExplorerViewModel) -> u16 {
         .toolbar
         .buttons
         .iter()
-        .filter(|b| b.action != ExplorerToolbarAction::Refresh)
+        .filter(|b| b.action != ExplorerToolbarAction::Refresh && !explorer_page_action_buttons(model).iter().any(|page| page.action == b.action))
     {
         let length = button
             .label
@@ -552,7 +563,7 @@ fn explorer_toolbar_button_layouts(
         .toolbar
         .buttons
         .iter()
-        .filter(|b| b.action != ExplorerToolbarAction::Refresh)
+        .filter(|b| b.action != ExplorerToolbarAction::Refresh && !explorer_page_action_buttons(model).iter().any(|page| page.action == b.action))
         .filter_map(|button| {
             let width = button
                 .label
@@ -866,4 +877,19 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
         }
         None => None,
     }
+}
+
+pub(super) fn explorer_page_action_buttons(model: &ExplorerViewModel) -> Vec<ExplorerToolbarButtonViewModel> {
+    let wanted: &[ExplorerToolbarAction] = if model.is_trash {
+        &[ExplorerToolbarAction::Restore, ExplorerToolbarAction::DumpTrash, ExplorerToolbarAction::Menu]
+    } else if model.entries.is_empty() {
+        &[ExplorerToolbarAction::New, ExplorerToolbarAction::Paste, ExplorerToolbarAction::Menu]
+    } else {
+        &[ExplorerToolbarAction::Open, ExplorerToolbarAction::New, ExplorerToolbarAction::Rename, ExplorerToolbarAction::Delete, ExplorerToolbarAction::Menu]
+    };
+    let mut buttons = wanted.iter().filter_map(|action| model.toolbar.buttons.iter().find(|b| b.action == *action).cloned()).collect::<Vec<_>>();
+    if model.selected_entry().is_none() && !model.is_trash {
+        buttons.sort_by_key(|button| button.action != ExplorerToolbarAction::New);
+    }
+    buttons
 }

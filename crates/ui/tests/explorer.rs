@@ -388,7 +388,8 @@ fn explorer_address_editor_shows_selection_and_scrolls_to_the_cursor() {
 
 #[test]
 fn explorer_first_entry_line_accounts_for_wrapped_header_text() {
-    let model = sample_model();
+    let mut model = sample_model();
+    model.current_path = "/a/long/directory/name/with/more/than/forty/characters".into();
 
     assert!(
         explorer_first_entry_content_line(&model, 40)
@@ -576,7 +577,7 @@ fn explorer_toolbar_keeps_every_action_at_supported_widths() {
                 .collect::<Vec<_>>(),
             ExplorerToolbarAction::REGULAR
                 .into_iter()
-                .filter(|action| *action != ExplorerToolbarAction::Refresh)
+                .filter(|action| *action != ExplorerToolbarAction::Refresh && !action.is_page_action())
                 .chain([ExplorerToolbarAction::Refresh])
                 .collect::<Vec<_>>(),
             "toolbar actions at width {width}"
@@ -619,10 +620,10 @@ fn explorer_toolbar_renders_actual_shortcuts_at_narrow_and_wide_widths() {
         };
         let layout = explorer_layout(main, &model);
         assert_eq!(
-            layout.toolbar_buttons.len(),
+            layout.toolbar_buttons.len() + layout.page_actions.len(),
             ExplorerToolbarAction::REGULAR.len()
         );
-        for button in &layout.toolbar_buttons {
+        for button in layout.toolbar_buttons.iter().chain(&layout.page_actions) {
             let text: String = (button.area.x..button.area.right())
                 .map(|x| {
                     terminal
@@ -645,7 +646,7 @@ fn explorer_toolbar_renders_actual_shortcuts_at_narrow_and_wide_widths() {
                 layout.hit_test(button.area.x, button.area.y),
                 button
                     .enabled
-                    .then_some(ExplorerHitTarget::Toolbar(button.action))
+                    .then_some(if button.action.is_page_action() { ExplorerHitTarget::PageAction(button.action) } else { ExplorerHitTarget::Toolbar(button.action) })
             );
         }
     }
@@ -984,4 +985,23 @@ fn conflict_focus_highlights_exactly_one_control_even_when_apply_is_enabled() {
             );
         }
     }
+}
+
+#[test]
+fn page_actions_keep_primary_and_disabled_targets_visible() {
+    let model = sample_model();
+    for width in [50, 72, 110] {
+        let layout = explorer_layout(Rect::new(0, 0, width, 20), &model);
+        let open = layout.page_actions.iter().find(|b| b.action == ExplorerToolbarAction::Open).unwrap();
+        assert_eq!(open.area.right(), layout.footer.right());
+        assert_eq!(layout.hit_test(open.area.x, open.area.y), Some(ExplorerHitTarget::PageAction(ExplorerToolbarAction::Open)));
+        assert!(layout.action_bar.actions.iter().any(|b| b.emphasis == ui::components::ButtonEmphasis::Primary));
+    }
+    let mut empty = model;
+    empty.entries.clear();
+    empty.selected_index = None;
+    empty.toolbar.buttons.iter_mut().find(|b| b.action == ExplorerToolbarAction::Paste).unwrap().enabled = false;
+    let layout = explorer_layout(Rect::new(0, 0, 50, 20), &empty);
+    assert!(layout.page_actions.iter().any(|b| b.action == ExplorerToolbarAction::New));
+    assert!(layout.page_actions.iter().any(|b| b.action == ExplorerToolbarAction::Paste && !b.enabled));
 }

@@ -883,7 +883,7 @@ impl ShellSession {
         }
         let index = match hit_target {
             ui::ExplorerHitTarget::Entry(index) => index,
-            ui::ExplorerHitTarget::Toolbar(action) => {
+            ui::ExplorerHitTarget::Toolbar(action) | ui::ExplorerHitTarget::PageAction(action) => {
                 self.activate_explorer_toolbar(action, coordinates, platform);
                 return;
             }
