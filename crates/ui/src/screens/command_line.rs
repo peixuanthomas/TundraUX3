@@ -302,6 +302,17 @@ pub(crate) fn render_terminal_snapshot(
     snapshot: &CommandLineTerminalSnapshot,
     theme: &TundraTheme,
 ) {
+    crate::automation::control(
+        "terminal",
+        "terminal",
+        "",
+        area,
+        crate::components::ComponentState {
+            focused: true,
+            ..Default::default()
+        },
+        &["click", "text", "key", "scroll"],
+    );
     let lines = (0..snapshot.rows)
         .map(|row| terminal_snapshot_line(snapshot, row, theme))
         .collect::<Vec<_>>();

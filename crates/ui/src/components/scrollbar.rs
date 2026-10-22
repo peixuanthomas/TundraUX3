@@ -74,6 +74,30 @@ impl Scrollbar {
         if len == 0 {
             return;
         }
+        if crate::automation::enabled() {
+            let (id, track, thumb) = match self.orientation {
+                ScrollbarOrientation::VerticalRight => (
+                    "scrollbar.vertical",
+                    Rect::new(area.right().saturating_sub(1), area.y, 1, area.height),
+                    Rect::new(area.right().saturating_sub(1), area.y + start, 1, len),
+                ),
+                ScrollbarOrientation::HorizontalBottom => (
+                    "scrollbar.horizontal",
+                    Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
+                    Rect::new(area.x + start, area.bottom().saturating_sub(1), len, 1),
+                ),
+            };
+            let _scope = crate::automation::scope(id, "group", "", track);
+            crate::automation::control(
+                "track",
+                "scrollbar",
+                "",
+                track,
+                Default::default(),
+                &["click", "scroll"],
+            );
+            crate::automation::control("thumb", "slider", "", thumb, Default::default(), &["drag"]);
+        }
         match self.orientation {
             ScrollbarOrientation::VerticalRight => {
                 let x = area.x.saturating_add(area.width.saturating_sub(1));

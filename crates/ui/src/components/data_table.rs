@@ -29,6 +29,9 @@ pub struct DataTable {
     pub show_header: bool,
     pub row_tones: Vec<ComponentTone>,
     pub bordered: bool,
+    pub interactive: bool,
+    pub capture_focused_row: Option<usize>,
+    pub row_ids: Vec<String>,
 }
 
 impl DataTable {
@@ -54,6 +57,9 @@ impl DataTable {
             show_header: true,
             row_tones: Vec::new(),
             bordered: true,
+            interactive: true,
+            capture_focused_row: None,
+            row_ids: Vec::new(),
         }
     }
 
@@ -88,6 +94,9 @@ impl DataTable {
     }
 
     pub fn handle_event(&mut self, event: InputEvent, area: Rect) -> ComponentEvent {
+        if !self.interactive || self.state.disabled {
+            return ComponentEvent::None;
+        }
         match event {
             InputEvent::FocusGained => {
                 self.state.focused = true;
@@ -133,6 +142,12 @@ impl DataTable {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
+        let _scope = crate::automation::scope(
+            self.id.as_str(),
+            "table",
+            self.title.as_deref().unwrap_or(""),
+            area,
+        );
         let tokens = context.theme;
         let mut block = Block::default()
             .style(Style::default().fg(tokens.text).bg(tokens.surface))
@@ -151,6 +166,12 @@ impl DataTable {
 
         let header_height = u16::from(self.show_header);
         if self.show_header {
+            self.capture_cells(
+                "headers",
+                "columnheader",
+                &self.headers,
+                Rect::new(inner.x, inner.y, inner.width, 1),
+            );
             Paragraph::new(join_row(
                 &self.headers,
                 inner.width,
@@ -173,6 +194,37 @@ impl DataTable {
             .take(inner.height.saturating_sub(header_height) as usize)
         {
             let selected = self.selected == Some(index) || self.selected_rows.contains(&index);
+            let row_area = Rect::new(
+                inner.x,
+                inner
+                    .y
+                    .saturating_add(header_height)
+                    .saturating_add((index - self.viewport_start) as u16),
+                inner.width,
+                1,
+            );
+            let row_id = self
+                .row_ids
+                .get(index)
+                .map_or_else(|| format!("row.{index}"), |id| format!("row.{id}"));
+            let _row = crate::automation::scope(&row_id, "row", "", row_area);
+            let mut state = self.state;
+            state.selected = selected;
+            state.focused &= self.selected == Some(index);
+            state.focused |= self.capture_focused_row == Some(index);
+            crate::automation::control(
+                "select",
+                "listitem",
+                "",
+                row_area,
+                state,
+                if self.interactive {
+                    &["click", "double_click"]
+                } else {
+                    &[]
+                },
+            );
+            self.capture_cells("cell", "cell", row, row_area);
             let style = if selected {
                 Style::default().fg(tokens.accent).bg(tokens.accent_soft)
             } else {
@@ -203,6 +255,35 @@ impl DataTable {
 
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, context: &RenderContext) {
         self.render(area, frame.buffer_mut(), context);
+    }
+
+    fn capture_cells(&self, prefix: &str, role: &str, cells: &[String], area: Rect) {
+        if !crate::automation::enabled() {
+            return;
+        }
+        let mut x = area.x;
+        for (index, (cell, width)) in cells
+            .iter()
+            .zip(column_widths(
+                cells.len(),
+                area.width,
+                self.column_widths.as_deref(),
+            ))
+            .enumerate()
+        {
+            let width = width.min(area.right().saturating_sub(x));
+            crate::automation::control(
+                &format!("{prefix}.{index}"),
+                role,
+                cell,
+                Rect::new(x, area.y, width, 1),
+                Default::default(),
+                &[],
+            );
+            x = x
+                .saturating_add(width)
+                .saturating_add(u16::from(self.column_widths.is_none()));
+        }
     }
 
     fn select_offset(&mut self, offset: isize) -> ComponentEvent {
@@ -239,25 +320,32 @@ fn join_row(cells: &[String], width: u16, explicit_widths: Option<&[u16]>) -> St
         return String::new();
     }
     let separator = if explicit_widths.is_some() { "" } else { " " };
-    let separators = if explicit_widths.is_some() {
-        0
-    } else {
-        cells.len().saturating_sub(1)
-    };
-    let fallback = usize::from(width).saturating_sub(separators) / cells.len();
     cells
         .iter()
-        .enumerate()
-        .map(|(index, cell)| {
-            let cell_width = explicit_widths
-                .and_then(|widths| widths.get(index))
-                .copied()
-                .map(usize::from)
-                .unwrap_or(fallback);
+        .zip(column_widths(cells.len(), width, explicit_widths))
+        .map(|(cell, cell_width)| {
+            let cell_width = usize::from(cell_width);
             let cell = super::truncate_to_terminal_width(cell, cell_width);
             let padding = cell_width.saturating_sub(usize::from(cell.cell_width()));
             format!("{cell}{}", " ".repeat(padding))
         })
         .collect::<Vec<_>>()
         .join(separator)
+}
+
+fn column_widths(count: usize, width: u16, explicit_widths: Option<&[u16]>) -> Vec<u16> {
+    let separators = if explicit_widths.is_some() {
+        0
+    } else {
+        count.saturating_sub(1)
+    };
+    let fallback = usize::from(width).saturating_sub(separators) / count.max(1);
+    (0..count)
+        .map(|index| {
+            explicit_widths
+                .and_then(|widths| widths.get(index))
+                .copied()
+                .unwrap_or(fallback as u16)
+        })
+        .collect()
 }

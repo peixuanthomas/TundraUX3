@@ -61,6 +61,7 @@ pub(super) fn render_processes(
     if area.is_empty() {
         return;
     }
+    let _scope = crate::automation::scope("system-status.processes", "table", "", area);
     let sort_header = |label: String, column| {
         if model.process_sort.column == column {
             format!(
@@ -125,6 +126,47 @@ pub(super) fn render_processes(
         ];
         let colors = [Color::Cyan, cpu_color, Color::Magenta, context.theme.text];
         let selected = model.selected_index() == Some(row_layout.index);
+        if crate::automation::enabled() {
+            let _row = crate::automation::scope(
+                &format!("row.{}", row[0]),
+                "row",
+                &row[1],
+                row_layout.area,
+            );
+            crate::automation::control(
+                "select",
+                "listitem",
+                &row[1],
+                row_layout.area,
+                crate::components::ComponentState {
+                    selected,
+                    focused: selected,
+                    ..Default::default()
+                },
+                &["click", "double_click"],
+            );
+            for (column, rect) in &layout.process_sort_headers {
+                let index = match column {
+                    SystemStatusProcessSortColumn::Pid => 0,
+                    SystemStatusProcessSortColumn::Cpu => 1,
+                    SystemStatusProcessSortColumn::Memory => 2,
+                    SystemStatusProcessSortColumn::Name => 3,
+                };
+                crate::automation::control(
+                    &format!("cell.{index}"),
+                    "cell",
+                    &fields[index],
+                    Rect::new(
+                        rect.x,
+                        row_layout.area.y,
+                        rect.width,
+                        row_layout.area.height,
+                    ),
+                    Default::default(),
+                    &[],
+                );
+            }
+        }
         let mut style = Style::default().bg(if selected {
             context.theme.accent_soft
         } else {

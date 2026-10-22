@@ -102,6 +102,10 @@ pub struct Button {
     pub pressed_fill: bool,
     pub emphasis: ButtonEmphasis,
     pub focus_fill: Option<ratatui::style::Color>,
+    capture_role: &'static str,
+    sensitive: bool,
+    capture_selected: Option<bool>,
+    capture_name: Option<String>,
 }
 
 impl Button {
@@ -126,6 +130,10 @@ impl Button {
             pressed_fill: false,
             emphasis: ButtonEmphasis::Normal,
             focus_fill: None,
+            capture_role: "button",
+            sensitive: false,
+            capture_selected: None,
+            capture_name: None,
         }
     }
 
@@ -165,6 +173,28 @@ impl Button {
 
     pub fn with_focus_fill(mut self, fill: Option<ratatui::style::Color>) -> Self {
         self.focus_fill = fill;
+        self
+    }
+
+    /// Describes fields and checkboxes that reuse the shared button painting.
+    pub fn with_capture_role(mut self, role: &'static str) -> Self {
+        self.capture_role = role;
+        self
+    }
+
+    pub fn with_sensitive(mut self, sensitive: bool) -> Self {
+        self.sensitive = sensitive;
+        self
+    }
+
+    /// A checkbox value is independent of the field currently receiving input.
+    pub fn with_capture_selected(mut self, selected: bool) -> Self {
+        self.capture_selected = Some(selected);
+        self
+    }
+
+    pub fn with_capture_name(mut self, name: impl Into<String>) -> Self {
+        self.capture_name = Some(name.into());
         self
     }
 
@@ -380,6 +410,27 @@ impl Button {
     }
 
     fn render_state(&self, area: Rect, theme: &TundraTheme) -> ComponentState {
+        let mut captured_state = self.state;
+        captured_state.focused |= self.state.selected && !self.current;
+        captured_state.selected |= self.current || self.latched;
+        if crate::automation::enabled() {
+            let mut node = crate::automation::node(
+                self.id.as_str(),
+                self.capture_role,
+                self.capture_name.as_deref().unwrap_or(&self.label),
+                area,
+            );
+            node.focused = captured_state.focused;
+            node.selected = self.capture_selected.unwrap_or(captured_state.selected);
+            node.enabled = !captured_state.disabled;
+            node.sensitive = self.sensitive;
+            node.actions = if self.capture_role == "textbox" {
+                vec!["click".into(), "text".into(), "key".into()]
+            } else {
+                vec!["click".into()]
+            };
+            crate::automation::record(node);
+        }
         let mut state = self.state;
         if let Some(frame) = &theme.buttons {
             state.focused &= frame.keyboard_focus_visible;

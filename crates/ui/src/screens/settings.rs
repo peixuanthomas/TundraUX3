@@ -79,6 +79,7 @@ impl SettingsCategory {
 pub enum SettingsField {
     ApplicationList,
     AutoAdmin,
+    AutomationEnabled,
     SoundOutputDevice,
     SoundOutputVolume,
     SoundOutputMute,
@@ -185,6 +186,7 @@ pub struct SettingsItemViewModel {
     pub kind: SettingsControlKind,
     pub enabled: bool,
     pub unavailable_reason: Option<String>,
+    pub checked: Option<bool>,
 }
 
 impl SettingsItemViewModel {
@@ -203,6 +205,7 @@ impl SettingsItemViewModel {
             kind,
             enabled: true,
             unavailable_reason: None,
+            checked: None,
         }
     }
 
@@ -214,6 +217,11 @@ impl SettingsItemViewModel {
 
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
         self
     }
 }
@@ -1016,7 +1024,7 @@ fn render_cards(
     if model.appearance_preview.is_some() {
         y += 5;
     }
-    for card in &model.cards {
+    for (card_index, card) in model.cards.iter().enumerate() {
         let height = u16::try_from(card.items.len())
             .unwrap_or(u16::MAX)
             .saturating_add(2)
@@ -1068,7 +1076,7 @@ fn render_cards(
             })
             .collect();
         let mut table = DataTable::new(
-            format!("settings.card.{}", card.title),
+            format!("settings.card.{:?}.{card_index}", model.selected_category),
             Vec::<String>::new(),
             rows,
         )
@@ -1083,6 +1091,11 @@ fn render_cards(
         .show_header(false)
         .with_row_tones(tones)
         .bordered(false);
+        table.row_ids = card
+            .items
+            .iter()
+            .map(|item| format!("{:?}", item.field))
+            .collect();
         table.selected = selected;
         table.state.focused = selected.is_some();
         table.render_frame(frame, visible_rows, context);
@@ -1715,7 +1728,13 @@ fn render_settings_control(
     let mut button = Button::new(
         format!("settings.field.{:?}", item.field).to_ascii_lowercase(),
         item.value.clone(),
-    );
+    )
+    .with_capture_name(&item.label);
+    if item.kind == SettingsControlKind::Toggle {
+        button = button
+            .with_capture_role("checkbox")
+            .with_capture_selected(item.checked.unwrap_or(false));
+    }
     button.state.selected = selected;
     button.set_focused(selected);
     button.set_disabled(!item.enabled);

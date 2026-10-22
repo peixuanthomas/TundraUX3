@@ -95,6 +95,7 @@ fn password_is_never_added_to_terminal_output_or_debug_text() {
         secret: true,
     });
     job.paste("test-secret");
+    assert!(job.view_model(false, None, 0).input_sensitive);
     assert!(
         !job.0
             .display
@@ -111,4 +112,5 @@ fn password_is_never_added_to_terminal_output_or_debug_text() {
         matches!(rx.try_recv().unwrap(), OperationInput::Answer { id, value } if id == "sudo-password" && value == "test-secret")
     );
     assert!(job.0.display.lock().unwrap().question.is_none());
+    assert!(!job.view_model(false, None, 0).input_sensitive);
 }

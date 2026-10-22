@@ -33,6 +33,14 @@ impl<'a> MetricCard<'a> {
         if area.is_empty() {
             return;
         }
+        crate::automation::control(
+            &format!("system-status.widget.{:?}", self.model.kind),
+            "button",
+            &self.model.kind.label(),
+            area,
+            self.state,
+            &["click", "drag"],
+        );
         let theme = &context.compatibility_theme();
         let surface = Surface::new()
             .titled(self.model.kind.label())

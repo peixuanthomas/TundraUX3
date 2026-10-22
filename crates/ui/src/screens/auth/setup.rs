@@ -916,6 +916,10 @@ fn render_setup_admin_field(
     }
 
     let mut input = TextInput::new(setup_admin_input_id(field))
+        .with_sensitive(matches!(
+            field,
+            SetupField::AdminPassword | SetupField::AdminPasswordConfirm
+        ))
         .with_placeholder(placeholder)
         .with_placeholder_when_focused(true)
         .with_cursor_symbol("_");

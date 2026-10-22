@@ -57,6 +57,7 @@ fn render_search_bar(
                     search.replacement.clone()
                 };
                 input.set_focused(focused);
+                input = input.with_capture_name(editor_search_label(*control));
                 input.render_borderless_frame_with_prefix(
                     frame,
                     *area,
@@ -542,6 +543,24 @@ fn render_canvas(
     if layout.canvas.is_empty() {
         return;
     }
+    crate::automation::control(
+        "editor.document",
+        "textbox",
+        &model.file_name,
+        layout.canvas,
+        crate::components::ComponentState {
+            focused: model.focus == EditorFocus::Canvas,
+            selected: model.selection.is_some()
+                || model.rich_selection.is_some()
+                || model.selection_offsets.is_some(),
+            ..Default::default()
+        },
+        if model.read_only {
+            &["click", "key", "scroll"]
+        } else {
+            &["click", "drag", "text", "key", "scroll"]
+        },
+    );
 
     for line_layout in &layout.line_areas {
         if layout.gutter.width >= 2 {

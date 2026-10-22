@@ -236,6 +236,7 @@ impl CommandPalette {
         if !self.open {
             return;
         }
+        let _scope = crate::automation::scope(self.id.as_str(), "dialog", "", area);
 
         Clear.render(area, buffer);
         self.block(theme).render(area, buffer);
@@ -253,6 +254,7 @@ impl CommandPalette {
         if !self.open {
             return;
         }
+        let _scope = crate::automation::scope(self.id.as_str(), "dialog", "", area);
 
         frame.render_widget(Clear, area);
         frame.render_widget(self.block(theme), area);

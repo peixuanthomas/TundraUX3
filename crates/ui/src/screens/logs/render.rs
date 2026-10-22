@@ -389,6 +389,15 @@ pub fn render_logs_content(
             bar.render(frame, context);
         }
     }
+}
+
+pub fn render_logs_overlay(
+    frame: &mut Frame<'_>,
+    main: Rect,
+    model: &LogsViewModel,
+    context: &RenderContext,
+) {
+    let layout = logs_layout(main, model);
     if let Some(selected) = model.more_selected {
         let theme = context.compatibility_theme();
         frame.render_widget(Clear, layout.menu);

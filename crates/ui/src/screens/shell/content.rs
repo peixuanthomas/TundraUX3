@@ -110,6 +110,7 @@ impl ScreenContent<'_> {
             Self::Settings(model) => {
                 render_settings_overlay(frame, &settings_layout(main, model), model, context)
             }
+            Self::Logs(model) => render_logs_overlay(frame, main, model, context),
             Self::Diagnostics(model) => render_diagnostics_overlay(frame, main, model, context),
             Self::SystemStatus(model) => render_system_status_overlay(frame, main, model, context),
             Self::Clock(model) => render_clock_overlay(frame, main, model, context),

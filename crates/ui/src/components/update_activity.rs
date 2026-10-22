@@ -117,6 +117,7 @@ impl<'a> UpdateActivity<'a> {
                 .bordered(false)
                 .with_viewport_start(start);
             table.selected = None;
+            table.interactive = false;
             table.render_frame(frame, area, context);
         }
     }

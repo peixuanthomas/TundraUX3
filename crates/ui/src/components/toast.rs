@@ -129,6 +129,7 @@ impl Toast {
         } else {
             area
         };
+        crate::automation::control("", "status", &self.message, area, Default::default(), &[]);
         let tokens = context.theme;
         let mut surface_context = context.clone();
         surface_context.theme.border = match self.tone {

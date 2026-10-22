@@ -321,6 +321,20 @@ fn render_explorer_table(
         // File selection persists in mouse mode and can contain several rows;
         // the keyboard cursor alone must not paint an unselected file as selected.
         table.selected = None;
+        table.capture_focused_row = layout.rows.iter().position(|row| {
+            model
+                .entry_presentation(row.index)
+                .is_some_and(|entry| entry.focused)
+        });
+        table.row_ids = layout
+            .rows
+            .iter()
+            .map(|row| {
+                model
+                    .entry_presentation(row.index)
+                    .map_or_else(|| format!("{}", row.index), |entry| entry.id.clone())
+            })
+            .collect();
         table.render_frame(
             frame,
             Rect::new(

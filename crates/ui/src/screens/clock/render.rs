@@ -273,6 +273,38 @@ fn render_clock_create_input(
     ];
     for (index, label) in labels.into_iter().enumerate() {
         let focused = model.focus == ClockCreateDialogFocus::Input && model.active_field == index;
+        for (part, role, area, actions) in [
+            (
+                "value",
+                "spinbutton",
+                layout.values[index],
+                &["click", "text", "key"][..],
+            ),
+            (
+                "increase",
+                "button",
+                layout.increments[index],
+                &["click"][..],
+            ),
+            (
+                "decrease",
+                "button",
+                layout.decrements[index],
+                &["click"][..],
+            ),
+        ] {
+            crate::automation::control(
+                &format!("clock.create.{index}.{part}"),
+                role,
+                &label,
+                area,
+                crate::components::ComponentState {
+                    focused: focused && part == "value",
+                    ..Default::default()
+                },
+                actions,
+            );
+        }
         let style = if focused {
             theme.title_style()
         } else {
