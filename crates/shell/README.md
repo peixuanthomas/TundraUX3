@@ -2,7 +2,7 @@
 
 `shell` 把应用状态、界面、终端输入和后台任务连接起来，提供 `tundra-shell`。它决定当前页面、返回路径、焦点和弹窗，最后合成完整的一帧。
 
-F1 或标题栏帮助按钮打开本页帮助，可用方向键、翻页、滚轮或拖动滚动条阅读，F1、Esc 或关闭按钮返回原焦点。已有弹窗、AA 和屏幕键盘优先处理输入；命令行中的 F1 继续交给子终端。
+页面底部操作栏沿用原有命令、授权和确认。F1 或标题栏帮助按钮打开本页帮助，可用方向键、翻页、滚轮或拖动滚动条阅读，F1、Esc 或关闭按钮返回原焦点。已有弹窗、AA 和屏幕键盘优先处理输入；命令行中的 F1 继续交给子终端。
 
 文件属性的“权限与归属”支持多选，并打开独立管理页，沿用 AA、页面任务和返回规则。权限与递归勾选项可用空格或 Enter 切换，文字字段的空格继续作为文本输入。修改表单退出前确认是否放弃，账户选择支持查找与屏幕键盘。
 
@@ -28,7 +28,7 @@ Linux 时钟直接跟随系统时间和时区，已有配置中的独立时区�
 | `src/previews/` | 样式、AA 和屏幕键盘演示 |
 | `src/input/` | Crossterm 事件批处理、终端事件转换和 Shell 输入类型 |
 
-`controller/` 按 account、auto_admin、clock、command_line、diagnostics、editor、explorer、launcher、logs、management、notifications、settings、system_status 分组。页面专用输入放回对应分组，通常使用 `input.rs`；公共路由、焦点和命中逻辑留在 `controller/input/`。
+`controller/` 按 account、auto_admin、clock、command_line、diagnostics、editor、explorer、help、launcher、logs、management、notifications、settings、system_status 分组。页面专用输入放回对应分组，通常使用 `input.rs`；公共路由、焦点和命中逻辑留在 `controller/input/`。
 
 输入入口统一为 `controller/input/preparation.rs::prepare_input`，运行时和无终端测试共用。`interaction.rs` 保存跨帧的输入方式、悬停抑制、按钮捕获和快捷键重复保护；`pointer.rs` 处理共享按钮的命中与松开确认；`input_routing.rs` 决定事件目标和语义命令。页面控制器只保留其业务操作、文本编辑和专用拖动语义。Crossterm 继续负责底层事件解析，Ratatui 继续作为唯一界面与渲染系统。
 

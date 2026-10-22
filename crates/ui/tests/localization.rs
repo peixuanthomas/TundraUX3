@@ -217,7 +217,11 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
                 ];
                 assert_eq!(layout.controls.len(), controls.len());
                 for (target, label) in controls {
-                    let control = layout.controls.iter().find(|control| control.target == target).unwrap();
+                    let control = layout
+                        .controls
+                        .iter()
+                        .find(|control| control.target == target)
+                        .unwrap();
                     assert_eq!(usize::from(control.area.width), label.width() + 2);
                     let expected = ui::logs_control_enabled(&model, target).then_some(target);
                     assert_eq!(

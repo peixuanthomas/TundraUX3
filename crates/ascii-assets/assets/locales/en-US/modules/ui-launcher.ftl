@@ -1,6 +1,5 @@
 # UI launcher messages.
 
-ui-launcher-no-launcher-items-go-to-explorer-select-a-file-then-right-click-and-choose-add-to-launcher = No Launcher items. Go to Explorer, select a file, then right-click and choose Add to Launcher.
 ui-launcher-remove = Remove
 ui-launcher-refresh = Refresh
 ui-launcher-view = View

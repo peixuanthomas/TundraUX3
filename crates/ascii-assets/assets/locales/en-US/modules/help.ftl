@@ -1,7 +1,7 @@
 ui-help-actions = Page actions
 ui-help-advanced = More keys
 ui-help-navigation = Navigation
-ui-help-close = Close
+ui-help-close = Esc Close
 ui-help-nav-back = Back
 ui-help-nav-help = Help
 ui-help-nav-tabs = Next area
@@ -55,7 +55,7 @@ ui-help-management-title = Management
 ui-help-management-action = Run primary action
 ui-help-management-focus = Switch area
 ui-help-management-details = Show details
-ui-help-management-pages = Page actions
+ui-help-management-pages = Switch page
 
 ui-help-system-status-title = System Status
 ui-help-system-status-edit = Edit dashboard
@@ -93,3 +93,19 @@ ui-help-editor-focus = Switch focus
 ui-help-command-line-title = Command Line
 ui-help-command-line-close = Close command line
 ui-help-command-line-keys = Keys go to the terminal
+
+ui-help-users-more = More account actions
+ui-help-users-enabled = Disable, enable or unlock user
+ui-help-users-role = Change user role
+ui-help-explorer-sort = Sort entries
+ui-help-explorer-options = File Explorer options
+ui-help-system-status-save = Save dashboard
+ui-help-system-status-add = Add card
+ui-help-system-status-size = Resize selected card
+ui-help-system-status-remove = Remove selected card
+ui-help-setup-title = First-use setup
+ui-help-bootstrap-title = Create administrator
+ui-help-back-button = Back button
+ui-help-clock-input = Select and adjust hours, minutes and seconds
+ui-help-editor-reload = Reload a read-only file
+ui-help-editor-settings = Adjust editor settings

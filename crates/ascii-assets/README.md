@@ -6,7 +6,7 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 
 编辑器 Vim 开关、当前模式和按需打开的快捷键帮助位于中英文 `modules/editor-vim.ftl`。
 
-软件包分栏页的主导航、高级区和键盘提示位于中英文 `modules/management-services-process-packages.ftl`；列表与展开详情分别提示菜单切换、列表选择和四向滚动。
+软件包分栏页的主导航和高级区文字位于中英文 `modules/management-services-process-packages.ftl`；键盘操作统一放在 F1 帮助。
 
 文件权限与归属的中英文提示集中在 `modules/file-permissions.ftl`，包括空格与 Enter 的勾选操作说明。
 
@@ -14,7 +14,7 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 
 `modules/settings.ftl` 和 `modules/ui-settings.ftl` 提供“区域与时间”直接修改 Linux 系统时区、自动校时和服务器的中英文提示，包含地图、刷新和服务器保存说明。
 
-这两份资源也保存“应用设置”的分类名称、应用列表标题、键盘提示及恢复当前应用默认值的文字。
+这两份资源也保存“应用设置”的分类名称、应用列表标题及恢复当前应用默认值的文字。
 
 默认资源表使用一份静态数据，校验、修复和内存回退共用其中的图片字节，避免在同一个可执行文件中重复嵌入 PNG。
 

@@ -1,6 +1,5 @@
 # UI launcher messages.
 
-ui-launcher-no-launcher-items-go-to-explorer-select-a-file-then-right-click-and-choose-add-to-launcher = 启动器中没有项目。请在文件管理器中选择文件，右键选择“添加到启动器”。
 ui-launcher-remove = 移除
 ui-launcher-refresh = 刷新
 ui-launcher-view = 视图

@@ -98,7 +98,7 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
             vec![
                 actions(vec![row("E A S M U", i18n::tr!("ui-help-home-entries"))]),
                 advanced(vec![
-                    row("Arrows", i18n::tr!("ui-help-home-move")),
+                    row("←→↑↓", i18n::tr!("ui-help-home-move")),
                     row("Ctrl+L", i18n::tr!("ui-help-home-logout")),
                 ]),
             ],
@@ -112,6 +112,8 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                     row("F2", i18n::tr!("ui-help-explorer-rename")),
                     row("Del", i18n::tr!("ui-help-explorer-delete")),
                     row("Shift+F10", i18n::tr!("ui-help-explorer-menu")),
+                    row("F6", i18n::tr!("ui-help-explorer-sort")),
+                    row("O", i18n::tr!("ui-help-explorer-options")),
                 ]),
                 advanced(vec![
                     row("C X V", i18n::tr!("ui-help-explorer-clipboard")),
@@ -131,7 +133,7 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 ]),
                 advanced(vec![
                     row("R/F5", i18n::tr!("ui-help-launcher-refresh")),
-                    row("Arrows", i18n::tr!("ui-help-launcher-move")),
+                    row("←→↑↓", i18n::tr!("ui-help-launcher-move")),
                 ]),
             ],
         ),
@@ -140,8 +142,8 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
             vec![
                 actions(vec![
                     row("Enter", i18n::tr!("ui-help-logs-open")),
-                    row("F", i18n::tr!("ui-help-logs-follow")),
-                    row("I", i18n::tr!("ui-help-logs-filter")),
+                    row("P", i18n::tr!("ui-help-logs-follow")),
+                    row("F", i18n::tr!("ui-help-logs-filter")),
                     row("M", i18n::tr!("ui-help-logs-more")),
                 ]),
                 advanced(vec![
@@ -153,9 +155,9 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
         PageHelpScreen::Settings => (
             i18n::tr!("ui-help-settings-title"),
             vec![
-                actions(vec![row("Enter Space", i18n::tr!("ui-help-settings-open"))]),
+                actions(vec![row("Enter / ␣", i18n::tr!("ui-help-settings-open"))]),
                 advanced(vec![
-                    row("Arrows", i18n::tr!("ui-help-settings-adjust")),
+                    row("←→↑↓", i18n::tr!("ui-help-settings-adjust")),
                     row("Tab", i18n::tr!("ui-help-settings-section")),
                 ]),
             ],
@@ -166,7 +168,10 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 actions(vec![
                     row("N", i18n::tr!("ui-help-users-new")),
                     row("E", i18n::tr!("ui-help-users-edit")),
-                    row("P", i18n::tr!("ui-help-users-password")),
+                    row("R", i18n::tr!("ui-help-users-password")),
+                    row("M", i18n::tr!("ui-help-users-more")),
+                    row("D / U", i18n::tr!("ui-help-users-enabled")),
+                    row("C", i18n::tr!("ui-help-users-role")),
                     row("Del", i18n::tr!("ui-help-users-delete")),
                 ]),
                 advanced(vec![
@@ -195,11 +200,16 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                     row("E", i18n::tr!("ui-help-system-status-edit")),
                     row("R/F5", i18n::tr!("ui-help-system-status-refresh")),
                     row("H", i18n::tr!("ui-help-system-status-diagnostics")),
-                ]),
-                advanced(vec![
-                    row("Arrows Enter", i18n::tr!("ui-help-system-status-move")),
+                    row("Ctrl+S", i18n::tr!("ui-help-system-status-save")),
+                    row("A", i18n::tr!("ui-help-system-status-add")),
+                    row("F4", i18n::tr!("ui-help-system-status-size")),
+                    row("Del", i18n::tr!("ui-help-system-status-remove")),
                     row("Esc", i18n::tr!("ui-help-system-status-cancel")),
                 ]),
+                advanced(vec![row(
+                    "Shift+←→↑↓ / Enter",
+                    i18n::tr!("ui-help-system-status-move"),
+                )]),
             ],
         ),
         PageHelpScreen::Diagnostics => (
@@ -226,21 +236,30 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 ]),
                 advanced(vec![
                     row("F3 F4", i18n::tr!("ui-help-clock-create")),
+                    row("←→ / Tab / ↑↓ / 0–9", i18n::tr!("ui-help-clock-input")),
                     row("Enter Esc", i18n::tr!("ui-help-clock-confirm")),
                 ]),
             ],
         ),
         PageHelpScreen::Setup | PageHelpScreen::Login | PageHelpScreen::BootstrapAdmin => (
-            i18n::tr!("ui-help-auth-title"),
+            i18n::tr!(match screen {
+                PageHelpScreen::Setup => "ui-help-setup-title",
+                PageHelpScreen::BootstrapAdmin => "ui-help-bootstrap-title",
+                _ => "ui-help-auth-title",
+            }),
             vec![
                 actions(vec![
-                    row("F10", i18n::tr!("ui-help-auth-submit")),
+                    row("Enter", i18n::tr!("ui-help-auth-submit")),
                     row("Esc", i18n::tr!("ui-help-auth-back")),
                 ]),
-                advanced(vec![
-                    row("Tab Arrows", i18n::tr!("ui-help-auth-focus")),
-                    row("F2", i18n::tr!("ui-help-auth-password")),
-                ]),
+                advanced(if screen == PageHelpScreen::Login {
+                    vec![
+                        row("Tab / ←→↑↓", i18n::tr!("ui-help-auth-focus")),
+                        row("F2", i18n::tr!("ui-help-auth-password")),
+                    ]
+                } else {
+                    vec![row("Tab / ←→↑↓", i18n::tr!("ui-help-auth-focus"))]
+                }),
             ],
         ),
         PageHelpScreen::Editor => (
@@ -249,17 +268,22 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 actions(vec![
                     row("Ctrl+S", i18n::tr!("ui-help-editor-save")),
                     row("Ctrl+F", i18n::tr!("ui-help-editor-find")),
+                    row("R", i18n::tr!("ui-help-editor-reload")),
                 ]),
                 advanced(vec![
                     row("F8", i18n::tr!("ui-help-editor-vim")),
                     row("F6", i18n::tr!("ui-help-editor-focus")),
+                    row("Tab / ←→ / Enter", i18n::tr!("ui-help-editor-settings")),
                 ]),
             ],
         ),
         PageHelpScreen::CommandLine => (
             i18n::tr!("ui-help-command-line-title"),
             vec![
-                actions(vec![row("Esc", i18n::tr!("ui-help-command-line-close"))]),
+                actions(vec![row(
+                    &i18n::tr!("ui-help-back-button"),
+                    i18n::tr!("ui-help-command-line-close"),
+                )]),
                 advanced(vec![row("F1", i18n::tr!("ui-help-command-line-keys"))]),
             ],
         ),

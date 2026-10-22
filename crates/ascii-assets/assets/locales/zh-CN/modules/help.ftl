@@ -1,7 +1,7 @@
 ui-help-actions = 本页操作
 ui-help-advanced = 进阶按键
 ui-help-navigation = 全局导航
-ui-help-close = 关闭
+ui-help-close = Esc 关闭
 ui-help-nav-back = 返回
 ui-help-nav-help = 帮助
 ui-help-nav-tabs = 下一个区域
@@ -55,7 +55,7 @@ ui-help-management-title = 管理
 ui-help-management-action = 执行主操作
 ui-help-management-focus = 切换区域
 ui-help-management-details = 查看详情
-ui-help-management-pages = 翻页操作
+ui-help-management-pages = 切换页面
 
 ui-help-system-status-title = 系统状态
 ui-help-system-status-edit = 编辑仪表板
@@ -93,3 +93,19 @@ ui-help-editor-focus = 切换焦点
 ui-help-command-line-title = 命令行
 ui-help-command-line-close = 关闭命令行
 ui-help-command-line-keys = 按键交给终端
+
+ui-help-users-more = 更多账户操作
+ui-help-users-enabled = 禁用、启用或解锁用户
+ui-help-users-role = 切换用户角色
+ui-help-explorer-sort = 排序文件列表
+ui-help-explorer-options = 文件浏览器选项
+ui-help-system-status-save = 保存仪表盘
+ui-help-system-status-add = 添加卡片
+ui-help-system-status-size = 调整所选卡片大小
+ui-help-system-status-remove = 移除所选卡片
+ui-help-setup-title = 首次设置
+ui-help-bootstrap-title = 创建管理员
+ui-help-back-button = 返回按钮
+ui-help-clock-input = 选择并调整时、分、秒
+ui-help-editor-reload = 重新加载只读文件
+ui-help-editor-settings = 调整编辑器设置
