@@ -26,7 +26,7 @@ fn wide_user_page_keeps_account_details_above_visible_action_buttons() {
     assert!(layout.details.x >= layout.rows_area.right());
     assert!(layout.details.bottom() <= layout.actions_panel.y);
     assert!(layout.scrollbar.is_some());
-    assert_eq!(layout.actions.len(), model.actions.len());
+    assert_eq!(layout.actions.len(), model.page_actions().len());
     for action in &layout.actions {
         assert!(!action.area.is_empty());
         assert_eq!(action.area.intersection(layout.actions_area), action.area);
@@ -84,7 +84,7 @@ fn layout_switches_columns_at_72_cells_and_keeps_one_row_at_minimum_height() {
         .iter()
         .find(|action| action.action == UserManagementAction::NewUser)
         .expect("new user action");
-    assert_eq!(detailed.actions[0].action, UserManagementAction::NewUser);
+    assert_eq!(detailed.actions[0].action, UserManagementAction::EditInfo);
     assert_eq!(new_user.area.y, detailed.actions_area.y);
     assert_ne!(new_user.area.y, detailed.summary.y);
     assert_eq!(detailed.summary.width, 70);
@@ -104,10 +104,10 @@ fn manual_user_window_can_move_away_from_the_selected_account() {
 
     let layout = user_management_layout(Rect::new(4, 7, 80, 10), &model);
 
-    assert_eq!(layout.visible_capacity, 3);
+    assert_eq!(layout.visible_capacity, 5);
     assert_eq!(layout.visible_start, 0);
     assert_eq!(layout.rows.first().map(|row| row.index), Some(0));
-    assert_eq!(layout.rows.last().map(|row| row.index), Some(2));
+    assert_eq!(layout.rows.last().map(|row| row.index), Some(4));
     assert!(layout.scrollbar.is_some());
 }
 
@@ -223,7 +223,7 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
     assert!(output.contains("Password: ************"));
     assert!(output.contains("[ Ctrl+Enter Create ]"));
     assert!(output.contains("[ Esc Cancel ]"));
-    assert!(output.contains("Ctrl+Enter: Create"));
+    assert!(!output.contains("Ctrl+Enter: Create"));
     assert!(region_has_fg(
         &terminal,
         form.submit,
@@ -412,4 +412,47 @@ fn region_has_fg(terminal: &Terminal<TestBackend>, area: Rect, fg: Color) -> boo
             cell.fg == fg && !cell.symbol().trim().is_empty()
         })
     })
+}
+
+#[test]
+fn page_actions_and_more_menu_share_visible_targets() {
+    let mut model = model_with_users(3);
+    let bounds = Rect::new(0, 0, 120, 36);
+    let layout = user_management_layout(bounds, &model);
+    assert_eq!(layout.action_bar.actions.len(), 5);
+    assert!(
+        layout
+            .action_bar
+            .actions
+            .iter()
+            .any(|action| action.id.as_str() == "action.Delete"
+                && action.emphasis == ui::components::ButtonEmphasis::Danger)
+    );
+    assert!(
+        !layout
+            .actions
+            .iter()
+            .any(|action| action.action == UserManagementAction::ToggleRole)
+    );
+    model.more_open = true;
+    model.focus = UserManagementFocus::Action(UserManagementAction::ToggleRole);
+    let layout = user_management_layout(bounds, &model);
+    assert!(layout.more_menu.is_some());
+    assert!(
+        layout
+            .actions
+            .iter()
+            .any(|action| action.action == UserManagementAction::ToggleRole)
+    );
+    assert!(
+        layout
+            .row_index_at(layout.rows[0].area.x, layout.rows[0].area.y)
+            .is_none()
+    );
+    for action in &layout.actions {
+        assert_eq!(
+            layout.action_at(action.area.x, action.area.y),
+            Some(action.action)
+        );
+    }
 }

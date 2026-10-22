@@ -1676,6 +1676,7 @@ impl ShellSession {
             UserManagementPageFocus::Action(action) => ui::UserManagementFocus::Action(action),
         };
         model.actions = self.user_management_action_view_models();
+        model.more_open = self.pages.user_management.user_management_more_open;
         model.feedback_tone = match self.pages.user_management.user_management_feedback_tone {
             UserManagementFeedbackTone::Info => ui::UserManagementFeedbackTone::Info,
             UserManagementFeedbackTone::Success => ui::UserManagementFeedbackTone::Success,

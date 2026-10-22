@@ -364,9 +364,14 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn user_management_focus_order(&self) -> Vec<UserManagementPageFocus> {
-        let mut order = vec![UserManagementPageFocus::UserList];
+        let mut order = if self.pages.user_management.user_management_more_open {
+            Vec::new()
+        } else {
+            vec![UserManagementPageFocus::UserList]
+        };
         order.extend(
-            self.user_management_action_view_models()
+            self.to_user_management_view_model()
+                .visible_actions()
                 .into_iter()
                 .filter(|action| action.enabled)
                 .map(|action| UserManagementPageFocus::Action(action.action)),
@@ -397,6 +402,9 @@ impl ShellSession {
         &self,
         action: ui::UserManagementAction,
     ) -> bool {
+        if action == ui::UserManagementAction::More {
+            return self.can_manage_all_users();
+        }
         self.user_management_action_view_models()
             .iter()
             .find(|model| model.action == action)
@@ -418,6 +426,10 @@ impl ShellSession {
     ) {
         use ui::UserManagementAction;
 
+        if action == UserManagementAction::More {
+            self.toggle_user_management_more();
+            return;
+        }
         let action_model = self
             .user_management_action_view_models()
             .into_iter()
@@ -435,7 +447,11 @@ impl ShellSession {
             return;
         }
 
+        if self.pages.user_management.user_management_more_open {
+            self.toggle_user_management_more();
+        }
         match action {
+            UserManagementAction::More => {}
             UserManagementAction::NewUser => self.begin_create_managed_user(),
             UserManagementAction::EditInfo => self.begin_edit_selected_user_info(),
             UserManagementAction::SetPassword => self.begin_set_selected_password(),

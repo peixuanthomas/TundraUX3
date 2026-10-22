@@ -101,7 +101,13 @@ impl ShellSession {
         if self.management_overlay_contains(point) {
             return self.management_button_at(point);
         }
-        self.management_button_at(point)
+        if self.pages.user_management.user_management_more_open
+            && self.active_screen() == ShellScreen::UserManagement
+        {
+            return self.user_management_button_at(point);
+        }
+        self.user_management_button_at(point)
+            .or_else(|| self.management_button_at(point))
             .or_else(|| self.logs_button_at(point))
             .or_else(|| self.table_sort_button_at(point))
             .or_else(|| {

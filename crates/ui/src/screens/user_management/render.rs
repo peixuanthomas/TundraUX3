@@ -91,14 +91,7 @@ pub fn render_user_management_content(
         .render_frame(frame, track, context);
     }
     render_user_management_feedback(frame, &layout, model, theme);
-    render_user_management_actions(frame, &layout, model, theme);
-    render_clock_line(
-        frame,
-        layout.help,
-        i18n::tr!("ui-user-management-touch-help"),
-        theme.muted_style(),
-        HorizontalAlignment::Left,
-    );
+    super::layout::user_management_action_bar(model).render(frame, layout.action_bar.area, context);
 }
 
 fn render_user_management_table(
@@ -208,41 +201,6 @@ fn render_user_management_feedback(
     );
 }
 
-fn render_user_management_actions(
-    frame: &mut Frame<'_>,
-    layout: &UserManagementLayout,
-    model: &UserManagementViewModel,
-    theme: &TundraTheme,
-) {
-    for action_layout in &layout.actions {
-        let Some(action) = model
-            .actions
-            .iter()
-            .find(|action| action.action == action_layout.action)
-        else {
-            continue;
-        };
-        let focused = model.focus == UserManagementFocus::Action(action.action);
-        let label = action.shortcut.map_or_else(
-            || action.label.clone(),
-            |key| format!("{} {}", key.to_ascii_uppercase(), action.label),
-        );
-        let mut button = Button::new(
-            format!("user-management.action.{:?}", action.action),
-            fit_cell(&label, usize::from(action_layout.area.width)),
-        );
-        button.set_disabled(!action.enabled);
-        button.set_focused(focused);
-        button.state.selected = focused;
-
-        let mut button_theme = theme.clone();
-        if action.dangerous && action.enabled && !focused {
-            button_theme.foreground = theme.error;
-        }
-        button.render_inline_frame(frame, action_layout.area, &button_theme);
-    }
-}
-
 fn render_user_management_form(
     frame: &mut Frame<'_>,
     layout: &UserManagementFormLayout,
@@ -266,18 +224,6 @@ fn render_user_management_form(
         )
         .render_frame(frame, track, context);
     }
-
-    let prompt = i18n::tr!(
-        "ui-user-management-form-shortcuts",
-        action = form.submit_label()
-    );
-    render_clock_line(
-        frame,
-        layout.prompt,
-        prompt,
-        theme.body_style(),
-        HorizontalAlignment::Left,
-    );
 
     for field in &layout.fields {
         let input = match field.field {
@@ -524,6 +470,37 @@ pub fn render_user_management_overlay(
     model: &UserManagementViewModel,
     context: &RenderContext,
 ) {
+    let layout = user_management_layout(main, model);
+    if let Some(menu) = layout.more_menu {
+        frame.render_widget(Clear, menu);
+        Surface::new()
+            .bordered(true)
+            .raised(true)
+            .titled(i18n::tr!("ui-user-management-more"))
+            .render_frame(frame, menu, context);
+        let theme = context.compatibility_theme();
+        for action_layout in &layout.actions {
+            let action = model
+                .visible_actions()
+                .into_iter()
+                .find(|action| action.action == action_layout.action)
+                .unwrap();
+            let mut button = Button::new(
+                format!("user-management.action.{:?}", action.action),
+                super::layout::user_management_action_label(&action),
+            )
+            .with_focus_fill(Some(context.theme.accent_soft))
+            .with_emphasis(if action.dangerous {
+                crate::components::ButtonEmphasis::Danger
+            } else {
+                crate::components::ButtonEmphasis::Normal
+            });
+            button.set_disabled(!action.enabled);
+            button.state.selected = model.focus == UserManagementFocus::Action(action.action);
+            button.render_borderless_frame(frame, action_layout.area, &theme);
+        }
+        return;
+    }
     let theme = &context.compatibility_theme();
     let layout = user_management_layout(main, model);
     if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {

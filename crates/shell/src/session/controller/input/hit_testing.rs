@@ -466,9 +466,10 @@ pub(in crate::session) fn build_shell_hit_map(
                     .or(layout.time_sync_server_editor)
             }),
             ShellScreen::UserManagement => user_management_model.and_then(|model| {
-                ui::user_management_layout(main, model)
-                    .form
-                    .map(|form| form.dialog)
+                let layout = ui::user_management_layout(main, model);
+                layout
+                    .more_menu
+                    .or_else(|| layout.form.map(|form| form.dialog))
             }),
             _ => None,
         };

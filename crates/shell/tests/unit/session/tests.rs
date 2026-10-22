@@ -7105,3 +7105,42 @@ fn launcher_sort_preserves_builtin_identity_and_keyboard_order() {
     );
     assert!(state.pages.common.table_sorts["launcher"].descending);
 }
+
+#[test]
+fn user_management_more_keeps_focus_and_blocks_covered_rows() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::Admin);
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::UserManagement]);
+    state.refresh_hit_map();
+    state.apply_input(InputEvent::key(InputKey::Char('m')));
+    assert!(state.pages.user_management.user_management_more_open);
+    assert!(state.resolved_overlay_owner() == Some(ShellComponent::UserManagement));
+    state.apply_input(InputEvent::key(InputKey::F(1)));
+    assert!(!state.help_open);
+    state.apply_input(InputEvent::key(InputKey::Escape));
+    assert!(!state.pages.user_management.user_management_more_open);
+    assert_eq!(
+        state.pages.user_management.user_management_focus,
+        UserManagementPageFocus::Action(ui::UserManagementAction::More)
+    );
+    assert_eq!(state.active_screen(), ShellScreen::UserManagement);
+    let layout = state.user_management_layout().unwrap();
+    let area = layout
+        .actions
+        .iter()
+        .find(|action| action.action == ui::UserManagementAction::More)
+        .unwrap()
+        .area;
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (area.x, area.y),
+    ));
+    assert!(!state.pages.user_management.user_management_more_open);
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)));
+    assert!(state.pages.user_management.user_management_more_open);
+}

@@ -295,6 +295,49 @@ impl ShellSession {
         if key.phase == InputPhase::Release {
             return (target, ShellCommand::Noop);
         }
+        if self.pages.user_management.user_management_more_open {
+            if key.has_non_shift_modifier()
+                || (key.phase != InputPhase::Press
+                    && matches!(
+                        key.key,
+                        InputKey::Escape | InputKey::Enter | InputKey::Char(_)
+                    ))
+            {
+                return (target, ShellCommand::CaptureOverlayInput);
+            }
+            let command = match key.key {
+                InputKey::Escape => {
+                    ShellCommand::UserManagementActivateAction(ui::UserManagementAction::More)
+                }
+                InputKey::Up | InputKey::Left | InputKey::BackTab => {
+                    ShellCommand::UserManagementFocusPrevious
+                }
+                InputKey::Tab if key.modifiers.shift => ShellCommand::UserManagementFocusPrevious,
+                InputKey::Down | InputKey::Right | InputKey::Tab => {
+                    ShellCommand::UserManagementFocusNext
+                }
+                InputKey::Enter | InputKey::Char(' ') if key.phase == InputPhase::Press => {
+                    ShellCommand::UserManagementActivateFocused
+                }
+                InputKey::Char(key)
+                    if !self
+                        .to_user_management_view_model()
+                        .visible_actions()
+                        .iter()
+                        .any(|action| {
+                            action
+                                .shortcut
+                                .is_some_and(|shortcut| shortcut.eq_ignore_ascii_case(&key))
+                        }) =>
+                {
+                    ShellCommand::CaptureOverlayInput
+                }
+                InputKey::Char(_) => return self.route_user_management_shortcut(key),
+                _ => ShellCommand::CaptureOverlayInput,
+            };
+            return (target, command);
+        }
+
         if key.has_non_shift_modifier() {
             return (
                 target,
@@ -385,6 +428,11 @@ impl ShellSession {
             };
         }
 
+        self.route_user_management_shortcut(key)
+    }
+
+    fn route_user_management_shortcut(&self, key: &KeyInput) -> (RoutedTarget, ShellCommand) {
+        let target = RoutedTarget::Component(ShellComponent::UserManagement);
         use ui::UserManagementAction;
         match &key.key {
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseUserManagement),
@@ -402,6 +450,10 @@ impl ShellSession {
             InputKey::Enter | InputKey::Char(' ') => {
                 (target, ShellCommand::UserManagementActivateFocused)
             }
+            InputKey::Char('m' | 'M') if self.can_manage_all_users() => (
+                target,
+                ShellCommand::UserManagementActivateAction(UserManagementAction::More),
+            ),
             InputKey::Char('n') | InputKey::Char('N') if self.can_manage_all_users() => (
                 target,
                 ShellCommand::UserManagementActivateAction(UserManagementAction::NewUser),
@@ -471,6 +523,21 @@ impl ShellSession {
         let Some(layout) = self.user_management_layout() else {
             return (target, ShellCommand::CaptureOverlayInput);
         };
+        if self.pages.user_management.user_management_more_open {
+            return (
+                target,
+                match mouse.kind {
+                    ui::MouseEventKind::Down(PointerButton::Left) => {
+                        ShellCommand::UserManagementActivateAction(
+                            layout
+                                .action_at(coordinates.0, coordinates.1)
+                                .unwrap_or(ui::UserManagementAction::More),
+                        )
+                    }
+                    _ => ShellCommand::CaptureOverlayInput,
+                },
+            );
+        }
         if self.pages.user_management.user_management_mode != UserManagementMode::Browse {
             return match mouse.kind {
                 ui::MouseEventKind::Moved => (target, ShellCommand::Hover(hit_target)),

@@ -78,6 +78,7 @@ pub enum UserManagementAction {
     ToggleEnabled,
     ToggleRole,
     Delete,
+    More,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -154,6 +155,7 @@ pub struct UserManagementViewModel {
     pub focus: UserManagementFocus,
     pub actions: Vec<UserManagementActionViewModel>,
     pub form: Option<UserManagementFormViewModel>,
+    pub more_open: bool,
 }
 
 impl UserManagementViewModel {
@@ -177,9 +179,62 @@ impl UserManagementViewModel {
             focus: UserManagementFocus::UserList,
             actions: Vec::new(),
             form,
+            more_open: false,
         };
         model.actions = model.default_actions();
         model
+    }
+
+    pub fn page_actions(&self) -> Vec<UserManagementActionViewModel> {
+        let mut actions = self
+            .actions
+            .iter()
+            .filter(|action| {
+                !matches!(
+                    action.action,
+                    UserManagementAction::ToggleEnabled | UserManagementAction::ToggleRole
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if actions.len() < self.actions.len() {
+            actions.push(
+                UserManagementActionViewModel::new(
+                    UserManagementAction::More,
+                    i18n::tr!("ui-user-management-more"),
+                )
+                .with_shortcut('M'),
+            );
+        }
+        let primary = if self.selected_user().is_some() {
+            UserManagementAction::EditInfo
+        } else {
+            UserManagementAction::NewUser
+        };
+        actions.sort_by_key(|action| action.action != primary);
+        actions
+    }
+
+    pub fn visible_actions(&self) -> Vec<UserManagementActionViewModel> {
+        if !self.more_open {
+            return self.page_actions();
+        }
+        let mut actions = self
+            .actions
+            .iter()
+            .filter(|action| {
+                matches!(
+                    action.action,
+                    UserManagementAction::ToggleEnabled | UserManagementAction::ToggleRole
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        actions.push(UserManagementActionViewModel::new(
+            UserManagementAction::More,
+            i18n::tr!("ui-user-management-more-close"),
+        ));
+        actions
     }
 
     pub fn selected_user(&self) -> Option<&UserManagementUserViewModel> {
