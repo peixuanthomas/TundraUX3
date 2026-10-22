@@ -1068,8 +1068,12 @@ fn automatic_time_sync_failure_keeps_navigation_available_and_explains_fallback(
 }
 
 #[test]
-fn successful_time_sync_clears_failure_dialog_and_updates_anchor() {
-    let mut state = ShellSession::new(debug_config(), (120, 40));
+fn successful_time_sync_clears_failure_dialog_and_updates_demo_anchor() {
+    let startup = ShellStartupState::clean(
+        PlatformKind::Windows,
+        PlatformCapabilities::native_supported(),
+    );
+    let mut state = ShellSession::new_with_startup(debug_config(), (120, 40), startup);
     let utc = Utc
         .with_ymd_and_hms(2026, 7, 9, 15, 30, 0)
         .single()

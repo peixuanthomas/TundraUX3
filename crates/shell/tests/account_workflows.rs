@@ -2425,7 +2425,7 @@ impl Drop for FixtureRoot {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn linux_attaches_current_user_after_language_timezone_and_appearance_setup() {
+fn linux_attaches_current_user_after_language_and_appearance_setup() {
     let fixture = FixtureRoot::new("linux-empty-users");
     let platform = mock_platform(fixture.path());
     let mut startup = prepare_shell_startup(&platform).unwrap();
@@ -2435,8 +2435,6 @@ fn linux_attaches_current_user_after_language_timezone_and_appearance_setup() {
     let current = platform::linux::identity::LinuxUserContext::current().unwrap();
     assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
     assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Language);
-    state.apply_input(InputEvent::from_key_label("Enter"));
-    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Timezone);
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
     for _ in 0..5 {
