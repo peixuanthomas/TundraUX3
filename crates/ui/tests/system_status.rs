@@ -34,9 +34,11 @@ fn narrow_dashboard_buttons_and_discard_dialog_keep_shortcuts_visible() {
         );
         assert!(text.contains(']'), "button label was clipped: {text}");
     }
-    assert!(layout.add_button.right() <= layout.size_button.x);
-    assert!(layout.size_button.right() <= layout.remove_button.x);
-    assert!(layout.remove_button.right() <= layout.save_button.x);
+    for (index, action) in layout.action_bar.actions.iter().enumerate() {
+        for other in layout.action_bar.actions.iter().skip(index + 1) {
+            assert!(action.area.intersection(other.area).is_empty());
+        }
+    }
     m.dashboard.dialog = Some(SystemStatusDialogViewModel {
         title: "Discard changes?".into(),
         message: "Unsaved changes will be lost.".into(),
@@ -56,7 +58,7 @@ fn narrow_dashboard_buttons_and_discard_dialog_keep_shortcuts_visible() {
         .collect::<String>();
     assert!(text.contains("Y Discard"));
     assert!(text.contains("Esc Continue editing"));
-    assert!(text.contains("Enter Selected"));
+    assert!(!text.contains("Enter Selected"));
 }
 
 #[test]
@@ -367,7 +369,7 @@ fn editing_footer_uses_reclaimed_width_for_operations_and_keeps_dialog_cancel() 
             assert!(regions.iter().any(|region| region.id.as_str() == id));
         }
         assert!(
-            !regions
+            regions
                 .iter()
                 .any(|region| region.id.as_str() == "system-status.cancel")
         );
@@ -767,4 +769,31 @@ fn overview_summary_labels_unavailable_system_and_os_values() {
     let output = render(120, 40, &m);
     assert!(output.contains("System: Unavailable"), "{output}");
     assert!(output.contains("OS: Unavailable"), "{output}");
+}
+
+#[test]
+fn dashboard_exposes_diagnostics_and_cancel_with_matching_hits() {
+    let mut model = model();
+    let layout = system_status_layout(Rect::new(0, 0, 100, 30), &model);
+    assert_eq!(
+        system_status_hit_test(
+            &layout,
+            (layout.diagnostics_button.x, layout.diagnostics_button.y)
+        ),
+        Some(SystemStatusHitTarget::OpenDiagnostics)
+    );
+    assert_eq!(layout.edit_button.right(), layout.footer.right());
+    model.dashboard.editing = true;
+    let layout = system_status_layout(Rect::new(0, 0, 50, 24), &model);
+    assert_eq!(
+        system_status_hit_test(&layout, (layout.cancel_button.x, layout.cancel_button.y)),
+        Some(SystemStatusHitTarget::CancelEdit)
+    );
+    assert!(
+        layout
+            .action_bar
+            .actions
+            .iter()
+            .any(|action| action.emphasis == ui::components::ButtonEmphasis::Danger)
+    );
 }

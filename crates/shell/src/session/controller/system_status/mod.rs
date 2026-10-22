@@ -998,6 +998,7 @@ impl ShellSession {
                     ui::SystemStatusDashboardFocus::Remove,
                 ),
                 (actions.save_disabled, ui::SystemStatusDashboardFocus::Save),
+                (false, ui::SystemStatusDashboardFocus::Cancel),
             ] {
                 if !disabled {
                     order.push(focus);
@@ -1010,6 +1011,7 @@ impl ShellSession {
             if !actions.refresh_disabled {
                 order.push(ui::SystemStatusDashboardFocus::Refresh);
             }
+            order.push(ui::SystemStatusDashboardFocus::Diagnostics);
         }
         order
     }
@@ -1092,6 +1094,10 @@ impl ShellSession {
             (true, Focus::Size) => self.open_system_status_size_picker(),
             (true, Focus::Remove) => self.remove_selected_system_status_widget(),
             (true, Focus::Save) => self.save_system_status_dashboard(),
+            (true, Focus::Cancel) => self.request_cancel_system_status_dashboard_edit(),
+            (false, Focus::Diagnostics) => {
+                self.open_system_status_detail(storage::SystemStatusWidgetKind::Diagnostics)
+            }
             _ => {}
         }
     }

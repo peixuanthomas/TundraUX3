@@ -1531,6 +1531,10 @@ impl ShellSession {
                 self.select_system_status_widget_direction(column, row);
                 ShellAction::Redraw
             }
+            ShellCommand::SystemStatusDiagnostics => {
+                self.open_system_status_detail(storage::SystemStatusWidgetKind::Diagnostics);
+                ShellAction::Redraw
+            }
             ShellCommand::SystemStatusBeginEdit => {
                 self.begin_system_status_dashboard_edit();
                 ShellAction::Redraw

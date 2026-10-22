@@ -46,6 +46,8 @@ pub enum SystemStatusHitTarget {
     Size,
     Remove,
     Save,
+    CancelEdit,
+    OpenDiagnostics,
     DialogConfirm,
     DialogCancel,
     Scrollbar,
@@ -57,6 +59,9 @@ pub struct SystemStatusLayout {
     pub content_panel: Rect,
     pub canvas: Rect,
     pub footer: Rect,
+    pub action_bar: crate::components::PageActionBarLayout,
+    pub cancel_button: Rect,
+    pub diagnostics_button: Rect,
     pub profile: SystemStatusDashboardProfile,
     pub column_count: u16,
     pub widgets: Vec<SystemStatusWidgetLayout>,
@@ -86,14 +91,6 @@ pub struct SystemStatusLayout {
     pub diagnostics_content: Option<DiagnosticsContentLayout>,
     pub diagnostics_repair_dialog: Option<DiagnosticsRepairDialogLayout>,
 }
-fn button_from_right(footer: Rect, right: &mut u16, width: u16) -> Rect {
-    let w = width.min(*right - footer.x);
-    *right = right.saturating_sub(w);
-    let r = Rect::new(*right, footer.y, w, footer.height);
-    *right = right.saturating_sub(u16::from(*right > footer.x));
-    r
-}
-
 pub(super) fn system_status_picker_area(
     panel: Rect,
     width: u16,
@@ -129,7 +126,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             diagnostics.tab = detail.diagnostics_tab().unwrap();
             crate::diagnostics_toolbar_height(inner.width, &diagnostics)
         }
-        _ => 1,
+        _ => system_status_action_bar(model).height(inner.width),
     }
     .min(inner.height.saturating_sub(2));
     let footer = Rect::new(
@@ -158,53 +155,23 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         SystemStatusDashboardProfile::Narrow
     };
     let column_count: u16 = if wide { 8 } else { 4 };
-    let mut right = footer.right();
-    let mut refresh_button = button_from_right(
-        footer,
-        &mut right,
-        localized_button_width(
-            &(if model.refreshing {
-                i18n::tr!("ui-system-status-refreshing")
-            } else {
-                i18n::tr!("ui-system-status-refresh")
-            }),
-        ),
-    );
-    let mut edit_button = button_from_right(
-        footer,
-        &mut right,
-        localized_button_width(&(i18n::tr!("ui-system-status-edit"))),
-    );
-    right = footer.right();
-    let mut save_button = button_from_right(
-        footer,
-        &mut right,
-        localized_button_width(&(i18n::tr!("ui-system-status-save"))),
-    );
-    let mut remove_button = button_from_right(
-        footer,
-        &mut right,
-        localized_button_width(&(i18n::tr!("ui-system-status-remove"))),
-    );
-    let mut size_button = button_from_right(
-        footer,
-        &mut right,
-        localized_button_width(&(i18n::tr!("ui-system-status-size"))),
-    );
-    let mut add_button = button_from_right(
-        footer,
-        &mut right,
-        localized_button_width(&(i18n::tr!("ui-system-status-add"))),
-    );
-    if model.dashboard.editing {
-        refresh_button = Rect::default();
-        edit_button = Rect::default();
-    } else {
-        add_button = Rect::default();
-        size_button = Rect::default();
-        remove_button = Rect::default();
-        save_button = Rect::default();
-    }
+    let action_bar = system_status_action_bar(model).layout(footer);
+    let action_rect = |id: &str| {
+        action_bar
+            .actions
+            .iter()
+            .find(|action| action.id.as_str() == id)
+            .map(|action| action.area)
+            .unwrap_or_default()
+    };
+    let refresh_button = action_rect("refresh");
+    let mut edit_button = action_rect("edit");
+    let save_button = action_rect("save");
+    let remove_button = action_rect("remove");
+    let size_button = action_rect("size");
+    let add_button = action_rect("add");
+    let cancel_button = action_rect("cancel");
+    let diagnostics_button = action_rect("diagnostics");
     let empty_canvas = canvas.height < 5;
     let visible_rows =
         canvas.height.saturating_add(LOGICAL_ROW_GAP) / (LOGICAL_ROW_HEIGHT + LOGICAL_ROW_GAP);
@@ -476,7 +443,7 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
             let dialog = Dialog::new(
                 "system-status.dialog",
                 &dialog_model.title,
-                dialog_model.message_with_shortcuts(),
+                dialog_model.message.clone(),
                 vec![
                     DialogAction::new("confirm", dialog_model.confirm_button_label()),
                     DialogAction::new("cancel", dialog_model.cancel_button_label()),
@@ -527,6 +494,9 @@ pub fn system_status_layout(main: Rect, model: &SystemStatusViewModel) -> System
         content_panel,
         canvas,
         footer,
+        action_bar,
+        cancel_button,
+        diagnostics_button,
         profile,
         column_count,
         widgets,
@@ -605,6 +575,8 @@ pub fn system_status_hit_test(
         (l.size_button, SystemStatusHitTarget::Size),
         (l.remove_button, SystemStatusHitTarget::Remove),
         (l.save_button, SystemStatusHitTarget::Save),
+        (l.cancel_button, SystemStatusHitTarget::CancelEdit),
+        (l.diagnostics_button, SystemStatusHitTarget::OpenDiagnostics),
     ] {
         if rect_contains(a, x, y) {
             return Some(t);
@@ -634,8 +606,76 @@ pub fn system_status_hit_test(
         .map(|r| SystemStatusHitTarget::Row(r.index))
 }
 
-fn localized_button_width(label: &str) -> u16 {
-    usize_to_u16(
-        crate::components::Button::new("system-status.action", label).rendered_label_width(),
+pub(super) fn system_status_action_bar(
+    model: &SystemStatusViewModel,
+) -> crate::components::PageActionBar {
+    use crate::components::{ComponentTone, PageAction, PageActionBar, PageActionStatus};
+    let state = model.dashboard.actions;
+    let refresh = PageAction::new(
+        "refresh",
+        if model.refreshing {
+            i18n::tr!("ui-system-status-refreshing")
+        } else {
+            i18n::tr!("ui-system-status-refresh")
+        },
     )
+    .disabled(state.refresh_disabled || model.refreshing);
+    let actions = if model.route != SystemStatusRoute::Dashboard {
+        vec![refresh]
+    } else if model.dashboard.editing {
+        vec![
+            PageAction::new("save", i18n::tr!("ui-system-status-save"))
+                .primary()
+                .disabled(state.save_disabled),
+            PageAction::new("add", i18n::tr!("ui-system-status-add")).disabled(state.add_disabled),
+            PageAction::new("size", i18n::tr!("ui-system-status-size"))
+                .disabled(state.size_disabled),
+            PageAction::new("remove", i18n::tr!("ui-system-status-remove"))
+                .danger()
+                .disabled(state.remove_disabled),
+            PageAction::new(
+                "cancel",
+                i18n::tr!(
+                    "ui-system-status-cancel-shortcut",
+                    label = i18n::tr!("ui-system-status-cancel")
+                ),
+            ),
+        ]
+    } else {
+        vec![
+            PageAction::new("edit", i18n::tr!("ui-system-status-edit"))
+                .primary()
+                .disabled(state.edit_disabled),
+            refresh,
+            PageAction::new(
+                "diagnostics",
+                i18n::tr!("ui-system-status-open-diagnostics"),
+            ),
+        ]
+    };
+    let selected = match model.dashboard.focus {
+        SystemStatusDashboardFocus::Edit => Some("edit"),
+        SystemStatusDashboardFocus::Refresh => Some("refresh"),
+        SystemStatusDashboardFocus::Add => Some("add"),
+        SystemStatusDashboardFocus::Size => Some("size"),
+        SystemStatusDashboardFocus::Remove => Some("remove"),
+        SystemStatusDashboardFocus::Save => Some("save"),
+        SystemStatusDashboardFocus::Cancel => Some("cancel"),
+        SystemStatusDashboardFocus::Diagnostics => Some("diagnostics"),
+        _ => None,
+    }
+    .map(Into::into);
+    let status = model
+        .dashboard
+        .feedback
+        .iter()
+        .map(|text| PageActionStatus {
+            text: text.clone(),
+            tone: ComponentTone::Muted,
+        })
+        .collect();
+    PageActionBar::new("system-status")
+        .with_actions(actions)
+        .with_selected(selected)
+        .with_status(status)
 }

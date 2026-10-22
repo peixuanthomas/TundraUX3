@@ -3,12 +3,9 @@
 ui-system-status-confirm = Confirm
 ui-system-status-cancel = Cancel
 ui-system-status-system-status = System Status
-ui-system-status-edit-mode-save-to-keep-changes-esc-cancel = EDIT MODE · Ctrl+S Save · Esc Cancel
 ui-system-status-dashboard = Dashboard
 ui-system-status-dashboard-needs-more-room = Dashboard needs more room
 ui-system-status-increase-the-terminal-height-to-show-metric-cards = Increase the terminal height to show metric cards.
-ui-system-status-arrows-move-enter-select-esc-cancel = Shift+Arrows Move · S Cycle size · Enter Select · Esc Cancel
-ui-system-status-h-diagnostics-e-edit-esc-home = H Diagnostics · E Edit · Esc Home
 ui-system-status-add = A Add
 ui-system-status-size = F4 Size
 ui-system-status-remove = Del Remove
@@ -20,10 +17,8 @@ ui-system-status-widget-size = Enter Choose · Esc Cancel · Size
 ui-system-status-picker-title = Enter Choose · Esc Cancel · { $title }
 ui-system-status-confirm-shortcut = Y { $label }
 ui-system-status-cancel-shortcut = Esc { $label }
-ui-system-status-dialog-help = Tab Switch · Enter Selected · Y Confirm · Esc Cancel
 ui-system-status-no-data = No data
 ui-system-status-this-metric-is-not-available = This metric is not available.
-ui-system-status-esc-dashboard-r-refresh = Esc Dashboard · R/F5 Refresh
 ui-system-status-loading = Loading...
 ui-system-status-unavailable = Unavailable
 ui-system-status-stale-data = Stale data
@@ -98,3 +93,6 @@ ui-system-status-stale-message = Stale: { $message }
 ui-system-status-stale-title = Stale { $title }
 
 ui-system-status-addresses = Addresses
+
+ui-system-status-open-diagnostics = H Diagnostics
+ui-system-status-edit-mode = Edit mode

@@ -3,12 +3,9 @@
 ui-system-status-confirm = 确认
 ui-system-status-cancel = 取消
 ui-system-status-system-status = 系统状态
-ui-system-status-edit-mode-save-to-keep-changes-esc-cancel = 编辑模式 · Ctrl+S 保存 · Esc 取消
 ui-system-status-dashboard = 仪表盘
 ui-system-status-dashboard-needs-more-room = 仪表盘需要更多空间
 ui-system-status-increase-the-terminal-height-to-show-metric-cards = 请增大终端高度以显示指标卡片。
-ui-system-status-arrows-move-enter-select-esc-cancel = Shift+方向键 移动 · S 切换大小 · Enter 选择 · Esc 取消
-ui-system-status-h-diagnostics-e-edit-esc-home = H 诊断 · E 编辑 · Esc 主页
 ui-system-status-add = A 添加
 ui-system-status-size = F4 大小
 ui-system-status-remove = Del 移除
@@ -20,10 +17,8 @@ ui-system-status-widget-size = Enter 选择 · Esc 取消 · 大小
 ui-system-status-picker-title = Enter 选择 · Esc 取消 · { $title }
 ui-system-status-confirm-shortcut = Y { $label }
 ui-system-status-cancel-shortcut = Esc { $label }
-ui-system-status-dialog-help = Tab 切换 · Enter 执行选中按钮 · Y 确认 · Esc 取消
 ui-system-status-no-data = 没有数据
 ui-system-status-this-metric-is-not-available = 此指标不可用。
-ui-system-status-esc-dashboard-r-refresh = Esc 仪表盘 · R/F5 刷新
 ui-system-status-loading = 正在加载…
 ui-system-status-unavailable = 不可用
 ui-system-status-stale-data = 数据已过期
@@ -98,3 +93,6 @@ ui-system-status-stale-message = 数据已过期：{ $message }
 ui-system-status-stale-title = 已过期：{ $title }
 
 ui-system-status-addresses = 地址
+
+ui-system-status-open-diagnostics = H 诊断
+ui-system-status-edit-mode = 编辑模式

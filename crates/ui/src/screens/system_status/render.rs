@@ -1,13 +1,12 @@
 use super::{layout::*, model::*};
+use crate::RenderContext;
 use crate::components::{
-    Button, ComponentState, DataTable, Dialog, DialogAction, EmptyState, List, ListItem,
-    MetricCard, Scrollbar, Surface, tone_color,
+    ComponentState, DataTable, Dialog, DialogAction, EmptyState, List, ListItem, MetricCard,
+    Scrollbar, Surface, tone_color,
 };
 use crate::screens::diagnostics::{
     render_diagnostics_content, render_diagnostics_footer, render_diagnostics_repair_dialog,
 };
-use crate::screens::shell::fit_cell;
-use crate::{RenderContext, TundraTheme};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -47,7 +46,7 @@ fn render_dashboard(
     };
     let width = usize::from(l.header.width);
     let left = if model.dashboard.editing {
-        i18n::tr!("ui-system-status-edit-mode-save-to-keep-changes-esc-cancel")
+        i18n::tr!("ui-system-status-edit-mode")
     } else {
         i18n::tr!("ui-system-status-dashboard")
     };
@@ -91,105 +90,9 @@ fn render_dashboard(
             .render_frame(frame, a, context)
         }
     }
-    let hint = model.dashboard.feedback.clone().unwrap_or_else(|| {
-        if model.dashboard.editing {
-            i18n::tr!("ui-system-status-arrows-move-enter-select-esc-cancel")
-        } else {
-            i18n::tr!("ui-system-status-h-diagnostics-e-edit-esc-home")
-        }
-    });
-    let action_left = if model.dashboard.editing {
-        l.add_button.x
-    } else {
-        l.edit_button.x
-    };
-    let help = Rect::new(
-        l.footer.x,
-        l.footer.y,
-        action_left.saturating_sub(l.footer.x),
-        1,
-    );
-    frame.render_widget(
-        Paragraph::new(fit_cell(&hint, usize::from(help.width))).style(theme.muted_style()),
-        help,
-    );
-    if model.dashboard.editing {
-        button(
-            frame,
-            l.add_button,
-            "system-status.add",
-            &i18n::tr!("ui-system-status-add"),
-            model.dashboard.actions.add_disabled,
-            model.dashboard.focus == SystemStatusDashboardFocus::Add,
-            theme,
-        );
-        button(
-            frame,
-            l.size_button,
-            "system-status.size",
-            &i18n::tr!("ui-system-status-size"),
-            model.dashboard.actions.size_disabled,
-            model.dashboard.focus == SystemStatusDashboardFocus::Size,
-            theme,
-        );
-        button(
-            frame,
-            l.remove_button,
-            "system-status.remove",
-            &i18n::tr!("ui-system-status-remove"),
-            model.dashboard.actions.remove_disabled,
-            model.dashboard.focus == SystemStatusDashboardFocus::Remove,
-            theme,
-        );
-        button(
-            frame,
-            l.save_button,
-            "system-status.save",
-            &i18n::tr!("ui-system-status-save"),
-            model.dashboard.actions.save_disabled,
-            model.dashboard.focus == SystemStatusDashboardFocus::Save,
-            theme,
-        );
-    } else {
-        button(
-            frame,
-            l.edit_button,
-            "system-status.edit",
-            &i18n::tr!("ui-system-status-edit"),
-            model.dashboard.actions.edit_disabled,
-            model.dashboard.focus == SystemStatusDashboardFocus::Edit,
-            theme,
-        );
-        button(
-            frame,
-            l.refresh_button,
-            "system-status.refresh",
-            if model.refreshing {
-                i18n::tr!("ui-system-status-refreshing")
-            } else {
-                i18n::tr!("ui-system-status-refresh")
-            },
-            model.dashboard.actions.refresh_disabled || model.refreshing,
-            model.dashboard.focus == SystemStatusDashboardFocus::Refresh,
-            theme,
-        )
-    }
+    system_status_action_bar(model).render(frame, l.action_bar.area, context);
 }
-fn button(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    id: &str,
-    label: impl Into<String>,
-    disabled: bool,
-    focused: bool,
-    theme: &TundraTheme,
-) {
-    let label = label.into();
-    let mut b = Button::new(id, label);
-    b.set_disabled(disabled);
-    b.set_focused(focused);
-    b.render_borderless_frame(frame, area, theme)
-}
+
 fn render_overlays(
     frame: &mut Frame<'_>,
     l: &SystemStatusLayout,
@@ -252,7 +155,7 @@ fn render_overlays(
         let mut dialog = Dialog::new(
             "system-status.dialog",
             &d.title,
-            d.message_with_shortcuts(),
+            d.message.clone(),
             vec![
                 DialogAction::new("confirm", d.confirm_button_label()),
                 DialogAction::new("cancel", d.cancel_button_label()),
@@ -313,20 +216,7 @@ fn render_detail(
         d,
         SystemStatusDetail::Diagnostics | SystemStatusDetail::Logs | SystemStatusDetail::Incidents
     ) {
-        frame.render_widget(
-            Paragraph::new(i18n::tr!("ui-system-status-esc-dashboard-r-refresh"))
-                .style(theme.muted_style()),
-            l.footer,
-        );
-        button(
-            frame,
-            l.refresh_button,
-            "system-status.refresh",
-            i18n::tr!("ui-system-status-refresh"),
-            model.refreshing,
-            false,
-            theme,
-        )
+        system_status_action_bar(model).render(frame, l.action_bar.area, context);
     }
 }
 fn render_formatted_detail(

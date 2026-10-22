@@ -148,6 +148,8 @@ pub enum SystemStatusDashboardFocus {
     Size,
     Remove,
     Save,
+    Cancel,
+    Diagnostics,
 }
 impl Default for SystemStatusDashboardFocus {
     fn default() -> Self {
@@ -189,14 +191,6 @@ pub struct SystemStatusDialogViewModel {
     pub selected_action: usize,
 }
 impl SystemStatusDialogViewModel {
-    pub(super) fn message_with_shortcuts(&self) -> String {
-        format!(
-            "{}\n{}",
-            self.message,
-            i18n::tr!("ui-system-status-dialog-help")
-        )
-    }
-
     pub(super) fn confirm_button_label(&self) -> String {
         let label = if self.confirm_label.is_empty() {
             i18n::tr!("ui-system-status-confirm")

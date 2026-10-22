@@ -330,6 +330,7 @@ impl ShellSession {
                 }
             }
             InputKey::Char('e' | 'E') => ShellCommand::SystemStatusBeginEdit,
+            InputKey::Char('h' | 'H') => ShellCommand::SystemStatusDiagnostics,
             InputKey::Enter | InputKey::Char(' ') => ShellCommand::SystemStatusActivateFocus,
             InputKey::BackTab => ShellCommand::SystemStatusFocusPrevious,
             InputKey::Tab if key.modifiers.shift => ShellCommand::SystemStatusFocusPrevious,
@@ -494,6 +495,12 @@ impl ShellSession {
                     ClickKind::Double => ShellCommand::SystemStatusOpenWidget(kind),
                     ClickKind::Single => ShellCommand::SystemStatusSelectWidget(kind),
                 },
+                Some(ui::SystemStatusHitTarget::OpenDiagnostics) => {
+                    ShellCommand::SystemStatusDiagnostics
+                }
+                Some(ui::SystemStatusHitTarget::CancelEdit) => {
+                    ShellCommand::SystemStatusRequestCancelEdit
+                }
                 Some(ui::SystemStatusHitTarget::Edit) if !editing => {
                     ShellCommand::SystemStatusBeginEdit
                 }

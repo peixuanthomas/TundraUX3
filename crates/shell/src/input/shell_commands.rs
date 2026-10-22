@@ -221,6 +221,7 @@ pub enum ShellCommand {
     SystemStatusSelectWidget(ui::SystemStatusWidgetKind),
     SystemStatusSelectWidgetDirection(i8, i8),
     SystemStatusBeginEdit,
+    SystemStatusDiagnostics,
     SystemStatusRequestCancelEdit,
     SystemStatusDiscardEdit,
     SystemStatusContinueEdit,

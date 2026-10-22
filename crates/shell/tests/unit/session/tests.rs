@@ -1322,7 +1322,7 @@ fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
     state.restore_system_status_widget_focus();
     let first = state.pages.system_status.system_status_dashboard_focus;
     state.pages.system_status.system_status_dashboard_focus =
-        ui::SystemStatusDashboardFocus::Refresh;
+        ui::SystemStatusDashboardFocus::Diagnostics;
     state.move_system_status_dashboard_focus(1);
     assert_eq!(
         state.pages.system_status.system_status_dashboard_focus, first,
@@ -1331,7 +1331,7 @@ fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
     state.move_system_status_dashboard_focus(-1);
     assert_eq!(
         state.pages.system_status.system_status_dashboard_focus,
-        ui::SystemStatusDashboardFocus::Refresh,
+        ui::SystemStatusDashboardFocus::Diagnostics,
         "reverse wraps"
     );
 
@@ -1339,6 +1339,11 @@ fn system_status_dashboard_focus_wraps_skips_disabled_and_activates() {
     state.pages.system_status.system_status_selected_widget = None;
     let first_edit_focus = state.system_status_dashboard_focus_order()[0];
     state.pages.system_status.system_status_dashboard_focus = ui::SystemStatusDashboardFocus::Add;
+    state.move_system_status_dashboard_focus(1);
+    assert_eq!(
+        state.pages.system_status.system_status_dashboard_focus,
+        ui::SystemStatusDashboardFocus::Cancel
+    );
     state.move_system_status_dashboard_focus(1);
     assert_eq!(
         state.pages.system_status.system_status_dashboard_focus, first_edit_focus,
