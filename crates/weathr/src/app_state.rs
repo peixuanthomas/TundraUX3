@@ -17,6 +17,7 @@ pub enum LocationDisplay {
 pub(crate) enum BottomHudPrompt {
     Quit,
     Start,
+    Resume,
 }
 
 impl BottomHudPrompt {
@@ -24,6 +25,7 @@ impl BottomHudPrompt {
         match self {
             Self::Quit => localize!(localize, "weathr-quit-prompt"),
             Self::Start => localize!(localize, "weathr-start-prompt"),
+            Self::Resume => localize!(localize, "weathr-resume-prompt"),
         }
     }
 }

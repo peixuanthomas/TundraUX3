@@ -23,10 +23,8 @@ impl<'a> RainbowText<'a> {
             elapsed,
         }
     }
-}
 
-impl Widget for RainbowText<'_> {
-    fn render(mut self, area: Rect, buffer: &mut Buffer) {
+    pub(super) fn into_text(mut self) -> Text<'a> {
         let phase = (self.elapsed.as_millis() % 3_000) as f32 * 360.0 / 3_000.0;
         for line in &mut self.text.lines {
             let mut column = 0;
@@ -44,6 +42,12 @@ impl Widget for RainbowText<'_> {
                 })
                 .collect();
         }
-        self.text.render(area, buffer);
+        self.text
+    }
+}
+
+impl Widget for RainbowText<'_> {
+    fn render(self, area: Rect, buffer: &mut Buffer) {
+        self.into_text().render(area, buffer);
     }
 }

@@ -1,5 +1,9 @@
 # ascii-assets
 
+中英文 `modules/settings.ftl` 保存屏幕超时时间及说明，`modules/weathr.ftl` 保存空闲天气画面的返回提示。
+
+`modules/regression-startup.ftl` 保存完整 CLI 命令列表及精简后的 doctor、REPL、应用入口和屏幕键盘帮助；doctor 使用顶层命令。
+
 `ascii-assets` 加载和校验主题、ASCII 图案、图标及字体，统计绘制所需尺寸，并提供内置资源用于修复。语言源码也随资源分发；加载和翻译由 `i18n` 负责。
 
 AA 自动策略的显示名称统一为“一律放行” / “Always allow”，帮助文字继续说明其只跳过 AA 确认。
@@ -45,3 +49,5 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 同一资源文件也保存 `debug test-rainbow-text` 的帮助、标题、示例和退出提示，中英文命令目录均包含此入口。
 
 `modules/help.ftl` 保存各页 F1 帮助；启动器空列表使用简短说明和文件浏览器按钮，中英文同步提供。
+
+外部 Shell 控制的开关、CLI 帮助与错误提示位于中英文 `modules/settings.ftl`；CLI 根帮助及公开配置字段列表同步列出 `ui` 和 `automation.enabled`。

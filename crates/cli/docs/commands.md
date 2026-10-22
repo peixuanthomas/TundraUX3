@@ -8,7 +8,7 @@ tundra-shell
 
 `tundra-shell` 不带参数时进入全屏 UI；`--help`（`-h`）显示帮助，`--version`（`-V`）显示程序名和版本后退出。其他公开参数仍会以参数错误退出，应用选择与 Editor 文件打开只能从 UI 发起。
 
-`tundra-cli` 是独立的运维工具，可读取和修改公开配置，但不能向 Shell 传参或绕过 UI 打开 Editor：
+`tundra-cli` 是独立的运维工具，可读取和修改公开配置，也可通过 `ui` 控制已开启外部控制的 Shell；打开应用和文件仍经过正常界面操作：
 
 ```console
 tundra-cli <command> [options]
@@ -17,21 +17,23 @@ tundra-cli <command> [options]
 | 命令 | 作用 |
 | --- | --- |
 | `--version` / `-V` | 显示 CLI 程序名和版本后退出。 |
+| `ui sessions` / `ui snapshot` | 列出当前用户的 Shell 会话，或读取所选会话的界面树和字符画面；见 [外部 CLI 控制](ui-control.md)。 |
+| `ui click` / `ui move` / `ui drag` / `ui scroll` / `ui key` / `ui text` / `ui wait` | 向所选会话发送正常输入，或等待目标出现、消失、可操作；默认 JSON，支持 `--session`、`--snapshot` 和 `--timeout`。 |
 | `debug asset` / `debug asset <name>` | 显示资源帮助或渲染指定资源；TOML art set 会输出全部图案。 |
 | `debug asset <name> -a` | 原样输出完整资源文件，包括 TOML 元数据。 |
 | `debug asset <name> --<item>` | 只输出 TOML 资源中的项目，例如 `home_icons --launcher`。 |
 | `cls` | 清空终端历史和可见内容，并将光标移到左上角。 |
 | `config` | 查看全部公开配置。 |
 | `config get [field]` | 查看外观、动画、语言、时区、天气地点和 Linux 更新模式；省略字段列出全部公开设置。 |
-| `config set <field> <value>` | 设置 `border-shape`、`border-color`、`accent-color`、`icon-mode`、`motion`、`animation-speed`、`language`、`timezone`、`address`、`weather-location` 或 `update-mode`；`theme` 仅为只读摘要。 |
+| `config set <field> <value>` | 设置 `automation.enabled`、`border-shape`、`border-color`、`accent-color`、`icon-mode`、`motion`、`animation-speed`、`language`、`timezone`、`address`、`weather-location` 或 `update-mode`；`theme` 仅为只读摘要。 |
 | `config reset <field>` | 只恢复指定字段的默认值，保留其他配置。 |
 | `config options [field]` | 列出取值说明；`language` 列出已安装语言，`timezone` / `address` 列出支持的时区和城市。 |
 | `launcher [list]` | 列出固定应用的 ID、状态和文件路径。 |
 | `launcher pin <path>` | 检查并固定可执行文件，支持带引号的相对或绝对路径；不会启动应用，重复路径不重复添加。 |
 | `launcher unpin <id>` | 按 `launcher list` 中的 ID 移除固定项，保留应用文件。 |
-| `debug doctor` | 检查系统、终端、权限、应用路径、存储和资源；实际探测 Kitty、Sixel、iTerm2 图形协议。 |
+| `doctor` | 检查系统、终端、权限、应用路径、存储和资源；实际探测 Kitty、Sixel、iTerm2 图形协议。 |
 | `debug explain` / `debug paths` | 输出启动/边界说明，或输出路径模板和解析路径。 |
-| `repl` | 交互命令循环；`exit` 或 EOF 退出，普通输入交给固定系统命令解释器并显示退出码，`/<command>` 执行 UX 命令。外部 CLI 调用不加 `/`。 |
+| `repl` | 交互命令行；`exit` 或 EOF 退出。 |
 | `debug test-frost` / `debug test-matrix` | 仅播放启动 frost banner 或首次运行 Matrix banner。 |
 | `debug view-ui-style [1\|2\|3]` | 不带数字时列出样式；带数字时进入交互 UI / 动画对比预览，不保存设置。 |
 | `debug screen-keyboard` | 外部终端中的英文屏幕键盘与 AA 输入演示；不连接应用表单。 |
@@ -42,14 +44,16 @@ tundra-cli <command> [options]
 | `debug test-watchdog-critical` | 主动生成严重错误报告。 |
 | `debug test-watchdog-panic` | 触发真实 panic，进入正常故障处理流程；当前命令行会话终止。 |
 | `services` / `processes` / `packages` / `network` / `disks` / `users` / `system-config` / `operations` | 正式管理命令，见 [运维 CLI](operations.md)。 |
-| `help [command ...]` | 显示对应命令帮助，例如 `help config`、`help debug doctor`；也支持 `config --help`、`config set -h`、`launcher help`、`logs export --help`。 |
+| `help [command ...]` | 显示对应命令帮助，例如 `help config`、`help doctor`；也支持 `config --help`、`config set -h`、`launcher help`、`logs export --help`。 |
 | `new` | 清除已保存的 TundraUX3 数据，重新创建初始存储。 |
 
-调试命令统一使用 `debug` 前缀，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中输入 `/debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
+测试和调试工具使用 `debug` 前缀；环境检查直接使用 `doctor`，不支持 `sudo` 前缀；原顶层调试命令和 `weathr` 命令已移除。Command Line 中输入 `/debug test-frost`；外部终端使用 `tundra-cli debug test-frost`。
 
 CLI 的帮助（含子命令帮助、无参数启动）和版本查询，以及 Shell 的帮助和版本查询，直接输出内置文本，不启动 watchdog、不读取配置，也不进入终端界面。即使日志或数据目录无法写入也能使用；Linux 下这些查询不需要 root 启动确认。
 
 ## 配置与固定应用
+
+`automation.enabled` 接受 `true` / `false`，默认 `false`。从设置中切换外部 CLI 控制会立即生效；通过 CLI 修改配置后需重启已有 Shell。关闭后不再接受新的外部输入。
 
 设置通过当前操作系统用户的配置文件保存，不修改系统时间或系统账号。`icon-mode` 接受 `ascii` / `image`，`motion` 接受 `full` / `reduced`，`animation-speed` 接受 50–200 的 25 倍数，默认 100。`address` 沿用旧行为，会改变 Tundra 时区；`weather-location` 单独保存最多 120 字符的英文地址，`auto` 或 `config reset weather-location` 恢复按时区选择天气地点。`update-mode` 仅在 Linux 接受 `release` / `beta`，只保存更新选择，不立即下载或安装。已运行的 UI 需要重启以加载 CLI 保存的设置和 Launcher 固定项。
 

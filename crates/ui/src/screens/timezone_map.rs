@@ -673,6 +673,14 @@ impl Widget for TimezoneMapWidget<'_> {
             .border_style(Style::default().fg(colors.border).bg(colors.background))
             .style(Style::default().fg(colors.unselected).bg(colors.background));
         let inner = block.inner(area);
+        crate::automation::control(
+            "timezone.map",
+            "map",
+            "",
+            inner,
+            Default::default(),
+            &["click"],
+        );
 
         block.render(area, buffer);
         if inner.width == 0 || inner.height == 0 {

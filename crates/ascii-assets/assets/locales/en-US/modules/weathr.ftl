@@ -35,3 +35,4 @@ weathr-condition-rain-showers = Rain Showers
 weathr-condition-snow-showers = Snow Showers
 weathr-condition-thunderstorm = Thunderstorm
 weathr-condition-thunderstorm-hail = Thunderstorm with Hail
+weathr-resume-prompt = Press any key or tap to resume

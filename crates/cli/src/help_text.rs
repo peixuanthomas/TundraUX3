@@ -41,10 +41,7 @@ pub(crate) fn write_explain(output: &mut impl Write) -> std::io::Result<()> {
         output,
         "  1. User starts tundra-cli or tundra-shell from a crossterm-compatible terminal."
     )?;
-    writeln!(
-        output,
-        "  2. tundra-cli handles config, launcher pins, logs, cls, new, and repl; diagnostics and tests are under debug."
-    )?;
+    writeln!(output, "{}", i18n::tr!("startup-cli-explain-commands"))?;
     writeln!(
         output,
         "  3. tundra-shell shows the banner, initializes the UX shell, then enters the main loop."
@@ -118,6 +115,12 @@ pub(crate) fn write_asset_help(output: &mut impl Write) -> std::io::Result<()> {
 pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, crate::CliError> {
     use crate::{AssetAction, ClearLogsAction, CliCommand, LogsAction};
     let topic = args.join(" ");
+    if args.first().is_some_and(|group| group == "ui")
+        && (args.len() == 1
+            || (args.len() == 2 && crate::ui_command::VERBS.contains(&args[1].as_str())))
+    {
+        return Ok(CliCommand::Ui(crate::UiCommand::Help));
+    }
     if args.first().is_some_and(|group| {
         crate::management_command::kind(group).is_some() || group == "operations"
     }) {
@@ -151,7 +154,7 @@ pub(crate) fn parse_help_topic(args: &[String]) -> Result<crate::CliCommand, cra
         | "new"
         | "cls"
         | "repl"
-        | "debug doctor"
+        | "doctor"
         | "debug paths"
         | "debug explain"
         | "debug test-frost"
@@ -183,17 +186,20 @@ pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io:
     if topic == "config" || topic.starts_with("config ") {
         return write_config_help(output);
     }
-    if topic == "launcher" || topic.starts_with("launcher ") {
-        return writeln!(
-            output,
-            "Usage: tundra-cli launcher [list | pin <path> | unpin <id>]\n  list          Show saved IDs, target paths, and availability\n  pin <path>    Add a checked executable; quote paths with spaces; does not run it\n  unpin <id>    Remove only the pin, using an ID from list; keeps the file\nExamples:\n  tundra-cli launcher pin \"/home/user/My App/run.sh\"\n  tundra-cli launcher list\nPaths may be relative to the current command directory. Duplicate pins are ignored.\nUses the current OS user's config. Restart a running TundraUX3 UI to refresh its Launcher."
-        );
+    let localized = match topic {
+        "doctor" => Some("startup-cli-doctor-help"),
+        "repl" => Some("startup-cli-repl-help"),
+        "launcher" | "launcher list" | "launcher pin" | "launcher unpin" => {
+            Some("startup-cli-launcher-help")
+        }
+        "debug screen-keyboard" => Some("startup-cli-screen-keyboard-help"),
+        _ => None,
+    };
+    if let Some(message) = localized {
+        return writeln!(output, "{}", i18n::tr!(message));
     }
     writeln!(output, "Usage: tundra-cli {topic}")?;
     let detail = match topic {
-        "debug doctor" => {
-            "Check runtime prerequisites, paths, storage, and assets. Linux checks include /bin/sh, /proc, PTY access, service/network/disk tools and optional desktop integration.\nWARN means a feature may be unavailable; FAIL means a required check failed. Exit: 0 no failures, 1 failure.\nDirectory write probes create/remove temporary files; storage may be initialized or recovered. No packages are installed and no services are changed. Use debug paths for path templates."
-        }
         "debug paths" => {
             "Show path templates and the resolved config, data, state, logs, cache, and temporary paths."
         }
@@ -206,17 +212,11 @@ pub(crate) fn write_topic_help(output: &mut impl Write, topic: &str) -> std::io:
         "cls" => {
             "Clear terminal scrollback and screen, then move the cursor home. Saved logs are kept."
         }
-        "repl" => {
-            "Start interactive Command Line. Use /help for UX commands and exit or EOF to leave.\nSystem commands run by default: ls -la or dir. UX commands require a leading /: /config set motion reduced. External CLI calls stay unchanged: tundra-cli config set motion reduced.\nFailed system input that looks like a UX command gets a / hint. Unknown / commands that look like system commands get a hint to remove /. Hints never execute another command.\nExported environment and working directory persist for this REPL session. cd changes the system command directory; /launcher pin uses that directory too.\nExamples: /config set motion reduced; pwd (Linux/macOS); cd (Windows)."
-        }
         "debug test-frost" | "debug test-matrix" => {
             "Play an animation preview in the current terminal; settings are not changed."
         }
         "debug test-aa-style1" | "debug test-aa-style2" | "debug test-aa-style3" => {
             "Preview an AutoAdmin (AA) warning style without running operations or saving settings. Requires an interactive terminal. C: confirmation; R: running; F: finished; B: compare the background before/after dimming. Tab/arrow keys and mouse select buttons; Enter activates; Esc/Ctrl+C returns."
-        }
-        "debug screen-keyboard" => {
-            "Open a standalone English QWERTY screen keyboard in the lower half of the terminal. Key widths adapt to the terminal size. Includes digits, symbols, F1-F12, Shift, Tab, CapsLock, Ctrl, Alt and right Ctrl. Click Shift/Ctrl/Alt/CapsLock to latch them; click again to release. Backspace removes the last character; on-screen Enter/Tab insert a newline/tab. Function keys and modified combinations appear in the last-key display. Copy/Ctrl+C copies all text; Paste/Ctrl+V appends clipboard text. Hide/Show collapses or expands the keyboard; Clear empties the text. Physical printable keys type directly and light the corresponding keycaps. Key-up reporting keeps held keys lit; legacy terminals show a brief flash. Test AA opens a safe input popup with its own Show/Hide keyboard button. The final compositor moves the popup above the keyboard without moving it off screen; the keyboard may cover status/time bars. The AA test needs at least 60 x 18 cells for both popup and keyboard. Esc in the AA test returns to the keyboard demo. Tab/arrows select a button, then Enter/Space activates it; after direct typing Enter/Space inserts a newline/space. Exit or Esc returns. Requires an interactive external terminal; unavailable in embedded Command Line. Text is temporary unless copied; keys are not sent to other applications.\nRun from an external terminal: tundra-cli debug screen-keyboard."
         }
         "debug test-watchdog-error" | "debug test-watchdog-critical" => {
             "Write an intentional diagnostic report and print its JSON/text paths. Requires the normal CLI watchdog runtime."
@@ -237,14 +237,14 @@ pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std:
             crate::management_command::help(output, group)
         }
         Some("config") => write_config_help(output),
+        Some("ui") => crate::ui_command::help(output),
         Some("launcher") => write_topic_help(output, "launcher"),
         Some("debug") => match args.get(1).map(String::as_str) {
             Some("asset") => write_asset_help(output),
             Some("view-ui-style") => write_ui_style_help(output),
             Some("clear-logs") => crate::clear_logs_command::help(output),
             Some(
-                "doctor"
-                | "paths"
+                "paths"
                 | "explain"
                 | "test-frost"
                 | "test-aa-style1"
@@ -260,6 +260,7 @@ pub(crate) fn write_error_help(output: &mut impl Write, args: &[String]) -> std:
             ) => write_topic_help(output, &format!("debug {}", args[1])),
             _ => write_debug_help(output),
         },
+        Some("doctor") => write_topic_help(output, "doctor"),
         Some("logs") => crate::logs_command::write_logs_help(output),
         _ => write_help(output),
     }
@@ -282,9 +283,9 @@ mod tests {
                 (
                     write_help as fn(&mut Vec<u8>) -> std::io::Result<()>,
                     "命令行",
-                    "/config set motion reduced",
+                    "doctor",
                 ),
-                (write_debug_help, "检查终端", "doctor"),
+                (write_debug_help, "资源", "paths"),
                 (
                     write_config_help,
                     "字段与取值",

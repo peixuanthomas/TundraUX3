@@ -76,6 +76,7 @@ impl Widget for BigText<'_> {
         if area.width == 0 || area.height == 0 {
             return;
         }
+        crate::automation::control("", "heading", self.text, area, Default::default(), &[]);
 
         let (sequence, rendered_width) = self.text_sizing_sequence(area.width);
         let mut first = true;

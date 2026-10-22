@@ -9,20 +9,31 @@ startup-temperature-unavailable = 温度不可用：未检测到传感器
 startup-battery-unavailable = 电池不可用：未检测到电池
 startup-cli-help = TundraUX3 命令行
     { cli-administration-root-usage }
-    cls：清空终端历史和屏幕，并将光标移到起点。
-    config：读取、修改、重置或列出设置；详情见 config help。
-    debug：诊断与测试命令；详情见 debug help。
-    new：清除已保存的 TundraUX3 数据并重新初始化。
-    repl：进入交互命令行。默认运行系统命令；/<command> 运行 UX 命令；exit 退出。
-    系统命令保留当前交互会话中的已导出环境变量和工作目录。
-    logs：查询运行日志、故障事件或导出诊断；详情见 logs help。
-    launcher：列出、固定或取消固定应用；详情见 launcher help。
-    help [command]：显示帮助，例如 help config 或 help debug doctor。
-    -h, --help：显示帮助；-V, --version：显示版本。
-    使用 <command> --help（或 -h）查看语法、取值和示例。
-    在内置命令行或 repl 中，UX 命令加 /：/config set motion reduced；/help 显示 UX 帮助。
-    系统命令无需前缀：pwd、ls -la（Linux/macOS）、dir（Windows）。外部 CLI 也无需 /：tundra-cli config set motion reduced。
-    退出码：0 成功，1 操作失败，2 参数无效；logs 也可能返回 3/130（见 logs help）。
+    { "  " }config [get|set|reset|options]  设置
+    { "  " }doctor                        检查运行环境
+    { "  " }launcher [list|pin|unpin]       应用快捷入口
+    { "  " }services                      系统服务
+    { "  " }processes                     运行中的进程
+    { "  " }packages                      软件包、更新和软件源
+    { "  " }network                       网络连接
+    { "  " }disks                         磁盘和挂载点
+    { "  " }users                         账户和用户组
+    { "  " }firewall                      端口和防火墙规则
+    { "  " }ssh                           SSH 设置和密钥
+    { "  " }backups                       配置备份与恢复
+    { "  " }scheduled-tasks               定时任务
+    { "  " }system-config                 系统配置文件
+    { "  " }operations                    操作状态与授权
+    { "  " }logs [query|incidents|export|follow]  日志与诊断
+    { "  " }ui [sessions|snapshot|click|move|drag|scroll|key|text|wait]  操作 Shell
+    { "  " }debug <command>               调试工具，见 debug --help
+    { "  " }cls                           清空终端
+    { "  " }new                           重置已保存的 TundraUX3 数据
+    { "  " }repl                          交互命令行
+    { "  " }help [command ...]            命令帮助
+    { "  " }-h, --help                    帮助
+    { "  " }-V, --version                 版本
+    使用 <command> --help 查看子命令和选项。
 startup-cli-debug-help = 用法：tundra-cli debug <command>
     { "  " }ui-test  { ui-test-summary }
     { "  " }test-rainbow-text  { rainbow-text-summary }
@@ -31,16 +42,15 @@ startup-cli-debug-help = 用法：tundra-cli debug <command>
     clear-logs <all|TYPE|--file PATH> [--yes]：预览或清理运行、故障、快照及旧日志。
     view-ui-style [1|2|3]：对比可交互的界面样式及动画。
     asset：输出测试资源或原始资源文件。
-    doctor：检查终端、存储和 Linux 运行工具；警告表示可选功能受限。
     paths：输出已配置和已解析的应用路径。
     explain：说明 CLI 启动流程及系统/UI 分工。
     test-frost / test-matrix：仅播放启动或首次启动的横幅动画。
     test-watchdog-error / test-watchdog-critical：主动生成错误或严重错误报告。
     test-watchdog-panic：触发真实 panic，丢弃当前会话。
-    错误测试输出 JSON/文本报告路径；panic 测试进入正常严重错误流程，内置测试会使 Shell 会话 panic。
 startup-cli-config-help = 用法：tundra-cli config [get [field] | set <field> <value> | reset <field> | options [field]]
     不带参数时输出设置；reset 只重置指定字段；theme 是只读颜色摘要。
     字段与取值：
+    automation.enabled：true | false（默认 false；本机 Shell 控制）
     border-shape：rounded | square
     border-color：default | 颜色名（如 light-cyan）| #RRGGBB
     accent-color：default | 颜色名 | #RRGGBB
@@ -63,3 +73,18 @@ startup-cli-packages-help = list [--scope installed|search|updates] 列出已安
     source-add --name NAME --url URL 添加软件源；APT 另需 --suite SUITE --components main --signed-by /key，DNF 使用 --gpgkey URL。
     sources add/enable/disable/remove 为添加、启用、禁用、删除软件源的别名。修改软件源先生成草稿，经审阅后使用 --apply --expected-version 保存。
     脚本修改默认保留现有配置；--config-policy replace 仅支持 APT。Arch 的安装和升级始终升级整个系统。
+
+startup-cli-doctor-help = 用法：tundra-cli doctor
+    检查终端、权限、路径、存储和资源。
+    存储检查可能创建或恢复应用文件。退出码：0 通过，1 失败。
+startup-cli-explain-commands = { "  " }2. tundra-cli 提供配置、应用入口和日志；doctor 检查环境；debug 提供测试工具。
+startup-cli-repl-help = 用法：tundra-cli repl
+    /help  命令列表
+    exit   退出（或 EOF）
+startup-cli-launcher-help = 用法：tundra-cli launcher [list | pin <path> | unpin <id>]
+    list          列出已保存的应用
+    pin <path>    保存可执行文件的快捷入口
+    unpin <id>    移除快捷入口，保留文件
+startup-cli-screen-keyboard-help = 用法：tundra-cli debug screen-keyboard
+    在外部交互终端中预览屏幕键盘和 AA 输入。
+    Tab/方向键选择，Enter/空格执行，Esc 退出。

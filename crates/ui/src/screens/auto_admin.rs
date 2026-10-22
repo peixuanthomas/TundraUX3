@@ -25,6 +25,7 @@ pub struct AutoAdminViewModel {
     pub button_focus: Option<usize>,
     pub scroll: u16,
     pub input: Option<String>,
+    pub input_sensitive: bool,
     pub terminal: Arc<CommandLineTerminalSnapshot>,
     pub stop: AutoAdminStopState,
     pub can_kill: bool,
@@ -315,6 +316,7 @@ pub(super) fn render_auto_admin_contents(
     context: &RenderContext,
     hint_override: Option<&str>,
 ) {
+    let _scope = crate::automation::scope("aa", "dialog", "AutoAdmin", layout.dialog);
     frame.render_widget(
         wrapped_paragraph(&description(model), layout.description.width).scroll((
             if model.confirming || model.stop == AutoAdminStopState::Warning {
@@ -353,6 +355,13 @@ pub(super) fn render_auto_admin_contents(
     let hint = hint_override
         .map(str::to_owned)
         .unwrap_or_else(|| auto_admin_hint(model));
+    if model.input.is_some() && crate::automation::enabled() {
+        let mut input = crate::automation::node("aa.input", "textbox", "", layout.input);
+        input.focused = model.button_focus.is_none();
+        input.sensitive = model.input_sensitive;
+        input.actions = vec!["click".into(), "text".into(), "key".into()];
+        crate::automation::record(input);
+    }
     frame.render_widget(wrapped_paragraph(&hint, layout.input.width), layout.input);
     let labels = if model.stop == AutoAdminStopState::Warning {
         vec![

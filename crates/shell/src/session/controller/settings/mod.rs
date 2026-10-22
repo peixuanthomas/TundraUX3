@@ -14,6 +14,7 @@ pub(in crate::session) const SETTINGS_WEATHER_LOCATION_NOTIFICATION_KEY: &str =
     "settings.weather-location";
 pub(in crate::session) const WEATHER_LOCATION_MAX_LEN: usize = 120;
 pub(in crate::session) const EDITOR_EXTENSIONS_INPUT_MAX_LEN: usize = 1_024;
+const SCREEN_TIMEOUT_OPTIONS: &[u64] = &[0, 30, 60, 120, 300, 600, 1800];
 
 pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::Theme,
@@ -36,6 +37,8 @@ pub(in crate::session) const REGION_SETTINGS_FIELDS: &[ui::SettingsField] = &[
 ];
 pub(in crate::session) const SYSTEM_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::AutoAdmin,
+    ui::SettingsField::AutomationEnabled,
+    ui::SettingsField::ScreenTimeout,
     ui::SettingsField::SystemLowAvailable,
     ui::SettingsField::SystemLowPercentage,
     ui::SettingsField::SystemCriticalAvailable,
@@ -810,6 +813,18 @@ impl ShellSession {
         };
         let increase = direction >= 0;
         match field {
+            ui::SettingsField::ScreenTimeout => {
+                let index = SCREEN_TIMEOUT_OPTIONS
+                    .iter()
+                    .position(|seconds| *seconds == config.screen_timeout_seconds)
+                    .unwrap_or(4) as isize;
+                let delta = if increase { 1 } else { -1 };
+                config.screen_timeout_seconds = SCREEN_TIMEOUT_OPTIONS
+                    [(index + delta).rem_euclid(SCREEN_TIMEOUT_OPTIONS.len() as isize) as usize];
+            }
+            ui::SettingsField::AutomationEnabled => {
+                config.automation.enabled = !config.automation.enabled;
+            }
             ui::SettingsField::AutoAdmin => {
                 use storage::AutoAdminPolicy::*;
                 config.auto_admin = match (config.auto_admin, increase) {
@@ -1096,8 +1111,10 @@ impl ShellSession {
                 config.weather_location = defaults.weather_location;
             }
             ui::SettingsCategory::System => {
+                config.screen_timeout_seconds = defaults.screen_timeout_seconds;
                 config.system_status = defaults.system_status;
                 config.auto_admin = defaults.auto_admin;
+                config.automation = defaults.automation;
             }
             ui::SettingsCategory::Applications => match application {
                 ui::SettingsApplication::FileExplorer => config.explorer = defaults.explorer,

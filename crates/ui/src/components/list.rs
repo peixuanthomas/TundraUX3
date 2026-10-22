@@ -366,6 +366,7 @@ impl List {
     }
 
     fn ratatui_state(&self, area: Rect, bordered: bool) -> RatatuiListState {
+        self.capture(area, bordered);
         if let Some(start) = self.viewport_start {
             return RatatuiListState::default()
                 .with_selected(
@@ -377,6 +378,40 @@ impl List {
         RatatuiListState::default()
             .with_selected(self.selected)
             .with_offset(self.viewport_offset(area, bordered))
+    }
+
+    fn capture(&self, area: Rect, bordered: bool) {
+        if !crate::automation::enabled() {
+            return;
+        }
+        let _scope = crate::automation::scope(
+            self.id.as_str(),
+            "list",
+            self.title.as_deref().unwrap_or(""),
+            area,
+        );
+        let inner = if bordered { inner_area(area) } else { area };
+        let start = self.viewport_offset(area, bordered);
+        for (index, item) in self
+            .items
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(usize::from(inner.height))
+        {
+            let mut state = self.state;
+            state.selected = self.selected == Some(index);
+            state.focused &= state.selected;
+            state.disabled |= item.disabled;
+            crate::automation::control(
+                item.id.as_str(),
+                "listitem",
+                &item.label,
+                Rect::new(inner.x, inner.y + (index - start) as u16, inner.width, 1),
+                state,
+                &["click", "double_click"],
+            );
+        }
     }
 
     fn viewport_offset(&self, area: Rect, bordered: bool) -> usize {

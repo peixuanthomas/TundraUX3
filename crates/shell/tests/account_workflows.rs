@@ -7,8 +7,8 @@ use platform::mock::MockPlatform;
 use platform::{PlatformCapabilities, PlatformKind, UserDirs, build_windows_app_paths};
 use shell::{
     HomeModeOverride, InputEvent, InputKey, InputModifiers, InputPhase, KeyInput,
-    LOGIN_IDLE_TIMEOUT, PASSWORD_REVEAL_DURATION, PointerButton, ShellAction, ShellComponent,
-    ShellHomeMode, ShellLaunchConfig, ShellScreen, ShellSession, prepare_shell_startup,
+    PASSWORD_REVEAL_DURATION, PointerButton, ShellAction, ShellComponent, ShellHomeMode,
+    ShellLaunchConfig, ShellScreen, ShellSession, prepare_shell_startup,
 };
 use storage::{BorderColor, BorderShape, ClockEntryRecord, ClockProfile};
 use ui::NotificationTone;
@@ -787,76 +787,38 @@ fn login_bad_password_without_hint_shows_invalid_credentials() {
 }
 
 #[test]
-fn login_idle_timeout_uses_exact_sixty_second_boundary_and_only_resets_for_activity() {
+fn login_timeout_shows_weather_and_wakes_to_the_same_login_page() {
     let fixture = FixtureRoot::new("login-idle-timeout");
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
-
     let startup = prepare_shell_startup(&platform).expect("login startup");
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     state.apply_input(InputEvent::from_key_label("Tab"));
     type_text(&mut state, "WrongPass123");
     state.apply_input(InputEvent::from_key_label("Enter"));
-    assert!(state.to_login_view_model().error.is_some());
-
-    let mut activity_at = Instant::now();
-    state.apply_input_at(InputEvent::FocusGained, activity_at);
-    assert_eq!(
-        state.login_idle_deadline_for_test(),
-        activity_at + LOGIN_IDLE_TIMEOUT
-    );
-
-    for activity in [
-        InputEvent::from_key_label("z"),
-        InputEvent::mouse_moved((2, 2)),
-        InputEvent::Resize {
-            width: 119,
-            height: 39,
-        },
-        InputEvent::Paste("ignored paste".to_string()),
-        InputEvent::FocusGained,
-    ] {
-        activity_at += Duration::from_secs(1);
-        assert_eq!(
-            state.apply_input_at(activity, activity_at),
-            ShellAction::Redraw
-        );
-        assert_eq!(
-            state.login_idle_deadline_for_test(),
-            activity_at + LOGIN_IDLE_TIMEOUT
-        );
-    }
-
-    let deadline = state.login_idle_deadline_for_test();
-    state.apply_input_at(InputEvent::FocusLost, activity_at + Duration::from_secs(1));
-    assert_eq!(state.login_idle_deadline_for_test(), deadline);
-    state.apply_time_sync_utc_for_test(Utc::now());
-    assert_eq!(state.login_idle_deadline_for_test(), deadline);
-
+    let error = state.to_login_view_model().error;
+    assert!(error.is_some());
+    let now = Instant::now();
+    state.apply_input_at(InputEvent::FocusGained, now);
+    let deadline = now + Duration::from_secs(storage::DEFAULT_SCREEN_TIMEOUT_SECONDS);
     assert_eq!(
         state.apply_input_at(InputEvent::Tick, deadline - Duration::from_nanos(1)),
         ShellAction::Redraw
     );
-    assert_eq!(state.active_screen(), ShellScreen::Login);
-    assert_eq!(state.login_idle_deadline_for_test(), deadline);
-
+    assert!(!state.screen_saver_active());
     assert_eq!(
         state.apply_input_at(InputEvent::Tick, deadline),
-        ShellAction::Exit
-    );
-    assert!(!state.shutdown_requested());
-    assert_eq!(state.to_login_view_model_at(deadline).password_len, 0);
-    assert_eq!(state.to_login_view_model_at(deadline).error, None);
-
-    let mut home = ShellSession::new(debug_config(), (120, 40));
-    assert_eq!(home.active_screen(), ShellScreen::Home);
-    assert_eq!(
-        home.apply_input_at(
-            InputEvent::Tick,
-            Instant::now() + LOGIN_IDLE_TIMEOUT + Duration::from_secs(1),
-        ),
         ShellAction::Redraw
     );
+    assert!(state.screen_saver_active());
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert_eq!(state.to_login_view_model().error, error);
+    state.apply_input_at(InputEvent::from_key_label("Enter"), deadline);
+    assert!(!state.screen_saver_active());
+    assert_eq!(state.active_screen(), ShellScreen::Login);
+    assert_eq!(state.to_login_view_model().error, error);
+    assert!(state.auth_session().is_none());
+    assert!(!state.shutdown_requested());
 }
 
 #[test]

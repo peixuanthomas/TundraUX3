@@ -3,6 +3,7 @@ mod diagnostics;
 pub mod installation;
 pub mod linux_logs;
 pub mod log_file;
+pub mod shell_control;
 pub use log_file::query_log_file;
 pub mod service;
 pub use linux_logs::query_linux_logs;

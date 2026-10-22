@@ -28,3 +28,5 @@ flowchart LR
 私有连接、sudo 密码缓存隔离和任务控制接口要求见 [platform 授权说明](../platform/docs/authorization.md)。
 
 验证：`cargo test --locked -p auto-admin`，并运行 Shell 的 AA 界面测试和 Linux 授权交互检查。
+
+AA 的界面数据保留当前问题是否为秘密输入的标记，供 Shell 外部控制快照隐藏密码；不改变正常批准和密码输入流程。

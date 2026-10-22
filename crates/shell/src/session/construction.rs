@@ -234,6 +234,7 @@ impl ShellSession {
             pending_default_ascii_icon_fallback: false,
 
             interaction: Default::default(),
+            screen_saver: Default::default(),
             button_regions: Vec::new(),
             notification_scrollbar_drag: None,
 

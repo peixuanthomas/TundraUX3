@@ -412,3 +412,47 @@ settings-animation-deceleration = Deceleration
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
 settings-animation-phase-help = Adjust by 1 ms (1–2000 ms). Times apply at 100% speed. Changing stages also changes the speed curve.
+
+
+ui-control-settings-title = External CLI control
+ui-control-settings-enable = Allow external CLI control
+ui-control-settings-help = Allow this operating system user to read and operate this Shell, including login. Changes take effect immediately.
+ui-control-invalid-boolean = Expected true or false.
+ui-control-config-saved = Saved external CLI control setting. Restart a running Shell to load CLI configuration changes.
+ui-control-unavailable = Shell control is unavailable: { $reason }
+ui-control-not-ready = The Shell interface is not ready.
+ui-control-stale = The interface changed. Read a new snapshot before acting.
+ui-control-target = The target does not exist or cannot receive this input.
+ui-control-protocol = Unsupported control protocol version.
+ui-control-timeout = Timed out waiting for the Shell or target.
+ui-control-help = Usage: tundra-cli ui <sessions|snapshot|click|move|drag|scroll|key|text|wait> [options]
+    Common: --session ID, --snapshot NUMBER, --timeout MS (default 5000)
+    click/move/scroll: --id ID or --x COL --y ROW; click: --button left|right|middle, --double
+    drag: --from-id ID or --from-x COL --from-y ROW; --to-id ID or --to-x COL --to-y ROW; --duration MS
+    scroll: --direction up|down|left|right, --count N
+    key KEY: --modifiers ctrl,alt,shift,super,hyper,meta; --phase press|repeat|release
+    text TEXT or text --stdin: enter text at the current focus
+    wait --id ID: --state present|absent|actionable (default actionable)
+    drag also accepts --button; duration is 16..10000 ms, scroll count is 1..1000.
+    Multiple sessions require --session. --snapshot rejects a changed frame; timeouts never replay input.
+    text -- TEXT accepts text starting with a dash; sessions takes no options.
+    Coordinates start at (0,0). Output is JSON, protocol version 1.
+    Enable in Settings > System or config set automation.enabled true before starting Shell.
+
+ui-control-no-session = No controllable Shell is running. Enable external CLI control and start Shell.
+ui-control-many-sessions = Multiple Shell sessions are running. Select one with --session.
+ui-control-session-missing = The selected Shell session is unavailable.
+ui-control-invalid-arguments = Invalid UI command arguments. See tundra-cli ui --help.
+ui-control-input-failed = Could not read text from standard input.
+ui-control-busy = Another external input is in progress. Try again after it completes.
+
+ui-control-lockscreen = Enter Shell
+settings-screen-timeout = Screen timeout
+settings-screen-timeout-never = Never
+settings-screen-timeout-seconds = { $value } seconds
+settings-screen-timeout-minutes =
+    { $value ->
+        [one] { $value } minute
+       *[other] { $value } minutes
+    }
+settings-screen-timeout-help = Show weather after inactivity. Press a key or tap to resume without signing in again.

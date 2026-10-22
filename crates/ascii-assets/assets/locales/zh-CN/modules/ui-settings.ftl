@@ -2,13 +2,13 @@
 
 ui-settings-appearance = 外观
 ui-settings-region-time = 区域与时间
-ui-settings-system = 运行与提醒
+ui-settings-system = 系统
 ui-settings-file-explorer = 文件管理器
 ui-settings-editor = 编辑器
 ui-settings-update = 更新
 ui-settings-theme-motion-icons-colors-and-borders = 主题、动画、图标、颜色和边框
 ui-settings-language-city-and-timezone = 语言、城市和时区
-ui-settings-storage-pressure-warning-thresholds = 存储空间压力警告阈值
+ui-settings-storage-pressure-warning-thresholds = 授权、外部 CLI 控制与存储空间提醒
 ui-settings-display-sorting-and-safety = 显示、排序和安全
 ui-settings-cursor-and-file-associations = 光标和文件关联
 ui-settings-version-commits-and-source-updates = 已安装版本与可用更新

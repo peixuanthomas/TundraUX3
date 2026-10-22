@@ -52,6 +52,18 @@ impl ShellSession {
         if cursor_direction.is_none() {
             self.pages.editor.editor_cursor_acceleration = None;
         }
+        if self.editor_vim_terminal.is_some()
+            && key.key == InputKey::F(8)
+            && !key.has_non_shift_modifier()
+            && !key.modifiers.shift
+        {
+            if !repeated {
+                // The native host exports only after its pending save is acknowledged.
+                // Queue the request now so an in-flight save cannot swallow F8.
+                self.toggle_editor_vim();
+            }
+            return;
+        }
         if self.pages.editor.editor_save_state.is_some() {
             if key.key == InputKey::Escape && !repeated {
                 self.request_editor_close(platform);

@@ -178,7 +178,7 @@ impl ShellSession {
         self.pages.common.error_message = None;
         self.return_to_lockscreen_requested = false;
         self.reset_navigation(ShellScreen::Login);
-        self.reset_login_idle_deadline_at(now);
+        self.screen_saver.last_activity = now;
         let _ = self.refresh_login_users_from_storage();
         self.pages.common.focused_component = ShellComponent::LoginUserList;
         self.refresh_hit_map();

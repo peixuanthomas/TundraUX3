@@ -519,6 +519,7 @@ impl AutoAdminJob {
             button_focus,
             scroll,
             input,
+            input_sensitive: d.question.as_ref().is_some_and(|question| question.secret),
             terminal: Arc::new(terminal),
             stop: d
                 .stop

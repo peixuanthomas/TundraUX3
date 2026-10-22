@@ -9,6 +9,7 @@ pub(super) struct RedrawIdentity {
     screen: String,
     focus: String,
     keyboard_focus_visible: bool,
+    screen_saver_active: bool,
     overlay: Option<RedrawOverlayIdentity>,
 }
 
@@ -31,6 +32,7 @@ impl RedrawIdentity {
             screen: format!("{:?}", state.active_screen()),
             focus: format!("{:?}", state.focused_component()),
             keyboard_focus_visible: state.interaction.keyboard_focus_visible(),
+            screen_saver_active: state.screen_saver.active,
             overlay,
         }
     }

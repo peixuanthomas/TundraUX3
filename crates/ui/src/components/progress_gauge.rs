@@ -43,6 +43,14 @@ impl Widget for ProgressGauge<'_> {
         if area.is_empty() {
             return;
         }
+        crate::automation::control(
+            "",
+            "progressbar",
+            &self.label.content,
+            area,
+            Default::default(),
+            &[],
+        );
         Gauge::default()
             .ratio(self.ratio)
             .use_unicode(true)

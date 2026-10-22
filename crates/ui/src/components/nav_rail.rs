@@ -110,6 +110,12 @@ impl NavRail {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
+        let _scope = crate::automation::scope(
+            self.id.as_str(),
+            "navigation",
+            self.title.as_deref().unwrap_or(""),
+            area,
+        );
         let tokens = context.theme;
         let mut block = Block::default()
             .style(Style::default().fg(tokens.text).bg(tokens.surface))
@@ -122,6 +128,18 @@ impl NavRail {
         block.render(area, buffer);
         for (index, item) in self.items.iter().enumerate().take(inner.height as usize) {
             let selected = self.selected == Some(index);
+            let mut state = self.state;
+            state.selected = selected;
+            state.focused &= selected;
+            state.disabled |= item.disabled;
+            crate::automation::control(
+                item.id.as_str(),
+                "tab",
+                &item.label,
+                Rect::new(inner.x, inner.y + index as u16, inner.width, 1),
+                state,
+                &["click"],
+            );
             let style = if item.disabled {
                 Style::default().fg(tokens.muted).bg(tokens.surface)
             } else if selected {

@@ -81,7 +81,10 @@ fn more_dialog_is_centered_and_keeps_space_around_centered_labels() {
         context.buttons = Some(buttons.clone());
         let mut terminal = Terminal::new(TestBackend::new(main.right(), main.bottom())).unwrap();
         terminal
-            .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
+            .draw(|frame| {
+                ui::render_logs_content(frame, main, &model, &context);
+                ui::render_logs_overlay(frame, main, &model, &context);
+            })
             .unwrap();
         assert_eq!(
             buttons.regions().len(),
@@ -166,7 +169,10 @@ fn more_dialog_buttons_keep_shared_keyboard_hover_and_pressed_colors() {
         context.buttons = Some(buttons);
         let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
         terminal
-            .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
+            .draw(|frame| {
+                ui::render_logs_content(frame, main, &model, &context);
+                ui::render_logs_overlay(frame, main, &model, &context);
+            })
             .unwrap();
         for x in selected.area.x..selected.area.right() {
             assert_eq!(
@@ -198,6 +204,7 @@ fn more_dialog_leaves_global_chrome_untouched_at_all_sizes() {
                     }
                 }
                 ui::render_logs_content(frame, main, &model, &context);
+                ui::render_logs_overlay(frame, main, &model, &context);
             })
             .unwrap();
         for y in 0..height {

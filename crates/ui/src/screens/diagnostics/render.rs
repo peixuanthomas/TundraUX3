@@ -252,6 +252,11 @@ fn render_diagnostics_rows(
         .with_row_tones(tones)
         .bordered(false)
         .show_header(false);
+    table.row_ids = match model.tab {
+        DiagnosticsTab::Health => model.checks.iter().map(|item| item.id.clone()).collect(),
+        DiagnosticsTab::Logs => model.logs.iter().map(|item| item.path.clone()).collect(),
+        DiagnosticsTab::Incidents => model.incidents.iter().map(|item| item.id.clone()).collect(),
+    };
     table.selected = Some(model.selected_index());
     table.state.focused = true;
     table.render_frame(frame, layout.list_rows_area, context);

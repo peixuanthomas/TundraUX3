@@ -27,6 +27,7 @@ impl EmptyState {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
+        crate::automation::control("", "status", &self.title, area, Default::default(), &[]);
         let tokens = context.theme;
         let mut lines = vec![Line::styled(
             self.title.as_str(),

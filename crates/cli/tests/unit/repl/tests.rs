@@ -147,7 +147,7 @@ fn system_suggestions_match_the_platform_and_use_general_typo_matching() {
         ("gxx", "git"),
         ("git statsu", "git status"),
         ("cargo bulid", "cargo build"),
-        ("/debug doctro", "/debug doctor"),
+        ("/doctro", "/doctor"),
         ("/config get timeznoe", "/config get timezone"),
     ] {
         let hint = command_hint(line, line.len()).unwrap();

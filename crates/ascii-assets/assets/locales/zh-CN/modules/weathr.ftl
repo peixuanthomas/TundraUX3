@@ -1,5 +1,6 @@
 weathr-quit-prompt = 按空格键退出
 weathr-start-prompt = 按下任意键进入
+weathr-resume-prompt = 按下任意键或点按返回
 weathr-loading = 加载中
 weathr-north = 北纬
 weathr-south = 南纬

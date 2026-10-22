@@ -13,6 +13,7 @@ name = "tundra-shell"
 path = "src/main.rs"
 
 [dependencies]
+shell-control = { path = "../shell-control" }
 auto-admin = { path = "../auto-admin" }
 terminal-runtime = { path = "../terminal-runtime" }
 vim-runtime = { path = "../vim-runtime" }

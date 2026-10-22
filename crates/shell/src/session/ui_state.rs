@@ -610,6 +610,7 @@ pub struct UiSessionState {
     pub(super) pending_default_ascii_icon_fallback: bool,
 
     pub(super) interaction: super::controller::InteractionState,
+    pub(super) screen_saver: super::screen_saver::ScreenSaverState,
     pub(super) button_regions: Vec<ui::components::ButtonRegion>,
     pub(super) notification_scrollbar_drag: Option<(u64, u16)>,
 

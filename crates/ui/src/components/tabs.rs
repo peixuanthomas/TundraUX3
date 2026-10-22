@@ -145,21 +145,25 @@ impl Tabs {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
+        self.capture(area, true);
         self.ratatui_widget(theme, true).render(area, buffer);
     }
 
     /// Renders bordered tabs through a Ratatui [`Frame`].
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        self.capture(area, true);
         frame.render_widget(self.ratatui_widget(theme, true), area);
     }
 
     /// Renders tabs using Ratatui's official `Tabs` widget without a surrounding block.
     pub fn render_borderless(&self, area: Rect, buffer: &mut Buffer, theme: &TundraTheme) {
+        self.capture(area, false);
         self.ratatui_widget(theme, false).render(area, buffer);
     }
 
     /// Renders borderless tabs through a Ratatui [`Frame`].
     pub fn render_borderless_frame(&self, frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
+        self.capture(area, false);
         frame.render_widget(self.ratatui_widget(theme, false), area);
     }
 
@@ -174,6 +178,32 @@ impl Tabs {
         self.state.focused = true;
         self.selected = Some(index);
         ComponentEvent::Selected(self.id.clone(), index)
+    }
+
+    fn capture(&self, area: Rect, bordered: bool) {
+        if !crate::automation::enabled() {
+            return;
+        }
+        let _scope = crate::automation::scope(self.id.as_str(), "tablist", "", area);
+        for (index, (item, rect)) in self
+            .tabs
+            .iter()
+            .zip(self.item_areas(area, bordered))
+            .enumerate()
+        {
+            let mut state = self.state;
+            state.selected = self.selected == Some(index);
+            state.focused &= state.selected;
+            state.disabled |= item.disabled;
+            crate::automation::control(
+                item.id.as_str(),
+                "tab",
+                &item.label,
+                rect,
+                state,
+                &["click"],
+            );
+        }
     }
 
     fn select_first(&mut self) -> ComponentEvent {

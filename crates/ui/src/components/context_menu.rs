@@ -184,6 +184,12 @@ impl ContextMenu {
         if !self.open {
             return;
         }
+        let _scope = crate::automation::scope(
+            self.id.as_str(),
+            "menu",
+            self.title.as_deref().unwrap_or(""),
+            area,
+        );
 
         Clear.render(area, buffer);
         let block = self.block(theme);
@@ -199,6 +205,12 @@ impl ContextMenu {
         if !self.open {
             return;
         }
+        let _scope = crate::automation::scope(
+            self.id.as_str(),
+            "menu",
+            self.title.as_deref().unwrap_or(""),
+            area,
+        );
 
         frame.render_widget(Clear, area);
         let block = self.block(theme);

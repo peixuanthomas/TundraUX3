@@ -15,7 +15,9 @@ pub(super) fn system_candidates(mut names: Vec<String>) -> Vec<String> {
 
 const COMMANDS: &[&str] = &[
     "help",
+    "ui",
     "config",
+    "doctor",
     "launcher",
     "services",
     "processes",
@@ -35,6 +37,7 @@ const COMMANDS: &[&str] = &[
     "new",
 ];
 const CONFIG_FIELDS: &[&str] = &[
+    "automation.enabled",
     "theme",
     "border-shape",
     "border-color",
@@ -383,10 +386,14 @@ fn next_words(words: &[String]) -> Vec<String> {
     }
     if words.len() == 1 {
         return match group {
+            "ui" => {
+                let mut verbs = strings(crate::ui_command::VERBS);
+                verbs.push("help".into());
+                verbs
+            }
             "debug" => strings(&[
                 "asset",
                 "clear-logs",
-                "doctor",
                 "paths",
                 "explain",
                 "test-frost",
@@ -425,6 +432,7 @@ fn next_words(words: &[String]) -> Vec<String> {
         }
         ["/config", "set", field] => {
             return strings(match *field {
+                "automation.enabled" => &["true", "false"],
                 "border-shape" | "border_shape" => &["rounded", "square"],
                 "icon-mode" | "icon_mode" => &["ascii", "image"],
                 "motion" => &["full", "reduced"],
@@ -457,6 +465,9 @@ fn next_words(words: &[String]) -> Vec<String> {
             ]);
         }
         _ => {}
+    }
+    if group == "ui" {
+        return ui_words(&words);
     }
     match (group, words.last().copied().unwrap_or_default()) {
         ("logs", "--source") => return strings(&["ux", "linux"]),
@@ -552,6 +563,48 @@ fn next_words(words: &[String]) -> Vec<String> {
         return flags;
     }
     Vec::new()
+}
+
+fn ui_words(words: &[&str]) -> Vec<String> {
+    let last = words.last().copied().unwrap_or_default();
+    match last {
+        "--button" => return strings(&["left", "right", "middle"]),
+        "--direction" => return strings(&["up", "down", "left", "right"]),
+        "--state" => return strings(&["present", "absent", "actionable"]),
+        "--phase" => return strings(&["press", "repeat", "release"]),
+        "--modifiers" => return strings(&["ctrl", "alt", "shift", "super", "hyper", "meta"]),
+        _ => {}
+    }
+    if words.contains(&"--") || (last.starts_with("--") && !matches!(last, "--double" | "--stdin"))
+    {
+        return Vec::new();
+    }
+    let mut flags = crate::ui_command::allowed_options(words[1])
+        .into_iter()
+        .filter(|flag| !words.contains(flag))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if words == ["/ui", "key"] {
+        flags.extend(strings(&[
+            "enter",
+            "esc",
+            "tab",
+            "backtab",
+            "backspace",
+            "space",
+            "delete",
+            "insert",
+            "left",
+            "right",
+            "up",
+            "down",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+        ]));
+    }
+    flags
 }
 
 fn nearby_words(partial: &str, candidates: &[String]) -> Vec<String> {

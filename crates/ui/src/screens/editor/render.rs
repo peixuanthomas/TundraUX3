@@ -30,15 +30,16 @@ pub fn render_editor_contextual(
         .bordered(true)
         .render_frame(frame, area, context);
     if let Some(terminal) = &model.vim_terminal {
-        render_editor_button(
-            frame,
-            layout.vim_toggle,
-            "editor.vim-toggle",
-            i18n::tr!("ui-editor-vim-return"),
-            false,
-            false,
-            theme,
-        );
+        let elapsed = if context.motion.reduced_motion {
+            std::time::Duration::ZERO
+        } else {
+            context.motion.now
+        };
+        let mut vim_toggle = Button::new("editor.vim-toggle", i18n::tr!("ui-editor-vim-return"))
+            .with_bracketed_label(false)
+            .with_rainbow_label(elapsed);
+        vim_toggle.state.selected = true;
+        vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
         crate::screens::command_line::render_native_terminal_snapshot(
             frame,
             layout.canvas,
@@ -75,6 +76,7 @@ fn render_search_bar(
                     search.replacement.clone()
                 };
                 input.set_focused(focused);
+                input = input.with_capture_name(editor_search_label(*control));
                 input.render_borderless_frame_with_prefix(
                     frame,
                     *area,
@@ -203,15 +205,18 @@ fn render_menu_bar(
             layout.menu_bar.height,
         ),
     );
-    render_editor_button(
-        frame,
-        layout.vim_toggle,
-        "editor.vim-toggle",
-        vim_mode_label(model.vim_mode),
-        model.vim_mode.is_some(),
-        false,
-        theme,
-    );
+    let mut vim_toggle = Button::new("editor.vim-toggle", vim_mode_label(model.vim_mode))
+        .with_bracketed_label(false);
+    vim_toggle.state.selected = model.vim_mode.is_some();
+    if model.vim_mode.is_some() {
+        let elapsed = if context.motion.reduced_motion {
+            std::time::Duration::ZERO
+        } else {
+            context.motion.now
+        };
+        vim_toggle = vim_toggle.with_rainbow_label(elapsed);
+    }
+    vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
 }
 
 fn render_menu_popup(
@@ -560,6 +565,24 @@ fn render_canvas(
     if layout.canvas.is_empty() {
         return;
     }
+    crate::automation::control(
+        "editor.document",
+        "textbox",
+        &model.file_name,
+        layout.canvas,
+        crate::components::ComponentState {
+            focused: model.focus == EditorFocus::Canvas,
+            selected: model.selection.is_some()
+                || model.rich_selection.is_some()
+                || model.selection_offsets.is_some(),
+            ..Default::default()
+        },
+        if model.read_only {
+            &["click", "key", "scroll"]
+        } else {
+            &["click", "drag", "text", "key", "scroll"]
+        },
+    );
 
     for line_layout in &layout.line_areas {
         if layout.gutter.width >= 2 {

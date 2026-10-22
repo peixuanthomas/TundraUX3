@@ -56,29 +56,8 @@ impl ShellSession {
     ) -> Option<ShellAction> {
         self.notification_expire(received_at);
         self.expire_login_password_visibility_at(received_at);
-        let requests_shutdown = match input {
-            InputEvent::Shutdown => true,
-            InputEvent::Key(key) => {
-                key.is_ctrl_c()
-                    && !matches!(
-                        self.active_screen(),
-                        ShellScreen::Editor | ShellScreen::CommandLine | ShellScreen::Explorer
-                    )
-            }
-            _ => false,
-        };
-        if self.login_idle_tracking_active()
-            && received_at >= self.pages.login.login_idle_deadline
-            && !requests_shutdown
-        {
-            self.prepare_return_to_lockscreen();
-            return Some(
-                self.app
-                    .dispatch_at(app::AppCommand::ConfirmExit, received_at),
-            );
-        }
-        if self.login_idle_tracking_active() && resets_login_idle_timeout(input) {
-            self.pages.login.login_idle_deadline = received_at + LOGIN_IDLE_TIMEOUT;
+        if self.consume_screen_saver_input(input, received_at) {
+            return Some(ShellAction::Redraw);
         }
         None
     }

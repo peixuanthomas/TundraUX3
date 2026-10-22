@@ -72,10 +72,12 @@ impl Surface {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
+        self.capture(area);
         self.block(context).render(area, buffer);
     }
 
     pub fn render_frame(&self, frame: &mut Frame<'_>, area: Rect, context: &RenderContext) {
+        self.capture(area);
         frame.render_widget(self.block(context), area);
     }
 
@@ -95,6 +97,7 @@ impl Surface {
             return;
         };
         let mut surface = self.clone();
+        self.capture(visible);
         if skipped > 0 {
             surface.title = None;
         }
@@ -167,6 +170,20 @@ impl Surface {
             );
         }
         block
+    }
+
+    fn capture(&self, area: Rect) {
+        crate::automation::control(
+            "",
+            "surface",
+            self.title.as_deref().unwrap_or(""),
+            area,
+            super::ComponentState {
+                focused: self.focused,
+                ..Default::default()
+            },
+            &[],
+        );
     }
 }
 

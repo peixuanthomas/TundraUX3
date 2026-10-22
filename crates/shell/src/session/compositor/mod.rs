@@ -105,9 +105,42 @@ pub(crate) struct ScreenCompositor {
     toast: Option<ui::components::Toast>,
     appearance: Option<(ui::ThemeTokens, u64)>,
     keyboard_open: bool,
+    pub(super) capture_enabled: bool,
+    pub(super) snapshot: Option<shell_control::Snapshot>,
+    sensitive_frame: bool,
 }
 
 impl ScreenCompositor {
+    pub(super) fn render_screen_saver(
+        &mut self,
+        frame: &mut Frame<'_>,
+        display: &mut weathr::EmbeddedDisplay,
+    ) -> io::Result<()> {
+        let bounds = frame.area();
+        let buffer = display.render((bounds.width, bounds.height))?;
+        frame.buffer_mut().merge(buffer);
+        self.snapshot = self.capture_enabled.then(|| {
+            let capture = ui::automation::FrameCapture::begin(bounds, "screen_saver");
+            let mut snapshot = capture.finish(frame.buffer_mut());
+            let mut resume = shell_control::Node::new(
+                "screen_saver/resume",
+                "button",
+                i18n::tr!("weathr-resume-prompt"),
+                shell_control::Rect {
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: bounds.height,
+                },
+            );
+            resume.actions = vec!["click".into(), "key".into()];
+            resume.parent = Some("screen".into());
+            snapshot.nodes.push(resume);
+            snapshot
+        });
+        Ok(())
+    }
+
     pub(super) fn prepare(
         &mut self,
         state: &ShellSession,
@@ -164,6 +197,19 @@ impl ScreenCompositor {
         }
     }
 
+    pub(super) fn render_size_notice(
+        &mut self,
+        frame: &mut Frame<'_>,
+        error: crate::startup::terminal_size::ShellTerminalSizeError,
+        theme: &ui::TundraTheme,
+    ) {
+        let capture = self
+            .capture_enabled
+            .then(|| ui::automation::FrameCapture::begin(frame.area(), "terminal_size"));
+        super::runtime::render_terminal_size_notice(frame, error, theme);
+        self.snapshot = capture.map(|capture| capture.finish(frame.buffer_mut()));
+    }
+
     /// Returns animation demand; the runtime retains ownership of scheduling and I/O.
     pub(super) fn render(
         &mut self,
@@ -173,6 +219,20 @@ impl ScreenCompositor {
         icons: Option<&LauncherIconRuntime>,
     ) -> bool {
         let bounds = frame.area();
+        let mut capture = self.capture_enabled.then(|| {
+            ui::automation::FrameCapture::begin(bounds, format!("{:?}", state.content_screen()))
+        });
+        let overlays = state.interactive_overlays();
+        let top_overlay = overlays.last();
+        let modal = top_overlay.is_some_and(|overlay| {
+            overlay.category == super::overlays::ShellOverlayCategory::ShellModal
+        });
+        let page_overlay = top_overlay.is_some_and(|overlay| {
+            overlay.category != super::overlays::ShellOverlayCategory::ShellModal
+        });
+        if let Some(capture) = &mut capture {
+            capture.set_group("page", "page", bounds, modal || page_overlay);
+        }
         if state.terminal_size != (bounds.width, bounds.height) {
             state.details_motion = None;
             state.screen_keyboard.pressed = None;
@@ -250,8 +310,18 @@ impl ScreenCompositor {
         if !shell_modal {
             self.motion.capture_base(frame.buffer_mut(), state);
         }
+        if let Some(capture) = &mut capture
+            && overlays.iter().any(|overlay| {
+                overlay.category != super::overlays::ShellOverlayCategory::ShellModal
+            })
+        {
+            capture.set_group("page-overlay", "dialog", layout.main, modal);
+        }
         if visible_content {
             content.render_overlay(frame, &layout, context);
+        }
+        if let Some(capture) = &mut capture {
+            capture.set_group("chrome", "toolbar", bounds, false);
         }
         ui::render_shell_chrome_with_status_focus(
             frame,
@@ -281,6 +351,18 @@ impl ScreenCompositor {
         if shell_modal {
             self.motion.capture_base(frame.buffer_mut(), state);
         }
+        if let Some(capture) = &mut capture
+            && (prepared.notification.is_some()
+                || prepared.help.is_some()
+                || prepared.time_sync.is_some())
+        {
+            capture.set_group(
+                "modal",
+                "dialog",
+                layout.modal_area(),
+                state.auto_admin_visible(),
+            );
+        }
         if let Some(notification) = &prepared.notification {
             ui::render_notification_overlay_with_context(
                 frame,
@@ -305,6 +387,14 @@ impl ScreenCompositor {
             );
         }
         if let Some(auto_admin) = state.auto_admin_view() {
+            if let Some(capture) = &mut capture {
+                capture.set_group(
+                    "authorization",
+                    "dialog",
+                    state.auto_admin_available_area(),
+                    false,
+                );
+            }
             ui::render_auto_admin_in(
                 frame,
                 bounds,
@@ -316,16 +406,71 @@ impl ScreenCompositor {
         self.motion.capture_overlay(frame.buffer_mut(), state);
         self.motion
             .process(context.motion.scaled_delta(), frame.buffer_mut(), state);
+        if let Some(capture) = &mut capture
+            && let Some(launcher) = state.keyboard_launcher_area()
+        {
+            let keyboard = state.input_keyboard_layout().keyboard;
+            let area = if keyboard.is_empty() {
+                launcher
+            } else {
+                keyboard.union(launcher)
+            };
+            capture.set_group("keyboard", "keyboard", area, false);
+        }
         self.render_input_keyboard(frame, state, context);
         state.button_regions = buttons.regions();
-        prepared.progress_running
+        let animation_running = prepared.progress_running
+            || (!context.motion.reduced_motion
+                && matches!(&prepared.page, ScreenViewModel::Editor(model) if model.vim_mode.is_some()))
             || keyboard_animating
             || details_animating
             || self.motion.is_running()
             || self
                 .toast
                 .as_ref()
-                .is_some_and(|toast| toast.requests_redraw(context.motion))
+                .is_some_and(|toast| toast.requests_redraw(context.motion));
+        self.snapshot = capture.map(|capture| {
+            let mut snapshot = capture.finish(frame.buffer_mut());
+            snapshot.animation_running = animation_running;
+            snapshot.background_tasks_running =
+                state.tasks.has_running() || state.auto_admin_running();
+            for node in snapshot
+                .nodes
+                .iter_mut()
+                .filter(|node| node.id.starts_with("chrome/") && node.role == "button")
+            {
+                let point = (
+                    node.rect.x + node.rect.width / 2,
+                    node.rect.y + node.rect.height / 2,
+                );
+                node.actionable &= state.button_at(point).is_some_and(|button| {
+                    node.id.strip_prefix("chrome/") == Some(button.id.as_str()) && !button.disabled
+                });
+                if !node.actionable {
+                    node.actions.clear();
+                }
+            }
+            let layout_animating =
+                keyboard_animating || details_animating || self.motion.is_running();
+            let sensitive = snapshot.nodes.iter().any(|node| node.sensitive);
+            if layout_animating {
+                for node in &mut snapshot.nodes {
+                    node.actionable = false;
+                }
+                if sensitive || self.sensitive_frame {
+                    snapshot.lines.iter_mut().for_each(String::clear);
+                    for node in &mut snapshot.nodes {
+                        node.text.clear();
+                        if node.role == "text" {
+                            node.name.clear();
+                        }
+                    }
+                }
+            }
+            self.sensitive_frame = sensitive || (self.sensitive_frame && layout_animating);
+            snapshot
+        });
+        animation_running
     }
 
     fn synchronize_toast(&mut self, chrome: &ui::ShellChromeViewModel, motion: ui::MotionFrame) {
@@ -400,6 +545,9 @@ impl ScreenCompositor {
         platform: &dyn Platform,
         received_at: Instant,
     ) -> Option<InputEvent> {
+        if state.screen_saver.active {
+            return state.prepare_input(input, platform, received_at);
+        }
         if matches!(
             input,
             InputEvent::Key(_) | InputEvent::Paste(_) | InputEvent::FocusLost

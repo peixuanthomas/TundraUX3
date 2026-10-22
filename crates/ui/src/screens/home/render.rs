@@ -100,14 +100,14 @@ fn render_user_main(
         }
         .bg(context.theme.raised);
         let content_width = usize::from(tile.width.saturating_sub(2));
-        let mut surface = Button::new(format!("home.entry.{index}"), "");
-        surface.state.selected = selected;
-        surface.set_focused(selected);
+        let mut surface = Button::new(format!("home.entry.{index}"), entry.label_with_shortcut());
+        surface.state.selected = index == home.selected_entry_index();
+        surface.set_focused(index == home.selected_entry_index());
         if tile.height < HOME_TILE_MIN_HEIGHT {
             let mut compact =
                 Button::new(format!("home.entry.{index}"), entry.label_with_shortcut());
-            compact.state.selected = selected;
-            compact.set_focused(selected);
+            compact.state.selected = index == home.selected_entry_index();
+            compact.set_focused(index == home.selected_entry_index());
             compact.render_borderless_frame(frame, tile, theme);
             continue;
         }

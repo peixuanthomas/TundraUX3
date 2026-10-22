@@ -98,7 +98,10 @@ fn render_bootstrap_input(
     }
 
     let prefix = label.to_string();
-    let mut input = TextInput::new(id).with_cursor_symbol("_");
+    let mut input = TextInput::new(id)
+        .with_capture_name(label)
+        .with_sensitive(id == "bootstrap.password")
+        .with_cursor_symbol("_");
     input.set_value(value);
     input.set_focused(focused);
     input.state.hovered = focused;

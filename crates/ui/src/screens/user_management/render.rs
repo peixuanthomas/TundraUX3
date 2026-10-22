@@ -124,6 +124,11 @@ fn render_user_management_table(
         .with_viewport_start(layout.visible_start)
         .with_row_tones(tones)
         .bordered(false);
+    table.row_ids = model
+        .users
+        .iter()
+        .map(|user| user.username.clone())
+        .collect();
     table.selected = Some(model.selected_index);
     table.state.focused = model.focus == UserManagementFocus::UserList;
     let table_area = Rect::new(
@@ -310,7 +315,10 @@ fn render_user_management_input(
     }
 
     let prefix = format!("[ {label}: ");
-    let mut input = TextInput::new(id).with_cursor_symbol("_");
+    let mut input = TextInput::new(id)
+        .with_capture_name(label)
+        .with_sensitive(id == "user-management.form.password")
+        .with_cursor_symbol("_");
     input.set_value(&value);
     input.set_focused(focused);
     input.state.hovered = focused;

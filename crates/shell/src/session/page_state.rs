@@ -62,7 +62,6 @@ pub(super) struct LoginPageState {
     pub(super) login_user_window_start: usize,
     pub(super) login_username: String,
     pub(super) login_password: String,
-    pub(super) login_idle_deadline: Instant,
     pub(super) login_password_visible_until: Option<Instant>,
 }
 impl Default for LoginPageState {
@@ -72,7 +71,6 @@ impl Default for LoginPageState {
             login_user_window_start: 0,
             login_username: String::new(),
             login_password: String::new(),
-            login_idle_deadline: Instant::now() + LOGIN_IDLE_TIMEOUT,
             login_password_visible_until: None,
         }
     }

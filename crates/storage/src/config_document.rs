@@ -13,6 +13,11 @@ pub const DEFAULT_ANIMATION_SPEED_PERCENT: u16 = 100;
 pub const MIN_ANIMATION_SPEED_PERCENT: u16 = 50;
 pub const MAX_ANIMATION_SPEED_PERCENT: u16 = 200;
 pub const ANIMATION_SPEED_STEP_PERCENT: u16 = 25;
+pub const DEFAULT_SCREEN_TIMEOUT_SECONDS: u64 = 300;
+
+fn default_screen_timeout_seconds() -> u64 {
+    DEFAULT_SCREEN_TIMEOUT_SECONDS
+}
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -34,6 +39,10 @@ pub enum AutoAdminPolicy {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageConfig {
     pub schema_version: u32,
+    #[serde(default = "default_screen_timeout_seconds")]
+    pub screen_timeout_seconds: u64,
+    #[serde(default)]
+    pub automation: AutomationConfig,
     #[serde(default)]
     pub auto_admin: AutoAdminPolicy,
     #[serde(default)]
@@ -98,6 +107,8 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            screen_timeout_seconds: DEFAULT_SCREEN_TIMEOUT_SECONDS,
+            automation: AutomationConfig::default(),
             linux_update_mode: LinuxUpdateMode::default(),
             auto_admin: AutoAdminPolicy::default(),
             theme: default_theme(),
@@ -904,6 +915,11 @@ fn legacy_launcher_entry_id(path: &str) -> String {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutomationConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecurityConfig {
     /// Retained for backward-compatible config parsing. Release builds never enable debug mode.
     pub allow_release_debug: bool,
@@ -951,6 +967,31 @@ mod update_mode_tests {
                 .unwrap()
                 .linux_update_mode,
             LinuxUpdateMode::Beta
+        );
+    }
+}
+
+#[cfg(test)]
+mod automation_tests {
+    use super::*;
+    #[test]
+    fn old_configuration_disables_control_and_enabled_setting_roundtrips() {
+        let mut config = StorageConfig::default();
+        let old = toml::to_string(&config)
+            .unwrap()
+            .replace("[automation]\nenabled = false\n", "");
+        assert!(
+            !toml::from_str::<StorageConfig>(&old)
+                .unwrap()
+                .automation
+                .enabled
+        );
+        config.automation.enabled = true;
+        assert!(
+            toml::from_str::<StorageConfig>(&toml::to_string(&config).unwrap())
+                .unwrap()
+                .automation
+                .enabled
         );
     }
 }

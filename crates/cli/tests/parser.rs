@@ -20,7 +20,7 @@ fn simple_commands_dispatch_from_a_table() {
         (&[], CliCommand::Help),
         (&["--version"], CliCommand::Version),
         (&["-V"], CliCommand::Version),
-        (&["debug", "doctor"], CliCommand::Doctor),
+        (&["doctor"], CliCommand::Doctor),
         (&["debug", "paths"], CliCommand::Paths),
         (&["debug", "explain"], CliCommand::Explain),
         (&["new"], CliCommand::New),
@@ -65,6 +65,78 @@ fn simple_commands_dispatch_from_a_table() {
             "unexpected dispatch for {args:?}"
         );
     }
+}
+
+#[test]
+fn root_help_lists_every_public_command_and_doctor_is_outside_debug() {
+    let mut stdout = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["--help"],
+            &UnsupportedPlatform,
+            &mut stdout,
+            &mut Vec::new()
+        ),
+        0
+    );
+    let text = String::from_utf8(stdout).unwrap();
+    for command in [
+        "config",
+        "doctor",
+        "launcher",
+        "services",
+        "processes",
+        "packages",
+        "network",
+        "disks",
+        "users",
+        "firewall",
+        "ssh",
+        "backups",
+        "scheduled-tasks",
+        "system-config",
+        "operations",
+        "logs",
+        "ui",
+        "debug",
+        "cls",
+        "new",
+        "repl",
+        "help",
+    ] {
+        assert!(
+            text.lines()
+                .any(|line| line.trim_start().starts_with(&format!("{command} "))),
+            "missing {command}: {text}"
+        );
+        let help = if command == "help" {
+            parse_args([command])
+        } else {
+            parse_args([command, "--help"])
+        };
+        assert!(help.unwrap().is_help_or_version(), "{command}");
+    }
+    assert!(!text.contains("prefix"));
+    assert!(!text.contains("/<command>"));
+    assert_eq!(
+        parse_args(["doctor", "extra"]),
+        Err(CliError::UnexpectedArgument("extra".into()))
+    );
+    assert_eq!(
+        parse_args(["debug", "doctor"]),
+        Err(CliError::UnknownDebugCommand("doctor".into()))
+    );
+    let mut stdout = Vec::new();
+    assert_eq!(
+        run_with_platform(
+            ["debug", "--help"],
+            &UnsupportedPlatform,
+            &mut stdout,
+            &mut Vec::new()
+        ),
+        0
+    );
+    assert!(!String::from_utf8(stdout).unwrap().contains("doctor"));
 }
 
 #[test]
@@ -117,7 +189,6 @@ fn version_prints_the_package_version_without_platform_support() {
 fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
     for name in [
         "asset",
-        "doctor",
         "paths",
         "explain",
         "test-frost",
@@ -131,7 +202,7 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
             Err(CliError::UnknownCommand(name.to_string()))
         );
     }
-    for name in ["weathr", "unknown", "new"] {
+    for name in ["weathr", "unknown", "new", "doctor"] {
         assert_eq!(
             parse_args(["debug", name]),
             Err(CliError::UnknownDebugCommand(name.to_string()))
@@ -141,7 +212,6 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
         "help",
         "test-frost",
         "test-matrix",
-        "doctor",
         "paths",
         "explain",
         "test-watchdog-error",
@@ -177,13 +247,10 @@ fn screen_keyboard_help_is_available_without_starting_the_demo() {
         let mut stderr = Vec::new();
         assert_eq!(run(args, &mut stdout, &mut stderr), 0);
         let text = String::from_utf8(stdout).unwrap();
-        assert!(text.contains("English QWERTY"));
-        assert!(text.contains("Backspace"));
-        assert!(text.contains("F1-F12"));
-        assert!(text.contains("CapsLock"));
-        assert!(text.contains("Copy/Ctrl+C copies all text"));
-        assert!(text.contains("lower half"));
-        assert!(text.contains("external terminal: tundra-cli debug screen-keyboard"));
+        assert!(text.contains("Usage: tundra-cli debug screen-keyboard"));
+        assert!(text.contains("external interactive terminal"));
+        assert!(text.contains("Tab/arrow keys"));
+        assert!(text.contains("Esc exits"));
         assert!(stderr.is_empty());
     }
     let mut stdout = Vec::new();
@@ -507,7 +574,7 @@ fn unknown_and_extra_arguments_are_errors() {
         Err(CliError::UnknownCommand("repair".to_string()))
     );
     assert_eq!(
-        parse_args(["debug", "doctor", "--json"]),
+        parse_args(["doctor", "--json"]),
         Err(CliError::UnexpectedArgument("--json".to_string()))
     );
 }
@@ -1185,7 +1252,7 @@ fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
     let asset_root = copy_complete_assets(&tree);
 
     let exit_code = run_with_platform_and_asset_root(
-        ["debug", "doctor"],
+        ["doctor"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -1236,7 +1303,7 @@ fn doctor_command_warns_for_missing_ascii_asset_without_failing() {
         .expect("missing asset fixture can be removed");
 
     let exit_code = run_with_platform_and_asset_root(
-        ["debug", "doctor"],
+        ["doctor"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -1262,7 +1329,7 @@ fn doctor_command_reports_checks_and_skips_storage_when_app_paths_fail() {
     let asset_root = copy_complete_assets(&tree);
 
     let exit_code = run_with_platform_and_asset_root(
-        ["debug", "doctor"],
+        ["doctor"],
         &platform,
         &mut stdout,
         &mut stderr,
@@ -1297,7 +1364,7 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stdout.is_empty());
     let stderr = String::from_utf8(stderr).expect("error output should be utf8");
     assert!(stderr.contains("ERROR: unknown command: repair"));
-    assert!(stderr.contains("<config|launcher|services|processes|packages|network|disks|users|firewall|ssh|backups|scheduled-tasks|system-config|operations|logs|debug|cls|new|repl|help>"));
+    assert!(stderr.contains("tundra-cli <command> [options]"));
 }
 
 fn assert_path_labels(output: &str) {
@@ -1462,7 +1529,7 @@ fn help_is_contextual_and_never_runs_the_command() {
         "repl",
         "new",
         "cls",
-        "debug doctor",
+        "doctor",
         "debug test-watchdog-panic",
         "logs export",
         "debug clear-logs",

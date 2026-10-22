@@ -939,13 +939,15 @@ fn render_launcher_grid(
         };
         let selected = model.selected_index == Some(item_layout.index) || item.selected;
         let style = item_style(item.status, selected, theme).bg(theme.tokens().raised);
-        let mut surface =
-            Button::new(format!("launcher.item.{}", item.id), "").with_current(selected);
+        let mut surface = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
+            .with_current(selected);
         surface.set_disabled(item.status != LauncherItemStatus::Ready);
+        surface.set_focused(model.selected_index == Some(item_layout.index));
         if item_layout.area.height < 3 {
             let mut compact = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
                 .with_current(selected);
             compact.set_disabled(item.status != LauncherItemStatus::Ready);
+            compact.set_focused(model.selected_index == Some(item_layout.index));
             compact.render_borderless_frame(frame, item_layout.area, theme);
             continue;
         }
@@ -1078,6 +1080,8 @@ fn render_launcher_details(
         .with_row_tones(tones)
         .bordered(false);
     table.selected = model.selected_index;
+    table.capture_focused_row = model.selected_index;
+    table.row_ids = model.items.iter().map(|item| item.id.clone()).collect();
     table.state.focused = false;
     let table_context = RenderContext {
         theme: crate::ThemeTokens {

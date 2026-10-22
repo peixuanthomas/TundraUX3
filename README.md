@@ -21,6 +21,10 @@ System-management development focuses on Linux. Windows and macOS builds let you
 
 ## What you can do
 
+- **Show weather while idle:** Settings → System lets you choose Never, 30 seconds, or 1/2/5/10/30 minutes (default: 5 minutes). Press a key or tap to return to the same page without signing in again.
+
+- **Let agents operate the interface:** enable external CLI control in Settings → System, then use `tundra-cli ui` to inspect the live UI tree and text screen, click, drag, scroll, or type. Connections are local and restricted to the same OS user. See [CLI control](crates/cli/docs/ui-control.md).
+
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
 - **Browse packages:** open Installed by default, cycle Installed/Updates/Search with Tab or Shift+Tab, and select packages with Up/Down. Expanded details scroll with all four arrow keys; existing shortcuts remain available.
 - **Find page actions:** common operations appear at the bottom right, with the main action highlighted and destructive actions in the danger color. F1 or the title-bar Help button opens page shortcuts.
@@ -29,7 +33,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Set up Linux:** the clock follows system time and timezone, including existing installations. Change timezone with the map in Region & Time, and manage system automatic synchronization and timesyncd/chrony servers there. Operating System Settings contains the host name.
 - **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.
 - **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.
-- **Work with files:** browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with syntax highlighting, search and replace, soft wrap and JSON formatting. F8 switches to the bundled real Vim. The editor opens 106 source and configuration suffixes by default. File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
+- **Work with files:** browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with syntax highlighting, search and replace, soft wrap and JSON formatting. F8 switches to the bundled real Vim, with rainbow toggle text when enabled. The editor opens 106 source and configuration suffixes by default. File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
 - **Manage Linux file access:** edit permissions and ownership for selected files, with separate file/directory permissions and a reviewed recursive range. Toggle permission boxes with Space or Enter.
 - **Open tools:** use the application launcher and built-in command line when a task calls for commands. Move between launcher icon rows with Up/Down and between adjacent items with Left/Right.
 - **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics.
@@ -75,7 +79,7 @@ Shrinking a running window pauses interaction behind a size reminder and preserv
 To check the environment:
 
 ```sh
-./tundra-cli debug doctor
+./tundra-cli doctor
 ```
 
 Linux uses the account that launched the program and that account's system permissions. Run it as your normal user; operations that need additional permission request authorization through the relevant system tools. Exiting TundraUX3 closes the application and returns to your terminal.
@@ -102,12 +106,12 @@ Explore the companion CLI:
 
 ```sh
 cargo run --locked -p cli --bin tundra-cli -- --help
-cargo run --locked -p cli --bin tundra-cli -- debug doctor
+cargo run --locked -p cli --bin tundra-cli -- doctor
 ```
 
 Preview shared controls with `tundra-cli debug ui-test` in a terminal of at least 88 × 30 cells. F1–F6 switch pages; Esc exits. It uses built-in sample data, theme and English text without reading or writing configuration, language files, logs or saved state.
 
-The [shared UI library](crates/ui/README.md) exposes `animate` for value and Ratatui layout/style animations, including its attribute macro.
+The [shared UI library](crates/ui/README.md) exposes `animate` for value and Ratatui layout/style animations, including its attribute macro. Animated pages share frame snapshots and skip unnecessary image checks to reduce CPU work.
 
 Run `tundra-cli debug test-rainbow-text` to preview flowing rainbow text. Esc or the Exit button closes the demo; it uses built-in samples without saving settings.
 

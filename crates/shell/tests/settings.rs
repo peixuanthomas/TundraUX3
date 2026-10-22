@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use identity::{SessionService, UserRole, UserService};
 use platform::mock::{MockCall, MockPlatform};
@@ -476,7 +476,18 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
         storage::AutoAdminPolicy::Manual
     );
     press(&mut state, &platform, "Down");
-    let items = &items[1..];
+    assert_eq!(items[1].field, SettingsField::AutomationEnabled);
+    assert_eq!(items[1].checked, Some(false));
+    assert!(!manager.load_config().unwrap().automation.enabled);
+    press(&mut state, &platform, "Right");
+    assert!(manager.load_config().unwrap().automation.enabled);
+    press(&mut state, &platform, "Left");
+    assert!(!manager.load_config().unwrap().automation.enabled);
+    press(&mut state, &platform, "Down");
+    assert_eq!(items[2].field, SettingsField::ScreenTimeout);
+    assert_eq!(items[2].value, "5 minutes");
+    press(&mut state, &platform, "Down");
+    let items = &items[3..];
     assert_eq!(items[0].field, SettingsField::SystemLowAvailable);
     assert_eq!(items[0].value, "5 GiB");
     assert_eq!(items[0].kind, ui::SettingsControlKind::Stepper);
@@ -513,6 +524,48 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
             .system_status
             .critical_available_gib,
         4
+    );
+}
+
+#[test]
+fn screen_timeout_saves_all_choices_and_wakes_without_logging_out() {
+    let fixture = FixtureRoot::new("screen-timeout");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    for key in ["Tab", "Tab", "Down", "Down"] {
+        press(&mut state, &platform, key);
+    }
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::ScreenTimeout
+    );
+    for seconds in [600, 1800, 0, 30, 60, 120, 300] {
+        press(&mut state, &platform, "Right");
+        assert_eq!(
+            manager.load_config().unwrap().screen_timeout_seconds,
+            seconds
+        );
+    }
+    press(&mut state, &platform, "Left");
+    assert_eq!(manager.load_config().unwrap().screen_timeout_seconds, 120);
+    let actor = state.auth_session().cloned();
+    let now = Instant::now();
+    state.apply_input_at(InputEvent::FocusGained, now);
+    state.apply_input_at(InputEvent::Tick, now + Duration::from_secs(120));
+    assert!(state.screen_saver_active());
+    state.apply_input_at(
+        InputEvent::from_key_label("Esc"),
+        now + Duration::from_secs(121),
+    );
+    assert!(!state.screen_saver_active());
+    assert_eq!(state.active_screen(), ShellScreen::Settings);
+    assert_eq!(state.auth_session(), actor.as_ref());
+    assert!(!state.shutdown_requested());
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::ScreenTimeout
     );
 }
 

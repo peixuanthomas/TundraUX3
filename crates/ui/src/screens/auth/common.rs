@@ -113,9 +113,21 @@ fn render_auth_viewport_inner(
         viewport.content.height,
     ))
     .expect("bounded authentication viewport");
-    terminal
-        .draw(|virtual_frame| render(virtual_frame, viewport.content, &local))
-        .expect("in-memory authentication rendering");
+    {
+        let _projection = crate::automation::transform(
+            i32::from(viewport.area.x),
+            i32::from(viewport.area.y) - i32::from(viewport.offset),
+            Rect::new(
+                viewport.area.x,
+                viewport.area.y,
+                viewport.content.width,
+                viewport.area.height,
+            ),
+        );
+        terminal
+            .draw(|virtual_frame| render(virtual_frame, viewport.content, &local))
+            .expect("in-memory authentication rendering");
+    }
     let buffer = terminal.backend().buffer();
     for y in 0..viewport.area.height {
         for x in 0..viewport.content.width {

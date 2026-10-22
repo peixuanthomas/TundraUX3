@@ -26,6 +26,9 @@ pub struct TextInput {
     horizontal_scroll: bool,
     cursor_symbol: String,
     placeholder_when_focused: bool,
+    sensitive: bool,
+    capture_focused: Option<bool>,
+    capture_name: Option<String>,
 }
 
 impl TextInput {
@@ -49,11 +52,31 @@ impl TextInput {
             horizontal_scroll: false,
             cursor_symbol: "|".to_string(),
             placeholder_when_focused: false,
+            sensitive: false,
+            capture_focused: None,
+            capture_name: None,
         }
     }
 
     pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
+        self
+    }
+
+    /// Password content is always hidden in exported snapshots, even during reveal.
+    pub fn with_sensitive(mut self, sensitive: bool) -> Self {
+        self.sensitive = sensitive;
+        self
+    }
+
+    /// Allows an enclosing field to own the cursor styling while exposing its focus.
+    pub fn with_capture_focused(mut self, focused: bool) -> Self {
+        self.capture_focused = Some(focused);
+        self
+    }
+
+    pub fn with_capture_name(mut self, name: impl Into<String>) -> Self {
+        self.capture_name = Some(name.into());
         self
     }
 
@@ -371,6 +394,7 @@ impl TextInput {
     }
 
     fn bordered_widget(&self, area: Rect, theme: &TundraTheme) -> Paragraph<'static> {
+        self.capture(area);
         let style = interactive_style(self.state, theme);
         let block = theme
             .block()
@@ -395,6 +419,7 @@ impl TextInput {
         theme: &TundraTheme,
         prefix: &str,
     ) -> Paragraph<'static> {
+        self.capture(area);
         let prefix_width = terminal_width(prefix);
         let mut line = self.display_line((area.width as usize).saturating_sub(prefix_width), theme);
         line.spans.insert(0, Span::raw(prefix.to_string()));
@@ -406,6 +431,24 @@ impl TextInput {
         Paragraph::new(line)
             .alignment(HorizontalAlignment::Left)
             .style(style)
+    }
+
+    fn capture(&self, area: Rect) {
+        if !crate::automation::enabled() {
+            return;
+        }
+        let mut node = crate::automation::node(
+            self.id.as_str(),
+            "textbox",
+            self.capture_name.as_deref().unwrap_or(&self.placeholder),
+            area,
+        );
+        node.focused = self.capture_focused.unwrap_or(self.state.focused);
+        node.selected = self.selection_range().is_some();
+        node.enabled = !self.state.disabled;
+        node.sensitive = self.sensitive;
+        node.actions = vec!["click".into(), "text".into(), "key".into()];
+        crate::automation::record(node);
     }
 
     fn insert_char(&mut self, character: char) {

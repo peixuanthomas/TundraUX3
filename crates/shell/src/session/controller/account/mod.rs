@@ -18,16 +18,6 @@ impl ShellSession {
         self.pages.common.error_message = None;
     }
 
-    pub(in crate::session) fn reset_login_idle_deadline_at(&mut self, now: Instant) {
-        self.pages.login.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
-    }
-
-    pub(in crate::session) fn login_idle_tracking_active(&self) -> bool {
-        self.identity_backend != identity::IdentityBackend::Linux
-            && self.screen_stack().contains(&ShellScreen::Login)
-            && self.app.auth_session().is_none()
-    }
-
     pub(in crate::session) fn expire_login_password_visibility_at(&mut self, now: Instant) {
         if self
             .pages
@@ -52,14 +42,6 @@ impl ShellSession {
         fallback: Duration,
     ) -> Duration {
         let mut timeout = fallback;
-        if self.login_idle_tracking_active() {
-            timeout = timeout.min(
-                self.pages
-                    .login
-                    .login_idle_deadline
-                    .saturating_duration_since(now),
-            );
-        }
         if let Some(deadline) = self.pages.login.login_password_visible_until {
             timeout = timeout.min(deadline.saturating_duration_since(now));
         }

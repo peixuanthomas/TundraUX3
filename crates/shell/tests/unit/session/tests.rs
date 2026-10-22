@@ -2782,8 +2782,14 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
     assert!(
         matches!(&state.app.system_status_snapshot().unwrap().storage, system_services::StorageState::Ready(storage) if storage.overall_pressure == system_services::StoragePressure::Normal)
     );
-    // AutoAdmin is now the first System setting; select the storage threshold.
+    // Skip authorization, external control and screen timeout to select storage.
     state.apply_input(InputEvent::from_key_label("Down"));
+    state.apply_input(InputEvent::from_key_label("Down"));
+    state.apply_input(InputEvent::from_key_label("Down"));
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        ui::SettingsField::SystemLowAvailable
+    );
     state.apply_input(InputEvent::from_key_label("Right"));
     assert_eq!(
         manager
@@ -5333,7 +5339,6 @@ fn auth_poll_timeout_wakes_at_password_reveal_deadline() {
     let now = Instant::now();
     let mut state = ShellSession::new(ShellLaunchConfig::default(), (80, 24));
     state.set_navigation_path(vec![ShellScreen::Login]);
-    state.pages.login.login_idle_deadline = now + LOGIN_IDLE_TIMEOUT;
     state.pages.login.login_password_visible_until = Some(now + Duration::from_millis(10));
 
     assert_eq!(

@@ -18,6 +18,8 @@ pub(crate) use commands::path_report;
 mod repl;
 mod runner;
 pub(crate) use commands::storage_reset;
+pub(crate) use commands::ui as ui_command;
+pub use ui_command::{UiAction, UiCommand, UiRequest, WaitState};
 
 pub use arguments::{
     AssetAction, AssetOutput, CliCommand, CliError, ConfigAction, ConfigField, ConfigUpdate,

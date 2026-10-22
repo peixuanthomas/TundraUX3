@@ -5,7 +5,7 @@ Supported desktop sessions are regular systemd/Freedesktop sessions on GNOME or
 KDE, under Wayland or X11.  Run the two binaries from a real terminal:
 
   ./tundra-shell
-  ./tundra-cli debug doctor
+  ./tundra-cli doctor
 
 The portable archive keeps `assets` and `vim` next to the binaries. Do not move
 the binaries without moving those directories too. Vim mode uses the bundled
@@ -21,7 +21,7 @@ XWayland when the Wayland compositor does not expose a data-control clipboard.
 Vim mode additionally needs libtinfo.so.6 from the ncurses runtime (libtinfo6 on
 Debian/Ubuntu); the complete Vim program and its scripts are provided in vim/.
 
-Use `tundra-cli debug doctor` after installation.  It reports missing optional desktop
+Use `tundra-cli doctor` after installation.  It reports missing optional desktop
 services and gives the relevant package/service hint; a missing desktop helper
 degrades only the affected integration, never stored data.
 
@@ -159,7 +159,7 @@ strategy. No privileged shell-command fallback is provided.
 
 Diagnostics and validation
 --------------------------
-`tundra-cli debug doctor` reports real/effective UID/GID, NSS user, HOME, XDG paths,
+`tundra-cli doctor` reports real/effective UID/GID, NSS user, HOME, XDG paths,
 user/system buses, logind, polkit, pkttyagent and portable installation status. Diagnosis only observes state and never elevates.
 
 Run cargo fmt --check, cargo check --workspace --locked, and

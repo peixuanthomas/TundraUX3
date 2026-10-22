@@ -403,6 +403,11 @@ fn render_storage(
     .with_column_widths(crate::equal_table_widths(l.rows_area.width, 7))
     .with_viewport_start(l.visible_start)
     .with_row_tones(a.storage_rows.iter().map(|r| r.tone).collect());
+    t.row_ids = a
+        .storage_rows
+        .iter()
+        .map(|row| row.volume.clone())
+        .collect();
     t.selected = model.selected_index();
     t.state.focused = true;
     t.render_frame(frame, l.rows_area, context);
@@ -460,6 +465,7 @@ fn render_network(
     .with_column_widths(crate::equal_table_widths(l.rows_area.width, 7))
     .with_viewport_start(l.visible_start)
     .with_row_tones(a.network_rows.iter().map(|r| r.tone).collect());
+    t.row_ids = a.network_rows.iter().map(|row| row.name.clone()).collect();
     t.selected = model.selected_index();
     t.state.focused = true;
     t.render_frame(frame, l.rows_area, context);

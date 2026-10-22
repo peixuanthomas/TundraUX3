@@ -47,3 +47,7 @@ impl ShellSession {
         self.app.storage_config().editor.vim_mode_enabled
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/session/controller/editor/vim_toggle_tests.rs"]
+mod tests;

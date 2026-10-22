@@ -161,6 +161,8 @@ fn toml_and_json_documents_round_trip() {
     shortcuts.insert("open_launcher".to_string(), "Ctrl+Space".to_string());
     let config = StorageConfig {
         schema_version: SCHEMA_VERSION,
+        screen_timeout_seconds: 120,
+        automation: storage::AutomationConfig { enabled: true },
         linux_update_mode: storage::LinuxUpdateMode::Beta,
         auto_admin: storage::AutoAdminPolicy::Manual,
         theme: "light".to_string(),

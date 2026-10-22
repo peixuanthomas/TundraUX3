@@ -1535,6 +1535,7 @@ pub fn render_management_content(
         button.render_borderless_frame(frame, *area, &theme);
     }
     let mut filter = TextInput::new(format!("management.filter.{}", model.scope_id))
+        .with_capture_name(i18n::tr!("management-search"))
         .with_cursor_symbol("_")
         .with_horizontal_scroll(true);
     filter.set_value(&model.filter);
@@ -1611,6 +1612,55 @@ pub fn render_management_content(
             table_line(&model.columns),
             theme.title_style(),
         )];
+        if crate::automation::enabled() {
+            let _table = crate::automation::scope(
+                &format!("management.rows.{}", model.scope_id),
+                "table",
+                &model.title,
+                layout.list,
+            );
+            for (index, row) in model
+                .rows
+                .iter()
+                .enumerate()
+                .skip(model.scroll)
+                .take(layout.list_capacity)
+            {
+                let row_area = Rect::new(
+                    layout.list_rows.x,
+                    layout.list_rows.y + (index - model.scroll) as u16,
+                    layout.list_rows.width,
+                    1,
+                );
+                let _row = crate::automation::scope(&format!("row.{index}"), "row", "", row_area);
+                crate::automation::control(
+                    "select",
+                    "listitem",
+                    "",
+                    row_area,
+                    crate::components::ComponentState {
+                        selected: index == model.selected,
+                        focused: index == model.selected
+                            && !model.filtering
+                            && !model.actions_focused,
+                        ..Default::default()
+                    },
+                    &["click", "double_click"],
+                );
+                for (column, header) in &layout.headers {
+                    if let Some(value) = row.get(*column) {
+                        crate::automation::control(
+                            &format!("cell.{column}"),
+                            "cell",
+                            value,
+                            Rect::new(header.x, row_area.y, header.width, 1),
+                            Default::default(),
+                            &[],
+                        );
+                    }
+                }
+            }
+        }
         for (index, row) in model
             .rows
             .iter()
@@ -1793,6 +1843,12 @@ pub fn render_management_overlay(
     };
     let layout = management_layout(main, model);
     let theme = context.compatibility_theme();
+    let _scope = crate::automation::scope(
+        &format!("management.form.{}", form.identity),
+        "dialog",
+        &form.title,
+        layout.form,
+    );
     frame.render_widget(Clear, layout.form);
     Surface::new()
         .bordered(true)
@@ -1890,7 +1946,9 @@ pub fn render_management_overlay(
                     Some(b'0') => "[ ]",
                     _ => "[-]",
                 };
-                let mut button = Button::new(management_permission_id(form, *index, cell), value);
+                let mut button = Button::new(management_permission_id(form, *index, cell), value)
+                    .with_capture_role("checkbox")
+                    .with_capture_selected(field.value.as_bytes().get(cell) == Some(&b'1'));
                 button.bracketed_label = false;
                 button.state.selected =
                     form.selected == *index && field.selected_cell == Some(cell);
@@ -1901,9 +1959,20 @@ pub fn render_management_overlay(
         let mut button = Button::new(
             management_field_id(form, *index),
             lines.into_iter().skip(skip).collect::<Vec<_>>().join("\n"),
-        );
+        )
+        .with_capture_name(&field.label)
+        .with_sensitive(field.secret)
+        .with_capture_role(match field.control {
+            ManagementFormControl::Checkbox => "checkbox",
+            _ if !field.choices.is_empty() => "combobox",
+            _ => "textbox",
+        });
+        if field.control == ManagementFormControl::Checkbox {
+            button = button.with_capture_selected(field.value == "true");
+        }
         button.bracketed_label = false;
         button.state.selected = form.selected == *index;
+        button.state.focused = form.selected == *index;
         button.render_borderless_frame(frame, *area, &theme);
     }
     let mut submit = Button::new(

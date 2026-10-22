@@ -277,6 +277,9 @@ fn render_login_password_field(
         )
     };
     let mut input = TextInput::new("login.password")
+        .with_capture_name(i18n::tr!("ui-auth-password"))
+        .with_sensitive(true)
+        .with_capture_focused(focused)
         .with_placeholder(placeholder)
         .with_cursor_symbol("");
     input.set_value(password);

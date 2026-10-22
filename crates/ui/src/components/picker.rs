@@ -86,6 +86,14 @@ impl Picker {
     }
 
     pub fn render(&self, area: Rect, buffer: &mut Buffer, context: &RenderContext) {
+        crate::automation::control(
+            self.id.as_str(),
+            "combobox",
+            self.title.as_deref().unwrap_or(""),
+            area,
+            self.state,
+            &["click", "key"],
+        );
         let tokens = context.theme;
         let selected = self.selected_value().unwrap_or("—");
         let marker = if self.state.focused { "‹ " } else { "  " };

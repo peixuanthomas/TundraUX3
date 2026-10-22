@@ -429,6 +429,7 @@ pub(in crate::session) fn settings_cards(
             description,
             Kind::Toggle,
         )
+        .checked(value)
         .enabled(enabled)
     };
     let reset = |enabled| {
@@ -601,6 +602,13 @@ pub(in crate::session) fn settings_cards(
                                 i18n::tr!("settings-system-time-help"),
                                 Kind::Toggle,
                             )
+                            .checked(
+                                time.action("set_system_ntp")
+                                    .and_then(|(_, action)| {
+                                        action.fields.iter().find(|field| field.id == "enabled")
+                                    })
+                                    .is_some_and(|field| field.value == "true"),
+                            )
                             .enabled(global_enabled),
                             "set_system_ntp",
                         ),
@@ -668,6 +676,37 @@ pub(in crate::session) fn settings_cards(
                         i18n::tr!("aa-policy"),
                         crate::session::controller::auto_admin::policy_label(config.auto_admin),
                         i18n::tr!("aa-policy-help"),
+                        Kind::Cycle,
+                    )
+                    .enabled(global_enabled),
+                ],
+            ),
+            Card::new(
+                i18n::tr!("ui-control-settings-title"),
+                vec![toggle(
+                    Field::AutomationEnabled,
+                    i18n::tr!("ui-control-settings-enable"),
+                    config.automation.enabled,
+                    i18n::tr!("ui-control-settings-help"),
+                    global_enabled,
+                )],
+            ),
+            Card::new(
+                i18n::tr!("settings-screen-timeout"),
+                vec![
+                    Item::new(
+                        Field::ScreenTimeout,
+                        i18n::tr!("settings-screen-timeout"),
+                        match config.screen_timeout_seconds {
+                            0 => i18n::tr!("settings-screen-timeout-never"),
+                            seconds if seconds % 60 == 0 => {
+                                i18n::tr!("settings-screen-timeout-minutes", value = seconds / 60)
+                            }
+                            seconds => {
+                                i18n::tr!("settings-screen-timeout-seconds", value = seconds)
+                            }
+                        },
+                        i18n::tr!("settings-screen-timeout-help"),
                         Kind::Cycle,
                     )
                     .enabled(global_enabled),

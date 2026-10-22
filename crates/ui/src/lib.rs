@@ -1,4 +1,5 @@
 mod assets;
+pub mod automation;
 mod foundation;
 mod screens;
 pub(crate) use assets::home_icons;

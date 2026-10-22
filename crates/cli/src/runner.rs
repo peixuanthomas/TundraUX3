@@ -149,6 +149,7 @@ where
         .map(|arg| arg.as_ref().to_string())
         .collect::<Vec<_>>();
     match parse_args(&args) {
+        Ok(CliCommand::Ui(action)) => crate::ui_command::run_ui(platform, stdout, action),
         Ok(CliCommand::Management(action)) => crate::management_client::run(action, stdout, stderr),
         Ok(CliCommand::TopicHelp(topic)) => {
             let _ = crate::help_text::write_topic_help(stdout, &topic);
@@ -268,6 +269,7 @@ where
             parent_pid,
             recover_only,
         }) => run_update_helper(&manifest, parent_pid, recover_only, stderr),
+        Err(crate::CliError::InvalidUiArgument) => crate::ui_command::invalid_arguments(stdout),
         Err(error) => {
             let _ = writeln!(stderr, "ERROR: {error}");
             let _ = crate::help_text::write_error_help(stderr, &args);

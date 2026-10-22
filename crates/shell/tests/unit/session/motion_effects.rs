@@ -72,7 +72,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
 }
 
 #[test]
-fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() {
+fn motion_dispatch_consumes_weather_wakeup_before_deferral_and_pre_route_blocking() {
     fn login_exit_fixture(now: Instant) -> (ShellSession, ShellMotionEffects) {
         let full = Rect::new(0, 0, 120, 40);
         let theme = ui::ThemeTokens::glacier_night();
@@ -89,14 +89,16 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         motion.update(&state, full, full, None, theme, false);
         buffer = Buffer::filled(full, Cell::new("A"));
         motion.test_frame(Duration::ZERO, &mut buffer, &state);
-        state.pages.login.login_idle_deadline = now + Duration::from_secs(1);
+        state.screen_saver.last_activity = now;
         (state, motion)
     }
 
     let platform = platform::mock::UnsupportedPlatform;
     let now = Instant::now();
     let (mut expired, mut expired_motion) = login_exit_fixture(now);
-    expired.pages.login.login_idle_deadline = now - Duration::from_millis(1);
+    expired.screen_saver.last_activity =
+        now - Duration::from_secs(storage::DEFAULT_SCREEN_TIMEOUT_SECONDS);
+    expired.advance_screen_saver_at(now);
     let (_, motion_blocked) = dispatch_motion_aware_input(
         &mut expired,
         &mut expired_motion,
@@ -105,7 +107,9 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(!motion_blocked);
-    assert!(expired.return_to_lockscreen_requested());
+    assert!(!expired.return_to_lockscreen_requested());
+    assert!(!expired.screen_saver_active());
+    assert_eq!(expired.active_screen(), ShellScreen::ExitConfirm);
     assert!(expired_motion.deferred_close.is_none());
 
     let (mut active, mut active_motion) = login_exit_fixture(now);
@@ -117,10 +121,7 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(!motion_blocked);
-    assert_eq!(
-        active.pages.login.login_idle_deadline,
-        now + LOGIN_IDLE_TIMEOUT
-    );
+    assert_eq!(active.screen_saver.last_activity, now);
     assert!(active_motion.deferred_close.is_none());
     assert_ne!(active.active_screen(), ShellScreen::ExitConfirm);
 
@@ -140,10 +141,7 @@ fn motion_dispatch_runs_login_preamble_before_deferral_and_pre_route_blocking() 
         now,
     );
     assert!(motion_blocked);
-    assert_eq!(
-        clicked.pages.login.login_idle_deadline,
-        now + LOGIN_IDLE_TIMEOUT
-    );
+    assert_eq!(clicked.screen_saver.last_activity, now);
     assert!(clicked_motion.deferred_close.is_some());
 
     active_motion.deferred_close = None;
@@ -283,7 +281,7 @@ fn pages_expand_from_the_button_and_return_in_reverse() {
     let old = BaseFrameSnapshot {
         screen: ShellScreen::Home,
         bounds,
-        cells: snapshot_normal_cells(&old, bounds).unwrap().cells,
+        cells: snapshot_normal_cells(&old, bounds).unwrap().cells.into(),
     };
     let origin = ui::RevealOrigin::Button(Rect::new(2, 1, 3, 2));
     for returning in [false, true] {
@@ -310,6 +308,44 @@ fn pages_expand_from_the_button_and_return_in_reverse() {
 }
 
 #[test]
+fn page_reveal_keeps_live_progress_and_whole_chinese_glyphs() {
+    let bounds = Rect::new(0, 0, 40, 16);
+    let area = Rect::new(4, 3, 24, 8);
+    let old = Buffer::filled(bounds, Cell::new("O"));
+    let mut effect = page_effect(
+        area,
+        Some(BaseFrameSnapshot {
+            screen: ShellScreen::Home,
+            bounds,
+            cells: snapshot_normal_cells(&old, bounds).unwrap().cells.into(),
+        }),
+        false,
+        ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+        ui::RevealOrigin::Center,
+    );
+    let context = ui::RenderContext::default();
+    for (delta, value) in [(0, "0"), (110, "1"), (55, "2")] {
+        let mut frame = Buffer::filled(bounds, Cell::new("N"));
+        ui::components::Surface::new()
+            .bordered(true)
+            .render(area, &mut frame, &context);
+        frame.set_string(
+            14,
+            6,
+            format!("中{value}"),
+            ratatui::style::Style::default(),
+        );
+        frame[(5, 4)].diff_option = CellDiffOption::Skip;
+        effect.process(Duration::from_millis(delta), &mut frame, bounds);
+        assert_eq!(frame[(5, 4)].diff_option, CellDiffOption::Skip);
+        if delta > 0 {
+            assert_eq!(frame[(14, 6)].symbol(), "中");
+            assert_eq!(frame[(16, 6)].symbol(), value);
+        }
+    }
+}
+
+#[test]
 fn dialogs_grow_from_center_without_recoloring_text() {
     let area = Rect::new(0, 0, 12, 6);
     let theme = ui::ThemeTokens::glacier_night();
@@ -317,7 +353,7 @@ fn dialogs_grow_from_center_without_recoloring_text() {
     let base = BaseFrameSnapshot {
         screen: ShellScreen::Home,
         bounds: area,
-        cells: snapshot_normal_cells(&base, area).unwrap().cells,
+        cells: snapshot_normal_cells(&base, area).unwrap().cells.into(),
     };
     let mut effect = overlay_enter_effect(
         ui::MotionOverlayKind::Dialog,
@@ -367,7 +403,7 @@ fn dialog_border_moves_from_its_button_and_closes_to_the_same_button() {
         Arc::new(Mutex::new(Some(BaseFrameSnapshot {
             screen: ShellScreen::Home,
             bounds: full,
-            cells: snapshot_normal_cells(&base, full).unwrap().cells,
+            cells: snapshot_normal_cells(&base, full).unwrap().cells.into(),
         }))),
         phases,
     );
@@ -1403,7 +1439,7 @@ fn stale_base_screen_or_bounds_falls_back_to_immediate_close() {
         base_snapshot: Some(BaseFrameSnapshot {
             screen: ShellScreen::Settings,
             bounds: Rect::new(0, 0, 80, 24),
-            cells: vec![(Position::new(1, 1), Cell::new("N"))],
+            cells: vec![(Position::new(1, 1), Cell::new("N"))].into(),
         }),
         bounds: Some(Rect::new(0, 0, 120, 40)),
         screen: Some(state.content_screen()),

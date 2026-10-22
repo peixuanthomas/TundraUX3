@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    Ui(crate::UiCommand),
     Management(crate::ManagementCli),
     ClearLogs(crate::ClearLogsAction),
     Logs(crate::logs_command::LogsAction),
@@ -57,6 +58,7 @@ impl CliCommand {
                 | Self::ClearLogs(crate::ClearLogsAction::Help)
                 | Self::Logs(crate::LogsAction::Help)
                 | Self::Management(crate::ManagementCli::Help(_))
+                | Self::Ui(crate::UiCommand::Help)
         )
     }
 }
@@ -84,6 +86,7 @@ pub enum ConfigAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigField {
+    AutomationEnabled,
     Theme,
     BorderShape,
     BorderColor,
@@ -100,6 +103,7 @@ pub enum ConfigField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigUpdate {
+    AutomationEnabled(String),
     BorderShape(String),
     BorderColor(String),
     AccentColor(String),
@@ -115,6 +119,7 @@ pub enum ConfigUpdate {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliError {
+    InvalidUiArgument,
     InvalidManagementArgument(String),
     InvalidLogsArgument(String),
     ForbiddenConfigField(String),
@@ -134,6 +139,9 @@ pub enum CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidUiArgument => {
+                write!(formatter, "{}", i18n::tr!("ui-control-invalid-arguments"))
+            }
             Self::InvalidManagementArgument(message) => write!(formatter, "{message}"),
             Self::InvalidLauncherArgument(message) => {
                 write!(formatter, "{message}; run launcher help")
@@ -194,6 +202,11 @@ where
     };
     let command = args.remove(0);
 
+    // UI text values can be "help" or contain command-like text.
+    if command == "ui" {
+        return crate::ui_command::parse_ui(&args).map(CliCommand::Ui);
+    }
+
     if command == "help" && !args.is_empty() {
         return crate::help_text::parse_help_topic(&args);
     }
@@ -216,6 +229,7 @@ where
         "launcher" => crate::launcher_command::parse_launcher(&args).map(CliCommand::Launcher),
         "logs" => crate::logs_command::parse_logs(&args).map(CliCommand::Logs),
         "debug" => parse_debug_args(&args),
+        "doctor" => parse_no_extra_args(&args, CliCommand::Doctor),
         "cls" => parse_no_extra_args(&args, CliCommand::Cls),
         "config" => parse_config_args(&args).map(CliCommand::Config),
         "new" => parse_no_extra_args(&args, CliCommand::New),
@@ -239,7 +253,6 @@ fn parse_debug_args(args: &[String]) -> Result<CliCommand, CliError> {
         "clear-logs" => {
             return crate::clear_logs_command::parse_clear_logs(rest).map(CliCommand::ClearLogs);
         }
-        "doctor" => CliCommand::Doctor,
         "paths" => CliCommand::Paths,
         "explain" => CliCommand::Explain,
         "test-frost" => CliCommand::TestFrost,
@@ -373,6 +386,9 @@ fn parse_config_set(args: &[String]) -> Result<ConfigAction, CliError> {
     let value = joined_config_value(&args[1..]).ok_or(CliError::MissingArgument("config value"))?;
 
     match parse_config_field(field)? {
+        ConfigField::AutomationEnabled => {
+            Ok(ConfigAction::Set(ConfigUpdate::AutomationEnabled(value)))
+        }
         ConfigField::Theme => Err(CliError::ReadOnlyConfigField(field.clone())),
         ConfigField::BorderShape => Ok(ConfigAction::Set(ConfigUpdate::BorderShape(value))),
         ConfigField::BorderColor => Ok(ConfigAction::Set(ConfigUpdate::BorderColor(value))),
@@ -403,6 +419,7 @@ fn joined_config_value(args: &[String]) -> Option<String> {
 
 fn parse_config_field(field: &str) -> Result<ConfigField, CliError> {
     match field {
+        "automation.enabled" => Ok(ConfigField::AutomationEnabled),
         "theme" => Ok(ConfigField::Theme),
         "border-shape" | "border_shape" => Ok(ConfigField::BorderShape),
         "border-color" | "border_color" => Ok(ConfigField::BorderColor),

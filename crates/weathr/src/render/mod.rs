@@ -78,6 +78,7 @@ pub struct TerminalRenderer {
     capabilities: TerminalCapabilities,
     min_width: u16,
     min_height: u16,
+    terminal_active: bool,
 }
 
 impl TerminalRenderer {
@@ -91,6 +92,13 @@ impl TerminalRenderer {
         }
 
         let (width, height) = terminal::size().map_err(TerminalError::SizeError)?;
+        Self::buffered((width, height), (min_width, min_height))
+    }
+
+    pub(crate) fn buffered(
+        (width, height): (u16, u16),
+        (min_width, min_height): (u16, u16),
+    ) -> Result<Self, TerminalError> {
         let min_width = min_width.max(MIN_TERMINAL_WIDTH);
         let min_height = min_height.max(MIN_TERMINAL_HEIGHT);
 
@@ -112,10 +120,12 @@ impl TerminalRenderer {
             capabilities,
             min_width,
             min_height,
+            terminal_active: false,
         })
     }
 
     pub fn init(&mut self) -> Result<(), TerminalError> {
+        self.terminal_active = true;
         terminal::enable_raw_mode().map_err(TerminalError::RawModeError)?;
         execute!(
             self.stdout,
@@ -128,6 +138,9 @@ impl TerminalRenderer {
     }
 
     pub fn cleanup(&mut self) -> io::Result<()> {
+        if !self.terminal_active {
+            return Ok(());
+        }
         let output_result = execute!(
             self.stdout,
             DisableMouseCapture,
@@ -136,10 +149,20 @@ impl TerminalRenderer {
             ResetColor
         );
         let raw_mode_result = terminal::disable_raw_mode();
-        output_result.and(raw_mode_result)
+        let result = output_result.and(raw_mode_result);
+        self.terminal_active = result.is_err();
+        result
     }
 
     pub fn manual_resize(&mut self, width: u16, height: u16) -> io::Result<()> {
+        if self.resize_buffer(width, height)? {
+            execute!(self.stdout, Clear(ClearType::All))?;
+            self.last_buffer_valid = true;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn resize_buffer(&mut self, width: u16, height: u16) -> io::Result<bool> {
         validate_terminal_size_with_minimum(width, height, self.min_width, self.min_height)
             .map_err(io::Error::other)?;
         let (width, height) = clamp_terminal_size(width, height);
@@ -150,10 +173,13 @@ impl TerminalRenderer {
             self.buffer = Buffer::empty(area);
             self.last_buffer = Buffer::empty(area);
             self.last_buffer_valid = false;
-            execute!(self.stdout, Clear(ClearType::All))?;
-            self.last_buffer_valid = true;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
+    }
+
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
     }
 
     pub fn get_size(&self) -> (u16, u16) {

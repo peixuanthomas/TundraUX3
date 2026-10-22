@@ -26,6 +26,10 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 
 ## 可以做什么
 
+- **空闲时显示天气：**“设置 → 系统”可选择永不、30 秒或 1/2/5/10/30 分钟，默认 5 分钟。按键或点按返回原页面，已登录时无需再次输入密码。
+
+- **让 agent 操作界面：**在“设置 → 系统”开启外部 CLI 控制后，用 `tundra-cli ui` 读取运行中的界面树和文字画面，模拟点击、拖动、滚动或输入。仅限本机同一操作系统用户连接，详见 [CLI 控制](../crates/cli/docs/ui-control.md)。
+
 - **管理 Linux 设备：**查看和控制服务、进程，管理软件包，配置受支持的网络连接，查看磁盘和挂载点。
 - **浏览软件包：**默认打开已安装，Tab/Shift+Tab 循环切换已安装、更新、搜索，↑/↓ 选择列表项；展开详情后用四个方向键滚动内容，原有快捷键继续可用。
 - **找到页面操作：**常用按钮位于右下方，主操作使用强调色，危险操作使用危险色。按 F1 或点击标题栏帮助按钮查看本页快捷键。
@@ -74,7 +78,7 @@ Vim 模式显示 Vim 自己的终端界面，包括 Visual 模式、次数、寄
 检查运行环境：
 
 ```sh
-./tundra-cli debug doctor
+./tundra-cli doctor
 ```
 
 Linux 版本使用启动程序的系统账户及其权限。日常使用普通用户运行；需要额外权限的操作，会通过相应的系统工具请求授权。退出 TundraUX3 会关闭应用并返回终端。
@@ -101,7 +105,7 @@ Vim 构建步骤显式下载并编译固定的上游版本，普通 Cargo 构建
 
 ```sh
 cargo run --locked -p cli --bin tundra-cli -- --help
-cargo run --locked -p cli --bin tundra-cli -- debug doctor
+cargo run --locked -p cli --bin tundra-cli -- doctor
 ```
 
 请同时构建这两个包：Shell 的内置命令行和 Linux 管理任务会使用配套 CLI。构建、测试和打包细节见 [技术文档](README-TECHNICAL.md)。
