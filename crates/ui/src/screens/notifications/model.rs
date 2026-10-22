@@ -40,6 +40,8 @@ pub struct NotificationViewModel {
     pub stacked_actions: bool,
     /// First wrapped message line to show; layout clamps it to the visible range.
     pub scroll_offset: usize,
+    pub align_left: bool,
+    pub show_tone_prefix: bool,
 }
 
 impl NotificationViewModel {
@@ -60,12 +62,18 @@ impl NotificationViewModel {
             actions,
             stacked_actions: false,
             scroll_offset: 0,
+            align_left: false,
+            show_tone_prefix: true,
         }
     }
 }
 
 pub(crate) fn notification_title(model: &NotificationViewModel) -> String {
-    format!("{} {}", notification_tone_prefix(model.tone), model.title)
+    if model.show_tone_prefix {
+        format!("{} {}", notification_tone_prefix(model.tone), model.title)
+    } else {
+        model.title.clone()
+    }
 }
 
 pub(crate) fn notification_tone_prefix(tone: NotificationTone) -> String {

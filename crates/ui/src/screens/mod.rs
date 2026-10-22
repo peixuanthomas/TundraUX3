@@ -9,6 +9,7 @@ mod context;
 pub(crate) mod diagnostics;
 pub(crate) mod editor;
 pub(crate) mod explorer;
+mod help;
 pub(crate) mod home;
 pub(crate) mod launcher;
 pub(crate) mod logs;
@@ -32,6 +33,10 @@ pub use context::*;
 pub use diagnostics::*;
 pub use editor::*;
 pub use explorer::*;
+pub use help::{
+    PageHelpRow, PageHelpScreen, PageHelpSection, PageHelpViewModel, page_help,
+    page_help_notification, render_page_help_overlay,
+};
 pub use home::*;
 pub use notifications::*;
 pub use panic::PanicScreen;

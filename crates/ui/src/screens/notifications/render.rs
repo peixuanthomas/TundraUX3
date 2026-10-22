@@ -68,7 +68,11 @@ pub(crate) fn render_notification_overlay_context(
     frame.render_widget(
         Paragraph::new(message_lines)
             .style(theme.body_style())
-            .alignment(HorizontalAlignment::Center),
+            .alignment(if model.align_left {
+                HorizontalAlignment::Left
+            } else {
+                HorizontalAlignment::Center
+            }),
         layout.message,
     );
 
