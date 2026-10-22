@@ -1050,6 +1050,93 @@ fn common_account_actions_are_visible_and_dangerous_changes_stay_in_more() {
 }
 
 #[test]
+fn account_view_field_keeps_its_meaning_in_both_languages() {
+    for (code, resources, account_label, service_label) in [
+        (
+            "en-US",
+            [
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../ascii-assets/assets/locales/en-US/modules/management.ftl"
+                )),
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../ascii-assets/assets/locales/en-US/modules/management-users.ftl"
+                )),
+            ],
+            "Accounts / groups",
+            "Scope (system / current user)",
+        ),
+        (
+            "zh-CN",
+            [
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../ascii-assets/assets/locales/zh-CN/modules/management.ftl"
+                )),
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../ascii-assets/assets/locales/zh-CN/modules/management-users.ftl"
+                )),
+            ],
+            "账户 / 用户组",
+            "范围（system 系统 / user 当前用户）",
+        ),
+    ] {
+        let language = Arc::new(
+            i18n::LanguageSnapshotData {
+                code: code.into(),
+                generation: 1,
+                current: resources.map(String::from).to_vec(),
+                english: vec![],
+            }
+            .restore()
+            .unwrap(),
+        );
+        i18n::with_snapshot(&language, || {
+            for (kind, label, choices) in [
+                (ManagementKind::Users, account_label, ["users", "groups"]),
+                (ManagementKind::Services, service_label, ["system", "user"]),
+            ] {
+                let mut session = shortcut_action_state(kind, "set_view");
+                session.language = language.clone();
+                session.pages.management.management_state.form = Some(ManagementEditor {
+                    instance: next_management_form_instance(),
+                    title: "View".into(),
+                    message: String::new(),
+                    message_scroll: 0,
+                    selected: 0,
+                    fields: vec![ManagementField {
+                        id: "scope".into(),
+                        label: "View".into(),
+                        value: choices[0].into(),
+                        choices: choices.map(String::from).to_vec(),
+                        ..Default::default()
+                    }],
+                    purpose: FormPurpose::Action(
+                        ManagementAction {
+                            id: "set_view".into(),
+                            ..Default::default()
+                        },
+                        None,
+                    ),
+                });
+                let field = session
+                    .to_management_view_model()
+                    .form
+                    .unwrap()
+                    .fields
+                    .remove(0);
+                assert_eq!(field.label, label);
+                assert_eq!(field.id, "scope");
+                assert_eq!(field.choices, choices);
+                assert_eq!(field.value, choices[0]);
+            }
+        });
+    }
+}
+
+#[test]
 fn services_expose_restart_and_logs_but_keep_startup_changes_in_more() {
     let mut session = shortcut_action_state(ManagementKind::Services, "start");
     session.pages.management.management_state.snapshot.rows[0]

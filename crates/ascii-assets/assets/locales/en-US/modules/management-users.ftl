@@ -20,6 +20,7 @@ management-action-group-members = Edit group members
 management-action-group-rename = Rename group
 management-action-group-delete = Delete group
 management-field-username = Account name
+management-field-account-view = Accounts / groups
 management-field-display-name = Display name
 management-field-shell = Login Shell
 management-field-expires = Expiry (YYYY-MM-DD or never)

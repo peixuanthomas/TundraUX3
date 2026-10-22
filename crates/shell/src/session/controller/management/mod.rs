@@ -1707,6 +1707,10 @@ impl ShellSession {
                             label: if matches!(f.purpose, FormPurpose::Configuration(_))
                                 || s.kind == Some(ManagementKind::ScheduledTasks) {
                                 v.label.clone()
+                            } else if s.kind == Some(ManagementKind::Users)
+                                && v.id == "scope"
+                                && matches!(&f.purpose, FormPurpose::Action(action, _) if action.id == "set_view") {
+                                i18n::tr!("management-field-account-view")
                             } else { management_text("field", &v.id, &v.label) },
                             value: if v.secret {
                                 "•".repeat(v.value.chars().count())

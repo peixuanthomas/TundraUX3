@@ -20,6 +20,7 @@ management-action-group-members = 编辑用户组成员
 management-action-group-rename = 重命名用户组
 management-action-group-delete = 删除用户组
 management-field-username = 账户名称
+management-field-account-view = 账户 / 用户组
 management-field-display-name = 显示名称
 management-field-shell = 登录 Shell
 management-field-expires = 有效期（YYYY-MM-DD 或 never）
