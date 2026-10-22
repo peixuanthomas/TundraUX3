@@ -5,7 +5,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{HomeDisplayMode, HomeViewModel};
-use crate::components::{Button, Scrollbar, Surface};
+use crate::components::{Button, ButtonEmphasis, Scrollbar, Surface};
 use crate::{RenderContext, TundraTheme};
 
 const HOME_SUMMARY_HEIGHT: u16 = 1;
@@ -205,7 +205,7 @@ fn render_home_account_summary(
         Rect::new(summary.x, summary.y, user_width, summary.height),
     );
     if logout.width > 0 {
-        let mut button = Button::new("home.logout", i18n::tr!("ui-home-logout-button"));
+        let mut button = Button::new("home.logout", i18n::tr!("ui-home-logout-button")).with_emphasis(ButtonEmphasis::Danger);
         button.state.selected = home.logout_selected();
         button.render_borderless_frame(frame, logout, theme);
     }
