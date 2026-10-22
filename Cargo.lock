@@ -72,7 +72,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "ascii-assets",
  "chrono",
@@ -94,7 +94,7 @@ dependencies = [
  "storage",
  "system-services",
  "tar",
- "time 1.4.0",
+ "time 1.4.1",
  "tokio",
  "toml 0.8.23",
  "unicode-segmentation",
@@ -177,7 +177,7 @@ dependencies = [
 
 [[package]]
 name = "ascii-assets"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -341,7 +341,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "auto-admin"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "i18n",
  "libc",
@@ -651,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "app",
  "arboard",
@@ -2006,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "i18n"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "ascii-assets",
  "fluent-bundle",
@@ -2140,7 +2140,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "identity"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "argon2",
  "hex",
@@ -3211,7 +3211,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "platform"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "arboard",
  "async-io",
@@ -3944,7 +3944,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-log"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "chrono",
  "fs2",
@@ -4309,7 +4309,7 @@ dependencies = [
 
 [[package]]
 name = "shell"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "app",
  "ascii-assets",
@@ -4328,7 +4328,7 @@ dependencies = [
  "system-services",
  "tachyonfx",
  "terminal-runtime",
- "time 1.4.0",
+ "time 1.4.1",
  "tokio",
  "ui",
  "vt100",
@@ -4489,7 +4489,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "i18n",
  "libc",
@@ -4669,7 +4669,7 @@ dependencies = [
 
 [[package]]
 name = "system-services"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4682,7 +4682,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "time 1.4.0",
+ "time 1.4.1",
  "tokio",
  "watchdog",
 ]
@@ -4758,7 +4758,7 @@ dependencies = [
 
 [[package]]
 name = "terminal-runtime"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "crossterm",
  "libc",
@@ -4893,7 +4893,7 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -5262,7 +5262,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "animate",
  "app",
@@ -5611,7 +5611,7 @@ dependencies = [
 
 [[package]]
 name = "watchdog"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "chrono",
  "futures-util",
@@ -5694,7 +5694,7 @@ dependencies = [
 
 [[package]]
 name = "weathr"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "chrono",
  "crossterm",
