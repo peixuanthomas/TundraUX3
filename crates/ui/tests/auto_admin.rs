@@ -165,7 +165,7 @@ fn auto_admin_uses_authorization_style_and_preserves_chrome_in_every_phase() {
 }
 
 #[test]
-fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
+fn running_auto_admin_highlights_buttons_and_preserves_masked_input() {
     for width in [50, 60, 180] {
         let bounds = Rect::new(0, 0, width, 50);
         let layout = ui::auto_admin_layout(bounds, &model(false, false));
@@ -226,11 +226,11 @@ fn running_auto_admin_highlights_keyboard_buttons_and_shows_the_return_hint() {
                 .collect::<String>();
             for shortcut in ["F6", "Tab", "Enter"] {
                 assert!(
-                    hint.contains(shortcut),
-                    "missing {shortcut} in {width}-column window: {hint}"
+                    !hint.contains(shortcut),
+                    "unexpected instruction {shortcut} in {width}-column window: {hint}"
                 );
             }
-            assert!(!hint.contains('•'));
+            assert!(hint.contains('•'));
         }
     }
 }
@@ -594,7 +594,6 @@ fn localized_confirmation_wraps_and_registers_the_same_centered_button_areas() {
             for (text, area) in [
                 (&model.description, layout.description),
                 (&model.status, layout.status),
-                (&i18n::tr!("aa-confirm-hint"), layout.input),
             ] {
                 let expected = ui::management_wrapped_lines(text, area.width);
                 assert!(

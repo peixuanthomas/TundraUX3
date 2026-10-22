@@ -182,6 +182,7 @@ pub enum EditorHitTarget {
     VerticalScrollbar,
     HorizontalScrollbar,
     StatusBar,
+    Reload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -248,6 +249,7 @@ pub struct EditorLayout {
     /// Text cells only; borders, gutter and optional scrollbars are excluded.
     pub canvas: Rect,
     pub status_bar: Rect,
+    pub reload_button: Rect,
     pub menus: Vec<EditorMenuLayout>,
     pub menu_popup: Option<Rect>,
     pub menu_items: Vec<EditorMenuItemLayout>,
@@ -421,6 +423,9 @@ impl EditorLayout {
                 line,
                 usize::from(x.saturating_sub(self.canvas.x)).saturating_add(horizontal_scroll),
             )));
+        }
+        if contains(self.reload_button, x, y) {
+            return Some(EditorHitTarget::Reload);
         }
         contains(self.status_bar, x, y).then_some(EditorHitTarget::StatusBar)
     }
@@ -870,6 +875,20 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             Some(item)
         })
         .collect();
+    let reload_button = if model.reload_available {
+        let width = crate::components::Button::new("editor.reload", i18n::tr!("ui-editor-reload"))
+            .rendered_label_width()
+            .min(usize::from(status_bar.right().saturating_sub(status_x)))
+            as u16;
+        Rect::new(
+            status_bar.right().saturating_sub(width),
+            status_bar.y,
+            width,
+            status_bar.height,
+        )
+    } else {
+        Rect::default()
+    };
     EditorLayout {
         vim_toggle,
         menu_scrollbar: menu_popup
@@ -897,6 +916,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         gutter,
         canvas,
         status_bar,
+        reload_button,
         menus,
         menu_popup,
         menu_items,

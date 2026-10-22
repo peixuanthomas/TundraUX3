@@ -436,21 +436,6 @@ fn render_settings(
             value_area,
         );
     }
-
-    let help = Rect::new(
-        settings_layout.dialog.x.saturating_add(2),
-        settings_layout.dialog.bottom().saturating_sub(4),
-        settings_layout.dialog.width.saturating_sub(4),
-        1,
-    );
-    frame.render_widget(
-        Paragraph::new(i18n::tr!(
-            "ui-editor-tab-select-left-right-adjust-enter-activate-esc-cancel"
-        ))
-        .alignment(HorizontalAlignment::Left)
-        .style(theme.muted_style()),
-        help,
-    );
 }
 
 fn settings_control_field(control: EditorSettingsControl) -> Option<EditorSettingsField> {
@@ -740,7 +725,12 @@ fn render_status_bar(
         .status_items
         .last()
         .map_or(layout.status_bar.x, |item| item.area.right());
-    let remaining = layout.status_bar.right().saturating_sub(start);
+    let right_edge = if layout.reload_button.is_empty() {
+        layout.status_bar.right()
+    } else {
+        layout.reload_button.x.saturating_sub(1)
+    };
+    let remaining = right_edge.saturating_sub(start);
     let mut right = format!(
         "{}:{} {}{}",
         cursor.line + 1,
@@ -749,10 +739,9 @@ fn render_status_bar(
         if model.dirty { " *" } else { "" }
     );
     if model.reload_available {
-        right = i18n::tr!(
-            "ui-editor-reload-help",
-            left = i18n::tr!("ui-editor-read-only")
-        );
+        let button = Button::new("editor.reload", i18n::tr!("ui-editor-reload"))
+            .with_emphasis(crate::components::ButtonEmphasis::Primary);
+        button.render_borderless_frame(frame, layout.reload_button, &status_theme);
     }
     if let Some(window) = model.read_window {
         right.push_str(&format!(

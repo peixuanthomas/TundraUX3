@@ -106,12 +106,11 @@ fn authorization_layout(main: Rect, model: &AutoAdminViewModel) -> (AutoAdminLay
         // Keep the PTY size stable as progress messages and input focus change.
         2
     };
-    let hint_height = if model.confirming || model.finished || stopping {
-        lines(&auto_admin_hint(model, content_width)).min(3)
+    let hint = auto_admin_hint(model);
+    let hint_height = if hint.is_empty() {
+        0
     } else {
-        lines(&i18n::tr!("aa-terminal-hint"))
-            .max(lines(&i18n::tr!("aa-buttons-hint")))
-            .min(3)
+        lines(&hint).min(3)
     };
     let terminal_height = if model.confirming || stopping {
         0
@@ -247,27 +246,17 @@ pub(super) fn auto_admin_terminal_layout(
     (terminal, scrollbar)
 }
 
-fn auto_admin_hint(model: &AutoAdminViewModel, width: u16) -> String {
+fn auto_admin_hint(model: &AutoAdminViewModel) -> String {
     if model.stop == AutoAdminStopState::Warning {
         return i18n::tr!("aa-stop-warning-hint");
     }
-    if !model.confirming && !model.finished && model.button_focus.is_some() {
-        i18n::tr!(if width < 80 {
-            "aa-buttons-hint-compact"
+    model.input.clone().unwrap_or_else(|| {
+        if model.finished {
+            i18n::tr!("aa-finished-hint")
         } else {
-            "aa-buttons-hint"
-        })
-    } else {
-        model.input.clone().unwrap_or_else(|| {
-            i18n::tr!(if model.confirming {
-                "aa-confirm-hint"
-            } else if model.finished {
-                "aa-finished-hint"
-            } else {
-                "aa-terminal-hint"
-            })
-        })
-    }
+            String::new()
+        }
+    })
 }
 
 fn description(model: &AutoAdminViewModel) -> String {
@@ -363,7 +352,7 @@ pub(super) fn render_auto_admin_contents(
     );
     let hint = hint_override
         .map(str::to_owned)
-        .unwrap_or_else(|| auto_admin_hint(model, layout.input.width));
+        .unwrap_or_else(|| auto_admin_hint(model));
     frame.render_widget(wrapped_paragraph(&hint, layout.input.width), layout.input);
     let labels = if model.stop == AutoAdminStopState::Warning {
         vec![

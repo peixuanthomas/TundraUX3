@@ -693,6 +693,7 @@ impl ShellSession {
                             platform,
                         );
                     }
+                    Some(ui::EditorHitTarget::Reload) => self.reload_log_editor(),
                     Some(ui::EditorHitTarget::StatusBar) => {
                         self.pages.editor.editor_open_menu = None;
                         self.pages.editor.editor_focus = ui::EditorFocus::StatusBar;

@@ -327,14 +327,14 @@ fn assert_snapshot_contains(
 
 #[cfg(any(windows, unix))]
 #[test]
-fn physical_escape_and_ctrl_shift_x_reach_the_real_child_terminal() {
+fn physical_escape_ctrl_shift_x_and_f1_reach_the_real_child_terminal() {
     let fixture = PtyFixture::new("physical-key-bytes");
     #[cfg(windows)]
     let (program, args) = {
         let script = fixture.root.join("read-keys.ps1");
         std::fs::write(
             &script,
-            "[Console]::WriteLine('READY_FOR_KEYS')\n$first = [Console]::ReadKey($true)\n$second = [Console]::ReadKey($true)\n[Console]::WriteLine(('KEY_BYTES:{0:x2} {1:x2}' -f [int]$first.KeyChar, [int]$second.KeyChar))\nStart-Sleep -Seconds 60\n",
+            "[Console]::WriteLine('READY_FOR_KEYS')\n$first = [Console]::ReadKey($true)\n$second = [Console]::ReadKey($true)\n[Console]::WriteLine(('KEY_BYTES:{0:x2} {1:x2}' -f [int]$first.KeyChar, [int]$second.KeyChar))\n$third = [Console]::ReadKey($true)\n[Console]::WriteLine(('F1_KEY:{0}' -f $third.Key))\nStart-Sleep -Seconds 60\n",
         ).unwrap();
         (
             OsString::from("powershell.exe"),
@@ -350,7 +350,7 @@ fn physical_escape_and_ctrl_shift_x_reach_the_real_child_terminal() {
     #[cfg(unix)]
     let (program, args) = (
         OsString::from("/bin/sh"),
-        vec!["-c".into(), "stty raw -echo; printf 'READY_FOR_KEYS\\r\\n'; bytes=$(dd bs=1 count=2 2>/dev/null | od -An -tx1); printf 'KEY_BYTES:%s\\r\\n' \"$bytes\"; sleep 60".into()],
+        vec!["-c".into(), "stty raw -echo; printf 'READY_FOR_KEYS\\r\\n'; bytes=$(dd bs=1 count=2 2>/dev/null | od -An -tx1); printf 'KEY_BYTES:%s\\r\\n' \"$bytes\"; bytes=$(dd bs=1 count=3 2>/dev/null | od -An -tx1); printf 'F1_BYTES:%s\\r\\n' \"$bytes\"; sleep 60".into()],
     );
     let mut host = CommandLineHost::new(fixture.app.clone());
     host.state = CommandLineHostState::Running(
@@ -380,6 +380,7 @@ fn physical_escape_and_ctrl_shift_x_reach_the_real_child_terminal() {
             InputKey::Char('x'),
             InputModifiers::CTRL_SHIFT,
         )),
+        InputEvent::key(InputKey::F(1)),
     ] {
         assert_eq!(
             host.handle_input(&input, Some(Rect::new(0, 0, 160, 24))),
@@ -391,6 +392,16 @@ fn physical_escape_and_ctrl_shift_x_reach_the_real_child_terminal() {
         "1b 18",
         Duration::from_secs(5),
         "Escape and Ctrl+Shift+X bytes echoed by the child",
+    );
+    assert_snapshot_contains(
+        running_pty(&host),
+        if cfg!(windows) {
+            "F1_KEY:F1"
+        } else {
+            "1b 4f 50"
+        },
+        Duration::from_secs(5),
+        "F1 delivered to the child terminal",
     );
     assert!(host.is_running());
 }

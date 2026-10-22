@@ -57,7 +57,6 @@ ui-editor-off-button = { "[" }T Off]
 ui-editor-restore-defaults-button = { "[" }R Reset]
 ui-editor-save-button = { "[" }Ctrl+S Save]
 ui-editor-cancel-button = { "[" }Esc Cancel]
-ui-editor-tab-select-left-right-adjust-enter-activate-esc-cancel = Tab select · ←/→ or -/+ adjust · Enter activate
 ui-editor-image-detecting = image:detecting
 ui-editor-image-fallback = image:fallback
 ui-editor-image-terminal = image:terminal
@@ -79,7 +78,6 @@ ui-editor-lines = { $count ->
 
 ui-editor-byte-window = Bytes { $start }-{ $end } of { $total }
 
-ui-editor-reload-help = { $left } · R Reload
 
 ui-editor-status = { $mode }  Ln { $line }, Col { $column }  { $count ->
     [one] { $count } word
@@ -154,3 +152,5 @@ config-editor-open-help = Enter the absolute path of a system configuration file
 management-form-apply = Apply
 management-value-yes = Yes
 management-value-no = No
+
+ui-editor-reload = R Reload

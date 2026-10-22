@@ -1686,6 +1686,13 @@ fn read_only_tail_editor_renders_access_window_and_reload_metadata() {
 
     assert!(output.contains("diagnostics.log [read-only] [tail]"));
     assert!(output.contains("R Reload"));
+    let layout = editor_layout(Rect::new(0, 0, 120, 24), &model);
+    assert!(!layout.reload_button.is_empty());
+    assert_eq!(
+        layout.hit_test(layout.reload_button.x, layout.reload_button.y),
+        Some(EditorHitTarget::Reload)
+    );
+
     assert!(output.contains("Bytes 43-100 of 100"));
 
     model.read_window = Some(ui::EditorReadWindowViewModel {

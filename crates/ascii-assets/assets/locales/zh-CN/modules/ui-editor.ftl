@@ -57,7 +57,6 @@ ui-editor-off-button = { "[" }T 关]
 ui-editor-restore-defaults-button = { "[" }R 恢复默认]
 ui-editor-save-button = { "[" }Ctrl+S 保存]
 ui-editor-cancel-button = { "[" }Esc 取消]
-ui-editor-tab-select-left-right-adjust-enter-activate-esc-cancel = Tab 选择 · ←/→ 或 -/+ 调整 · Enter 执行
 ui-editor-image-detecting = 图片：检测中
 ui-editor-image-fallback = 图片：回退显示
 ui-editor-image-terminal = 图片：终端显示
@@ -73,7 +72,6 @@ ui-editor-lines = { $count } 行
 
 ui-editor-byte-window = 字节 { $start }-{ $end } / { $total }
 
-ui-editor-reload-help = { $left } · R 重新加载
 
 ui-editor-status = { $mode }  行 { $line }，列 { $column }  { $count } 个词  { $encoding }/{ $line_ending }  { $protocol }{ $window }
 
@@ -145,3 +143,5 @@ config-editor-open-help = 输入要编辑的系统配置文件的绝对路径，
 management-form-apply = 应用
 management-value-yes = 是
 management-value-no = 否
+
+ui-editor-reload = R 重新加载
