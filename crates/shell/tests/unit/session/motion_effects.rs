@@ -283,7 +283,7 @@ fn pages_expand_from_the_button_and_return_in_reverse() {
     let old = BaseFrameSnapshot {
         screen: ShellScreen::Home,
         bounds,
-        cells: snapshot_normal_cells(&old, bounds).unwrap().cells,
+        cells: snapshot_normal_cells(&old, bounds).unwrap().cells.into(),
     };
     let origin = ui::RevealOrigin::Button(Rect::new(2, 1, 3, 2));
     for returning in [false, true] {
@@ -310,6 +310,44 @@ fn pages_expand_from_the_button_and_return_in_reverse() {
 }
 
 #[test]
+fn page_reveal_keeps_live_progress_and_whole_chinese_glyphs() {
+    let bounds = Rect::new(0, 0, 40, 16);
+    let area = Rect::new(4, 3, 24, 8);
+    let old = Buffer::filled(bounds, Cell::new("O"));
+    let mut effect = page_effect(
+        area,
+        Some(BaseFrameSnapshot {
+            screen: ShellScreen::Home,
+            bounds,
+            cells: snapshot_normal_cells(&old, bounds).unwrap().cells.into(),
+        }),
+        false,
+        ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+        ui::RevealOrigin::Center,
+    );
+    let context = ui::RenderContext::default();
+    for (delta, value) in [(0, "0"), (110, "1"), (55, "2")] {
+        let mut frame = Buffer::filled(bounds, Cell::new("N"));
+        ui::components::Surface::new()
+            .bordered(true)
+            .render(area, &mut frame, &context);
+        frame.set_string(
+            14,
+            6,
+            format!("中{value}"),
+            ratatui::style::Style::default(),
+        );
+        frame[(5, 4)].diff_option = CellDiffOption::Skip;
+        effect.process(Duration::from_millis(delta), &mut frame, bounds);
+        assert_eq!(frame[(5, 4)].diff_option, CellDiffOption::Skip);
+        if delta > 0 {
+            assert_eq!(frame[(14, 6)].symbol(), "中");
+            assert_eq!(frame[(16, 6)].symbol(), value);
+        }
+    }
+}
+
+#[test]
 fn dialogs_grow_from_center_without_recoloring_text() {
     let area = Rect::new(0, 0, 12, 6);
     let theme = ui::ThemeTokens::glacier_night();
@@ -317,7 +355,7 @@ fn dialogs_grow_from_center_without_recoloring_text() {
     let base = BaseFrameSnapshot {
         screen: ShellScreen::Home,
         bounds: area,
-        cells: snapshot_normal_cells(&base, area).unwrap().cells,
+        cells: snapshot_normal_cells(&base, area).unwrap().cells.into(),
     };
     let mut effect = overlay_enter_effect(
         ui::MotionOverlayKind::Dialog,
@@ -367,7 +405,7 @@ fn dialog_border_moves_from_its_button_and_closes_to_the_same_button() {
         Arc::new(Mutex::new(Some(BaseFrameSnapshot {
             screen: ShellScreen::Home,
             bounds: full,
-            cells: snapshot_normal_cells(&base, full).unwrap().cells,
+            cells: snapshot_normal_cells(&base, full).unwrap().cells.into(),
         }))),
         phases,
     );
@@ -1403,7 +1441,7 @@ fn stale_base_screen_or_bounds_falls_back_to_immediate_close() {
         base_snapshot: Some(BaseFrameSnapshot {
             screen: ShellScreen::Settings,
             bounds: Rect::new(0, 0, 80, 24),
-            cells: vec![(Position::new(1, 1), Cell::new("N"))],
+            cells: vec![(Position::new(1, 1), Cell::new("N"))].into(),
         }),
         bounds: Some(Rect::new(0, 0, 120, 40)),
         screen: Some(state.content_screen()),

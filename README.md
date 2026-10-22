@@ -100,7 +100,7 @@ cargo run --locked -p cli --bin tundra-cli -- debug doctor
 
 Preview shared controls with `tundra-cli debug ui-test` in a terminal of at least 88 × 30 cells. F1–F6 switch pages; Esc exits. It uses built-in sample data, theme and English text without reading or writing configuration, language files, logs or saved state.
 
-The [shared UI library](crates/ui/README.md) exposes `animate` for value and Ratatui layout/style animations, including its attribute macro.
+The [shared UI library](crates/ui/README.md) exposes `animate` for value and Ratatui layout/style animations, including its attribute macro. Animated pages share frame snapshots and skip unnecessary image checks to reduce CPU work.
 
 Run `tundra-cli debug test-rainbow-text` to preview flowing rainbow text. Esc or the Exit button closes the demo; it uses built-in samples without saving settings.
 

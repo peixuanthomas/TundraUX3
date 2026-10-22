@@ -32,7 +32,8 @@ struct CellSnapshot {
 struct BaseFrameSnapshot {
     screen: ShellScreen,
     bounds: Rect,
-    cells: Vec<(Position, Cell)>,
+    // Page transitions and live overlays retain the same immutable frame.
+    cells: Arc<[(Position, Cell)]>,
 }
 
 #[derive(Debug, Clone)]
@@ -158,13 +159,17 @@ impl ShellMotionEffects {
         }
 
         let screen = state.content_screen();
-        let previous_base = self.base_snapshot.clone();
         let previous_origin = self.page_origin;
         let returning = state.screen_stack().len() < self.page_depth;
         let page_changed = self.screen.is_some_and(|previous| previous != screen)
             || self
                 .page
                 .is_some_and(|page| page != state.content_page_id());
+        let previous_base = if page_changed {
+            self.base_snapshot.take()
+        } else {
+            None
+        };
         if page_changed {
             // Outgoing closures carry old page cells. Drop them before scheduling
             // the new page reveal, even when terminal geometry did not change.
@@ -504,7 +509,7 @@ impl ShellMotionEffects {
             snapshot_normal_cells(buffer, buffer.area).map(|snapshot| BaseFrameSnapshot {
                 screen: state.content_screen(),
                 bounds: buffer.area,
-                cells: snapshot.cells,
+                cells: snapshot.cells.into(),
             });
         *self.live_base.lock().expect("motion base lock") = self.base_snapshot.clone();
         if let Some(area) = overlay_area(state) {
@@ -841,7 +846,7 @@ fn page_effect(
             };
             let protected = protected_skip_positions(buffer);
             if !returning {
-                for (position, cell) in &old.cells {
+                for (position, cell) in old.cells.iter() {
                     if area.contains(*position)
                         && !cell_overlaps_protected(*position, cell, &protected)
                     {
@@ -1027,6 +1032,9 @@ fn paint_morph(source: &Buffer, area: Rect, buffer: &mut Buffer, protected: &Has
 }
 
 fn cell_overlaps_protected(position: Position, cell: &Cell, protected: &HashSet<Position>) -> bool {
+    if protected.is_empty() {
+        return false;
+    }
     let width = ratatui::text::Span::raw(cell.symbol()).width().max(1);
     (0..width).any(|offset| {
         protected.contains(&Position::new(
@@ -1038,10 +1046,16 @@ fn cell_overlaps_protected(position: Position, cell: &Cell, protected: &HashSet<
 
 fn protected_skip_positions(buffer: &Buffer) -> HashSet<Position> {
     let mut protected: HashSet<_> = buffer
-        .area
-        .positions()
-        .filter(|position| buffer[*position].diff_option == CellDiffOption::Skip)
+        .content
+        .iter()
+        .enumerate()
+        .filter(|(_, cell)| cell.diff_option == CellDiffOption::Skip)
+        .map(|(index, _)| Position::from(buffer.pos_of(index)))
         .collect();
+    // Text-only frames need no glyph-width scan or per-cell protection checks.
+    if protected.is_empty() {
+        return protected;
+    }
     for position in buffer.area.positions() {
         if cell_overlaps_protected(position, &buffer[position], &protected) {
             let width = ratatui::text::Span::raw(buffer[position].symbol())
