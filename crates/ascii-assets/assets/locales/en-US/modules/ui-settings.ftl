@@ -2,13 +2,13 @@
 
 ui-settings-appearance = Appearance
 ui-settings-region-time = Region & Time
-ui-settings-system = Runtime alerts
+ui-settings-system = System
 ui-settings-file-explorer = File Explorer
 ui-settings-editor = Editor
 ui-settings-update = Update
 ui-settings-theme-motion-icons-colors-and-borders = Theme, motion, icons, colors and borders
 ui-settings-language-city-and-timezone = Language, city and timezone
-ui-settings-storage-pressure-warning-thresholds = Storage pressure warning thresholds
+ui-settings-storage-pressure-warning-thresholds = Authorization, external CLI control, and storage alerts
 ui-settings-display-sorting-and-safety = Display, sorting and safety
 ui-settings-cursor-and-file-associations = Cursor and file associations
 ui-settings-version-commits-and-source-updates = Installed version and available updates

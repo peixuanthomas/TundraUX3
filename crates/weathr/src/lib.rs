@@ -12,6 +12,7 @@ pub mod theme;
 pub use localization::LocalizationProvider;
 
 pub use launch::{
-    ClockFormat, ExitSemantic, ShellLockscreenResult, WeathrDisplayInput, WeathrRunError,
-    restore_terminal_best_effort, run_display, run_display_blocking,
+    ClockFormat, DisplayControl, ExitSemantic, ShellLockscreenResult, WeathrDisplayInput,
+    WeathrRunError, restore_terminal_best_effort, run_display, run_display_blocking,
+    run_display_blocking_with_control,
 };

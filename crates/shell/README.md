@@ -90,3 +90,11 @@ flowchart LR
 编辑器默认文件后缀为 106 项，包含全部已有语法着色支持的后缀。默认 `.rs` 文件从 Explorer 直接进入编辑器；后缀列表仍可在应用设置中修改。
 
 系统时区模式下，文件列表和文件属性中的本地日期也跟随系统时区；用户选择 UTC 显示时仍使用 UTC。
+
+## 外部 CLI 控制
+
+在“设置 → 系统”开启“允许外部 CLI 控制”后，同一操作系统用户可以用 `tundra-cli ui` 读取运行中的界面树和逐行画面，或模拟点击、拖动、滚动、按键和粘贴。开关默认关闭、保存到配置，在设置中修改立即生效；启动前可用 `tundra-cli config set automation.enabled true` 预先开启。
+
+`session/automation.rs` 安排真实输入事件并等待绘制完成；`compositor` 从同一帧采集界面信息。外部输入沿用现有输入准备、页面分发、子终端及授权流程。内置密码从导出文字中隐藏，密码所在页面的转场期间暂不导出文字，避免动画中保留的旧帧泄漏内容。独立天气锁屏也使用同一个控制连接。用法见 [CLI 控制](../cli/docs/ui-control.md)。
+
+Linux 实际终端验证：`python3 scripts/tests/shell-control.py target/debug/tundra-shell`（从项目根目录运行）。

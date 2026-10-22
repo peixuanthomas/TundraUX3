@@ -36,6 +36,7 @@ pub(in crate::session) const REGION_SETTINGS_FIELDS: &[ui::SettingsField] = &[
 ];
 pub(in crate::session) const SYSTEM_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::AutoAdmin,
+    ui::SettingsField::AutomationEnabled,
     ui::SettingsField::SystemLowAvailable,
     ui::SettingsField::SystemLowPercentage,
     ui::SettingsField::SystemCriticalAvailable,
@@ -810,6 +811,9 @@ impl ShellSession {
         };
         let increase = direction >= 0;
         match field {
+            ui::SettingsField::AutomationEnabled => {
+                config.automation.enabled = !config.automation.enabled;
+            }
             ui::SettingsField::AutoAdmin => {
                 use storage::AutoAdminPolicy::*;
                 config.auto_admin = match (config.auto_admin, increase) {
@@ -1098,6 +1102,7 @@ impl ShellSession {
             ui::SettingsCategory::System => {
                 config.system_status = defaults.system_status;
                 config.auto_admin = defaults.auto_admin;
+                config.automation = defaults.automation;
             }
             ui::SettingsCategory::Applications => match application {
                 ui::SettingsApplication::FileExplorer => config.explorer = defaults.explorer,

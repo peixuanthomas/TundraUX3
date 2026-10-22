@@ -20,16 +20,17 @@ mod user_document;
 pub use animation::{AnimationTimingsConfig, MAX_ANIMATION_PHASE_MS, MIN_ANIMATION_PHASE_MS};
 pub use clock_document::{ClockDocument, ClockEntryRecord, ClockProfile};
 pub use config_document::{
-    ANIMATION_SPEED_STEP_PERCENT, AccentColor, AppearanceConfig, AutoAdminPolicy, BorderColor,
-    BorderColorParseError, BorderShape, DEFAULT_ACCENT_COLOR, DEFAULT_ANIMATION_SPEED_PERCENT,
-    DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS, EditorConfig, ExplorerConfig, ExplorerDateZone,
-    ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField, IconDisplayMode, LauncherConfig,
-    LauncherEntryRecord, LauncherExecutableKind, LauncherFingerprint, LinuxUpdateMode,
-    MAX_ANIMATION_SPEED_PERCENT, MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN,
-    MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS, MIN_ANIMATION_SPEED_PERCENT, MotionPreference,
-    RuntimeLogsConfig, SYSTEM_STATUS_MAX_AVAILABLE_GIB, SYSTEM_STATUS_MAX_PERCENTAGE,
-    SYSTEM_STATUS_MIN_AVAILABLE_GIB, SYSTEM_STATUS_MIN_PERCENTAGE, SecurityConfig, StorageConfig,
-    SystemStatusConfig, TimeSyncConfig, TimeSyncSource, normalize_editor_explorer_open_extension,
+    ANIMATION_SPEED_STEP_PERCENT, AccentColor, AppearanceConfig, AutoAdminPolicy, AutomationConfig,
+    BorderColor, BorderColorParseError, BorderShape, DEFAULT_ACCENT_COLOR,
+    DEFAULT_ANIMATION_SPEED_PERCENT, DEFAULT_EDITOR_EXPLORER_OPEN_EXTENSIONS, EditorConfig,
+    ExplorerConfig, ExplorerDateZone, ExplorerSizeFormat, ExplorerSortDirection, ExplorerSortField,
+    IconDisplayMode, LauncherConfig, LauncherEntryRecord, LauncherExecutableKind,
+    LauncherFingerprint, LinuxUpdateMode, MAX_ANIMATION_SPEED_PERCENT,
+    MAX_EDITOR_EXPLORER_OPEN_EXTENSION_LEN, MAX_EDITOR_EXPLORER_OPEN_EXTENSIONS,
+    MIN_ANIMATION_SPEED_PERCENT, MotionPreference, RuntimeLogsConfig,
+    SYSTEM_STATUS_MAX_AVAILABLE_GIB, SYSTEM_STATUS_MAX_PERCENTAGE, SYSTEM_STATUS_MIN_AVAILABLE_GIB,
+    SYSTEM_STATUS_MIN_PERCENTAGE, SecurityConfig, StorageConfig, SystemStatusConfig,
+    TimeSyncConfig, TimeSyncSource, normalize_editor_explorer_open_extension,
 };
 pub use descriptors::{
     CLOCK_DESCRIPTOR, CONFIG_DESCRIPTOR, StorageDescriptor, VERSIONED_JSON_DESCRIPTORS,

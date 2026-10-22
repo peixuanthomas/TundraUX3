@@ -476,7 +476,15 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
         storage::AutoAdminPolicy::Manual
     );
     press(&mut state, &platform, "Down");
-    let items = &items[1..];
+    assert_eq!(items[1].field, SettingsField::AutomationEnabled);
+    assert_eq!(items[1].checked, Some(false));
+    assert!(!manager.load_config().unwrap().automation.enabled);
+    press(&mut state, &platform, "Right");
+    assert!(manager.load_config().unwrap().automation.enabled);
+    press(&mut state, &platform, "Left");
+    assert!(!manager.load_config().unwrap().automation.enabled);
+    press(&mut state, &platform, "Down");
+    let items = &items[2..];
     assert_eq!(items[0].field, SettingsField::SystemLowAvailable);
     assert_eq!(items[0].value, "5 GiB");
     assert_eq!(items[0].kind, ui::SettingsControlKind::Stepper);

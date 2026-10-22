@@ -429,6 +429,7 @@ pub(in crate::session) fn settings_cards(
             description,
             Kind::Toggle,
         )
+        .checked(value)
         .enabled(enabled)
     };
     let reset = |enabled| {
@@ -593,6 +594,13 @@ pub(in crate::session) fn settings_cards(
                                 i18n::tr!("settings-system-time-help"),
                                 Kind::Toggle,
                             )
+                            .checked(
+                                time.action("set_system_ntp")
+                                    .and_then(|(_, action)| {
+                                        action.fields.iter().find(|field| field.id == "enabled")
+                                    })
+                                    .is_some_and(|field| field.value == "true"),
+                            )
                             .enabled(global_enabled),
                             "set_system_ntp",
                         ),
@@ -664,6 +672,16 @@ pub(in crate::session) fn settings_cards(
                     )
                     .enabled(global_enabled),
                 ],
+            ),
+            Card::new(
+                i18n::tr!("ui-control-settings-title"),
+                vec![toggle(
+                    Field::AutomationEnabled,
+                    i18n::tr!("ui-control-settings-enable"),
+                    config.automation.enabled,
+                    i18n::tr!("ui-control-settings-help"),
+                    global_enabled,
+                )],
             ),
             Card::new(
                 i18n::tr!("settings-storage-pressure"),

@@ -33,6 +33,12 @@ pub struct WeathrDisplayInput {
     pub first_frame_callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
 }
 
+/// Optional host input and frame access; Weathr does not own the control connection.
+pub trait DisplayControl {
+    fn frame(&mut self, buffer: &ratatui_core::buffer::Buffer);
+    fn poll(&mut self) -> Option<crossterm::event::Event>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitSemantic {
     Start,
@@ -155,16 +161,29 @@ pub fn run_display_blocking(
     runtime.block_on(run_display(input))
 }
 
+/// Runs the display with an optional local input source supplied by the host.
+pub fn run_display_blocking_with_control(
+    input: WeathrDisplayInput,
+    control: &mut dyn DisplayControl,
+) -> Result<ShellLockscreenResult, WeathrRunError> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(WeathrRunError::Runtime)?;
+    runtime.block_on(run_display_inner(input, Some(control)))
+}
+
 /// Renders one scene from snapshots. It performs no configuration lookup and
 /// starts no weather, geolocation, cache or time request.
 pub async fn run_display(
     input: WeathrDisplayInput,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
-    run_display_inner(input).await
+    run_display_inner(input, None).await
 }
 
 async fn run_display_inner(
     input: WeathrDisplayInput,
+    control: Option<&mut dyn DisplayControl>,
 ) -> Result<ShellLockscreenResult, WeathrRunError> {
     let mut registry = ThemeRegistry::new();
     registry.set_active_palette(input.palette);
@@ -187,7 +206,12 @@ async fn run_display_inner(
     renderer.init()?;
     let first_frame_callback = input.first_frame_callback;
     let run_result = app
-        .run_with_outcome_and_shutdown(&mut renderer, &input.shutdown, first_frame_callback)
+        .run_with_outcome_and_shutdown(
+            &mut renderer,
+            &input.shutdown,
+            first_frame_callback,
+            control,
+        )
         .await
         .map(|outcome| input.exit_semantic.resolve(outcome))
         .map_err(WeathrRunError::Run);

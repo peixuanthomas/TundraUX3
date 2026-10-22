@@ -9,3 +9,4 @@ pub(crate) mod logs;
 pub(crate) mod management;
 pub(crate) mod path_report;
 pub(crate) mod storage_reset;
+pub(crate) mod ui;

@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn ui_commands_complete_only_their_options_and_known_values() {
+    for (line, expected) in [
+        ("/ui ", "snapshot"),
+        ("/help ui ", "wait"),
+        ("/ui drag --", "--from-id"),
+        ("/ui key --phase ", "release"),
+        ("/ui wait --id save --state ", "actionable"),
+        ("/ui click --button ", "middle"),
+        ("/ui scroll --direction ", "down"),
+        ("/config set automation.enabled ", "true"),
+    ] {
+        assert!(
+            command_completions(line, line.len(), &[])
+                .1
+                .contains(&expected.to_string()),
+            "{line}"
+        );
+    }
+    let line = "/ui move --";
+    let flags = command_completions(line, line.len(), &[]).1;
+    assert!(flags.contains(&"--id".into()));
+    assert!(!flags.contains(&"--button".into()));
+    for line in ["/ui sessions --", "/ui text -- private ", "/ui click --id "] {
+        assert!(
+            command_completions(line, line.len(), &[]).1.is_empty(),
+            "{line}"
+        );
+    }
+}
+
+#[test]
 fn new_management_commands_complete_verbs_and_only_supported_flags() {
     for (line, expected) in [
         ("/firewall ", "allow"),

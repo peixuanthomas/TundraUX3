@@ -53,6 +53,7 @@ const USER_MANAGEMENT_REFRESH_ALERT_KEY: &str = "user-management.refresh";
 const CLOCK_STORAGE_ALERT_KEY: &str = "clock.storage";
 const CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX: &str = "clock.manage";
 const CLOCK_DUE_NOTIFICATION_KEY_PREFIX: &str = "clock.due";
+mod automation;
 mod command_line_runtime;
 mod compositor;
 pub(crate) use compositor::ScreenCompositor;

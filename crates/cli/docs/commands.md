@@ -8,7 +8,7 @@ tundra-shell
 
 `tundra-shell` 不带参数时进入全屏 UI；`--help`（`-h`）显示帮助，`--version`（`-V`）显示程序名和版本后退出。其他公开参数仍会以参数错误退出，应用选择与 Editor 文件打开只能从 UI 发起。
 
-`tundra-cli` 是独立的运维工具，可读取和修改公开配置，但不能向 Shell 传参或绕过 UI 打开 Editor：
+`tundra-cli` 是独立的运维工具，可读取和修改公开配置，也可通过 `ui` 控制已开启外部控制的 Shell；打开应用和文件仍经过正常界面操作：
 
 ```console
 tundra-cli <command> [options]
@@ -17,13 +17,15 @@ tundra-cli <command> [options]
 | 命令 | 作用 |
 | --- | --- |
 | `--version` / `-V` | 显示 CLI 程序名和版本后退出。 |
+| `ui sessions` / `ui snapshot` | 列出当前用户的 Shell 会话，或读取所选会话的界面树和字符画面；见 [外部 CLI 控制](ui-control.md)。 |
+| `ui click` / `ui move` / `ui drag` / `ui scroll` / `ui key` / `ui text` / `ui wait` | 向所选会话发送正常输入，或等待目标出现、消失、可操作；默认 JSON，支持 `--session`、`--snapshot` 和 `--timeout`。 |
 | `debug asset` / `debug asset <name>` | 显示资源帮助或渲染指定资源；TOML art set 会输出全部图案。 |
 | `debug asset <name> -a` | 原样输出完整资源文件，包括 TOML 元数据。 |
 | `debug asset <name> --<item>` | 只输出 TOML 资源中的项目，例如 `home_icons --launcher`。 |
 | `cls` | 清空终端历史和可见内容，并将光标移到左上角。 |
 | `config` | 查看全部公开配置。 |
 | `config get [field]` | 查看外观、动画、语言、时区、天气地点和 Linux 更新模式；省略字段列出全部公开设置。 |
-| `config set <field> <value>` | 设置 `border-shape`、`border-color`、`accent-color`、`icon-mode`、`motion`、`animation-speed`、`language`、`timezone`、`address`、`weather-location` 或 `update-mode`；`theme` 仅为只读摘要。 |
+| `config set <field> <value>` | 设置 `automation.enabled`、`border-shape`、`border-color`、`accent-color`、`icon-mode`、`motion`、`animation-speed`、`language`、`timezone`、`address`、`weather-location` 或 `update-mode`；`theme` 仅为只读摘要。 |
 | `config reset <field>` | 只恢复指定字段的默认值，保留其他配置。 |
 | `config options [field]` | 列出取值说明；`language` 列出已安装语言，`timezone` / `address` 列出支持的时区和城市。 |
 | `launcher [list]` | 列出固定应用的 ID、状态和文件路径。 |
@@ -50,6 +52,8 @@ tundra-cli <command> [options]
 CLI 的帮助（含子命令帮助、无参数启动）和版本查询，以及 Shell 的帮助和版本查询，直接输出内置文本，不启动 watchdog、不读取配置，也不进入终端界面。即使日志或数据目录无法写入也能使用；Linux 下这些查询不需要 root 启动确认。
 
 ## 配置与固定应用
+
+`automation.enabled` 接受 `true` / `false`，默认 `false`。从设置中切换外部 CLI 控制会立即生效；通过 CLI 修改配置后需重启已有 Shell。关闭后不再接受新的外部输入。
 
 设置通过当前操作系统用户的配置文件保存，不修改系统时间或系统账号。`icon-mode` 接受 `ascii` / `image`，`motion` 接受 `full` / `reduced`，`animation-speed` 接受 50–200 的 25 倍数，默认 100。`address` 沿用旧行为，会改变 Tundra 时区；`weather-location` 单独保存最多 120 字符的英文地址，`auto` 或 `config reset weather-location` 恢复按时区选择天气地点。`update-mode` 仅在 Linux 接受 `release` / `beta`，只保存更新选择，不立即下载或安装。已运行的 UI 需要重启以加载 CLI 保存的设置和 Launcher 固定项。
 

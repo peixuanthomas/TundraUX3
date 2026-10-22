@@ -189,6 +189,11 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
         .register_app(app::diagnostics::diagnostics_watchdog_descriptor())
         .map_err(io::Error::other)?;
     let initial_startup = prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?;
+    let control_directory = platform
+        .app_paths()
+        .map(|paths| platform::shell_control::directory(&paths))
+        .unwrap_or_default();
+    let mut control = super::automation::ControlRuntime::new(control_directory);
     let configured_language = initial_startup
         .storage_manager
         .as_ref()
@@ -248,6 +253,18 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             None => prepare_shell_startup(platform.as_ref()).map_err(io::Error::other)?,
         };
         let _ = system_services.reconfigure(system_services_config_for_startup(&startup));
+        let control_enabled = startup
+            .storage_manager
+            .as_ref()
+            .and_then(|storage| storage.load_config().ok())
+            .is_some_and(|config| config.automation.enabled);
+        if let Err(error) = control.synchronize(control_enabled) {
+            // The UI remains usable if the optional control connection cannot start.
+            eprintln!(
+                "{}",
+                i18n::tr!("ui-control-unavailable", reason = error.to_string())
+            );
+        }
         if explorer_task_runtime.is_none()
             && let Some(storage) = startup.storage_manager.as_ref()
         {
@@ -292,7 +309,13 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
             let lockscreen_result = weathr_watchdog.run_boundary(
                 BoundarySpec::new("shell-lockscreen-ui-session", BoundaryKind::UiSession)
                     .terminal_owner(),
-                AssertUnwindSafe(|| weathr::run_display_blocking(lockscreen_input)),
+                AssertUnwindSafe(|| {
+                    if control.enabled() {
+                        weathr::run_display_blocking_with_control(lockscreen_input, &mut control)
+                    } else {
+                        weathr::run_display_blocking(lockscreen_input)
+                    }
+                }),
             );
             match lockscreen_result {
                 Ok(Ok(weathr::ShellLockscreenResult::Started)) => {}
@@ -321,6 +344,7 @@ pub fn run_fullscreen_blocking_managed_with_outcome(
                     output,
                     config,
                     startup,
+                    control: &mut control,
                     ascii_assets: ascii_assets.clone(),
                     platform: std::sync::Arc::clone(&platform),
                     time_sync_receiver: &time_sync_receiver,
@@ -852,6 +876,7 @@ pub(super) struct FullscreenShellSessionInput<'a, W> {
     output: &'a mut W,
     config: ShellLaunchConfig,
     startup: ShellStartupState,
+    control: &'a mut super::automation::ControlRuntime,
     ascii_assets: ui::RuntimeAsciiAssets,
     platform: std::sync::Arc<dyn Platform>,
     time_sync_receiver: &'a mpsc::Receiver<TimedTimeSyncResult>,
@@ -876,6 +901,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         output,
         config,
         startup,
+        control,
         ascii_assets,
         platform,
         time_sync_receiver,
@@ -973,6 +999,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         reduced_motion_enabled(&state),
     );
     let mut compositor = ScreenCompositor::default();
+    control.invalidate();
     let mut terminal_suspended = false;
     let mut last_background_poll = runtime_origin;
     let mut update_ready_marked = false;
@@ -984,6 +1011,17 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             }
             if state.auto_admin_power_succeeded() {
                 break;
+            }
+            let was_control_enabled = control.enabled();
+            if let Err(error) = control.synchronize(state.app.storage_config().automation.enabled) {
+                state.notify_alert_with_tone(
+                    i18n::msg!("ui-control-unavailable", reason = error.to_string()),
+                    ui::NotificationTone::Error,
+                );
+            }
+            compositor.capture_enabled = control.enabled();
+            if was_control_enabled != control.enabled() {
+                redraw.request_redraw();
             }
             state.resize_auto_admin();
             language_runtime.update_from(&state);
@@ -1047,6 +1085,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             }
 
             if resize_runtime_session(&mut state, crossterm::terminal::size()?, platform.as_ref()) {
+                control.invalidate();
                 compositor.cancel_for_bounds_change();
                 redraw.request_redraw();
             }
@@ -1147,7 +1186,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     if let Err(error) =
                         terminal_size_requirement.validate((bounds.width, bounds.height))
                     {
-                        render_terminal_size_notice(frame, error, &theme);
+                        compositor.render_size_notice(frame, error, &theme);
                     } else {
                         animation_running = compositor.render(
                             frame,
@@ -1157,6 +1196,10 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         );
                     }
                 })?;
+                if let Some(mut snapshot) = compositor.snapshot.take() {
+                    snapshot.background_tasks_running |= command_line_hosts.has_running_processes();
+                    control.publish(snapshot);
+                }
                 if !update_ready_marked {
                     app::update::mark_update_ready_from_env().map_err(io::Error::other)?;
                     update_ready_marked = true;
@@ -1212,14 +1255,30 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             );
             let state_timeout_wakeup =
                 command_line_timeout_is_state && state_poll_timeout <= redraw_timeout;
+            let external_event = control.poll(Instant::now());
+            let poll_timeout = if control.enabled() {
+                poll_timeout.min(Duration::from_millis(16))
+            } else {
+                poll_timeout
+            };
             let mut action = None;
-            let mut terminal_event_received = false;
-            if event::poll(poll_timeout)? {
-                terminal_event_received = true;
-                let terminal_events = read_ready_terminal_event_batch(event::read()?)?;
+            let mut terminal_events = Vec::new();
+            if let Some(event) = external_event {
+                terminal_events.push(event);
+            }
+            if event::poll(if terminal_events.is_empty() {
+                poll_timeout
+            } else {
+                Duration::ZERO
+            })? {
+                terminal_events.extend(read_ready_terminal_event_batch(event::read()?)?);
+            }
+            let terminal_event_received = !terminal_events.is_empty();
+            if terminal_event_received {
                 for terminal_event in terminal_events {
                     let identity_before_input = RedrawIdentity::from_session(&state);
                     if let event::Event::Resize(width, height) = &terminal_event {
+                        control.invalidate();
                         compositor.cancel_for_bounds_change();
                         state.details_motion = None;
                         state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
@@ -1299,7 +1358,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         break;
                     }
                 }
-            } else if state_timeout_wakeup {
+            } else if state_timeout_wakeup
+                && Instant::now().saturating_duration_since(poll_now) >= state_poll_timeout
+            {
                 action = Some(state.apply_input_with_platform(InputEvent::Tick, platform.as_ref()));
                 if background_work_outstanding
                     && poll_now.saturating_duration_since(last_background_poll)
@@ -1313,6 +1374,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 break;
             }
 
+            if control.needs_frame() {
+                redraw.request_redraw();
+            }
             if terminal_event_received && action == Some(ShellAction::Redraw) {
                 redraw.request_redraw();
             }
@@ -1331,6 +1395,11 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         Ok(None)
     }));
 
+    if !matches!(&execution, Ok(Ok(None))) || !state.return_to_lockscreen_requested() {
+        control.close();
+    } else {
+        control.invalidate();
+    }
     if !matches!(&execution, Ok(Ok(None))) {
         let _ = state.persist_all_editor_recovery_now(Instant::now());
     }
@@ -1387,7 +1456,7 @@ fn resize_runtime_session(
     true
 }
 
-fn render_terminal_size_notice(
+pub(super) fn render_terminal_size_notice(
     frame: &mut ratatui::Frame<'_>,
     error: crate::startup::terminal_size::ShellTerminalSizeError,
     theme: &ui::TundraTheme,

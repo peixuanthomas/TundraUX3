@@ -21,6 +21,8 @@ System-management development focuses on Linux. Windows and macOS builds let you
 
 ## What you can do
 
+- **Let agents operate the interface:** enable external CLI control in Settings → System, then use `tundra-cli ui` to inspect the live UI tree and text screen, click, drag, scroll, or type. Connections are local and restricted to the same OS user. See [CLI control](crates/cli/docs/ui-control.md).
+
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
 - **Browse packages:** open Installed by default, cycle Installed/Updates/Search with Tab or Shift+Tab, and select packages with Up/Down. Expanded details scroll with all four arrow keys; existing shortcuts remain available.
 - **Find page actions:** common operations appear at the bottom right, with the main action highlighted and destructive actions in the danger color. F1 or the title-bar Help button opens page shortcuts.

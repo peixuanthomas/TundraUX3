@@ -16,6 +16,7 @@ startup-cli-help = TundraUX3 命令行
     repl：进入交互命令行。默认运行系统命令；/<command> 运行 UX 命令；exit 退出。
     系统命令保留当前交互会话中的已导出环境变量和工作目录。
     logs：查询运行日志、故障事件或导出诊断；详情见 logs help。
+    ui：读取和操作运行中的 Shell；详情见 ui --help。
     launcher：列出、固定或取消固定应用；详情见 launcher help。
     help [command]：显示帮助，例如 help config 或 help debug doctor。
     -h, --help：显示帮助；-V, --version：显示版本。
@@ -41,6 +42,7 @@ startup-cli-debug-help = 用法：tundra-cli debug <command>
 startup-cli-config-help = 用法：tundra-cli config [get [field] | set <field> <value> | reset <field> | options [field]]
     不带参数时输出设置；reset 只重置指定字段；theme 是只读颜色摘要。
     字段与取值：
+    automation.enabled：true | false（默认 false；本机 Shell 控制）
     border-shape：rounded | square
     border-color：default | 颜色名（如 light-cyan）| #RRGGBB
     accent-color：default | 颜色名 | #RRGGBB

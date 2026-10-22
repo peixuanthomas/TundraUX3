@@ -412,3 +412,38 @@ settings-animation-deceleration = 减速
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
 settings-animation-phase-help = 按 1ms 调整（1～2000ms），表示 100% 速度下的时长。改变各阶段时长也会改变速度曲线。
+
+
+ui-control-settings-title = 外部 CLI 控制
+ui-control-settings-enable = 允许外部 CLI 控制
+ui-control-settings-help = 允许当前操作系统用户读取和操作此 Shell，包括登录界面。修改立即生效。
+ui-control-invalid-boolean = 请使用 true 或 false。
+ui-control-config-saved = 已保存外部 CLI 控制设置。通过 CLI 修改后，需重启正在运行的 Shell。
+ui-control-unavailable = 无法连接 Shell 控制接口：{ $reason }
+ui-control-not-ready = Shell 界面尚未就绪。
+ui-control-stale = 界面已变化，请重新读取快照后操作。
+ui-control-target = 目标不存在或不能接收此输入。
+ui-control-protocol = 不支持此控制协议版本。
+ui-control-timeout = 等待 Shell 或目标超时。
+ui-control-help = 用法：tundra-cli ui <sessions|snapshot|click|move|drag|scroll|key|text|wait> [选项]
+    通用：--session ID、--snapshot 编号、--timeout 毫秒（默认 5000）
+    click/move/scroll：--id ID 或 --x 列 --y 行；click：--button left|right|middle、--double
+    drag：--from-id ID 或 --from-x 列 --from-y 行；--to-id ID 或 --to-x 列 --to-y 行；--duration 毫秒
+    scroll：--direction up|down|left|right、--count 次数
+    key 按键：--modifiers ctrl,alt,shift,super,hyper,meta；--phase press|repeat|release
+    text 文字 或 text --stdin：向当前焦点输入文字
+    wait --id ID：--state present|absent|actionable（默认 actionable）
+    drag 也支持 --button；时长范围为 16..10000 毫秒，滚动次数为 1..1000。
+    多会话必须指定 --session。--snapshot 拒绝旧快照；超时不会重放输入。
+    text -- 文字 可输入以短横线开头的文字；sessions 不接受选项。
+    坐标从 (0,0) 开始。输出为 JSON，协议版本为 1。
+    在“设置 → 系统”开启，或启动前执行 config set automation.enabled true。
+
+ui-control-no-session = 没有可控制的 Shell。请开启外部 CLI 控制并启动 Shell。
+ui-control-many-sessions = 有多个 Shell 会话，请使用 --session 选择。
+ui-control-session-missing = 指定的 Shell 会话不可用。
+ui-control-invalid-arguments = UI 命令参数不正确，请查看 tundra-cli ui --help。
+ui-control-input-failed = 无法从标准输入读取文字。
+ui-control-busy = 另一个外部输入正在执行，请稍后重试。
+
+ui-control-lockscreen = 进入 Shell

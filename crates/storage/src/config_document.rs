@@ -35,6 +35,8 @@ pub enum AutoAdminPolicy {
 pub struct StorageConfig {
     pub schema_version: u32,
     #[serde(default)]
+    pub automation: AutomationConfig,
+    #[serde(default)]
     pub auto_admin: AutoAdminPolicy,
     #[serde(default)]
     pub linux_update_mode: LinuxUpdateMode,
@@ -98,6 +100,7 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
+            automation: AutomationConfig::default(),
             linux_update_mode: LinuxUpdateMode::default(),
             auto_admin: AutoAdminPolicy::default(),
             theme: default_theme(),
@@ -904,6 +907,11 @@ fn legacy_launcher_entry_id(path: &str) -> String {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutomationConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecurityConfig {
     /// Retained for backward-compatible config parsing. Release builds never enable debug mode.
     pub allow_release_debug: bool,
@@ -951,6 +959,31 @@ mod update_mode_tests {
                 .unwrap()
                 .linux_update_mode,
             LinuxUpdateMode::Beta
+        );
+    }
+}
+
+#[cfg(test)]
+mod automation_tests {
+    use super::*;
+    #[test]
+    fn old_configuration_disables_control_and_enabled_setting_roundtrips() {
+        let mut config = StorageConfig::default();
+        let old = toml::to_string(&config)
+            .unwrap()
+            .replace("[automation]\nenabled = false\n", "");
+        assert!(
+            !toml::from_str::<StorageConfig>(&old)
+                .unwrap()
+                .automation
+                .enabled
+        );
+        config.automation.enabled = true;
+        assert!(
+            toml::from_str::<StorageConfig>(&toml::to_string(&config).unwrap())
+                .unwrap()
+                .automation
+                .enabled
         );
     }
 }

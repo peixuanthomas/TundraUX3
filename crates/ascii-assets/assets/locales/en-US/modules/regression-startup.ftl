@@ -16,6 +16,7 @@ startup-cli-help = TundraUX3 CLI
     { "  " }repl    Enter the interactive command loop; system commands run by default, /<command> runs a UX command, exit leaves
     { "          " }System commands keep exported environment variables and the working directory until you leave this REPL.
     { "  " }logs    Query runtime logs and incidents, or export diagnostics; run logs help
+    { "  " }ui      Read and operate a running Shell; run ui --help
     { "  " }launcher  List, pin, or unpin applications; run launcher help
     { "  " }help [command]  Show help, for example: help config or help debug doctor
     { "  " }-h, --help      Show help
@@ -47,6 +48,7 @@ startup-cli-debug-help = Usage: tundra-cli debug <command>
 startup-cli-config-help = Usage: tundra-cli config [get [field] | set <field> <value> | reset <field> | options [field]]
     No arguments prints settings. reset restores only the named field. theme is a read-only color summary.
     Fields and values:
+    { "  " }automation.enabled true | false (default false; local Shell control)
     { "  " }border-shape       rounded | square
     { "  " }border-color       default | named color (e.g. light-cyan) | #RRGGBB
     { "  " }accent-color       default | named color | #RRGGBB

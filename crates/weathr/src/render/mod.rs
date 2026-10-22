@@ -156,6 +156,10 @@ impl TerminalRenderer {
         Ok(())
     }
 
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
     pub fn get_size(&self) -> (u16, u16) {
         (self.width, self.height)
     }

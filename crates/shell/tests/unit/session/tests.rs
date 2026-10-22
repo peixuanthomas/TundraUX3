@@ -2782,7 +2782,8 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
     assert!(
         matches!(&state.app.system_status_snapshot().unwrap().storage, system_services::StorageState::Ready(storage) if storage.overall_pressure == system_services::StoragePressure::Normal)
     );
-    // AutoAdmin is now the first System setting; select the storage threshold.
+    // Skip authorization and external control to select the storage threshold.
+    state.apply_input(InputEvent::from_key_label("Down"));
     state.apply_input(InputEvent::from_key_label("Down"));
     state.apply_input(InputEvent::from_key_label("Right"));
     assert_eq!(

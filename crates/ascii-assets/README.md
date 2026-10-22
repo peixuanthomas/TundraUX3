@@ -43,3 +43,5 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 同一资源文件也保存 `debug test-rainbow-text` 的帮助、标题、示例和退出提示，中英文命令目录均包含此入口。
 
 `modules/help.ftl` 保存各页 F1 帮助；启动器空列表使用简短说明和文件浏览器按钮，中英文同步提供。
+
+外部 Shell 控制的开关、CLI 帮助与错误提示位于中英文 `modules/settings.ftl`；CLI 根帮助及公开配置字段列表同步列出 `ui` 和 `automation.enabled`。

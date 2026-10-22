@@ -216,6 +216,7 @@ impl App {
             renderer,
             &std::sync::atomic::AtomicBool::new(false),
             None,
+            None,
         )
         .await
     }
@@ -225,6 +226,7 @@ impl App {
         renderer: &mut TerminalRenderer,
         shutdown: &std::sync::atomic::AtomicBool,
         mut first_frame_callback: Option<Arc<dyn Fn() -> io::Result<()> + Send + Sync>>,
+        mut control: Option<&mut dyn crate::launch::DisplayControl>,
     ) -> io::Result<AppRunOutcome> {
         let mut rng = rand::rng();
 
@@ -437,11 +439,24 @@ impl App {
 
             flush_and_notify_first_frame(&mut first_frame_callback, || renderer.flush())?;
 
+            if let Some(control) = control.as_deref_mut() {
+                control.frame(renderer.buffer());
+            }
             if let Some(outcome) = wait_for_next_frame(
                 next_frame,
                 shutdown,
                 Instant::now,
                 |timeout| {
+                    if let Some(control) = control.as_deref_mut()
+                        && let Some(event) = control.poll()
+                    {
+                        return Ok(Some(event));
+                    }
+                    let timeout = if control.is_some() {
+                        timeout.min(Duration::from_millis(16))
+                    } else {
+                        timeout
+                    };
                     if event::poll(timeout)? {
                         event::read().map(Some)
                     } else {

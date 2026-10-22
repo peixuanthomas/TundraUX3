@@ -89,6 +89,9 @@ pub(crate) fn load_or_default_config(storage: &StorageManager) -> Result<Storage
 
 fn write_config_value(output: &mut impl Write, config: &StorageConfig, field: Option<ConfigField>) {
     match field {
+        Some(ConfigField::AutomationEnabled) => {
+            let _ = writeln!(output, "automation.enabled = {}", config.automation.enabled);
+        }
         Some(ConfigField::Theme) => {
             write_theme_summary(output, config);
         }
@@ -160,6 +163,7 @@ fn write_config_value(output: &mut impl Write, config: &StorageConfig, field: Op
         }
         None => {
             for field in [
+                ConfigField::AutomationEnabled,
                 ConfigField::IconMode,
                 ConfigField::Motion,
                 ConfigField::AnimationSpeed,
@@ -178,6 +182,12 @@ fn write_config_value(output: &mut impl Write, config: &StorageConfig, field: Op
 
 fn apply_config_update(config: &mut StorageConfig, update: ConfigUpdate) -> Result<String, String> {
     match update {
+        ConfigUpdate::AutomationEnabled(value) => {
+            config.automation.enabled = value
+                .parse::<bool>()
+                .map_err(|_| i18n::tr!("ui-control-invalid-boolean"))?;
+            Ok(i18n::tr!("ui-control-config-saved"))
+        }
         ConfigUpdate::IconMode(value) => {
             config.appearance.icon_display_mode =
                 match clean_config_value("icon-mode", value)?.as_str() {
@@ -415,6 +425,7 @@ fn save_config(
 fn reset_config_field(config: &mut StorageConfig, field: ConfigField) {
     let defaults = StorageConfig::default();
     match field {
+        ConfigField::AutomationEnabled => config.automation.enabled = false,
         ConfigField::Theme => unreachable!("read-only field rejected by parser"),
         ConfigField::BorderShape => {
             config.appearance.border_shape = defaults.appearance.border_shape
@@ -459,6 +470,7 @@ fn write_config_options(output: &mut impl Write, field: Option<ConfigField>) {
         }
         Some(field) => {
             let values = match field {
+                ConfigField::AutomationEnabled => "true, false".into(),
                 ConfigField::BorderShape => "rounded, square".to_string(),
                 ConfigField::BorderColor | ConfigField::AccentColor => {
                     format!("default, #RRGGBB, {}", BorderColor::NAMED_VALUES.join(", "))
