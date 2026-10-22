@@ -81,3 +81,34 @@ fn translated_explorer_sort_choices_keep_stable_command_ids() {
         ["sort-name", "sort-type", "sort-size", "sort-modified"]
     );
 }
+
+#[test]
+fn selected_file_menu_keeps_the_actions_moved_from_the_toolbar() {
+    let ui::ExplorerOverlayViewModel::ContextMenu(menu) =
+        explorer_context_menu_view_model(ExplorerContextMenuInput {
+            anchor: (0, 0),
+            selected_count: 1,
+            entry_count: 1,
+            clipboard_available: false,
+            is_trash: false,
+            trash_has_items: false,
+            focused_index: 0,
+            can_manage_launcher: false,
+            can_execute_command_line: false,
+            launcher_eligible_count: 0,
+        })
+    else {
+        panic!("file menu");
+    };
+    for id in ["cut", "copy", "paste", "sort", "options"] {
+        assert!(menu.items.iter().any(|item| item.id == id), "{id}");
+    }
+    assert!(
+        !menu
+            .items
+            .iter()
+            .find(|item| item.id == "paste")
+            .unwrap()
+            .enabled
+    );
+}

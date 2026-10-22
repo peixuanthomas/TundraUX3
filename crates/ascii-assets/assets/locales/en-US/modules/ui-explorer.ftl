@@ -88,10 +88,7 @@ ui-explorer-search-matches = { " " }({ $count ->
        *[other] { $count } matches
     }, { $mode })
 
-ui-explorer-help = Ctrl+A: select all    Space: toggle    Shift+arrows: select range    Ctrl+arrows: move focus    C/X/V: copy/cut/paste    Del: delete    Ctrl+I: invert    Ctrl+Shift+A: clear selection    Home/End/PgUp/PgDn: jump (Shift: select)    Shift+F10: menu    Enter: open    Backspace: parent    N/T: folder/text    F2: rename    F5: refresh    /: search (S/Ctrl+F)    F6/O: sort/options    Esc: back
 
-ui-explorer-compact-help = Ctrl+A: select all | Space: toggle | C/X/V: copy/cut/paste | Del: delete | Shift+F10: menu | Hidden: { $hidden }{ $quick }
 
-ui-explorer-quick-access-help = { " " }| Tab/Shift+Tab: quick access
 ui-explorer-open-selected = Open
 ui-explorer-actions-menu = Actions

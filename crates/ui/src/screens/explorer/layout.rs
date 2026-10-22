@@ -10,7 +10,6 @@ const EXPLORER_SIDEBAR_MIN_WIDTH: u16 = 96;
 const EXPLORER_DETAILED_MIN_WIDTH: u16 = 72;
 const EXPLORER_SIDEBAR_WIDTH: u16 = 20;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExplorerScrollbarLayout {
     pub track: Rect,
@@ -163,7 +162,11 @@ impl ExplorerLayout {
         {
             return Some(ExplorerHitTarget::Toolbar(button.action));
         }
-        if let Some(button) = self.page_actions.iter().find(|button| button.enabled && rect_contains(button.area, x, y)) {
+        if let Some(button) = self
+            .page_actions
+            .iter()
+            .find(|button| button.enabled && rect_contains(button.area, x, y))
+        {
             return Some(ExplorerHitTarget::PageAction(button.action));
         }
         if rect_contains(self.search, x, y) {
@@ -249,10 +252,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         inner.width,
         footer_height,
     );
-    toolbar.y = footer
-        .y
-        .saturating_sub(toolbar.height)
-        .max(inner.y.saturating_add(2));
+    toolbar.y = inner.y.saturating_add(2).min(inner.bottom());
     let path_bar = line_in_rect(inner, inner.y);
     let address_button_width =
         usize_to_u16(terminal_width(&i18n::tr!("ui-explorer-edit-button"))).min(path_bar.width);
@@ -294,9 +294,9 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     );
     let body = Rect::new(
         inner.x,
-        search.bottom(),
+        toolbar.bottom(),
         inner.width,
-        remaining_height.saturating_sub(footer_height),
+        footer.y.saturating_sub(toolbar.bottom()),
     );
     let mut toolbar_buttons = explorer_toolbar_button_layouts(toolbar, model, mode);
     for y in toolbar.y..toolbar.bottom() {
@@ -461,12 +461,16 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     });
     let action_bar = bar.layout(footer);
     let page_buttons = explorer_page_action_buttons(model);
-    let page_actions = action_bar.actions.iter().map(|action| ExplorerToolbarButtonLayout {
-        action: page_buttons[action.index].action,
-        area: action.area,
-        show_label: true,
-        enabled: action.enabled,
-    }).collect();
+    let page_actions = action_bar
+        .actions
+        .iter()
+        .map(|action| ExplorerToolbarButtonLayout {
+            action: page_buttons[action.index].action,
+            area: action.area,
+            show_label: true,
+            enabled: action.enabled,
+        })
+        .collect();
     let overlay = explorer_overlay_layout(area, model);
 
     ExplorerLayout {
@@ -531,12 +535,14 @@ fn explorer_toolbar_rows(width: u16, model: &ExplorerViewModel) -> u16 {
     }
     let mut rows = 1u16;
     let mut used = 0u16;
-    for button in model
-        .toolbar
-        .buttons
-        .iter()
-        .filter(|b| b.action != ExplorerToolbarAction::Refresh && !explorer_page_action_buttons(model).iter().any(|page| page.action == b.action))
-    {
+    for button in model.toolbar.buttons.iter().filter(|b| {
+        matches!(
+            b.action,
+            ExplorerToolbarAction::Back
+                | ExplorerToolbarAction::Forward
+                | ExplorerToolbarAction::Up
+        )
+    }) {
         let length = button
             .label
             .cell_width()
@@ -563,7 +569,14 @@ fn explorer_toolbar_button_layouts(
         .toolbar
         .buttons
         .iter()
-        .filter(|b| b.action != ExplorerToolbarAction::Refresh && !explorer_page_action_buttons(model).iter().any(|page| page.action == b.action))
+        .filter(|b| {
+            matches!(
+                b.action,
+                ExplorerToolbarAction::Back
+                    | ExplorerToolbarAction::Forward
+                    | ExplorerToolbarAction::Up
+            )
+        })
         .filter_map(|button| {
             let width = button
                 .label
@@ -879,15 +892,41 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
     }
 }
 
-pub(super) fn explorer_page_action_buttons(model: &ExplorerViewModel) -> Vec<ExplorerToolbarButtonViewModel> {
+pub(super) fn explorer_page_action_buttons(
+    model: &ExplorerViewModel,
+) -> Vec<ExplorerToolbarButtonViewModel> {
     let wanted: &[ExplorerToolbarAction] = if model.is_trash {
-        &[ExplorerToolbarAction::Restore, ExplorerToolbarAction::DumpTrash, ExplorerToolbarAction::Menu]
+        &[
+            ExplorerToolbarAction::Restore,
+            ExplorerToolbarAction::DumpTrash,
+            ExplorerToolbarAction::Menu,
+        ]
     } else if model.entries.is_empty() {
-        &[ExplorerToolbarAction::New, ExplorerToolbarAction::Paste, ExplorerToolbarAction::Menu]
+        &[
+            ExplorerToolbarAction::New,
+            ExplorerToolbarAction::Paste,
+            ExplorerToolbarAction::Menu,
+        ]
     } else {
-        &[ExplorerToolbarAction::Open, ExplorerToolbarAction::New, ExplorerToolbarAction::Rename, ExplorerToolbarAction::Delete, ExplorerToolbarAction::Menu]
+        &[
+            ExplorerToolbarAction::Open,
+            ExplorerToolbarAction::New,
+            ExplorerToolbarAction::Rename,
+            ExplorerToolbarAction::Delete,
+            ExplorerToolbarAction::Menu,
+        ]
     };
-    let mut buttons = wanted.iter().filter_map(|action| model.toolbar.buttons.iter().find(|b| b.action == *action).cloned()).collect::<Vec<_>>();
+    let mut buttons = wanted
+        .iter()
+        .filter_map(|action| {
+            model
+                .toolbar
+                .buttons
+                .iter()
+                .find(|b| b.action == *action)
+                .cloned()
+        })
+        .collect::<Vec<_>>();
     if model.selected_entry().is_none() && !model.is_trash {
         buttons.sort_by_key(|button| button.action != ExplorerToolbarAction::New);
     }

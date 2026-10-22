@@ -55,7 +55,10 @@ pub enum ExplorerToolbarAction {
 
 impl ExplorerToolbarAction {
     pub const fn is_page_action(self) -> bool {
-        matches!(self, Self::Open | Self::New | Self::Rename | Self::Delete | Self::Menu)
+        matches!(
+            self,
+            Self::Open | Self::New | Self::Rename | Self::Delete | Self::Menu
+        )
     }
 
     pub const ALL: [Self; 16] = [

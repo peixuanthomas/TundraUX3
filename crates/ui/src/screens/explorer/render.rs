@@ -9,8 +9,8 @@ use super::{
     ExplorerViewModel, explorer_layout,
 };
 use crate::components::{
-    Button, ComponentTone, DataTable, List, ListItem, Panel, Scrollbar, Surface, TextInput,
-    PageAction, PageActionBar, PageActionStatus, terminal_width,
+    Button, ComponentTone, DataTable, List, ListItem, PageAction, PageActionBar, PageActionStatus,
+    Panel, Scrollbar, Surface, TextInput, terminal_width,
 };
 use crate::screens::shell::fit_cell;
 use crate::{RuntimeAsciiAssets, TundraTheme};
@@ -360,41 +360,120 @@ fn render_explorer_table(
 }
 
 pub(super) fn explorer_action_bar(model: &ExplorerViewModel) -> PageActionBar {
-    let actions = super::layout::explorer_page_action_buttons(model).into_iter().map(|button| {
-        let action = button.action;
-        let page = PageAction::new(format!("toolbar.{action:?}"), format!("{} {}", action.shortcut_label(), button.label)).disabled(!button.enabled);
-        if matches!(action, super::ExplorerToolbarAction::Delete | super::ExplorerToolbarAction::DumpTrash) {
-            page.danger()
-        } else if (action == super::ExplorerToolbarAction::Open && model.selected_entry().is_some())
-            || (action == super::ExplorerToolbarAction::New && model.selected_entry().is_none())
-            || action == super::ExplorerToolbarAction::Restore {
-            page.primary()
-        } else { page }
-    }).collect();
+    let actions = super::layout::explorer_page_action_buttons(model)
+        .into_iter()
+        .map(|button| {
+            let action = button.action;
+            let page = PageAction::new(
+                format!("toolbar.{action:?}"),
+                format!("{} {}", action.shortcut_label(), button.label),
+            )
+            .disabled(!button.enabled);
+            if matches!(
+                action,
+                super::ExplorerToolbarAction::Delete | super::ExplorerToolbarAction::DumpTrash
+            ) {
+                page.danger()
+            } else if (action == super::ExplorerToolbarAction::Open
+                && model.selected_entry().is_some())
+                || (action == super::ExplorerToolbarAction::New && model.selected_entry().is_none())
+                || action == super::ExplorerToolbarAction::Restore
+            {
+                page.primary()
+            } else {
+                page
+            }
+        })
+        .collect();
     let mut status = Vec::new();
     if let Some(error) = &model.error {
-        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-error", error = error), tone: ComponentTone::Danger });
+        status.push(PageActionStatus {
+            text: i18n::tr!("ui-explorer-error", error = error),
+            tone: ComponentTone::Danger,
+        });
     } else if let Some(operation) = &model.operation {
-        let text = operation.percent().map_or_else(|| i18n::tr!("ui-explorer-operation-items", operation = operation.label.clone(), count = operation.completed_items.clone()), |percent| format!("{}: {percent}%", operation.label));
-        status.push(PageActionStatus { text, tone: ComponentTone::Accent });
+        let text = operation.percent().map_or_else(
+            || {
+                i18n::tr!(
+                    "ui-explorer-operation-items",
+                    operation = operation.label.clone(),
+                    count = operation.completed_items.clone()
+                )
+            },
+            |percent| format!("{}: {percent}%", operation.label),
+        );
+        status.push(PageActionStatus {
+            text,
+            tone: ComponentTone::Accent,
+        });
     } else if model.listing_warning_count > 0 {
-        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-metadata-warnings", count = model.listing_warning_count.clone()), tone: ComponentTone::Muted });
+        status.push(PageActionStatus {
+            text: i18n::tr!(
+                "ui-explorer-metadata-warnings",
+                count = model.listing_warning_count.clone()
+            ),
+            tone: ComponentTone::Muted,
+        });
     }
     let names = selected_entry_names(model);
-    let text = if names.is_empty() { i18n::tr!("ui-explorer-selected-count", count = model.effective_selected_count()) } else { i18n::tr!("ui-explorer-selected-names", names = names.join(", ")) };
-    status.push(PageActionStatus { text, tone: ComponentTone::Muted });
+    let text = if names.is_empty() {
+        i18n::tr!(
+            "ui-explorer-selected-count",
+            count = model.effective_selected_count()
+        )
+    } else {
+        i18n::tr!("ui-explorer-selected-names", names = names.join(", "))
+    };
+    status.push(PageActionStatus {
+        text,
+        tone: ComponentTone::Muted,
+    });
     if let Some(entry) = model.selected_entry() {
-        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-entry-details", name = entry.name.clone(), kind = entry.kind.clone(), size = entry.size.as_deref().unwrap_or("-")), tone: ComponentTone::Muted });
-        status.push(PageActionStatus { text: i18n::tr!("ui-explorer-entry-metadata", modified = entry.modified.as_deref().unwrap_or("-"), attributes = format_attributes(&entry.attributes)), tone: ComponentTone::Muted });
+        status.push(PageActionStatus {
+            text: i18n::tr!(
+                "ui-explorer-entry-details",
+                name = entry.name.clone(),
+                kind = entry.kind.clone(),
+                size = entry.size.as_deref().unwrap_or("-")
+            ),
+            tone: ComponentTone::Muted,
+        });
+        status.push(PageActionStatus {
+            text: i18n::tr!(
+                "ui-explorer-entry-metadata",
+                modified = entry.modified.as_deref().unwrap_or("-"),
+                attributes = format_attributes(&entry.attributes)
+            ),
+            tone: ComponentTone::Muted,
+        });
     }
-    PageActionBar::new("explorer").with_status(status).with_actions(actions)
+    PageActionBar::new("explorer")
+        .with_status(status)
+        .with_actions(actions)
 }
 
-fn render_explorer_footer(frame: &mut Frame<'_>, layout: &ExplorerLayout, model: &ExplorerViewModel, assets: &RuntimeAsciiAssets, context: &crate::RenderContext) {
+fn render_explorer_footer(
+    frame: &mut Frame<'_>,
+    layout: &ExplorerLayout,
+    model: &ExplorerViewModel,
+    assets: &RuntimeAsciiAssets,
+    context: &crate::RenderContext,
+) {
     explorer_action_bar(model).render(frame, layout.footer, context);
     if let (Some(cancel), Some(operation)) = (layout.cancel_operation, model.operation.as_ref()) {
         let icon = explorer_icon_line(assets, "cancel");
-        render_explorer_button(frame, cancel, "explorer.operation.cancel", fit_cell(&format!("{icon} {}", operation.cancel_label), usize::from(cancel.width)), true, true, &context.compatibility_theme());
+        render_explorer_button(
+            frame,
+            cancel,
+            "explorer.operation.cancel",
+            fit_cell(
+                &format!("{icon} {}", operation.cancel_label),
+                usize::from(cancel.width),
+            ),
+            true,
+            true,
+            &context.compatibility_theme(),
+        );
     }
 }
 

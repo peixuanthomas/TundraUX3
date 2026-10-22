@@ -374,6 +374,12 @@ pub(in crate::session) fn explorer_context_menu_view_model(
             false,
         ));
     }
+    if selected_count > 0 {
+        items.extend([
+            item("sort", i18n::tr!("shell-sort"), true, false),
+            item("options", i18n::tr!("shell-advanced-options"), true, false),
+        ]);
+    }
     items.extend([
         item(
             "select-all",
