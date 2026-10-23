@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::{ManagedCommand, PlatformError};
+#[cfg(target_os = "macos")]
+pub(super) mod macos;
 
 /// One stdout/stderr record, delivered while the child is still running.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -663,6 +665,12 @@ impl ChildTree {
         #[cfg(unix)]
         if self.isolated && unsafe { libc::kill(-(self.child.id() as i32), libc::SIGKILL) } < 0 {
             let error = std::io::Error::last_os_error();
+            #[cfg(target_os = "macos")]
+            if error.raw_os_error() == Some(libc::EPERM)
+                && macos::group_is_dead(self.child.id()).unwrap_or(false)
+            {
+                return Ok(());
+            }
             if error.raw_os_error() != Some(libc::ESRCH) {
                 return Err(error);
             }

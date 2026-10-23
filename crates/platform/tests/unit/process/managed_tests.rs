@@ -87,6 +87,26 @@ fn output_drains_both_pipes_beyond_one_read_batch() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn an_exited_process_group_is_cleaned_without_a_permission_failure() {
+    let mut child = Command::new("/usr/bin/true").spawn_managed().unwrap();
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        },
+        0
+    );
+    assert!(crate::process::macos::group_is_dead(child.id()).unwrap());
+    assert!(child.try_wait().unwrap().unwrap().success());
+}
+
 #[test]
 fn dropping_a_child_after_an_error_stops_it() {
     let mut child = command("sleep").spawn_managed().unwrap();
