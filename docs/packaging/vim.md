@@ -44,6 +44,8 @@ python3 scripts/build-vim.py --verify-only --output target/debug/vim
 
 校验包括固定版本、`+eval`、`+channel`、`+autocmd`、`+timers`、`+multi_byte`，以及 runtime、许可证和上游元数据。构建启用 Huge 功能集和终端支持，禁用 GUI、X11、可选外部语言解释器及可选动态库，避免便携包依赖未随包提供的组件。
 
+Windows Vim 将多字节支持显示为 `+multi_byte_ime` 或 `+multi_byte_ime/dyn`，脚本同样接受这两个上游名称。校验回归：`python -B -m unittest discover -s scripts/tests -p test_build_vim.py`。
+
 ## 发布
 
 最新发布工作流在 Windows、macOS、Linux 的打包步骤显式构建 Vim。Linux 本地打包先准备 release 引擎，再运行原打包脚本：

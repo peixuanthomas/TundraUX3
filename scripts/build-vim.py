@@ -28,7 +28,10 @@ def verify_bundle(directory):
     executable = directory / ("vim.exe" if os.name == "nt" else "vim")
     output = subprocess.check_output([str(executable), "--version"], text=True)
     for feature in PIN["required_features"]:
-        if not re.search(r"\+" + re.escape(feature) + r"(?:\s|$)", output):
+        pattern = r"\+" + re.escape(feature)
+        if feature == "multi_byte":
+            pattern += r"(?:_ime(?:/dyn)?)?"
+        if not re.search(pattern + r"(?:\s|$)", output):
             raise RuntimeError(f"Bundled Vim requires +{feature}")
     major, minor, patch = PIN["version"].split(".")
     if not output.startswith(f"VIM - Vi IMproved {major}.{minor} ") or not re.search(
