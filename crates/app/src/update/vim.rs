@@ -5,6 +5,13 @@ pub(super) mod install;
 #[cfg(test)]
 pub(super) const UPSTREAM_MANIFEST: &str = include_str!("../../../../packaging/vim.json");
 const EXECUTABLE: &str = if cfg!(windows) { "vim.exe" } else { "vim" };
+#[cfg(windows)]
+pub(super) const WINDOWS_ICONV_FILES: [&str; 4] = [
+    "libiconv-2.dll",
+    "licenses/libiconv/COPYING.LIB",
+    "licenses/libiconv/BUILD-LICENSE.txt",
+    "sources/libiconv.tar.gz",
+];
 
 #[derive(Deserialize)]
 struct UpstreamManifest {
@@ -26,13 +33,16 @@ pub(super) fn prepared_directory(prepared: &PreparedUpdate) -> Result<PathBuf, U
 }
 
 pub(super) fn validate_bundle(directory: &Path) -> Result<(), UpdateError> {
-    for relative in [
+    let required = [
         EXECUTABLE,
         "runtime/defaults.vim",
         "runtime/doc/help.txt",
         "LICENSE",
         "UPSTREAM.json",
-    ] {
+    ];
+    #[cfg(windows)]
+    let required = required.into_iter().chain(WINDOWS_ICONV_FILES);
+    for relative in required {
         let path = directory.join(relative);
         platform::validate_no_follow_path(&path, true)
             .map_err(|error| UpdateError::new(format!("unsafe bundled Vim path: {error}")))?;

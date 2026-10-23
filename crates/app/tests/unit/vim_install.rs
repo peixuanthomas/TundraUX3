@@ -27,6 +27,11 @@ fn bundle() -> Vec<u8> {
         zip.start_file(format!("vim/{name}"), options).unwrap();
         zip.write_all(contents.as_bytes()).unwrap();
     }
+    #[cfg(windows)]
+    for name in super::super::WINDOWS_ICONV_FILES {
+        zip.start_file(format!("vim/{name}"), options).unwrap();
+        zip.write_all(b"iconv fixture").unwrap();
+    }
     zip.finish().unwrap().into_inner()
 }
 

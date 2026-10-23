@@ -19,10 +19,47 @@ import zipfile
 
 REPO = Path(__file__).resolve().parent.parent
 PIN = json.loads((REPO / "packaging/vim.json").read_text(encoding="utf-8"))
+WINDOWS_ICONV_FILES = (
+    "libiconv-2.dll", "licenses/libiconv/COPYING.LIB",
+    "licenses/libiconv/BUILD-LICENSE.txt", "sources/libiconv.tar.gz",
+)
 
 
 def run(arguments, cwd, env=None):
     subprocess.run(arguments, cwd=cwd, env=env, check=True)
+
+
+def checked_archive(url, checksum, archive, offline=False):
+    if not archive.exists():
+        if offline:
+            raise RuntimeError(f"Archive does not exist: {archive}")
+        partial = archive.with_suffix(".download")
+        with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as file:
+            shutil.copyfileobj(response, file)
+        partial.replace(archive)
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
+        raise RuntimeError(f"Archive SHA-256 mismatch: {archive}")
+    return archive
+
+
+def stage_windows_iconv(directory, cache, archive=None, source_archive=None):
+    pin = PIN["windows_iconv"]
+    binary = checked_archive(
+        pin["binary_url"], pin["binary_sha256"],
+        archive or cache / pin["binary_url"].rsplit("/", 1)[1], bool(archive))
+    source = checked_archive(
+        pin["source_url"], pin["source_sha256"],
+        source_archive or cache / f"libiconv-{pin['version']}.tar.gz", bool(source_archive))
+    licenses = directory / "licenses/libiconv"
+    licenses.mkdir(parents=True)
+    with zipfile.ZipFile(binary) as bundle:
+        (directory / "libiconv-2.dll").write_bytes(bundle.read("bin/libiconv-2.dll"))
+        (licenses / "BUILD-LICENSE.txt").write_bytes(bundle.read("license.txt"))
+    with tarfile.open(source, "r:gz") as tar:
+        license_file = tar.extractfile(f"libiconv-{pin['version']}/COPYING.LIB")
+        (licenses / "COPYING.LIB").write_bytes(license_file.read())
+    (directory / "sources").mkdir()
+    shutil.copy2(source, directory / "sources/libiconv.tar.gz")
 
 
 def verify_bundle(directory):
@@ -39,18 +76,27 @@ def verify_bundle(directory):
         r"^Included patches: 1-" + re.escape(patch) + r"$", output, re.MULTILINE
     ):
         raise RuntimeError(f"Bundled Vim must be version {PIN['version']}")
-    for relative in ("runtime/defaults.vim", "runtime/doc/help.txt", "LICENSE", "UPSTREAM.json"):
+    required = ("runtime/defaults.vim", "runtime/doc/help.txt", "LICENSE", "UPSTREAM.json")
+    if os.name == "nt":
+        required += WINDOWS_ICONV_FILES
+    for relative in required:
         path = directory / relative
         if not path.is_file() or path.stat().st_size == 0:
             raise RuntimeError(f"Incomplete Vim bundle: missing {relative}")
     if json.loads((directory / "UPSTREAM.json").read_text(encoding="utf-8")) != PIN:
         raise RuntimeError("Bundled Vim does not match packaging/vim.json")
+    if os.name == "nt":
+        run([
+            str(executable), "-u", "NONE", "-U", "NONE", "-i", "NONE", "-n", "-es",
+            "-c", "call assert_equal([65, 0], blob2list(str2blob(['A'], {'encoding': 'utf-16le'})))",
+            "-c", "if !empty(v:errors) | cquit | endif", "-c", "qall!",
+        ], directory, dict(os.environ, VIMRUNTIME=str(directory / "runtime")))
 
 
 def build_windows(source):
     arguments = [
         "nmake", "/nologo", "-f", "Make_mvc.mak", "FEATURES=HUGE", "GUI=no",
-        "VIMDLL=no", "CHANNEL=yes", "TERMINAL=yes", "ICONV=no", "GETTEXT=no", "SOUND=no",
+        "VIMDLL=no", "CHANNEL=yes", "TERMINAL=yes", "ICONV=yes", "GETTEXT=no", "SOUND=no",
     ]
     if shutil.which("nmake"):
         run(arguments, source / "src")
@@ -111,7 +157,9 @@ def build_unix(source, universal):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path, help="Shell-adjacent vim directory")
-    parser.add_argument("--source-archive", type=Path, help="Use a downloaded archive without network access")
+    parser.add_argument("--source-archive", type=Path, help="Use an existing Vim source archive")
+    parser.add_argument("--iconv-archive", type=Path, help="Use an existing Windows libiconv binary archive")
+    parser.add_argument("--iconv-source-archive", type=Path, help="Use an existing libiconv source archive")
     parser.add_argument("--macos-universal", action="store_true")
     parser.add_argument("--verify-only", action="store_true", help="Check an already built bundle")
     parser.add_argument("--package", type=Path, help="Also write a prebuilt engine ZIP archive")
@@ -129,16 +177,9 @@ def main():
         return
     cache = Path(os.environ.get("CARGO_TARGET_DIR", REPO / "target")).resolve() / "vim-build"
     cache.mkdir(parents=True, exist_ok=True)
-    archive = args.source_archive or cache / f"vim-{PIN['version']}.tar.gz"
-    if not archive.exists():
-        if args.source_archive:
-            parser.error(f"Source archive does not exist: {archive}")
-        partial = archive.with_suffix(".download")
-        with urllib.request.urlopen(PIN["source_url"], timeout=60) as response, partial.open("wb") as file:
-            shutil.copyfileobj(response, file)
-        partial.replace(archive)
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != PIN["source_sha256"]:
-        raise RuntimeError(f"Vim source SHA-256 mismatch: {archive}")
+    archive = checked_archive(
+        PIN["source_url"], PIN["source_sha256"],
+        args.source_archive or cache / f"vim-{PIN['version']}.tar.gz", bool(args.source_archive))
     with tempfile.TemporaryDirectory(prefix="source-", dir=cache) as work:
         with tarfile.open(archive, "r:gz") as tar:
             tar.extractall(work, filter="data")
@@ -155,6 +196,8 @@ def main():
         shutil.copy2(source / "src" / executable, staged / executable)
         shutil.copytree(source / "runtime", staged / "runtime")
         shutil.copy2(source / "LICENSE", staged / "LICENSE")
+        if os.name == "nt":
+            stage_windows_iconv(staged, cache, args.iconv_archive, args.iconv_source_archive)
         (staged / "UPSTREAM.json").write_text(json.dumps(PIN, indent=2) + "\n", encoding="utf-8")
         verify_bundle(staged)
         if args.macos_universal:

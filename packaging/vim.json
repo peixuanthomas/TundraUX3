@@ -5,5 +5,14 @@
   "source_url": "https://codeload.github.com/vim/vim/tar.gz/e9ced3cf4a029dd3816d81fcbd36422c372030d1",
   "source_sha256": "b9ee1dc93f79c9c2444a8d57b1615adf478b2d548290c9ba85df6ec496cded57",
   "license": "Vim License",
-  "required_features": ["eval", "channel", "autocmd", "timers", "multi_byte"]
+  "required_features": ["eval", "channel", "autocmd", "timers", "multi_byte"],
+  "windows_iconv": {
+    "version": "1.19",
+    "binary_url": "https://github.com/mlocati/gettext-iconv-windows/releases/download/v1.0-v1.19/gettext1.0-iconv1.19-shared-64.zip",
+    "binary_sha256": "c2f195fc4ed3df4070fb08ff88c2f724afd1eed4e28f859efae1000bb7ba1152",
+    "source_url": "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.19.tar.gz",
+    "source_sha256": "88dd96a8c0464eca144fc791ae60cd31cd8ee78321e67397e25fc095c4a19aa6",
+    "build_url": "https://github.com/mlocati/gettext-iconv-windows/tree/v1.0-v1.19",
+    "license": "LGPL-2.1-or-later"
+  }
 }

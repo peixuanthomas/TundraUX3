@@ -11,6 +11,12 @@ pub(super) fn write_bundle(directory: &Path, program: &[u8]) {
     fs::write(directory.join("runtime/doc/help.txt"), b"help").unwrap();
     fs::write(directory.join("LICENSE"), b"Vim License").unwrap();
     fs::write(directory.join("UPSTREAM.json"), vim::UPSTREAM_MANIFEST).unwrap();
+    #[cfg(windows)]
+    for name in vim::WINDOWS_ICONV_FILES {
+        let path = directory.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, b"iconv fixture").unwrap();
+    }
 }
 
 #[test]

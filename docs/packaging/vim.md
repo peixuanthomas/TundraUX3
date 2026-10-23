@@ -43,6 +43,8 @@ python3 scripts/build-vim.py --output target/debug/vim
 
 Windows 可用 `python` 运行同一个脚本。macOS 发布包用 `--macos-universal` 同时构建 arm64 和 x86_64，并用 `lipo` 检查两个架构。常规本地构建只编译当前架构。
 
+Windows 启用动态 iconv，随包提供固定的 `libiconv-2.dll`，用于 UTF-16 等编码转换。DLL 来自 [Vim 官方构建采用的来源](https://github.com/vim/vim-win32-installer/blob/master/.github/workflows/build-vim.yml)，具体版本、下载地址和 SHA-256 保存在 `packaging/vim.json` 的 `windows_iconv` 中。只提取这个 DLL，同时保留 `licenses/libiconv/` 下的 LGPL 及构建包许可证，以及 `sources/libiconv.tar.gz` 中的对应源码。校验脚本实际执行一次 UTF-16LE 转换，避免只检查功能名称却漏掉运行时 DLL。
+
 如已有固定源码归档，可离线运行；仍会核对相同的 SHA-256：
 
 ```sh
@@ -50,7 +52,9 @@ python3 scripts/build-vim.py --source-archive /path/to/vim.tar.gz --output targe
 python3 scripts/build-vim.py --verify-only --output target/debug/vim
 ```
 
-校验包括固定版本、`+eval`、`+channel`、`+autocmd`、`+timers`、`+multi_byte`，以及 runtime、许可证和上游元数据。构建启用 Huge 功能集和终端支持，禁用 GUI、X11、可选外部语言解释器及可选动态库，避免便携包依赖未随包提供的组件。
+Windows 离线构建还需提供已下载的 `--iconv-archive` 和 `--iconv-source-archive`；也可以提前把这两份固定归档放入 `target/vim-build/` 缓存。脚本同样检查其 SHA-256。
+
+校验包括固定版本、`+eval`、`+channel`、`+autocmd`、`+timers`、`+multi_byte`，以及 runtime、许可证和上游元数据。构建启用 Huge 功能集和终端支持，禁用 GUI、X11、可选外部语言解释器及其他可选动态库，避免便携包依赖未随包提供的组件。
 
 Windows Vim 将多字节支持显示为 `+multi_byte_ime` 或 `+multi_byte_ime/dyn`，脚本同样接受这两个上游名称。校验回归：`python -B -m unittest discover -s scripts/tests -p test_build_vim.py`。
 

@@ -118,7 +118,7 @@ cargo run --locked -p cli --bin tundra-cli -- doctor
 - Linux 管理功能各有运行条件，例如服务管理需要 systemd，软件包管理需要受支持的发行版工具。缺少组件时，界面会说明原因。
 - 网络操作位于“启动器 → 网络”。设置中不可用的声音、显示、Wi-Fi 和蓝牙页面已移除；用户管理移至“启动器 → 用户管理”。
 - 各种输入方式的操作覆盖和真实设备上的表现仍在完善，项目尚不承诺支持所有终端、触摸屏或 Linux 发行版。
-- Vim 使用终端界面。Linux 有真实 PTY 回归；Windows/macOS 的构建和运行时检查仍需在各自 CI runner 执行，不能以 Linux 结果代替。
+- Vim 使用终端界面。Linux 有真实 PTY 和外部 UI 控制回归，Windows 有真实 ConPTY 保存与编码回归；macOS 的构建和运行时检查仍需在对应 CI runner 执行，不能以其他平台结果代替。
 
 ## 文档
 

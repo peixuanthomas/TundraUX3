@@ -24,6 +24,11 @@ class VerifyBundleTests(unittest.TestCase):
             path = self.bundle / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("test\n", encoding="utf-8")
+        if builder.os.name == "nt":
+            for relative in builder.WINDOWS_ICONV_FILES:
+                path = self.bundle / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("test", encoding="utf-8")
         (self.bundle / "UPSTREAM.json").write_text(json.dumps(builder.PIN), encoding="utf-8")
 
     def output(self, multi_byte):
@@ -36,7 +41,14 @@ class VerifyBundleTests(unittest.TestCase):
         for feature in ("+multi_byte", "+multi_byte_ime", "+multi_byte_ime/dyn"):
             with self.subTest(feature=feature), patch.object(
                 builder.subprocess, "check_output", return_value=self.output(feature)
-            ):
+            ), patch.object(builder, "run"):
+                builder.verify_bundle(self.bundle)
+
+    @unittest.skipUnless(builder.os.name == "nt", "Windows bundle dependency")
+    def test_missing_windows_encoding_library_is_rejected(self):
+        (self.bundle / "libiconv-2.dll").unlink()
+        with patch.object(builder.subprocess, "check_output", return_value=self.output("+multi_byte")):
+            with self.assertRaisesRegex(RuntimeError, "missing libiconv-2.dll"):
                 builder.verify_bundle(self.bundle)
 
     def test_missing_multibyte_support_is_rejected(self):
