@@ -93,7 +93,7 @@ impl VimHost {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
         let script = directory.path().join("bridge.vim");
-        fs::write(&script, BRIDGE)?;
+        fs::write(&script, BRIDGE.replace("\r\n", "\n"))?;
         let mut args: Vec<OsString> = ["-N", "-n", "-i", "NONE"]
             .into_iter()
             .map(OsString::from)

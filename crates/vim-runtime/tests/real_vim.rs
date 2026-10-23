@@ -15,8 +15,17 @@ fn until(host: &mut VimHost, predicate: impl Fn(&VimPoll) -> bool) -> VimPoll {
         }
         assert!(
             Instant::now() < deadline,
-            "Vim did not reach expected state: {:?}",
-            poll.state
+            "Vim did not reach expected state: {:?}\n{}",
+            poll.state,
+            poll.terminal
+                .cells
+                .iter()
+                .map(|row| row
+                    .iter()
+                    .map(|cell| cell.text.as_str())
+                    .collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
         );
         std::thread::sleep(Duration::from_millis(10));
     }

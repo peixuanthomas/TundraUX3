@@ -1,5 +1,7 @@
 # vim-runtime
 
+启动时将内置 `bridge.vim` 的换行统一为 LF，避免 Windows 检出的 CRLF 在隔离运行的 Unix Vim 中被当成命令字符；此处理只作用于启动脚本，不改变用户文档。
+
 运行真正的 Vim，Vim 开启期间由 Vim 管理文本、模式、撤销、寄存器、宏、窗口、搜索和 Ex 命令；本 crate 不解释 Vim 编辑按键。Shell 只负责输入路由、页面生命周期和保存授权，UI 绘制真实 PTY 快照。
 
 `VimHost` 使用已有 `terminal-runtime` 的 Unix PTY / Windows ConPTY 与 watchdog 进程树清理。初始化脚本通过带随机令牌认证的本机回环连接交换 JSON 行；缓冲内容不写入 IPC 文件、日志或临时脚本。运行时需要包含 `+eval`、`+channel`、`+timers` 的完整 Vim；发布包在程序同目录提供 `vim/vim`（Windows 为 `vim/vim.exe`）及 `vim/runtime`，由调用方指定路径。
