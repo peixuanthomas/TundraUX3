@@ -118,7 +118,6 @@ pub struct CommandLinePty {
     master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
-    process_tree: Arc<Mutex<ProcessTreeGuard>>,
     process_registration: Option<watchdog::ManagedResource>,
     parser: Arc<Mutex<vt100::Parser>>,
     output_revision: Arc<AtomicU64>,
@@ -273,7 +272,6 @@ impl CommandLinePty {
             master,
             writer: Some(writer),
             child,
-            process_tree,
             process_registration: Some(process_registration),
             parser,
             output_revision,
@@ -420,22 +418,7 @@ impl CommandLinePty {
     /// inspection or permission failure is reported instead of silently killing
     /// only the direct child and leaving its other jobs behind.
     pub fn force_terminate(&self) -> io::Result<()> {
-        match lock_io(&self.process_tree)?.terminate() {
-            Ok(()) => Ok(()),
-            Err(containment_error) => {
-                #[cfg(target_os = "linux")]
-                return Err(containment_error);
-                #[cfg(not(target_os = "linux"))]
-                {
-                    let mut child = lock_io(&self.child)?;
-                    child.kill().map_err(|child_error| {
-                    io::Error::other(format!(
-                        "process-tree termination failed ({containment_error}); direct child termination also failed ({child_error})"
-                    ))
-                })
-                }
-            }
-        }
+        self.process_registration.as_ref().unwrap().stop()
     }
 
     pub fn process_id(&self) -> io::Result<Option<u32>> {

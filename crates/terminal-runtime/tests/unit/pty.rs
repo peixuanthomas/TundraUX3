@@ -318,7 +318,7 @@ fn pty_process_runs_inside_platform_containment() {
 
 #[cfg(unix)]
 #[test]
-fn normally_exited_pty_cleanup_does_not_report_an_incident() {
+fn pty_cleanup_is_repeatable_for_running_and_exited_children() {
     use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
 
     let root = std::env::temp_dir().join(format!(
@@ -343,34 +343,50 @@ fn normally_exited_pty_cleanup_does_not_report_an_incident() {
         ))
         .unwrap();
     let tasks = app.task_group("terminal");
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
-            program: "/bin/sh".into(),
-            args: vec!["-c".into(), "exit 0".into()],
-            env: Vec::new(),
-            cwd: None,
-            columns: 80,
-            rows: 24,
-            scrollback_lines: 0,
-        },
-        &tasks,
-    )
-    .unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = pty.try_wait().unwrap() {
-            assert!(status.success);
-            break;
+    for attempt in 0..34 {
+        let command = if attempt == 0 {
+            "exit 0"
+        } else {
+            "exec sleep 60"
+        };
+        let pty = CommandLinePty::spawn(
+            CommandLinePtyConfig {
+                program: "/bin/sh".into(),
+                args: vec!["-c".into(), command.into()],
+                env: Vec::new(),
+                cwd: None,
+                columns: 80,
+                rows: 24,
+                scrollback_lines: 0,
+            },
+            &tasks,
+        )
+        .unwrap();
+        if attempt == 0 {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Some(status) = pty.try_wait().unwrap() {
+                    assert!(status.success);
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            pty.snapshot_after_exit();
+        } else if attempt == 1 {
+            pty.force_terminate().unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            pty.force_terminate().unwrap();
+            drop(pty);
+        } else {
+            drop(pty);
         }
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(10));
     }
-    pty.snapshot_after_exit();
-    assert!(process.drain_incidents().is_empty());
     drop(tasks);
     drop(app);
-    drop(process);
     runtime.shutdown().unwrap();
+    assert!(process.drain_incidents().is_empty());
+    drop(process);
     std::fs::remove_dir_all(root).unwrap();
 }
 
