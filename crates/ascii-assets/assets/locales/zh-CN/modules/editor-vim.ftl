@@ -1,8 +1,6 @@
-ui-editor-vim-toggle = VIM_mode
-ui-editor-vim-return = F8 返回编辑器
-ui-editor-vim-off = { " F8 VIM_mode: 关闭 " }
-ui-editor-vim-normal = { " F8 VIM_mode: 普通 " }
-ui-editor-vim-insert = { " F8 VIM_mode: 输入 " }
+ui-editor-vim-toggle = VIM模式
+ui-editor-vim-enabled = { " F8 VIM模式已启用 " }
+ui-editor-vim-off = { " F8 VIM模式未启用 " }
 ui-editor-vim-help = Vim 帮助
 vim-install-title = 安装 Vim 引擎
 vim-install-checking = 正在查找对应版本的预编译引擎…
