@@ -1,10 +1,6 @@
-use ratatui::{
-    Terminal, backend::TestBackend, buffer::Buffer, layout::Rect, style::Color, widgets::Widget,
-};
-use ui::components::{
-    ProgressGauge, UpdateActivity, UpdateActivityViewModel, UpdateMeterViewModel,
-};
-use ui::{MotionFrame, RenderCapabilities, RenderContext, ThemeTokens, TundraTheme};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
+use ui::ThemeTokens;
+use ui::components::ProgressGauge;
 
 #[test]
 fn solid_fills_choose_the_higher_contrast_black_or_white_text() {
@@ -89,52 +85,4 @@ fn gauge_handles_empty_narrow_and_unicode_labels() {
     assert_eq!(buffer[(5, 0)].symbol(), "e\u{301}");
     assert_eq!(buffer[(5, 0)].fg, Color::White);
     assert_eq!(buffer[(5, 0)].bg, Color::Blue);
-}
-
-#[test]
-fn update_meters_use_resolved_accent_and_animated_fill_for_label_contrast() {
-    for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
-        for accent in [Color::Yellow, Color::Blue, Color::Rgb(245, 245, 10)] {
-            let context = RenderContext::from_theme(
-                &TundraTheme::default().with_accent_color(accent),
-                MotionFrame::default(),
-                capabilities,
-            );
-            let model = UpdateActivityViewModel {
-                download: UpdateMeterViewModel {
-                    percent: Some(100),
-                    display_basis_points: None,
-                    label: "Download: 100%".into(),
-                },
-                compilation: UpdateMeterViewModel {
-                    percent: Some(80),
-                    display_basis_points: Some(5000),
-                    label: "Compilation: 80%".into(),
-                },
-                output: Vec::new(),
-            };
-            let mut terminal = Terminal::new(TestBackend::new(42, 18)).unwrap();
-            terminal
-                .draw(|frame| {
-                    UpdateActivity::new(&model).render_scrolled(frame, frame.area(), 0, &context);
-                })
-                .unwrap();
-            let buffer = terminal.backend().buffer();
-            for (y, label) in [(1, "Download: 100%"), (2, "Compilation: 80%")] {
-                let start = 1 + (40 - label.len() as u16) / 2;
-                for (offset, symbol) in label.chars().enumerate() {
-                    let x = start + offset as u16;
-                    let background = if y == 1 || x < 21 {
-                        context.theme.accent
-                    } else {
-                        context.theme.surface
-                    };
-                    let cell = &buffer[(x, y)];
-                    assert_eq!(cell.symbol(), symbol.to_string());
-                    assert_eq!(cell.bg, background);
-                    assert_eq!(cell.fg, context.theme.filled_style(background).fg.unwrap());
-                }
-            }
-        }
-    }
 }

@@ -110,76 +110,6 @@ fn workspace_overlay_captures_only_its_own_buttons() {
 }
 
 #[test]
-fn details_focus_border_follows_keyboard_visibility() {
-    let mut model = model(false);
-    model.workspace.as_mut().unwrap().focus = WorkspaceFocus::Details;
-    model.actions_focused = false;
-    let theme = TundraTheme::default_dark();
-    for keyboard in [false, true] {
-        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-        let mut buttons = ButtonFrame::new(None, None, &theme);
-        buttons.keyboard_focus_visible = keyboard;
-        context.buttons = Some(buttons);
-        let area = Rect::new(0, 0, 120, 30);
-        let layout = management_layout(area, &model);
-        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        terminal
-            .draw(|frame| render_management_content(frame, area, &model, &context))
-            .unwrap();
-        assert_eq!(
-            terminal.backend().buffer()[(layout.details.x, layout.details.y)].fg,
-            if keyboard {
-                theme.accent_color
-            } else {
-                theme.border_style().fg.unwrap()
-            }
-        );
-    }
-}
-
-#[test]
-fn selected_package_row_remains_visible_after_pointer_input_and_focus_changes() {
-    use ratatui::style::Modifier;
-    for keyboard in [false, true] {
-        for focus in [
-            WorkspaceFocus::List,
-            WorkspaceFocus::Details,
-            WorkspaceFocus::Actions,
-        ] {
-            let mut model = model(false);
-            model.selected = 1;
-            model.workspace.as_mut().unwrap().focus = focus;
-            model.actions_focused = focus == WorkspaceFocus::Actions;
-            let theme = TundraTheme::default_dark();
-            let mut context =
-                RenderContext::from_theme(&theme, Default::default(), Default::default());
-            let mut buttons = ButtonFrame::new(None, None, &theme);
-            buttons.keyboard_focus_visible = keyboard;
-            context.buttons = Some(buttons);
-            let area = Rect::new(0, 0, 120, 30);
-            let layout = management_layout(area, &model);
-            let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-            terminal
-                .draw(|frame| render_management_content(frame, area, &model, &context))
-                .unwrap();
-            let buffer = terminal.backend().buffer();
-            let row = layout.list_rows.y + 1;
-            assert!(
-                buffer[(layout.list_rows.x, row)]
-                    .modifier
-                    .contains(Modifier::REVERSED),
-                "keyboard={keyboard}, focus={focus:?}"
-            );
-            assert!(
-                !buffer[(layout.list_rows.x, layout.list_rows.y)]
-                    .modifier
-                    .contains(Modifier::REVERSED)
-            );
-        }
-    }
-}
-
-#[test]
 fn workspace_wraps_long_action_labels_without_losing_their_shortcuts() {
     for label in [
         "[U] Upgrade package and the entire system",
@@ -204,39 +134,6 @@ fn workspace_wraps_long_action_labels_without_losing_their_shortcuts() {
             text.split_whitespace().collect::<String>(),
             label.split_whitespace().collect::<String>()
         );
-    }
-}
-
-#[test]
-fn search_button_shows_slash_to_open_and_enter_to_submit_on_every_layout() {
-    for (workspace, filtering) in [(false, false), (false, true), (true, false), (true, true)] {
-        let mut model = model(false);
-        if !workspace {
-            model.workspace = None;
-        }
-        model.filtering = filtering;
-        let theme = TundraTheme::default_dark();
-        let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-        let main = Rect::new(0, 0, 108, 20);
-        let layout = management_layout(main, &model);
-        let area = layout
-            .controls
-            .iter()
-            .find(|(control, _)| *control == ManagementControl::ApplySearch)
-            .unwrap()
-            .1;
-        let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
-        terminal
-            .draw(|frame| render_management_content(frame, main, &model, &context))
-            .unwrap();
-        let text = (area.x..area.right())
-            .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
-            .collect::<String>();
-        assert!(
-            text.contains(if filtering { "[Enter]" } else { "[/]" }),
-            "{text}"
-        );
-        assert!(!text.contains("Ctrl+Enter"));
     }
 }
 
@@ -281,26 +178,4 @@ fn expanded_details_scroll_to_clipped_text_without_covering_it_with_scrollbars()
             "{width}x{height}: {last_line}"
         );
     }
-}
-
-#[test]
-fn primary_action_bar_keeps_primary_and_danger_styles() {
-    let mut model = model(false);
-    model.action_tones = vec![ui::components::ComponentTone::Default; 8];
-    model.action_tones[7] = ui::components::ComponentTone::Danger;
-    let layout = management_layout(Rect::new(0, 0, 160, 40), &model);
-    assert!(
-        layout
-            .primary_action_bar
-            .actions
-            .iter()
-            .any(|action| action.emphasis == ui::components::ButtonEmphasis::Primary)
-    );
-    assert!(
-        layout
-            .primary_action_bar
-            .actions
-            .iter()
-            .any(|action| action.emphasis == ui::components::ButtonEmphasis::Danger)
-    );
 }

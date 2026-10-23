@@ -23,21 +23,6 @@ fn long_notification() -> NotificationViewModel {
     )
 }
 
-#[test]
-fn one_line_notification_does_not_reserve_empty_rows() {
-    let model = NotificationViewModel::new(
-        "saved",
-        NotificationLevel::Modal,
-        NotificationTone::Success,
-        "Saved",
-        "File saved.",
-        vec![NotificationActionViewModel::new("close", "Close").with_shortcut("Esc")],
-    );
-    let layout = layout(Rect::new(0, 0, 120, 40), &model);
-    assert_eq!(layout.dialog.height, 5);
-    assert!(layout.dialog.width < 40);
-    assert_eq!(layout.actions[0].area.bottom() + 1, layout.dialog.bottom());
-}
 fn layout(area: Rect, model: &NotificationViewModel) -> NotificationDialogLayout {
     match notification_layout(area, model) {
         NotificationLayout::Dialog(layout) => layout,

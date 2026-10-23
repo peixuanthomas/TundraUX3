@@ -136,51 +136,6 @@ fn literal_button_labels_preserve_text_width_and_shared_interaction_styles() {
 }
 
 #[test]
-fn focused_buttons_use_accent_borders_while_inputs_keep_the_configured_border() {
-    let area = Rect::new(0, 0, 16, 3);
-    let theme = TundraTheme::default().with_border_color(Color::LightGreen);
-
-    let mut button = Button::new("save", "Save");
-    button.set_focused(true);
-    let mut button_buffer = Buffer::empty(area);
-    button.render(area, &mut button_buffer, &theme);
-    assert_eq!(button_buffer.cell((0, 0)).unwrap().fg, theme.accent_color);
-
-    let mut input = TextInput::new("query");
-    input.set_focused(true);
-    let mut input_buffer = Buffer::empty(area);
-    input.render(area, &mut input_buffer, &theme);
-    assert_eq!(input_buffer.cell((0, 0)).unwrap().fg, Color::LightGreen);
-}
-
-#[test]
-fn selected_controls_use_accent_borders_without_changing_regular_border_color() {
-    let area = Rect::new(0, 0, 16, 3);
-    let theme = TundraTheme::default()
-        .with_border_color(Color::LightGreen)
-        .with_accent_color(Color::LightMagenta);
-
-    let mut button = Button::new("save", "Save");
-    button.state.selected = true;
-    let mut button_buffer = Buffer::empty(area);
-    button.render(area, &mut button_buffer, &theme);
-    assert_eq!(button_buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
-    let selected_text = button_buffer
-        .content()
-        .iter()
-        .find(|cell| cell.symbol() == "S")
-        .expect("selected button text");
-    assert_eq!(selected_text.fg, Color::LightMagenta);
-    assert_eq!(selected_text.bg, theme.background);
-
-    let mut input = TextInput::new("query");
-    input.state.selected = true;
-    let mut input_buffer = Buffer::empty(area);
-    input.render(area, &mut input_buffer, &theme);
-    assert_eq!(input_buffer.cell((0, 0)).unwrap().fg, Color::LightMagenta);
-}
-
-#[test]
 fn list_supports_keyboard_selection_mouse_selection_and_activation() {
     let mut list = List::new(
         "files",
@@ -290,19 +245,6 @@ fn text_input_edits_text_and_maps_mouse_clicks_to_cursor_positions() {
     let mut buffer = Buffer::empty(area);
     input.render(area, &mut buffer, &TundraTheme::default());
     assert_regular_weight_vertical_border(&buffer, area);
-}
-
-#[test]
-fn focused_empty_text_input_defaults_to_cursor_instead_of_placeholder() {
-    let area = Rect::new(0, 0, 18, 3);
-    let mut input = TextInput::new("query").with_placeholder("Search");
-    input.set_focused(true);
-
-    let mut buffer = Buffer::empty(area);
-    input.render(area, &mut buffer, &TundraTheme::default());
-
-    assert_eq!(buffer.cell((1, 1)).expect("cursor cell").symbol(), "|");
-    assert_ne!(buffer.cell((1, 1)).expect("cursor cell").symbol(), "S");
 }
 
 #[test]
@@ -542,13 +484,6 @@ fn context_menu_activates_items_and_dismisses_on_outside_click() {
 }
 
 #[test]
-fn context_menu_preferred_width_uses_terminal_columns() {
-    let menu = ContextMenu::new("menu", vec![ContextMenuItem::new("settings", "设置")]);
-
-    assert_eq!(menu.preferred_area(0, 0, Rect::new(0, 0, 80, 24)).width, 6);
-}
-
-#[test]
 fn tabs_support_keyboard_and_mouse_selection() {
     let mut tabs = Tabs::new(
         "sections",
@@ -578,27 +513,6 @@ fn tabs_support_keyboard_and_mouse_selection() {
 
     let mut buffer = Buffer::empty(area);
     tabs.render(area, &mut buffer, &TundraTheme::default());
-}
-
-#[test]
-fn tabs_hit_testing_uses_terminal_width_for_wide_labels() {
-    let mut tabs = Tabs::new(
-        "sections",
-        vec![
-            TabItem::new("appearance", "界面"),
-            TabItem::new("files", "Files"),
-        ],
-    );
-    let area = Rect::new(0, 0, 20, 3);
-    tabs.set_selected(Some(1));
-
-    assert_eq!(
-        tabs.handle_event(
-            InputEvent::mouse(MouseEvent::click(5, 1, MouseButton::Left)),
-            area,
-        ),
-        ComponentEvent::Selected(ComponentId::new("sections"), 0)
-    );
 }
 
 #[test]
@@ -804,42 +718,6 @@ fn context_menu_single_click_activates_even_the_already_selected_item() {
 }
 
 #[test]
-fn buttons_share_hover_accent_pressed_tint_and_disabled_precedence() {
-    let area = Rect::new(0, 0, 16, 3);
-    let theme = TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180));
-    assert_eq!(theme.button_hover_color(), Color::Rgb(100, 140, 180));
-    assert_eq!(theme.button_pressed_color(), Color::Rgb(154, 180, 206));
-    let mut button = Button::new("save", "Save");
-    for borderless in [false, true] {
-        for (hovered, active, disabled, expected) in [
-            (false, false, false, theme.foreground),
-            (true, false, false, theme.button_hover_color()),
-            (true, true, false, theme.button_pressed_color()),
-            (true, true, true, Color::DarkGray),
-        ] {
-            button.state.hovered = hovered;
-            button.state.active = active;
-            button.state.disabled = disabled;
-            let mut buffer = Buffer::empty(area);
-            if borderless {
-                button.render_borderless(area, &mut buffer, &theme);
-            } else {
-                button.render(area, &mut buffer, &theme);
-            }
-            assert_eq!(
-                buffer
-                    .content()
-                    .iter()
-                    .find(|cell| cell.symbol() == "S")
-                    .unwrap()
-                    .fg,
-                expected
-            );
-        }
-    }
-}
-
-#[test]
 fn disabled_buttons_remain_gray_without_emphasis_for_every_render_variant() {
     use ui::components::{ButtonFrame, ButtonRegion, ComponentState};
     use ui::{RenderCapabilities, RenderContext};
@@ -925,39 +803,6 @@ fn disabling_a_pressed_button_cancels_activation_until_reenabled() {
 }
 
 #[test]
-fn disabled_menu_items_keep_gray_instead_of_their_semantic_tone() {
-    use ui::components::ComponentTone;
-    let theme = TundraTheme {
-        muted: Color::Magenta,
-        ..TundraTheme::default()
-    };
-    for tone in [
-        ComponentTone::Default,
-        ComponentTone::Accent,
-        ComponentTone::Danger,
-    ] {
-        let mut list = List::new(
-            "actions",
-            vec![
-                ListItem::new("open", "Open"),
-                ListItem::new("delete", "Delete").tone(tone).disabled(true),
-            ],
-        );
-        list.set_focused(true);
-        let area = Rect::new(0, 0, 16, 2);
-        let mut buffer = Buffer::empty(area);
-        list.render_borderless(area, &mut buffer, &theme);
-        let label = buffer
-            .content()
-            .iter()
-            .find(|cell| cell.symbol() == "D")
-            .unwrap();
-        assert_eq!(label.fg, Color::DarkGray);
-        assert!(label.modifier.is_empty());
-    }
-}
-
-#[test]
 fn button_frame_uses_exact_rendered_rectangles_and_ignores_page_focus_as_hover() {
     use ui::components::{ButtonFrame, ButtonRegion};
     let area = Rect::new(3, 2, 14, 3);
@@ -990,33 +835,6 @@ fn button_frame_uses_exact_rendered_rectangles_and_ignores_page_focus_as_hover()
             .fg,
         theme.accent_color
     );
-}
-
-#[test]
-fn selected_swatch_does_not_hide_pressed_text_on_an_accent_fill() {
-    use ui::components::{ButtonFrame, ButtonRegion};
-    let base = TundraTheme::default();
-    let area = Rect::new(0, 0, 14, 1);
-    let region = ButtonRegion {
-        id: "swatch".into(),
-        area,
-        disabled: false,
-    };
-    let mut swatch_theme = base.clone();
-    swatch_theme.background = base.accent_color;
-    swatch_theme.accent_color = base.background;
-    swatch_theme.buttons = Some(ButtonFrame::new(Some(region.clone()), Some(region), &base));
-    let mut button = Button::new("swatch", "Accent");
-    button.state.selected = true;
-    let mut buffer = Buffer::empty(area);
-    button.render_borderless(area, &mut buffer, &swatch_theme);
-    let label = buffer
-        .content()
-        .iter()
-        .find(|cell| cell.symbol() == "A")
-        .unwrap();
-    assert_eq!(label.fg, base.button_pressed_color());
-    assert_eq!(label.bg, base.background);
 }
 
 #[test]

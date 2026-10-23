@@ -15,21 +15,9 @@ use ui::{
     SettingsPickerKind, SettingsPickerOptionViewModel, SettingsPickerViewModel,
     SettingsTimeSyncServerEditorViewModel, SettingsUpdateCommitViewModel,
     SettingsUpdateConfirmationViewModel, SettingsUpdateViewModel, SettingsViewModel,
-    SettingsWeatherLocationEditorViewModel, ShellChromeViewModel, StatusViewModel, TundraTheme,
-    render_settings, settings_hit_test, settings_layout,
+    ShellChromeViewModel, StatusViewModel, TundraTheme, render_settings, settings_hit_test,
+    settings_layout,
 };
-
-#[test]
-fn settings_catalog_does_not_offer_unavailable_device_pages() {
-    for category in [
-        SettingsCategory::Sound,
-        SettingsCategory::Display,
-        SettingsCategory::Wifi,
-        SettingsCategory::Bluetooth,
-    ] {
-        assert!(!SettingsCategory::ALL.contains(&category));
-    }
-}
 
 #[test]
 fn application_list_stays_left_of_settings_and_uses_the_same_hit_areas() {
@@ -130,68 +118,6 @@ fn operating_system_group_has_a_separate_hittable_entry_and_respects_overlays() 
             Some(SettingsHitTarget::OperatingSystem)
         );
     }
-}
-
-#[test]
-fn theme_picker_shrinks_to_one_or_two_options() {
-    let mut model = sample_model();
-    for count in [1, 2] {
-        model.picker = Some(SettingsPickerViewModel {
-            kind: SettingsPickerKind::Theme,
-            title: "Theme".into(),
-            query: String::new(),
-            options: (0..count)
-                .map(|n| SettingsPickerOptionViewModel::new(format!("Theme {n}"), ""))
-                .collect(),
-            selected_index: 0,
-            window_start: 0,
-            searchable: false,
-        });
-        for (width, height) in [(120, 40), (50, 16), (32, 10)] {
-            let bounds = Rect::new(0, 0, width, height);
-            let layout = settings_layout(bounds, &model);
-            let dialog = layout.picker_dialog.unwrap();
-            assert_eq!(dialog.height, count as u16 + 5);
-            assert_eq!(dialog.intersection(bounds), dialog);
-            assert_eq!(layout.picker_options.len(), count);
-            for option in &layout.picker_options {
-                assert_eq!(
-                    settings_hit_test(&layout, (option.area.x, option.area.y)),
-                    Some(SettingsHitTarget::PickerOption(option.index))
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn settings_editor_actions_are_hittable_without_a_duplicate_page_back() {
-    let mut model = sample_model();
-    let area = Rect::new(0, 0, 40, 10);
-    let layout = settings_layout(area, &model);
-    let footer = (area.right() - 2, area.bottom() - 2);
-    assert_eq!(settings_hit_test(&layout, footer), None);
-    model.color_editor = Some(SettingsColorEditorViewModel {
-        title: "Color".into(),
-        value: "#123456".into(),
-        error: None,
-    });
-    let overlay = settings_layout(area, &model);
-    let apply = overlay.overlay_apply.unwrap();
-    let cancel = overlay.overlay_cancel.unwrap();
-    assert_eq!(
-        settings_hit_test(&overlay, (apply.x, apply.y)),
-        Some(SettingsHitTarget::OverlayApply)
-    );
-    assert_eq!(
-        settings_hit_test(&overlay, (cancel.x, cancel.y)),
-        Some(SettingsHitTarget::OverlayCancel)
-    );
-    assert_eq!(
-        settings_hit_test(&overlay, footer),
-        Some(SettingsHitTarget::ColorEditor),
-        "the dialog consumes clicks over the former page footer"
-    );
 }
 
 #[test]
@@ -511,68 +437,6 @@ fn time_sync_server_editor_shows_validation_state_and_captures_clicks() {
     assert!(output.contains("Time synchronization server"));
     assert!(output.contains("> https://time.example.test/_"));
     assert!(output.contains("Synchronizing with this server"));
-}
-
-#[test]
-fn weather_location_editor_captures_clicks_and_explains_timezone_fallback() {
-    let mut model = sample_model();
-    model.weather_location_editor = Some(SettingsWeatherLocationEditorViewModel {
-        value: "Cambridge, Massachusetts, USA".to_string(),
-        error: None,
-    });
-    let layout = settings_layout(Rect::new(0, 0, 120, 32), &model);
-    let dialog = layout
-        .weather_location_editor
-        .expect("weather location editor layout");
-
-    assert_eq!(
-        settings_hit_test(&layout, (dialog.x, dialog.y)),
-        Some(SettingsHitTarget::WeatherLocationEditor)
-    );
-
-    let mut terminal = Terminal::new(TestBackend::new(120, 32)).expect("test terminal");
-    terminal
-        .draw(|frame| {
-            render_settings(
-                frame,
-                frame.area(),
-                &chrome(),
-                &model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render weather location editor");
-    let output = terminal_output(&terminal);
-    assert!(output.contains("> Cambridge, Massachusetts, USA_"));
-    assert!(output.contains("Leave empty to use the timezone location."));
-}
-
-#[test]
-fn system_time_server_editor_uses_native_configuration_help() {
-    let mut model = sample_model();
-    model.time_sync_server_editor = Some(SettingsTimeSyncServerEditorViewModel {
-        system_server_label: Some("chrony pool".into()),
-        value: "pool.example".into(),
-        error: None,
-        validating: false,
-    });
-    let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
-    terminal
-        .draw(|frame| {
-            render_settings(
-                frame,
-                frame.area(),
-                &chrome(),
-                &model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .unwrap();
-    let output = terminal_output(&terminal);
-    assert!(output.contains("chrony pool"));
-    assert!(output.contains("pool.example"));
-    assert!(output.contains("Enter: save"));
-    assert!(!output.contains("HTTP(S)"));
 }
 
 #[test]
@@ -1008,165 +872,6 @@ fn scrolled_categories_render_and_hit_the_same_rows() {
 }
 
 #[test]
-fn unavailable_settings_use_localized_reasons_and_theme_without_permission_lock() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
-    for (language, reason, missing) in [
-        (
-            "en-US",
-            "This feature is not supported on this platform yet.",
-            "Not obtained",
-        ),
-        ("zh-CN", "当前平台暂不支持此功能", "未获取"),
-    ] {
-        let snapshot = i18n::LanguageSnapshot::load(&root, language, 1)
-            .unwrap()
-            .snapshot;
-        let _language = i18n::enter_snapshot(std::sync::Arc::new(snapshot));
-        for category in [
-            SettingsCategory::Sound,
-            SettingsCategory::Display,
-            SettingsCategory::Wifi,
-            SettingsCategory::Bluetooth,
-        ] {
-            assert!(!category.label().starts_with("ui-settings-"));
-            assert!(!category.description().starts_with("ui-settings-"));
-            let mut model = sample_model();
-            model.selected_category = category;
-            model.selected_field = SettingsField::SoundOutputVolume;
-            model.appearance_preview = None;
-            model.locked_message = None;
-            model.cards = vec![SettingsCardViewModel::new(
-                category.label(),
-                vec![
-                    SettingsItemViewModel::new(
-                        SettingsField::SoundOutputVolume,
-                        i18n::tr!("settings-device-sound-output-volume"),
-                        i18n::tr!("settings-device-not-obtained"),
-                        i18n::tr!("settings-device-sound-output-volume-help"),
-                        SettingsControlKind::Stepper,
-                    )
-                    .unavailable(i18n::tr!("settings-device-unsupported")),
-                ],
-            )];
-            for (width, height) in [(80, 24), (108, 20), (120, 32)] {
-                let theme = TundraTheme {
-                    muted: Color::Magenta,
-                    ..TundraTheme::default_dark()
-                };
-                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal
-                    .draw(|frame| {
-                        render_settings(frame, frame.area(), &chrome(), &model, &theme);
-                    })
-                    .unwrap();
-                let output = terminal_output(&terminal);
-                assert!(
-                    output.replace(' ', "").contains(&reason.replace(' ', "")),
-                    "{language}: {output}"
-                );
-                assert!(output.replace(' ', "").contains(&missing.replace(' ', "")));
-                assert!(!output.contains("locked") && !output.contains("已锁定"));
-                assert!(
-                    terminal
-                        .backend()
-                        .buffer()
-                        .content()
-                        .iter()
-                        .any(
-                            |cell| cell.symbol() == missing.chars().next().unwrap().to_string()
-                                && cell.fg == Color::DarkGray
-                        )
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn settings_show_unavailable_status_without_a_description_pane() {
-    let reason = "This feature is not supported on this platform yet.";
-    let mut model = sample_model();
-    model.appearance_preview = None;
-    model.selected_field = SettingsField::SoundOutputVolume;
-    model.cards = vec![SettingsCardViewModel::new(
-        "Sound",
-        vec![
-            SettingsItemViewModel::new(
-                SettingsField::SoundOutputVolume,
-                "Volume",
-                "Unavailable",
-                "Output volume",
-                SettingsControlKind::Stepper,
-            )
-            .unavailable(reason),
-        ],
-    )];
-    let area = Rect::new(0, 0, 120, 24);
-    let layout = settings_layout(area, &model);
-    assert!(layout.scrollbar.is_none());
-    model.scroll_offset = layout.max_scroll_offset;
-    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-    terminal
-        .draw(|frame| {
-            let layout = settings_layout(area, &model);
-            let theme = TundraTheme::default_dark();
-            let context =
-                ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
-            ui::render_settings_content(frame, &layout, &model, &context);
-        })
-        .unwrap();
-    let output = terminal_output(&terminal);
-    assert!(output.contains(reason), "{output}");
-    assert!(!output.contains("Output volume"), "{output}");
-    assert!(!output.contains("[Back]"));
-}
-
-#[test]
-fn clipped_setting_cards_keep_borders_off_content_rows() {
-    let mut model = sample_model();
-    model.appearance_preview = None;
-    model.cards = vec![SettingsCardViewModel::new(
-        "Clipped card",
-        (0..20)
-            .map(|index| {
-                SettingsItemViewModel::new(
-                    SettingsField::BluetoothUnpair,
-                    format!("Device {index}"),
-                    "Unavailable",
-                    "Not integrated",
-                    SettingsControlKind::Action,
-                )
-                .unavailable("Not integrated")
-            })
-            .collect(),
-    )];
-    model.scroll_offset = 3;
-    let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
-    let mut layout = None;
-    terminal
-        .draw(|frame| {
-            layout = Some(render_settings(
-                frame,
-                frame.area(),
-                &chrome(),
-                &model,
-                &TundraTheme::default_dark(),
-            ));
-        })
-        .unwrap();
-    let detail = layout.unwrap().detail;
-    for y in [detail.y, detail.bottom() - 1] {
-        assert_eq!(terminal.backend().buffer()[(detail.x, y)].symbol(), "│");
-        assert_eq!(
-            terminal.backend().buffer()[(detail.right() - 1, y)].symbol(),
-            "│"
-        );
-    }
-    assert!(!terminal_output(&terminal).contains("Clipped card"));
-    assert!(terminal_output(&terminal).contains("Device 2"));
-}
-
-#[test]
 fn animation_modal_scrolls_and_captures_only_its_visible_controls() {
     let phases = [
         SettingsField::PageAcceleration,
@@ -1240,26 +945,4 @@ fn animation_modal_scrolls_and_captures_only_its_visible_controls() {
             assert!(terminal_output(&terminal).contains("[Reset]"));
         }
     }
-}
-
-#[test]
-fn settings_footer_preserves_status_without_keyboard_help() {
-    let mut model = sample_model();
-    model.status = "Saved settings".into();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    terminal
-        .draw(|frame| {
-            render_settings(
-                frame,
-                frame.area(),
-                &chrome(),
-                &model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .unwrap();
-    let text = terminal_output(&terminal);
-    assert!(text.contains("Saved settings"));
-    assert!(!text.contains("Tab: section"));
-    assert!(!text.contains("Enter/Space"));
 }

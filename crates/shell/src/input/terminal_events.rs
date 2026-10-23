@@ -69,11 +69,6 @@ const fn phase_from_crossterm(kind: KeyEventKind) -> InputPhase {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn key_event_to_label(key_event: CrosstermKeyEvent) -> String {
-    key_event_to_input(key_event).label()
-}
-
 pub(crate) fn mouse_event_to_input(mouse_event: CrosstermMouseEvent) -> InputEvent {
     let kind = match mouse_event.kind {
         CrosstermMouseEventKind::Down(button) => {

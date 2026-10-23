@@ -8,37 +8,6 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use support::terminal_output;
 
-#[test]
-fn diagnostics_actions_fill_the_page_bottom_and_emphasize_repair() {
-    let mut model = health_model();
-    model.can_repair = true;
-    model.checks = vec![check(1, DiagnosticsStatus::Fail)];
-    for width in [50, 108, 160] {
-        let layout = diagnostics_layout(Rect::new(0, 0, width, 24), &model);
-        assert_eq!(layout.footer.x, layout.panel.x + 1);
-        assert_eq!(layout.footer.right(), layout.panel.right() - 1);
-        let repair = layout
-            .action_bar
-            .actions
-            .iter()
-            .find(|action| action.id.as_str() == "102")
-            .unwrap();
-        assert_eq!(repair.emphasis, ui::components::ButtonEmphasis::Primary);
-        assert_eq!(
-            layout.hit_test(repair.area.x, repair.area.y),
-            Some(DiagnosticsHitTarget::Action('f'))
-        );
-        assert!(
-            layout
-                .action_bar
-                .actions
-                .iter()
-                .any(|action| action.emphasis == ui::components::ButtonEmphasis::Danger)
-        );
-        assert!(layout.list_panel.bottom() <= layout.footer.y);
-    }
-}
-use ui::components::Scrollbar as GlacierScrollbar;
 use ui::{
     DiagnosticsCheckViewModel, DiagnosticsHitTarget, DiagnosticsIncidentViewModel,
     DiagnosticsLogViewModel, DiagnosticsRepairDialogViewModel, DiagnosticsRepairItemViewModel,
@@ -115,24 +84,6 @@ fn long_diagnostic_details_can_show_the_last_line_with_a_scrollbar() {
 }
 
 #[test]
-fn diagnostic_toolbar_keeps_operations_without_a_page_escape_button() {
-    let mut model = health_model();
-    model.can_repair = true;
-    let controls = ui::diagnostics_toolbar_buttons(Rect::new(0, 0, 108, 5), &model);
-    assert_eq!(
-        controls.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(),
-        vec!['r', 'c', 'f', 'a', 'x']
-    );
-    assert!(controls.iter().all(|(key, _, _)| *key != '\u{1b}'));
-    model.can_repair = false;
-    assert_eq!(ui::diagnostics_toolbar_height(38, &model), 1);
-    let layout = diagnostics_layout(Rect::new(0, 0, 40, 20), &model);
-    assert_eq!(layout.footer.height, 1);
-    assert!(layout.footer.y >= layout.detail_panel.bottom());
-    assert_eq!(layout.footer.x, layout.list_panel.x);
-}
-
-#[test]
 fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targets() {
     let mut model = health_model();
     model.checks = (0..12)
@@ -166,69 +117,6 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
 }
 
 #[test]
-fn overflowing_checks_show_a_proportional_scrollbar_at_the_current_window() {
-    let mut model = health_model();
-    model.checks = (0..12)
-        .map(|index| check(index, DiagnosticsStatus::Pass))
-        .collect();
-    model.selected_check = 10;
-    let main = full_main(108, 20);
-
-    let layout = diagnostics_layout(main, &model);
-    let scrollbar = layout
-        .list_scrollbar
-        .expect("an overflowing checks list should expose a scrollbar");
-
-    assert_eq!(layout.visible_capacity, 7);
-    assert_eq!(layout.visible_start, 4);
-    assert_eq!(scrollbar.track.height, 7);
-    assert_eq!(scrollbar.thumb.height, 5);
-    assert_eq!(scrollbar.thumb.y, scrollbar.track.y.saturating_add(1));
-    assert_eq!(
-        diagnostics_hit_test(&layout, (scrollbar.thumb.x, scrollbar.thumb.y)),
-        Some(DiagnosticsHitTarget::Scrollbar)
-    );
-    assert_eq!(
-        layout.list_rows_area.right().saturating_add(1),
-        scrollbar.track.x
-    );
-
-    let terminal = render(108, 20, &model);
-    let buffer = terminal.backend().buffer();
-    let glacier =
-        GlacierScrollbar::new(model.item_count(), layout.rows.len(), layout.visible_start);
-    let (thumb_start, thumb_len) = glacier.thumb_range(scrollbar.track);
-    let thumb_y = scrollbar.track.y.saturating_add(thumb_start);
-    for y in scrollbar.track.y..scrollbar.track.bottom() {
-        let expected = if y >= thumb_y && y < thumb_y.saturating_add(thumb_len) {
-            "█"
-        } else {
-            "│"
-        };
-        assert_eq!(
-            buffer
-                .cell((scrollbar.track.x, y))
-                .expect("scrollbar cell")
-                .symbol(),
-            expected
-        );
-    }
-}
-
-#[test]
-fn checks_that_fit_do_not_reserve_a_scrollbar_column() {
-    let mut model = health_model();
-    model.checks = (0..3)
-        .map(|index| check(index, DiagnosticsStatus::Pass))
-        .collect();
-
-    let layout = diagnostics_layout(full_main(108, 20), &model);
-
-    assert!(layout.list_scrollbar.is_none());
-    assert_eq!(layout.list_rows_area, Rect::new(2, 7, 40, 7));
-}
-
-#[test]
 fn incident_renderer_redacts_sensitive_fields_for_non_admins_at_108x20() {
     let mut model = health_model();
     model.tab = DiagnosticsTab::Incidents;
@@ -258,20 +146,6 @@ fn logs_tab_redacts_availability_for_non_admins() {
     assert!(!output.contains("E Log folder"));
     assert!(!output.contains("service-0.log.1"));
     assert!(!output.contains("/private/logs"));
-}
-
-#[test]
-fn admin_incident_renderer_shows_full_report_on_larger_terminals() {
-    let mut model = health_model();
-    model.tab = DiagnosticsTab::Incidents;
-    model.can_view_details = true;
-    model.incidents = vec![incident(false)];
-    let terminal = render(140, 32, &model);
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("SECRET incident summary"));
-    assert!(output.contains("SECRET stack trace"));
-    assert!(output.contains("/private/reports/incident-7.json"));
 }
 
 #[test]

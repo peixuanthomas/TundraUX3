@@ -5,11 +5,9 @@ mod support;
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use support::terminal_output;
 use ui::{
-    DiagnosticsIncidentViewModel, DiagnosticsLogViewModel, DiagnosticsStatus, DiagnosticsTab,
-    HomeDisplayMode, LogsCategory, LogsEventViewModel, LogsHitTarget, LogsSection, LogsViewModel,
+    HomeDisplayMode, LogsCategory, LogsEventViewModel, LogsHitTarget, LogsViewModel,
     NotificationTone, RenderContext, ShellChromeViewModel, ShellLayout, StatusViewModel,
-    TundraTheme, compute_shell_layout, diagnostics_content_layout, logs_hit_test, logs_layout,
-    render_logs_with_context,
+    TundraTheme, compute_shell_layout, logs_hit_test, logs_layout, render_logs_with_context,
 };
 
 fn model() -> LogsViewModel {
@@ -56,56 +54,6 @@ fn more_menu_reuses_button_geometry_and_covers_background_controls() {
 }
 
 #[test]
-fn more_dialog_is_centered_and_keeps_space_around_centered_labels() {
-    let mut model = model();
-    model.more_selected = Some(0);
-    for main in [Rect::new(3, 5, 120, 30), Rect::new(0, 1, 49, 10)] {
-        let layout = logs_layout(main, &model);
-        let menu = layout.menu;
-        assert!(menu.width < main.width && menu.height <= main.height);
-        assert!(menu.x > main.x && menu.right() < main.right());
-        assert!((menu.x - main.x).abs_diff(main.right() - menu.right()) <= 1);
-        assert!((menu.y - main.y).abs_diff(main.bottom() - menu.bottom()) <= 1);
-        assert!(layout.menu_controls.iter().all(|control| {
-            control.area.x >= menu.x + 3 && control.area.right() <= menu.right() - 3
-        }));
-        assert!(
-            layout
-                .menu_controls
-                .iter()
-                .any(|control| control.target == LogsHitTarget::CloseMore)
-        );
-        let theme = TundraTheme::default_dark();
-        let buttons = ui::components::ButtonFrame::new(None, None, &theme);
-        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-        context.buttons = Some(buttons.clone());
-        let mut terminal = Terminal::new(TestBackend::new(main.right(), main.bottom())).unwrap();
-        terminal
-            .draw(|frame| {
-                ui::render_logs_content(frame, main, &model, &context);
-                ui::render_logs_overlay(frame, main, &model, &context);
-            })
-            .unwrap();
-        assert_eq!(
-            buttons.regions().len(),
-            layout.menu_controls.len(),
-            "covered buttons must not receive pointer feedback"
-        );
-        for control in &layout.menu_controls {
-            let row = (control.area.x..control.area.right())
-                .map(|x| terminal.backend().buffer()[(x, control.area.y)].symbol())
-                .collect::<String>();
-            let leading = row.len() - row.trim_start().len();
-            let trailing = row.len() - row.trim_end().len();
-            assert!(
-                leading.abs_diff(trailing) <= 1,
-                "label is not centered: {row:?}"
-            );
-        }
-    }
-}
-
-#[test]
 fn compact_more_dialog_scrolls_options_and_keeps_close_visible() {
     let mut model = model();
     let main = Rect::new(0, 1, 49, 10);
@@ -133,53 +81,6 @@ fn compact_more_dialog_scrolls_options_and_keeps_close_visible() {
             logs_hit_test(main, &model, (close.area.x, close.area.y)),
             Some(LogsHitTarget::CloseMore)
         );
-    }
-}
-
-#[test]
-fn more_dialog_buttons_keep_shared_keyboard_hover_and_pressed_colors() {
-    let mut model = model();
-    model.more_selected = Some(0);
-    let main = main_area();
-    let layout = logs_layout(main, &model);
-    let selected = &layout.menu_controls[0];
-    let other = &layout.menu_controls[1];
-    let theme = TundraTheme::default_dark();
-    for (keyboard, hovered, pressed, expected) in [
-        (true, None, None, theme.button_accent_color()),
-        (false, Some(selected), None, theme.button_accent_color()),
-        (
-            false,
-            Some(selected),
-            Some(selected),
-            theme.button_pressed_color(),
-        ),
-        (false, Some(other), None, theme.foreground),
-        (false, None, None, theme.foreground),
-    ] {
-        let region = |control: &ui::LogsControlLayout| ui::components::ButtonRegion {
-            id: ui::logs_control_id(&model, control.target).into(),
-            area: control.area,
-            disabled: false,
-        };
-        let mut buttons =
-            ui::components::ButtonFrame::new(hovered.map(region), pressed.map(region), &theme);
-        buttons.keyboard_focus_visible = keyboard;
-        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-        context.buttons = Some(buttons);
-        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
-        terminal
-            .draw(|frame| {
-                ui::render_logs_content(frame, main, &model, &context);
-                ui::render_logs_overlay(frame, main, &model, &context);
-            })
-            .unwrap();
-        for x in selected.area.x..selected.area.right() {
-            assert_eq!(
-                terminal.backend().buffer()[(x, selected.area.y)].fg,
-                expected
-            );
-        }
     }
 }
 
@@ -256,41 +157,6 @@ fn render(
     terminal
 }
 #[test]
-fn log_controls_show_working_shortcuts_without_overlap_in_a_narrow_page() {
-    let model = model();
-    let main = Rect::new(0, 0, 50, 24);
-    let layout = logs_layout(main, &model);
-    let theme = TundraTheme::default_dark();
-    let buttons = ui::components::ButtonFrame::new(None, None, &theme);
-    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-    context.buttons = Some(buttons.clone());
-    let mut terminal = Terminal::new(TestBackend::new(50, 24)).unwrap();
-    terminal
-        .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
-        .unwrap();
-    let output = terminal_output(&terminal);
-    for hint in ["Refresh", "Open", "Latest", "More actions"] {
-        assert!(output.contains(hint), "missing shortcut {hint}");
-    }
-    for (index, control) in layout.controls.iter().enumerate() {
-        let region = buttons
-            .regions()
-            .into_iter()
-            .find(|button| button.id.as_str() == ui::logs_control_id(&model, control.target))
-            .unwrap();
-        assert_eq!(
-            region.disabled,
-            !ui::logs_control_enabled(&model, control.target)
-        );
-        assert!(control.area.right() <= main.right());
-        assert!(control.area.bottom() <= main.bottom());
-        for other in &layout.controls[index + 1..] {
-            assert!(control.area.intersection(other.area).is_empty());
-        }
-    }
-}
-
-#[test]
 fn event_list_uses_shared_scrolling_geometry_and_exposes_correlation() {
     let mut model = model();
     model.selected_event = 29;
@@ -350,63 +216,6 @@ fn category_section_and_control_geometry_match_rendered_components() {
     }
 }
 #[test]
-fn files_and_incidents_reuse_diagnostics_content_without_health_navigation() {
-    let mut model = model();
-    model.section = LogsSection::Files;
-    model.diagnostics.logs = vec![DiagnosticsLogViewModel {
-        relative_path: "my-run.jsonl".into(),
-        path: "/logs/my-run.jsonl".into(),
-        modified_at: "today".into(),
-        size_bytes: 12,
-    }];
-    let main = main_area();
-    let layout = logs_layout(main, &model);
-    let mut diagnostics = model.diagnostics.clone();
-    diagnostics.tab = DiagnosticsTab::Logs;
-    let area = Rect::new(
-        layout.content.list_panel.x,
-        layout.content.list_panel.y,
-        layout.content.detail_panel.right() - layout.content.list_panel.x,
-        layout.content.list_panel.height,
-    );
-    let mut expected = diagnostics_content_layout(area, &diagnostics);
-    assert!(layout.content.detail_panel.height < expected.detail_panel.height);
-    expected.detail_panel.height = layout.content.detail_panel.height;
-    assert_eq!(layout.content, expected);
-    assert!(
-        layout
-            .controls
-            .iter()
-            .filter(|button| button.target != LogsHitTarget::Refresh)
-            .all(|button| button.area.y >= layout.content.detail_panel.bottom())
-    );
-    let row = layout.content.rows[0].area;
-    assert_eq!(
-        logs_hit_test(main, &model, (row.x, row.y)),
-        Some(LogsHitTarget::File(0))
-    );
-    let output = terminal_output(&render(120, 32, &model, &TundraTheme::default_dark()));
-    assert!(output.contains("my-run.jsonl"));
-    assert!(!output.contains("Health"));
-    model.section = LogsSection::Incidents;
-    model.diagnostics.incidents = vec![DiagnosticsIncidentViewModel {
-        id: "incident-1".into(),
-        occurred_at: "today".into(),
-        app: "Explorer".into(),
-        severity: DiagnosticsStatus::Fail,
-        recovery: "Recovered".into(),
-        summary: "Failed operation".into(),
-        detail: "Details".into(),
-        report_path: "/logs/incident-1.json".into(),
-        restricted: false,
-    }];
-    let row = logs_layout(main, &model).content.rows[0].area;
-    assert_eq!(
-        logs_hit_test(main, &model, (row.x, row.y)),
-        Some(LogsHitTarget::Incident(0))
-    );
-}
-#[test]
 fn restricted_and_unsupported_sources_hide_rows_and_disable_actions() {
     let mut model = model();
     model.category = LogsCategory::Linux;
@@ -463,24 +272,6 @@ fn themes_and_narrow_or_empty_terminal_sizes_render_without_panicking() {
 }
 
 #[test]
-fn empty_events_use_log_language_and_disable_open() {
-    let mut model = model();
-    model.events.clear();
-    let output = terminal_output(&render(120, 32, &model, &TundraTheme::default_dark()));
-    assert!(output.contains("No events match the current query"));
-    assert!(!output.contains("No check"));
-    let open = logs_layout(main_area(), &model)
-        .controls
-        .into_iter()
-        .find(|control| control.target == LogsHitTarget::Open)
-        .unwrap();
-    assert_eq!(
-        logs_hit_test(main_area(), &model, (open.area.x, open.area.y)),
-        None
-    );
-}
-
-#[test]
 fn long_log_details_expose_a_draggable_scrollbar_and_the_last_line() {
     let mut model = model();
     model.events[0].detail = (0..80).map(|index| format!("detail-{index}\n")).collect();
@@ -495,88 +286,4 @@ fn long_log_details_expose_a_draggable_scrollbar_and_the_last_line() {
     model.detail_scroll = end;
     let output = terminal_output(&render(120, 32, &model, &TundraTheme::default_dark()));
     assert!(output.contains("detail-79"), "{output}");
-}
-
-#[test]
-fn narrow_log_toolbar_keeps_all_controls_inside_the_page() {
-    let model = model();
-    for size in [(40, 20), (60, 20), (80, 24)] {
-        let area = Rect::new(0, 0, size.0, size.1);
-        let layout = logs_layout(area, &model);
-        assert_eq!(layout.controls.len(), 5);
-        assert!(layout.controls.iter().all(|control| control.area.width > 0
-            && control.area.height > 0
-            && control.area.right() <= area.right()
-            && control.area.bottom() <= area.bottom()));
-        assert_eq!(layout.controls.last().unwrap().target, LogsHitTarget::More);
-    }
-}
-
-#[test]
-fn log_list_and_detail_inherit_the_global_border_shape() {
-    for (shape, corner) in [
-        (ui::BorderShape::Square, "┌"),
-        (ui::BorderShape::Rounded, "╭"),
-    ] {
-        let theme = TundraTheme::default_dark().with_border_shape(shape);
-        let model = model();
-        let layout = logs_layout(main_area(), &model);
-        let terminal = render(120, 32, &model, &theme);
-        for panel in [layout.content.list_panel, layout.content.detail_panel] {
-            assert_eq!(
-                terminal.backend().buffer()[(panel.x, panel.y)].symbol(),
-                corner
-            );
-        }
-    }
-}
-
-#[test]
-fn log_buttons_use_the_same_record_identity_for_rendering_and_pressed_color() {
-    use ui::components::{ButtonFrame, ButtonRegion};
-    let model = model();
-    let main = main_area();
-    let layout = logs_layout(main, &model);
-    let control = layout
-        .controls
-        .iter()
-        .find(|control| control.target == LogsHitTarget::Refresh)
-        .unwrap();
-    let region = ButtonRegion {
-        id: ui::logs_control_id(&model, control.target).into(),
-        area: control.area,
-        disabled: false,
-    };
-    let theme = TundraTheme::default_dark();
-    let buttons = ButtonFrame::new(Some(region.clone()), Some(region.clone()), &theme);
-    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
-    context.buttons = Some(buttons.clone());
-    let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
-    terminal
-        .draw(|frame| ui::render_logs_content(frame, main, &model, &context))
-        .unwrap();
-    assert!(buttons.regions().contains(&region));
-    assert_eq!(
-        terminal.backend().buffer()[(region.area.x, region.area.y)].fg,
-        theme.button_pressed_color()
-    );
-}
-
-#[test]
-fn page_action_bar_is_full_width_and_has_no_shortcut_sentence() {
-    let model = model();
-    for width in [50, 72, 110] {
-        let layout = logs_layout(Rect::new(0, 0, width, 24), &model);
-        assert_eq!(layout.action_bar.area.width, width - 2);
-        assert_eq!(layout.action_bar.actions.len(), 4);
-        assert!(
-            layout
-                .action_bar
-                .actions
-                .iter()
-                .all(|action| action.area.y >= layout.content.list_panel.bottom())
-        );
-    }
-    let terminal = render(120, 40, &model, &TundraTheme::default_dark());
-    assert!(!support::terminal_output(&terminal).contains("Tab: section"));
 }

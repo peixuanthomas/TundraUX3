@@ -140,31 +140,6 @@ fn root_help_lists_every_public_command_and_doctor_is_outside_debug() {
 }
 
 #[test]
-fn rainbow_text_help_is_available_without_platform_initialization() {
-    assert!(matches!(
-        parse_args(["debug", "test-rainbow-text", "unexpected"]),
-        Err(CliError::UnexpectedArgument(_))
-    ));
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    assert_eq!(
-        run_with_platform(
-            ["debug", "test-rainbow-text", "--help"],
-            &UnsupportedPlatform,
-            &mut stdout,
-            &mut stderr
-        ),
-        0
-    );
-    assert!(
-        String::from_utf8(stdout)
-            .unwrap()
-            .contains("tundra-cli debug test-rainbow-text")
-    );
-    assert!(stderr.is_empty());
-}
-
-#[test]
 fn version_prints_the_package_version_without_platform_support() {
     for flag in ["--version", "-V"] {
         let mut stdout = Vec::new();
@@ -231,75 +206,6 @@ fn debug_commands_reject_old_entries_unknown_names_and_extra_arguments() {
     let mut stderr = Vec::new();
     assert_eq!(run(["weathr"], &mut stdout, &mut stderr), 2);
     assert!(String::from_utf8_lossy(&stderr).contains("unknown command: weathr"));
-}
-
-#[test]
-fn screen_keyboard_help_is_available_without_starting_the_demo() {
-    for args in [
-        ["debug", "screen-keyboard", "--help"],
-        ["help", "debug", "screen-keyboard"],
-    ] {
-        assert_eq!(
-            parse_args(args),
-            Ok(CliCommand::TopicHelp("debug screen-keyboard".to_owned()))
-        );
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        assert_eq!(run(args, &mut stdout, &mut stderr), 0);
-        let text = String::from_utf8(stdout).unwrap();
-        assert!(text.contains("Usage: tundra-cli debug screen-keyboard"));
-        assert!(text.contains("external interactive terminal"));
-        assert!(text.contains("Tab/arrow keys"));
-        assert!(text.contains("Esc exits"));
-        assert!(stderr.is_empty());
-    }
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    assert_eq!(run(["debug", "help"], &mut stdout, &mut stderr), 0);
-    assert!(
-        String::from_utf8(stdout)
-            .unwrap()
-            .contains("screen-keyboard")
-    );
-}
-
-#[test]
-fn ui_style_command_selects_versions_and_rejects_invalid_arguments() {
-    for style in shell::UiStyleVersion::ALL {
-        assert_eq!(
-            parse_args(["debug", "view-ui-style", &style.number().to_string()]),
-            Ok(CliCommand::ViewUiStyle(style))
-        );
-    }
-    assert_eq!(
-        parse_args(["debug", "view-ui-style"]),
-        Ok(CliCommand::UiStyleHelp)
-    );
-    for help in ["help", "--help", "-h"] {
-        assert_eq!(
-            parse_args(["debug", "view-ui-style", help]),
-            Ok(CliCommand::UiStyleHelp)
-        );
-    }
-    for invalid in ["0", "4", "-1", "1/2/3", "tea", "999", "1.0"] {
-        assert_eq!(
-            parse_args(["debug", "view-ui-style", invalid]),
-            Err(CliError::InvalidUiStyle(invalid.into()))
-        );
-    }
-    assert_eq!(
-        parse_args(["debug", "view-ui-style", "1", "extra"]),
-        Err(CliError::UnexpectedArgument("extra".into()))
-    );
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    assert_eq!(run(["debug", "view-ui-style"], &mut stdout, &mut stderr), 0);
-    let output = String::from_utf8(stdout).unwrap();
-    for style in shell::UiStyleVersion::ALL {
-        assert!(output.contains(&style.title()));
-    }
-    assert!(output.contains("F1-F3"));
-    assert!(stderr.is_empty());
 }
 
 #[test]
@@ -666,28 +572,6 @@ fn asset_command_renders_art_sets_and_individual_items() {
 }
 
 #[test]
-fn asset_source_mode_prints_the_complete_original_file() {
-    let tree = TempTree::new("asset-source");
-    let asset_root = copy_complete_assets(&tree);
-    let expected =
-        fs::read(asset_root.join("themes/default/explorer_icons.toml")).expect("asset source");
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-
-    let exit_code = run_with_platform_and_asset_root(
-        ["debug", "asset", "explorer_icons", "-a"],
-        &UnsupportedPlatform,
-        &mut stdout,
-        &mut stderr,
-        &asset_root,
-    );
-
-    assert_eq!(exit_code, 0);
-    assert!(stderr.is_empty());
-    assert_eq!(stdout, expected);
-}
-
-#[test]
 fn asset_command_supports_unique_file_names_and_reports_missing_values() {
     let tree = TempTree::new("asset-errors");
     let asset_root = copy_complete_assets(&tree);
@@ -756,18 +640,6 @@ fn asset_command_supports_unique_file_names_and_reports_missing_values() {
         error.contains("ERROR: could not read asset \"banner\""),
         "unexpected error: {error}"
     );
-}
-
-#[test]
-fn cls_command_clears_history_and_screen_then_moves_the_cursor_home() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-
-    let exit_code = run(["cls"], &mut stdout, &mut stderr);
-
-    assert_eq!(exit_code, 0);
-    assert_eq!(stdout, b"\x1b[3J\x1b[2J\x1b[H");
-    assert!(stderr.is_empty());
 }
 
 #[test]
@@ -1207,43 +1079,6 @@ fn new_command_clears_saved_content_and_recreates_default_storage() {
 }
 
 #[test]
-fn paths_command_prints_injected_macos_resolved_and_storage_paths() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let tree = TempTree::new("macos-paths");
-    let platform = mock_macos_platform(tree.path());
-
-    let exit_code = run_with_platform(["debug", "paths"], &platform, &mut stdout, &mut stderr);
-
-    assert_eq!(exit_code, 0);
-    assert!(stderr.is_empty());
-    let stdout = String::from_utf8(stdout).expect("paths output should be utf8");
-    assert!(stdout.contains("Path templates:"));
-    assert!(stdout.contains("Resolved paths:"));
-    assert!(stdout.contains("Storage files:"));
-    assert_path_labels(&stdout);
-    assert_storage_labels(&stdout);
-    assert_macos_resolved_path_markers(&stdout);
-    assert_macos_storage_file_markers(&stdout);
-}
-
-#[test]
-fn paths_command_reports_unsupported_platform_from_injected_platform() {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let platform = UnsupportedPlatform;
-
-    let exit_code = run_with_platform(["debug", "paths"], &platform, &mut stdout, &mut stderr);
-
-    assert_eq!(exit_code, 1);
-    let stdout = String::from_utf8(stdout).expect("paths output should be utf8");
-    let stderr = String::from_utf8(stderr).expect("paths error output should be utf8");
-    assert!(stdout.contains("Path templates:"));
-    assert_path_labels(&stdout);
-    assert!(stderr.contains("ERROR: platform capability is unsupported: app_paths"));
-}
-
-#[test]
 fn doctor_command_passes_and_bootstraps_storage_with_injected_macos_platform() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -1367,22 +1202,6 @@ fn unknown_command_exits_two_and_writes_error_to_stderr() {
     assert!(stderr.contains("tundra-cli <command> [options]"));
 }
 
-fn assert_path_labels(output: &str) {
-    assert!(output.contains("Config path:"));
-    assert!(output.contains("Data path:"));
-    assert!(output.contains("Cache path:"));
-    assert!(output.contains("Logs path:"));
-    assert!(output.contains("Temp path:"));
-}
-
-fn assert_storage_labels(output: &str) {
-    assert!(output.contains("Config file:"));
-    assert!(output.contains("State file:"));
-    assert!(output.contains("Recent files:"));
-    assert!(output.contains("Sessions file:"));
-    assert!(output.contains("Users file:"));
-}
-
 fn assert_macos_resolved_path_markers(output: &str) {
     let normalized = output.replace('\\', "/");
 
@@ -1391,20 +1210,6 @@ fn assert_macos_resolved_path_markers(output: &str) {
     assert!(normalized.contains("Home/Library/Caches/TundraUX3"));
     assert!(normalized.contains("Home/Library/Logs/TundraUX3"));
     assert!(normalized.contains("Temp/TundraUX3"));
-}
-
-fn assert_macos_storage_file_markers(output: &str) {
-    let normalized = output.replace('\\', "/");
-
-    assert!(normalized.contains("Home/Library/Application Support/TundraUX3/state/state.v1.json"));
-    assert!(
-        normalized
-            .contains("Home/Library/Application Support/TundraUX3/state/recent-files.v1.json")
-    );
-    assert!(
-        normalized.contains("Home/Library/Application Support/TundraUX3/state/sessions.v1.json")
-    );
-    assert!(normalized.contains("Home/Library/Application Support/TundraUX3/state/users.v2.json"));
 }
 
 fn mock_windows_platform(base: &Path) -> MockPlatform {

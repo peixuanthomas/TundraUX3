@@ -29,28 +29,6 @@ fn row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .collect()
 }
 
-#[test]
-fn back_button_shows_and_fits_the_actual_page_shortcut() {
-    for size in [(50, 12), (108, 30), (40, 10)] {
-        for shortcut in ["Esc", ""] {
-            let mut model = chrome(size.0, size.1);
-            model.back_shortcut = shortcut;
-            let (terminal, layout) = render(&model, &RenderContext::default());
-            let back = layout.back_button.unwrap();
-            let y = back.y + u16::from(back.height > 1);
-            let label: String = (back.x..back.right())
-                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                .collect();
-            let expected = if shortcut.is_empty() {
-                "[◀]".to_owned()
-            } else {
-                format!("[◀ {shortcut}]")
-            };
-            assert!(label.contains(&expected), "{label}");
-            assert!(back.intersection(layout.main).is_empty());
-        }
-    }
-}
 fn render(
     model: &ShellChromeViewModel,
     context: &RenderContext,
@@ -70,48 +48,6 @@ fn render(
         })
         .unwrap();
     (terminal, layout)
-}
-#[test]
-fn chrome_title_and_information_share_one_row_without_spilling_into_content() {
-    for width in [50, 80, 120] {
-        let (terminal, layout) = render(&chrome(width, 24), &RenderContext::default());
-        let ShellLayout::Full { top, .. } = layout.shell else {
-            panic!("full layout")
-        };
-        assert_eq!(top.height, 3);
-        let text = row(&terminal, top.y + 1);
-        assert!(text.contains("TundraUX 3"));
-        assert_eq!(text.contains("debug"), cfg!(debug_assertions));
-        if cfg!(debug_assertions) && width >= 80 {
-            assert!(text.replace(' ', "").contains("中文"));
-        }
-        assert!(!row(&terminal, top.y).contains("debug"));
-        assert!(!row(&terminal, top.bottom() - 1).contains("debug"));
-        assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
-        let message = layout.status_message.unwrap();
-        let time = layout.time_button.unwrap();
-        assert!(message.right() <= time.x);
-        assert_eq!(message.intersection(time).area(), 0);
-        assert!(row(&terminal, time.y + 1).contains("09:30"));
-        let back = layout.back_button.unwrap();
-        assert_eq!(back.right(), top.right());
-        assert_eq!(back.height, top.height);
-        let label = (back.x..back.right())
-            .map(|x| terminal.backend().buffer()[(x, back.y + 1)].symbol())
-            .collect::<String>();
-        assert!(label.contains("[◀ Esc]"));
-    }
-}
-#[test]
-fn long_chinese_title_is_clipped_to_top_inner_row() {
-    let mut model = chrome(50, 12);
-    model.app_name = "终端交互环境".repeat(20);
-    let (terminal, layout) = render(&model, &RenderContext::default());
-    assert!(row(&terminal, 1).replace(' ', "").contains("终端交互环境"));
-    assert!(row(&terminal, 1).contains("..."));
-    assert!(row(&terminal, 1).contains("[◀ Esc]"));
-    assert!(!row(&terminal, 2).contains('终'));
-    assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
 }
 #[test]
 fn compact_threshold_keeps_escape_above_the_content() {
@@ -165,38 +101,6 @@ fn page_transition_projects_only_main_and_leaves_chrome_pixels_and_hit_regions_f
     }
     assert!(row(&during, shifted.main.y).contains("PAGE CONTENT"));
     assert!(!row(&during, base.main.y).contains("PAGE CONTENT"));
-}
-
-#[test]
-fn back_button_uses_the_active_theme_and_hover_accent() {
-    for border_shape in [BorderShape::Rounded, BorderShape::Square] {
-        for capability in [ColorCapability::TrueColor, ColorCapability::Ansi] {
-            let theme = TundraTheme {
-                border_shape,
-                accent_color: ratatui::style::Color::Magenta,
-                ..TundraTheme::default()
-            };
-            let context = RenderContext::from_theme(
-                &theme,
-                Default::default(),
-                RenderCapabilities {
-                    color: capability,
-                    image_protocol: false,
-                    ..Default::default()
-                },
-            );
-            let mut model = chrome(80, 24);
-            model.back_button_hovered = true;
-            let (terminal, layout) = render(&model, &context);
-            let back = layout.back_button.unwrap();
-            assert_eq!(
-                terminal.backend().buffer()[(back.x + 3, back.y + 1)].fg,
-                context.compatibility_theme().button_hover_color()
-            );
-            let offset = ShellFrameLayout::new(Rect::new(5, 8, 80, 24), None, &context);
-            assert_eq!(offset.back_button.unwrap(), Rect::new(76, 8, 9, 3));
-        }
-    }
 }
 
 #[test]

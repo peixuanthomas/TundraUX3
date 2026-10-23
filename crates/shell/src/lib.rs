@@ -63,8 +63,6 @@ pub use terminal_session::{
 pub use terminal_size::{ShellTerminalSizeError, ShellTerminalSizeRequirement};
 
 pub(crate) use banner::asset_io_error;
-#[cfg(test)]
-pub(crate) use terminal_events::{key_event_to_label, mouse_event_to_input};
 pub(crate) use terminal_size::checked_current_terminal_size;
 
 mod session;

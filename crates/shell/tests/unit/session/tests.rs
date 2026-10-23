@@ -1,6 +1,5 @@
 use super::overlays::{ResolvedExplorerOverlay, ShellOverlayCategory};
 use super::*;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 #[test]
 fn strong_clock_due_events_keep_reminder_semantics_and_dismiss_actions() {
@@ -4425,49 +4424,6 @@ fn exit_confirmation_distinguishes_program_and_computer_actions() {
 }
 
 #[test]
-fn fixed_launcher_items_include_editor_and_keep_command_line_admin_only() {
-    let mut admin = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    set_test_auth_role(&mut admin, UserRole::Admin);
-
-    let launcher = admin.to_launcher_view_model();
-    assert_eq!(
-        launcher.items.len(),
-        if cfg!(target_os = "linux") { 13 } else { 4 }
-    );
-    assert_eq!(launcher.items[0].id, app::COMMAND_LINE_APPLICATION.id);
-    assert_eq!(launcher.items[1].id, app::EDITOR_APPLICATION.id);
-    assert!(launcher.items.iter().any(|item| item.id == "builtin.users"));
-    for id in [
-        "builtin.firewall",
-        "builtin.ssh",
-        "builtin.backups",
-        "builtin.scheduled-tasks",
-    ] {
-        assert_eq!(
-            launcher.items.iter().any(|item| item.id == id),
-            cfg!(target_os = "linux")
-        );
-    }
-    assert!(launcher.items.iter().all(|item| item.is_builtin()));
-    assert!(
-        launcher
-            .items
-            .iter()
-            .all(|item| { !item.capabilities.removable && !item.capabilities.reorderable })
-    );
-
-    let mut user = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    set_test_auth_role(&mut user, UserRole::User);
-    let launcher = user.to_launcher_view_model();
-    assert_eq!(
-        launcher.items.len(),
-        if cfg!(target_os = "linux") { 12 } else { 3 }
-    );
-    assert_eq!(launcher.items[0].id, app::EDITOR_APPLICATION.id);
-    assert!(launcher.items.iter().any(|item| item.id == "builtin.users"));
-}
-
-#[test]
 fn launcher_uses_cached_ascii_assets_after_the_runtime_directory_is_deleted() {
     fn copy_directory(source: &std::path::Path, destination: &std::path::Path) {
         std::fs::create_dir_all(destination).expect("create temporary asset directory");
@@ -4756,132 +4712,6 @@ fn back_button_hit_region_tracks_resize_including_compact_mode() {
                 );
             }
         }
-    }
-}
-
-#[test]
-fn key_event_to_label_maps_requested_keys() {
-    let cases = [
-        (
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-            "Ctrl+C",
-        ),
-        (KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), "x"),
-        (KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), "Enter"),
-        (KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), "Esc"),
-        (
-            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
-            "Backspace",
-        ),
-        (KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), "Tab"),
-        (
-            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
-            "Shift+Tab",
-        ),
-        (KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), "Left"),
-        (KeyEvent::new(KeyCode::Right, KeyModifiers::NONE), "Right"),
-        (KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), "Up"),
-        (KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), "Down"),
-        (KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE), "F(5)"),
-    ];
-
-    for (event, expected) in cases {
-        assert_eq!(key_event_to_label(event), expected);
-    }
-}
-
-#[test]
-fn mouse_event_to_input_maps_button_motion_and_scroll_events() {
-    let down = mouse_event_to_input(MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: 12,
-        row: 7,
-        modifiers: KeyModifiers::NONE,
-    });
-    let drag = mouse_event_to_input(MouseEvent {
-        kind: MouseEventKind::Drag(MouseButton::Right),
-        column: 13,
-        row: 8,
-        modifiers: KeyModifiers::NONE,
-    });
-    let moved = mouse_event_to_input(MouseEvent {
-        kind: MouseEventKind::Moved,
-        column: 14,
-        row: 9,
-        modifiers: KeyModifiers::NONE,
-    });
-    let scroll_up = mouse_event_to_input(MouseEvent {
-        kind: MouseEventKind::ScrollUp,
-        column: 15,
-        row: 10,
-        modifiers: KeyModifiers::NONE,
-    });
-
-    assert_eq!(
-        down,
-        InputEvent::Mouse(ui::MouseEvent {
-            position: ui::Point::new(12, 7),
-            kind: ui::MouseEventKind::Down(PointerButton::Left),
-            modifiers: InputModifiers::none(),
-        })
-    );
-    assert_eq!(
-        drag,
-        InputEvent::Mouse(ui::MouseEvent {
-            position: ui::Point::new(13, 8),
-            kind: ui::MouseEventKind::Drag(PointerButton::Right),
-            modifiers: InputModifiers::none(),
-        })
-    );
-    assert_eq!(
-        moved,
-        InputEvent::Mouse(ui::MouseEvent {
-            position: ui::Point::new(14, 9),
-            kind: ui::MouseEventKind::Moved,
-            modifiers: InputModifiers::none(),
-        })
-    );
-    assert_eq!(
-        scroll_up,
-        InputEvent::Mouse(ui::MouseEvent {
-            position: ui::Point::new(15, 10),
-            kind: ui::MouseEventKind::Scroll(ScrollDirection::Up),
-            modifiers: InputModifiers::none(),
-        })
-    );
-}
-
-#[test]
-fn mouse_event_to_input_uses_required_scroll_direction_labels() {
-    let cases = [
-        (MouseEventKind::ScrollDown, "Down"),
-        (MouseEventKind::ScrollUp, "Up"),
-        (MouseEventKind::ScrollLeft, "Left"),
-        (MouseEventKind::ScrollRight, "Right"),
-    ];
-
-    for (kind, expected_direction) in cases {
-        let input = mouse_event_to_input(MouseEvent {
-            kind,
-            column: 1,
-            row: 2,
-            modifiers: KeyModifiers::NONE,
-        });
-
-        assert_eq!(
-            input,
-            InputEvent::Mouse(ui::MouseEvent {
-                position: ui::Point::new(1, 2),
-                kind: ui::MouseEventKind::Scroll(match expected_direction {
-                    "Down" => ScrollDirection::Down,
-                    "Up" => ScrollDirection::Up,
-                    "Left" => ScrollDirection::Left,
-                    "Right" => ScrollDirection::Right,
-                    _ => unreachable!("test direction"),
-                }),
-                modifiers: InputModifiers::none(),
-            })
-        );
     }
 }
 

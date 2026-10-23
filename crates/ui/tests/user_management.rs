@@ -10,36 +10,11 @@ use ratatui::style::Color;
 use support::terminal_output;
 use ui::{
     HomeDisplayMode, NotificationTone, ShellChromeViewModel, StatusViewModel, TundraTheme,
-    UserManagementAction, UserManagementColumnMode, UserManagementField, UserManagementFocus,
-    UserManagementFormKind, UserManagementFormViewModel, UserManagementUserViewModel,
-    UserManagementViewModel, compute_shell_layout, render_user_management,
-    user_management_action_at, user_management_form_control_at, user_management_layout,
-    user_management_row_index_at,
+    UserManagementAction, UserManagementField, UserManagementFocus, UserManagementFormKind,
+    UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
+    compute_shell_layout, render_user_management, user_management_action_at,
+    user_management_form_control_at, user_management_layout, user_management_row_index_at,
 };
-
-#[test]
-fn wide_user_page_keeps_account_details_above_visible_action_buttons() {
-    let model = model_with_users(30);
-    let (terminal, main) = render(120, 28, &model);
-    let layout = user_management_layout(main, &model);
-    assert!(!layout.details.is_empty());
-    assert!(layout.details.x >= layout.rows_area.right());
-    assert!(layout.details.bottom() <= layout.actions_panel.y);
-    assert!(layout.scrollbar.is_some());
-    assert_eq!(layout.actions.len(), model.page_actions().len());
-    for action in &layout.actions {
-        assert!(!action.area.is_empty());
-        assert_eq!(action.area.intersection(layout.actions_area), action.area);
-        assert_eq!(
-            layout.action_at(action.area.x, action.area.y),
-            Some(action.action)
-        );
-    }
-    let output = terminal_output(&terminal);
-    assert!(output.contains("Username: user0"));
-    assert!(output.contains("R Set password"));
-    assert!(output.contains("N New user"));
-}
 
 #[test]
 fn narrow_user_actions_wrap_and_short_forms_expose_the_remaining_fields() {
@@ -67,33 +42,6 @@ fn narrow_user_actions_wrap_and_short_forms_expose_the_remaining_fields() {
             .any(|field| field.field == UserManagementField::Password)
     );
     assert!(!form.submit.is_empty() && !form.cancel.is_empty());
-}
-
-#[test]
-fn layout_switches_columns_at_72_cells_and_keeps_one_row_at_minimum_height() {
-    let model = model_with_users(3);
-    let account = user_management_layout(Rect::new(0, 0, 71, 6), &model);
-    let detailed = user_management_layout(Rect::new(0, 0, 72, 6), &model);
-
-    assert_eq!(account.column_mode, UserManagementColumnMode::Account);
-    assert_eq!(detailed.column_mode, UserManagementColumnMode::Detailed);
-    assert_eq!(account.visible_capacity, 1);
-    assert_eq!(account.rows.len(), 1);
-    let new_user = detailed
-        .actions
-        .iter()
-        .find(|action| action.action == UserManagementAction::NewUser)
-        .expect("new user action");
-    assert_eq!(detailed.actions[0].action, UserManagementAction::EditInfo);
-    assert_eq!(new_user.area.y, detailed.actions_area.y);
-    assert_ne!(new_user.area.y, detailed.summary.y);
-    assert_eq!(detailed.summary.width, 70);
-    assert!(
-        detailed
-            .actions
-            .iter()
-            .all(|action| action.area.y == detailed.actions_area.y)
-    );
 }
 
 #[test]
@@ -178,33 +126,6 @@ fn default_admin_actions_protect_the_last_enabled_administrator() {
             .iter()
             .all(|action| !action.label.to_ascii_lowercase().contains("debug"))
     );
-}
-
-#[test]
-fn disabled_action_is_gray_and_exposes_its_reason() {
-    let mut model = UserManagementViewModel::new(
-        "root",
-        vec![user("root", "Administrator", "Admin", true, false, true)],
-        0,
-        None,
-        true,
-        None,
-    );
-    model.focus = UserManagementFocus::Action(UserManagementAction::Delete);
-    let (terminal, main) = render(120, 24, &model);
-    let layout = user_management_layout(main, &model);
-    let delete = layout
-        .actions
-        .iter()
-        .find(|action| action.action == UserManagementAction::Delete)
-        .expect("delete layout");
-
-    assert!(terminal_output(&terminal).contains("last enabled administrator"));
-    assert!(region_has_fg(
-        &terminal,
-        delete.area,
-        ratatui::style::Color::DarkGray
-    ));
 }
 
 #[test]

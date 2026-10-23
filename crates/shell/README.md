@@ -95,6 +95,8 @@ flowchart LR
 
 构建时同时执行 `cargo build --locked -p shell -p cli`，否则内嵌命令行可能继续使用旧 CLI。验证使用 `cargo test --locked -p shell`；终端输入和模式恢复还需对应系统的真实 PTY 检查。
 
+固定测试优先覆盖完整操作、页面与任务归属、保存恢复、授权和退出收尾；输入转换与基础样式由共享层验证，不在会话中重复检查事件标签、颜色和动画绘制细节。
+
 macOS 可用 `TMPDIR=/private/tmp cargo test --locked -p shell -p terminal-runtime --lib` 验证子终端输入与后台任务清理，避免 `/var` 的符号链接被路径安全检查拒绝；按键字节测试统一系统 `od` 的空格格式。
 
 `src/previews/ui_test.rs` 提供无状态的 `debug ui-test` 入口：使用内置主题和英文，不读写配置、资源文件或日志；输入及终端恢复沿用现有组件和 `TerminalGuard`。六页控件清单见[调试预览](docs/previews.md#全部共享控件)。

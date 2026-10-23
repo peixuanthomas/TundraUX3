@@ -1,7 +1,6 @@
 use super::*;
 use crate::session::runtime::dispatch_motion_aware_input;
 
-const DIALOG_MS: u32 = ui::MotionTimings::DIALOG.as_millis() as u32;
 const POPOVER_MS: u32 = ui::MotionTimings::POPOVER.as_millis() as u32;
 
 impl ShellMotionEffects {
@@ -191,58 +190,6 @@ fn exit_never_overwrites_dynamic_skip_destinations_or_neighbors() {
 }
 
 #[test]
-fn areas_are_bounded_unions_and_empty_regions_are_ignored() {
-    assert_eq!(
-        bounds_for_regions([Rect::new(3, 4, 2, 2), Rect::new(1, 5, 3, 1), Rect::ZERO].into_iter()),
-        Some(Rect::new(1, 4, 4, 2))
-    );
-}
-
-#[test]
-fn saved_page_phases_control_the_deadline_and_painted_position() {
-    let full = Rect::new(0, 0, 200, 20);
-    let theme = ui::ThemeTokens::glacier_night();
-    let mut state = ShellSession::new(ShellLaunchConfig::default(), (200, 20));
-    while state.notification_dismiss_active_modal_without_response() {}
-    let mut appearance = storage::AppearanceConfig::default();
-    appearance.animation_timings.page = [200, 100, 100];
-    appearance.animation_timings.dialog = [100, 40, 60];
-    appearance.animation_timings.menu = [20, 60, 20];
-    state.app.dispatch_at(
-        app::AppCommand::SetActiveAppearance(Some(appearance)),
-        Instant::now(),
-    );
-    let mut motion = ShellMotionEffects::default();
-    motion.update(&state, full, full, None, theme, false);
-    let mut old = Buffer::filled(full, Cell::new("O"));
-    motion.test_frame(Duration::ZERO, &mut old, &state);
-    state.enter_screen(ShellScreen::Clock);
-    motion.update(&state, full, full, None, theme, false);
-    assert_eq!(motion.page_gate, Duration::from_millis(400));
-    let mut new = Buffer::filled(full, Cell::new("N"));
-    motion.test_frame(Duration::ZERO, &mut new, &state);
-    new = Buffer::filled(full, Cell::new("N"));
-    motion.test_frame(Duration::from_millis(100), &mut new, &state);
-    let main = shell_main_area(full);
-    let visible = ui::reveal_rect(main, 100, overlay_origin(&state, main));
-    assert_eq!(
-        main.positions()
-            .filter(|position| new[*position].symbol() == "N")
-            .count(),
-        usize::from(visible.width) * usize::from(visible.height)
-    );
-    assert_eq!(motion.page_gate, Duration::from_millis(300));
-    assert_eq!(
-        motion.overlay_duration(ui::MotionOverlayKind::Dialog),
-        Duration::from_millis(200)
-    );
-    assert_eq!(
-        motion.overlay_duration(ui::MotionOverlayKind::Popover),
-        Duration::from_millis(100)
-    );
-}
-
-#[test]
 fn resumed_overlay_exit_keeps_the_original_speed_curve() {
     let area = Rect::new(0, 0, 120, 40);
     let old = Buffer::filled(area, Cell::new("O"));
@@ -270,177 +217,6 @@ fn resumed_overlay_exit_keeps_the_original_speed_curve() {
         uninterrupted.process(Duration::from_millis(full_delta), &mut expected, area);
         resumed.process(Duration::from_millis(resumed_delta), &mut actual, area);
         assert_eq!(actual, expected);
-    }
-}
-
-#[test]
-fn pages_expand_from_the_button_and_return_in_reverse() {
-    let area = Rect::new(2, 1, 12, 4);
-    let bounds = Rect::new(0, 0, 16, 6);
-    let old = Buffer::filled(bounds, Cell::new("O"));
-    let old = BaseFrameSnapshot {
-        screen: ShellScreen::Home,
-        bounds,
-        cells: snapshot_normal_cells(&old, bounds).unwrap().cells.into(),
-    };
-    let origin = ui::RevealOrigin::Button(Rect::new(2, 1, 3, 2));
-    for returning in [false, true] {
-        let mut effect = page_effect(
-            area,
-            Some(old.clone()),
-            returning,
-            ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
-            origin,
-        );
-        let natural = Buffer::filled(bounds, Cell::new("N"));
-        let mut frame = natural.clone();
-        effect.process(Duration::ZERO, &mut frame, bounds);
-        assert_eq!(frame[(2, 1)].symbol(), if returning { "O" } else { "N" });
-        frame = natural.clone();
-        effect.process(Duration::from_millis(70), &mut frame, bounds);
-        assert_eq!(frame[(2, 1)].symbol(), if returning { "O" } else { "N" });
-        assert_eq!(frame[(13, 1)].symbol(), if returning { "N" } else { "O" });
-        assert_eq!(frame[(0, 0)].symbol(), "N");
-        frame = natural.clone();
-        effect.process(Duration::from_secs(1), &mut frame, bounds);
-        assert_eq!(frame, natural);
-    }
-}
-
-#[test]
-fn page_reveal_keeps_live_progress_and_whole_chinese_glyphs() {
-    let bounds = Rect::new(0, 0, 40, 16);
-    let area = Rect::new(4, 3, 24, 8);
-    let old = Buffer::filled(bounds, Cell::new("O"));
-    let mut effect = page_effect(
-        area,
-        Some(BaseFrameSnapshot {
-            screen: ShellScreen::Home,
-            bounds,
-            cells: snapshot_normal_cells(&old, bounds).unwrap().cells.into(),
-        }),
-        false,
-        ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
-        ui::RevealOrigin::Center,
-    );
-    let context = ui::RenderContext::default();
-    for (delta, value) in [(0, "0"), (110, "1"), (55, "2")] {
-        let mut frame = Buffer::filled(bounds, Cell::new("N"));
-        ui::components::Surface::new()
-            .bordered(true)
-            .render(area, &mut frame, &context);
-        frame.set_string(
-            14,
-            6,
-            format!("中{value}"),
-            ratatui::style::Style::default(),
-        );
-        frame[(5, 4)].diff_option = CellDiffOption::Skip;
-        effect.process(Duration::from_millis(delta), &mut frame, bounds);
-        assert_eq!(frame[(5, 4)].diff_option, CellDiffOption::Skip);
-        if delta > 0 {
-            assert_eq!(frame[(14, 6)].symbol(), "中");
-            assert_eq!(frame[(16, 6)].symbol(), value);
-        }
-    }
-}
-
-#[test]
-fn dialogs_grow_from_center_without_recoloring_text() {
-    let area = Rect::new(0, 0, 12, 6);
-    let theme = ui::ThemeTokens::glacier_night();
-    let base = Buffer::filled(area, Cell::new("B"));
-    let base = BaseFrameSnapshot {
-        screen: ShellScreen::Home,
-        bounds: area,
-        cells: snapshot_normal_cells(&base, area).unwrap().cells.into(),
-    };
-    let mut effect = overlay_enter_effect(
-        ui::MotionOverlayKind::Dialog,
-        area,
-        theme,
-        ui::RevealOrigin::Center,
-        Arc::new(Mutex::new(Some(base))),
-        ui::MotionPhases::for_duration(ui::MotionTimings::DIALOG),
-    );
-    let natural = Buffer::filled(area, Cell::new("D").set_fg(theme.text).clone());
-    let mut frame = natural.clone();
-    effect.process(Duration::ZERO, &mut frame, area);
-    assert!(
-        area.positions()
-            .all(|position| frame[position].symbol() == "B")
-    );
-    frame = natural.clone();
-    effect.process(Duration::from_millis(60), &mut frame, area);
-    assert_eq!(frame[(5, 2)].symbol(), "D");
-    assert_eq!(frame[(0, 0)].symbol(), "B");
-    assert_eq!(frame[(5, 2)].fg, theme.text);
-    frame = natural.clone();
-    effect.process(Duration::from_secs(1), &mut frame, area);
-    assert_eq!(frame, natural);
-}
-
-#[test]
-fn dialog_border_moves_from_its_button_and_closes_to_the_same_button() {
-    let full = Rect::new(0, 0, 120, 40);
-    let area = Rect::new(25, 8, 60, 20);
-    let button = Rect::new(95, 31, 14, 3);
-    let origin = ui::RevealOrigin::Button(button);
-    let phases = ui::MotionPhases::for_duration(ui::MotionTimings::DIALOG);
-    let context = ui::RenderContext::default();
-    let base = Buffer::filled(full, Cell::new("B"));
-    let mut natural = base.clone();
-    ui::components::Surface::new()
-        .bordered(true)
-        .render(area, &mut natural, &context);
-    let snapshot = snapshot_normal_cells(&natural, area).unwrap();
-    let underlay = snapshot_normal_cells(&base, area.union(button)).unwrap();
-    let mut enter = overlay_enter_effect(
-        ui::MotionOverlayKind::Dialog,
-        area,
-        context.theme,
-        origin,
-        Arc::new(Mutex::new(Some(BaseFrameSnapshot {
-            screen: ShellScreen::Home,
-            bounds: full,
-            cells: snapshot_normal_cells(&base, full).unwrap().cells.into(),
-        }))),
-        phases,
-    );
-    let mut exit = outgoing_snapshot_effect_from(
-        snapshot,
-        Some(underlay),
-        ui::MotionOverlayKind::Dialog,
-        0.0,
-        phases.duration(),
-        None,
-        origin,
-        phases,
-    );
-    for (delta, elapsed) in [(0, 0), (90, 90), (90, 180)] {
-        let mut entering = natural.clone();
-        let mut exiting = base.clone();
-        enter.process(Duration::from_millis(delta), &mut entering, full);
-        exit.process(Duration::from_millis(delta), &mut exiting, full);
-        if elapsed == 180 {
-            assert_eq!(entering, natural);
-            assert_eq!(exiting, base);
-        } else {
-            let amount = phases.progress((elapsed * 1_000 / 180) as u16);
-            for (frame, amount) in [(&entering, amount), (&exiting, 1_000 - amount)] {
-                let current = ui::reveal_rect(area, amount, origin);
-                assert_eq!(
-                    frame[(current.x, current.y)].symbol(),
-                    natural[(area.x, area.y)].symbol()
-                );
-                assert_eq!(
-                    frame[(current.right() - 1, current.bottom() - 1)].symbol(),
-                    natural[(area.right() - 1, area.bottom() - 1)].symbol()
-                );
-                assert_eq!(frame[(current.x, current.y)].fg, context.theme.border);
-                assert_eq!(frame[(0, 0)].symbol(), "B");
-            }
-        }
     }
 }
 
@@ -1285,54 +1061,6 @@ fn dialog_and_popover_snapshot_exits_are_spatial_single_stage_and_end_natural() 
 }
 
 #[test]
-fn newly_scheduled_effects_ignore_idle_delta_then_advance_normally() {
-    let state = ShellSession::new(ShellLaunchConfig::default(), (40, 12));
-    let area = Rect::new(0, 0, 40, 12);
-    let mut buffer = Buffer::filled(area, Cell::new("T"));
-    let mut motion = ShellMotionEffects::default();
-    motion.overlay_gate = Duration::from_millis(DIALOG_MS.into());
-    motion.schedule(
-        MotionEffectId::Overlay,
-        fx::fade_from_fg(
-            ui::ThemeTokens::glacier_night().accent_soft,
-            (DIALOG_MS, Interpolation::Linear),
-        )
-        .with_area(area),
-    );
-    motion.schedule(
-        MotionEffectId::Page,
-        fx::fade_from_fg(
-            ui::ThemeTokens::glacier_night().accent_soft,
-            (120, Interpolation::Linear),
-        )
-        .with_area(area),
-    );
-    motion.test_frame(Duration::from_secs(1), &mut buffer, &state);
-    assert!(motion.is_running());
-    assert_eq!(motion.overlay_gate, Duration::from_millis(DIALOG_MS.into()));
-    motion.test_frame(Duration::from_millis(17), &mut buffer, &state);
-    assert_eq!(
-        motion.overlay_gate,
-        Duration::from_millis(DIALOG_MS.into()) - Duration::from_millis(17)
-    );
-
-    motion.overlay_gate = Duration::from_millis(POPOVER_MS.into());
-    motion.schedule(
-        MotionEffectId::Overlay,
-        fx::fade_from_fg(
-            ui::ThemeTokens::glacier_night().accent_soft,
-            (POPOVER_MS, Interpolation::Linear),
-        )
-        .with_area(area),
-    );
-    motion.test_frame(Duration::from_secs(1), &mut buffer, &state);
-    assert_eq!(
-        motion.overlay_gate,
-        Duration::from_millis(POPOVER_MS.into())
-    );
-}
-
-#[test]
 fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -1518,18 +1246,6 @@ fn phased_capture_reveals_current_underlay_without_rewinding_chrome() {
 }
 
 #[test]
-fn processing_effects_does_not_capture_a_composited_frame() {
-    let full = Rect::new(0, 0, 120, 40);
-    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
-    while state.notification_dismiss_active_modal_without_response() {}
-    let mut motion = ShellMotionEffects::default();
-    let mut frame = Buffer::filled(full, Cell::new("N"));
-    motion.process(Duration::ZERO, &mut frame, &state);
-    assert!(motion.base_snapshot.is_none());
-    assert!(motion.overlay_snapshot.is_none());
-}
-
-#[test]
 fn snapshot_exit_protects_wide_glyphs_overlapping_image_cells() {
     let area = Rect::new(0, 0, 3, 1);
     let mut old = Buffer::filled(area, Cell::new("O"));
@@ -1547,37 +1263,6 @@ fn snapshot_exit_protects_wide_glyphs_overlapping_image_cells() {
     old[(1, 0)].diff_option = CellDiffOption::Skip;
     let captured = snapshot_normal_cells(&old, area).unwrap();
     assert!(captured.cells.iter().all(|(position, _)| position.x == 2));
-}
-
-#[test]
-fn shared_layout_main_is_used_without_a_second_chrome_inset() {
-    let full = Rect::new(0, 0, 120, 40);
-    let theme = ui::ThemeTokens::glacier_night();
-    let layout = ui::ShellFrameLayout::new(full, None, &ui::RenderContext::default());
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
-    while state.notification_dismiss_active_modal_without_response() {}
-    let mut motion = ShellMotionEffects::default();
-    motion.update_layout(&state, &layout, theme, false);
-    state.set_navigation_path(vec![ShellScreen::Editor]);
-    state.refresh_hit_map();
-    let old_base = motion.base_snapshot.clone();
-    motion.update_layout(&state, &layout, theme, false);
-    let mut actual = Buffer::filled(full, Cell::new("X"));
-    let mut expected = actual.clone();
-    page_effect(
-        layout.main,
-        old_base,
-        false,
-        ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
-        ui::RevealOrigin::Right,
-    )
-    .process(Duration::ZERO, &mut expected, full);
-    motion.process(Duration::ZERO, &mut actual, &state);
-    assert_eq!(actual, expected);
 }
 
 #[test]

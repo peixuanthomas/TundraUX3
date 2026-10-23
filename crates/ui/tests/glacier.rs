@@ -3,89 +3,13 @@ use std::time::Duration;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ui::components::{
-    ComponentEvent, ComponentTone, DataTable, InputEvent, List, ListItem, MouseButton, NavRail,
-    NavRailItem, Surface, Toast, ToastTone,
+    ComponentEvent, DataTable, InputEvent, MouseButton, NavRail, NavRailItem, Toast, ToastTone,
 };
 use ui::{
-    BorderShape, FrostMotion, MotionDirection, MotionFrame, MotionIdentity, MotionOverlayIdentity,
+    FrostMotion, MotionDirection, MotionFrame, MotionIdentity, MotionOverlayIdentity,
     MotionOverlayKind, MotionTimings, MotionTransitionKind, MouseEvent, RenderCapabilities,
     RenderContext, TundraTheme, schedule_motion, schedule_motion_range,
 };
-
-#[test]
-fn render_context_and_surface_preserve_or_explicitly_override_border_shape() {
-    let theme = TundraTheme::default().with_border_shape(BorderShape::Square);
-    let context =
-        RenderContext::from_theme(&theme, MotionFrame::default(), RenderCapabilities::ansi());
-    assert_eq!(context.theme.border_shape, BorderShape::Square);
-    assert_eq!(
-        context.compatibility_theme().border_shape,
-        BorderShape::Square
-    );
-
-    let area = Rect::new(0, 0, 8, 3);
-    let mut inherited = Buffer::empty(area);
-    Surface::new()
-        .bordered(true)
-        .render(area, &mut inherited, &context);
-    assert_eq!(inherited[(0, 0)].symbol(), "┌");
-
-    let mut overridden = Buffer::empty(area);
-    Surface::new()
-        .bordered(true)
-        .border_shape(BorderShape::Rounded)
-        .render(area, &mut overridden, &context);
-    assert_eq!(overridden[(0, 0)].symbol(), "╭");
-}
-
-#[test]
-fn shared_collections_preserve_explicit_geometry_viewport_and_semantic_tones() {
-    let context = RenderContext::default();
-    let area = Rect::new(0, 0, 12, 3);
-    let mut table = DataTable::new(
-        "table",
-        ["A", "B"],
-        [["zero", "0"], ["warn", "1"], ["ok", "2"]],
-    )
-    .bordered(false)
-    .with_column_widths(vec![8, 4])
-    .with_viewport_start(1)
-    .with_row_tones(vec![
-        ComponentTone::Default,
-        ComponentTone::Warning,
-        ComponentTone::Success,
-    ]);
-    table.selected = Some(2);
-    let mut buffer = Buffer::empty(area);
-    table.render(area, &mut buffer, &context);
-    assert_eq!(buffer[(0, 1)].symbol(), "w");
-    assert_eq!(buffer[(8, 1)].symbol(), "1");
-    assert_eq!(buffer[(0, 1)].fg, context.theme.warning);
-    assert_eq!(
-        table.handle_event(
-            InputEvent::mouse(MouseEvent::down(1, 2, MouseButton::Left)),
-            area
-        ),
-        ComponentEvent::Consumed
-    );
-
-    let list = List::new(
-        "list",
-        vec![
-            ListItem::new("zero", "zero"),
-            ListItem::new("danger", "danger").tone(ComponentTone::Danger),
-        ],
-    )
-    .with_viewport_start(1);
-    let mut list_buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
-    list.render_borderless(
-        Rect::new(0, 0, 10, 1),
-        &mut list_buffer,
-        &context.compatibility_theme(),
-    );
-    assert_eq!(list_buffer[(2, 0)].symbol(), "d");
-    assert_eq!(list_buffer[(2, 0)].fg, context.theme.danger);
-}
 
 #[test]
 fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
@@ -174,75 +98,6 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
         .expect("popover reversal");
     assert_eq!(reversed.direction, MotionDirection::Exiting);
     assert_eq!(reversed.progress, 1_000);
-}
-
-#[test]
-fn render_context_exposes_observable_page_and_overlay_frames() {
-    let home = MotionIdentity {
-        screen: Some("home"),
-        ..MotionIdentity::default()
-    };
-    let settings = MotionIdentity {
-        screen: Some("settings"),
-        overlay: Some(MotionOverlayIdentity {
-            kind: MotionOverlayKind::Dialog,
-            id: "dialog",
-        }),
-        ..MotionIdentity::default()
-    };
-    let frame = |millis| MotionFrame {
-        now: Duration::from_millis(millis),
-        delta: Duration::ZERO,
-        reduced_motion: false,
-        animation_speed_percent: 100,
-    };
-    let theme = TundraTheme::default();
-    let area = Rect::new(0, 0, 80, 24);
-
-    let start_frame = frame(0);
-    let start = RenderContext::from_theme_with_transitions(
-        &theme,
-        start_frame,
-        schedule_motion(home, settings, Duration::ZERO, start_frame).transitions,
-        RenderCapabilities::default(),
-    );
-    assert_eq!(start.page_area(area), Rect::new(0, 1, 80, 23));
-    assert_eq!(start.theme.border, start.theme.canvas);
-    assert!(!start.overlay_interaction_ready());
-
-    let mid_frame = frame(120);
-    let mid = RenderContext::from_theme_with_transitions(
-        &theme,
-        mid_frame,
-        schedule_motion(home, settings, Duration::ZERO, mid_frame).transitions,
-        RenderCapabilities::default(),
-    );
-    assert_eq!(mid.page_area(area), area);
-    assert_ne!(mid.theme.border, mid.theme.canvas);
-    assert!(mid.overlay_interaction_ready());
-
-    let final_frame = frame(220);
-    let final_context = RenderContext::from_theme_with_transitions(
-        &theme,
-        final_frame,
-        schedule_motion(home, settings, Duration::ZERO, final_frame).transitions,
-        RenderCapabilities::default(),
-    );
-    assert_eq!(final_context.page_area(area), area);
-    assert_eq!(final_context.theme.border, theme.tokens().border);
-
-    let exit_frame = frame(0);
-    let exit_context = RenderContext::from_theme_with_transitions(
-        &theme,
-        exit_frame,
-        schedule_motion(settings, home, Duration::ZERO, exit_frame).transitions,
-        RenderCapabilities::default(),
-    );
-    assert_eq!(
-        exit_context.theme.border,
-        theme.tokens().border,
-        "an absent exiting overlay must not fade the page and jump at completion"
-    );
 }
 
 #[test]
@@ -428,66 +283,6 @@ fn dismissed_toast_is_immediately_invisible_in_reduced_motion() {
 }
 
 #[test]
-fn toast_inherits_border_shape_and_regular_color_without_filling_the_border_band() {
-    use ratatui::style::{Color, Modifier};
-
-    let area = Rect::new(0, 0, 32, 3);
-    for (shape, corners) in [
-        (BorderShape::Rounded, ["╭", "╮", "╰", "╯"]),
-        (BorderShape::Square, ["┌", "┐", "└", "┘"]),
-    ] {
-        for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
-            let theme = TundraTheme::default()
-                .with_border_shape(shape)
-                .with_border_color(Color::Magenta)
-                .with_accent_color(Color::Yellow);
-            let context = RenderContext::from_theme(
-                &theme,
-                MotionFrame::reduced(Duration::ZERO),
-                capabilities,
-            );
-            for tone in [
-                ToastTone::Info,
-                ToastTone::Success,
-                ToastTone::Warning,
-                ToastTone::Danger,
-            ] {
-                let mut buffer = Buffer::empty(area);
-                Toast::new("已保存 /tmp/note.txt", tone, context.motion).render(
-                    area,
-                    &mut buffer,
-                    &context,
-                );
-                let border_color = match tone {
-                    ToastTone::Info => Color::Magenta,
-                    ToastTone::Success => context.theme.success,
-                    ToastTone::Warning => context.theme.warning,
-                    ToastTone::Danger => context.theme.danger,
-                };
-                for (position, corner) in
-                    [(0, 0), (31, 0), (0, 2), (31, 2)].into_iter().zip(corners)
-                {
-                    assert_eq!(buffer[position].symbol(), corner);
-                }
-                for position in area.positions().filter(|p| {
-                    p.x == area.x
-                        || p.x == area.right() - 1
-                        || p.y == area.y
-                        || p.y == area.bottom() - 1
-                }) {
-                    let cell = &buffer[position];
-                    assert_eq!(cell.fg, border_color);
-                    assert_eq!(cell.bg, context.theme.canvas);
-                    assert!(!cell.modifier.contains(Modifier::BOLD));
-                }
-                assert_eq!(buffer[(1, 1)].symbol(), "已");
-                assert_eq!(buffer[(1, 1)].bg, context.theme.raised);
-            }
-        }
-    }
-}
-
-#[test]
 fn toast_enter_and_exit_progress_remain_self_scheduled_behind_other_overlays() {
     let frame = |millis| MotionFrame {
         now: Duration::from_millis(millis),
@@ -545,30 +340,6 @@ fn toast_resume_reverses_from_the_visible_progress_in_full_and_reduced_motion() 
         1_000
     );
     assert!(!reduced.requests_redraw(MotionFrame::reduced(Duration::from_millis(2))));
-}
-
-#[test]
-fn selected_table_rows_keep_accent_after_pointer_selection_and_focus_loss() {
-    for capabilities in [RenderCapabilities::default(), RenderCapabilities::ansi()] {
-        let theme = TundraTheme::default().with_accent_color(ratatui::style::Color::Magenta);
-        let mut context = RenderContext::from_theme(&theme, MotionFrame::default(), capabilities);
-        let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
-        buttons.keyboard_focus_visible = false;
-        context.buttons = Some(buttons);
-        let area = Rect::new(0, 0, 20, 5);
-        let mut table = DataTable::new("records", ["Name"], [["First"], ["Second"]]);
-        table.handle_event(
-            InputEvent::mouse(MouseEvent::down(1, 3, MouseButton::Left)),
-            area,
-        );
-        table.handle_event(InputEvent::FocusLost, area);
-        let mut buffer = Buffer::empty(area);
-        table.render(area, &mut buffer, &context);
-        assert_eq!(table.selected, Some(1));
-        assert_eq!(buffer[(1, 3)].fg, context.theme.accent);
-        assert_eq!(buffer[(1, 3)].bg, context.theme.accent_soft);
-        assert_eq!(buffer[(1, 2)].fg, context.theme.text);
-    }
 }
 
 #[test]

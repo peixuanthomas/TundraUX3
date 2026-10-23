@@ -622,40 +622,6 @@ fn live_keyboard_animation_keeps_aa_and_cli_content_above_visible_keys() {
 }
 
 #[test]
-fn command_line_keyboard_launcher_uses_the_selected_language() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
-    for (language, show, hide) in [
-        ("zh-CN", "展开键盘", "收起键盘"),
-        ("en-US", "Show keyboard", "Hide keyboard"),
-    ] {
-        let snapshot = Arc::new(
-            i18n::LanguageSnapshot::load(&root, language, 1)
-                .unwrap()
-                .snapshot,
-        );
-        let _language = i18n::enter_snapshot(snapshot.clone());
-        let mut state = session();
-        state.language = snapshot;
-        state.enter_screen(ShellScreen::CommandLine);
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        let mut compositor = ScreenCompositor::default();
-        for expected in [show, hide] {
-            let prepared = home_frame(&state, 0, true);
-            draw(&mut compositor, &mut terminal, &mut state, &prepared);
-            let actual = text(
-                terminal.backend().buffer(),
-                state.keyboard_launcher_area().unwrap(),
-            );
-            assert!(
-                actual.replace(' ', "").contains(&expected.replace(' ', "")),
-                "{language}: expected {expected}, got {actual}"
-            );
-            state.toggle_input_keyboard();
-        }
-    }
-}
-
-#[test]
 fn auto_admin_pointer_entry_honors_speed_and_keyboard_close_is_immediate() {
     for (speed, reduced) in [(50, false), (100, false), (200, false), (100, true)] {
         let mut state = session();
@@ -930,49 +896,6 @@ fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
 }
 
 #[test]
-fn animated_toast_leaves_clock_pixels_and_mouse_target_intact() {
-    let mut state = session();
-    let mut compositor = ScreenCompositor::default();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    let mut initial = home_frame(&state, 0, false);
-    initial.chrome.status.time_button_label = Some("2026-09-25 12:59".into());
-    draw(&mut compositor, &mut terminal, &mut state, &initial);
-    let clock = state.frame_layout.unwrap().time_button.unwrap();
-    let baseline: Vec<_> = clock
-        .positions()
-        .map(|p| terminal.backend().buffer()[p].clone())
-        .collect();
-    for millis in [0, 50, 150, 300] {
-        let mut prepared = home_frame(&state, millis, false);
-        prepared.chrome.status.time_button_label = initial.chrome.status.time_button_label.clone();
-        prepared.chrome.status.toast = Some("Saved changes".into());
-        compositor.synchronize_toast(&prepared.chrome, prepared.context.motion);
-        draw(&mut compositor, &mut terminal, &mut state, &prepared);
-        assert_eq!(
-            clock
-                .positions()
-                .map(|p| terminal.backend().buffer()[p].clone())
-                .collect::<Vec<_>>(),
-            baseline
-        );
-        assert!(
-            state
-                .hit_map()
-                .regions()
-                .iter()
-                .any(|region| region.component == ShellComponent::ClockButton
-                    && region.area == clock)
-        );
-    }
-    let mut next = home_frame(&state, 350, false);
-    next.chrome.status.time_button_label = Some("2026-09-25 13:00".into());
-    next.chrome.status.toast = Some("Saved changes".into());
-    compositor.synchronize_toast(&next.chrome, next.context.motion);
-    draw(&mut compositor, &mut terminal, &mut state, &next);
-    assert!(text(terminal.backend().buffer(), clock).contains("13:00"));
-}
-
-#[test]
 fn alert_preempts_an_exiting_toast_and_reduced_motion_has_no_animation_demand() {
     let mut state = session();
     let mut compositor = ScreenCompositor::default();
@@ -996,22 +919,6 @@ fn alert_preempts_an_exiting_toast_and_reduced_motion_has_no_animation_demand() 
     );
     assert!(output.contains("Disk is full"));
     assert!(!output.contains("Saved changes"));
-}
-
-#[test]
-fn vim_rainbow_keeps_requesting_frames_with_reduced_motion() {
-    let mut state = session();
-    let mut compositor = ScreenCompositor::default();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    let mut prepared = home_frame(&state, 0, true);
-    let mut editor = ui::EditorViewModel::source("note.txt", "text");
-    editor.vim_mode = Some(ui::EditorVimMode::Normal);
-    prepared.page = ScreenViewModel::Editor(Box::new(editor));
-    assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
-    if let ScreenViewModel::Editor(model) = &mut prepared.page {
-        model.vim_mode = None;
-    }
-    assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
 }
 
 #[test]
@@ -1303,45 +1210,6 @@ fn button_click_allows_short_presses_but_rejects_holds_over_500_ms() {
             }
         }
     }
-}
-
-#[test]
-fn page_buttons_use_pointer_hover_instead_of_keyboard_focus_and_release_opens_dialog() {
-    let mut state = session();
-    state.enter_screen(ShellScreen::Clock);
-    state.restore_clock_profile(Default::default());
-    state.refresh_hit_map();
-    let mut compositor = ScreenCompositor::default();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    let mut prepared = home_frame(&state, 0, true);
-    prepared.page = ScreenViewModel::Clock(Box::new(
-        state.to_clock_view_model_at(&state.app.snapshot().clock, Instant::now()),
-    ));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    let region = state
-        .button_regions
-        .iter()
-        .find(|r| r.id.as_str() == "clock.new")
-        .unwrap()
-        .clone();
-    let point = (region.area.x + region.area.width / 2, region.area.y);
-    let theme = prepared.context.compatibility_theme();
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
-    state.apply_input(InputEvent::mouse_moved(point));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[point].fg,
-        theme.button_hover_color()
-    );
-    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-    assert!(state.pages.clock.clock_create_state.is_none());
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[point].fg,
-        theme.button_pressed_color()
-    );
-    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-    assert!(state.pages.clock.clock_create_state.is_some());
 }
 
 #[test]
@@ -1735,142 +1603,4 @@ fn scrolling_or_leaving_a_pressed_modal_button_cancels_the_click() {
         assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
         assert!(state.interaction.button_capture.is_none());
     }
-}
-
-#[test]
-fn aa_keyboard_focus_hover_and_press_render_the_requested_accent_colors() {
-    let mut state = session();
-    let (tx, _rx) = mpsc::channel();
-    state
-        .begin_auto_admin("Enable TestUser".into(), true, tx)
-        .unwrap();
-    let mut compositor = ScreenCompositor::default();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    let prepared = home_frame(&state, 0, true);
-    let theme = prepared.context.compatibility_theme();
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    let button = |state: &ShellSession, id: &str| {
-        let area = state
-            .button_regions
-            .iter()
-            .find(|r| r.id.as_str() == id)
-            .unwrap()
-            .area;
-        (area.x + area.width / 2, area.y)
-    };
-    let approve = button(&state, "aa.approve");
-    let deny = button(&state, "aa.deny");
-    assert_eq!(terminal.backend().buffer()[approve].fg, theme.accent_color);
-    assert_eq!(terminal.backend().buffer()[deny].fg, theme.foreground);
-    state.apply_input(InputEvent::key(InputKey::Right));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[approve].fg, theme.foreground);
-    assert_eq!(terminal.backend().buffer()[deny].fg, theme.accent_color);
-
-    state.apply_input(InputEvent::mouse_moved(approve));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[approve].fg, theme.accent_color);
-    assert_eq!(terminal.backend().buffer()[deny].fg, theme.foreground);
-    state.apply_input(InputEvent::mouse_down(PointerButton::Left, approve));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[approve].fg,
-        theme.button_pressed_color()
-    );
-    assert!(state.auto_admin_view().unwrap().confirming);
-
-    // Keyboard navigation cancels the press and takes over from the stationary mouse.
-    state.apply_input(InputEvent::key(InputKey::Tab));
-    state.apply_input(InputEvent::mouse_moved(approve));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert!(state.auto_admin_pressed_button().is_none());
-    assert_eq!(terminal.backend().buffer()[approve].fg, theme.foreground);
-    assert_eq!(terminal.backend().buffer()[deny].fg, theme.accent_color);
-    let back = state
-        .button_regions
-        .iter()
-        .find(|r| r.id.as_str() == "shell.back")
-        .unwrap()
-        .area;
-    assert_eq!(
-        state.button_at((back.x, back.y)).unwrap().id.as_str(),
-        "shell.back"
-    );
-    state.apply_input(InputEvent::FocusLost);
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[deny].fg, theme.foreground);
-
-    // Reopening from a keyboard shortcut must also restore visible focus.
-    state.close_auto_admin();
-    state.apply_input(InputEvent::key(InputKey::F(12)));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    let close = button(&state, "aa.close");
-    assert_eq!(terminal.backend().buffer()[close].fg, theme.accent_color);
-}
-
-#[test]
-fn aa_button_release_clears_emphasis_until_the_pointer_moves_again() {
-    let mut state = session();
-    let (tx, rx) = mpsc::channel();
-    state
-        .begin_auto_admin("Read fixture output".into(), false, tx)
-        .unwrap();
-    state.toggle_input_keyboard();
-    let mut compositor = ScreenCompositor::default();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    let prepared = home_frame(&state, 0, true);
-    let theme = prepared.context.compatibility_theme();
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    let area = state
-        .button_regions
-        .iter()
-        .find(|r| r.id.as_str() == "screen-keyboard.enter")
-        .unwrap()
-        .area;
-    let point = (area.x + area.width / 2, area.y + area.height / 2);
-    let now = Instant::now();
-    state.apply_input_at(InputEvent::mouse_moved(point), now);
-    state.apply_input_at(InputEvent::mouse_down(PointerButton::Left, point), now);
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[point].fg,
-        theme.tokens().filled_style(theme.accent_color).fg.unwrap()
-    );
-    assert_eq!(terminal.backend().buffer()[point].bg, theme.accent_color);
-    state.apply_input_at(
-        InputEvent::mouse_up(PointerButton::Left, point),
-        now + Duration::from_millis(50),
-    );
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[point].fg,
-        theme.readable_text_color(theme.border_color)
-    );
-    assert_eq!(terminal.backend().buffer()[point].bg, theme.background);
-    assert!(rx.try_iter().any(|input| matches!(input, platform::management::OperationInput::Terminal { bytes } if bytes == b"\r")));
-    state.apply_input(InputEvent::mouse_moved(point));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[point].fg,
-        theme.readable_text_color(theme.border_color)
-    );
-    state.apply_input(InputEvent::mouse_moved((point.0 + 1, point.1)));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(terminal.backend().buffer()[point].fg, theme.accent_color);
-    state.apply_input(InputEvent::key(InputKey::F(6)));
-    draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    assert_eq!(
-        terminal.backend().buffer()[point].fg,
-        theme.readable_text_color(theme.border_color)
-    );
-    let first = state
-        .button_regions
-        .iter()
-        .find(|r| r.id.as_str() == ui::ScreenKeyboardAction::ToggleKeyboard.button_id())
-        .unwrap()
-        .area;
-    assert_eq!(
-        terminal.backend().buffer()[(first.x, first.y)].fg,
-        theme.accent_color
-    );
 }

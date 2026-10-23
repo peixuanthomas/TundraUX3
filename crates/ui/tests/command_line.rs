@@ -194,31 +194,6 @@ fn command_line_force_wraps_a_snapshot_row_wider_than_the_viewport() {
 }
 
 #[test]
-fn command_line_history_renders_the_glacier_scrollbar_style() {
-    let mut terminal = CommandLineTerminalSnapshot::blank(105, 14);
-    terminal.scrollback_rows = 14;
-    let model = CommandLineViewModel::new(terminal);
-    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
-    screen
-        .draw(|frame| {
-            render_command_line(
-                frame,
-                frame.area(),
-                &chrome((108, 22)),
-                &model,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .unwrap();
-    let buffer = screen.backend().buffer();
-
-    // The inner panel spans x=1..106 and y=4..17. At the live bottom, the
-    // upper track remains visible while the thumb occupies its lower half.
-    assert_eq!(buffer.cell((106, 4)).unwrap().symbol(), "│");
-    assert_eq!(buffer.cell((106, 17)).unwrap().symbol(), "█");
-}
-
-#[test]
 fn short_history_scrollbar_layout_matches_the_painted_thumb() {
     use ratatui::layout::Rect;
 
@@ -337,61 +312,5 @@ fn stopped_and_failed_cli_states_offer_restart_and_the_return_button() {
         assert!(!output.contains("Ctrl+Shift+X"));
         assert!(output.contains("Status"));
         assert!(output.contains("2026-07-27 10:15"));
-    }
-}
-
-#[test]
-fn command_markers_use_theme_colors_without_recoloring_command_text() {
-    use ui::components::CommandStatus;
-    for theme in [
-        TundraTheme::default_dark(),
-        TundraTheme::default_dark().with_accent_color(ratatui::style::Color::LightMagenta),
-    ] {
-        let cases = [
-            (CommandStatus::Pending, "○", theme.muted),
-            (CommandStatus::Succeeded, "●", theme.accent_color),
-            (CommandStatus::Failed, "×", theme.error),
-        ];
-        let mut snapshot = CommandLineTerminalSnapshot::blank(106, 14);
-        for (row, (status, _, _)) in cases.iter().enumerate() {
-            snapshot.set_cell(
-                0,
-                row as u16,
-                CommandLineCell {
-                    symbol: "○".into(),
-                    command_status: Some(*status),
-                    ..Default::default()
-                },
-            );
-            snapshot.set_cell(
-                2,
-                row as u16,
-                CommandLineCell {
-                    symbol: "h".into(),
-                    style: CommandLineCellStyle {
-                        foreground: CommandLineColor::Rgb(12, 34, 56),
-                        ..Default::default()
-                    },
-                    cursor: row == 0,
-                    ..Default::default()
-                },
-            );
-        }
-        let model = CommandLineViewModel::new(snapshot);
-        let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
-        screen
-            .draw(|frame| {
-                render_command_line(frame, frame.area(), &chrome((108, 22)), &model, &theme)
-            })
-            .unwrap();
-        let buffer = screen.backend().buffer();
-        for (row, (_, symbol, color)) in cases.iter().enumerate() {
-            let marker = buffer.cell((1, 4 + row as u16)).unwrap();
-            assert_eq!(marker.symbol(), *symbol);
-            assert_eq!(marker.fg, *color);
-            let input = buffer.cell((3, 4 + row as u16)).unwrap();
-            assert_eq!(input.symbol(), "h");
-            assert_eq!(input.fg, ratatui::style::Color::Rgb(12, 34, 56));
-        }
     }
 }

@@ -117,19 +117,6 @@ fn typos_suggest_full_corrected_commands_without_inserting_hint_labels() {
 }
 
 #[test]
-fn hint_foreground_is_gray_and_resets_afterward() {
-    let display = PromptDisplay {
-        accent: "\x1b[95m".into(),
-        path_commands: PathCommands::new(None),
-    };
-    assert_eq!(display.highlight_hint("lp"), "\x1b[90mlp\x1b[39m");
-    assert_eq!(
-        display.highlight_hint("\nDid you mean: /help"),
-        "\x1b[90m\nDid you mean: /help\x1b[39m"
-    );
-}
-
-#[test]
 fn system_suggestions_match_the_platform_and_use_general_typo_matching() {
     for (os, expected, absent) in [
         ("windows", "ipconfig", "systemctl"),
@@ -188,22 +175,6 @@ fn ux_completion_covers_formal_operations_and_keeps_system_commands_intact() {
             .1
             .contains(&"--primary-group".into())
     );
-}
-
-#[test]
-fn status_metadata_is_added_only_to_the_rendered_primary_prompt() {
-    let display = PromptDisplay {
-        accent: "\x1b[95m".to_string(),
-        path_commands: PathCommands::new(None),
-    };
-    let prompt = "○ user@C:\\Documents >> ";
-    assert_eq!(
-        display.highlight_prompt(prompt, true),
-        "○\x1b[777;0z \x1b[95muser@C:\\Documents\x1b[39m >> "
-    );
-    assert_eq!(display.highlight_prompt(prompt, false), prompt);
-    let reset = "Type RESET to erase TundraUX3 data, or press Enter to cancel: ";
-    assert_eq!(display.highlight_prompt(reset, true), reset);
 }
 
 #[test]

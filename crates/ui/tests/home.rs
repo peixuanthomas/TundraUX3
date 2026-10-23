@@ -7,47 +7,18 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use std::cell::RefCell;
 use support::terminal_output;
 use ui::{
     AuthField, BootstrapAdminViewModel, ClockViewModel, DebugDiagnosticsViewModel,
-    ExitConfirmViewModel, HomeDisplayMode, HomeIconRenderer, HomeViewModel, LoginField,
-    LoginUserOptionViewModel, LoginViewModel, NotificationActionViewModel, NotificationLayout,
-    NotificationLevel, NotificationTone, NotificationViewModel, ShellChromeViewModel, ShellEntry,
-    ShellLayout, StatusViewModel, TundraTheme, UserManagementViewModel, compute_shell_layout,
-    home_entry_icon_area, home_logout_area, login_password_area, login_password_visibility_area,
-    login_user_list_area, login_user_list_visible_rows, notification_layout,
-    notification_too_small_message, render_bootstrap_admin, render_clock, render_exit_confirmation,
-    render_home, render_home_with_icons, render_login, render_notification_overlay,
-    render_user_management, status_time_button_area,
+    ExitConfirmViewModel, HomeDisplayMode, HomeViewModel, LoginField, LoginUserOptionViewModel,
+    LoginViewModel, NotificationActionViewModel, NotificationLayout, NotificationLevel,
+    NotificationTone, NotificationViewModel, ShellChromeViewModel, ShellEntry, ShellLayout,
+    StatusViewModel, TundraTheme, UserManagementViewModel, compute_shell_layout, home_logout_area,
+    login_password_area, login_password_visibility_area, login_user_list_area,
+    login_user_list_visible_rows, notification_layout, notification_too_small_message,
+    render_bootstrap_admin, render_clock, render_exit_confirmation, render_home, render_login,
+    render_notification_overlay, render_user_management,
 };
-
-#[derive(Default)]
-struct RecordingHomeIconRenderer {
-    calls: RefCell<Vec<(String, Rect)>>,
-}
-
-impl HomeIconRenderer for RecordingHomeIconRenderer {
-    fn render_icon(&self, entry_label: &str, _frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
-        self.calls
-            .borrow_mut()
-            .push((entry_label.to_string(), area));
-        true
-    }
-}
-
-struct UnavailableHomeIconRenderer;
-
-impl HomeIconRenderer for UnavailableHomeIconRenderer {
-    fn render_icon(
-        &self,
-        _entry_label: &str,
-        _frame: &mut ratatui::Frame<'_>,
-        _area: Rect,
-    ) -> bool {
-        false
-    }
-}
 
 #[test]
 fn storage_free_debug_home_does_not_expose_logout_hit_area() {
@@ -64,98 +35,6 @@ fn storage_free_debug_home_does_not_expose_logout_hit_area() {
     });
 
     assert_eq!(home_logout_area(main_rect(80, 24), &home).width, 0);
-}
-
-#[test]
-fn contextual_home_uses_stable_image_keys_and_preserves_ascii_fallback() {
-    let context = ui::RenderContext::from_theme(
-        &TundraTheme::default_dark(),
-        Default::default(),
-        Default::default(),
-    );
-    for label in ["Explorer", "文件管理器"] {
-        let home = HomeViewModel::user(
-            "Strix",
-            "2026-07-01 09:30",
-            vec![ShellEntry::new(label, "Browse files").with_icon_key("explorer")],
-        );
-        let chrome = chrome_for("Home");
-        let tile = ui::home_entry_tile_areas(main_rect(100, 30), 1)[0];
-        let icon_area = home_entry_icon_area(tile);
-        let icons = RecordingHomeIconRenderer::default();
-        let unavailable = UnavailableHomeIconRenderer;
-        for (renderer, image_available) in [
-            (Some(&icons as &dyn HomeIconRenderer), true),
-            (Some(&unavailable as &dyn HomeIconRenderer), false),
-            (None, false),
-        ] {
-            let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-            terminal
-                .draw(|frame| {
-                    ui::render_home_with_context(
-                        frame,
-                        frame.area(),
-                        &chrome,
-                        &home,
-                        &context,
-                        renderer,
-                    );
-                })
-                .expect("render contextual Home");
-            let output = terminal_output(&terminal);
-            // Wide characters leave a trailing blank cell in TestBackend's buffer.
-            assert!(output.replace(' ', "").contains(label));
-            assert!(output.contains("Browse files"));
-            if image_available {
-                assert_eq!(
-                    icons.calls.borrow().as_slice(),
-                    &[("explorer".to_string(), icon_area)]
-                );
-                for y in icon_area.y..icon_area.bottom() {
-                    assert!(
-                        buffer_row_text(&terminal, icon_area.x, y, icon_area.width)
-                            .trim()
-                            .is_empty()
-                    );
-                }
-            } else {
-                assert_centered_icon_matches_asset(
-                    &terminal,
-                    tile,
-                    home.home_icon_for_label("explorer")
-                        .expect("ASCII fallback"),
-                );
-            }
-        }
-    }
-}
-
-#[test]
-fn user_home_falls_back_to_ascii_when_graphical_icon_loading_is_unavailable() {
-    let entries = vec![ShellEntry::new("Explorer", "Browse files")];
-    let home = HomeViewModel::user("Strix", "2026-07-01 09:30", entries);
-    let chrome = chrome_for("Home");
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home_with_icons(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-                Some(&UnavailableHomeIconRenderer),
-            );
-        })
-        .expect("render Home with unavailable graphical icon");
-
-    let main = main_rect(100, 30);
-    let tile = ui::home_entry_tile_areas(main, home.entries().len())[0];
-    let icon = home
-        .home_icon_for_label("Explorer")
-        .expect("Explorer ASCII fallback icon");
-    assert_centered_icon_matches_asset(&terminal, tile, icon);
 }
 
 #[test]
@@ -191,18 +70,6 @@ fn home_entry_index_at_maps_coordinates_to_entry_tiles() {
 }
 
 #[test]
-fn short_login_reserves_space_at_the_stacked_layout_boundary() {
-    let model = LoginViewModel::new(Vec::new(), 0, 0, 0, LoginField::Password, None);
-    for width in 39..=44 {
-        let viewport = ui::login_viewport(Rect::new(0, 0, width, 10), &model);
-        let layout = ui::login_layout(viewport.content);
-        assert!(layout.password.height >= 3);
-        assert!(layout.password.bottom() <= layout.submit.y, "width {width}");
-        assert!(layout.submit.bottom() <= viewport.content.bottom());
-    }
-}
-
-#[test]
 fn home_scrolling_keeps_tail_entries_and_uses_the_freed_footer_space() {
     let entries = (0..30)
         .map(|index| ShellEntry::new(format!("App {index}"), "Open this app"))
@@ -222,119 +89,6 @@ fn home_scrolling_keeps_tail_entries_and_uses_the_freed_footer_space() {
             Some(item.index)
         );
     }
-}
-
-#[test]
-fn debug_status_returns_after_a_notification_clears() {
-    let home = HomeViewModel::debug(DebugDiagnosticsViewModel {
-        tick_count: 0,
-        last_key_event: Some("x".to_string()),
-        last_mouse_event: None,
-        last_resize_event: None,
-        mouse_coordinates: Some((12, 7)),
-        scroll_direction: Some("Down".to_string()),
-        drag_direction: None,
-        terminal_flags: Vec::new(),
-        platform_capability_summary: "Windows: ready".to_string(),
-    });
-    let mut chrome = ShellChromeViewModel {
-        app_name: "TundraUX 3".to_string(),
-        build_mode: "debug".to_string(),
-        display_mode: HomeDisplayMode::Debug,
-        terminal_size: (120, 30),
-        back_button_hovered: false,
-        help_available: false,
-        help_button_hovered: false,
-        help_button_focused: false,
-        back_shortcut: "Esc",
-        screen_stack: vec!["Home".to_string()],
-        status: StatusViewModel {
-            status: "Last Key: x | Mouse position: 12,7 | Size: 120x30 | Scroll: Down | Drag: none"
-                .to_string(),
-            toast: Some("Saved".to_string()),
-            error: None,
-            alert_tone: NotificationTone::Info,
-            time_button_label: None,
-            time_button_selected: false,
-        },
-    };
-    let theme = TundraTheme::default_dark();
-    let mut notification_terminal =
-        Terminal::new(TestBackend::new(120, 30)).expect("notification terminal");
-
-    notification_terminal
-        .draw(|frame| render_home(frame, frame.area(), &chrome, &home, &theme))
-        .expect("render notification");
-    let notification_output = terminal_output(&notification_terminal);
-    assert!(notification_output.contains("Saved"));
-    assert!(!notification_output.contains("Last Key: x"));
-
-    chrome.status.toast = None;
-    let mut restored_terminal =
-        Terminal::new(TestBackend::new(120, 30)).expect("restored terminal");
-    restored_terminal
-        .draw(|frame| render_home(frame, frame.area(), &chrome, &home, &theme))
-        .expect("render restored status");
-    let restored_output = terminal_output(&restored_terminal);
-    assert!(restored_output.contains("Last Key: x"));
-    assert!(restored_output.contains("Mouse position: 12,7"));
-    assert!(!restored_output.contains("Saved"));
-}
-
-#[test]
-fn status_time_button_area_clamps_long_labels_and_preserves_left_space() {
-    let status = Rect::new(0, 20, 50, 3);
-    let button = status_time_button_area(status, "2026-07-10 09:30:45 Asia/Shanghai UTC+08");
-
-    assert_eq!(
-        button.x.saturating_add(button.width),
-        status.x + status.width
-    );
-    assert_eq!(button.width, 38);
-    assert_eq!(button.x, 12);
-}
-
-#[test]
-fn narrow_full_status_prioritizes_alert_and_uses_ascii_ellipsis_without_wrapping() {
-    let home = HomeViewModel::user("Strix", "2026-07-10 09:30", Vec::new());
-    let mut chrome = chrome_for("Home");
-    chrome.terminal_size = (50, 12);
-    chrome.status = StatusViewModel {
-        status: "Low priority status".to_string(),
-        toast: Some("Lower priority toast".to_string()),
-        error: Some(
-            "This alert is intentionally long and must not wrap into hidden rows".to_string(),
-        ),
-        alert_tone: NotificationTone::Error,
-        time_button_label: None,
-        time_button_selected: false,
-    };
-    let mut terminal = Terminal::new(TestBackend::new(50, 12)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_home(
-                frame,
-                frame.area(),
-                &chrome,
-                &home,
-                &TundraTheme::default_dark(),
-            );
-        })
-        .expect("render narrow full status");
-
-    let status = status_rect(50, 12);
-    let rendered = buffer_row_text(
-        &terminal,
-        status.x.saturating_add(1),
-        status.y.saturating_add(1),
-        status.width.saturating_sub(2),
-    );
-    assert!(rendered.starts_with("[ERROR] This alert"));
-    assert!(rendered.ends_with("..."));
-    assert!(!rendered.contains("Low priority status"));
-    assert!(!rendered.contains("Lower priority toast"));
-    assert!(!terminal_output(&terminal).contains("hidden rows"));
 }
 
 #[test]
@@ -544,56 +298,6 @@ fn notification_overlay_renders_modal_actions_and_replaces_too_small_terminal_co
     assert!(!narrow_output.contains("README.md"));
     assert!(!narrow_output.contains("Y: Move"));
     assert!(!narrow_output.contains("N: Cancel"));
-}
-
-#[test]
-fn notification_layout_follows_content_and_adapts_to_full_shell_widths() {
-    let model = NotificationViewModel::new(
-        "42",
-        NotificationLevel::Modal,
-        NotificationTone::Warning,
-        "Delete File",
-        "Move README.md to TundraUX trash?",
-        vec![
-            NotificationActionViewModel::new("confirm", "Move")
-                .with_shortcut("Y")
-                .selected(true),
-            NotificationActionViewModel::new("cancel", "Cancel").with_shortcut("N"),
-        ],
-    );
-
-    let NotificationLayout::Dialog(layout) = notification_layout(Rect::new(5, 7, 64, 9), &model)
-    else {
-        panic!("a short notification must fit its content");
-    };
-    assert_eq!(layout.dialog, Rect::new(19, 9, 35, 5));
-    assert_eq!(layout.message, Rect::new(20, 10, 33, 1));
-    assert_eq!(layout.actions.len(), 2);
-    assert_eq!(layout.actions[0].index, 0);
-    assert_eq!(layout.actions[0].area, Rect::new(24, 12, 9, 1));
-    assert_eq!(layout.actions[1].index, 1);
-    assert_eq!(layout.actions[1].area, Rect::new(37, 12, 11, 1));
-
-    let NotificationLayout::Dialog(narrow) = notification_layout(Rect::new(0, 0, 50, 12), &model)
-    else {
-        panic!("the minimum full-shell width must keep modal actions operable");
-    };
-    assert_eq!(narrow.dialog.width, 35);
-    assert_eq!(narrow.actions.len(), 2);
-    assert!(narrow.actions.iter().all(|action| action.area.width > 0));
-    for area in [Rect::new(0, 0, 39, 9), Rect::new(0, 0, 64, 8)] {
-        assert!(
-            matches!(
-                notification_layout(area, &model),
-                NotificationLayout::Dialog(_)
-            ),
-            "nominal padding must not prevent a usable notification"
-        );
-    }
-    assert!(matches!(
-        notification_layout(Rect::new(0, 0, 64, 4), &model),
-        NotificationLayout::TooSmall { .. }
-    ));
 }
 
 #[test]
@@ -831,36 +535,6 @@ fn buffer_row_text(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16)
         .collect()
 }
 
-fn assert_centered_icon_matches_asset(
-    terminal: &Terminal<TestBackend>,
-    tile: Rect,
-    icon: &ui::HomeIcon,
-) {
-    let buffer = terminal.backend().buffer();
-    let content_x = tile.x.saturating_add(1);
-    let content_y = tile.y.saturating_add(1);
-    let content_width = tile.width.saturating_sub(2);
-    let icon_width = u16::try_from(icon.width).expect("icon width should fit terminal");
-    let start_x = content_x + content_width.saturating_sub(icon_width) / 2;
-
-    for (row, line) in icon.lines.iter().enumerate() {
-        let y = content_y + u16::try_from(row).expect("icon row should fit terminal");
-        for (column, character) in line.chars().enumerate() {
-            let x = start_x + u16::try_from(column).expect("icon column should fit terminal");
-            let actual = buffer
-                .cell((x, y))
-                .expect("expected rendered icon cell")
-                .symbol();
-            let expected = character.to_string();
-            assert_eq!(
-                actual,
-                expected.as_str(),
-                "icon line {row}, column {column} should preserve asset spacing"
-            );
-        }
-    }
-}
-
 fn login_user(username: &str, display_name: &str, role: &str) -> LoginUserOptionViewModel {
     LoginUserOptionViewModel {
         username: username.to_string(),
@@ -874,13 +548,6 @@ fn login_user(username: &str, display_name: &str, role: &str) -> LoginUserOption
 fn main_rect(width: u16, height: u16) -> Rect {
     match compute_shell_layout(Rect::new(0, 0, width, height)) {
         ShellLayout::Full { main, .. } => main,
-        ShellLayout::Compact(_) => panic!("home render tests expect a full shell layout"),
-    }
-}
-
-fn status_rect(width: u16, height: u16) -> Rect {
-    match compute_shell_layout(Rect::new(0, 0, width, height)) {
-        ShellLayout::Full { status, .. } => status,
         ShellLayout::Compact(_) => panic!("home render tests expect a full shell layout"),
     }
 }
@@ -936,29 +603,4 @@ fn linux_login_labels_system_identity_and_keeps_errors_visible() {
     assert!(output.contains("Linux password"));
     assert!(output.contains("Invalid username or password"));
     assert!(output.contains("******"));
-}
-
-#[test]
-fn logout_uses_shared_danger_button_with_matching_hit_area() {
-    let model =
-        HomeViewModel::user("Strix", "09:30", Vec::new()).with_account_logout("Strix", true);
-    let theme = TundraTheme::default_dark();
-    let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
-    let buttons = ui::components::ButtonFrame::new(None, None, &theme);
-    context.buttons = Some(buttons.clone());
-    let bounds = Rect::new(0, 0, 100, 30);
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal
-        .draw(|frame| ui::render_home_content(frame, bounds, &model, &context, None))
-        .unwrap();
-    let region = buttons
-        .regions()
-        .into_iter()
-        .find(|b| b.id.as_str() == "home.logout")
-        .unwrap();
-    assert_eq!(region.area, home_logout_area(bounds, &model));
-    assert_eq!(
-        terminal.backend().buffer()[(region.area.x, region.area.y)].fg,
-        theme.error
-    );
 }

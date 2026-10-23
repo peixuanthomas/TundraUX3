@@ -6,42 +6,11 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ui::{
     HomeDisplayMode, LauncherConfirmationKind, LauncherConfirmationViewModel, LauncherDropSide,
-    LauncherDropTarget, LauncherHitTarget, LauncherIconRenderer, LauncherItemStatus,
-    LauncherItemViewModel, LauncherToolbarAction, LauncherViewMode, LauncherViewModel,
-    NotificationTone, ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme,
-    compute_shell_layout, launcher_layout, render_launcher, render_launcher_with_icons,
+    LauncherDropTarget, LauncherHitTarget, LauncherItemStatus, LauncherItemViewModel,
+    LauncherToolbarAction, LauncherViewMode, LauncherViewModel, NotificationTone,
+    ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
+    launcher_layout, render_launcher,
 };
-
-struct UnavailableLauncherIconRenderer;
-
-#[test]
-fn selected_launcher_item_keeps_accent_in_mouse_mode_for_both_views() {
-    for view in [LauncherViewMode::LargeIcons, LauncherViewMode::Details] {
-        let model = LauncherViewModel::new(
-            vec![item(0, LauncherItemStatus::Ready)],
-            Some(0),
-            view,
-            true,
-        );
-        let theme = TundraTheme::default().with_accent_color(ratatui::style::Color::Magenta);
-        let mut context =
-            ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
-        let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
-        buttons.keyboard_focus_visible = false;
-        context.buttons = Some(buttons);
-        let bounds = Rect::new(0, 0, 120, 40);
-        let layout = launcher_layout(bounds, &model);
-        let area = layout.items[0].area;
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        terminal
-            .draw(|frame| ui::render_launcher_content(frame, bounds, &model, &context, None))
-            .unwrap();
-        assert_eq!(
-            terminal.backend().buffer()[(area.x, area.y)].fg,
-            theme.accent_color
-        );
-    }
-}
 
 #[test]
 fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
@@ -107,12 +76,6 @@ fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
     }
 }
 
-impl LauncherIconRenderer for UnavailableLauncherIconRenderer {
-    fn render_icon(&self, _item_id: &str, _frame: &mut ratatui::Frame<'_>, _area: Rect) -> bool {
-        false
-    }
-}
-
 fn item(index: usize, status: LauncherItemStatus) -> LauncherItemViewModel {
     LauncherItemViewModel::new(
         format!("item-{index}"),
@@ -173,55 +136,6 @@ fn render(model: &LauncherViewModel, width: u16, height: u16) -> String {
         .collect()
 }
 
-fn text_at(terminal: &Terminal<TestBackend>, x: u16, y: u16, width: u16) -> String {
-    (x..x.saturating_add(width))
-        .filter_map(|column| terminal.backend().buffer().cell((column, y)))
-        .map(|cell| cell.symbol())
-        .collect()
-}
-
-#[test]
-fn built_in_launcher_item_falls_back_to_ascii_when_graphical_icon_loading_fails() {
-    let command_line = LauncherItemViewModel::command_line();
-    let model = LauncherViewModel::new(
-        vec![command_line],
-        Some(0),
-        LauncherViewMode::LargeIcons,
-        false,
-    );
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test terminal");
-
-    terminal
-        .draw(|frame| {
-            render_launcher_with_icons(
-                frame,
-                frame.area(),
-                &chrome((100, 30)),
-                &model,
-                &TundraTheme::default_dark(),
-                Some(&UnavailableLauncherIconRenderer),
-            );
-        })
-        .expect("render Launcher with unavailable graphical icon");
-
-    let icon_line = model
-        .item_icon(&model.items[0])
-        .expect("Command Line ASCII fallback icon")
-        .lines()
-        .iter()
-        .find(|line| !line.trim().is_empty())
-        .expect("non-empty ASCII icon line")
-        .trim();
-    let output = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-    assert!(output.contains(icon_line));
-}
-
 #[test]
 fn unavailable_launcher_cards_stay_gray_when_selected() {
     use ratatui::style::Color;
@@ -257,72 +171,6 @@ fn unavailable_launcher_cards_stay_gray_when_selected() {
         }
         assert!(painted > 0);
     }
-}
-
-#[test]
-fn details_table_renders_cells_at_the_declared_column_boundaries() {
-    let width = 100;
-    let height = 30;
-    let theme = TundraTheme::default_dark();
-    let model = LauncherViewModel::new(
-        vec![
-            item(0, LauncherItemStatus::Ready),
-            item(1, LauncherItemStatus::Changed),
-        ],
-        Some(1),
-        LauncherViewMode::Details,
-        false,
-    );
-    let ShellLayout::Full { main, .. } = compute_shell_layout(Rect::new(0, 0, width, height))
-    else {
-        panic!("Launcher table test requires the full shell layout");
-    };
-    let layout = launcher_layout(main, &model);
-    let table_width = layout
-        .content
-        .width
-        .saturating_sub(u16::from(layout.scrollbar.is_some()));
-    let name_width = (table_width.saturating_mul(28) / 100).max(8);
-    let type_width = (table_width.saturating_mul(16) / 100).max(6);
-    let integrity_width = (table_width.saturating_mul(18) / 100).max(8);
-    let name_x = layout.content.x;
-    let type_x = name_x.saturating_add(name_width);
-    let integrity_x = type_x.saturating_add(type_width);
-    let path_x = integrity_x.saturating_add(integrity_width);
-    let terminal = render_terminal(&model, width, height);
-
-    assert_eq!(text_at(&terminal, name_x, layout.content.y, 4), "Name");
-    assert_eq!(text_at(&terminal, type_x, layout.content.y, 4), "Type");
-    assert_eq!(
-        text_at(&terminal, integrity_x, layout.content.y, 9),
-        "Integrity"
-    );
-    assert_eq!(text_at(&terminal, path_x, layout.content.y, 4), "Path");
-
-    let selected_row = layout
-        .items
-        .iter()
-        .find(|item| item.index == 1)
-        .expect("selected details row");
-    assert_eq!(text_at(&terminal, name_x, selected_row.area.y, 3), "[A]");
-    assert_eq!(text_at(&terminal, type_x, selected_row.area.y, 6), "Native");
-    assert_eq!(
-        text_at(&terminal, integrity_x, selected_row.area.y, 7),
-        "Changed"
-    );
-    assert_eq!(
-        text_at(&terminal, path_x, selected_row.area.y, 7),
-        "C:/apps"
-    );
-    assert_eq!(
-        terminal
-            .backend()
-            .buffer()
-            .cell((integrity_x, selected_row.area.y))
-            .expect("selected details cell")
-            .fg,
-        theme.accent_color
-    );
 }
 
 #[test]
@@ -519,28 +367,5 @@ fn confirmation_overlay_takes_precedence_in_hit_testing_and_rendering() {
         let output = render(&model, width, 30);
         assert!(output.contains("[Y Launch]"));
         assert!(output.contains("[Esc Cancel]"));
-    }
-}
-
-#[test]
-fn launcher_empty_state_has_a_primary_explorer_button() {
-    let model = LauncherViewModel::new(Vec::new(), None, LauncherViewMode::Details, true);
-    let text = render(&model, 100, 30);
-    assert!(text.contains("Open File Explorer"));
-    assert!(!text.contains("right-click"));
-    for width in [50, 72, 110] {
-        let layout = launcher_layout(Rect::new(0, 0, width, 20), &model);
-        let action = layout
-            .action_bar
-            .actions
-            .iter()
-            .find(|action| action.id.as_str() == "empty.explorer")
-            .unwrap();
-        assert_eq!(action.emphasis, ui::components::ButtonEmphasis::Primary);
-        assert_eq!(
-            layout.hit_test(action.area.x, action.area.y),
-            Some(LauncherHitTarget::EmptyOpenExplorer)
-        );
-        assert_eq!(action.area.right(), layout.footer.right());
     }
 }

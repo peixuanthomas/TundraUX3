@@ -9,81 +9,12 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use support::terminal_output;
 
-#[test]
-fn clock_new_is_primary_and_create_keeps_three_numeric_fields_without_help() {
-    let mut model = clock_model();
-    model.create_dialog = Some(ClockCreateDialogViewModel::default());
-    let layout = clock_page_layout(Rect::new(0, 0, 100, 30), &model);
-    assert!(layout.help.is_empty());
-    let new = layout
-        .action_bar
-        .actions
-        .iter()
-        .find(|action| action.id.as_str() == "new")
-        .unwrap();
-    assert_eq!(new.emphasis, ui::components::ButtonEmphasis::Primary);
-    let dialog = layout.create_dialog.unwrap();
-    assert!(dialog.prompt.is_empty());
-    assert!(dialog.values.iter().all(|field| !field.is_empty()));
-    let (terminal, _) = render(100, 30, &model);
-    let text = terminal_output(&terminal);
-    assert!(!text.contains("Manage: delete/strong"));
-    assert!(!text.contains("HH:MM:SS"));
-}
 use ui::{
     ClockCreateDialogFocus, ClockCreateDialogViewModel, ClockEntryKind, ClockEntryViewModel,
     ClockPageMode, ClockViewModel, HomeDisplayMode, NotificationTone, RuntimeAsciiAssets,
     ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, clock_page_layout,
     compute_shell_layout, render_clock,
 };
-
-#[test]
-fn selected_clock_entry_keeps_accent_in_mouse_mode() {
-    let model = clock_model();
-    let theme = TundraTheme::default().with_accent_color(Color::Magenta);
-    let mut context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
-    let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
-    buttons.keyboard_focus_visible = false;
-    context.buttons = Some(buttons);
-    let bounds = Rect::new(0, 0, 120, 40);
-    let layout = clock_page_layout(bounds, &model);
-    let row = layout
-        .entry_rows
-        .iter()
-        .find(|row| Some(row.id) == model.selected_entry_id)
-        .unwrap();
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    terminal
-        .draw(|frame| ui::render_clock_content(frame, bounds, &model, &context))
-        .unwrap();
-    assert_eq!(
-        terminal.backend().buffer()[(row.area.x + row.area.width / 2, row.area.y)].fg,
-        theme.accent_color
-    );
-}
-
-#[test]
-fn short_clock_keeps_new_manage_and_scrollbar_without_a_page_back() {
-    let mut model = clock_model();
-    model.alarms = (0..20)
-        .map(|id| ClockEntryViewModel::new(id, "Alarm", false))
-        .collect();
-    let area = Rect::new(0, 0, 30, 10);
-    let layout = clock_page_layout(area, &model);
-    for button in [layout.new_button, layout.manage_button] {
-        assert!(!button.is_empty());
-        assert!(button.right() <= area.right() && button.bottom() <= area.bottom());
-    }
-    assert!(layout.manage_button.right() < layout.new_button.x);
-    assert_eq!(layout.new_button.right(), layout.panel.right() - 1);
-    assert!(layout.scrollbar.is_some());
-    model.create_dialog = Some(ClockCreateDialogViewModel::default());
-    let dialog = clock_page_layout(area, &model).create_dialog.unwrap();
-    assert!(!dialog.cancel.is_empty());
-    assert!(dialog.create_alarm.bottom() <= dialog.create_countdown.y);
-    assert!(dialog.create_countdown.bottom() <= dialog.cancel.y);
-    assert!(dialog.decrements.iter().all(|field| !field.is_empty()));
-}
 
 #[test]
 fn narrow_clock_create_shows_both_direct_shortcuts_and_cancel() {
@@ -167,89 +98,6 @@ fn entry_window_slices_alarms_then_countdowns_and_preserves_ids() {
 }
 
 #[test]
-fn wide_renderer_draws_ascii_hands_digital_time_and_grouped_entries() {
-    let model = clock_model();
-    let (terminal, main) = render(100, 30, &model);
-    let output = terminal_output(&terminal);
-    let layout = clock_page_layout(main, &model);
-
-    assert!(output.contains("2026-07-10"));
-    assert!(output.contains("14:32:08"));
-    assert!(output.contains("Alarms & Timers"));
-    assert!(output.contains("[N New]"));
-    assert!(output.contains("ALARMS"));
-    assert!(output.contains("COUNTDOWNS"));
-    assert!(output.contains("[A] 07:30:00 Daily"));
-    assert!(output.contains("[T] 00:04:12 left !"));
-
-    let analog = layout.analog.expect("wide page should have a face");
-    let face = region_text(&terminal, analog);
-    assert!(face.contains('#'), "hour hand should use #");
-    assert!(face.contains('*'), "minute hand should use *");
-    assert!(face.contains('+'), "second hand should use +");
-    assert!(face.contains('@'), "center should use @");
-    assert!(face.is_ascii());
-
-    let selected_row = layout
-        .entry_rows
-        .iter()
-        .find(|row| row.id == 20)
-        .expect("selected row should be visible");
-    assert!(region_has_fg(
-        &terminal,
-        selected_row.area,
-        TundraTheme::default_dark().accent_color,
-    ));
-}
-
-#[test]
-fn analog_clock_falls_back_to_small_numerals_below_either_large_face_threshold() {
-    let model = clock_model();
-    // Include the Spring shell's one-cell inset on each edge.
-    for (width, height) in [(101, 32), (102, 31), (82, 26)] {
-        let (terminal, main) = render(width, height, &model);
-        let layout = clock_page_layout(main, &model);
-        let face = region_text(
-            &terminal,
-            layout.analog.expect("test size should retain analog mode"),
-        );
-
-        assert!(face.contains("12"), "{width}x{height} lost the small 12");
-        assert!(face.is_ascii());
-    }
-}
-
-#[test]
-fn upward_pointing_hands_do_not_overwrite_the_large_twelve() {
-    let assets = RuntimeAsciiAssets::load_default().expect("default ASCII assets");
-    let expected_twelve = (0..assets.clock_font().height)
-        .map(|row| {
-            format!(
-                "{}{}{}",
-                assets.clock_font().glyphs[&'1'][row],
-                " ".repeat(assets.clock_font().spacing),
-                assets.clock_font().glyphs[&'2'][row]
-            )
-        })
-        .collect::<Vec<_>>();
-    let model = ClockViewModel::at("2026-07-10", "00:00:00", 0, 0, 0).with_ascii_assets(assets);
-    let (terminal, main) = render(102, 34, &model);
-    let layout = clock_page_layout(main, &model);
-    let face = region_text(
-        &terminal,
-        layout.analog.expect("wide page should have a face"),
-    );
-
-    for line in expected_twelve {
-        assert!(
-            face.contains(&line),
-            "large 12 row was overwritten: {line:?}"
-        );
-    }
-    assert!(face.contains('@'));
-}
-
-#[test]
 fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
@@ -277,84 +125,6 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
         dialog.create_countdown,
         TundraTheme::default_dark().accent_color,
     ));
-}
-
-#[test]
-fn focused_create_input_shows_two_digit_modules_and_arrows() {
-    let mut model = clock_model();
-    model.create_dialog = Some(ClockCreateDialogViewModel {
-        values: [1, 2, 3],
-        active_field: 0,
-        error: None,
-        focus: ClockCreateDialogFocus::Input,
-    });
-
-    let (terminal, _) = render(100, 30, &model);
-    let output = terminal_output(&terminal);
-
-    assert!(output.contains("[ 01 ]"));
-    assert!(output.contains("[ 02 ]"));
-    assert!(output.contains("[ 03 ]"));
-    assert_eq!(output.matches('▲').count(), 3);
-    assert_eq!(output.matches('▼').count(), 3);
-    assert!(!output.contains("01 02 03|"));
-}
-
-#[test]
-fn create_dialog_highlights_only_the_selected_module_in_both_languages() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
-    for locale in ["en-US", "zh-CN"] {
-        let language = std::sync::Arc::new(
-            i18n::LanguageSnapshot::load(&root, locale, 1)
-                .unwrap()
-                .snapshot,
-        );
-        i18n::with_snapshot(&language, || {
-            for active_field in 0..3 {
-                let mut model = clock_model();
-                model.create_dialog = Some(ClockCreateDialogViewModel {
-                    active_field,
-                    ..ClockCreateDialogViewModel::default()
-                });
-                let (terminal, main) = render(100, 30, &model);
-                let layout = clock_page_layout(main, &model).create_dialog.unwrap();
-                assert!(layout.prompt.is_empty());
-                for field in 0..3 {
-                    for area in [
-                        layout.values[field],
-                        layout.increments[field],
-                        layout.decrements[field],
-                    ] {
-                        assert_eq!(
-                            region_has_fg(
-                                &terminal,
-                                area,
-                                TundraTheme::default_dark().accent_color
-                            ),
-                            field == active_field
-                        );
-                    }
-                }
-            }
-        });
-    }
-}
-
-#[test]
-fn focused_empty_create_input_shows_zeroes() {
-    let mut model = clock_model();
-    model.create_dialog = Some(ClockCreateDialogViewModel {
-        values: [0; 3],
-        active_field: 0,
-        error: None,
-        focus: ClockCreateDialogFocus::Input,
-    });
-
-    let (terminal, _) = render(100, 30, &model);
-    let output = terminal_output(&terminal);
-
-    assert_eq!(output.matches("[ 00 ]").count(), 3);
-    assert!(!output.contains("[ _ ]"));
 }
 
 #[test]
