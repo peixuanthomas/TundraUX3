@@ -316,6 +316,64 @@ fn pty_process_runs_inside_platform_containment() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn normally_exited_pty_cleanup_does_not_report_an_incident() {
+    use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
+
+    let root = std::env::temp_dir().join(format!(
+        "tundra-pty-normal-exit-{}-{}",
+        std::process::id(),
+        NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+        root.join("reports"),
+        root.join("fallback"),
+        root.join("data"),
+        "pty-normal-exit-test",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .unwrap();
+    let app = process
+        .register_app(AppDescriptor::new(
+            AppId::from_static("terminal.normal-exit-test"),
+            "Terminal normal exit test",
+            env!("CARGO_PKG_VERSION"),
+            AppCriticality::Optional,
+        ))
+        .unwrap();
+    let tasks = app.task_group("terminal");
+    let pty = CommandLinePty::spawn(
+        CommandLinePtyConfig {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), "exit 0".into()],
+            env: Vec::new(),
+            cwd: None,
+            columns: 80,
+            rows: 24,
+            scrollback_lines: 0,
+        },
+        &tasks,
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = pty.try_wait().unwrap() {
+            assert!(status.success);
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    pty.snapshot_after_exit();
+    assert!(process.drain_incidents().is_empty());
+    drop(tasks);
+    drop(app);
+    drop(process);
+    runtime.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(any(windows, unix))]
 #[test]
 fn watchdog_shutdown_stops_terminal_even_if_the_view_still_owns_it() {

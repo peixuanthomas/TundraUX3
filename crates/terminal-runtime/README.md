@@ -16,6 +16,8 @@ Shell 决定何时进入或交还终端，本 crate 执行具体设置；UI 只�
 
 Command Line 的输出先进入内存终端，不直接写入宿主；OSC 控制串（包括剪贴板请求）被过滤。强制退出需要清理子进程树，不能只隐藏页面。
 
+macOS 等非 Linux Unix 平台清理已退出的子终端时，将不存在的进程组视为已清理；Vim 的 `:q!`、`:wq` 和正常命令行退出不会因此触发严重错误。
+
 Windows Terminal 下的 WSL 优先使用 win32-input-mode 区分 Ctrl+Enter 与 Ctrl+J；tmux/screen 中不启用该模式。其他 Linux 终端尝试 Kitty 报告，再尝试 xterm modifyOtherKeys。不支持的终端按实际事件处理，不能猜测组合键。
 
 验证：`cargo test --locked -p terminal-runtime`。模式开关、退出恢复和输入编码还需真实 Unix PTY 或 Windows ConPTY；单元测试通过不能代替实机输入验收。

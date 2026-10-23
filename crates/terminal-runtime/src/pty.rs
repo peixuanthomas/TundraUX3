@@ -628,7 +628,12 @@ impl ProcessTreeGuard {
             if unsafe { libc::kill(-process_group, libc::SIGKILL) } == 0 {
                 Ok(())
             } else {
-                Err(io::Error::last_os_error())
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
             }
         }
     }
