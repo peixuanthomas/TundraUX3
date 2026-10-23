@@ -23,6 +23,9 @@ use watchdog::{ManagedTaskGroup, ManagedThreadHandle, TaskId, TaskSpec};
 #[cfg(target_os = "linux")]
 #[path = "process_tree_linux.rs"]
 mod process_tree_linux;
+#[cfg(target_os = "macos")]
+#[path = "process_tree_macos.rs"]
+mod process_tree_macos;
 
 #[cfg(test)]
 use ui::KeyModifiers as InputModifiers;
@@ -625,6 +628,8 @@ impl ProcessTreeGuard {
             if process_group <= 0 || process_group == std::process::id() as libc::pid_t {
                 return Err(io::Error::other("child process group is unsafe"));
             }
+            #[cfg(target_os = "macos")]
+            process_tree_macos::terminate_background_groups(process_group)?;
             if unsafe { libc::kill(-process_group, libc::SIGKILL) } == 0 {
                 Ok(())
             } else {

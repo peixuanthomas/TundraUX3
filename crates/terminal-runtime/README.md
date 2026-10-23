@@ -18,6 +18,8 @@ Command Line 的输出先进入内存终端，不直接写入宿主；OSC 控制
 
 macOS 等非 Linux Unix 平台清理已退出的子终端时，将不存在的进程组视为已清理；Vim 的 `:q!`、`:wq` 和正常命令行退出不会因此触发严重错误。
 
+macOS 关闭子终端时，使用系统进程查询先结束同一终端会话内的后台进程组，再结束 Shell 进程组；关闭一个终端不会终止其他终端的任务。
+
 Windows Terminal 下的 WSL 优先使用 win32-input-mode 区分 Ctrl+Enter 与 Ctrl+J；tmux/screen 中不启用该模式。其他 Linux 终端尝试 Kitty 报告，再尝试 xterm modifyOtherKeys。不支持的终端按实际事件处理，不能猜测组合键。
 
 验证：`cargo test --locked -p terminal-runtime`。模式开关、退出恢复和输入编码还需真实 Unix PTY 或 Windows ConPTY；单元测试通过不能代替实机输入验收。

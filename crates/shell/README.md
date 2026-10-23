@@ -95,6 +95,8 @@ flowchart LR
 
 构建时同时执行 `cargo build --locked -p shell -p cli`，否则内嵌命令行可能继续使用旧 CLI。验证使用 `cargo test --locked -p shell`；终端输入和模式恢复还需对应系统的真实 PTY 检查。
 
+macOS 可用 `TMPDIR=/private/tmp cargo test --locked -p shell -p terminal-runtime --lib` 验证子终端输入与后台任务清理，避免 `/var` 的符号链接被路径安全检查拒绝；按键字节测试统一系统 `od` 的空格格式。
+
 `src/previews/ui_test.rs` 提供无状态的 `debug ui-test` 入口：使用内置主题和英文，不读写配置、资源文件或日志；输入及终端恢复沿用现有组件和 `TerminalGuard`。六页控件清单见[调试预览](docs/previews.md#全部共享控件)。
 
 `debug test-rainbow-text` 使用同样的独立预览方式，持续展示彩虹变色文本；Esc、Ctrl+C、Enter 或退出按钮结束。它与控件预览共用鼠标按下/松开处理，关闭或发生绘制错误时由 `TerminalGuard` 恢复终端。

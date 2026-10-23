@@ -350,7 +350,7 @@ fn physical_escape_ctrl_shift_x_and_f1_reach_the_real_child_terminal() {
     #[cfg(unix)]
     let (program, args) = (
         OsString::from("/bin/sh"),
-        vec!["-c".into(), "stty raw -echo; printf 'READY_FOR_KEYS\\r\\n'; bytes=$(dd bs=1 count=2 2>/dev/null | od -An -tx1); printf 'KEY_BYTES:%s\\r\\n' \"$bytes\"; bytes=$(dd bs=1 count=3 2>/dev/null | od -An -tx1); printf 'F1_BYTES:%s\\r\\n' \"$bytes\"; sleep 60".into()],
+        vec!["-c".into(), "stty raw -echo; printf 'READY_FOR_KEYS\\r\\n'; bytes=$(dd bs=1 count=2 2>/dev/null | od -An -tx1 | tr -s ' '); printf 'KEY_BYTES:%s\\r\\n' \"$bytes\"; bytes=$(dd bs=1 count=3 2>/dev/null | od -An -tx1 | tr -s ' '); printf 'F1_BYTES:%s\\r\\n' \"$bytes\"; sleep 60".into()],
     );
     let mut host = CommandLineHost::new(fixture.app.clone());
     host.state = CommandLineHostState::Running(
