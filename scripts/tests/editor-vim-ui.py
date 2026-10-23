@@ -152,7 +152,7 @@ def main():
                 assert document.read_text() == smoke.BASE
                 print("PASS: an unpublished engine is reported without changing the document", flush=True)
                 return
-            screen_contains("F8 Return to editor")
+            screen_contains("F8 VIM mode enabled")
             screen_contains(smoke.BASE.splitlines()[0])
             print("PASS: UI navigation and F8 entered the real Vim terminal", flush=True)
 
@@ -221,11 +221,11 @@ def main():
             ui("text", "DRAFT-")
             key("esc")
             key("F8")
-            screen_contains("VIM_mode: Off")
+            screen_contains("VIM mode disabled")
             screen_contains("DRAFT-alpha")
             assert path.read_text() == smoke.BASE
             key("F8")
-            screen_contains("F8 Return to editor")
+            screen_contains("F8 VIM mode enabled")
             key("u")
             ex("write")
             expect_file(path, smoke.BASE)

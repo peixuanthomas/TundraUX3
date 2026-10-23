@@ -533,7 +533,7 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
     let menu_height = u16::from(inner.height > 0);
     if let Some(terminal) = &model.vim_terminal {
         let canvas = editor_vim_terminal_area(area);
-        let width = to_u16(terminal_width(&i18n::tr!("ui-editor-vim-return"))).min(inner.width);
+        let width = to_u16(terminal_width(&i18n::tr!("ui-editor-vim-enabled"))).min(inner.width);
         return EditorLayout {
             vim_toggle: Rect::new(
                 inner.right().saturating_sub(width),
@@ -1633,8 +1633,7 @@ pub(super) fn mode_label(mode: EditorMode) -> String {
 pub(super) fn vim_mode_label(mode: Option<EditorVimMode>) -> String {
     i18n::tr!(match mode {
         None => "ui-editor-vim-off",
-        Some(EditorVimMode::Normal) => "ui-editor-vim-normal",
-        Some(EditorVimMode::Insert) => "ui-editor-vim-insert",
+        Some(_) => "ui-editor-vim-enabled",
     })
 }
 

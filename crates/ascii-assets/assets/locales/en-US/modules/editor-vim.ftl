@@ -1,8 +1,6 @@
-ui-editor-vim-toggle = VIM_mode
-ui-editor-vim-return = F8 Return to editor
-ui-editor-vim-off = { " F8 VIM_mode: Off " }
-ui-editor-vim-normal = { " F8 VIM_mode: Normal " }
-ui-editor-vim-insert = { " F8 VIM_mode: Insert " }
+ui-editor-vim-toggle = VIM mode
+ui-editor-vim-enabled = { " F8 VIM mode enabled " }
+ui-editor-vim-off = { " F8 VIM mode disabled " }
 ui-editor-vim-help = Vim help
 vim-install-title = Install Vim engine
 vim-install-checking = Looking for the matching prebuilt engine…

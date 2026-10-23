@@ -94,7 +94,7 @@ fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
         .unwrap();
     let text = support::terminal_output(&terminal);
     for visible in [
-        "F8 Return to editor",
+        "F8 VIM mode enabled",
         "Vim buffer",
         "-- INSERT --",
         "E486: Pattern not found",
@@ -199,7 +199,7 @@ fn vim_buttons_keep_real_time_rainbow_under_all_motion_and_pointer_settings() {
                 let text = support::terminal_output(&terminal);
                 if native {
                     let mut column = toggle.x;
-                    for character in i18n::tr!("ui-editor-vim-return").chars() {
+                    for character in i18n::tr!("ui-editor-vim-enabled").chars() {
                         let symbol = character.to_string();
                         assert_eq!(
                             terminal.backend().buffer()[(column, toggle.y)].symbol(),
@@ -209,7 +209,7 @@ fn vim_buttons_keep_real_time_rainbow_under_all_motion_and_pointer_settings() {
                     }
                     assert!(!text.contains("host contents stay hidden"));
                 } else {
-                    assert!(text.contains("VIM_mode"));
+                    assert!(text.contains(i18n::tr!("ui-editor-vim-enabled").trim()));
                 }
                 terminal.backend().buffer().clone()
             };
@@ -294,7 +294,13 @@ fn vim_toggle_is_localized_visible_and_uses_shared_pointer_feedback() {
                     .unwrap();
                 let buffer = terminal.backend().buffer();
                 let text = support::terminal_output(&terminal);
-                assert!(text.contains("VIM_mode"));
+                let expected = match (locale, mode.is_some()) {
+                    ("zh-CN", true) => "F8 VIM模式已启用",
+                    ("zh-CN", false) => "F8 VIM模式未启用",
+                    (_, true) => "F8 VIM mode enabled",
+                    (_, false) => "F8 VIM mode disabled",
+                };
+                assert!(text.contains(expected), "{expected}: {text}");
                 assert!(
                     !text.contains("h/j/k/l"),
                     "Vim help stays hidden until requested"

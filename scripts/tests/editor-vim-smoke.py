@@ -46,7 +46,7 @@ SPECIAL_KEYS = {
     "<F8>": F8,
 }
 BASE = "alpha beta gamma\nsecond line\nthird line\n"
-VIM_READY = "F8 Return to editor"
+VIM_READY = "F8 VIM mode enabled"
 
 
 class ShellPty:
@@ -329,7 +329,7 @@ def main():
 
             path = open_file("toggle-dirty")
             shell.keys("gg0iDRAFT-<Esc><F8>")
-            shell.wait("VIM_mode: Off")
+            shell.wait("VIM mode disabled")
             shell.wait("DRAFT-alpha")
             assert path.read_text() == BASE, "F8 must not save the user's document"
             shell.send(F8)
@@ -345,7 +345,7 @@ def main():
             target.write_text("second buffer\n")
             shell.ex("hide edit " + vim_path(target))
             shell.keys("gg0iSECOND-<Esc><F8>")
-            shell.wait("VIM_mode: Off")
+            shell.wait("VIM mode disabled")
             shell.wait("SECOND-second buffer")
             assert source.read_text() == BASE
             assert target.read_text() == "second buffer\n"
@@ -367,7 +367,7 @@ def main():
             shell.ex("hide edit " + vim_path(survivor))
             shell.ex("bdelete! " + vim_path(removed))
             shell.send(F8)
-            shell.wait("VIM_mode: Off")
+            shell.wait("VIM mode disabled")
             shell.wait("surviving buffer")
             assert removed.read_text() == BASE
             shell.send(F8)
@@ -381,7 +381,7 @@ def main():
 
             path = open_file("gui-undo")
             shell.keys('gg0qcxqugg0"byygg0iVIM-<Esc><F8>')
-            shell.wait("VIM_mode: Off")
+            shell.wait("VIM mode disabled")
             shell.send(b"\x01")
             shell.send(b"\x1b[200~GUI-only line\n\x1b[201~")
             shell.send(F8)
@@ -421,7 +421,7 @@ def main():
             path.write_text(BASE)
             editor_from_explorer(path)
             shell.keys("gg0iOLD-VIM-<Esc><F8>")
-            shell.wait("VIM_mode: Off")
+            shell.wait("VIM mode disabled")
             shell.send(b"\x01")
             shell.send(b"\x1b[200~GUI-RECOVERY\n\x1b[201~")
             shell.wait("GUI-RECOVERY")
