@@ -7,6 +7,16 @@ startup-check-fail = 失败/FAIL
 startup-diagnostics-status-explanation = 状态说明：PASS/Pass 表示通过；WARN 表示可选功能受限；FAIL 表示必要检查失败；Unavailable 表示当前环境无法使用该功能或数据源。
 startup-temperature-unavailable = 温度不可用：未检测到传感器
 startup-battery-unavailable = 电池不可用：未检测到电池
+startup-shell-ui-automation-help = UI automation（供 agent 使用）：
+    agent 可以通过 tundra-cli ui 查看运行中 Shell 的界面并操作内部控件。
+    先在“设置 → 系统 → 外部 CLI 控制”中开启此功能（默认关闭）。
+    也可在启动 Shell 前运行 tundra-cli config set automation.enabled true。
+    在同一操作系统用户的另一个终端中运行：
+    { "  " }tundra-cli ui snapshot
+    { "  " }tundra-cli ui click --id TARGET_ID
+    { "  " }tundra-cli ui text "TEXT"
+    将 TARGET_ID 替换为 snapshot 中的控件 ID；文字会输入到当前焦点控件。
+    点击、拖动、滚动、按键、文字输入和等待的完整用法见 tundra-cli ui --help。
 startup-cli-help = TundraUX3 命令行
     { cli-administration-root-usage }
     { "  " }config [get|set|reset|options]  设置

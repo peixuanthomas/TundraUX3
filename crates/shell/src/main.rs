@@ -13,7 +13,8 @@ fn main() {
                  Usage: tundra-shell [OPTIONS]\n\n\
                  Start the fullscreen UI when no options are supplied.\n\n\
                  Options:\n  -h, --help     Show help\n  -V, --version  Show version\n\n\
-                 Use tundra-cli for commands and configuration."
+                 Use tundra-cli for commands and configuration.\n\n{}",
+                i18n::tr!("startup-shell-ui-automation-help")
             );
             return;
         }

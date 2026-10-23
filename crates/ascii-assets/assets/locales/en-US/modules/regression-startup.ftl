@@ -7,6 +7,16 @@ startup-check-fail = FAIL
 startup-diagnostics-status-explanation = PASS: passed; WARN: limited or optional feature; FAIL: a required check failed. Unavailable means this feature or data source cannot be used in the current environment.
 startup-temperature-unavailable = Temperature unavailable: no sensors detected
 startup-battery-unavailable = Battery unavailable: no battery detected
+startup-shell-ui-automation-help = UI automation (for agents):
+    Agents can use tundra-cli ui to inspect and operate controls in a running Shell.
+    Enable Settings > System > External CLI control (off by default).
+    Or run tundra-cli config set automation.enabled true before starting Shell.
+    From another terminal under the same OS user:
+    { "  " }tundra-cli ui snapshot
+    { "  " }tundra-cli ui click --id TARGET_ID
+    { "  " }tundra-cli ui text "TEXT"
+    Replace TARGET_ID with an ID from snapshot; text goes to the focused control.
+    See tundra-cli ui --help for click, drag, scroll, key, text, and wait commands.
 startup-cli-help = TundraUX3 CLI
     { cli-administration-root-usage }
     { "  " }config [get|set|reset|options]  Settings
