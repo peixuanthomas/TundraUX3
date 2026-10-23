@@ -4,6 +4,22 @@ ui-editor-vim-off = { " F8 VIM_mode: 关闭 " }
 ui-editor-vim-normal = { " F8 VIM_mode: 普通 " }
 ui-editor-vim-insert = { " F8 VIM_mode: 输入 " }
 ui-editor-vim-help = Vim 帮助
+vim-install-title = 安装 Vim 引擎
+vim-install-checking = 正在查找对应版本的预编译引擎…
+vim-install-downloading = 正在下载 Vim 引擎…
+vim-install-extracting = 下载完成，正在解压引擎…
+vim-install-verifying = 正在检查引擎版本和运行文件…
+vim-install-percent = { $percent }%
+vim-install-cancel = Esc 取消
+vim-install-cancelling = 正在取消，等待临时文件清理完成…
+vim-install-cancelled = 已取消 Vim 安装，文档内容保持不变。
+vim-install-not-published = 对应版本的 Vim 引擎包尚未发布，请在项目发布后重试。
+vim-install-unsupported = 暂无适用于当前系统和处理器的预编译 Vim 引擎。
+vim-install-worker-failed = Vim 安装任务未能完成。
+vim-install-invalid-checksum = Vim 安装包的校验文件没有有效的 SHA-256 校验值。
+vim-install-damaged-download = Vim 下载内容的 SHA-256 或大小校验失败，请重试。
+vim-install-unsafe-archive = Vim 安装包包含不安全的文件路径或符号链接。
+vim-install-mismatched-bundle = Vim 安装包与程序要求的固定版本不符。
 ui-editor-vim-help-text =
     Vim 模式运行随程序提供的 Vim。使用 :help 或 F1 查看完整帮助。
     普通、输入、替换、Visual 和命令行模式，以及移动、操作符、文本对象、寄存器、宏与撤销，均由 Vim 处理。

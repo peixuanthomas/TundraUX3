@@ -117,6 +117,10 @@ pub fn render_editor_overlay(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
+    if let Some(install) = &model.vim_install {
+        super::vim_install::render(frame, layout.area, install, context);
+        return;
+    }
     render_menu_popup(frame, &layout, model, theme, context);
     render_quick_menu(frame, &layout, theme, context);
     render_settings(frame, layout, model, theme, context);

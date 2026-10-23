@@ -1,0 +1,79 @@
+name: Publish Vim engine
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['vim-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+            arguments: ''
+          - os: ubuntu-24.04
+            target: linux-x86_64
+            arguments: ''
+          - os: macos-latest
+            target: macos-universal
+            arguments: --macos-universal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Read pinned version
+        id: pin
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          print('version=' + json.loads(Path('packaging/vim.json').read_text())['version'])
+          PY
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential libncurses-dev
+      - name: Check bundle verification
+        run: python -B -m unittest discover -s scripts/tests -p test_build_vim.py
+      - name: Build and package Vim
+        shell: bash
+        run: python scripts/build-vim.py --output target/vim --package dist/TundraUX3-vim-${{ steps.pin.outputs.version }}-${{ matrix.target }}.zip ${{ matrix.arguments }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vim-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vim-*
+          path: dist
+          merge-multiple: true
+      - name: Publish the three matching engine packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("packaging/vim.json"))["version"])')
+          tag="vim-v$version"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            exit 1
+          fi
+          test "$(find dist -name '*.zip' | wc -l)" -eq 3
+          test "$(find dist -name '*.zip.sha256' | wc -l)" -eq 3
+          gh release create "$tag" dist/* --target "$GITHUB_SHA" --latest=false --title "Vim $version engines" --notes "Pinned Vim engines for TundraUX3. Includes runtime, Vim License, UPSTREAM.json and SHA-256 checksums."

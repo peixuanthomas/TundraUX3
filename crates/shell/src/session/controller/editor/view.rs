@@ -397,6 +397,7 @@ impl ShellSession {
         {
             model.status_message = Some(error.clone());
         }
+        model.vim_install = self.current_vim_install().cloned();
         model
     }
 

@@ -446,6 +446,9 @@ pub(in crate::session) fn build_shell_hit_map(
                     .map(|layout| layout.area)
             }),
             ShellScreen::Editor => editor_model.and_then(|model| {
+                if model.vim_install.is_some() {
+                    return Some(ui::editor_vim_install_layout(main).0);
+                }
                 let layout = ui::editor_layout(main, model);
                 match descriptor.kind {
                     ui::MotionOverlayKind::Popover => layout.menu_popup.or(layout.quick_menu_popup),

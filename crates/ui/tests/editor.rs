@@ -1,6 +1,34 @@
 mod support;
 
 #[test]
+fn vim_install_dialog_shows_download_progress_and_a_visible_cancel_button() {
+    let mut model = EditorViewModel::source("sample.txt", "original document");
+    model.vim_install = Some(ui::EditorVimInstallViewModel {
+        progress: app::update::VimInstallProgress {
+            phase: app::update::VimInstallPhase::Downloading,
+            downloaded: 50,
+            total: 100,
+        },
+        cancelling: false,
+    });
+    let theme = TundraTheme::default_dark();
+    let context = ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut terminal = Terminal::new(TestBackend::new(108, 30)).unwrap();
+    terminal
+        .draw(|frame| {
+            let layout = ui::render_editor_contextual(frame, frame.area(), &model, &context);
+            ui::render_editor_overlay(frame, &layout, &model, &context);
+        })
+        .unwrap();
+    let text = support::terminal_output(&terminal);
+    for expected in ["Install Vim engine", "Downloading", "50%", "Esc Cancel"] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+    let (dialog, cancel) = ui::editor_vim_install_layout(Rect::new(0, 0, 108, 30));
+    assert!(dialog.contains((cancel.x, cancel.y).into()));
+}
+
+#[test]
 fn native_vim_owns_the_canvas_including_mode_commands_and_messages() {
     use ui::{
         CommandLineCell, CommandLineCellStyle, CommandLineColor, CommandLineCursorStyle,

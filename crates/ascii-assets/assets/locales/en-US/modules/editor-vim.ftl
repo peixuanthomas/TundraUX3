@@ -4,6 +4,22 @@ ui-editor-vim-off = { " F8 VIM_mode: Off " }
 ui-editor-vim-normal = { " F8 VIM_mode: Normal " }
 ui-editor-vim-insert = { " F8 VIM_mode: Insert " }
 ui-editor-vim-help = Vim help
+vim-install-title = Install Vim engine
+vim-install-checking = Looking for the matching prebuilt engine…
+vim-install-downloading = Downloading the Vim engine…
+vim-install-extracting = Download complete. Extracting the engine…
+vim-install-verifying = Checking the engine version and runtime…
+vim-install-percent = { $percent }%
+vim-install-cancel = Esc Cancel
+vim-install-cancelling = Cancelling. Waiting for temporary files to be removed…
+vim-install-cancelled = Vim installation cancelled. Your document is unchanged.
+vim-install-not-published = The matching Vim engine package has not been published yet. Please try again after the project publishes it.
+vim-install-unsupported = No prebuilt Vim engine is available for this system and architecture.
+vim-install-worker-failed = The Vim installer stopped before it finished.
+vim-install-invalid-checksum = The Vim package checksum file does not contain a valid SHA-256 checksum.
+vim-install-damaged-download = The Vim download failed its SHA-256 or size check. Please try again.
+vim-install-unsafe-archive = The Vim package contains an unsafe file path or symbolic link.
+vim-install-mismatched-bundle = The Vim package does not match this application's pinned version.
 ui-editor-vim-help-text =
     Vim mode runs the bundled Vim editor. Use :help or F1 for Vim's complete help.
     Normal, Insert, Replace, Visual and command-line modes, motions, operators, text objects, registers, macros and undo follow Vim.

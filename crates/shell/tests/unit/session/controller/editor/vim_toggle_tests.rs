@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn vim_install_blocks_editing_and_escape_cancels_without_closing_the_document() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    state.open_editor();
+    let page = state.content_page_id();
+    let before = state.app.editor_state().unwrap().clone();
+    state.editor_vim_install = Some((
+        page,
+        ui::EditorVimInstallViewModel {
+            progress: Default::default(),
+            cancelling: false,
+        },
+    ));
+    let platform = platform::mock::UnsupportedPlatform;
+    state.apply_input_with_platform(InputEvent::Paste("blocked text".into()), &platform);
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::new(InputKey::Char('x'))),
+        &platform,
+    );
+    assert_eq!(state.app.editor_state(), Some(&before));
+    state.apply_input_with_platform(InputEvent::Key(KeyInput::new(InputKey::Escape)), &platform);
+    assert!(state.current_vim_install().unwrap().cancelling);
+    assert_eq!(state.content_page_id(), page);
+    assert_eq!(state.app.editor_state(), Some(&before));
+}
+
+#[test]
 fn native_vim_f8_queues_export_without_interfering_with_a_pending_save() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),

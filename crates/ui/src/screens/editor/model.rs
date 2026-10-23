@@ -632,9 +632,16 @@ impl EditorToolbarState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorVimInstallViewModel {
+    pub progress: app::update::VimInstallProgress,
+    pub cancelling: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorViewModel {
     pub vim_mode: Option<EditorVimMode>,
     pub vim_terminal: Option<Arc<crate::CommandLineTerminalSnapshot>>,
+    pub vim_install: Option<EditorVimInstallViewModel>,
     pub search_bar: Option<EditorSearchBar>,
     pub selected_menu: EditorMenu,
     pub selected_menu_action: usize,
@@ -723,6 +730,7 @@ impl EditorViewModel {
         Self {
             vim_mode: None,
             vim_terminal: None,
+            vim_install: None,
             search_bar: None,
             selected_menu: EditorMenu::File,
             selected_menu_action: 0,

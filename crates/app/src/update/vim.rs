@@ -1,5 +1,6 @@
 //! The pinned Vim directory is one payload in the existing update transaction.
 use super::*;
+pub(super) mod install;
 
 #[cfg(test)]
 pub(super) const UPSTREAM_MANIFEST: &str = include_str!("../../../../packaging/vim.json");

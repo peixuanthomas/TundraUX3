@@ -1,6 +1,19 @@
 use crate::session::*;
 
 impl ShellSession {
+    pub(in crate::session) fn current_vim_install(&self) -> Option<&ui::EditorVimInstallViewModel> {
+        self.editor_vim_install
+            .as_ref()
+            .filter(|(page, _)| *page == self.content_page_id())
+            .map(|(_, view)| view)
+    }
+
+    pub(in crate::session) fn cancel_vim_install(&mut self) {
+        if let Some((_, view)) = &mut self.editor_vim_install {
+            view.cancelling = true;
+        }
+    }
+
     pub(in crate::session) fn toggle_editor_vim(&mut self) {
         if self.editor_vim_terminal.is_some() {
             self.editor_vim_toggle_requested = true;

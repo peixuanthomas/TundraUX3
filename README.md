@@ -43,6 +43,8 @@ See [Linux system management](crates/platform/docs/linux-management.md) for supp
 
 Vim mode displays Vim's own terminal interface, including Visual modes, counts, registers, macros, windows, command line and `:help`. `Ctrl+W` operates Vim windows. F8 returns to the ordinary editor without saving the document; F8 again resumes the same Vim process and its existing state. Document writes such as `:w` and `:wq` use Tundra's existing save workers and protected-configuration checks; `:q!` follows Vim's discard behavior. See the [editor guide](docs/source-editor.md#真实-vim-模式).
 
+If the Vim engine is missing, enabling Vim opens a cancellable installation dialog with download progress. It downloads the matching prebuilt engine from this project's `vim-v<version>` GitHub Release into your application data. The engine release must be published first; users do not need a compiler.
+
 ## Keyboard, mouse, or touchscreen
 
 Independent use of all three input methods is a core design requirement:

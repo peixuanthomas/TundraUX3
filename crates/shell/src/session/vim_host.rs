@@ -3,10 +3,12 @@ use super::*;
 use vim_runtime::{
     BufferInput, LineEnding, SaveRequest, SaveResult, VimBuffer, VimConfig, VimHost,
 };
+mod install;
 
 pub(super) struct EditorVimHost {
     watchdog: AppWatchdog,
     host: Option<VimHost>,
+    installer: Option<install::VimInstaller>,
     pages: HashMap<u32, PageInstanceId>,
     imported: HashSet<PageInstanceId>,
     mirrored: HashMap<u32, MirrorRevision>,
@@ -42,6 +44,7 @@ impl EditorVimHost {
         Self {
             watchdog,
             host: None,
+            installer: None,
             pages: HashMap::new(),
             imported: HashSet::new(),
             mirrored: HashMap::new(),
@@ -56,18 +59,22 @@ impl EditorVimHost {
     }
 
     pub(super) fn running(&self) -> bool {
-        self.host.as_ref().is_some_and(VimHost::is_running)
+        self.installer.is_some() || self.host.as_ref().is_some_and(VimHost::is_running)
     }
 
     pub(super) fn poll(&mut self, state: &mut ShellSession, platform: &dyn Platform) -> bool {
         let before = state.editor_vim_terminal.clone();
+        let before_install = state.editor_vim_install.clone();
         if let Err(error) = self.poll_inner(state, platform) {
             self.fail(state, error);
         }
-        before != state.editor_vim_terminal
+        before != state.editor_vim_terminal || before_install != state.editor_vim_install
     }
 
     fn poll_inner(&mut self, state: &mut ShellSession, platform: &dyn Platform) -> io::Result<()> {
+        if self.poll_install(state)? {
+            return Ok(());
+        }
         let visible = state.content_screen() == ShellScreen::Editor;
         let enabled = state.app.storage_config().editor.vim_mode_enabled;
         if visible
@@ -76,7 +83,17 @@ impl EditorVimHost {
             && state.pages.editor.editor_load_state.is_none()
             && state.pages.editor.editor_save_state.is_none()
         {
-            let (program, runtime) = resolve_vim()?;
+            let (program, runtime) = match resolve_vim(platform) {
+                Ok(resolved) => resolved,
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound
+                        && std::env::var_os("TUNDRA_VIM").is_none() =>
+                {
+                    self.start_install(state, platform)?;
+                    return Ok(());
+                }
+                Err(error) => return Err(error),
+            };
             let mut config = VimConfig::new(program);
             config.runtime_path = runtime;
             config.user_config = std::env::var_os("TUNDRA_VIM_CLEAN").is_none();
@@ -598,14 +615,21 @@ impl EditorVimHost {
     }
 }
 
-fn resolve_vim() -> io::Result<(PathBuf, Option<PathBuf>)> {
+fn resolve_vim(platform: &dyn Platform) -> io::Result<(PathBuf, Option<PathBuf>)> {
     let bundled = std::env::current_exe()?
         .parent()
         .ok_or_else(|| io::Error::other("executable directory unavailable"))?
         .join("vim");
-    let program = std::env::var_os("TUNDRA_VIM")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| bundled.join(format!("vim{}", std::env::consts::EXE_SUFFIX)));
+    let executable = format!("vim{}", std::env::consts::EXE_SUFFIX);
+    let program = if let Some(program) = std::env::var_os("TUNDRA_VIM") {
+        PathBuf::from(program)
+    } else if bundled.join(&executable).is_file() {
+        bundled.join(&executable)
+    } else {
+        app::update::installed_vim_directory(platform)
+            .map_err(io::Error::other)?
+            .join(&executable)
+    };
     if !program.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,

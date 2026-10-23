@@ -14,6 +14,7 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+import zipfile
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -74,6 +75,20 @@ def build_windows(source):
     run(["cmd.exe", "/d", "/c", str(batch)], source / "src")
 
 
+def package_bundle(directory, archive):
+    if archive.resolve().is_relative_to(directory.resolve()):
+        raise ValueError("Engine archive must be outside the Vim directory")
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for path in sorted(directory.rglob("*")):
+            if path.is_file():
+                bundle.write(path, Path("vim") / path.relative_to(directory))
+    checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+    archive.with_suffix(archive.suffix + ".sha256").write_text(
+        f"{checksum}  {archive.name}\n", encoding="utf-8")
+    print(f"Packaged Vim {PIN['version']}: {archive}")
+
+
 def build_unix(source, universal):
     env = os.environ.copy()
     env.setdefault("CFLAGS", "-O2")
@@ -99,6 +114,7 @@ def main():
     parser.add_argument("--source-archive", type=Path, help="Use a downloaded archive without network access")
     parser.add_argument("--macos-universal", action="store_true")
     parser.add_argument("--verify-only", action="store_true", help="Check an already built bundle")
+    parser.add_argument("--package", type=Path, help="Also write a prebuilt engine ZIP archive")
     args = parser.parse_args()
     if sys.version_info < (3, 12):
         parser.error("Building bundled Vim requires Python 3.12 or newer")
@@ -108,6 +124,8 @@ def main():
     if args.verify_only:
         verify_bundle(output)
         print(f"Verified Vim {PIN['version']}: {output}")
+        if args.package:
+            package_bundle(output, args.package)
         return
     cache = Path(os.environ.get("CARGO_TARGET_DIR", REPO / "target")).resolve() / "vim-build"
     cache.mkdir(parents=True, exist_ok=True)
@@ -146,6 +164,8 @@ def main():
             shutil.rmtree(output)
         shutil.copytree(staged, output)
     print(f"Built Vim {PIN['version']}: {output}")
+    if args.package:
+        package_bundle(output, args.package)
 
 
 if __name__ == "__main__":

@@ -511,6 +511,10 @@ pub(in crate::session) fn editor_rich_spans_in(
 
 impl ShellSession {
     pub(in crate::session) fn request_editor_close(&mut self, _platform: &dyn Platform) {
+        if self.current_vim_install().is_some() {
+            self.cancel_vim_install();
+            return;
+        }
         if self.editor_vim_terminal.is_some() {
             self.editor_vim_close_requested = true;
             return;

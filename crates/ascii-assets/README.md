@@ -1,5 +1,7 @@
 # ascii-assets
 
+中英文 `modules/editor-vim.ftl` 也提供引擎安装弹窗、下载进度、取消及尚未发布的提示。
+
 中英文 `modules/settings.ftl` 保存屏幕超时时间及说明，`modules/weathr.ftl` 保存空闲天气画面的返回提示。
 
 `modules/regression-startup.ftl` 保存完整 CLI 命令列表及精简后的 doctor、REPL、应用入口和屏幕键盘帮助；doctor 使用顶层命令。

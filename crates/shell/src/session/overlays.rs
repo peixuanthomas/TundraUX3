@@ -244,6 +244,9 @@ impl ShellSession {
             });
         }
         let additional = match self.content_screen() {
+            ShellScreen::Editor if self.current_vim_install().is_some() => {
+                Some(("editor-vim-install", ShellComponent::Editor))
+            }
             ShellScreen::Logs => self.logs_overlay_id().map(|id| (id, ShellComponent::Logs)),
             ShellScreen::Management => self
                 .management_overlay_id()

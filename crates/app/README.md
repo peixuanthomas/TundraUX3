@@ -1,5 +1,7 @@
 # app
 
+`update/vim/install.rs` 从项目独立引擎 Release 下载固定版本的 ZIP，复用现有可取消的 HTTP 请求，报告下载字节及解压、校验阶段。验证 SHA-256、目录内容和上游清单后才替换用户数据目录的 `vim/`，失败或取消时清理本次临时目录。
+
 `app` 保存应用状态并处理命令。它不依赖 UI、Ratatui 或 crossterm；窗口大小、按键、焦点和点击位置由 Shell/UI 处理。
 
 | 模块 | 职责 |

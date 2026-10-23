@@ -12,11 +12,19 @@ vim/
   UPSTREAM.json
 ```
 
-当前固定 **Vim 9.2.1225**，上游提交和源码 SHA-256 写在 [`packaging/vim.json`](../../packaging/vim.json)。脚本只构建这份未修改的源码，保留完整 runtime 和原始 Vim 许可证；不依赖系统 `vim`、`vi` 或功能裁剪的 `vim-tiny`。缺少或损坏的引擎应显示错误，不回退到旧的按键模拟。
+当前固定 **Vim 9.2.1225**，上游提交和源码 SHA-256 写在 [`packaging/vim.json`](../../packaging/vim.json)。脚本只构建这份未修改的源码，保留完整 runtime 和原始 Vim 许可证；不依赖系统 `vim`、`vi` 或功能裁剪的 `vim-tiny`。缺少引擎时尝试下载对应预编译包；损坏或安装失败时显示错误，不回退到旧的按键模拟。
 
 ## 本地构建
 
-普通 `cargo build` 不下载或编译 Vim。启用 Vim 模式前，显式运行一次：
+用户开启 Vim 模式时，编辑器先查找随包引擎，再查找当前用户数据目录的 `vim/`。两处均缺少引擎时，安装弹窗从本项目 `vim-v<版本>` Release 下载当前平台的 ZIP，显示下载百分比及解压、校验阶段，并支持取消。成功后自动进入 Vim；失败或取消不改动文档。此流程不需要 Python 或编译器；`TUNDRA_VIM` 指定的路径无效时仍直接报错。
+
+`.github/workflows/vim-engine-release.yml` 使用下述构建脚本，为 Windows x64、Linux x86_64（Ubuntu 24.04 构建）和 macOS Universal 发布同版本的独立引擎包。触发方式为手动运行或推送与固定版本一致的 `vim-v<版本>` 标签。各 ZIP 包含 `vim/`、runtime、LICENSE 和 UPSTREAM.json，并附带 `.zip.sha256` 校验文件；安装时检查 SHA-256、下载大小及固定上游清单。引擎 Release 不标为最新应用版本。尚未发布对应包时，编辑器明确提示尚未发布。
+
+已有构建可直接校验并打包：`python scripts/build-vim.py --verify-only --output target/debug/vim --package target/vim-engine.zip`。
+
+Linux 实机验收使用本机 WSL：`python3 scripts/tests/editor-vim-ui.py /path/to/tundra-shell`，所有操作经 `tundra-cli ui` 发给真实程序，配置及文档均使用临时目录。增加 `--missing-engine` 会从不带引擎的隔离副本启动，验证安装弹窗、进度条和鼠标取消；对应 Release 未发布时还会验证失败提示。原有 `scripts/tests/editor-vim-smoke.py` 继续检查更多真实 Vim 工作流。
+
+普通 `cargo build` 不下载或编译 Vim。开发者也可以直接运行脚本准备随包引擎：
 
 ```sh
 cargo build --locked -p shell -p cli

@@ -56,7 +56,7 @@ F8 或 Vim 按钮开启固定版本的真实终端 Vim。编辑区域直接显�
 
 普通编辑器支持 UTF-8（含 BOM）、UTF-16LE 和 UTF-16BE。Vim 支持的其他 `fileencoding` 可在 Vim 内保存，但 F8 返回前，已加载的普通缓冲需改为宿主支持的编码；例如使用 `:set fileencoding=utf-8`。存在其他编码时会提示并保留 Vim，不把它默认为 UTF-8 后继续普通编辑。普通运行按 Vim 的方式加载用户配置和插件，插件所需的外部组件由用户环境提供。
 
-便携包保留 Shell 旁的 `vim/`。源码构建需显式执行 `python3 scripts/build-vim.py --output target/debug/vim`；release 或自定义 target 将目录放到对应 Shell 旁。普通 Cargo 构建不下载 Vim；缺少引擎会报错。调试可用 `TUNDRA_VIM` 指定其他兼容的完整 Vim；`TUNDRA_VIM_CLEAN=1` 跳过个人配置和插件，适合隔离回归。依赖和固定版本见[随包 Vim](packaging/vim.md)。
+便携包保留 Shell 旁的 `vim/`。缺少随包及用户目录引擎时，开启 Vim 会显示安装弹窗，从项目 Release 下载对应版本的预编译包，显示进度并支持取消；安装成功后自动进入 Vim，失败或取消不改动文档。对应引擎 Release 需要先发布。开发时仍可执行 `python3 scripts/build-vim.py --output target/debug/vim`；release 或自定义 target 将目录放到对应 Shell 旁，普通 Cargo 构建不下载 Vim。调试可用 `TUNDRA_VIM` 指定其他兼容的完整 Vim，无效路径仍直接报错；`TUNDRA_VIM_CLEAN=1` 跳过个人配置和插件，适合隔离回归。依赖和固定版本见[随包 Vim](packaging/vim.md)。
 
 Linux 验收使用真实 PTY 与隔离配置。Windows/macOS 已接入各自构建和运行时 CI，仍需在对应 runner 验证，Linux 结果不能替代。测试入口见[真实 Vim 回归](testing.md#真实-vim-回归)。
 

@@ -19,6 +19,8 @@ mod layout;
 mod model;
 mod render;
 mod source;
+mod vim_install;
+pub use vim_install::editor_vim_install_layout;
 
 pub use layout::*;
 pub use model::*;

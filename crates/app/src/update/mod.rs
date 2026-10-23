@@ -31,6 +31,9 @@ mod git;
 mod release;
 mod toolchain;
 mod vim;
+pub use vim::install::{
+    VimInstallPhase, VimInstallProgress, install_vim_engine, installed_vim_directory,
+};
 const SHELL_FILE: &str = if cfg!(windows) {
     "tundra-shell.exe"
 } else {

@@ -13,6 +13,17 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) {
+        if self.current_vim_install().is_some() {
+            if key.phase == InputPhase::Press
+                && matches!(
+                    key.key,
+                    InputKey::Escape | InputKey::Enter | InputKey::Space
+                )
+            {
+                self.cancel_vim_install();
+            }
+            return;
+        }
         if self.config_editor_form_visible() {
             self.handle_management_key(&key);
             return;
@@ -413,6 +424,15 @@ impl ShellSession {
         mouse: MouseInput,
         platform: &dyn Platform,
     ) {
+        if self.current_vim_install().is_some() {
+            let cancel = ui::editor_vim_install_layout(self.editor_current_layout().area).1;
+            if matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
+                && cancel.contains((mouse.column(), mouse.row()).into())
+            {
+                self.cancel_vim_install();
+            }
+            return;
+        }
         if self.config_editor_form_visible() {
             self.handle_management_pointer(mouse);
             return;

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+import zipfile
 from unittest.mock import patch
 
 
@@ -42,6 +43,23 @@ class VerifyBundleTests(unittest.TestCase):
         with patch.object(builder.subprocess, "check_output", return_value=self.output("-multi_byte")):
             with self.assertRaisesRegex(RuntimeError, r"requires \+multi_byte"):
                 builder.verify_bundle(self.bundle)
+
+    def test_package_contains_runtime_license_and_metadata(self):
+        archive = self.bundle / "engine.zip"
+        source = self.bundle / "vim"
+        source.mkdir()
+        for name in ("vim", "LICENSE", "UPSTREAM.json", "runtime/doc/help.txt"):
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("test", encoding="utf-8")
+        builder.package_bundle(source, archive)
+        self.assertEqual(archive.with_suffix(".zip.sha256").read_text(encoding="utf-8"),
+                         builder.hashlib.sha256(archive.read_bytes()).hexdigest() + "  engine.zip\n")
+        with zipfile.ZipFile(archive) as bundle:
+            self.assertEqual(set(bundle.namelist()), {
+                "vim/vim", "vim/LICENSE", "vim/UPSTREAM.json", "vim/runtime/doc/help.txt"})
+        with self.assertRaisesRegex(ValueError, "outside"):
+            builder.package_bundle(source, source / "engine.zip")
 
 
 if __name__ == "__main__":
