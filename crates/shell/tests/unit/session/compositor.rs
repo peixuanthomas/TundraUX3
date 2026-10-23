@@ -65,6 +65,75 @@ fn text(buffer: &Buffer, area: Rect) -> String {
 }
 
 #[test]
+fn vim_buttons_keep_pointer_presses_during_document_synchronization() {
+    let platform = platform::mock::UnsupportedPlatform;
+    for installing in [false, true] {
+        let mut state = session();
+        state.open_editor();
+        assert!(state.set_editor_vim_enabled(true));
+        if installing {
+            state.editor_vim_install = Some((
+                state.content_page_id(),
+                ui::EditorVimInstallViewModel {
+                    progress: Default::default(),
+                    cancelling: false,
+                },
+            ));
+        } else {
+            state.editor_vim_terminal =
+                Some(Arc::new(ui::CommandLineTerminalSnapshot::blank(116, 30)));
+        }
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut prepared = home_frame(&state, 0, true);
+        prepared.page = ScreenViewModel::Editor(Box::new(state.to_editor_view_model()));
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let id = if installing {
+            "editor.vim-install.cancel"
+        } else {
+            "editor.vim-toggle"
+        };
+        let area = state
+            .button_regions
+            .iter()
+            .find(|region| region.id.as_str() == id)
+            .unwrap()
+            .area;
+        let point = (area.x + area.width / 2, area.y + area.height / 2);
+        let now = Instant::now();
+        assert!(
+            compositor
+                .prepare_input(
+                    &mut state,
+                    InputEvent::mouse_down(PointerButton::Left, point),
+                    &platform,
+                    now,
+                )
+                .is_none()
+        );
+        if !installing {
+            state.activate_editor_document_page(state.content_page_id());
+        }
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let released = now + Duration::from_millis(16);
+        let input = compositor
+            .prepare_input(
+                &mut state,
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+                released,
+            )
+            .expect("matching release activates the button");
+        compositor.dispatch_input(&mut state, input, &platform, released);
+        if installing {
+            assert!(state.current_vim_install().unwrap().cancelling);
+        } else {
+            assert!(state.editor_vim_toggle_requested);
+        }
+    }
+}
+
+#[test]
 fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() {
     let platform = platform::mock::UnsupportedPlatform;
     for (pointer, aa) in [(false, false), (true, false), (true, true)] {

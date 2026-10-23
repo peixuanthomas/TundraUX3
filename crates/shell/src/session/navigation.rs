@@ -169,7 +169,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn activate_editor_document_page(&mut self, id: PageInstanceId) {
-        if !self.editor_document_pages().contains(&id) {
+        if self.content_page_id() == id || !self.editor_document_pages().contains(&id) {
             return;
         }
         if let Some(index) = self
