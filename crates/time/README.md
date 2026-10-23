@@ -9,4 +9,4 @@
 
 `NetworkClock::operating_system()` 每次读取当前系统时间和本地时区，不使用已保存的网络时间；Linux Shell 使用此模式。演示平台设置仍可选择平台时钟、默认 HTTP(S) 服务器或自定义地址。自定义地址验证成功后才保存；本 crate 不修改操作系统时间。
 
-验证：`cargo test --locked -p time`。HTTP 测试使用本地服务器；网络服务可达性与本地时钟计算分别验证。
+验证：`cargo test --locked --manifest-path crates/time/Cargo.toml`（从仓库根目录运行，避免与同名依赖混淆）。测试只检查离线日期解析、服务器地址校验和本地时钟计算，不发起 HTTP 请求。

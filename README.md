@@ -119,6 +119,8 @@ Run `tundra-cli debug test-rainbow-text` to preview flowing rainbow text. Rainbo
 
 Build both packages: the shell uses the companion CLI for the built-in command line and Linux management tasks. For build, test, and packaging details, see the [technical documentation](docs/README-TECHNICAL.md).
 
+Automated tests focus on core workflows, data safety, and permission boundaries. They do not make HTTP requests or start HTTP test servers; see the [testing guide](docs/testing.md).
+
 ## Current limits
 
 - The terminal interface is the focus. Features that launch graphical applications or use desktop services still require those applications or services; they may be unavailable in a terminal-only session.

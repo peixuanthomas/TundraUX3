@@ -115,7 +115,7 @@ bash scripts/check-weathr-dependency-boundary.sh
 
 定向改动使用 `cargo test --locked -p <包名>`；跨包接口或影响范围不明确时运行完整 workspace 测试。Linux 检查在本机 WSL/Linux 执行。Windows 使用安装好的 MSVC 工具链，例如 `cargo +stable-x86_64-pc-windows-msvc test --workspace --locked`。
 
-资源紧张时限制编译并发，如 `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0`。回环 HTTP 测试受代理影响时，只给测试进程设置 `NO_PROXY=127.0.0.1,localhost,::1` 和 `no_proxy`。串行测试可加 `-- --test-threads=1`，汇报时说明实际运行方式。
+资源紧张时限制编译并发，如 `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0`。固定测试不发起 HTTP 请求或启动 HTTP 模拟服务器；依赖已缓存时可加 `--offline`。串行测试可加 `-- --test-threads=1`，汇报时说明实际运行方式。
 
 测试目录、PTY、root 启动和 CI 说明见[测试指南](testing.md)。单元测试、模拟后端和只读查询通过，不等于真实桌面、触屏、系统授权或设备写操作已经验收。
 

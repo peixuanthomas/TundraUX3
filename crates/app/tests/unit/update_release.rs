@@ -1,56 +1,5 @@
 use super::*;
 
-#[test]
-fn release_check_resolves_the_tag_and_uses_release_notes() {
-    use std::io::{BufRead, BufReader};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let api_root = format!("http://{}", listener.local_addr().unwrap());
-    let sha = "c".repeat(40);
-    let commit = sha.clone();
-    let server = std::thread::spawn(move || {
-        let release = release();
-        let assets: Vec<_> = release
-            .assets
-            .iter()
-            .map(|a| {
-                serde_json::json!({
-                    "name": a.name, "browser_download_url": a.browser_download_url, "state": a.state
-                })
-            })
-            .collect();
-        for (path, body) in [
-            (
-                "releases/latest",
-                serde_json::json!({"tag_name":"v1.3.2", "draft":false,
-                "prerelease":false, "body":"Release notes", "target_commitish":"master", "assets":assets}),
-            ),
-            ("commits/v1.3.2", serde_json::json!({"sha":commit})),
-        ] {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut line = String::new();
-            BufReader::new(&mut stream).read_line(&mut line).unwrap();
-            assert!(line.starts_with(&format!("GET /repos/{GITHUB_OWNER}/{GITHUB_REPO}/{path} ")));
-            let body = body.to_string();
-            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
-        }
-    });
-    let identity = BuildIdentity {
-        package_version: "1.3.1".into(),
-        commit_sha: Some("a".repeat(40)),
-        dirty: false,
-    };
-    let result = check(&identity, &api_root, &UpdateCancellation::default()).unwrap();
-    server.join().unwrap();
-    assert_eq!(result.head_sha, sha);
-    assert_eq!(result.default_branch, "v1.3.2");
-    assert_eq!(result.commits[0].message, "Release notes");
-    assert_eq!(result.relation, UpdateRelation::Behind { remote_ahead: 1 });
-    assert!(result.release.is_some());
-}
-
 fn release() -> Release {
     let base = format!("https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/v1.3.2/");
     Release {

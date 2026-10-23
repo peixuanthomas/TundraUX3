@@ -39,3 +39,5 @@ Linux 启动器固定包含防火墙与端口、SSH 服务、配置备份与恢�
 - [系统配置保存](../platform/docs/system-config.md)
 
 验证：`cargo test --locked -p app`。修改跨 crate 的命令或共享类型后运行 workspace 测试。
+
+更新与 Vim 安装测试只保留离线校验、取消、文件安全和回退检查，不运行 HTTP 下载测试或本地 HTTP 服务器。

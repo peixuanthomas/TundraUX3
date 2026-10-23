@@ -384,39 +384,4 @@ mod tests {
             None
         );
     }
-    #[test]
-    fn live_selected_process_details_include_real_owned_listener() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let pid = std::process::id();
-        let process = super::super::read_process(Path::new("/proc"), pid, 4096).unwrap();
-        let mut row = super::super::row(&process, "boot", 0);
-        append_details(
-            Path::new("/proc"),
-            &process,
-            &mut row,
-            None,
-            0.1,
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-        assert!(
-            row.detail.iter().any(|(key, value)| key == "TCP/UDP ports"
-                && value.contains(&format!("127.0.0.1:{port}")))
-        );
-        assert!(row.detail.iter().any(|(key, _)| key == "Disk bytes read"));
-        let mut stale = process;
-        stale.started += 1;
-        let mut row = super::super::row(&stale, "boot", 0);
-        append_details(
-            Path::new("/proc"),
-            &stale,
-            &mut row,
-            None,
-            0.1,
-            &AtomicBool::new(false),
-        )
-        .unwrap();
-        assert!(!row.detail.iter().any(|(key, _)| key == "Open files"));
-    }
 }

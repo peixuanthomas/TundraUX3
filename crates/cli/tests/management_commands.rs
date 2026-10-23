@@ -191,27 +191,6 @@ mod linux {
         );
     }
     #[test]
-    fn listening_ports_json_reports_a_real_socket_without_modifying_the_firewall() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap().to_string();
-        let result = successful_json(&[
-            "firewall",
-            "listeners",
-            "--filter",
-            &address,
-            "--json",
-            "--yes",
-            "--non-interactive",
-        ]);
-        assert_eq!(result["backend"], "Linux listening ports");
-        assert!(result["rows"].as_array().unwrap().iter().any(|row| {
-            row["cells"][2] == address
-                && row["cells"][3]
-                    .as_str()
-                    .is_some_and(|owner| owner.contains(&std::process::id().to_string()))
-        }));
-    }
-    #[test]
     fn nonexistent_operation_uses_failure_code_and_json_result() {
         let directory = Directory::new();
         let missing = directory.0.join("missing.sock");

@@ -13,7 +13,9 @@ cargo test --workspace --locked
 cargo build --locked -p shell -p cli -p weathr
 ```
 
-本地回环 HTTP 测试应直接连接测试服务器。受系统代理影响时，可仅为测试进程设置 `NO_PROXY=127.0.0.1,localhost,::1` 和小写 `no_proxy`，无需修改系统代理。资源紧张或排查并发时可使用 `cargo test --workspace --locked -- --test-threads=1`；串行仍执行全部用例，交付时应注明运行方式及默认并发结果。
+固定测试不发起 HTTP 请求，也不启动本地 HTTP 模拟服务器，避免代理、连接失败或阻塞等待使测试卡住。更新和 Vim 安装保留离线校验、解压安全、取消前置检查与回退验证；网络管理保留配置解析和模拟后端测试，不创建真实监听端口。
+
+依赖下载完成后，可用 `cargo test --workspace --locked --offline` 避免 Cargo 访问网络。资源紧张或排查并发时可加 `-- --test-threads=1`；串行仍执行全部用例，交付时应注明运行方式及默认并发结果。
 
 最低支持版本为 Rust 1.95；修改工具链或依赖后，还需验证最低版本：
 

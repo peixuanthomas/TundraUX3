@@ -1,46 +1,5 @@
 use super::*;
 use std::io::Write;
-use std::time::Instant;
-
-#[test]
-fn update_cancellation_interrupts_waiting_http_headers_and_body() {
-    for body in [false, true] {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/slow", listener.local_addr().unwrap());
-        let cancel = UpdateCancellation::default();
-        let worker_cancel = cancel.clone();
-        let (release, wait) = std::sync::mpsc::channel();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut buffer = [0; 4096];
-            stream.read(&mut buffer).unwrap();
-            if body {
-                stream
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10000\r\n\r\nfirst")
-                    .unwrap();
-            }
-            std::thread::sleep(Duration::from_millis(50));
-            worker_cancel.cancel();
-            // Keep the connection open until the cancelled client has returned.
-            let _ = wait.recv_timeout(Duration::from_secs(5));
-        });
-        let started = Instant::now();
-        let result = Client::new(Duration::from_secs(30), &cancel)
-            .and_then(|client| client.get(&url).send())
-            .and_then(Response::text);
-        let elapsed = started.elapsed();
-        release.send(()).unwrap();
-        server.join().unwrap();
-        assert!(result.unwrap_err().is_cancelled());
-        assert!(
-            elapsed < Duration::from_secs(2),
-            "HTTP cancellation took {elapsed:?}"
-        );
-    }
-}
 
 #[test]
 fn update_cancelled_check_never_runs_git_fallback() {

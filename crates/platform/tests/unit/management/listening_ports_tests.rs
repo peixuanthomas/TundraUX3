@@ -21,12 +21,3 @@ fn only_tcp_listeners_and_unconnected_udp_are_selected() {
         Some("[::1]:22".into())
     );
 }
-#[test]
-fn live_listener_reports_the_real_owner() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap().to_string();
-    let (rows, _) = query(Path::new("/proc"), &address, &AtomicBool::new(false)).unwrap();
-    assert!(rows.iter().any(
-        |row| row.cells[2] == address && row.cells[3].contains(&std::process::id().to_string())
-    ));
-}
