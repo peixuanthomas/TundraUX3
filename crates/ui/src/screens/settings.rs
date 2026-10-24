@@ -2,6 +2,8 @@ mod animation;
 pub use animation::{SettingsAnimationEditorViewModel, SettingsAnimationLayout};
 mod applications;
 pub use applications::{SettingsApplication, SettingsApplicationsLayout};
+mod slider;
+pub use slider::SettingsSliderLayout;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
@@ -165,6 +167,7 @@ pub enum SettingsField {
 pub enum SettingsControlKind {
     Toggle,
     Cycle,
+    Slider { selected: usize },
     Picker,
     Palette,
     Stepper,
@@ -188,6 +191,7 @@ pub struct SettingsItemViewModel {
     pub enabled: bool,
     pub unavailable_reason: Option<String>,
     pub checked: Option<bool>,
+    pub options: Vec<String>,
 }
 
 impl SettingsItemViewModel {
@@ -207,6 +211,7 @@ impl SettingsItemViewModel {
             enabled: true,
             unavailable_reason: None,
             checked: None,
+            options: Vec::new(),
         }
     }
 
@@ -223,6 +228,11 @@ impl SettingsItemViewModel {
 
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = Some(checked);
+        self
+    }
+
+    pub fn options(mut self, options: Vec<String>) -> Self {
+        self.options = options;
         self
     }
 }
@@ -406,6 +416,7 @@ pub enum SettingsHitTarget {
     OverlayApply,
     OverlayCancel,
     AdjustField(SettingsField, i8),
+    SliderOption(SettingsField, usize),
     Category(SettingsCategory),
     Field(SettingsField),
     PickerOption(usize),
@@ -435,12 +446,14 @@ pub struct SettingsLayout {
     pub animation_editor: Option<SettingsAnimationLayout>,
     pub picker_list: Option<Rect>,
     pub adjustments: Vec<(SettingsField, i8, Rect)>,
+    pub sliders: Vec<SettingsSliderLayout>,
     pub overlay_apply: Option<Rect>,
     pub overlay_cancel: Option<Rect>,
     pub category_cards: Vec<SettingsCategoryLayout>,
     pub fields: Vec<SettingsFieldLayout>,
     /// Absolute content row, including card spacing, even when scrolled out of view.
     pub selected_field_row: Option<u16>,
+    pub selected_field_height: u16,
     pub picker_options: Vec<SettingsPickerOptionLayout>,
     pub picker_dialog: Option<Rect>,
     pub color_editor: Option<Rect>,
@@ -560,7 +573,9 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
 
     let mut fields = Vec::new();
     let mut adjustments = Vec::new();
+    let mut sliders = Vec::new();
     let mut selected_field_row = None;
+    let mut selected_field_height = 1;
     let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
     if model.appearance_preview.is_some() {
         y += 5;
@@ -573,15 +588,19 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             .max()
             .unwrap_or(0)
             .min(detail_area.width.saturating_sub(2) / 2);
-        let height = u16::try_from(card.items.len())
-            .unwrap_or(u16::MAX)
-            .saturating_add(2)
-            .max(3);
-        for (index, item) in card.items.iter().enumerate() {
-            let row_y = y + 1 + i32::try_from(index).unwrap_or(i32::MAX);
+        let height = settings_card_height(card);
+        let mut row_y = y + 1;
+        for item in &card.items {
+            let item_height = settings_item_height(item);
             if item.field == model.selected_field {
                 selected_field_row =
                     u16::try_from(row_y - i32::from(detail_area.y) + i32::from(scroll_offset)).ok();
+                selected_field_height = item_height;
+            }
+            if matches!(item.kind, SettingsControlKind::Slider { .. })
+                && let Some(layout) = SettingsSliderLayout::new(detail_area, row_y + 1, item)
+            {
+                sliders.push(layout);
             }
             if row_y >= i32::from(detail_area.y) && row_y < i32::from(detail_area.bottom()) {
                 if item.enabled && item.kind == SettingsControlKind::Stepper && value_width >= 6 {
@@ -603,6 +622,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
                     ),
                 });
             }
+            row_y += i32::from(item_height);
         }
         y += i32::from(height) + 1;
     }
@@ -717,11 +737,13 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         category_capacity,
         picker_list,
         adjustments,
+        sliders,
         overlay_apply: overlay_buttons.map(|buttons| buttons[0]),
         overlay_cancel: overlay_buttons.map(|buttons| buttons[1]),
         category_cards,
         fields,
         selected_field_row,
+        selected_field_height,
         picker_options,
         picker_dialog,
         color_editor: model
@@ -837,6 +859,13 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
             .find(|(_, area)| contains(*area, point))
     {
         return Some(SettingsHitTarget::Application(*application));
+    }
+    if let Some((slider, index)) = layout
+        .sliders
+        .iter()
+        .find_map(|slider| slider.option_at(point).map(|index| (slider, index)))
+    {
+        return Some(SettingsHitTarget::SliderOption(slider.field, index));
     }
     if let Some(field) = layout
         .fields
@@ -1026,16 +1055,13 @@ fn render_cards(
         y += 5;
     }
     for (card_index, card) in model.cards.iter().enumerate() {
-        let height = u16::try_from(card.items.len())
-            .unwrap_or(u16::MAX)
-            .saturating_add(2)
-            .max(3);
+        let height = settings_card_height(card);
         Surface::new()
             .titled(format!(" {} ", card.title))
             .bordered(true)
             .raised(true)
             .render_scrolled_frame(frame, detail_area, y, height, context);
-        let rows_height = u16::try_from(card.items.len()).unwrap_or(u16::MAX);
+        let rows_height = height.saturating_sub(2);
         let Some((visible_rows, skipped_rows)) = visible_scrolled_rect(
             detail_area.x.saturating_add(1),
             y + 1,
@@ -1056,24 +1082,43 @@ fn render_cards(
         let rows = card
             .items
             .iter()
-            .map(|item| vec![item.label.clone(), String::new()])
+            .flat_map(|item| {
+                (0..settings_item_height(item)).map(|row| {
+                    vec![
+                        if row == 0 {
+                            item.label.clone()
+                        } else {
+                            String::new()
+                        },
+                        String::new(),
+                    ]
+                })
+            })
             .collect::<Vec<_>>();
         let first_visible = usize::from(skipped_rows);
         let visible_end = first_visible.saturating_add(usize::from(visible_rows.height));
         let selected = card
             .items
             .iter()
-            .position(|item| item.field == model.selected_field)
+            .scan(0usize, |row, item| {
+                let start = *row;
+                *row += usize::from(settings_item_height(item));
+                Some((item, start))
+            })
+            .find_map(|(item, row)| (item.field == model.selected_field).then_some(row))
             .filter(|index| *index >= first_visible && *index < visible_end);
         let tones = card
             .items
             .iter()
-            .map(|item| {
-                if item.enabled {
-                    ComponentTone::Default
-                } else {
-                    ComponentTone::Muted
-                }
+            .flat_map(|item| {
+                std::iter::repeat_n(
+                    if item.enabled {
+                        ComponentTone::Default
+                    } else {
+                        ComponentTone::Muted
+                    },
+                    usize::from(settings_item_height(item)),
+                )
             })
             .collect();
         let mut table = DataTable::new(
@@ -1095,14 +1140,29 @@ fn render_cards(
         table.row_ids = card
             .items
             .iter()
-            .map(|item| format!("{:?}", item.field))
+            .flat_map(|item| {
+                (0..settings_item_height(item)).map(|row| {
+                    if row == 0 {
+                        format!("{:?}", item.field)
+                    } else {
+                        format!("{:?}.{row}", item.field)
+                    }
+                })
+            })
             .collect();
         table.selected = selected;
         table.state.focused = selected.is_some();
         table.render_frame(frame, visible_rows, context);
 
-        for (index, item) in card.items.iter().enumerate() {
-            let row_y = y + 1 + i32::try_from(index).unwrap_or(i32::MAX);
+        let mut next_row_y = y + 1;
+        for item in &card.items {
+            let row_y = next_row_y;
+            next_row_y += i32::from(settings_item_height(item));
+            if matches!(item.kind, SettingsControlKind::Slider { .. })
+                && let Some(slider) = SettingsSliderLayout::new(detail_area, row_y + 1, item)
+            {
+                slider.render(frame, item, item.field == model.selected_field, theme);
+            }
             if row_y < i32::from(detail_area.y) || row_y >= i32::from(detail_area.bottom()) {
                 continue;
             }
@@ -1144,10 +1204,7 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
     }
 
     for card in &model.cards {
-        let height = u16::try_from(card.items.len())
-            .unwrap_or(u16::MAX)
-            .saturating_add(2)
-            .max(3);
+        let height = settings_card_height(card);
         content_height = content_height.max(next_y.saturating_add(usize::from(height)));
         next_y = next_y.saturating_add(usize::from(height)).saturating_add(1);
     }
@@ -1682,7 +1739,10 @@ fn render_settings_control(
     selected: bool,
     theme: &TundraTheme,
 ) {
-    if area.width == 0 || area.height == 0 {
+    if area.width == 0
+        || area.height == 0
+        || matches!(item.kind, SettingsControlKind::Slider { .. })
+    {
         return;
     }
 
@@ -1752,8 +1812,26 @@ fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
         | SettingsControlKind::Action => 4,
         SettingsControlKind::Stepper => 6,
         SettingsControlKind::ReadOnly => 0,
+        SettingsControlKind::Slider { .. } => return 0,
     };
     label_width.saturating_add(component_padding)
+}
+
+fn settings_item_height(item: &SettingsItemViewModel) -> u16 {
+    if matches!(item.kind, SettingsControlKind::Slider { .. }) {
+        3
+    } else {
+        1
+    }
+}
+
+fn settings_card_height(card: &SettingsCardViewModel) -> u16 {
+    card.items
+        .iter()
+        .map(settings_item_height)
+        .sum::<u16>()
+        .saturating_add(2)
+        .max(3)
 }
 
 fn picker_list_area(dialog: Rect, timezone: bool, searchable: bool) -> Rect {

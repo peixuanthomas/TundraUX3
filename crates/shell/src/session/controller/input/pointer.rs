@@ -220,6 +220,13 @@ impl ShellSession {
             return None;
         }
         if self.interactive_overlays().is_empty()
+            && self.active_screen() == ShellScreen::Settings
+            && self.handle_settings_slider_pointer(mouse)
+        {
+            self.interaction.button_capture = None;
+            return None;
+        }
+        if self.interactive_overlays().is_empty()
             && (self.handle_home_pointer_scrollbar(&mouse)
                 || self.handle_launcher_pointer_scrollbar(&mouse)
                 || self.handle_diagnostics_detail_pointer(mouse)

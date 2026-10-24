@@ -30,6 +30,7 @@ pub(in crate::session) struct InteractionState {
     pub pointer_position: Option<CellPosition>,
     pub button_capture: Option<ButtonPointerCapture>,
     pub completed_button_click_at: Option<Instant>,
+    pub settings_slider_drag: Option<(ui::SettingsField, Rect)>,
 }
 
 impl InteractionState {

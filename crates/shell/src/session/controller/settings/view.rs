@@ -676,7 +676,18 @@ pub(in crate::session) fn settings_cards(
                         i18n::tr!("aa-policy"),
                         crate::session::controller::auto_admin::policy_label(config.auto_admin),
                         i18n::tr!("aa-policy-help"),
-                        Kind::Cycle,
+                        Kind::Slider {
+                            selected: AUTO_ADMIN_POLICIES
+                                .iter()
+                                .position(|policy| *policy == config.auto_admin)
+                                .unwrap(),
+                        },
+                    )
+                    .options(
+                        AUTO_ADMIN_POLICIES
+                            .into_iter()
+                            .map(crate::session::controller::auto_admin::policy_label)
+                            .collect(),
                     )
                     .enabled(global_enabled),
                 ],

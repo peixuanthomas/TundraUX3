@@ -3,6 +3,7 @@ mod applications;
 mod background;
 pub(in crate::session) mod devices;
 mod forms;
+mod slider;
 mod system_time;
 pub(in crate::session) use system_time::SystemTimeSettings;
 pub(in crate::session) mod tasks;
@@ -15,6 +16,11 @@ pub(in crate::session) const SETTINGS_WEATHER_LOCATION_NOTIFICATION_KEY: &str =
 pub(in crate::session) const WEATHER_LOCATION_MAX_LEN: usize = 120;
 pub(in crate::session) const EDITOR_EXTENSIONS_INPUT_MAX_LEN: usize = 1_024;
 const SCREEN_TIMEOUT_OPTIONS: &[u64] = &[0, 30, 60, 120, 300, 600, 1800];
+const AUTO_ADMIN_POLICIES: [storage::AutoAdminPolicy; 3] = [
+    storage::AutoAdminPolicy::Deny,
+    storage::AutoAdminPolicy::Manual,
+    storage::AutoAdminPolicy::Automatic,
+];
 
 pub(in crate::session) const APPEARANCE_SETTINGS_FIELDS: &[ui::SettingsField] = &[
     ui::SettingsField::Theme,
@@ -450,6 +456,11 @@ impl ShellSession {
                 }
                 self.adjust_selected_setting(delta, platform);
             }
+            Some(ui::SettingsHitTarget::SliderOption(field, _)) => {
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
+                    state.selected_field = field;
+                }
+            }
             Some(ui::SettingsHitTarget::UpdateConfirm) => self.begin_confirmed_update(),
             Some(ui::SettingsHitTarget::UpdateCancel) => self.cancel_update_confirmation(),
             Some(ui::SettingsHitTarget::Category(category)) => {
@@ -564,8 +575,11 @@ impl ShellSession {
         {
             state.scroll_offset = if row < layout.scroll_offset {
                 row
-            } else if row >= layout.scroll_offset.saturating_add(layout.detail.height) {
-                row.saturating_add(1).saturating_sub(layout.detail.height)
+            } else if row.saturating_add(layout.selected_field_height)
+                > layout.scroll_offset.saturating_add(layout.detail.height)
+            {
+                row.saturating_add(layout.selected_field_height)
+                    .saturating_sub(layout.detail.height)
             } else {
                 layout.scroll_offset
             }
@@ -672,7 +686,9 @@ impl ShellSession {
             ui::SettingsField::UpdateMode => self.switch_update_mode(),
             ui::SettingsField::CheckUpdates => self.begin_update_check(),
             ui::SettingsField::StartUpdate => self.open_update_confirmation(),
-            ui::SettingsField::InstalledVersion | ui::SettingsField::RemoteVersion => {}
+            ui::SettingsField::AutoAdmin
+            | ui::SettingsField::InstalledVersion
+            | ui::SettingsField::RemoteVersion => {}
             _ => self.adjust_selected_setting(1, platform),
         }
     }
@@ -826,12 +842,15 @@ impl ShellSession {
                 config.automation.enabled = !config.automation.enabled;
             }
             ui::SettingsField::AutoAdmin => {
-                use storage::AutoAdminPolicy::*;
-                config.auto_admin = match (config.auto_admin, increase) {
-                    (Manual, true) | (Deny, false) => Automatic,
-                    (Automatic, true) | (Manual, false) => Deny,
-                    _ => Manual,
-                };
+                let current = AUTO_ADMIN_POLICIES
+                    .iter()
+                    .position(|policy| *policy == config.auto_admin)
+                    .unwrap();
+                let next = (current as i8 + direction).clamp(0, 2) as usize;
+                if current == next {
+                    return;
+                }
+                config.auto_admin = AUTO_ADMIN_POLICIES[next];
             }
             ui::SettingsField::ShowHidden => {
                 config.explorer.show_hidden = !config.explorer.show_hidden

@@ -5,6 +5,7 @@ mod support;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
 use support::terminal_output;
@@ -18,6 +19,98 @@ use ui::{
     ShellChromeViewModel, StatusViewModel, TundraTheme, render_settings, settings_hit_test,
     settings_layout,
 };
+
+#[test]
+fn slider_options_keep_visible_labels_and_share_rendered_hit_areas() {
+    for labels in [
+        vec!["Deny all", "Ask every time (default)", "Always allow"],
+        vec!["一律禁止", "手动批准（默认）", "一律放行"],
+    ] {
+        for (width, height) in [(40, 12), (108, 20), (140, 40)] {
+            for selected in 0..3 {
+                let mut model = sample_model();
+                model.appearance_preview = None;
+                model.selected_category = SettingsCategory::System;
+                model.selected_field = SettingsField::AutoAdmin;
+                model.cards = vec![SettingsCardViewModel::new(
+                    "AutoAdmin (AA)",
+                    vec![
+                        SettingsItemViewModel::new(
+                            SettingsField::AutoAdmin,
+                            "AA",
+                            labels[selected],
+                            "",
+                            SettingsControlKind::Slider { selected },
+                        )
+                        .options(labels.iter().map(|label| (*label).into()).collect()),
+                    ],
+                )];
+                let area = Rect::new(0, 0, width, height);
+                let layout = settings_layout(area, &model);
+                let buttons =
+                    ui::components::ButtonFrame::new(None, None, &TundraTheme::default_dark());
+                let theme = TundraTheme {
+                    buttons: Some(buttons.clone()),
+                    ..TundraTheme::default_dark()
+                };
+                let context =
+                    ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|frame| ui::render_settings_content(frame, &layout, &model, &context))
+                    .unwrap();
+                let slider = &layout.sliders[0];
+                assert_eq!(slider.options.len(), 3);
+                let regions: Vec<_> = buttons
+                    .regions()
+                    .into_iter()
+                    .filter(|region| region.id.as_str().starts_with("settings.slider."))
+                    .collect();
+                for (index, option) in slider.options.iter().enumerate() {
+                    assert_eq!(regions[index].area, *option);
+                    assert_eq!(option.intersection(layout.detail), *option);
+                    let x = option.x + option.width / 2;
+                    assert_eq!(
+                        terminal.backend().buffer()[(x, option.y)].symbol(),
+                        if index == selected { "●" } else { "○" }
+                    );
+                    for y in option.y..option.bottom() {
+                        assert_eq!(
+                            settings_hit_test(&layout, (x, y)),
+                            Some(SettingsHitTarget::SliderOption(
+                                SettingsField::AutoAdmin,
+                                index
+                            ))
+                        );
+                    }
+                    if width >= 108 {
+                        let mut x = option.x;
+                        let rendered: String = std::iter::from_fn(|| {
+                            if x >= option.right() {
+                                return None;
+                            }
+                            let cell = &terminal.backend().buffer()[(x, option.y + 1)];
+                            x += cell.cell_width();
+                            Some(cell.symbol())
+                        })
+                        .collect();
+                        assert_eq!(rendered.trim(), labels[index], "{width} × {height}");
+                    }
+                }
+                model.color_editor = Some(SettingsColorEditorViewModel {
+                    title: "Color".into(),
+                    value: String::new(),
+                    error: None,
+                });
+                let option = slider.options[0];
+                assert_ne!(
+                    settings_hit_test(&settings_layout(area, &model), (option.x, option.y)),
+                    Some(SettingsHitTarget::SliderOption(SettingsField::AutoAdmin, 0))
+                );
+            }
+        }
+    }
+}
 
 #[test]
 fn application_list_stays_left_of_settings_and_uses_the_same_hit_areas() {

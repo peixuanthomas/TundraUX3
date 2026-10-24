@@ -468,13 +468,21 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
     press(&mut state, &platform, "Right");
     assert_eq!(
         manager.load_config().unwrap().auto_admin,
-        storage::AutoAdminPolicy::Deny
+        storage::AutoAdminPolicy::Automatic
     );
-    press(&mut state, &platform, "Right");
+    press(&mut state, &platform, "Left");
     assert_eq!(
         manager.load_config().unwrap().auto_admin,
         storage::AutoAdminPolicy::Manual
     );
+    for _ in 0..2 {
+        press(&mut state, &platform, "Left");
+        assert_eq!(
+            manager.load_config().unwrap().auto_admin,
+            storage::AutoAdminPolicy::Deny
+        );
+    }
+    press(&mut state, &platform, "Right");
     press(&mut state, &platform, "Down");
     assert_eq!(items[1].field, SettingsField::AutomationEnabled);
     assert_eq!(items[1].checked, Some(false));
@@ -525,6 +533,109 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
             .critical_available_gib,
         4
     );
+}
+
+#[test]
+fn auto_admin_slider_saves_pointer_choices_and_cancels_interrupted_gestures() {
+    use storage::AutoAdminPolicy::{Automatic, Deny, Manual};
+    for hover in [true, false] {
+        let fixture = FixtureRoot::new("aa-slider");
+        let platform = mock_platform(fixture.path());
+        let manager = initialize_users(&platform, true, false);
+        for (username, password, enabled) in [
+            ("AdminUser", "StrongPass123", true),
+            ("NormalUser", "NormalPass123", false),
+        ] {
+            let mut config = manager.load_config().unwrap();
+            config.auto_admin = Manual;
+            manager.save_config(&config).unwrap();
+            let mut state = logged_in_state(&platform, username, password);
+            open_settings_from_home(&mut state, &platform);
+            press(&mut state, &platform, "Tab");
+            press(&mut state, &platform, "Tab");
+            let main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
+                ui::ShellLayout::Compact(main) | ui::ShellLayout::Full { main, .. } => main,
+            };
+            let layout = ui::settings_layout(main, &state.to_settings_view_model().unwrap());
+            let points: Vec<_> = layout.sliders[0]
+                .options
+                .iter()
+                .map(|area| (area.x + area.width / 2, area.y))
+                .collect();
+            for (index, policy) in [(2, Automatic), (0, Deny), (1, Manual)] {
+                let before = manager.load_config().unwrap().auto_admin;
+                if hover {
+                    state.apply_input_with_platform(
+                        InputEvent::mouse_moved(points[index]),
+                        &platform,
+                    );
+                }
+                state.apply_input_with_platform(
+                    InputEvent::mouse_down(ui::MouseButton::Left, points[index]),
+                    &platform,
+                );
+                assert_eq!(manager.load_config().unwrap().auto_admin, before);
+                state.apply_input_with_platform(
+                    InputEvent::mouse_up(ui::MouseButton::Left, points[index]),
+                    &platform,
+                );
+                assert_eq!(
+                    manager.load_config().unwrap().auto_admin,
+                    if enabled { policy } else { Manual }
+                );
+            }
+            for interruption in [
+                InputEvent::FocusLost,
+                InputEvent::Resize {
+                    width: 120,
+                    height: 40,
+                },
+                InputEvent::from_key_label("F1"),
+            ] {
+                state.apply_input_with_platform(
+                    InputEvent::mouse_down(ui::MouseButton::Left, points[0]),
+                    &platform,
+                );
+                state.apply_input_with_platform(interruption.clone(), &platform);
+                state.apply_input_with_platform(
+                    InputEvent::mouse_up(ui::MouseButton::Left, points[0]),
+                    &platform,
+                );
+                assert_eq!(manager.load_config().unwrap().auto_admin, Manual);
+                if matches!(interruption, InputEvent::Key(_)) {
+                    press(&mut state, &platform, "Esc");
+                }
+            }
+            state.apply_input_with_platform(
+                InputEvent::mouse_down(ui::MouseButton::Left, points[1]),
+                &platform,
+            );
+            for (index, policy) in [(0, Deny), (2, Automatic)] {
+                state.apply_input_with_platform(
+                    InputEvent::mouse_drag(ui::MouseButton::Left, points[index]),
+                    &platform,
+                );
+                assert_eq!(
+                    manager.load_config().unwrap().auto_admin,
+                    if enabled { policy } else { Manual }
+                );
+            }
+            state.apply_input_with_platform(
+                InputEvent::mouse_up(ui::MouseButton::Left, points[2]),
+                &platform,
+            );
+            press(&mut state, &platform, "Esc");
+            open_settings_from_home(&mut state, &platform);
+            press(&mut state, &platform, "Tab");
+            press(&mut state, &platform, "Tab");
+            assert_eq!(
+                state.to_settings_view_model().unwrap().cards[0].items[0].kind,
+                ui::SettingsControlKind::Slider {
+                    selected: if enabled { 2 } else { 1 }
+                }
+            );
+        }
+    }
 }
 
 #[test]
