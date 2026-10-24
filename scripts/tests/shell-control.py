@@ -115,9 +115,20 @@ def main():
             assert len(current["lines"]) == 40
             ids = [node["id"] for node in current["nodes"]]
             assert len(ids) == len(set(ids))
-            key("s")
-            current = until(lambda current: current["page"] == "Settings")
-            print("PASS: external key opened Settings and returned its painted UI tree")
+            old = current["number"]
+            time.sleep(1.1)
+            ui("move", "--x", 0, "--y", 0, "--snapshot", old)
+            os.write(master, b"\x1b[<35;4;4M")
+            ui("move", "--x", 0, "--y", 0, "--snapshot", old)
+            os.write(master, b"s")
+            for options in [[], ["--snapshot", old]]:
+                refused = ui("key", "e", *options, okay=False)
+                assert refused["error"]["code"] == "stale_snapshot", refused
+                assert "tundra-cli ui snapshot" in refused["error"]["message"]
+            current = ui("wait", "--id", "page/settings.category.system")["snapshot"]
+            assert current["page"] == "Settings"
+            ui("move", "--x", 0, "--y", 0)
+            print("PASS: automatic redraw and pointer motion preserved old snapshots; user input required a fresh read")
             click("page/settings.category.system")
             current = ui("wait", "--id", "page/settings.field.automationenabled")["snapshot"]
             toggle = node_by(current, lambda node: node["id"] == "page/settings.field.automationenabled")
@@ -131,6 +142,14 @@ def main():
             current = until(lambda current: current["page"] == "screen_saver", timeout=35)
             assert any(node["id"] == "screen_saver/resume" for node in current["nodes"])
             assert "Press any key or tap to resume" in "\n".join(current["lines"])
+            current = ui("wake")["snapshot"]
+            assert current["page"] == "Settings"
+            assert any(node["id"].startswith("modal/") for node in current["nodes"])
+            current = ui("wake")["snapshot"]
+            assert current["page"] == "Settings"
+            assert any(node["id"].startswith("modal/") for node in current["nodes"])
+            print("PASS: wake dismissed idle weather and preserved the page and help dialog")
+            until(lambda current: current["page"] == "screen_saver", timeout=35)
             os.write(master, b"\x1b")
             current = until(lambda current: current["page"] == "Settings")
             assert any(node["id"].startswith("modal/") for node in current["nodes"])
@@ -164,7 +183,8 @@ def main():
             area = body["rect"]
             ui("drag", "--from-x", area["x"], "--from-y", area["y"],
                 "--to-x", area["x"] + 4, "--to-y", area["y"], "--duration", 160)
-            ui("scroll", "--x", area["x"], "--y", area["y"], "--direction", "down", "--count", 2)
+            # Scheduled wheel events must not each wait for a full control poll interval.
+            ui("scroll", "--x", area["x"], "--y", area["y"], "--direction", "down", "--count", 400)
             key("F1")
             current = until(lambda current: any(node["id"].startswith("modal/") and node["role"] == "button" for node in current["nodes"]))
             blocked = node_by(current, lambda node: node["id"] == body["id"])
@@ -174,6 +194,8 @@ def main():
             key("Escape")
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 41, 116, 0, 0))
             os.kill(child.pid, signal.SIGWINCH)
+            refused = ui("key", "F1", okay=False)
+            assert refused["error"]["code"] == "stale_snapshot", refused
             current = until(lambda current: current["width"] == 116 and current["height"] == 41)
             assert len(current["lines"]) == 41
             print("PASS: drag, scroll, modal blocking and real terminal resize")

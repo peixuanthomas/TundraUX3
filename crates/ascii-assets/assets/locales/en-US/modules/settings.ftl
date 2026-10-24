@@ -421,11 +421,11 @@ ui-control-invalid-boolean = Expected true or false.
 ui-control-config-saved = Saved external CLI control setting. Restart a running Shell to load CLI configuration changes.
 ui-control-unavailable = Shell control is unavailable: { $reason }
 ui-control-not-ready = The Shell interface is not ready.
-ui-control-stale = The interface changed. Read a new snapshot before acting.
+ui-control-stale = Shell content changed after user input. Run tundra-cli ui snapshot again before acting.
 ui-control-target = The target does not exist or cannot receive this input.
 ui-control-protocol = Unsupported control protocol version.
 ui-control-timeout = Timed out waiting for the Shell or target.
-ui-control-help = Usage: tundra-cli ui <sessions|snapshot|click|move|drag|scroll|key|text|wait> [options]
+ui-control-help = Usage: tundra-cli ui <sessions|snapshot|wake|click|move|drag|scroll|key|text|wait> [options]
     Common: --session ID, --snapshot NUMBER, --timeout MS (default 5000)
     click/move/scroll: --id ID or --x COL --y ROW; click: --button left|right|middle, --double
     drag: --from-id ID or --from-x COL --from-y ROW; --to-id ID or --to-x COL --to-y ROW; --duration MS
@@ -433,8 +433,11 @@ ui-control-help = Usage: tundra-cli ui <sessions|snapshot|click|move|drag|scroll
     key KEY: --modifiers ctrl,alt,shift,super,hyper,meta; --phase press|repeat|release
     text TEXT or text --stdin: enter text at the current focus
     wait --id ID: --state present|absent|actionable (default actionable)
+    wake: close idle weather or the weather lockscreen; return the resulting Shell snapshot.
     drag also accepts --button; duration is 16..10000 ms, scroll count is 1..1000.
-    Multiple sessions require --session. --snapshot rejects a changed frame; timeouts never replay input.
+    Multiple sessions require --session. Timeouts never replay input.
+    User operations require a new snapshot or wait, including when using --snapshot.
+    Pointer movement, animations and automatic updates do not invalidate snapshots; weather screens are exempt.
     text -- TEXT accepts text starting with a dash; sessions takes no options.
     Coordinates start at (0,0). Output is JSON, protocol version 1.
     Enable in Settings > System or config set automation.enabled true before starting Shell.

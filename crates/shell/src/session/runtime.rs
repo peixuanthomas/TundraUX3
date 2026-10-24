@@ -1336,26 +1336,17 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             );
             let state_timeout_wakeup =
                 command_line_timeout_is_state && state_poll_timeout <= redraw_timeout;
-            let external_event = control.poll(Instant::now());
             let poll_timeout = if control.enabled() {
                 poll_timeout.min(Duration::from_millis(16))
             } else {
                 poll_timeout
             };
+            let poll_timeout = control.poll_timeout(Instant::now(), poll_timeout);
             let mut action = None;
             let mut terminal_events = Vec::new();
-            let external_pending = external_event.is_some();
-            if let Some(event) = external_event {
-                terminal_events.push(event);
-            }
-            if event::poll(if terminal_events.is_empty() {
-                poll_timeout
-            } else {
-                Duration::ZERO
-            })? {
+            if event::poll(poll_timeout)? {
                 let first = event::read()?;
-                let native_input = !external_pending
-                    && matches!(&first, event::Event::Key(_) | event::Event::Paste(_))
+                let native_input = matches!(&first, event::Event::Key(_) | event::Event::Paste(_))
                     && !state.input_keyboard_open()
                     && editor_vim.captures_input(&state, &crossterm_event_to_input(first.clone()));
                 terminal_events.extend(if native_input {
@@ -1363,6 +1354,13 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 } else {
                     read_ready_terminal_event_batch(first)?
                 });
+            }
+            let mut user_operated = false;
+            for event in &terminal_events {
+                user_operated |= control.observe_user_input(event);
+            }
+            if !user_operated && let Some(event) = control.poll(Instant::now()) {
+                terminal_events.push(event);
             }
             let terminal_event_received = !terminal_events.is_empty();
             if terminal_event_received {

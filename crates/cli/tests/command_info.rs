@@ -25,6 +25,7 @@ fn help_and_version_work_without_startup_or_writable_watchdog_paths() {
         &["ui", "--help"],
         &["help", "ui", "text"],
         &["ui", "click", "--help"],
+        &["ui", "wake", "--help"],
         &["debug"],
         &["debug", "asset"],
         &["debug", "clear-logs"],
