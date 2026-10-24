@@ -143,6 +143,9 @@ impl ControlRuntime {
                         Some(Response::failure("busy", i18n::tr!("ui-control-busy")))
                     } else {
                         match action_events(&request.action, snapshot) {
+                            Ok(events) if events.is_empty() => {
+                                Some(Response::success(snapshot.clone()))
+                            }
                             Ok(events) => {
                                 self.active = Some(client);
                                 self.events = events
@@ -289,6 +292,9 @@ pub(super) fn action_events(
     action: &Action,
     snapshot: &Snapshot,
 ) -> Result<Vec<(Duration, Event)>, &'static str> {
+    if matches!(action, Action::Wake) && !is_weather_page(&snapshot.page) {
+        return Ok(Vec::new());
+    }
     if snapshot.page == "terminal_size" {
         return Err("target_unavailable");
     }
@@ -301,6 +307,18 @@ pub(super) fn action_events(
     let mut add = |ms: u64, event| events.push((Duration::from_millis(ms), event));
     match action {
         Action::Snapshot => {}
+        Action::Wake => {
+            for (ms, kind) in [(0, KeyEventKind::Press), (16, KeyEventKind::Release)] {
+                add(
+                    ms,
+                    Event::Key(KeyEvent::new_with_kind(
+                        KeyCode::Char(' '),
+                        KeyModifiers::NONE,
+                        kind,
+                    )),
+                );
+            }
+        }
         Action::Click {
             target,
             button: b,
@@ -394,6 +412,10 @@ pub(super) fn action_events(
         Action::Text { text } => add(0, Event::Paste(text.clone())),
     }
     Ok(events)
+}
+
+fn is_weather_page(page: &str) -> bool {
+    matches!(page, "lockscreen" | "screen_saver")
 }
 
 fn parse_key(key: &str) -> Result<(KeyCode, KeyModifiers), &'static str> {

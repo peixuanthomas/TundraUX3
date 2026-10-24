@@ -131,6 +131,14 @@ def main():
             current = until(lambda current: current["page"] == "screen_saver", timeout=35)
             assert any(node["id"] == "screen_saver/resume" for node in current["nodes"])
             assert "Press any key or tap to resume" in "\n".join(current["lines"])
+            current = ui("wake")["snapshot"]
+            assert current["page"] == "Settings"
+            assert any(node["id"].startswith("modal/") for node in current["nodes"])
+            current = ui("wake")["snapshot"]
+            assert current["page"] == "Settings"
+            assert any(node["id"].startswith("modal/") for node in current["nodes"])
+            print("PASS: wake dismissed idle weather and preserved the page and help dialog")
+            until(lambda current: current["page"] == "screen_saver", timeout=35)
             os.write(master, b"\x1b")
             current = until(lambda current: current["page"] == "Settings")
             assert any(node["id"].startswith("modal/") for node in current["nodes"])

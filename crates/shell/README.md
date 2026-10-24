@@ -115,4 +115,6 @@ macOS 可用 `TMPDIR=/private/tmp cargo test --locked -p shell -p terminal-runti
 
 `session/automation.rs` 安排真实输入事件并等待绘制完成；`compositor` 从同一帧采集界面信息。外部输入沿用现有输入准备、页面分发、子终端及授权流程。内置密码从导出文字中隐藏，密码所在页面的转场期间暂不导出文字，避免动画中保留的旧帧泄漏内容。独立天气锁屏也使用同一个控制连接。用法见 [CLI 控制](../cli/docs/ui-control.md)。
 
+`tundra-cli ui wake` 沿用天气画面的唤醒输入，关闭空闲天气或天气锁屏后等待 Shell 绘制再回复。普通页面不发送按键，只返回当前画面；不会跳过登录或触发原页面操作。
+
 Linux 实际终端验证：`python3 scripts/tests/shell-control.py target/debug/tundra-shell`（从项目根目录运行）。包含设置 30 秒超时、保留帮助弹窗的键盘唤醒，以及命令行后台运行时的点按唤醒。

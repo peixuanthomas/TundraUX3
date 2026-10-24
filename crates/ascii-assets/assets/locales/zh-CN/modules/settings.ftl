@@ -425,7 +425,7 @@ ui-control-stale = 界面已变化，请重新读取快照后操作。
 ui-control-target = 目标不存在或不能接收此输入。
 ui-control-protocol = 不支持此控制协议版本。
 ui-control-timeout = 等待 Shell 或目标超时。
-ui-control-help = 用法：tundra-cli ui <sessions|snapshot|click|move|drag|scroll|key|text|wait> [选项]
+ui-control-help = 用法：tundra-cli ui <sessions|snapshot|wake|click|move|drag|scroll|key|text|wait> [选项]
     通用：--session ID、--snapshot 编号、--timeout 毫秒（默认 5000）
     click/move/scroll：--id ID 或 --x 列 --y 行；click：--button left|right|middle、--double
     drag：--from-id ID 或 --from-x 列 --from-y 行；--to-id ID 或 --to-x 列 --to-y 行；--duration 毫秒
@@ -433,6 +433,7 @@ ui-control-help = 用法：tundra-cli ui <sessions|snapshot|click|move|drag|scro
     key 按键：--modifiers ctrl,alt,shift,super,hyper,meta；--phase press|repeat|release
     text 文字 或 text --stdin：向当前焦点输入文字
     wait --id ID：--state present|absent|actionable（默认 actionable）
+    wake：关闭空闲天气或天气锁屏，返回进入 Shell 后的快照。
     drag 也支持 --button；时长范围为 16..10000 毫秒，滚动次数为 1..1000。
     多会话必须指定 --session。--snapshot 拒绝旧快照；超时不会重放输入。
     text -- 文字 可输入以短横线开头的文字；sessions 不接受选项。

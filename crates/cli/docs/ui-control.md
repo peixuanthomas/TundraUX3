@@ -31,6 +31,7 @@ tundra-cli ui snapshot --session SESSION_ID
 | --- | --- |
 | `sessions` | 列出会话；不接受选项。 |
 | `snapshot` | 读取界面树和字符画面。 |
+| `wake` | 关闭空闲天气或天气锁屏，返回绘制后的 Shell 快照；已在普通页面时只返回当前快照。不会跳过登录。 |
 | `click` | `--id TARGET_ID` 或 `--x COL --y ROW`；可加 `--button left\|right\|middle`、`--double`。 |
 | `move` | `--id TARGET_ID` 或 `--x COL --y ROW`。 |
 | `drag` | 起点 `--from-id FROM_ID` 或 `--from-x COL --from-y ROW`；终点 `--to-id TO_ID` 或 `--to-x COL --to-y ROW`；可加 `--duration MS`、`--button left\|right\|middle`。默认 300 ms，允许 16–10000 ms。 |
@@ -44,6 +45,7 @@ tundra-cli ui snapshot --session SESSION_ID
 
 ```console
 tundra-cli ui click --id TARGET_ID
+tundra-cli ui wake
 tundra-cli ui key s --modifiers ctrl
 tundra-cli ui key tab --modifiers shift
 tundra-cli ui drag --from-id FROM_ID --to-x 40 --to-y 18 --duration 400

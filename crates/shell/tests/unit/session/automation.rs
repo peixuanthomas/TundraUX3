@@ -152,6 +152,36 @@ fn text_is_one_paste_event_and_coordinates_are_checked() {
 }
 
 #[test]
+fn wake_only_sends_input_to_weather_pages() {
+    let mut current = snapshot();
+    for page in ["Home", "terminal_size"] {
+        current.page = page.into();
+        assert!(action_events(&Action::Wake, &current).unwrap().is_empty());
+    }
+    for page in ["lockscreen", "screen_saver"] {
+        current.page = page.into();
+        let events = action_events(&Action::Wake, &current).unwrap();
+        assert_eq!(events.len(), 2);
+        for (index, phase) in [KeyEventKind::Press, KeyEventKind::Release]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                events[index],
+                (
+                    Duration::from_millis(index as u64 * 16),
+                    Event::Key(KeyEvent::new_with_kind(
+                        KeyCode::Char(' '),
+                        KeyModifiers::NONE,
+                        phase,
+                    )),
+                )
+            );
+        }
+    }
+}
+
+#[test]
 fn disconnect_cancels_pointer_instead_of_activating_a_pressed_button() {
     let mut releases = Vec::new();
     track_release(
