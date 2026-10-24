@@ -16,6 +16,8 @@ startup-shell-ui-automation-help = UI automation (for agents):
     { "  " }tundra-cli ui click --id TARGET_ID
     { "  " }tundra-cli ui text "TEXT"
     Replace TARGET_ID with an ID from snapshot; text goes to the focused control.
+    After user operations, read snapshot or wait again; animations and automatic updates are ignored.
+    Run tundra-cli ui wake to close idle weather or the weather lockscreen.
     See tundra-cli ui --help for click, drag, scroll, key, text, and wait commands.
 startup-cli-help = TundraUX3 CLI
     { cli-administration-root-usage }

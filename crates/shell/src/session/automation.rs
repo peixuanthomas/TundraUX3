@@ -13,6 +13,8 @@ pub(super) struct ControlRuntime {
     server: Option<platform::shell_control::Server>,
     snapshot: Option<Snapshot>,
     number: u64,
+    last_observed_snapshot: Option<u64>,
+    last_user_input_snapshot: u64,
     active: Option<u64>,
     events: VecDeque<(Instant, Event)>,
     releases: Vec<Event>,
@@ -27,6 +29,8 @@ impl ControlRuntime {
             server: None,
             snapshot: None,
             number: 0,
+            last_observed_snapshot: None,
+            last_user_input_snapshot: 0,
             active: None,
             events: VecDeque::new(),
             releases: Vec::new(),
@@ -69,11 +73,44 @@ impl ControlRuntime {
         snapshot.number = self.number;
         if self.awaiting_frame && self.events.is_empty() {
             if let Some(client) = self.active.take() {
+                self.last_observed_snapshot = Some(snapshot.number);
                 server.respond(client, &Response::success(snapshot.clone()));
             }
             self.awaiting_frame = false;
         }
         self.snapshot = Some(snapshot);
+    }
+
+    /// Physical operations must be applied before accepting another external request.
+    pub fn observe_user_input(&mut self, event: &Event) -> bool {
+        let operated = match event {
+            Event::Key(key) => key.kind != KeyEventKind::Release,
+            Event::Mouse(mouse) => mouse.kind != MouseEventKind::Moved,
+            Event::Paste(_) | Event::Resize(_, _) => true,
+            _ => false,
+        };
+        if !operated {
+            return false;
+        }
+        if self.server.is_none()
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| is_weather_page(&snapshot.page))
+        {
+            return true;
+        }
+        self.last_user_input_snapshot = self.number;
+        self.events.clear();
+        self.awaiting_frame = false;
+        cancel_pointer(&mut self.releases);
+        if let Some(client) = self.active.take() {
+            self.server.as_mut().expect("enabled server").respond(
+                client,
+                &Response::failure("stale_snapshot", i18n::tr!("ui-control-stale")),
+            );
+        }
+        true
     }
 
     pub fn invalidate(&mut self) {
@@ -95,6 +132,8 @@ impl ControlRuntime {
             }
         }
         self.snapshot = None;
+        self.last_observed_snapshot = None;
+        self.last_user_input_snapshot = 0;
         self.events.clear();
         self.awaiting_frame = false;
         cancel_pointer(&mut self.releases);
@@ -131,9 +170,13 @@ impl ControlRuntime {
                     let snapshot = self.snapshot.as_ref().expect("checked snapshot");
                     if matches!(request.action, Action::Snapshot) {
                         Some(Response::success(snapshot.clone()))
-                    } else if request
-                        .snapshot
-                        .is_some_and(|number| number != snapshot.number)
+                    } else if !is_weather_page(&snapshot.page)
+                        && (self
+                            .last_observed_snapshot
+                            .is_some_and(|number| number <= self.last_user_input_snapshot)
+                            || request.snapshot.is_some_and(|number| {
+                                number <= self.last_user_input_snapshot || number > snapshot.number
+                            }))
                     {
                         Some(Response::failure(
                             "stale_snapshot",
@@ -168,6 +211,9 @@ impl ControlRuntime {
                 }
             };
             if let Some(response) = response {
+                if let Some(snapshot) = &response.snapshot {
+                    self.last_observed_snapshot = Some(snapshot.number);
+                }
                 server.respond(client, &response);
             }
         }
@@ -187,6 +233,15 @@ impl ControlRuntime {
 
     pub fn needs_frame(&self) -> bool {
         self.awaiting_frame
+    }
+
+    pub fn poll_timeout(&self, now: Instant, fallback: Duration) -> Duration {
+        if self.active.is_none() && !self.releases.is_empty() {
+            return Duration::ZERO;
+        }
+        self.events.front().map_or(fallback, |(at, _)| {
+            fallback.min(at.saturating_duration_since(now))
+        })
     }
 }
 

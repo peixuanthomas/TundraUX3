@@ -61,7 +61,11 @@ tundra-cli ui wait --id TARGET_ID --state actionable --timeout 10000
 
 除了 `sessions`，各命令都支持 `--session ID`、`--snapshot NUMBER`、`--timeout MS`。`--timeout` 是正整数，默认 5000 ms，限制连接/响应等待或 `wait` 的总等待时间；读取 `--stdin` 先等待标准输入结束。参数重复、未知选项、缺少坐标、同时提供 ID 和坐标都以参数错误退出。
 
-`--snapshot` 要求 Shell 的当前快照编号仍与指定值一致，否则返回 `stale_snapshot`，不执行输入。适用于读取位置后马上操作，防止误点已经变动的界面。超时后不会自动重发输入；此时输入可能已经发生，应重新读取快照确认结果。
+最近一次 CLI 返回控件信息后，如果用户通过真实键盘按键、点击、拖动、滚动、粘贴或调整窗口大小进行了操作，后续控制命令会返回 `stale_snapshot`，不发送输入。拒绝状态会保留，直到重新执行 `snapshot` 或 `wait` 获取界面信息。没有传入 `--snapshot` 时也会检查；外部 CLI 自己发送的输入不算用户操作。
+
+单纯移动鼠标、焦点变化、动画、弹簧进度条、时钟及其他随时间或后台任务自动更新的控件不会使已读取的信息失效。空闲天气和天气锁屏不参与这项检查，可用 `wake` 直接关闭。
+
+`--snapshot` 可指定先前读取的编号。即使自动更新已经产生新编号，只要之后没有真实用户操作，仍可使用旧编号；用户操作之前的编号在重新获取后仍会拒绝，未发布的编号也会拒绝。超时后不会自动重发输入；此时输入可能已经发生，应重新读取快照确认结果。
 
 每条结果都是一行 JSON。成功的快照及输入结果形如：
 
@@ -84,7 +88,7 @@ tundra-cli ui wait --id TARGET_ID --state actionable --timeout 10000
 错误形如：
 
 ```json
-{"protocol":1,"ok":false,"error":{"code":"stale_snapshot","message":"The interface changed. Read a new snapshot before acting."}}
+{"protocol":1,"ok":false,"error":{"code":"stale_snapshot","message":"Shell content changed after user input. Run tundra-cli ui snapshot again before acting."}}
 ```
 
 脚本应检查 `ok` 和 `error.code`，不匹配会随语言改变的 `message`。正常完成退出码为 `0`，参数解析失败为 `2`，连接、服务端拒绝、读取标准输入和等待失败为 `1`。
@@ -97,7 +101,7 @@ tundra-cli ui wait --id TARGET_ID --state actionable --timeout 10000
 | `session_not_found` | 指定会话不可用。 |
 | `unavailable` | 本地连接或会话目录不可用。 |
 | `not_ready` | Shell 尚未发布画面；`wait` 会继续读取。 |
-| `stale_snapshot` | 快照编号已改变，输入未执行。 |
+| `stale_snapshot` | 用户操作后尚未重新获取信息，或指定了用户操作之前／尚未发布的编号；输入未执行。 |
 | `busy` | 另一个外部输入尚未完成。 |
 | `target_unavailable` | 目标不存在或当前不能接收输入。 |
 | `unsupported_protocol` / `protocol_error` | 服务端不支持请求版本，或客户端收到不符合协议的响应。 |

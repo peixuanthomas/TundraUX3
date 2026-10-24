@@ -421,7 +421,7 @@ ui-control-invalid-boolean = 请使用 true 或 false。
 ui-control-config-saved = 已保存外部 CLI 控制设置。通过 CLI 修改后，需重启正在运行的 Shell。
 ui-control-unavailable = 无法连接 Shell 控制接口：{ $reason }
 ui-control-not-ready = Shell 界面尚未就绪。
-ui-control-stale = 界面已变化，请重新读取快照后操作。
+ui-control-stale = Shell 内容已因用户操作发生变化，请重新执行 tundra-cli ui snapshot 获取界面信息后再操作。
 ui-control-target = 目标不存在或不能接收此输入。
 ui-control-protocol = 不支持此控制协议版本。
 ui-control-timeout = 等待 Shell 或目标超时。
@@ -435,7 +435,9 @@ ui-control-help = 用法：tundra-cli ui <sessions|snapshot|wake|click|move|drag
     wait --id ID：--state present|absent|actionable（默认 actionable）
     wake：关闭空闲天气或天气锁屏，返回进入 Shell 后的快照。
     drag 也支持 --button；时长范围为 16..10000 毫秒，滚动次数为 1..1000。
-    多会话必须指定 --session。--snapshot 拒绝旧快照；超时不会重放输入。
+    多会话必须指定 --session。超时不会重放输入。
+    用户操作后需重新执行 snapshot 或 wait 获取信息，使用 --snapshot 时也一样。
+    单纯移动鼠标、动画和控件自动更新不会使快照失效；天气画面不参与此检查。
     text -- 文字 可输入以短横线开头的文字；sessions 不接受选项。
     坐标从 (0,0) 开始。输出为 JSON，协议版本为 1。
     在“设置 → 系统”开启，或启动前执行 config set automation.enabled true。
