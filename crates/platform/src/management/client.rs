@@ -279,7 +279,14 @@ fn wait_for_launcher(
 #[cfg(target_os = "macos")]
 pub use super::packages::client::run;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(any(windows, test))]
+#[path = "client/windows.rs"]
+mod windows;
+
+#[cfg(windows)]
+pub use windows::run;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn run(
     _command: Option<ManagementCommand>,
     _privileged: bool,

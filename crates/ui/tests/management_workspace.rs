@@ -8,7 +8,7 @@ fn model(advanced_open: bool) -> ManagementViewModel {
             navigation_actions: vec![0, 1, 2],
             active_navigation: 0,
             primary_actions: vec![6, 7],
-            advanced_toggle: 3,
+            advanced_toggle: Some(3),
             advanced_actions: vec![4, 5],
             advanced_open,
             focus: WorkspaceFocus::Actions,
@@ -81,6 +81,39 @@ fn workspace_actions_stay_separate_from_search_list_and_details() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn workspace_without_advanced_actions_has_no_advanced_buttons_or_focus_targets() {
+    let mut model = model(false);
+    let workspace = model.workspace.as_mut().unwrap();
+    workspace.advanced_toggle = None;
+    workspace.advanced_actions.clear();
+    assert!(workspace.action_group(WorkspaceFocus::Advanced).is_empty());
+    for (width, height) in [(108, 20), (160, 40), (50, 12)] {
+        let main = Rect::new(0, 0, width, height);
+        let layout = management_layout(main, &model);
+        for index in [3, 4, 5] {
+            assert!(layout.actions[index].is_empty());
+        }
+        for index in [0, 1, 2, 6, 7] {
+            assert!(!layout.actions[index].is_empty());
+        }
+        let theme = TundraTheme::default_dark();
+        let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_management_content(frame, main, &model, &context))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!text.contains("Advanced"));
     }
 }
 

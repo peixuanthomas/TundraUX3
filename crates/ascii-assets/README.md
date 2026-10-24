@@ -1,5 +1,7 @@
 # ascii-assets
 
+`management-winget.ftl` 提供 Windows 软件包的中英文标签、缺少依赖、输出解析及执行结果提示，沿用现有语言包加载流程。
+
 中英文 `modules/editor-vim.ftl` 也提供引擎安装弹窗、下载进度、取消及尚未发布的提示。
 
 中英文 `modules/settings.ftl` 保存屏幕超时时间及说明，`modules/weathr.ftl` 保存空闲天气画面的返回提示。

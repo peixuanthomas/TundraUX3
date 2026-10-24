@@ -1,4 +1,12 @@
 use i18n::{LocalizedText, msg};
+use platform::PlatformKind;
+
+const ALL_PLATFORMS: &[PlatformKind] = &[
+    PlatformKind::Windows,
+    PlatformKind::Macos,
+    PlatformKind::Linux,
+    PlatformKind::Unsupported,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupLanguageOption {
@@ -75,7 +83,7 @@ pub struct BuiltInApplicationDescriptor {
     pub type_label: &'static str,
     pub admin_only: bool,
     pub fixed_in_launcher: bool,
-    pub linux_only: bool,
+    pub platforms: &'static [PlatformKind],
 }
 
 impl BuiltInApplicationDescriptor {
@@ -119,8 +127,8 @@ impl BuiltInApplicationDescriptor {
         msg!("app-catalog-builtin-type").into()
     }
 
-    pub const fn available_on_platform(&self, linux: bool) -> bool {
-        !self.linux_only || linux
+    pub fn available_on_platform(&self, platform: PlatformKind) -> bool {
+        self.platforms.contains(&platform)
     }
 }
 
@@ -131,7 +139,7 @@ pub const COMMAND_LINE_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplic
     type_label: "Built-in application",
     admin_only: true,
     fixed_in_launcher: true,
-    linux_only: false,
+    platforms: ALL_PLATFORMS,
 };
 
 pub const EDITOR_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationDescriptor {
@@ -141,7 +149,7 @@ pub const EDITOR_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationD
     type_label: "Built-in application",
     admin_only: false,
     fixed_in_launcher: true,
-    linux_only: false,
+    platforms: ALL_PLATFORMS,
 };
 
 const fn management_application(
@@ -156,7 +164,7 @@ const fn management_application(
         type_label: "Built-in application",
         admin_only: false,
         fixed_in_launcher: true,
-        linux_only: true,
+        platforms: &[PlatformKind::Linux],
     }
 }
 
@@ -170,7 +178,7 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         type_label: "Built-in application",
         admin_only: false,
         fixed_in_launcher: true,
-        linux_only: false,
+        platforms: ALL_PLATFORMS,
     },
     BuiltInApplicationDescriptor {
         id: "builtin.logs",
@@ -179,7 +187,7 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         type_label: "Built-in application",
         admin_only: false,
         fixed_in_launcher: true,
-        linux_only: false,
+        platforms: ALL_PLATFORMS,
     },
     management_application(
         "builtin.services",
@@ -192,7 +200,11 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         "Inspect processes and resource use",
     ),
     BuiltInApplicationDescriptor {
-        linux_only: !cfg!(target_os = "macos"),
+        platforms: &[
+            PlatformKind::Linux,
+            PlatformKind::Macos,
+            PlatformKind::Windows,
+        ],
         ..management_application(
             "builtin.packages",
             "Packages",

@@ -59,6 +59,14 @@ jobs:
       - name: Compile workspace
         shell: bash
         run: cargo build --workspace --locked
+      - name: Test Windows package management
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo test --locked -p platform --lib winget
+          cargo test --locked -p app --test application_catalog
+          cargo test --locked -p ui --test management_workspace
+          cargo test --locked -p shell --lib package_workspace
       - name: Build bundled Vim for editor tests
         shell: bash
         run: python3 scripts/build-vim.py --output target/debug/vim

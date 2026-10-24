@@ -19,10 +19,10 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 | 平台 | 用途 |
 | --- | --- |
 | **Linux** | 主要目标平台，用于在只有终端的环境中操作设备和管理系统。 |
-| **Windows** | 演示平台，用于体验界面和交互设计。 |
+| **Windows** | 支持 WinGet 软件包管理，其他系统控制仍以体验界面和交互为主。 |
 | **macOS** | 体验界面和交互设计，支持通过 Homebrew 管理 Formula 和 Cask。 |
 
-系统管理功能主要面向 Linux 开发。Windows 和 macOS 版本用于体验项目，不承诺提供同等的系统控制功能。Linux 上可用的操作取决于已安装的工具、正在运行的服务，以及当前用户的权限。
+系统管理功能主要面向 Linux 开发。Windows 通过 WinGet、macOS 通过 Homebrew 管理软件包，其他系统控制不承诺提供与 Linux 同等的功能。可用的操作取决于已安装的工具、正在运行的服务，以及当前用户的权限。
 
 ## 可以做什么
 
@@ -33,6 +33,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 - **管理 Linux 设备：**查看和控制服务、进程，管理软件包，配置受支持的网络连接，查看磁盘和挂载点。
 - **浏览软件包：**默认打开已安装，Tab/Shift+Tab 循环切换已安装、更新、搜索，↑/↓ 选择列表项；展开详情后用四个方向键滚动内容，原有快捷键继续可用。
 - **管理 macOS 软件包：**通过 Homebrew 搜索、安装、卸载和升级 Formula、Cask，原生确认与密码在任务终端输入，详见 [Homebrew 支持](../crates/platform/docs/homebrew.md)。
+- **管理 Windows 软件包：**同一个软件包页面通过 WinGet 搜索、安装、卸载、升级单个软件或全部升级，使用 `winget` 软件源。系统需要 App Installer 和已初始化的软件源，详见 [Windows 软件包](../crates/platform/docs/windows-packages.md)。
 - **找到页面操作：**常用按钮位于右下方，主操作使用强调色，危险操作使用危险色。按 F1 或点击标题栏帮助按钮查看本页快捷键。
 - **看清页面层次：**鼠标和触屏打开整页、弹窗、菜单时，边框从入口按钮逐渐放大，关闭时缩回同一个按钮；实体键盘操作立即完成。详情和屏幕键盘保留原有动画，设置支持整体速度、各阶段时长、恢复默认及减少动态效果。
 - **管理端口和登录：**查看监听端口及所属进程，管理 UFW/firewalld 放行规则，修改 SSH 设置后在新连接中确认保留。
@@ -130,6 +131,7 @@ cargo run --locked -p cli --bin tundra-cli -- doctor
 - [技术文档](README-TECHNICAL.md)：架构、构建、测试和打包。
 - [源码编辑器](source-editor.md)：查找、替换、软换行、JSON 格式化和支持的文本格式。
 - [Linux 系统管理](../crates/platform/docs/linux-management.md)：服务、进程、软件包、网络和磁盘。
+- [Windows 软件包](../crates/platform/docs/windows-packages.md)：WinGet 准备、支持的操作和验证方式。
 - [正式运维 CLI](../crates/cli/docs/operations.md)：脚本命令、授权、任务编号和退出码。
 - [系统配置编辑器](../crates/platform/docs/system-config.md)与[用户管理](../crates/platform/docs/user-management.md)。
 - [Linux 运行说明](packaging/linux/README-LINUX.txt)：运行依赖、权限和便携更新，英文编写。

@@ -33,10 +33,19 @@ impl ShellSession {
     pub(in crate::session) fn built_in_launcher_applications(
         &self,
     ) -> Vec<app::BuiltInApplicationDescriptor> {
+        let platform = if cfg!(target_os = "linux") {
+            PlatformKind::Linux
+        } else if cfg!(windows) {
+            PlatformKind::Windows
+        } else if cfg!(target_os = "macos") {
+            PlatformKind::Macos
+        } else {
+            PlatformKind::Unsupported
+        };
         app::BUILT_IN_LAUNCHER_APPLICATIONS
             .iter()
             .copied()
-            .filter(|descriptor| descriptor.available_on_platform(cfg!(target_os = "linux")))
+            .filter(|descriptor| descriptor.available_on_platform(platform))
             .filter(|descriptor| !descriptor.admin_only || self.can_execute_command_line())
             .collect()
     }
