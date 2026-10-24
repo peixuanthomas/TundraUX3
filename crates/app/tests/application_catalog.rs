@@ -22,7 +22,7 @@ fn management_and_logs_are_fixed_launcher_apps_with_platform_visibility() {
         assert!(!application.description.is_empty());
         assert_eq!(
             application.available_on_platform(false),
-            id == "builtin.logs"
+            id == "builtin.logs" || (id == "builtin.packages" && cfg!(target_os = "macos"))
         );
         assert!(application.available_on_platform(true));
     }

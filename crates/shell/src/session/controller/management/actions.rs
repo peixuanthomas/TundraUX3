@@ -49,6 +49,8 @@ impl ShellSession {
         if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
             // Navigation must also remain available after a failed query or
             // when a subview has no rows.
+            let backend = &self.pages.management.management_state.snapshot.backend;
+            let homebrew = backend == "brew" || (cfg!(target_os = "macos") && backend.is_empty());
             for scope in [
                 "search",
                 "installed",
@@ -57,6 +59,9 @@ impl ShellSession {
                 "conflicts",
                 "status",
             ] {
+                if homebrew && matches!(scope, "sources" | "conflicts" | "status") {
+                    continue;
+                }
                 let id = format!("scope_{scope}");
                 if !actions.iter().any(|(action, _)| {
                     action.id == id
@@ -607,7 +612,13 @@ impl ShellSession {
                         .as_ref()
                         .map(|query| query.scope.as_str())
                 {
-                    self.pages.management.management_state.snapshot = ManagementSnapshot::default();
+                    let backend = std::mem::take(
+                        &mut self.pages.management.management_state.snapshot.backend,
+                    );
+                    self.pages.management.management_state.snapshot = ManagementSnapshot {
+                        backend,
+                        ..Default::default()
+                    };
                     self.pages.management.management_state.problem = None;
                 }
                 if !keep_package_filter {
@@ -687,7 +698,13 @@ impl ShellSession {
         }
         if action.id == "recover" {
             if let Some(socket) = values.get("socket") {
-                self.start_management_operation(None, false, Some(PathBuf::from(socket)), None);
+                self.start_management_operation(
+                    None,
+                    false,
+                    false,
+                    Some(PathBuf::from(socket)),
+                    None,
+                );
             }
             return;
         }
@@ -724,7 +741,13 @@ impl ShellSession {
         {
             query.options.insert("provider".into(), unit.clone());
         }
-        self.start_management_operation(Some(command), action.privileged, None, Some(description));
+        self.start_management_operation(
+            Some(command),
+            action.privileged,
+            action.requires_approval,
+            None,
+            Some(description),
+        );
     }
 
     pub(in crate::session) fn management_send(&self, input: OperationInput) {
@@ -788,6 +811,7 @@ impl ShellSession {
         &mut self,
         command: Option<ManagementCommand>,
         privileged: bool,
+        requires_approval: bool,
         socket: Option<PathBuf>,
         description: Option<String>,
     ) {
@@ -825,6 +849,7 @@ impl ShellSession {
         let (job, rx) = self.management_job();
         let description = description.unwrap_or_else(|| i18n::tr!("aa-reconnect"));
         let requires_approval = privileged
+            || requires_approval
             || command
                 .as_ref()
                 .is_some_and(|c| c.kind == ManagementKind::SystemConfig && c.action == "reload");
@@ -834,7 +859,7 @@ impl ShellSession {
             return;
         };
         self.pages.management.management_state.auto_admin_job = Some(aa.clone());
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         aa.enable_helper_control();
         let worker_aa = aa.clone();
         #[cfg(target_os = "linux")]

@@ -191,11 +191,14 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         "Processes",
         "Inspect processes and resource use",
     ),
-    management_application(
-        "builtin.packages",
-        "Packages",
-        "Search, install, remove and update software",
-    ),
+    BuiltInApplicationDescriptor {
+        linux_only: !cfg!(target_os = "macos"),
+        ..management_application(
+            "builtin.packages",
+            "Packages",
+            "Search, install, remove and update software",
+        )
+    },
     management_application(
         "builtin.network",
         "Network",

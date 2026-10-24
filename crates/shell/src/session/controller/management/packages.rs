@@ -33,6 +33,9 @@ impl ShellSession {
     }
 
     pub(super) fn package_advanced_label(&self) -> String {
+        if self.pages.management.management_state.snapshot.backend == "brew" {
+            return i18n::tr!("management-brew-advanced");
+        }
         match root_scope(self.package_scope()) {
             "search" => i18n::tr!("management-package-advanced-sources"),
             "updates" => i18n::tr!("management-package-advanced-status"),
@@ -69,7 +72,9 @@ impl ShellSession {
             !management_view_action(action)
                 && (!matches!(action.id.as_str(), "upgrade_all" | "pacman_upgrade_all")
                     || root == "updates")
-                && (action.id != "refresh" || root != "installed")
+                && (action.id != "refresh"
+                    || root != "installed"
+                    || self.pages.management.management_state.snapshot.backend == "brew")
                 && (action.id != "remove" || self.package_scope() != "updates")
         }));
         let state = &self.pages.management.management_state;

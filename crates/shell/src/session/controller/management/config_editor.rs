@@ -865,6 +865,7 @@ impl ShellSession {
                 identity: Default::default(),
             }),
             privileged,
+            false,
             None,
             Some(format!(
                 "{}: {}",

@@ -15,7 +15,8 @@ TundraUX3 is written in Rust, using Ratatui and crossterm. It is under active de
 | Platform | Role |
 | --- | --- |
 | **Linux** | The main target for device operation and system management in terminal-only environments. |
-| **Windows and macOS** | A demonstration platform for exploring the interface and interaction design. |
+| **macOS** | Interface exploration and Homebrew package management for Formulae and Casks. |
+| **Windows** | A demonstration platform for exploring the interface and interaction design. |
 
 System-management development focuses on Linux. Windows and macOS builds let you try the experience, but do not promise the same system controls. Available Linux operations depend on the installed tools, running services, and your user's permissions.
 
@@ -27,6 +28,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
 - **Browse packages:** open Installed by default, cycle Installed/Updates/Search with Tab or Shift+Tab, and select packages with Up/Down. Expanded details scroll with all four arrow keys; existing shortcuts remain available.
+- **Manage macOS packages:** use Homebrew to search, install, remove and upgrade Formulae and Casks, with task-terminal input for native prompts. See [Homebrew support](crates/platform/docs/homebrew.md).
 - **Find page actions:** common operations appear at the bottom right, with the main action highlighted and destructive actions in the danger color. F1 or the title-bar Help button opens page shortcuts.
 - **Keep track of selections:** selected list rows and the current file shortcut stay highlighted when using a mouse or moving to another control. File Explorer quick access uses the same spacious rows as the application list in Settings.
 - **Follow page changes:** pages, dialogs and menus expand from their entry button's border and shrink back to it with a mouse or touchscreen; keyboard actions are immediate. Details and the screen keyboard keep their existing motion. Settings offers overall speed, phase times, reset and reduced motion.

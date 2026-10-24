@@ -130,6 +130,8 @@ pub struct ManagementAction {
     pub fields: Vec<ManagementField>,
     pub confirm: bool,
     pub privileged: bool,
+    #[serde(default)]
+    pub requires_approval: bool,
     pub disabled_reason: Option<String>,
     #[serde(default)]
     pub values: BTreeMap<String, String>,
@@ -281,6 +283,10 @@ pub trait OperationInteraction {
     fn terminal_size(&mut self) -> Option<(u16, u16)> {
         None
     }
+    /// A graceful stop, or a force-stop after the caller's explicit warning.
+    fn stop_requested(&mut self) -> Option<bool> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +372,9 @@ mod listening_ports;
 pub mod network;
 #[cfg(target_os = "linux")]
 pub mod packages;
+#[cfg(target_os = "macos")]
+#[path = "homebrew/mod.rs"]
+pub mod packages;
 pub mod problem;
 #[cfg(target_os = "linux")]
 pub mod processes;
@@ -388,6 +397,10 @@ pub fn query(
     query: &ManagementQuery,
     cancelled: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
+    #[cfg(target_os = "macos")]
+    if query.kind == ManagementKind::Packages {
+        return packages::query(query, cancelled);
+    }
     #[cfg(target_os = "linux")]
     return match query.kind {
         ManagementKind::Services => services::query(query, cancelled),
@@ -419,6 +432,10 @@ pub fn execute(
     interaction: &mut dyn OperationInteraction,
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
+    #[cfg(target_os = "macos")]
+    if command.kind == ManagementKind::Packages {
+        return packages::execute(command, context, interaction, cancelled);
+    }
     #[cfg(target_os = "linux")]
     return match command.kind {
         ManagementKind::Services => services::execute(command, context, interaction, cancelled),

@@ -188,6 +188,20 @@ impl ManagedChild {
             command.creation_flags(CREATE_SUSPENDED | if isolated { CREATE_NO_WINDOW } else { 0 });
         }
         let child = command.spawn()?;
+        Self::track(
+            child,
+            isolated,
+            register,
+            format!("child:{}", command.get_program().to_string_lossy()),
+        )
+    }
+
+    fn track(
+        child: std::process::Child,
+        isolated: bool,
+        register: bool,
+        label: String,
+    ) -> io::Result<Self> {
         let mut tree = ChildTree::new(child, isolated)?;
         let stdin = tree.child.stdin.take();
         let stdout = tree.child.stdout.take();
@@ -195,10 +209,9 @@ impl ManagedChild {
         let tree = Arc::new(Mutex::new(tree));
         let cleanup = tree.clone();
         let registration = if register {
-            ManagedResource::register_current(
-                format!("child:{}", command.get_program().to_string_lossy()),
-                move || cleanup.lock().unwrap_or_else(|e| e.into_inner()).stop(),
-            )
+            ManagedResource::register_current(label, move || {
+                cleanup.lock().unwrap_or_else(|e| e.into_inner()).stop()
+            })
             .map_err(io::Error::other)?
         } else {
             None
@@ -210,6 +223,19 @@ impl ManagedChild {
             tree,
             registration,
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn spawn_pty(
+        slave: &dyn portable_pty::SlavePty,
+        command: portable_pty::CommandBuilder,
+    ) -> io::Result<Self> {
+        let child: Box<dyn portable_pty::Child> =
+            slave.spawn_command(command).map_err(io::Error::other)?;
+        let child = child
+            .downcast::<std::process::Child>()
+            .expect("the native Unix PTY returns std::process::Child");
+        Self::track(*child, true, true, "pty".into())
     }
 
     pub fn id(&self) -> u32 {
@@ -229,6 +255,25 @@ impl ManagedChild {
 
     pub fn kill(&mut self) -> io::Result<()> {
         self.tree.lock().unwrap_or_else(|e| e.into_inner()).stop()
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn terminate(&mut self) -> io::Result<()> {
+        let mut tree = self.tree.lock().unwrap_or_else(|e| e.into_inner());
+        if tree.try_wait()?.is_none()
+            && unsafe { libc::kill(-(tree.child.id() as i32), libc::SIGTERM) } < 0
+        {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EPERM)
+                && crate::process::macos::group_is_dead(tree.child.id()).unwrap_or(false)
+            {
+                return Ok(());
+            }
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {

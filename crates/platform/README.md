@@ -8,6 +8,7 @@
 | --- | --- |
 | 数据目录、Linux 启动身份、桌面和文件集成 | [系统集成](docs/integration.md) |
 | 服务、进程、软件包和授权助手 | [Linux 系统管理](docs/linux-management.md) |
+| macOS Homebrew Formula 与 Cask | [Homebrew 软件包](docs/homebrew.md) |
 | 私有授权连接、撤销和任务控制接口 | [授权与助手连接](docs/authorization.md) |
 | Wi-Fi、网络恢复、磁盘健康与目录扫描 | [网络和磁盘](docs/network-disks.md) |
 | 系统用户、用户组和 SSH 公钥 | [用户管理](docs/user-management.md) |
@@ -22,6 +23,8 @@
 | 进程、日志、文档、目录性能及复测方式 | [性能优化](docs/performance.md) |
 
 查询使用当前进程权限。需要额外权限的操作先经过 AA，再由系统授权；保存的 Tundra 角色不会授予 Linux 权限。后端拒绝或无法确认写入结果时，先查询实际状态，不能换后端重复写入。
+
+macOS 软件包后端位于 `management/homebrew/`，与 Linux 后端共用查询、操作、AA 事件和子进程监督接口。通过 brew JSON v2 读取 Formula/Cask，类型与完整名称共同组成目标标识；提交前重新核对选中版本。写操作以当前用户运行，Cask 密码等原生提示通过 PTY 交互，关闭页面可继续后台运行，显式停止和强制结束沿用 AA。查询和普通操作不自动刷新、不清理其他包；刷新按钮显式执行 `brew update`。
 
 `shell_control` 为外部 CLI 提供本机 Shell 连接和会话发现。登记文件保存在当前用户缓存目录的 `shell-control/` 中；Unix 使用用户独有的 `0700` 目录和 `0600` socket、登记文件，连接后核对对方用户编号和 Shell 进程编号。Windows 命名管道和登记目录只允许当前用户 SID，明确拒绝网络用户，子文件继承相同权限。退出时删除登记文件并关闭连接，Unix socket 随监听器删除；崩溃留下的无效登记不会出现在会话列表中。
 

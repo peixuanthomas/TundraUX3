@@ -30,3 +30,5 @@ flowchart LR
 验证：`cargo test --locked -p auto-admin`，并运行 Shell 的 AA 界面测试和 Linux 授权交互检查。
 
 AA 的界面数据保留当前问题是否为秘密输入的标记，供 Shell 外部控制快照隐藏密码；不改变正常批准和密码输入流程。
+
+macOS Homebrew 操作也遵循 AA 策略，通过任务输入通道处理原生终端和停止请求。brew 本身以当前用户运行，Cask 若需要额外系统授权，由其原生安装程序在终端请求。

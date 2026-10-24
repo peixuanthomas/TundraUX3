@@ -1,6 +1,71 @@
 use super::*;
 
-#[cfg(target_os = "linux")]
+#[test]
+fn homebrew_advanced_actions_keep_refresh_without_linux_only_views() {
+    let mut session = package_list_state();
+    session.pages.management.management_state.snapshot.backend = "brew".into();
+    session
+        .pages
+        .management
+        .management_state
+        .snapshot
+        .actions
+        .push(ManagementAction {
+            id: "refresh".into(),
+            confirm: true,
+            ..Default::default()
+        });
+    let actions = session.package_actions();
+    assert!(actions.iter().any(|(action, _)| action.id == "refresh"));
+    assert!(!actions.iter().any(|(action, _)| matches!(
+        action.id.as_str(),
+        "scope_sources" | "scope_conflicts" | "scope_status"
+    )));
+}
+
+#[test]
+fn package_actions_require_aa_approval_without_system_privileges() {
+    let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
+        "tundra-package-approval-{}-{}",
+        std::process::id(),
+        PageInstanceId::new().get()
+    ));
+    let (runtime, process) =
+        watchdog::WatchdogRuntime::start_isolated(watchdog::WatchdogConfig::new(
+            root.join("reports"),
+            root.join("fallback"),
+            root.join("state"),
+            "package-approval-test",
+            "test",
+        ))
+        .unwrap();
+    let watchdog = process.register_app(shell_watchdog_descriptor()).unwrap();
+    let mut session = state();
+    session.settings_task_runtime = ShellSettingsTaskRuntime::new_managed(watchdog);
+    session.pages.management.management_state.kind = Some(ManagementKind::Packages);
+    session.perform_management_action(
+        ManagementAction {
+            id: "invalid-test-action".into(),
+            requires_approval: true,
+            privileged: false,
+            ..Default::default()
+        },
+        None,
+    );
+    let job = session
+        .pages
+        .management
+        .management_state
+        .auto_admin_job
+        .clone()
+        .unwrap();
+    assert_eq!(job.phase(), ::auto_admin::JobPhase::Waiting);
+    job.decide(false);
+    runtime.shutdown().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn opening_packages_defaults_to_installed_with_navigation_in_display_order() {
     let mut session = state();

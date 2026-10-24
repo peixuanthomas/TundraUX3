@@ -1,7 +1,9 @@
 //! Shared UI/CLI client. Disconnecting stops this reader, never the system operation.
+#[cfg(not(target_os = "macos"))]
 use super::*;
 #[cfg(target_os = "linux")]
 use crate::ManagedCommand;
+#[cfg(not(target_os = "macos"))]
 use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, mpsc},
@@ -274,7 +276,10 @@ fn wait_for_launcher(
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub use super::packages::client::run;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn run(
     _command: Option<ManagementCommand>,
     _privileged: bool,

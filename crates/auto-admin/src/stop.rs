@@ -22,7 +22,12 @@ impl AutoAdminJob {
         self.phase() == RUNNING && !self.0.stop_requested.load(Ordering::Acquire)
     }
 
-    #[cfg(any(target_os = "linux", test, feature = "test-support"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        test,
+        feature = "test-support"
+    ))]
     pub fn enable_helper_control(&self) {
         self.0.helper_control.store(true, Ordering::Release);
     }

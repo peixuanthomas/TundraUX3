@@ -894,6 +894,9 @@ fn shortcut_action_state(kind: ManagementKind, id: &str) -> ShellSession {
     let mut session = state();
     session.pages.management.management_state.kind = Some(kind);
     session.pages.management.management_state.query = Some(ManagementQuery::new(kind));
+    if kind == ManagementKind::Packages {
+        session.pages.management.management_state.snapshot.backend = "apt/dpkg".into();
+    }
     session
         .pages
         .management
@@ -2364,7 +2367,7 @@ fn action_capture_requires_matching_release() {
 }
 
 #[test]
-fn launcher_management_entries_are_linux_only_and_guest_is_blocked() {
+fn launcher_management_entries_follow_platform_support_and_guest_is_blocked() {
     let mut state = state();
     let entries = state.built_in_launcher_applications();
     for kind in [
@@ -2379,6 +2382,7 @@ fn launcher_management_entries_are_linux_only_and_guest_is_blocked() {
                 .iter()
                 .any(|entry| entry.id == format!("builtin.{}", kind.id())),
             cfg!(target_os = "linux")
+                || (kind == ManagementKind::Packages && cfg!(target_os = "macos"))
         );
     }
     state.app.dispatch_at(
@@ -2931,7 +2935,10 @@ fn all_package_subviews_keep_navigation_after_empty_or_failed_queries() {
         "status",
     ] {
         let mut session = package_list_state();
-        session.pages.management.management_state.snapshot = ManagementSnapshot::default();
+        session.pages.management.management_state.snapshot = ManagementSnapshot {
+            backend: "apt/dpkg".into(),
+            ..Default::default()
+        };
         session
             .pages
             .management

@@ -510,8 +510,9 @@ impl ShellSession {
 
     pub(in crate::session) fn open_management_query(&mut self, query: ManagementQuery) {
         let kind = query.kind;
-        if !cfg!(target_os = "linux") || self.app.auth_session().is_none() || self.is_strict_guest()
-        {
+        let supported = cfg!(target_os = "linux")
+            || (cfg!(target_os = "macos") && kind == ManagementKind::Packages);
+        if !supported || self.app.auth_session().is_none() || self.is_strict_guest() {
             return;
         }
         self.enter_new_page(ShellScreen::Management);
@@ -647,6 +648,7 @@ impl ShellSession {
             self.start_management_operation(
                 Some(command),
                 true,
+                false,
                 None,
                 Some(format!(
                     "{}\n{}",
