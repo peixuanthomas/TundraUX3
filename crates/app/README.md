@@ -32,7 +32,7 @@ Explorer 默认交给编辑器的 106 种后缀包含现有语法着色支持的
 
 Linux 启动器固定包含防火墙与端口、SSH 服务、配置备份与恢复、定时任务入口；这些入口和已有管理应用一样，由 Shell 打开独立页面，由 platform 执行实际操作。
 
-macOS 启动器也显示软件包管理器，使用 platform 的 Homebrew 后端管理 Formula 和 Cask；其他系统管理入口继续按各平台已有支持显示。
+软件包入口支持 Linux、Windows 和 macOS；Windows 使用 platform 的 WinGet 后端，macOS 使用 Homebrew 后端管理 Formula 和 Cask。内置应用目录按 `PlatformKind` 声明支持的平台，其他系统管理入口继续按各平台已有支持显示。
 
 部分文件和启动器操作仍在 `apply` 中调用平台或存储服务；不能假定每条命令都没有文件读写。后台任务使用 watchdog，写操作不能未经判断自动重放。
 

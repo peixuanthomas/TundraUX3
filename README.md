@@ -16,9 +16,9 @@ TundraUX3 is written in Rust, using Ratatui and crossterm. It is under active de
 | --- | --- |
 | **Linux** | The main target for device operation and system management in terminal-only environments. |
 | **macOS** | Interface exploration and Homebrew package management for Formulae and Casks. |
-| **Windows** | A demonstration platform for exploring the interface and interaction design. |
+| **Windows** | WinGet package management, with other system controls remaining demonstration features. |
 
-System-management development focuses on Linux. Windows and macOS builds let you try the experience, but do not promise the same system controls. Available Linux operations depend on the installed tools, running services, and your user's permissions.
+System-management development focuses on Linux. Windows supports software packages through WinGet, and macOS through Homebrew; other system controls on those platforms do not promise the same coverage as Linux. Available operations depend on the installed tools, running services, and your user's permissions.
 
 ## What you can do
 
@@ -29,6 +29,7 @@ System-management development focuses on Linux. Windows and macOS builds let you
 - **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points.
 - **Browse packages:** open Installed by default, cycle Installed/Updates/Search with Tab or Shift+Tab, and select packages with Up/Down. Expanded details scroll with all four arrow keys; existing shortcuts remain available.
 - **Manage macOS packages:** use Homebrew to search, install, remove and upgrade Formulae and Casks, with task-terminal input for native prompts. See [Homebrew support](crates/platform/docs/homebrew.md).
+- **Manage Windows packages:** use the same Packages page with WinGet to search, install, uninstall, upgrade one package, or upgrade all available packages from the `winget` source. App Installer and an initialized WinGet source are required; see [Windows packages](crates/platform/docs/windows-packages.md).
 - **Find page actions:** common operations appear at the bottom right, with the main action highlighted and destructive actions in the danger color. F1 or the title-bar Help button opens page shortcuts.
 - **Keep track of selections:** selected list rows and the current file shortcut stay highlighted when using a mouse or moving to another control. File Explorer quick access uses the same spacious rows as the application list in Settings.
 - **Follow page changes:** pages, dialogs and menus expand from their entry button's border and shrink back to it with a mouse or touchscreen; keyboard actions are immediate. Details and the screen keyboard keep their existing motion. Settings offers overall speed, phase times, reset and reduced motion.
@@ -140,6 +141,7 @@ Most detailed documentation is currently in Chinese. Start with the [documentati
 - [Technical documentation](docs/README-TECHNICAL.md) — architecture, building, testing, and packaging.
 - [Source editor](docs/source-editor.md) — search, replace, soft wrap, JSON formatting, and supported text formats.
 - [Linux system management](crates/platform/docs/linux-management.md) — services, processes, packages, networks, and disks.
+- [Windows packages](crates/platform/docs/windows-packages.md) — WinGet setup, supported operations, and verification.
 - [Operations CLI](crates/cli/docs/operations.md) — reusable commands, authorization, task IDs and exit codes.
 - [System configuration editor](crates/platform/docs/system-config.md) and [user management](crates/platform/docs/user-management.md).
 - [Configuration backups](crates/platform/docs/config-backups.md), [firewall and ports](crates/platform/docs/firewall.md), [SSH management](crates/platform/docs/ssh-management.md), and [scheduled tasks](crates/platform/docs/scheduled-tasks.md).

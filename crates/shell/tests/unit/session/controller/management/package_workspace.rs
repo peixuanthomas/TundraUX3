@@ -17,6 +17,14 @@ fn homebrew_advanced_actions_keep_refresh_without_linux_only_views() {
         });
     let actions = session.package_actions();
     assert!(actions.iter().any(|(action, _)| action.id == "refresh"));
+    let workspace = session.package_workspace_model(&actions);
+    assert!(workspace.advanced_toggle.is_some());
+    assert!(
+        workspace
+            .advanced_actions
+            .iter()
+            .any(|index| actions[*index].0.id == "refresh")
+    );
     assert!(!actions.iter().any(|(action, _)| matches!(
         action.id.as_str(),
         "scope_sources" | "scope_conflicts" | "scope_status"
@@ -65,7 +73,7 @@ fn package_actions_require_aa_approval_without_system_privileges() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 #[test]
 fn opening_packages_defaults_to_installed_with_navigation_in_display_order() {
     let mut session = state();
@@ -135,7 +143,75 @@ fn package_shortcuts_follow_the_actions_on_the_current_page() {
     }
 }
 
+#[cfg(windows)]
 #[test]
+fn windows_package_actions_have_no_empty_advanced_menu_or_f3_install() {
+    let mut session = shortcut_action_state(ManagementKind::Packages, "install");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    let actions = session.management_actions();
+    let workspace = session.package_workspace_model(&actions);
+    assert_eq!(workspace.advanced_toggle, None);
+    assert!(workspace.advanced_actions.is_empty());
+    assert_eq!(actions[3].0.id, "install");
+    assert!(workspace.primary_actions.contains(&3));
+    session.handle_management_key(&KeyInput::new(InputKey::F(3)));
+    assert!(
+        !session
+            .pages
+            .management
+            .management_state
+            .package_advanced_open
+    );
+    assert!(session.pages.management.management_state.form.is_none());
+    session.handle_management_key(&KeyInput::new(InputKey::Char('i')));
+    assert!(session.pages.management.management_state.form.is_some());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_package_completion_refreshes_the_current_view_without_a_helper_snapshot() {
+    for success in [false, true] {
+        let mut session = package_list_state();
+        let state = &mut session.pages.management.management_state;
+        state.received_snapshot = true;
+        let query = state.query.as_mut().unwrap();
+        query.scope = "updates".into();
+        query.filter = "demo".into();
+        let expected_query = state.query.clone();
+        let (job, _) = session.management_job();
+        job.0.events.lock().unwrap().push_back(if success {
+            OperationEvent::Completed {
+                message: "Updated".into(),
+            }
+        } else {
+            OperationEvent::Failed {
+                message: "Update failed".into(),
+            }
+        });
+        session.register_management_job(
+            &job,
+            TaskDomain::ManagementOperation,
+            TaskClass::Operation,
+        );
+        session.pages.management.management_state.operation_job = Some(job);
+        session.poll_management();
+        let state = &session.pages.management.management_state;
+        assert!(state.operation_job.is_none());
+        assert_eq!(state.query, expected_query);
+        assert_eq!(state.refresh_requested, success);
+        assert_eq!(
+            state.status,
+            if success {
+                i18n::tr!("management-worker-unavailable")
+            } else {
+                "Update failed".into()
+            }
+        );
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn package_pointer_and_touch_can_switch_pages_and_open_their_advanced_views() {
     for hover in [false, true] {
         for (navigation, scope, advanced_scope) in [
@@ -194,6 +270,7 @@ fn package_pointer_and_touch_can_switch_pages_and_open_their_advanced_views() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn package_shortcuts_reach_primary_actions_and_advanced_pages_without_pointer_input() {
     let mut session = shortcut_action_state(ManagementKind::Packages, "install");
     session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
@@ -244,6 +321,7 @@ fn package_shortcuts_reach_primary_actions_and_advanced_pages_without_pointer_in
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn package_navigation_and_shortcuts_work_while_the_search_field_is_focused() {
     use ui::components::WorkspaceFocus;
     let mut session = package_list_state();

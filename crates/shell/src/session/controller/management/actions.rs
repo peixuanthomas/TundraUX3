@@ -59,7 +59,9 @@ impl ShellSession {
                 "conflicts",
                 "status",
             ] {
-                if homebrew && matches!(scope, "sources" | "conflicts" | "status") {
+                if (homebrew || cfg!(windows))
+                    && matches!(scope, "sources" | "conflicts" | "status")
+                {
                     continue;
                 }
                 let id = format!("scope_{scope}");
@@ -272,7 +274,7 @@ impl ShellSession {
             self.pages.management.management_state.workspace_focus =
                 if workspace.navigation_actions.contains(&index) {
                     ui::components::WorkspaceFocus::Navigation
-                } else if index == workspace.advanced_toggle
+                } else if Some(index) == workspace.advanced_toggle
                     || workspace.advanced_actions.contains(&index)
                 {
                     ui::components::WorkspaceFocus::Advanced

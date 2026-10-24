@@ -7,7 +7,7 @@ pub struct ManagementWorkspace {
     pub navigation_actions: Vec<usize>,
     pub active_navigation: usize,
     pub primary_actions: Vec<usize>,
-    pub advanced_toggle: usize,
+    pub advanced_toggle: Option<usize>,
     pub advanced_actions: Vec<usize>,
     pub advanced_open: bool,
     pub focus: WorkspaceFocus,
@@ -18,7 +18,9 @@ impl ManagementWorkspace {
         match focus {
             WorkspaceFocus::Navigation => self.navigation_actions.clone(),
             WorkspaceFocus::Actions => self.primary_actions.clone(),
-            WorkspaceFocus::Advanced => std::iter::once(self.advanced_toggle)
+            WorkspaceFocus::Advanced => self
+                .advanced_toggle
+                .into_iter()
                 .chain(
                     self.advanced_actions
                         .iter()
@@ -71,7 +73,9 @@ pub(super) fn layout(
     } else {
         body.width
     };
-    let advanced_indices = std::iter::once(workspace.advanced_toggle)
+    let advanced_indices = workspace
+        .advanced_toggle
+        .into_iter()
         .chain(
             workspace
                 .advanced_actions

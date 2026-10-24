@@ -392,6 +392,8 @@ pub mod system_settings;
 pub mod termination;
 #[cfg(target_os = "linux")]
 pub mod users;
+#[cfg(any(windows, test))]
+pub mod winget;
 
 pub fn query(
     query: &ManagementQuery,
@@ -417,6 +419,10 @@ pub fn query(
         ManagementKind::FilePermissions => file_permissions::query(query, cancelled),
         ManagementKind::SystemSettings => system_settings::query(query, cancelled),
     };
+    #[cfg(windows)]
+    if query.kind == ManagementKind::Packages {
+        return winget::query(query, cancelled);
+    }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (query, cancelled);
@@ -462,6 +468,10 @@ pub fn execute(
             system_settings::execute(command, context, interaction, cancelled)
         }
     };
+    #[cfg(windows)]
+    if command.kind == ManagementKind::Packages {
+        return winget::execute(command, context, interaction, cancelled);
+    }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (command, context, interaction, cancelled);
