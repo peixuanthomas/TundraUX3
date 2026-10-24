@@ -81,7 +81,6 @@ impl SettingsCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsField {
-    CategoryList,
     ApplicationList,
     AutoAdmin,
     AutomationEnabled,
@@ -907,15 +906,10 @@ pub fn render_settings_content(
     let buttons = SettingsCategory::ALL
         .into_iter()
         .map(|category| {
-            let mut button = Button::new(
+            Button::new(
                 format!("settings.category.{category:?}").to_ascii_lowercase(),
                 category.label(),
-            );
-            button.set_focused(
-                model.selected_field == SettingsField::CategoryList
-                    && model.selected_category == category,
-            );
-            button
+            )
         })
         .collect::<Vec<_>>();
     let active = SettingsCategory::ALL

@@ -298,12 +298,6 @@ impl ShellSession {
             return;
         }
 
-        let choosing_category = self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .is_some_and(|state| state.selected_field == ui::SettingsField::CategoryList);
         let choosing_application =
             self.pages
                 .settings
@@ -314,18 +308,11 @@ impl ShellSession {
                         && state.selected_field == ui::SettingsField::ApplicationList
                 });
         match &key.key {
-            InputKey::Up if choosing_category => self.select_settings_category_delta(-1),
-            InputKey::Down if choosing_category => self.select_settings_category_delta(1),
-            InputKey::Right | InputKey::Enter | InputKey::Char(' ') if choosing_category => {
-                self.select_settings_field_at(0)
-            }
-            InputKey::Left if choosing_category => {}
             InputKey::Up if choosing_application => self.select_settings_application_delta(-1),
             InputKey::Down if choosing_application => self.select_settings_application_delta(1),
             InputKey::Right | InputKey::Enter | InputKey::Char(' ') if choosing_application => {
                 self.select_settings_field_at(1)
             }
-            InputKey::Left if choosing_application => self.focus_settings_categories(),
             InputKey::F(5)
                 if self.identity_backend == identity::IdentityBackend::Linux
                     && self
@@ -364,8 +351,6 @@ impl ShellSession {
                     .is_some_and(|state| state.category == ui::SettingsCategory::Applications)
                 {
                     self.select_settings_field_at(0);
-                } else {
-                    self.focus_settings_categories();
                 }
             }
             InputKey::Right => {}
@@ -538,7 +523,6 @@ impl ShellSession {
             Some(ui::SettingsHitTarget::UpdateCancel) => self.cancel_update_confirmation(),
             Some(ui::SettingsHitTarget::Category(category)) => {
                 self.select_settings_category(category);
-                self.focus_settings_categories();
             }
             Some(ui::SettingsHitTarget::Field(field)) => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
@@ -593,9 +577,7 @@ impl ShellSession {
     pub(in crate::session) fn select_settings_category(&mut self, category: ui::SettingsCategory) {
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.category = category;
-            if state.selected_field != ui::SettingsField::CategoryList {
-                state.selected_field = settings_fields(category)[0];
-            }
+            state.selected_field = settings_fields(category)[0];
             state.scroll_offset = 0;
             state.animation_editor = None;
             state.number_editor = None;
@@ -623,12 +605,6 @@ impl ShellSession {
                 .is_some_and(|state| state.system_time.snapshot.is_none())
         {
             self.refresh_system_time_settings();
-        }
-    }
-
-    fn focus_settings_categories(&mut self) {
-        if let Some(state) = self.pages.settings.settings_state.as_mut() {
-            state.selected_field = ui::SettingsField::CategoryList;
         }
     }
 
@@ -782,8 +758,7 @@ impl ShellSession {
             ui::SettingsField::UpdateMode => self.switch_update_mode(),
             ui::SettingsField::CheckUpdates => self.begin_update_check(),
             ui::SettingsField::StartUpdate => self.open_update_confirmation(),
-            ui::SettingsField::CategoryList
-            | ui::SettingsField::ApplicationList
+            ui::SettingsField::ApplicationList
             | ui::SettingsField::InstalledVersion
             | ui::SettingsField::RemoteVersion => {}
             _ => self.change_selected_setting(platform),

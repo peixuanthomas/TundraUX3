@@ -40,8 +40,8 @@ ui-help-logs-back = 返回
 
 ui-help-settings-title = 设置
 ui-help-settings-open = 打开或修改值
-ui-help-settings-adjust = 移动焦点；左键返回列表，右键进入设置
-ui-help-settings-section = 切换分类
+ui-help-settings-adjust = 上下选择项目；左右切换应用列表与设置
+ui-help-settings-section = 切换大类
 ui-help-settings-number = 数值弹窗内调整或输入，回车确认
 
 ui-help-users-title = 用户管理

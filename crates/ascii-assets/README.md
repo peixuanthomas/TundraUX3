@@ -38,7 +38,7 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 
 动画高级选项弹窗的打开、关闭、阶段名称、毫秒说明和恢复提示位于中英文 `modules/settings.ftl`。
 
-同一资源提供设置数值弹窗的范围校验、调整、输入、确认和取消提示；`modules/help.ftl` 同步说明方向键切换焦点与弹窗内的数值操作。
+同一资源提供设置数值弹窗的范围校验、调整、输入、确认和取消提示；`modules/help.ftl` 同步说明 Tab/Shift+Tab 切换大类、方向键移动内容区焦点与弹窗内的数值操作。
 
 重建发布程序后，可运行 `python scripts/check-embedded-assets.py target/release/tundra-shell.exe target/release/tundra-cli.exe` 检查每张默认图片是否恰好嵌入一次；Linux/macOS 使用不带 `.exe` 的程序路径。脚本逐字节匹配源码中的完整 PNG，同时检查遗漏和重复。
 

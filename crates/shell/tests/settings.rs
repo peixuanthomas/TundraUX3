@@ -114,7 +114,7 @@ fn numeric_settings_wait_for_confirmation_and_escape_discards_changes() {
 }
 
 #[test]
-fn horizontal_navigation_moves_between_categories_applications_and_fields() {
+fn tab_switches_categories_while_arrows_stay_in_settings_content() {
     let fixture = FixtureRoot::new("settings-focus");
     let platform = mock_platform(fixture.path());
     let manager = initialize_users(&platform, false, false);
@@ -122,39 +122,33 @@ fn horizontal_navigation_moves_between_categories_applications_and_fields() {
     open_settings_from_home(&mut state, &platform);
     let before = manager.load_config().unwrap();
     for (key, category, field) in [
+        ("Left", SettingsCategory::Appearance, SettingsField::Theme),
         (
-            "Left",
+            "Down",
             SettingsCategory::Appearance,
-            SettingsField::CategoryList,
-        ),
-        (
-            "Down",
-            SettingsCategory::RegionTime,
-            SettingsField::CategoryList,
-        ),
-        (
-            "Down",
-            SettingsCategory::System,
-            SettingsField::CategoryList,
-        ),
-        ("Right", SettingsCategory::System, SettingsField::AutoAdmin),
-        (
-            "Down",
-            SettingsCategory::System,
-            SettingsField::AutomationEnabled,
-        ),
-        (
-            "Left",
-            SettingsCategory::System,
-            SettingsField::CategoryList,
-        ),
-        (
-            "Down",
-            SettingsCategory::Applications,
-            SettingsField::CategoryList,
+            SettingsField::BorderShape,
         ),
         (
             "Right",
+            SettingsCategory::Appearance,
+            SettingsField::BorderShape,
+        ),
+        ("Up", SettingsCategory::Appearance, SettingsField::Theme),
+        ("Tab", SettingsCategory::RegionTime, SettingsField::Language),
+        ("Tab", SettingsCategory::System, SettingsField::AutoAdmin),
+        (
+            "Shift+Tab",
+            SettingsCategory::RegionTime,
+            SettingsField::Language,
+        ),
+        ("Tab", SettingsCategory::System, SettingsField::AutoAdmin),
+        (
+            "Tab",
+            SettingsCategory::Applications,
+            SettingsField::ApplicationList,
+        ),
+        (
+            "Left",
             SettingsCategory::Applications,
             SettingsField::ApplicationList,
         ),
@@ -181,7 +175,12 @@ fn horizontal_navigation_moves_between_categories_applications_and_fields() {
         (
             "Left",
             SettingsCategory::Applications,
-            SettingsField::CategoryList,
+            SettingsField::ApplicationList,
+        ),
+        (
+            "Shift+Tab",
+            SettingsCategory::System,
+            SettingsField::AutoAdmin,
         ),
     ] {
         press(&mut state, &platform, key);
