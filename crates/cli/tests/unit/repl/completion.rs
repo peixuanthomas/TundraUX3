@@ -4,6 +4,8 @@ use super::*;
 fn ui_commands_complete_only_their_options_and_known_values() {
     for (line, expected) in [
         ("/ui ", "snapshot"),
+        ("/ui ", "wake"),
+        ("/ui wake --", "--session"),
         ("/help ui ", "wait"),
         ("/ui drag --", "--from-id"),
         ("/ui key --phase ", "release"),

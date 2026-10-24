@@ -36,6 +36,7 @@ fn parses_every_ui_action_and_common_options() {
     assert_eq!(command.timeout_ms, 17);
     assert_eq!(command.action, UiAction::Input(Action::Snapshot));
     assert_eq!(parse(&["ui", "snapshot"]).timeout_ms, 5000);
+    assert_eq!(parse(&["ui", "wake"]).action, UiAction::Input(Action::Wake));
     assert_eq!(
         parse(&["ui", "click", "--id", "save"]).action,
         UiAction::Input(Action::Click {
@@ -167,6 +168,8 @@ fn rejects_missing_conflicting_duplicate_unknown_and_out_of_range_arguments() {
         &["ui", "unknown"],
         &["ui", "sessions", "--session", "a"],
         &["ui", "snapshot", "extra"],
+        &["ui", "wake", "extra"],
+        &["ui", "wake", "--id", "start"],
         &["ui", "snapshot", "--timeout", "0"],
         &["ui", "snapshot", "--timeout", "+1"],
         &["ui", "snapshot", "--timeout", "-1"],
@@ -497,6 +500,9 @@ fn sessions_selection_and_input_use_real_transport_without_storage() {
     assert!(
         matches!(request.action, Action::Click { target: Target::Id { id }, .. } if id == "save")
     );
+    let (code, response) = fixture.run(&["ui", "wake"]);
+    assert_eq!(code, 0, "{response}");
+    assert_eq!(server.requests.try_recv().unwrap().action, Action::Wake);
     let second = MockServer::start(&fixture.directory, |info, _, _| {
         Some(Response::success(snapshot(info, 1)))
     });

@@ -7,7 +7,7 @@ use shell_control::{Action, Button, Phase, Request, Response, SessionInfo, Targe
 use crate::CliError;
 
 pub(crate) const VERBS: &[&str] = &[
-    "sessions", "snapshot", "click", "move", "drag", "scroll", "key", "text", "wait",
+    "sessions", "snapshot", "wake", "click", "move", "drag", "scroll", "key", "text", "wait",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +111,7 @@ pub(crate) fn parse_ui(args: &[String]) -> Result<UiCommand, CliError> {
     };
     let action = match verb.as_str() {
         "snapshot" => UiAction::Input(Action::Snapshot),
+        "wake" => UiAction::Input(Action::Wake),
         "click" => UiAction::Input(Action::Click {
             target: target(&mut options, "--id", "--x", "--y")?,
             button,

@@ -55,3 +55,7 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 `modules/help.ftl` 保存各页 F1 帮助；启动器空列表使用简短说明和文件浏览器按钮，中英文同步提供。
 
 外部 Shell 控制的开关、CLI 帮助与错误提示位于中英文 `modules/settings.ftl`；CLI 根帮助及公开配置字段列表同步列出 `ui` 和 `automation.enabled`。
+
+同一帮助列出 `tundra-cli ui wake`，用于关闭空闲天气或天气锁屏并读取后续 Shell 画面。
+
+外部控制的中英文错误提示明确要求用户操作后重新执行 `tundra-cli ui snapshot`；CLI 和 Shell 帮助同步说明自动更新、单纯移动鼠标与天气画面的例外。

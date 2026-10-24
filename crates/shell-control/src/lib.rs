@@ -105,6 +105,7 @@ pub enum Phase {
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Action {
     Snapshot,
+    Wake,
     Click {
         target: Target,
         #[serde(default)]
