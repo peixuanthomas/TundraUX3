@@ -414,38 +414,23 @@ impl ShellSession {
                     .logs_state
                     .selected
                     .min(self.logs_count().saturating_sub(1));
-                self.pages.logs.logs_state.feedback = Some(
-                    format!(
-                        "{}{}",
-                        log_state_label(self.pages.logs.logs_state.snapshot.result.state),
-                        if self
-                            .pages
-                            .logs
-                            .logs_state
-                            .snapshot
-                            .result
+                let result = &self.pages.logs.logs_state.snapshot.result;
+                let mut feedback = Vec::new();
+                if result.state != runtime_log::LogSourceState::Ready {
+                    feedback.push(log_state_label(result.state));
+                }
+                if !result.notices.is_empty() {
+                    feedback.push(
+                        result
                             .notices
-                            .is_empty()
-                        {
-                            String::new()
-                        } else {
-                            format!(
-                                " — {}",
-                                self.pages
-                                    .logs
-                                    .logs_state
-                                    .snapshot
-                                    .result
-                                    .notices
-                                    .iter()
-                                    .map(|notice| log_notice_label(notice))
-                                    .collect::<Vec<_>>()
-                                    .join("; ")
-                            )
-                        }
-                    )
-                    .into(),
-                );
+                            .iter()
+                            .map(|notice| log_notice_label(notice))
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                    );
+                }
+                self.pages.logs.logs_state.feedback =
+                    (!feedback.is_empty()).then(|| feedback.join(" — ").into());
             }
             LogsJobResult::Document(Ok(path)) => {
                 if visible {

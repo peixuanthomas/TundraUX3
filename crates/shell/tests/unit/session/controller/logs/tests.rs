@@ -42,11 +42,64 @@ fn pending_snapshot(state: &mut ShellSession, text: &str) -> LogsJob {
         cancelled: Arc::new(AtomicBool::new(false)),
         result: Mutex::new(Some(LogsJobResult::Snapshot(snapshot))),
         worker: Mutex::new(None),
-        background: false,
+        background: state.pages.logs.logs_state.background_refresh,
     }));
     state.register_logs_job(&job);
     state.pages.logs.logs_state.job = Some(job.clone());
     job
+}
+
+#[test]
+fn successful_log_refreshes_keep_the_content_geometry_stable_without_idle_feedback() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.pages.logs.logs_state.feedback = None;
+    let area = Rect::new(0, 0, 120, 40);
+    for background in [false, true, true] {
+        state.pages.logs.logs_state.background_refresh = background;
+        pending_snapshot(&mut state, "read complete");
+        let before = ui::logs_layout(area, &state.to_logs_view_model());
+        state.poll_logs_tasks();
+        let model = state.to_logs_view_model();
+        let after = ui::logs_layout(area, &model);
+        assert_eq!(before.content.list_panel, after.content.list_panel);
+        assert_eq!(before.content.detail_panel, after.content.detail_panel);
+        assert!(model.feedback.is_none());
+    }
+}
+
+#[test]
+fn log_refresh_feedback_keeps_notices_and_non_ready_source_states() {
+    use runtime_log::LogSourceState;
+
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    let notice = "Showing a bounded tail of the file. Earlier records remain in the log file.";
+    for source_state in [
+        LogSourceState::Ready,
+        LogSourceState::Partial,
+        LogSourceState::PermissionDenied,
+        LogSourceState::Unavailable,
+        LogSourceState::Unsupported,
+        LogSourceState::Cancelled,
+    ] {
+        let job = pending_snapshot(&mut state, "read complete");
+        if let Some(LogsJobResult::Snapshot(snapshot)) = job.0.result.lock().unwrap().as_mut() {
+            snapshot.result.state = source_state;
+            snapshot.result.notices = vec![notice.into()];
+        }
+        state.poll_logs_tasks();
+        let feedback = state.to_logs_view_model().feedback.unwrap();
+        let notice_label = log_notice_label(notice);
+        if source_state == LogSourceState::Ready {
+            assert_eq!(feedback, notice_label);
+        } else {
+            assert_eq!(
+                feedback,
+                format!("{} — {notice_label}", log_state_label(source_state))
+            );
+        }
+    }
 }
 
 #[test]
