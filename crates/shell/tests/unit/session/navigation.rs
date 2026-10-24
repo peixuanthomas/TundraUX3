@@ -35,6 +35,7 @@ fn prepare_page(state: &mut ShellSession, screen: ShellScreen) {
             application: Default::default(),
             system_time: Default::default(),
             animation_editor: None,
+            number_editor: None,
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
             status: i18n::msg!("settings-ready").into(),

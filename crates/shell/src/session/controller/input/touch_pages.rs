@@ -157,7 +157,9 @@ impl ShellSession {
             ShellScreen::Settings => {
                 if let Some(model) = self.to_settings_view_model() {
                     let layout = ui::settings_layout(self.touch_main(), &model);
-                    if let Some(editor) = layout.animation_editor.as_ref() {
+                    if layout.number_editor.is_some() {
+                        return regions;
+                    } else if let Some(editor) = layout.animation_editor.as_ref() {
                         add(
                             TouchScroll::SettingsAnimation,
                             editor.scrollbar,

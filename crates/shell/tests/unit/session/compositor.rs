@@ -133,6 +133,202 @@ fn vim_buttons_keep_pointer_presses_during_document_synchronization() {
     }
 }
 
+fn animation_settings_session() -> ShellSession {
+    let mut state = session();
+    state.app.dispatch_at(
+        app::AppCommand::SetActiveAppearance(Some(Default::default())),
+        Instant::now(),
+    );
+    state.enter_screen(ShellScreen::Settings);
+    state.pages.settings.settings_state = Some(SettingsState {
+        application: Default::default(),
+        system_time: Default::default(),
+        animation_editor: Some(SettingsAnimationEditorState {
+            selected_index: 0,
+            scroll_offset: 0,
+        }),
+        number_editor: None,
+        category: ui::SettingsCategory::Appearance,
+        selected_field: ui::SettingsField::AnimationAdvanced,
+        status: String::new().into(),
+        scroll_offset: 0,
+        picker: None,
+        color_editor: None,
+        weather_location_editor: None,
+        file_extensions_editor: None,
+        time_sync_server_editor: None,
+        time_sync_validation_request_id: None,
+    });
+    state
+}
+
+#[test]
+fn settings_number_dialog_captures_only_its_buttons_and_waits_for_release() {
+    let platform = platform::mock::UnsupportedPlatform;
+    let mut state = animation_settings_session();
+    let mut compositor = ScreenCompositor::default();
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+    let mut prepared = home_frame(&state, 0, true);
+    prepared.page = ScreenViewModel::Settings(Box::new(state.to_settings_view_model().unwrap()));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    let covered = state
+        .button_regions
+        .iter()
+        .find(|region| region.id.as_str() == "settings.field.pagecruise")
+        .unwrap()
+        .area;
+    let point = (covered.right() - 1, covered.y);
+    state.handle_settings_key(&KeyInput::new(InputKey::Enter), &platform);
+    let layout = state.current_settings_layout().unwrap();
+    let number = layout.number_editor.unwrap();
+    assert!(!rect_contains(number.dialog, point));
+    assert!(state.button_at(point).is_none());
+    prepared.page = ScreenViewModel::Settings(Box::new(state.to_settings_view_model().unwrap()));
+    draw(&mut compositor, &mut terminal, &mut state, &prepared);
+    assert!(state.button_at(point).is_none());
+    let point = (number.increase.x, number.increase.y);
+    let now = Instant::now();
+    assert!(
+        compositor
+            .prepare_input(
+                &mut state,
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+                now
+            )
+            .is_none()
+    );
+    assert_eq!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .number_editor
+            .unwrap()
+            .input
+            .value(),
+        "55"
+    );
+    let released = now + Duration::from_millis(16);
+    let input = compositor
+        .prepare_input(
+            &mut state,
+            InputEvent::mouse_up(PointerButton::Left, point),
+            &platform,
+            released,
+        )
+        .unwrap();
+    compositor.dispatch_input(&mut state, input, &platform, released);
+    assert_eq!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .number_editor
+            .unwrap()
+            .input
+            .value(),
+        "56"
+    );
+    state.handle_settings_key(&KeyInput::new(InputKey::Escape), &platform);
+    let model = state.to_settings_view_model().unwrap();
+    assert!(model.number_editor.is_none());
+    assert_eq!(model.animation_editor.unwrap().selected_index, 0);
+    assert_eq!(
+        state
+            .app
+            .active_appearance()
+            .unwrap()
+            .animation_timings
+            .page[0],
+        55
+    );
+}
+
+#[test]
+fn settings_nested_dialogs_keep_parents_visible_when_opening_and_closing() {
+    for deferred in [false, true] {
+        let platform = platform::mock::UnsupportedPlatform;
+        let mut state = animation_settings_session();
+        state.interaction.pointer_motion = true;
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut millis = 0;
+        let mut render = |compositor: &mut ScreenCompositor,
+                          terminal: &mut Terminal<TestBackend>,
+                          state: &mut ShellSession,
+                          delta| {
+            millis += delta;
+            let mut prepared = home_frame(state, millis, false);
+            prepared.context.motion.delta = Duration::from_millis(delta);
+            prepared.page =
+                ScreenViewModel::Settings(Box::new(state.to_settings_view_model().unwrap()));
+            prepared.help = state.help_open.then(|| state.to_page_help_view_model());
+            draw(compositor, terminal, state, &prepared)
+        };
+        render(&mut compositor, &mut terminal, &mut state, 0);
+        assert!(!render(&mut compositor, &mut terminal, &mut state, 180));
+        let parent = state
+            .current_settings_layout()
+            .unwrap()
+            .animation_editor
+            .unwrap()
+            .dialog;
+        let corner = (parent.x, parent.y);
+        let border = terminal.backend().buffer()[corner].symbol().to_owned();
+        state.handle_settings_key(&KeyInput::new(InputKey::Enter), &platform);
+        assert_eq!(
+            state
+                .interactive_overlays()
+                .iter()
+                .map(|overlay| overlay.id.as_str())
+                .collect::<Vec<_>>(),
+            ["settings-editor:animation", "settings-editor:number"]
+        );
+        assert!(render(&mut compositor, &mut terminal, &mut state, 0));
+        assert!(render(&mut compositor, &mut terminal, &mut state, 90));
+        assert_eq!(terminal.backend().buffer()[corner].symbol(), border);
+        assert!(
+            !render(&mut compositor, &mut terminal, &mut state, 90),
+            "only the number dialog enters"
+        );
+
+        state.help_open = true;
+        state.refresh_hit_map();
+        assert_eq!(state.interactive_overlays().len(), 3);
+        render(&mut compositor, &mut terminal, &mut state, 0);
+        assert!(!render(&mut compositor, &mut terminal, &mut state, 180));
+        state.help_open = false;
+        state.refresh_hit_map();
+        render(&mut compositor, &mut terminal, &mut state, 0);
+        assert!(
+            !render(&mut compositor, &mut terminal, &mut state, 180),
+            "closing Help does not reenter the number dialog"
+        );
+
+        if deferred {
+            let close = state
+                .clone()
+                .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
+            assert_eq!(
+                compositor.motion.intercept_input(&close),
+                MotionInputDisposition::Defer
+            );
+            render(&mut compositor, &mut terminal, &mut state, 0);
+            render(&mut compositor, &mut terminal, &mut state, 180);
+            assert!(compositor.motion.take_deferred_close(&state).is_some());
+        }
+        state.handle_settings_key(&KeyInput::new(InputKey::Escape), &platform);
+        render(&mut compositor, &mut terminal, &mut state, 0);
+        assert_eq!(terminal.backend().buffer()[corner].symbol(), border);
+        assert!(
+            !render(&mut compositor, &mut terminal, &mut state, 180),
+            "the existing parent does not enter again"
+        );
+        let model = state.to_settings_view_model().unwrap();
+        assert!(model.number_editor.is_none());
+        assert_eq!(model.animation_editor.unwrap().selected_index, 0);
+    }
+}
+
 #[test]
 fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() {
     let platform = platform::mock::UnsupportedPlatform;
@@ -252,6 +448,7 @@ fn aa_keyboard_keeps_background_layout_and_places_one_global_launcher_on_every_p
                     application: Default::default(),
                     system_time: Default::default(),
                     animation_editor: None,
+                    number_editor: None,
                     category: ui::SettingsCategory::Appearance,
                     selected_field: ui::SettingsField::Theme,
                     status: i18n::msg!("settings-ready").into(),

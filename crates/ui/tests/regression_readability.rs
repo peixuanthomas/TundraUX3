@@ -180,6 +180,7 @@ fn system_and_update_settings_keep_errors_in_footer_without_description_pane() {
             locked_message: None,
             scroll_offset: 0,
             animation_editor: None,
+            number_editor: None,
             picker: None,
             color_editor: None,
             weather_location_editor: None,

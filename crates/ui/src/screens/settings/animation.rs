@@ -13,7 +13,6 @@ pub struct SettingsAnimationLayout {
     pub dialog: Rect,
     pub viewport: Rect,
     pub fields: Vec<SettingsFieldLayout>,
-    pub adjustments: Vec<(SettingsField, i8, Rect)>,
     pub close: Rect,
     pub scrollbar: Option<Rect>,
     pub scroll_offset: u16,
@@ -49,7 +48,6 @@ impl SettingsAnimationLayout {
             .unwrap_or(0)
             .min(viewport.width / 2);
         let mut fields = Vec::new();
-        let mut adjustments = Vec::new();
         for item in model
             .items
             .iter()
@@ -66,14 +64,6 @@ impl SettingsAnimationLayout {
                 field: item.field,
                 area: row,
             });
-            if item.enabled && item.kind == SettingsControlKind::Stepper && value_width >= 6 {
-                adjustments.push((
-                    item.field,
-                    -1,
-                    Rect::new(row.right() - value_width, row.y, 3, 1),
-                ));
-                adjustments.push((item.field, 1, Rect::new(row.right() - 3, row.y, 3, 1)));
-            }
         }
         let close = Rect::new(
             dialog.x.saturating_add(2),
@@ -86,7 +76,6 @@ impl SettingsAnimationLayout {
             dialog,
             viewport,
             fields,
-            adjustments,
             close,
             scrollbar,
             scroll_offset,

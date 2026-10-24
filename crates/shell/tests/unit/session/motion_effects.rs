@@ -392,6 +392,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: None,
+        number_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -1073,6 +1074,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: None,
+        number_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),
@@ -1369,6 +1371,16 @@ fn closing_shell_modal_only_reveals_its_existing_page_overlay() {
     motion.process(Duration::from_millis(180), &mut frame, &state);
     assert!(!motion.is_running(), "revealed page must not enter again");
     assert_eq!(motion.overlay_gate, Duration::ZERO);
+}
+
+#[test]
+fn keyboard_motion_cancellation_preserves_parent_overlay_origins() {
+    let (state, mut motion, layout) = clock_overlay_covered_by_shell_modal();
+    motion.overlay_frames[0].1 = ui::RevealOrigin::Button(Rect::new(8, 10, 12, 3));
+    let origins = motion.overlay_frames.clone();
+    motion.update_layout(&state, &layout, ui::ThemeTokens::glacier_night(), true);
+    assert_eq!(motion.overlay_frames, origins);
+    assert!(!motion.is_running());
 }
 
 #[test]

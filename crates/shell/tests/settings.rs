@@ -57,6 +57,359 @@ fn settings_action_repeat_is_ignored_and_shift_tab_goes_to_previous_section() {
     assert_eq!(state.active_screen(), ShellScreen::Settings);
 }
 
+#[test]
+fn settings_arrows_do_not_change_saved_values() {
+    let fixture = FixtureRoot::new("settings-navigation-only");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    select_category(&mut state, &platform, SettingsCategory::System);
+    let before = manager.load_config().unwrap();
+    for key in ["Right", "Left", "Down", "Right", "Left", "Up"] {
+        press(&mut state, &platform, key);
+        assert_eq!(manager.load_config().unwrap(), before, "{key}");
+    }
+}
+
+#[test]
+fn numeric_settings_wait_for_confirmation_and_escape_discards_changes() {
+    let fixture = FixtureRoot::new("settings-numeric-confirmation");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    for _ in 0..5 {
+        press(&mut state, &platform, "Down");
+    }
+    let saved_speed = || {
+        manager.load_users().unwrap().users[0]
+            .appearance
+            .animation_speed_percent
+    };
+    press(&mut state, &platform, " ");
+    assert!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .number_editor
+            .is_none()
+    );
+    assert_eq!(saved_speed(), 100);
+    press(&mut state, &platform, "Enter");
+    assert_eq!(saved_speed(), 100);
+    press(&mut state, &platform, "Right");
+    assert_eq!(saved_speed(), 100);
+    press(&mut state, &platform, "Enter");
+    assert_eq!(saved_speed(), 125);
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::AnimationSpeed
+    );
+    for key in ["Enter", "Left", "Esc"] {
+        press(&mut state, &platform, key);
+    }
+    assert_eq!(saved_speed(), 125);
+    assert_eq!(state.active_screen(), ShellScreen::Settings);
+}
+
+#[test]
+fn horizontal_navigation_moves_between_categories_applications_and_fields() {
+    let fixture = FixtureRoot::new("settings-focus");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    let before = manager.load_config().unwrap();
+    for (key, category, field) in [
+        (
+            "Left",
+            SettingsCategory::Appearance,
+            SettingsField::CategoryList,
+        ),
+        (
+            "Down",
+            SettingsCategory::RegionTime,
+            SettingsField::CategoryList,
+        ),
+        (
+            "Down",
+            SettingsCategory::System,
+            SettingsField::CategoryList,
+        ),
+        ("Right", SettingsCategory::System, SettingsField::AutoAdmin),
+        (
+            "Down",
+            SettingsCategory::System,
+            SettingsField::AutomationEnabled,
+        ),
+        (
+            "Left",
+            SettingsCategory::System,
+            SettingsField::CategoryList,
+        ),
+        (
+            "Down",
+            SettingsCategory::Applications,
+            SettingsField::CategoryList,
+        ),
+        (
+            "Right",
+            SettingsCategory::Applications,
+            SettingsField::ApplicationList,
+        ),
+        (
+            "Down",
+            SettingsCategory::Applications,
+            SettingsField::ApplicationList,
+        ),
+        (
+            "Right",
+            SettingsCategory::Applications,
+            SettingsField::ExplorerOpenExtensions,
+        ),
+        (
+            "Down",
+            SettingsCategory::Applications,
+            SettingsField::CursorAcceleration,
+        ),
+        (
+            "Left",
+            SettingsCategory::Applications,
+            SettingsField::ApplicationList,
+        ),
+        (
+            "Left",
+            SettingsCategory::Applications,
+            SettingsField::CategoryList,
+        ),
+    ] {
+        press(&mut state, &platform, key);
+        let model = state.to_settings_view_model().unwrap();
+        assert_eq!(
+            (model.selected_category, model.selected_field),
+            (category, field),
+            "{key}"
+        );
+        assert_eq!(manager.load_config().unwrap(), before);
+        assert!(model.picker.is_none());
+        assert!(model.number_editor.is_none());
+    }
+}
+
+#[test]
+fn numeric_settings_validate_direct_input_before_saving() {
+    let fixture = FixtureRoot::new("settings-number-input");
+    let platform = mock_platform(fixture.path());
+    let manager = initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    for (category, field, value, display) in [
+        (
+            SettingsCategory::System,
+            SettingsField::SystemLowAvailable,
+            "20",
+            "20 GiB",
+        ),
+        (
+            SettingsCategory::System,
+            SettingsField::SystemLowPercentage,
+            "25",
+            "25%",
+        ),
+        (
+            SettingsCategory::System,
+            SettingsField::SystemCriticalAvailable,
+            "3",
+            "3 GiB",
+        ),
+        (
+            SettingsCategory::System,
+            SettingsField::SystemCriticalPercentage,
+            "8",
+            "8%",
+        ),
+        (
+            SettingsCategory::Applications,
+            SettingsField::CursorDelay,
+            "1000",
+            "1000 ms",
+        ),
+        (
+            SettingsCategory::Applications,
+            SettingsField::CursorRamp,
+            "2000",
+            "2000 ms",
+        ),
+        (
+            SettingsCategory::Applications,
+            SettingsField::CursorHorizontalStep,
+            "12",
+            "12 cells",
+        ),
+        (
+            SettingsCategory::Applications,
+            SettingsField::CursorVerticalStep,
+            "5",
+            "5 lines",
+        ),
+    ] {
+        select_category(&mut state, &platform, category);
+        if category == SettingsCategory::Applications
+            && state.to_settings_view_model().unwrap().selected_application
+                != SettingsApplication::Editor
+        {
+            press(&mut state, &platform, "Home");
+            press(&mut state, &platform, "Down");
+        }
+        select_field(&mut state, &platform, field);
+        press(&mut state, &platform, "Enter");
+        let before = manager.load_config().unwrap();
+        let model = state.to_settings_view_model().unwrap();
+        let editor = model.number_editor.unwrap();
+        for invalid in [String::new(), "0".into(), (editor.maximum + 1).to_string()] {
+            press(&mut state, &platform, "Ctrl+A");
+            press(&mut state, &platform, "Backspace");
+            for digit in invalid.chars() {
+                press(&mut state, &platform, &digit.to_string());
+            }
+            press(&mut state, &platform, "Enter");
+            assert!(
+                state
+                    .to_settings_view_model()
+                    .unwrap()
+                    .number_editor
+                    .unwrap()
+                    .error
+                    .is_some(),
+                "{field:?}"
+            );
+            assert_eq!(manager.load_config().unwrap(), before);
+        }
+        press(&mut state, &platform, "Ctrl+A");
+        for digit in value.chars() {
+            press(&mut state, &platform, &digit.to_string());
+        }
+        assert_eq!(manager.load_config().unwrap(), before);
+        press(&mut state, &platform, "Enter");
+        let model = state.to_settings_view_model().unwrap();
+        assert!(model.number_editor.is_none());
+        assert_eq!(model.selected_field, field);
+        assert_eq!(
+            model
+                .cards
+                .iter()
+                .flat_map(|card| &card.items)
+                .find(|item| item.field == field)
+                .unwrap()
+                .value,
+            display
+        );
+    }
+}
+
+#[test]
+fn numeric_settings_use_the_same_dialog_for_mouse_and_touch() {
+    for hover in [true, false] {
+        let fixture = FixtureRoot::new("settings-number-pointer");
+        let platform = mock_platform(fixture.path());
+        let manager = initialize_users(&platform, false, false);
+        let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+        open_settings_from_home(&mut state, &platform);
+        select_category(&mut state, &platform, SettingsCategory::System);
+        let main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
+            ui::ShellLayout::Compact(main) | ui::ShellLayout::Full { main, .. } => main,
+        };
+        for confirm in [true, false] {
+            let before = manager.load_config().unwrap();
+            let layout = ui::settings_layout(main, &state.to_settings_view_model().unwrap());
+            let field = layout
+                .fields
+                .iter()
+                .find(|field| field.field == SettingsField::SystemLowAvailable)
+                .unwrap()
+                .area;
+            let point = (field.x, field.y);
+            if hover {
+                state.apply_input_with_platform(InputEvent::mouse_moved(point), &platform);
+            }
+            state.apply_input_with_platform(
+                InputEvent::mouse_down(ui::MouseButton::Left, point),
+                &platform,
+            );
+            state.apply_input_with_platform(
+                InputEvent::mouse_up(ui::MouseButton::Left, point),
+                &platform,
+            );
+            let model = state.to_settings_view_model().unwrap();
+            assert_eq!(
+                model.number_editor.as_ref().unwrap().field,
+                SettingsField::SystemLowAvailable
+            );
+            let layout = ui::settings_layout(main, &model);
+            let number = layout.number_editor.unwrap();
+            let point = (number.increase.x, number.increase.y);
+            state.apply_input_with_platform(
+                InputEvent::mouse_down(ui::MouseButton::Left, point),
+                &platform,
+            );
+            state.apply_input_with_platform(
+                InputEvent::mouse_up(ui::MouseButton::Left, point),
+                &platform,
+            );
+            assert_eq!(manager.load_config().unwrap(), before);
+            assert_eq!(
+                state
+                    .to_settings_view_model()
+                    .unwrap()
+                    .number_editor
+                    .unwrap()
+                    .input
+                    .value(),
+                (before.system_status.low_available_gib + 1).to_string()
+            );
+            let background = layout.category_cards[0].area;
+            state.apply_input_with_platform(
+                InputEvent::mouse_down(ui::MouseButton::Left, (background.x, background.y)),
+                &platform,
+            );
+            state.apply_input_with_platform(
+                InputEvent::mouse_up(ui::MouseButton::Left, (background.x, background.y)),
+                &platform,
+            );
+            assert_eq!(
+                state.to_settings_view_model().unwrap().selected_category,
+                SettingsCategory::System
+            );
+            let button = if confirm {
+                layout.overlay_apply.unwrap()
+            } else {
+                layout.overlay_cancel.unwrap()
+            };
+            let point = (button.x, button.y);
+            state.apply_input_with_platform(
+                InputEvent::mouse_down(ui::MouseButton::Left, point),
+                &platform,
+            );
+            state.apply_input_with_platform(
+                InputEvent::mouse_up(ui::MouseButton::Left, point),
+                &platform,
+            );
+            let model = state.to_settings_view_model().unwrap();
+            assert!(model.number_editor.is_none());
+            assert_eq!(model.selected_field, SettingsField::SystemLowAvailable);
+            assert_eq!(
+                manager
+                    .load_config()
+                    .unwrap()
+                    .system_status
+                    .low_available_gib,
+                before.system_status.low_available_gib + u16::from(confirm)
+            );
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_personal_settings_work_without_system_account_service() {
@@ -230,7 +583,7 @@ fn linux_update_mode_saves_keyboard_and_mouse_choices_across_reopen() {
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::UpdateMode
     );
-    press(&mut state, &platform, "Right");
+    press(&mut state, &platform, "Enter");
     assert_eq!(
         manager.load_config().unwrap().linux_update_mode,
         storage::LinuxUpdateMode::Beta
@@ -263,7 +616,7 @@ fn linux_update_mode_saves_keyboard_and_mouse_choices_across_reopen() {
         manager.load_config().unwrap().linux_update_mode,
         storage::LinuxUpdateMode::Release
     );
-    press(&mut state, &platform, "Left");
+    press(&mut state, &platform, "Enter");
     assert_eq!(
         manager.load_config().unwrap().linux_update_mode,
         storage::LinuxUpdateMode::Beta
@@ -439,71 +792,49 @@ fn mouse_wheel_scrolls_only_to_the_settings_content_boundary() {
 }
 
 #[test]
-fn system_settings_show_defaults_and_persist_normalized_steps() {
+fn system_settings_show_defaults_and_persist_confirmed_values() {
     let fixture = FixtureRoot::new("system-settings");
     let platform = mock_platform(fixture.path());
     let manager = initialize_users(&platform, false, false);
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
-
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Tab");
-    press(&mut state, &platform, "Tab");
-    let system = state.to_settings_view_model().unwrap();
-    assert_eq!(system.selected_category, SettingsCategory::System);
-    let items = system
-        .cards
-        .iter()
-        .flat_map(|card| &card.items)
-        .collect::<Vec<_>>();
-    assert_eq!(items[0].field, SettingsField::AutoAdmin);
-    assert_eq!(
-        manager.load_config().unwrap().auto_admin,
-        storage::AutoAdminPolicy::Manual
-    );
-    press(&mut state, &platform, "Right");
-    assert_eq!(
-        manager.load_config().unwrap().auto_admin,
-        storage::AutoAdminPolicy::Automatic
-    );
-    press(&mut state, &platform, "Right");
-    assert_eq!(
-        manager.load_config().unwrap().auto_admin,
-        storage::AutoAdminPolicy::Automatic
-    );
-    press(&mut state, &platform, "Left");
-    assert_eq!(
-        manager.load_config().unwrap().auto_admin,
-        storage::AutoAdminPolicy::Manual
-    );
-    for _ in 0..2 {
-        press(&mut state, &platform, "Left");
-        assert_eq!(
-            manager.load_config().unwrap().auto_admin,
-            storage::AutoAdminPolicy::Deny
-        );
+    select_category(&mut state, &platform, SettingsCategory::System);
+    for (index, policy) in [
+        (2, storage::AutoAdminPolicy::Automatic),
+        (0, storage::AutoAdminPolicy::Deny),
+        (1, storage::AutoAdminPolicy::Manual),
+    ] {
+        let before = manager.load_config().unwrap().auto_admin;
+        press(&mut state, &platform, "Enter");
+        press(&mut state, &platform, "Home");
+        for _ in 0..index {
+            press(&mut state, &platform, "Down");
+        }
+        assert_eq!(manager.load_config().unwrap().auto_admin, before);
+        press(&mut state, &platform, "Enter");
+        assert_eq!(manager.load_config().unwrap().auto_admin, policy);
     }
-    press(&mut state, &platform, "Right");
     press(&mut state, &platform, "Down");
-    assert_eq!(items[1].field, SettingsField::AutomationEnabled);
-    assert_eq!(items[1].checked, Some(false));
-    assert!(!manager.load_config().unwrap().automation.enabled);
-    press(&mut state, &platform, "Right");
+    press(&mut state, &platform, "Enter");
     assert!(manager.load_config().unwrap().automation.enabled);
-    press(&mut state, &platform, "Left");
+    press(&mut state, &platform, " ");
     assert!(!manager.load_config().unwrap().automation.enabled);
-    press(&mut state, &platform, "Down");
-    assert_eq!(items[2].field, SettingsField::ScreenTimeout);
-    assert_eq!(items[2].value, "5 minutes");
-    press(&mut state, &platform, "Down");
-    let items = &items[3..];
-    assert_eq!(items[0].field, SettingsField::SystemLowAvailable);
-    assert_eq!(items[0].value, "5 GiB");
-    assert_eq!(items[0].kind, ui::SettingsControlKind::Stepper);
-    assert_eq!(items[1].value, "10%");
-    assert_eq!(items[2].value, "1 GiB");
-    assert_eq!(items[3].value, "5%");
-
-    press(&mut state, &platform, "Left");
+    for _ in 0..2 {
+        press(&mut state, &platform, "Down");
+    }
+    let model = state.to_settings_view_model().unwrap();
+    let items = &model.cards[3].items;
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>(),
+        ["5 GiB", "10%", "1 GiB", "5%"]
+    );
+    assert_eq!(model.selected_field, SettingsField::SystemLowAvailable);
+    for key in ["Enter", "Left", "Enter"] {
+        press(&mut state, &platform, key);
+    }
     assert_eq!(
         manager
             .load_config()
@@ -517,14 +848,15 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
     config.system_status.low_available_gib = 5;
     config.system_status.critical_available_gib = 5;
     manager.save_config(&config).unwrap();
-    press(&mut state, &platform, "Left");
+    for key in ["Enter", "Ctrl+A", "4", "Enter"] {
+        press(&mut state, &platform, key);
+    }
     let saved = manager.load_config().unwrap();
     assert_eq!(saved.system_status.low_available_gib, 4);
     assert_eq!(saved.system_status.critical_available_gib, 4);
-
-    press(&mut state, &platform, "Down");
-    press(&mut state, &platform, "Down");
-    press(&mut state, &platform, "Right");
+    for key in ["Down", "Down", "Enter", "Right", "Enter"] {
+        press(&mut state, &platform, key);
+    }
     assert_eq!(
         manager
             .load_config()
@@ -536,104 +868,98 @@ fn system_settings_show_defaults_and_persist_normalized_steps() {
 }
 
 #[test]
-fn auto_admin_slider_saves_pointer_choices_and_cancels_interrupted_gestures() {
-    use storage::AutoAdminPolicy::{Automatic, Deny, Manual};
+fn auto_admin_picker_requires_confirmation_with_mouse_or_touch() {
     for hover in [true, false] {
-        let fixture = FixtureRoot::new("aa-slider");
+        let fixture = FixtureRoot::new("aa-picker");
         let platform = mock_platform(fixture.path());
         let manager = initialize_users(&platform, true, false);
         for (username, password, enabled) in [
             ("AdminUser", "StrongPass123", true),
             ("NormalUser", "NormalPass123", false),
         ] {
-            let mut config = manager.load_config().unwrap();
-            config.auto_admin = Manual;
-            manager.save_config(&config).unwrap();
             let mut state = logged_in_state(&platform, username, password);
             open_settings_from_home(&mut state, &platform);
-            press(&mut state, &platform, "Tab");
-            press(&mut state, &platform, "Tab");
+            select_category(&mut state, &platform, SettingsCategory::System);
             let main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
                 ui::ShellLayout::Compact(main) | ui::ShellLayout::Full { main, .. } => main,
             };
-            let layout = ui::settings_layout(main, &state.to_settings_view_model().unwrap());
-            let points: Vec<_> = layout.sliders[0]
-                .options
-                .iter()
-                .map(|area| (area.x + area.width / 2, area.y))
-                .collect();
-            for (index, policy) in [(2, Automatic), (0, Deny), (1, Manual)] {
+            for (index, policy) in [
+                (2, storage::AutoAdminPolicy::Automatic),
+                (0, storage::AutoAdminPolicy::Deny),
+                (1, storage::AutoAdminPolicy::Manual),
+            ] {
                 let before = manager.load_config().unwrap().auto_admin;
+                let layout = ui::settings_layout(main, &state.to_settings_view_model().unwrap());
+                let area = layout
+                    .fields
+                    .iter()
+                    .find(|field| field.field == SettingsField::AutoAdmin)
+                    .unwrap()
+                    .area;
+                let point = (area.x, area.y);
                 if hover {
-                    state.apply_input_with_platform(
-                        InputEvent::mouse_moved(points[index]),
-                        &platform,
-                    );
+                    state.apply_input_with_platform(InputEvent::mouse_moved(point), &platform);
                 }
                 state.apply_input_with_platform(
-                    InputEvent::mouse_down(ui::MouseButton::Left, points[index]),
+                    InputEvent::mouse_down(ui::MouseButton::Left, point),
+                    &platform,
+                );
+                state.apply_input_with_platform(
+                    InputEvent::mouse_up(ui::MouseButton::Left, point),
+                    &platform,
+                );
+                let model = state.to_settings_view_model().unwrap();
+                assert_eq!(model.picker.is_some(), enabled);
+                if !enabled {
+                    assert_eq!(manager.load_config().unwrap().auto_admin, before);
+                    continue;
+                }
+                assert_eq!(
+                    model.picker.as_ref().unwrap().kind,
+                    SettingsPickerKind::AutoAdmin
+                );
+                let layout = ui::settings_layout(main, &model);
+                let option = layout
+                    .picker_options
+                    .iter()
+                    .find(|option| option.index == index)
+                    .unwrap()
+                    .area;
+                let point = (option.x, option.y);
+                if hover {
+                    state.apply_input_with_platform(InputEvent::mouse_moved(point), &platform);
+                }
+                state.apply_input_with_platform(
+                    InputEvent::mouse_down(ui::MouseButton::Left, point),
+                    &platform,
+                );
+                state.apply_input_with_platform(
+                    InputEvent::mouse_up(ui::MouseButton::Left, point),
                     &platform,
                 );
                 assert_eq!(manager.load_config().unwrap().auto_admin, before);
-                state.apply_input_with_platform(
-                    InputEvent::mouse_up(ui::MouseButton::Left, points[index]),
-                    &platform,
-                );
                 assert_eq!(
-                    manager.load_config().unwrap().auto_admin,
-                    if enabled { policy } else { Manual }
+                    state
+                        .to_settings_view_model()
+                        .unwrap()
+                        .picker
+                        .unwrap()
+                        .selected_index,
+                    index
                 );
-            }
-            for interruption in [
-                InputEvent::FocusLost,
-                InputEvent::Resize {
-                    width: 120,
-                    height: 40,
-                },
-                InputEvent::from_key_label("F1"),
-            ] {
+                let apply = layout.overlay_apply.unwrap();
+                let point = (apply.x, apply.y);
                 state.apply_input_with_platform(
-                    InputEvent::mouse_down(ui::MouseButton::Left, points[0]),
+                    InputEvent::mouse_down(ui::MouseButton::Left, point),
                     &platform,
                 );
-                state.apply_input_with_platform(interruption.clone(), &platform);
                 state.apply_input_with_platform(
-                    InputEvent::mouse_up(ui::MouseButton::Left, points[0]),
+                    InputEvent::mouse_up(ui::MouseButton::Left, point),
                     &platform,
                 );
-                assert_eq!(manager.load_config().unwrap().auto_admin, Manual);
-                if matches!(interruption, InputEvent::Key(_)) {
-                    press(&mut state, &platform, "Esc");
-                }
+                assert_eq!(manager.load_config().unwrap().auto_admin, policy);
+                assert!(state.to_settings_view_model().unwrap().picker.is_none());
             }
-            state.apply_input_with_platform(
-                InputEvent::mouse_down(ui::MouseButton::Left, points[1]),
-                &platform,
-            );
-            for (index, policy) in [(0, Deny), (2, Automatic)] {
-                state.apply_input_with_platform(
-                    InputEvent::mouse_drag(ui::MouseButton::Left, points[index]),
-                    &platform,
-                );
-                assert_eq!(
-                    manager.load_config().unwrap().auto_admin,
-                    if enabled { policy } else { Manual }
-                );
-            }
-            state.apply_input_with_platform(
-                InputEvent::mouse_up(ui::MouseButton::Left, points[2]),
-                &platform,
-            );
-            press(&mut state, &platform, "Esc");
-            open_settings_from_home(&mut state, &platform);
-            press(&mut state, &platform, "Tab");
-            press(&mut state, &platform, "Tab");
-            assert_eq!(
-                state.to_settings_view_model().unwrap().cards[0].items[0].kind,
-                ui::SettingsControlKind::Slider {
-                    selected: if enabled { 2 } else { 1 }
-                }
-            );
         }
     }
 }
@@ -652,14 +978,26 @@ fn screen_timeout_saves_all_choices_and_wakes_without_logging_out() {
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::ScreenTimeout
     );
-    for seconds in [600, 1800, 0, 30, 60, 120, 300] {
-        press(&mut state, &platform, "Right");
+    for (index, seconds) in [0, 30, 60, 120, 300, 600, 1800].into_iter().enumerate() {
+        let before = manager.load_config().unwrap().screen_timeout_seconds;
+        press(&mut state, &platform, "Enter");
+        press(&mut state, &platform, "Home");
+        for _ in 0..index {
+            press(&mut state, &platform, "Down");
+        }
+        assert_eq!(
+            manager.load_config().unwrap().screen_timeout_seconds,
+            before
+        );
+        press(&mut state, &platform, "Enter");
         assert_eq!(
             manager.load_config().unwrap().screen_timeout_seconds,
             seconds
         );
     }
-    press(&mut state, &platform, "Left");
+    for key in ["Enter", "Home", "Down", "Down", "Down", "Enter"] {
+        press(&mut state, &platform, key);
+    }
     assert_eq!(manager.load_config().unwrap().screen_timeout_seconds, 120);
     let actor = state.auth_session().cloned();
     let now = Instant::now();
@@ -763,6 +1101,16 @@ fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selectio
             .status
             .contains("Saved")
     );
+    select_field(&mut state, &platform, SettingsField::SortField);
+    for expected in [
+        storage::ExplorerSortField::Type,
+        storage::ExplorerSortField::Size,
+        storage::ExplorerSortField::Modified,
+        storage::ExplorerSortField::Name,
+    ] {
+        press(&mut state, &platform, "Enter");
+        assert_eq!(manager.load_config().unwrap().explorer.sort_field, expected);
+    }
 }
 
 #[test]
@@ -1006,8 +1354,9 @@ fn advanced_animation_phases_save_per_user_and_restore_with_speed_defaults() {
     for _ in 0..5 {
         press(&mut state, &platform, "Down");
     }
-    press(&mut state, &platform, "Right");
-    press(&mut state, &platform, "Down");
+    for key in ["Enter", "Right", "Enter", "Down"] {
+        press(&mut state, &platform, key);
+    }
     let phases = [
         SettingsField::PageAcceleration,
         SettingsField::PageCruise,
@@ -1034,7 +1383,9 @@ fn advanced_animation_phases_save_per_user_and_restore_with_speed_defaults() {
         let editor = model.animation_editor.as_ref().expect("advanced modal");
         assert_eq!(model.selected_field, SettingsField::AnimationAdvanced);
         assert_eq!(editor.items[editor.selected_index].field, field);
-        press(&mut state, &platform, "Right");
+        for key in ["Enter", "Right", "Enter"] {
+            press(&mut state, &platform, key);
+        }
         if index < phases.len() - 1 {
             press(&mut state, &platform, "Down");
         }
@@ -1133,16 +1484,26 @@ fn animation_modal_blocks_background_supports_pointer_reset_and_restores_focus()
         state.to_settings_view_model().unwrap().selected_category,
         SettingsCategory::Appearance
     );
-    let increase = editor
-        .adjustments
+    let value = editor
+        .fields
         .iter()
-        .find(|(field, delta, _)| *field == SettingsField::PageAcceleration && *delta == 1)
+        .find(|field| field.field == SettingsField::PageAcceleration)
         .unwrap()
-        .2;
+        .area;
     state.apply_input_with_platform(
-        InputEvent::mouse_down(ui::MouseButton::Left, (increase.x, increase.y)),
+        InputEvent::mouse_down(ui::MouseButton::Left, (value.x, value.y)),
         &platform,
     );
+    assert!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .number_editor
+            .is_some()
+    );
+    for key in ["Right", "Enter"] {
+        press(&mut state, &platform, key);
+    }
     assert_eq!(
         state
             .to_settings_view_model()
@@ -1258,7 +1619,9 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
     assert_eq!(speed.kind, ui::SettingsControlKind::Stepper);
     assert!(speed.enabled);
 
-    press(&mut state, &platform, "Right");
+    for key in ["Enter", "Right", "Enter"] {
+        press(&mut state, &platform, key);
+    }
     let normal_appearance = || {
         manager
             .load_users()
@@ -1285,43 +1648,27 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
         InputEvent::mouse_down(ui::MouseButton::Left, (speed_area.x, speed_area.y)),
         &platform,
     );
-    let picker_model = state.to_settings_view_model().unwrap();
-    let picker = picker_model
-        .picker
+    let number_model = state.to_settings_view_model().unwrap();
+    let editor = number_model
+        .number_editor
         .as_ref()
-        .expect("animation speed picker");
-    assert_eq!(picker.kind, SettingsPickerKind::AnimationSpeed);
-    assert_eq!(picker.selected_index, 3);
-    assert_eq!(picker.options.len(), 7);
+        .expect("animation speed number dialog");
+    assert_eq!(editor.input.value(), "125");
     assert_eq!(normal_appearance().animation_speed_percent, 125);
-    for direction in [shell::ScrollDirection::Left, shell::ScrollDirection::Right] {
-        state.apply_input_with_platform(InputEvent::mouse_scroll(direction, (60, 10)), &platform);
-        assert_eq!(
-            state
-                .to_settings_view_model()
-                .unwrap()
-                .picker
-                .as_ref()
-                .unwrap()
-                .selected_index,
-            3
-        );
+    for key in ["Ctrl+A", "2", "0", "0", "Enter"] {
+        press(&mut state, &platform, key);
     }
-
-    let fastest = ui::settings_layout(main, &picker_model)
-        .picker_options
-        .into_iter()
-        .find(|option| option.index == 6)
-        .expect("200% picker option")
-        .area;
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(ui::MouseButton::Left, (fastest.x, fastest.y)),
-        &platform,
-    );
     assert_eq!(normal_appearance().animation_speed_percent, 200);
-    assert!(state.to_settings_view_model().unwrap().picker.is_none());
-
-    press(&mut state, &platform, "Left");
+    assert!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .number_editor
+            .is_none()
+    );
+    for key in ["Enter", "Left", "Enter"] {
+        press(&mut state, &platform, key);
+    }
     assert_eq!(normal_appearance().animation_speed_percent, 175);
 
     press(&mut state, &platform, "Down");
@@ -1580,7 +1927,36 @@ fn open_time_server_editor(state: &mut ShellSession, platform: &MockPlatform) {
 }
 
 fn press(state: &mut ShellSession, platform: &MockPlatform, key: &str) {
-    state.apply_input_with_platform(InputEvent::from_key_label(key), platform);
+    let input = if key == "Ctrl+A" {
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::Char('a'),
+            InputModifiers::ctrl(),
+        ))
+    } else {
+        InputEvent::from_key_label(key)
+    };
+    state.apply_input_with_platform(input, platform);
+}
+
+fn select_field(state: &mut ShellSession, platform: &MockPlatform, field: SettingsField) {
+    press(state, platform, "Home");
+    let model = state.to_settings_view_model().unwrap();
+    if model.selected_category == SettingsCategory::Applications {
+        press(state, platform, "Right");
+    }
+    let index = model
+        .cards
+        .iter()
+        .flat_map(|card| &card.items)
+        .position(|item| item.field == field)
+        .unwrap();
+    for _ in 0..index {
+        press(state, platform, "Down");
+    }
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        field
+    );
 }
 
 fn mock_platform(base: &Path) -> MockPlatform {

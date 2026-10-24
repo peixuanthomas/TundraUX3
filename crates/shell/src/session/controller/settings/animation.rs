@@ -118,7 +118,7 @@ impl ShellSession {
         let mut reveal = false;
         match key.key {
             InputKey::Escape => self.close_settings_animation(),
-            InputKey::Up | InputKey::BackTab => {
+            InputKey::Up | InputKey::Left | InputKey::BackTab => {
                 editor.selected_index = editor.selected_index.saturating_sub(1);
                 reveal = true;
             }
@@ -126,7 +126,7 @@ impl ShellSession {
                 editor.selected_index = editor.selected_index.saturating_sub(1);
                 reveal = true;
             }
-            InputKey::Down | InputKey::Tab => {
+            InputKey::Down | InputKey::Right | InputKey::Tab => {
                 editor.selected_index = (editor.selected_index + 1).min(close);
                 reveal = true;
             }
@@ -140,18 +140,12 @@ impl ShellSession {
             }
             InputKey::PageUp => self.scroll_settings_animation(-6),
             InputKey::PageDown => self.scroll_settings_animation(6),
-            InputKey::Left | InputKey::Right => {
-                let index = editor.selected_index;
-                if let Some(field) = PHASE_FIELDS.get(index) {
-                    self.adjust_animation_phase(
-                        *field,
-                        if key.key == InputKey::Left { -1 } else { 1 },
-                    );
-                }
-            }
             InputKey::Enter | InputKey::Char(' ') => match editor.selected_index {
                 index if index == close => self.close_settings_animation(),
                 index if index == PHASE_FIELDS.len() => self.reset_settings_animation_speed(),
+                index if key.key == InputKey::Enter => {
+                    self.open_settings_number(PHASE_FIELDS[index]);
+                }
                 _ => {}
             },
             _ => {}
@@ -227,39 +221,5 @@ impl ShellSession {
             editor.scroll_offset =
                 settings_scroll_offset(layout.scroll_offset, delta, layout.max_scroll_offset);
         }
-    }
-
-    pub(super) fn adjust_animation_phase(
-        &mut self,
-        field: ui::SettingsField,
-        direction: i8,
-    ) -> bool {
-        let Some(index) = PHASE_FIELDS
-            .iter()
-            .position(|candidate| *candidate == field)
-        else {
-            return false;
-        };
-        let Some(mut appearance) = self.app.active_appearance().cloned() else {
-            return true;
-        };
-        if appearance.motion_preference.reduced() {
-            self.set_settings_error(i18n::msg!("settings-full-motion-required"));
-            return true;
-        }
-        appearance.animation_timings = appearance.animation_timings.normalized();
-        let phases = match index / 3 {
-            0 => &mut appearance.animation_timings.page,
-            1 => &mut appearance.animation_timings.dialog,
-            _ => &mut appearance.animation_timings.menu,
-        };
-        let value = &mut phases[index % 3];
-        *value = if direction >= 0 {
-            value.saturating_add(1).min(storage::MAX_ANIMATION_PHASE_MS)
-        } else {
-            value.saturating_sub(1).max(storage::MIN_ANIMATION_PHASE_MS)
-        };
-        self.save_settings_appearance(appearance, settings_saved_field(field));
-        true
     }
 }

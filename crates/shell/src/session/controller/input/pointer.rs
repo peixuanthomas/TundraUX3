@@ -76,6 +76,38 @@ impl ShellSession {
                     disabled: false,
                 });
         }
+        if self.content_screen() == ShellScreen::Settings
+            && self
+                .pages
+                .settings
+                .settings_state
+                .as_ref()
+                .is_some_and(|state| state.number_editor.is_some())
+            && let Some(layout) = self.current_settings_layout()
+            && rect_contains(layout.main, point)
+        {
+            let number = layout.number_editor.as_ref().unwrap();
+            let (id, area) = match ui::settings_hit_test(&layout, point) {
+                Some(ui::SettingsHitTarget::AdjustField(_, -1)) => {
+                    ("settings.number.decrease", number.decrease)
+                }
+                Some(ui::SettingsHitTarget::AdjustField(_, 1)) => {
+                    ("settings.number.increase", number.increase)
+                }
+                Some(ui::SettingsHitTarget::OverlayApply) => {
+                    ("settings.overlay.apply", layout.overlay_apply.unwrap())
+                }
+                Some(ui::SettingsHitTarget::OverlayCancel) => {
+                    ("settings.overlay.cancel", layout.overlay_cancel.unwrap())
+                }
+                _ => return None,
+            };
+            return Some(ui::components::ButtonRegion {
+                id: id.into(),
+                area,
+                disabled: false,
+            });
+        }
         if self.resolved_overlay_owner() == Some(ShellComponent::Explorer)
             && matches!(
                 self.resolved_explorer_overlay(),
@@ -215,13 +247,6 @@ impl ShellSession {
         if self.help_open
             && !self.notification_has_active_modal()
             && self.handle_help_scrollbar(mouse)
-        {
-            self.interaction.button_capture = None;
-            return None;
-        }
-        if self.interactive_overlays().is_empty()
-            && self.active_screen() == ShellScreen::Settings
-            && self.handle_settings_slider_pointer(mouse)
         {
             self.interaction.button_capture = None;
             return None;

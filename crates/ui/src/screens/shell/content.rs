@@ -93,6 +93,32 @@ impl ScreenContent<'_> {
         layout: &ShellFrameLayout,
         context: &RenderContext,
     ) {
+        self.render_overlay_underlay(frame, layout, context);
+        self.render_overlay_top(frame, layout, context);
+    }
+
+    pub fn render_overlay_underlay(
+        self,
+        frame: &mut Frame<'_>,
+        layout: &ShellFrameLayout,
+        context: &RenderContext,
+    ) {
+        if let Self::Settings(model) = self {
+            crate::screens::settings::render_settings_overlay_underlay(
+                frame,
+                &settings_layout(layout.main, model),
+                model,
+                context,
+            );
+        }
+    }
+
+    pub fn render_overlay_top(
+        self,
+        frame: &mut Frame<'_>,
+        layout: &ShellFrameLayout,
+        context: &RenderContext,
+    ) {
         let main = layout.main;
         match self {
             Self::Setup(model) => render_setup_overlay(frame, main, model, context),
@@ -107,9 +133,12 @@ impl ScreenContent<'_> {
             Self::Editor(model) => {
                 render_editor_overlay(frame, &editor_layout(main, model), model, context)
             }
-            Self::Settings(model) => {
-                render_settings_overlay(frame, &settings_layout(main, model), model, context)
-            }
+            Self::Settings(model) => crate::screens::settings::render_settings_overlay_top(
+                frame,
+                &settings_layout(main, model),
+                model,
+                context,
+            ),
             Self::Logs(model) => render_logs_overlay(frame, main, model, context),
             Self::Diagnostics(model) => render_diagnostics_overlay(frame, main, model, context),
             Self::SystemStatus(model) => render_system_status_overlay(frame, main, model, context),

@@ -411,7 +411,9 @@ settings-animation-cruise = 匀速
 settings-animation-deceleration = 减速
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
-settings-animation-phase-help = 按 1ms 调整（1～2000ms），表示 100% 速度下的时长。改变各阶段时长也会改变速度曲线。
+settings-animation-phase-help = 打开数值后调整或输入 1～2000ms，确认后保存；表示 100% 速度下的时长。
+settings-number-range = 请输入 { $min }～{ $max } 之间的数字。
+settings-number-help = 左右键调整 · 直接输入数字 · 回车确认 · Esc 取消
 
 
 ui-control-settings-title = 外部 CLI 控制

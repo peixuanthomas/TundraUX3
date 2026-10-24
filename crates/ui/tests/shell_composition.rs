@@ -241,6 +241,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
         locked_message: None,
         scroll_offset: 0,
         animation_editor: None,
+        number_editor: None,
         picker: None,
         color_editor: None,
         weather_location_editor: None,

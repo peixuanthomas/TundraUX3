@@ -411,7 +411,9 @@ settings-animation-cruise = Cruise
 settings-animation-deceleration = Deceleration
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
-settings-animation-phase-help = Adjust by 1 ms (1–2000 ms). Times apply at 100% speed. Changing stages also changes the speed curve.
+settings-animation-phase-help = Open a value to adjust or type 1–2000 ms, then confirm. Times apply at 100% speed.
+settings-number-range = Enter a number from { $min } to { $max }.
+settings-number-help = Left/Right: adjust · Type digits · Enter: confirm · Esc: cancel
 
 
 ui-control-settings-title = External CLI control

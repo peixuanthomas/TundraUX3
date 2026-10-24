@@ -177,6 +177,20 @@ impl ShellSession {
                     scroll_offset: editor.scroll_offset,
                 }
             }),
+            number_editor: state.number_editor.as_ref().map(|editor| {
+                ui::SettingsNumberEditorViewModel {
+                    field: editor.field,
+                    title: editor.title.clone(),
+                    input: editor.input.clone(),
+                    minimum: editor.minimum,
+                    maximum: editor.maximum,
+                    error: editor
+                        .error
+                        .as_ref()
+                        .map(i18n::LocalizedText::render_current),
+                    selected_index: editor.selected_index,
+                }
+            }),
             picker,
             color_editor,
             weather_location_editor,
@@ -676,18 +690,7 @@ pub(in crate::session) fn settings_cards(
                         i18n::tr!("aa-policy"),
                         crate::session::controller::auto_admin::policy_label(config.auto_admin),
                         i18n::tr!("aa-policy-help"),
-                        Kind::Slider {
-                            selected: AUTO_ADMIN_POLICIES
-                                .iter()
-                                .position(|policy| *policy == config.auto_admin)
-                                .unwrap(),
-                        },
-                    )
-                    .options(
-                        AUTO_ADMIN_POLICIES
-                            .into_iter()
-                            .map(crate::session::controller::auto_admin::policy_label)
-                            .collect(),
+                        Kind::Picker,
                     )
                     .enabled(global_enabled),
                 ],
@@ -718,7 +721,7 @@ pub(in crate::session) fn settings_cards(
                             }
                         },
                         i18n::tr!("settings-screen-timeout-help"),
-                        Kind::Cycle,
+                        Kind::Picker,
                     )
                     .enabled(global_enabled),
                 ],
@@ -970,6 +973,28 @@ pub(in crate::session) fn settings_picker_options(
 ) -> Vec<ui::SettingsPickerOptionViewModel> {
     let query = picker.query.trim().to_ascii_lowercase();
     match picker.kind {
+        ui::SettingsPickerKind::AutoAdmin => AUTO_ADMIN_POLICIES
+            .into_iter()
+            .map(|policy| {
+                ui::SettingsPickerOptionViewModel::new(
+                    crate::session::controller::auto_admin::policy_label(policy),
+                    "",
+                )
+            })
+            .collect(),
+        ui::SettingsPickerKind::ScreenTimeout => SCREEN_TIMEOUT_OPTIONS
+            .iter()
+            .map(|seconds| {
+                let label = match *seconds {
+                    0 => i18n::tr!("settings-screen-timeout-never"),
+                    seconds if seconds % 60 == 0 => {
+                        i18n::tr!("settings-screen-timeout-minutes", value = seconds / 60)
+                    }
+                    seconds => i18n::tr!("settings-screen-timeout-seconds", value = seconds),
+                };
+                ui::SettingsPickerOptionViewModel::new(label, "")
+            })
+            .collect(),
         ui::SettingsPickerKind::SystemTimeServers => picker
             .options
             .iter()
@@ -992,21 +1017,6 @@ pub(in crate::session) fn settings_picker_options(
             )
             .enabled(picker.image_icons_supported),
         ],
-        ui::SettingsPickerKind::AnimationSpeed => (storage::MIN_ANIMATION_SPEED_PERCENT
-            ..=storage::MAX_ANIMATION_SPEED_PERCENT)
-            .step_by(usize::from(storage::ANIMATION_SPEED_STEP_PERCENT))
-            .map(|speed| {
-                let detail = match speed.cmp(&storage::DEFAULT_ANIMATION_SPEED_PERCENT) {
-                    std::cmp::Ordering::Less => i18n::tr!("settings-slower-default"),
-                    std::cmp::Ordering::Equal => i18n::tr!("settings-default"),
-                    std::cmp::Ordering::Greater => i18n::tr!("settings-faster-default"),
-                };
-                ui::SettingsPickerOptionViewModel::new(
-                    i18n::tr!("settings-value-percent", value = speed),
-                    detail,
-                )
-            })
-            .collect(),
         ui::SettingsPickerKind::Language => languages
             .iter()
             .cloned()
@@ -1066,38 +1076,17 @@ pub(in crate::session) fn color_picker_initial_index(color: storage::BorderColor
         .unwrap_or_else(|| ui::setup_standard_color_options().len())
 }
 
-pub(in crate::session) fn animation_speed_picker_index(speed: u16) -> usize {
-    let normalized = speed.clamp(
-        storage::MIN_ANIMATION_SPEED_PERCENT,
-        storage::MAX_ANIMATION_SPEED_PERCENT,
-    );
-    let offset = normalized.saturating_sub(storage::MIN_ANIMATION_SPEED_PERCENT);
-    usize::from(
-        offset.saturating_add(storage::ANIMATION_SPEED_STEP_PERCENT / 2)
-            / storage::ANIMATION_SPEED_STEP_PERCENT,
-    )
-}
-
-pub(in crate::session) fn animation_speed_for_picker_index(index: usize) -> u16 {
-    storage::MIN_ANIMATION_SPEED_PERCENT
-        .saturating_add(
-            u16::try_from(index)
-                .unwrap_or(u16::MAX)
-                .saturating_mul(storage::ANIMATION_SPEED_STEP_PERCENT),
-        )
-        .min(storage::MAX_ANIMATION_SPEED_PERCENT)
-}
-
 pub(in crate::session) fn settings_picker_visible_rows(terminal_height: u16) -> usize {
     usize::from(terminal_height.saturating_sub(10).clamp(4, 18))
 }
 
 pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> String {
     match kind {
+        ui::SettingsPickerKind::AutoAdmin => i18n::tr!("aa-policy"),
+        ui::SettingsPickerKind::ScreenTimeout => i18n::tr!("settings-screen-timeout"),
         ui::SettingsPickerKind::SystemTimeServers => i18n::tr!("system-settings-edit-servers"),
         ui::SettingsPickerKind::Theme => i18n::tr!("settings-choose-theme"),
         ui::SettingsPickerKind::DefaultThemeIcons => i18n::tr!("settings-default-theme"),
-        ui::SettingsPickerKind::AnimationSpeed => i18n::tr!("settings-choose-speed"),
         ui::SettingsPickerKind::Language => i18n::tr!("settings-choose-language"),
         ui::SettingsPickerKind::Timezone => i18n::tr!("settings-choose-timezone"),
         ui::SettingsPickerKind::BorderColor => i18n::tr!("settings-choose-border-color"),
@@ -1107,10 +1096,11 @@ pub(in crate::session) fn picker_title(kind: ui::SettingsPickerKind) -> String {
 
 pub(in crate::session) fn picker_label(kind: ui::SettingsPickerKind) -> String {
     match kind {
+        ui::SettingsPickerKind::AutoAdmin => i18n::tr!("aa-policy"),
+        ui::SettingsPickerKind::ScreenTimeout => i18n::tr!("settings-screen-timeout"),
         ui::SettingsPickerKind::SystemTimeServers => i18n::tr!("system-settings-servers"),
         ui::SettingsPickerKind::Theme => i18n::tr!("settings-theme"),
         ui::SettingsPickerKind::DefaultThemeIcons => i18n::tr!("settings-default-icon-mode"),
-        ui::SettingsPickerKind::AnimationSpeed => i18n::tr!("settings-animation-speed"),
         ui::SettingsPickerKind::BorderColor => i18n::tr!("settings-border-color"),
         ui::SettingsPickerKind::AccentColor => i18n::tr!("settings-accent-color"),
         ui::SettingsPickerKind::Language => i18n::tr!("settings-language"),
@@ -1170,28 +1160,7 @@ pub(in crate::session) fn cycle_explorer_sort_field(
         storage::ExplorerSortField::Modified,
     ];
     let index = values.iter().position(|item| *item == value).unwrap_or(0) as isize;
-    values[(index + delta).clamp(0, values.len().saturating_sub(1) as isize) as usize]
-}
-
-pub(super) fn adjust_u16_setting(value: u16, increase: bool, minimum: u16, maximum: u16) -> u16 {
-    if increase {
-        value.saturating_add(1).min(maximum)
-    } else {
-        value.saturating_sub(1).max(minimum)
-    }
-}
-
-pub(super) fn adjust_u8_setting_in_range(
-    value: u8,
-    increase: bool,
-    minimum: u8,
-    maximum: u8,
-) -> u8 {
-    if increase {
-        value.saturating_add(1).min(maximum)
-    } else {
-        value.saturating_sub(1).max(minimum)
-    }
+    values[(index + delta).rem_euclid(values.len() as isize) as usize]
 }
 
 pub(super) fn settings_saved_field(field: ui::SettingsField) -> i18n::LocalizedMessage {

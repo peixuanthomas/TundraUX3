@@ -133,8 +133,10 @@ def main():
             current = ui("wait", "--id", "page/settings.field.automationenabled")["snapshot"]
             toggle = node_by(current, lambda node: node["id"] == "page/settings.field.automationenabled")
             assert toggle["role"] == "checkbox" and toggle["selected"]
-            for _ in range(4):
-                click("page/settings.field.screentimeout")
+            click("page/settings.field.screentimeout")
+            key("Home")
+            key("Down")
+            key("Enter")
             config_path = next(Path(env["XDG_CONFIG_HOME"]).rglob("config.toml"))
             assert "screen_timeout_seconds = 30" in config_path.read_text()
             key("F1")

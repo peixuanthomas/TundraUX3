@@ -262,14 +262,7 @@ fn unavailable_settings_retain_gray_buttons_and_register_disabled_hit_regions() 
                         && !region.id.as_str().starts_with("settings.category.")
                 })
                 .collect();
-            assert_eq!(
-                regions.len(),
-                if kind == SettingsControlKind::Stepper {
-                    2
-                } else {
-                    1
-                }
-            );
+            assert_eq!(regions.len(), 1);
             for region in regions {
                 assert_eq!(region.disabled, !enabled);
                 let label: String = (region.area.x..region.area.right())
@@ -648,6 +641,7 @@ fn sample_model() -> SettingsViewModel {
         locked_message: None,
         scroll_offset: 0,
         animation_editor: None,
+        number_editor: None,
         picker: None,
         color_editor: None,
         weather_location_editor: None,
@@ -1008,11 +1002,11 @@ fn animation_modal_scrolls_and_captures_only_its_visible_controls() {
             let editor = layout.animation_editor.as_ref().unwrap();
             assert_eq!(editor.dialog.intersection(area), editor.dialog);
             assert!(!editor.fields.is_empty());
-            for (field, delta, button) in &editor.adjustments {
-                assert_eq!(button.intersection(editor.viewport), *button);
+            for field in &editor.fields {
+                assert_eq!(field.area.intersection(editor.viewport), field.area);
                 assert_eq!(
-                    settings_hit_test(&layout, (button.x, button.y)),
-                    Some(SettingsHitTarget::AdjustField(*field, *delta))
+                    settings_hit_test(&layout, (field.area.x, field.area.y)),
+                    Some(SettingsHitTarget::Field(field.field))
                 );
             }
             assert_eq!(
@@ -1036,6 +1030,109 @@ fn animation_modal_scrolls_and_captures_only_its_visible_controls() {
                 })
                 .unwrap();
             assert!(terminal_output(&terminal).contains("[Reset]"));
+        }
+    }
+}
+
+#[test]
+fn number_dialog_renders_shared_controls_and_blocks_the_underlying_dialog() {
+    for title in ["Animation speed (%)", "动画速度（百分比）"] {
+        for (width, height) in [(46, 11), (108, 20), (140, 40)] {
+            let mut model = sample_model();
+            model.animation_editor = Some(ui::SettingsAnimationEditorViewModel {
+                items: vec![SettingsItemViewModel::new(
+                    SettingsField::PageAcceleration,
+                    "Page acceleration",
+                    "55 ms",
+                    "",
+                    SettingsControlKind::Stepper,
+                )],
+                selected_index: 0,
+                scroll_offset: 0,
+            });
+            let mut input = ui::components::TextInput::new("settings.number.input");
+            input.set_value("125");
+            input.set_focused(true);
+            model.number_editor = Some(ui::SettingsNumberEditorViewModel {
+                field: SettingsField::AnimationSpeed,
+                title: title.into(),
+                input,
+                minimum: 50,
+                maximum: 200,
+                error: None,
+                selected_index: 0,
+            });
+            let area = Rect::new(0, 0, width, height);
+            let layout = settings_layout(area, &model);
+            let number = layout.number_editor.as_ref().unwrap();
+            assert_eq!(number.dialog.intersection(area), number.dialog);
+            for (button, delta) in [(number.decrease, -1), (number.increase, 1)] {
+                assert_eq!(button.intersection(number.dialog), button);
+                assert_eq!(
+                    settings_hit_test(&layout, (button.x, button.y)),
+                    Some(SettingsHitTarget::AdjustField(
+                        SettingsField::AnimationSpeed,
+                        delta
+                    ))
+                );
+            }
+            assert_eq!(
+                settings_hit_test(&layout, (number.input.x, number.input.y)),
+                Some(SettingsHitTarget::NumberEditor)
+            );
+            for (button, target) in [
+                (
+                    layout.overlay_apply.unwrap(),
+                    SettingsHitTarget::OverlayApply,
+                ),
+                (
+                    layout.overlay_cancel.unwrap(),
+                    SettingsHitTarget::OverlayCancel,
+                ),
+            ] {
+                assert_eq!(button.intersection(number.dialog), button);
+                assert_eq!(
+                    settings_hit_test(&layout, (button.x, button.y)),
+                    Some(target)
+                );
+            }
+            assert_eq!(settings_hit_test(&layout, (area.x, area.y)), None);
+            let buttons =
+                ui::components::ButtonFrame::new(None, None, &TundraTheme::default_dark());
+            let theme = TundraTheme {
+                buttons: Some(buttons.clone()),
+                ..TundraTheme::default_dark()
+            };
+            let context =
+                ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| ui::render_settings_overlay(frame, &layout, &model, &context))
+                .unwrap();
+            let output = terminal_output(&terminal);
+            let mut title_row = String::new();
+            let mut column = number.dialog.x;
+            while column < number.dialog.right() {
+                let cell = &terminal.backend().buffer()[(column, number.dialog.y)];
+                title_row.push_str(cell.symbol());
+                column += cell.cell_width();
+            }
+            assert!(title_row.contains(title), "{width} × {height}: {title_row}");
+            assert!(output.contains("125"));
+            let regions = buttons.regions();
+            for (id, rect) in [
+                ("settings.number.decrease", number.decrease),
+                ("settings.number.increase", number.increase),
+            ] {
+                assert_eq!(
+                    regions
+                        .iter()
+                        .find(|region| region.id.as_str() == id)
+                        .unwrap()
+                        .area,
+                    rect
+                );
+            }
         }
     }
 }

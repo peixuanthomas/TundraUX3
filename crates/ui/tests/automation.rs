@@ -483,6 +483,7 @@ fn settings_checkbox_reports_the_saved_value_separately_from_focus() {
             locked_message: None,
             scroll_offset: 0,
             animation_editor: None,
+            number_editor: None,
             picker: None,
             color_editor: None,
             weather_location_editor: None,

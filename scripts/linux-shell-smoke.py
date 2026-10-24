@@ -582,10 +582,10 @@ def check_animation_settings(master, output, child):
     os.write(master, b"s")
     if not wait_for_painted_text(master, output, "Animation speed", child):
         raise SystemExit("Settings did not paint the animation percentage")
-    os.write(master, b"\x1b[B" * 5 + b"\x1b[C\x1b[B\r")
+    os.write(master, b"\x1b[B" * 5 + b"\r\x1b[C\r\x1b[B\r")
     if not wait_for_painted_text(master, output, "Acceleration", child):
         raise SystemExit("Animation advanced options did not open as a dialog")
-    os.write(master, b"\x1b[C")
+    os.write(master, b"\r56\r")
     if not wait_for_painted_text(master, output, "56 ms", child):
         raise SystemExit("Page acceleration did not increase by one millisecond")
     os.write(master, b"\x1b[F\x1b[A\r\x1b")
@@ -602,7 +602,7 @@ def check_animation_settings(master, output, child):
     if not wait_for_painted_text(master, output, "Launcher", child):
         raise SystemExit("Animation settings did not return to Home")
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
-    print("PASS: animation advanced options adjust milliseconds and restore phase times and percentage")
+    print("PASS: animation number dialogs confirm arrow and typed values and restore phase times and percentage")
 
 
 def check_system_settings_environment(master, output, child):

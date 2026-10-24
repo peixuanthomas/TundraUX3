@@ -2789,7 +2789,9 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         state.to_settings_view_model().unwrap().selected_field,
         ui::SettingsField::SystemLowAvailable
     );
+    state.apply_input(InputEvent::from_key_label("Enter"));
     state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(
         manager
             .load_config()
@@ -3892,6 +3894,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: None,
+        number_editor: None,
         category: ui::SettingsCategory::Appearance,
         selected_field: ui::SettingsField::Theme,
         status: String::new().into(),

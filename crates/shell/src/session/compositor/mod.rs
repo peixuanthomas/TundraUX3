@@ -312,8 +312,12 @@ impl ScreenCompositor {
         } else {
             ui::render_compact_home(frame, layout.main, &chrome, &context.compatibility_theme());
         }
-        let shell_modal = self.motion.needs_shell_modal_base();
-        if !shell_modal {
+        if visible_content {
+            content.render_overlay_underlay(frame, &layout, context);
+        }
+        let capture_after_page_overlays =
+            self.motion.needs_shell_modal_base() || self.motion.needs_page_overlay_base();
+        if !capture_after_page_overlays {
             self.motion.capture_base(frame.buffer_mut(), state);
         }
         if let Some(capture) = &mut capture
@@ -324,7 +328,7 @@ impl ScreenCompositor {
             capture.set_group("page-overlay", "dialog", layout.main, modal);
         }
         if visible_content {
-            content.render_overlay(frame, &layout, context);
+            content.render_overlay_top(frame, &layout, context);
         }
         if let Some(capture) = &mut capture {
             capture.set_group("chrome", "toolbar", bounds, false);
@@ -354,7 +358,7 @@ impl ScreenCompositor {
             }
         }
         state.displayed_status = Some(displayed_status.full_message());
-        if shell_modal {
+        if capture_after_page_overlays {
             self.motion.capture_base(frame.buffer_mut(), state);
         }
         if let Some(capture) = &mut capture

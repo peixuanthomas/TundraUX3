@@ -3,20 +3,10 @@ use crate::session::*;
 
 impl ShellSession {
     pub(in crate::session) fn open_settings_picker(&mut self, kind: ui::SettingsPickerKind) {
-        if kind == ui::SettingsPickerKind::AnimationSpeed
-            && self
-                .app
-                .active_appearance()
-                .is_some_and(|appearance| appearance.motion_preference.reduced())
-        {
-            self.set_settings_error(i18n::msg!("settings-full-motion-required"));
-            return;
-        }
         if !matches!(
             kind,
             ui::SettingsPickerKind::Theme
                 | ui::SettingsPickerKind::DefaultThemeIcons
-                | ui::SettingsPickerKind::AnimationSpeed
                 | ui::SettingsPickerKind::BorderColor
                 | ui::SettingsPickerKind::AccentColor
         ) && !self.can_change_global_settings()
@@ -53,6 +43,14 @@ impl ShellSession {
         }
         let config = self.app.storage_config();
         match kind {
+            ui::SettingsPickerKind::AutoAdmin => AUTO_ADMIN_POLICIES
+                .iter()
+                .position(|policy| *policy == config.auto_admin)
+                .unwrap(),
+            ui::SettingsPickerKind::ScreenTimeout => SCREEN_TIMEOUT_OPTIONS
+                .iter()
+                .position(|seconds| *seconds == config.screen_timeout_seconds)
+                .unwrap_or(4),
             ui::SettingsPickerKind::SystemTimeServers => 0,
             ui::SettingsPickerKind::Theme => 0,
             ui::SettingsPickerKind::DefaultThemeIcons => {
@@ -68,13 +66,6 @@ impl ShellSession {
                         .unwrap_or(0)
                 }
             }
-            ui::SettingsPickerKind::AnimationSpeed => self
-                .app
-                .active_appearance()
-                .map(|appearance| {
-                    animation_speed_picker_index(appearance.normalized_animation_speed_percent())
-                })
-                .unwrap_or(0),
             ui::SettingsPickerKind::Language => self
                 .language_options()
                 .iter()
@@ -260,6 +251,29 @@ impl ShellSession {
             return;
         }
         match picker.kind {
+            ui::SettingsPickerKind::AutoAdmin | ui::SettingsPickerKind::ScreenTimeout => {
+                let storage = self.storage_manager.clone().unwrap();
+                let mut config = match storage.load_config() {
+                    Ok(config) => config,
+                    Err(error) => {
+                        self.set_settings_error(i18n::msg!(
+                            "settings-load-failed",
+                            reason = error.to_string()
+                        ));
+                        return;
+                    }
+                };
+                let field = if picker.kind == ui::SettingsPickerKind::AutoAdmin {
+                    config.auto_admin = AUTO_ADMIN_POLICIES[picker.selected_index];
+                    ui::SettingsField::AutoAdmin
+                } else {
+                    config.screen_timeout_seconds = SCREEN_TIMEOUT_OPTIONS[picker.selected_index];
+                    ui::SettingsField::ScreenTimeout
+                };
+                if self.save_settings_global_config(config, field) {
+                    self.pages.settings.settings_state.as_mut().unwrap().picker = None;
+                }
+            }
             ui::SettingsPickerKind::SystemTimeServers => {
                 self.edit_system_time_server(picker.selected_index);
             }
@@ -293,24 +307,6 @@ impl ShellSession {
                 appearance.icon_display_mode = icon_display_mode;
                 if self.save_settings_appearance(appearance, i18n::msg!("settings-saved-icon-mode"))
                     && let Some(state) = self.pages.settings.settings_state.as_mut()
-                {
-                    state.picker = None;
-                }
-            }
-            ui::SettingsPickerKind::AnimationSpeed => {
-                let Some(mut appearance) = self.app.active_appearance().cloned() else {
-                    return;
-                };
-                if appearance.motion_preference.reduced() {
-                    self.set_settings_error(i18n::msg!("settings-full-motion-required"));
-                    return;
-                }
-                appearance.animation_speed_percent =
-                    animation_speed_for_picker_index(picker.selected_index);
-                if self.save_settings_appearance(
-                    appearance,
-                    settings_saved_field(ui::SettingsField::AnimationSpeed),
-                ) && let Some(state) = self.pages.settings.settings_state.as_mut()
                 {
                     state.picker = None;
                 }

@@ -461,7 +461,9 @@ pub(in crate::session) fn build_shell_hit_map(
             ShellScreen::Settings => settings_model.and_then(|model| {
                 let layout = ui::settings_layout(main, model);
                 layout
-                    .picker_dialog
+                    .number_editor
+                    .map(|editor| editor.dialog)
+                    .or(layout.picker_dialog)
                     .or(layout.animation_editor.map(|editor| editor.dialog))
                     .or(layout.color_editor)
                     .or(layout.weather_location_editor)

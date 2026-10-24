@@ -159,6 +159,7 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 advanced(vec![
                     row("←→↑↓", i18n::tr!("ui-help-settings-adjust")),
                     row("Tab", i18n::tr!("ui-help-settings-section")),
+                    row("←→ / 0–9 / Enter", i18n::tr!("ui-help-settings-number")),
                 ]),
             ],
         ),

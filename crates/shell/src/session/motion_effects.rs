@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::overlays::ShellOverlayCategory;
+use crate::session::overlays::{ShellOverlayCategory, ShellOverlayDescriptor};
 use ratatui::{
     buffer::{Buffer, Cell, CellDiffOption},
     layout::{Position, Rect},
@@ -20,6 +20,17 @@ struct OverlayIdentity {
     kind: ui::MotionOverlayKind,
     id: String,
     immediate: bool,
+}
+
+impl From<ShellOverlayDescriptor> for OverlayIdentity {
+    fn from(overlay: ShellOverlayDescriptor) -> Self {
+        Self {
+            category: overlay.category,
+            kind: overlay.kind,
+            id: overlay.id,
+            immediate: overlay.immediate,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +62,7 @@ struct ActiveVisualOutgoing {
     total: Duration,
     remaining: Duration,
     origin: ui::RevealOrigin,
+    reveals_page_overlay: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +84,7 @@ pub(super) struct ShellMotionEffects {
     manager: EffectManager<MotionEffectId>,
     screen: Option<ShellScreen>,
     overlay: Option<OverlayIdentity>,
-    covered_page_overlay: Option<(ShellScreen, OverlayIdentity, ui::RevealOrigin)>,
+    overlay_frames: Vec<(OverlayIdentity, ui::RevealOrigin)>,
     overlay_snapshot: Option<CellSnapshot>,
     bounds: Option<Rect>,
     reduced: bool,
@@ -145,7 +157,13 @@ impl ShellMotionEffects {
         self.timings = state.animation_timings();
         if reduced {
             if !self.reduced || self.manager.is_running() {
+                let overlay_frames = if self.page == Some(state.content_page_id()) {
+                    std::mem::take(&mut self.overlay_frames)
+                } else {
+                    Vec::new()
+                };
                 self.clear();
+                self.overlay_frames = overlay_frames;
             }
             self.completed_exit = None;
             self.reduced = true;
@@ -237,36 +255,19 @@ impl ShellMotionEffects {
                 self.effects_scheduled_since_process = false;
             }
             let previous_overlay = self.overlay.clone();
-            let covering_page = overlay
-                .as_ref()
-                .is_some_and(|new| new.category == ShellOverlayCategory::ShellModal)
-                && previous_overlay
-                    .as_ref()
-                    .is_some_and(|old| is_page_overlay(old));
-            if covering_page {
-                self.covered_page_overlay = previous_overlay
-                    .clone()
-                    .map(|old| (screen, old, self.overlay_origin));
-            }
-            let revealing_page = previous_overlay
-                .as_ref()
-                .is_some_and(|old| old.category == ShellOverlayCategory::ShellModal)
-                && self.covered_page_overlay.as_ref().is_some_and(
-                    |(covered_screen, covered, _)| {
-                        *covered_screen == screen && overlay.as_ref() == Some(covered)
-                    },
-                );
-            let revealed_origin =
-                revealing_page.then(|| self.covered_page_overlay.as_ref().unwrap().2);
-            if previous_overlay
-                .as_ref()
-                .is_some_and(|old| old.category == ShellOverlayCategory::ShellModal)
-                && overlay
-                    .as_ref()
-                    .is_none_or(|new| new.category != ShellOverlayCategory::ShellModal)
-            {
-                self.covered_page_overlay = None;
-            }
+            let covering_overlay = previous_overlay.as_ref().is_some_and(|old| {
+                state
+                    .interactive_overlays()
+                    .iter()
+                    .any(|visible| visible.id == old.id)
+            });
+            let revealed_origin = overlay.as_ref().and_then(|new| {
+                self.overlay_frames
+                    .iter()
+                    .find(|(previous, _)| previous == new)
+                    .map(|(_, origin)| *origin)
+            });
+            let revealing_overlay = revealed_origin.is_some();
             let completed_old = self.completed_exit.is_some()
                 && self.completed_exit.as_ref() == self.overlay.as_ref();
             let critical = overlay.as_ref().is_some_and(|overlay| overlay.immediate);
@@ -282,7 +283,7 @@ impl ShellMotionEffects {
                 self.overlay_underlay_snapshot = None;
                 self.outgoing_block_remaining = Duration::ZERO;
                 if let Some(new) = overlay.as_ref().filter(|new| {
-                    !revealing_page && !new.immediate && new.kind != ui::MotionOverlayKind::Toast
+                    !revealing_overlay && !new.immediate && new.kind != ui::MotionOverlayKind::Toast
                 }) && let Some(area) = overlay_area(state)
                     && let Some(underlay) =
                         self.freeze_underlay(state.content_screen(), full_area, area)
@@ -302,9 +303,8 @@ impl ShellMotionEffects {
                 self.overlay_underlay_snapshot = None;
                 self.outgoing_block_remaining = Duration::ZERO;
                 self.active_visual_outgoing = None;
-            } else if covering_page {
-                // The lower page overlay remains visible below the shell modal.
-                // It is not an outgoing sibling and must not be animated away.
+            } else if covering_overlay {
+                // A covered parent stays visible while its child opens.
                 self.manager = EffectManager::default();
                 self.effects_scheduled_since_process = false;
                 self.active_visual_outgoing = None;
@@ -370,7 +370,7 @@ impl ShellMotionEffects {
                 } else {
                     match (&previous_overlay, &overlay) {
                         (Some(old), Some(new))
-                            if !revealing_page
+                            if !revealing_overlay
                                 && old.kind != ui::MotionOverlayKind::Toast
                                 && new.kind != ui::MotionOverlayKind::Toast =>
                         {
@@ -424,6 +424,7 @@ impl ShellMotionEffects {
                                     total: self.overlay_duration(old.kind),
                                     remaining: self.overlay_duration(old.kind),
                                     origin: self.overlay_origin,
+                                    reveals_page_overlay: false,
                                 });
                             } else {
                                 self.manager.cancel_unique_effect(MotionEffectId::Overlay);
@@ -456,6 +457,7 @@ impl ShellMotionEffects {
                                     total: self.overlay_duration(old.kind),
                                     remaining: self.overlay_duration(old.kind),
                                     origin: self.overlay_origin,
+                                    reveals_page_overlay: revealing_overlay && is_page_overlay(old),
                                 });
                             } else {
                                 self.manager.cancel_unique_effect(MotionEffectId::Overlay);
@@ -501,6 +503,12 @@ impl ShellMotionEffects {
                 .deferred_close
                 .as_ref()
                 .is_some_and(|close| close.overlay.category == ShellOverlayCategory::ShellModal)
+    }
+
+    pub(super) fn needs_page_overlay_base(&self) -> bool {
+        self.active_visual_outgoing
+            .as_ref()
+            .is_some_and(|outgoing| outgoing.reveals_page_overlay)
     }
 
     /// Capture below the animated overlay: page content, or page/chrome for shell modals.
@@ -785,7 +793,7 @@ impl ShellMotionEffects {
         self.active_visual_outgoing = None;
         self.exit_confirmation = false;
         self.completed_exit = None;
-        self.covered_page_overlay = None;
+        self.overlay_frames.clear();
         self.page = None;
         self.page_origin = None;
         self.page_gate = Duration::ZERO;
@@ -794,6 +802,24 @@ impl ShellMotionEffects {
     pub(super) fn remember(&mut self, state: &ShellSession, bounds: Rect) {
         self.screen = Some(state.content_screen());
         self.overlay = current_overlay(state);
+        let previous = std::mem::take(&mut self.overlay_frames);
+        self.overlay_frames = state
+            .interactive_overlays()
+            .into_iter()
+            .map(|overlay| {
+                let identity = OverlayIdentity::from(overlay);
+                let origin = if self.overlay.as_ref() == Some(&identity) {
+                    self.overlay_origin
+                } else {
+                    previous
+                        .iter()
+                        .find(|(old, _)| *old == identity)
+                        .map(|(_, origin)| *origin)
+                        .unwrap_or(ui::RevealOrigin::Center)
+                };
+                (identity, origin)
+            })
+            .collect();
         self.bounds = Some(bounds);
         self.exit_confirmation = state.active_screen() == ShellScreen::ExitConfirm;
         self.page_depth = state.screen_stack().len();
@@ -1153,14 +1179,7 @@ fn is_page_overlay(overlay: &OverlayIdentity) -> bool {
 }
 
 fn current_overlay(state: &ShellSession) -> Option<OverlayIdentity> {
-    state
-        .active_overlay_descriptor()
-        .map(|overlay| OverlayIdentity {
-            category: overlay.category,
-            kind: overlay.kind,
-            id: overlay.id,
-            immediate: overlay.immediate,
-        })
+    state.active_overlay_descriptor().map(OverlayIdentity::from)
 }
 
 fn overlay_area(state: &ShellSession) -> Option<Rect> {

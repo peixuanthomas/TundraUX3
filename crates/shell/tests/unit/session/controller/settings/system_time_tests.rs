@@ -57,6 +57,7 @@ fn settings_state(time: SystemTimeSettings) -> SettingsState {
         application: Default::default(),
         system_time: time,
         animation_editor: None,
+        number_editor: None,
         category: ui::SettingsCategory::RegionTime,
         selected_field: ui::SettingsField::TimeSyncSource,
         status: String::new().into(),

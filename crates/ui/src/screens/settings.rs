@@ -2,6 +2,8 @@ mod animation;
 pub use animation::{SettingsAnimationEditorViewModel, SettingsAnimationLayout};
 mod applications;
 pub use applications::{SettingsApplication, SettingsApplicationsLayout};
+mod number;
+pub use number::{SettingsNumberEditorViewModel, SettingsNumberLayout};
 mod slider;
 pub use slider::SettingsSliderLayout;
 
@@ -79,6 +81,7 @@ impl SettingsCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsField {
+    CategoryList,
     ApplicationList,
     AutoAdmin,
     AutomationEnabled,
@@ -261,9 +264,10 @@ pub struct SettingsAppearancePreview {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsPickerKind {
+    AutoAdmin,
+    ScreenTimeout,
     Theme,
     DefaultThemeIcons,
-    AnimationSpeed,
     Language,
     Timezone,
     SystemTimeServers,
@@ -360,6 +364,7 @@ pub struct SettingsViewModel {
     pub locked_message: Option<String>,
     pub scroll_offset: u16,
     pub animation_editor: Option<SettingsAnimationEditorViewModel>,
+    pub number_editor: Option<SettingsNumberEditorViewModel>,
     pub picker: Option<SettingsPickerViewModel>,
     pub color_editor: Option<SettingsColorEditorViewModel>,
     pub weather_location_editor: Option<SettingsWeatherLocationEditorViewModel>,
@@ -424,6 +429,7 @@ pub enum SettingsHitTarget {
     WeatherLocationEditor,
     FileExtensionsEditor,
     TimeSyncServerEditor,
+    NumberEditor,
     UpdateConfirm,
     UpdateCancel,
 }
@@ -444,8 +450,8 @@ pub struct SettingsLayout {
     pub category_window_start: usize,
     pub category_capacity: usize,
     pub animation_editor: Option<SettingsAnimationLayout>,
+    pub number_editor: Option<SettingsNumberLayout>,
     pub picker_list: Option<Rect>,
-    pub adjustments: Vec<(SettingsField, i8, Rect)>,
     pub sliders: Vec<SettingsSliderLayout>,
     pub overlay_apply: Option<Rect>,
     pub overlay_cancel: Option<Rect>,
@@ -572,7 +578,6 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .collect();
 
     let mut fields = Vec::new();
-    let mut adjustments = Vec::new();
     let mut sliders = Vec::new();
     let mut selected_field_row = None;
     let mut selected_field_height = 1;
@@ -581,13 +586,6 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         y += 5;
     }
     for card in &model.cards {
-        let value_width = card
-            .items
-            .iter()
-            .map(settings_control_width)
-            .max()
-            .unwrap_or(0)
-            .min(detail_area.width.saturating_sub(2) / 2);
         let height = settings_card_height(card);
         let mut row_y = y + 1;
         for item in &card.items {
@@ -603,15 +601,6 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
                 sliders.push(layout);
             }
             if row_y >= i32::from(detail_area.y) && row_y < i32::from(detail_area.bottom()) {
-                if item.enabled && item.kind == SettingsControlKind::Stepper && value_width >= 6 {
-                    let x = detail_area.right().saturating_sub(1 + value_width);
-                    adjustments.push((item.field, -1, Rect::new(x, row_y as u16, 3, 1)));
-                    adjustments.push((
-                        item.field,
-                        1,
-                        Rect::new(detail_area.right().saturating_sub(4), row_y as u16, 3, 1),
-                    ));
-                }
                 fields.push(SettingsFieldLayout {
                     field: item.field,
                     area: Rect::new(
@@ -694,9 +683,15 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .unwrap_or_default();
 
     let active_editor = model
-        .time_sync_server_editor
+        .number_editor
         .as_ref()
-        .map(|_| centered(area, area.width.min(76), area.height.min(11)))
+        .map(|editor| SettingsNumberLayout::new(area, editor.field).dialog)
+        .or_else(|| {
+            model
+                .time_sync_server_editor
+                .as_ref()
+                .map(|_| centered(area, area.width.min(76), area.height.min(11)))
+        })
         .or_else(|| {
             model
                 .file_extensions_editor
@@ -723,6 +718,10 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             .animation_editor
             .as_ref()
             .map(|editor| SettingsAnimationLayout::new(area, editor)),
+        number_editor: model
+            .number_editor
+            .as_ref()
+            .map(|editor| SettingsNumberLayout::new(area, editor.field)),
         workspace,
         category: category_area,
         operating_system,
@@ -736,7 +735,6 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         category_window_start: category_start,
         category_capacity,
         picker_list,
-        adjustments,
         sliders,
         overlay_apply: overlay_buttons.map(|buttons| buttons[0]),
         overlay_cancel: overlay_buttons.map(|buttons| buttons[1]),
@@ -769,16 +767,29 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
 }
 
 pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<SettingsHitTarget> {
+    if let Some(editor) = &layout.number_editor {
+        if layout
+            .overlay_apply
+            .is_some_and(|area| contains(area, point))
+        {
+            return Some(SettingsHitTarget::OverlayApply);
+        }
+        if layout
+            .overlay_cancel
+            .is_some_and(|area| contains(area, point))
+        {
+            return Some(SettingsHitTarget::OverlayCancel);
+        }
+        for (area, delta) in [(editor.decrease, -1), (editor.increase, 1)] {
+            if contains(area, point) {
+                return Some(SettingsHitTarget::AdjustField(editor.field, delta));
+            }
+        }
+        return contains(editor.input, point).then_some(SettingsHitTarget::NumberEditor);
+    }
     if let Some(editor) = &layout.animation_editor {
         if contains(editor.close, point) {
             return Some(SettingsHitTarget::OverlayCancel);
-        }
-        if let Some((field, delta, _)) = editor
-            .adjustments
-            .iter()
-            .find(|(_, _, area)| contains(*area, point))
-        {
-            return Some(SettingsHitTarget::AdjustField(*field, *delta));
         }
         return editor
             .fields
@@ -872,13 +883,6 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
         .iter()
         .find(|field| contains(field.area, point))
     {
-        if let Some((field, delta, _)) = layout
-            .adjustments
-            .iter()
-            .find(|(_, _, area)| contains(*area, point))
-        {
-            return Some(SettingsHitTarget::AdjustField(*field, *delta));
-        }
         return Some(SettingsHitTarget::Field(field.field));
     }
     layout
@@ -903,10 +907,15 @@ pub fn render_settings_content(
     let buttons = SettingsCategory::ALL
         .into_iter()
         .map(|category| {
-            Button::new(
+            let mut button = Button::new(
                 format!("settings.category.{category:?}").to_ascii_lowercase(),
                 category.label(),
-            )
+            );
+            button.set_focused(
+                model.selected_field == SettingsField::CategoryList
+                    && model.selected_category == category,
+            );
+            button
         })
         .collect::<Vec<_>>();
     let active = SettingsCategory::ALL
@@ -995,7 +1004,32 @@ pub fn render_settings_overlay(
     model: &SettingsViewModel,
     context: &RenderContext,
 ) {
+    render_settings_overlay_underlay(frame, layout, model, context);
+    render_settings_overlay_top(frame, layout, model, context);
+}
+
+pub(crate) fn render_settings_overlay_underlay(
+    frame: &mut Frame<'_>,
+    layout: &SettingsLayout,
+    model: &SettingsViewModel,
+    context: &RenderContext,
+) {
+    if model.number_editor.is_some()
+        && let (Some(editor), Some(editor_layout)) =
+            (&model.animation_editor, &layout.animation_editor)
+    {
+        animation::render(frame, editor_layout, editor, context);
+    }
+}
+
+pub(crate) fn render_settings_overlay_top(
+    frame: &mut Frame<'_>,
+    layout: &SettingsLayout,
+    model: &SettingsViewModel,
+    context: &RenderContext,
+) {
     if let (Some(editor), Some(editor_layout)) = (&model.animation_editor, &layout.animation_editor)
+        && model.number_editor.is_none()
     {
         animation::render(frame, editor_layout, editor, context);
     }
@@ -1014,6 +1048,9 @@ pub fn render_settings_overlay(
     if let Some(editor) = &model.time_sync_server_editor {
         render_time_sync_server_editor(frame, layout.main, editor, context);
     }
+    if let (Some(editor), Some(editor_layout)) = (&model.number_editor, &layout.number_editor) {
+        number::render(frame, editor_layout, editor, context);
+    }
     if let Some(confirmation) = model
         .update
         .as_ref()
@@ -1027,6 +1064,12 @@ pub fn render_settings_overlay(
             "settings.overlay.apply",
             i18n::tr!("ui-settings-touch-apply"),
         );
+        apply_button.set_focused(
+            model
+                .number_editor
+                .as_ref()
+                .is_some_and(|editor| editor.selected_index == 1),
+        );
         apply_button.set_disabled(
             model
                 .time_sync_server_editor
@@ -1034,11 +1077,17 @@ pub fn render_settings_overlay(
                 .is_some_and(|editor| editor.validating),
         );
         apply_button.render_inline_frame(frame, apply, theme);
-        Button::new(
+        let mut cancel_button = Button::new(
             "settings.overlay.cancel",
             i18n::tr!("ui-settings-touch-cancel"),
-        )
-        .render_inline_frame(frame, cancel, theme);
+        );
+        cancel_button.set_focused(
+            model
+                .number_editor
+                .as_ref()
+                .is_some_and(|editor| editor.selected_index == 2),
+        );
+        cancel_button.render_inline_frame(frame, cancel, theme);
     }
 }
 
@@ -1764,28 +1813,6 @@ fn render_settings_control(
         );
         return;
     }
-    if item.kind == SettingsControlKind::Stepper && area.width >= 6 {
-        for (action, label, x) in [
-            ("decrease", "−", area.x),
-            ("increase", "+", area.right() - 3),
-        ] {
-            let mut button = Button::new(format!("settings.{action}.{:?}", item.field), label);
-            button.set_disabled(!item.enabled);
-            button.render_inline_frame(frame, Rect::new(x, area.y, 3, area.height), theme);
-        }
-        frame.render_widget(
-            Paragraph::new(item.value.clone())
-                .alignment(HorizontalAlignment::Center)
-                .style(if item.enabled {
-                    theme.body_style()
-                } else {
-                    theme.disabled_style()
-                }),
-            Rect::new(area.x + 3, area.y, area.width - 6, area.height),
-        );
-        return;
-    }
-
     let mut button = Button::new(
         format!("settings.field.{:?}", item.field).to_ascii_lowercase(),
         item.value.clone(),
@@ -1810,7 +1837,7 @@ fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
         | SettingsControlKind::Picker
         | SettingsControlKind::Palette
         | SettingsControlKind::Action => 4,
-        SettingsControlKind::Stepper => 6,
+        SettingsControlKind::Stepper => 4,
         SettingsControlKind::ReadOnly => 0,
         SettingsControlKind::Slider { .. } => return 0,
     };

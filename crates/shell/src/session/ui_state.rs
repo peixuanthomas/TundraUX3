@@ -141,10 +141,23 @@ pub(super) struct SettingsAnimationEditorState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SettingsNumberEditorState {
+    pub(super) field: ui::SettingsField,
+    pub(super) title: String,
+    pub(super) input: ui::components::TextInput,
+    pub(super) minimum: u32,
+    pub(super) maximum: u32,
+    pub(super) step: u32,
+    pub(super) error: Option<i18n::LocalizedText>,
+    pub(super) selected_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
     pub(super) application: ui::SettingsApplication,
     pub(super) system_time: crate::session::controller::SystemTimeSettings,
     pub(super) animation_editor: Option<SettingsAnimationEditorState>,
+    pub(super) number_editor: Option<SettingsNumberEditorState>,
     pub(super) category: ui::SettingsCategory,
     pub(super) selected_field: ui::SettingsField,
     pub(super) status: i18n::LocalizedText,

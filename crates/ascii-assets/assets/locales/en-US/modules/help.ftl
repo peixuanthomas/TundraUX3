@@ -40,8 +40,9 @@ ui-help-logs-back = Back
 
 ui-help-settings-title = Settings
 ui-help-settings-open = Open or change value
-ui-help-settings-adjust = Adjust value
+ui-help-settings-adjust = Move focus; Left returns to the list, Right enters settings
 ui-help-settings-section = Switch section
+ui-help-settings-number = In a number dialog: adjust, type, then confirm
 
 ui-help-users-title = User Management
 ui-help-users-new = New user

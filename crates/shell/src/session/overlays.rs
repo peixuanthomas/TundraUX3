@@ -123,6 +123,22 @@ impl ShellSession {
     /// Only the current content page contributes page-owned overlays.
     pub(super) fn interactive_overlays(&self) -> Vec<ShellOverlayDescriptor> {
         let mut overlays = Vec::new();
+        if self.content_screen() == ShellScreen::Settings
+            && self
+                .pages
+                .settings
+                .settings_state
+                .as_ref()
+                .is_some_and(|state| {
+                    state.animation_editor.is_some() && state.number_editor.is_some()
+                })
+        {
+            overlays.push(ShellOverlayDescriptor::dialog(
+                "settings-editor:animation".into(),
+                ShellOverlayCategory::PageDialog,
+                ShellComponent::Settings,
+            ));
+        }
         if let Some(page) = self.page_overlay_descriptor() {
             overlays.push(page);
         }
@@ -357,7 +373,9 @@ impl ShellSession {
         } else if self.content_screen() == ShellScreen::Settings
             && let Some(settings) = self.pages.settings.settings_state.as_ref()
         {
-            if let Some(editor) = settings.color_editor.as_ref() {
+            if settings.number_editor.is_some() {
+                Some(("settings-editor:number", ShellComponent::Settings))
+            } else if let Some(editor) = settings.color_editor.as_ref() {
                 Some((
                     match editor.kind {
                         ui::SettingsPickerKind::BorderColor => "settings-editor:color:border",

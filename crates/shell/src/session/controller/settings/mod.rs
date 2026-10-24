@@ -3,7 +3,7 @@ mod applications;
 mod background;
 pub(in crate::session) mod devices;
 mod forms;
-mod slider;
+mod number;
 mod system_time;
 pub(in crate::session) use system_time::SystemTimeSettings;
 pub(in crate::session) mod tasks;
@@ -124,6 +124,7 @@ impl ShellSession {
             application: Default::default(),
             system_time: SystemTimeSettings::default(),
             animation_editor: None,
+            number_editor: None,
             category: ui::SettingsCategory::Appearance,
             selected_field: ui::SettingsField::Theme,
             status: i18n::msg!("settings-ready").into(),
@@ -228,6 +229,16 @@ impl ShellSession {
             .settings
             .settings_state
             .as_ref()
+            .is_some_and(|state| state.number_editor.is_some())
+        {
+            self.handle_settings_number_key(key);
+            return;
+        }
+        if self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
             .is_some_and(|state| state.time_sync_server_editor.is_some())
         {
             self.handle_settings_time_sync_server_key(key);
@@ -287,6 +298,12 @@ impl ShellSession {
             return;
         }
 
+        let choosing_category = self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| state.selected_field == ui::SettingsField::CategoryList);
         let choosing_application =
             self.pages
                 .settings
@@ -297,12 +314,18 @@ impl ShellSession {
                         && state.selected_field == ui::SettingsField::ApplicationList
                 });
         match &key.key {
+            InputKey::Up if choosing_category => self.select_settings_category_delta(-1),
+            InputKey::Down if choosing_category => self.select_settings_category_delta(1),
+            InputKey::Right | InputKey::Enter | InputKey::Char(' ') if choosing_category => {
+                self.select_settings_field_at(0)
+            }
+            InputKey::Left if choosing_category => {}
             InputKey::Up if choosing_application => self.select_settings_application_delta(-1),
             InputKey::Down if choosing_application => self.select_settings_application_delta(1),
             InputKey::Right | InputKey::Enter | InputKey::Char(' ') if choosing_application => {
                 self.select_settings_field_at(1)
             }
-            InputKey::Left if choosing_application => {}
+            InputKey::Left if choosing_application => self.focus_settings_categories(),
             InputKey::F(5)
                 if self.identity_backend == identity::IdentityBackend::Linux
                     && self
@@ -332,8 +355,27 @@ impl ShellSession {
             }
             InputKey::PageUp => self.scroll_settings(-6),
             InputKey::PageDown => self.scroll_settings(6),
-            InputKey::Left => self.adjust_selected_setting(-1, platform),
-            InputKey::Right => self.adjust_selected_setting(1, platform),
+            InputKey::Left => {
+                if self
+                    .pages
+                    .settings
+                    .settings_state
+                    .as_ref()
+                    .is_some_and(|state| state.category == ui::SettingsCategory::Applications)
+                {
+                    self.select_settings_field_at(0);
+                } else {
+                    self.focus_settings_categories();
+                }
+            }
+            InputKey::Right => {}
+            InputKey::Char(' ')
+                if self.to_settings_view_model().is_some_and(|model| {
+                    model.cards.iter().flat_map(|card| &card.items).any(|item| {
+                        item.field == model.selected_field
+                            && item.kind == ui::SettingsControlKind::Stepper
+                    })
+                }) => {}
             InputKey::Enter | InputKey::Char(' ') => self.activate_selected_setting(platform),
             _ => {}
         }
@@ -346,6 +388,16 @@ impl ShellSession {
         platform: &dyn Platform,
     ) {
         if self.pages.settings.settings_state.is_none() {
+            return;
+        }
+        if self
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .is_some_and(|state| state.number_editor.is_some())
+            && input.scroll_direction().is_some()
+        {
             return;
         }
         if let Some(direction) = input.scroll_direction() {
@@ -421,17 +473,43 @@ impl ShellSession {
             ui::ShellLayout::Full { main, .. } => main,
         };
         let layout = ui::settings_layout(app_area, &model);
+        if model.number_editor.is_some() {
+            match ui::settings_hit_test(&layout, coordinates) {
+                Some(ui::SettingsHitTarget::OverlayApply) => self.apply_settings_number(),
+                Some(ui::SettingsHitTarget::OverlayCancel) => self.close_settings_number(),
+                Some(ui::SettingsHitTarget::AdjustField(_, delta)) => {
+                    self.adjust_settings_number(delta)
+                }
+                Some(ui::SettingsHitTarget::NumberEditor) => {
+                    let editor = self
+                        .pages
+                        .settings
+                        .settings_state
+                        .as_mut()
+                        .unwrap()
+                        .number_editor
+                        .as_mut()
+                        .unwrap();
+                    editor.selected_index = 0;
+                    editor.input.handle_event_borderless(
+                        InputEvent::Mouse(input),
+                        layout.number_editor.unwrap().input,
+                    );
+                }
+                _ => {}
+            }
+            self.refresh_hit_map();
+            return;
+        }
         if model.animation_editor.is_some() {
             match ui::settings_hit_test(&layout, coordinates) {
                 Some(ui::SettingsHitTarget::OverlayCancel) => self.close_settings_animation(),
-                Some(ui::SettingsHitTarget::AdjustField(field, delta)) => {
-                    self.select_settings_animation_field(field);
-                    self.adjust_animation_phase(field, delta);
-                }
                 Some(ui::SettingsHitTarget::Field(field)) => {
                     self.select_settings_animation_field(field);
                     if field == ui::SettingsField::ResetAnimationSpeed {
                         self.reset_settings_animation_speed();
+                    } else {
+                        self.open_settings_number(field);
                     }
                 }
                 _ => {}
@@ -450,12 +528,7 @@ impl ShellSession {
             Some(ui::SettingsHitTarget::OverlayCancel) => {
                 self.handle_settings_key(&KeyInput::new(InputKey::Escape), platform)
             }
-            Some(ui::SettingsHitTarget::AdjustField(field, delta)) => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut() {
-                    state.selected_field = field;
-                }
-                self.adjust_selected_setting(delta, platform);
-            }
+            Some(ui::SettingsHitTarget::AdjustField(_, _)) => {}
             Some(ui::SettingsHitTarget::SliderOption(field, _)) => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.selected_field = field;
@@ -465,16 +538,13 @@ impl ShellSession {
             Some(ui::SettingsHitTarget::UpdateCancel) => self.cancel_update_confirmation(),
             Some(ui::SettingsHitTarget::Category(category)) => {
                 self.select_settings_category(category);
+                self.focus_settings_categories();
             }
             Some(ui::SettingsHitTarget::Field(field)) => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
                     state.selected_field = field;
                 }
-                if field == ui::SettingsField::AnimationSpeed {
-                    self.open_settings_picker(ui::SettingsPickerKind::AnimationSpeed);
-                } else {
-                    self.activate_selected_setting(platform);
-                }
+                self.activate_selected_setting(platform);
             }
             Some(ui::SettingsHitTarget::PickerOption(index)) => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut()
@@ -482,12 +552,20 @@ impl ShellSession {
                 {
                     picker.selected_index = index;
                 }
-                self.apply_settings_picker_selection();
+                if !model.picker.is_some_and(|picker| {
+                    matches!(
+                        picker.kind,
+                        ui::SettingsPickerKind::AutoAdmin | ui::SettingsPickerKind::ScreenTimeout
+                    )
+                }) {
+                    self.apply_settings_picker_selection();
+                }
             }
             Some(ui::SettingsHitTarget::ColorEditor)
             | Some(ui::SettingsHitTarget::WeatherLocationEditor)
             | Some(ui::SettingsHitTarget::FileExtensionsEditor)
             | Some(ui::SettingsHitTarget::TimeSyncServerEditor)
+            | Some(ui::SettingsHitTarget::NumberEditor)
             | None => {}
         }
         self.refresh_hit_map();
@@ -515,9 +593,12 @@ impl ShellSession {
     pub(in crate::session) fn select_settings_category(&mut self, category: ui::SettingsCategory) {
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.category = category;
-            state.selected_field = settings_fields(category)[0];
+            if state.selected_field != ui::SettingsField::CategoryList {
+                state.selected_field = settings_fields(category)[0];
+            }
             state.scroll_offset = 0;
             state.animation_editor = None;
+            state.number_editor = None;
             state.picker = None;
             state.color_editor = None;
             state.weather_location_editor = None;
@@ -542,6 +623,12 @@ impl ShellSession {
                 .is_some_and(|state| state.system_time.snapshot.is_none())
         {
             self.refresh_system_time_settings();
+        }
+    }
+
+    fn focus_settings_categories(&mut self) {
+        if let Some(state) = self.pages.settings.settings_state.as_mut() {
+            state.selected_field = ui::SettingsField::CategoryList;
         }
     }
 
@@ -614,7 +701,7 @@ impl ShellSession {
         }
     }
 
-    fn current_settings_layout(&self) -> Option<ui::SettingsLayout> {
+    pub(in crate::session) fn current_settings_layout(&self) -> Option<ui::SettingsLayout> {
         let model = self.to_settings_view_model()?;
         let terminal = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let main = match self.shell_layout_for(terminal) {
@@ -649,7 +736,16 @@ impl ShellSession {
         else {
             return;
         };
+        if self.open_settings_number(field) {
+            return;
+        }
         match field {
+            ui::SettingsField::AutoAdmin => {
+                self.open_settings_picker(ui::SettingsPickerKind::AutoAdmin)
+            }
+            ui::SettingsField::ScreenTimeout => {
+                self.open_settings_picker(ui::SettingsPickerKind::ScreenTimeout)
+            }
             ui::SettingsField::RefreshSystemTime => self.refresh_system_time_settings(),
             ui::SettingsField::AnimationAdvanced => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
@@ -686,65 +782,22 @@ impl ShellSession {
             ui::SettingsField::UpdateMode => self.switch_update_mode(),
             ui::SettingsField::CheckUpdates => self.begin_update_check(),
             ui::SettingsField::StartUpdate => self.open_update_confirmation(),
-            ui::SettingsField::AutoAdmin
+            ui::SettingsField::CategoryList
+            | ui::SettingsField::ApplicationList
             | ui::SettingsField::InstalledVersion
             | ui::SettingsField::RemoteVersion => {}
-            _ => self.adjust_selected_setting(1, platform),
+            _ => self.change_selected_setting(platform),
         }
     }
 
-    pub(in crate::session) fn adjust_selected_setting(
-        &mut self,
-        direction: i8,
-        platform: &dyn Platform,
-    ) {
-        if self.block_unavailable_system_setting() {
-            return;
-        }
-        let Some(field) = self
+    fn change_selected_setting(&mut self, platform: &dyn Platform) {
+        let field = self
             .pages
             .settings
             .settings_state
             .as_ref()
-            .map(|state| state.selected_field)
-        else {
-            return;
-        };
-        if self.adjust_animation_phase(field, direction) {
-            return;
-        }
-        if matches!(
-            field,
-            ui::SettingsField::Theme
-                | ui::SettingsField::BorderColor
-                | ui::SettingsField::AccentColor
-                | ui::SettingsField::Language
-                | ui::SettingsField::Timezone
-                | ui::SettingsField::WeatherLocation
-                | ui::SettingsField::ExplorerOpenExtensions
-                | ui::SettingsField::TimeSyncServer
-                | ui::SettingsField::UpdateMode
-                | ui::SettingsField::CheckUpdates
-                | ui::SettingsField::AnimationAdvanced
-                | ui::SettingsField::StartUpdate
-        ) {
-            self.activate_selected_setting(platform);
-            return;
-        }
-        if matches!(
-            field,
-            ui::SettingsField::InstalledVersion | ui::SettingsField::RemoteVersion
-        ) {
-            return;
-        }
-        if field == ui::SettingsField::RestoreDefaults {
-            self.request_settings_restore_defaults();
-            return;
-        }
-        if field == ui::SettingsField::ResetAnimationSpeed {
-            self.reset_settings_animation_speed();
-            return;
-        }
+            .unwrap()
+            .selected_field;
         if field == ui::SettingsField::BorderShape {
             let Some(mut appearance) = self.app.active_appearance().cloned() else {
                 return;
@@ -773,42 +826,14 @@ impl ShellSession {
             );
             return;
         }
-        if field == ui::SettingsField::AnimationSpeed {
-            let Some(mut appearance) = self.app.active_appearance().cloned() else {
-                return;
-            };
-            if appearance.motion_preference.reduced() {
-                self.set_settings_error(i18n::msg!("settings-full-motion-required"));
-                return;
-            }
-            let speed = appearance.normalized_animation_speed_percent();
-            appearance.animation_speed_percent = if direction >= 0 {
-                speed
-                    .saturating_add(storage::ANIMATION_SPEED_STEP_PERCENT)
-                    .min(storage::MAX_ANIMATION_SPEED_PERCENT)
-            } else {
-                speed
-                    .saturating_sub(storage::ANIMATION_SPEED_STEP_PERCENT)
-                    .max(storage::MIN_ANIMATION_SPEED_PERCENT)
-            };
-            self.save_settings_appearance(
-                appearance,
-                settings_saved_field(ui::SettingsField::AnimationSpeed),
-            );
-            return;
-        }
         if field == ui::SettingsField::TimeSyncSource {
             self.change_time_sync_source(platform);
             return;
         }
-        self.save_global_setting(field, direction);
+        self.save_global_setting(field);
     }
 
-    pub(in crate::session) fn save_global_setting(
-        &mut self,
-        field: ui::SettingsField,
-        direction: i8,
-    ) {
+    pub(in crate::session) fn save_global_setting(&mut self, field: ui::SettingsField) {
         if !self.can_change_global_settings() {
             self.set_settings_error(i18n::msg!("settings-admin-required"));
             return;
@@ -827,30 +852,9 @@ impl ShellSession {
                 return;
             }
         };
-        let increase = direction >= 0;
         match field {
-            ui::SettingsField::ScreenTimeout => {
-                let index = SCREEN_TIMEOUT_OPTIONS
-                    .iter()
-                    .position(|seconds| *seconds == config.screen_timeout_seconds)
-                    .unwrap_or(4) as isize;
-                let delta = if increase { 1 } else { -1 };
-                config.screen_timeout_seconds = SCREEN_TIMEOUT_OPTIONS
-                    [(index + delta).rem_euclid(SCREEN_TIMEOUT_OPTIONS.len() as isize) as usize];
-            }
             ui::SettingsField::AutomationEnabled => {
                 config.automation.enabled = !config.automation.enabled;
-            }
-            ui::SettingsField::AutoAdmin => {
-                let current = AUTO_ADMIN_POLICIES
-                    .iter()
-                    .position(|policy| *policy == config.auto_admin)
-                    .unwrap();
-                let next = (current as i8 + direction).clamp(0, 2) as usize;
-                if current == next {
-                    return;
-                }
-                config.auto_admin = AUTO_ADMIN_POLICIES[next];
             }
             ui::SettingsField::ShowHidden => {
                 config.explorer.show_hidden = !config.explorer.show_hidden
@@ -883,10 +887,8 @@ impl ShellSession {
                 }
             }
             ui::SettingsField::SortField => {
-                config.explorer.sort_field = cycle_explorer_sort_field(
-                    config.explorer.sort_field,
-                    if increase { 1 } else { -1 },
-                )
+                config.explorer.sort_field =
+                    cycle_explorer_sort_field(config.explorer.sort_field, 1)
             }
             ui::SettingsField::SortDirection => {
                 config.explorer.sort_direction = match config.explorer.sort_direction {
@@ -904,66 +906,27 @@ impl ShellSession {
             ui::SettingsField::ConfirmNameConflicts => {
                 config.explorer.confirm_name_conflicts = !config.explorer.confirm_name_conflicts
             }
-            ui::SettingsField::SystemLowAvailable => {
-                config.system_status.low_available_gib = adjust_u16_setting(
-                    config.system_status.low_available_gib,
-                    increase,
-                    storage::SYSTEM_STATUS_MIN_AVAILABLE_GIB,
-                    storage::SYSTEM_STATUS_MAX_AVAILABLE_GIB,
-                )
-            }
-            ui::SettingsField::SystemLowPercentage => {
-                config.system_status.low_percentage = adjust_u8_setting_in_range(
-                    config.system_status.low_percentage,
-                    increase,
-                    storage::SYSTEM_STATUS_MIN_PERCENTAGE,
-                    storage::SYSTEM_STATUS_MAX_PERCENTAGE,
-                )
-            }
-            ui::SettingsField::SystemCriticalAvailable => {
-                config.system_status.critical_available_gib = adjust_u16_setting(
-                    config.system_status.critical_available_gib,
-                    increase,
-                    storage::SYSTEM_STATUS_MIN_AVAILABLE_GIB,
-                    storage::SYSTEM_STATUS_MAX_AVAILABLE_GIB,
-                )
-            }
-            ui::SettingsField::SystemCriticalPercentage => {
-                config.system_status.critical_percentage = adjust_u8_setting_in_range(
-                    config.system_status.critical_percentage,
-                    increase,
-                    storage::SYSTEM_STATUS_MIN_PERCENTAGE,
-                    storage::SYSTEM_STATUS_MAX_PERCENTAGE,
-                )
-            }
             ui::SettingsField::CursorAcceleration => {
                 config.editor.cursor_acceleration_enabled =
                     !config.editor.cursor_acceleration_enabled
             }
-            ui::SettingsField::CursorDelay => {
-                config.editor.cursor_acceleration_delay_ms = adjust_u32_setting(
-                    config.editor.cursor_acceleration_delay_ms,
-                    EDITOR_CURSOR_TIME_STEP_MS,
-                    increase,
-                )
-            }
-            ui::SettingsField::CursorRamp => {
-                config.editor.cursor_acceleration_ramp_ms = adjust_u32_setting(
-                    config.editor.cursor_acceleration_ramp_ms,
-                    EDITOR_CURSOR_TIME_STEP_MS,
-                    increase,
-                )
-            }
-            ui::SettingsField::CursorHorizontalStep => {
-                config.editor.cursor_horizontal_max_step =
-                    adjust_u8_setting(config.editor.cursor_horizontal_max_step, increase)
-            }
-            ui::SettingsField::CursorVerticalStep => {
-                config.editor.cursor_vertical_max_step =
-                    adjust_u8_setting(config.editor.cursor_vertical_max_step, increase)
-            }
             _ => return,
         }
+        self.save_settings_global_config(config, field);
+    }
+
+    pub(super) fn save_settings_global_config(
+        &mut self,
+        mut config: storage::StorageConfig,
+        field: ui::SettingsField,
+    ) -> bool {
+        if !self.can_change_global_settings() {
+            self.set_settings_error(i18n::msg!("settings-admin-required"));
+            return false;
+        }
+        let Some(storage) = self.storage_manager.clone() else {
+            return false;
+        };
         config.editor = normalized_editor_config(config.editor);
         config.system_status.normalize();
         if let Err(error) = self.save_settings_config_logged(&storage, &config) {
@@ -971,13 +934,14 @@ impl ShellSession {
                 "settings-save-failed",
                 reason = error.to_string()
             ));
-            return;
+            return false;
         }
         self.replace_storage_config(config);
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.status = settings_saved_field(field).into();
         }
         self.notify_status(settings_saved_field(field));
+        true
     }
 
     pub(in crate::session) fn save_settings_appearance(
