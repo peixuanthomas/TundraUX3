@@ -511,7 +511,7 @@ impl ShellSession {
     pub(in crate::session) fn open_management_query(&mut self, query: ManagementQuery) {
         let kind = query.kind;
         let supported = cfg!(target_os = "linux")
-            || (cfg!(target_os = "macos") && kind == ManagementKind::Packages);
+            || (cfg!(any(target_os = "macos", windows)) && kind == ManagementKind::Packages);
         if !supported || self.app.auth_session().is_none() || self.is_strict_guest() {
             return;
         }
@@ -1013,6 +1013,13 @@ impl ShellSession {
             .unwrap_or_default();
         let mut completed = false;
         for event in events {
+            if cfg!(windows)
+                && self.pages.management.management_state.kind == Some(ManagementKind::Packages)
+                && !self.pages.management.management_state.configuration_operation
+                && matches!(&event, OperationEvent::Completed { .. })
+            {
+                self.pages.management.management_state.refresh_requested = true;
+            }
             if matches!(
                 &event,
                 OperationEvent::Failed { .. } | OperationEvent::Disconnected { .. }

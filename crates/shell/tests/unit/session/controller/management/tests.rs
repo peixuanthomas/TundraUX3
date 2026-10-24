@@ -2382,7 +2382,7 @@ fn launcher_management_entries_follow_platform_support_and_guest_is_blocked() {
                 .iter()
                 .any(|entry| entry.id == format!("builtin.{}", kind.id())),
             cfg!(target_os = "linux")
-                || (kind == ManagementKind::Packages && cfg!(target_os = "macos"))
+                || (kind == ManagementKind::Packages && cfg!(any(target_os = "macos", windows)))
         );
     }
     state.app.dispatch_at(
@@ -2961,7 +2961,9 @@ fn all_package_subviews_keep_navigation_after_empty_or_failed_queries() {
                     .iter()
                     .filter(|(action, _)| action.id == format!("scope_{destination}"))
                     .count(),
-                1
+                usize::from(
+                    !cfg!(windows) || !matches!(destination, "sources" | "conflicts" | "status")
+                )
             );
         }
         assert!(
@@ -3267,12 +3269,13 @@ fn package_navigation_remains_enabled_during_a_background_operation() {
     session.pages.management.management_state.operation_job = Some(job.clone());
     session.handle_management_key(&KeyInput::new(InputKey::F(3)));
     let model = session.to_management_view_model();
-    assert!(
+    assert_eq!(
         session
             .pages
             .management
             .management_state
-            .package_advanced_open
+            .package_advanced_open,
+        !cfg!(windows)
     );
     assert!(session.pages.management.management_state.form.is_none());
     let items = session.management_actions();

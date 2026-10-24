@@ -49,14 +49,6 @@ impl ShellSession {
             .into_iter()
             .filter_map(|id| all.iter().find(|(action, _)| action.id == id).cloned())
             .collect::<Vec<_>>();
-        actions.push((
-            ManagementAction {
-                id: "package_advanced".into(),
-                label: self.package_advanced_label(),
-                ..Default::default()
-            },
-            None,
-        ));
         let root = root_scope(self.package_scope());
         let advanced_scope = match root {
             "search" => "scope_sources",
@@ -77,6 +69,22 @@ impl ShellSession {
                     || self.pages.management.management_state.snapshot.backend == "brew")
                 && (action.id != "remove" || self.package_scope() != "updates")
         }));
+        if actions
+            .iter()
+            .any(|(action, _)| advanced_action(&action.id))
+        {
+            actions.insert(
+                3,
+                (
+                    ManagementAction {
+                        id: "package_advanced".into(),
+                        label: self.package_advanced_label(),
+                        ..Default::default()
+                    },
+                    None,
+                ),
+            );
+        }
         let state = &self.pages.management.management_state;
         if state.can_show_details() {
             actions.push((
@@ -114,10 +122,13 @@ impl ShellSession {
                 .iter()
                 .enumerate()
                 .filter_map(|(index, (action, _))| {
-                    (index > 3 && !advanced_action(&action.id)).then_some(index)
+                    (index >= 3 && action.id != "package_advanced" && !advanced_action(&action.id))
+                        .then_some(index)
                 })
                 .collect(),
-            advanced_toggle: 3,
+            advanced_toggle: actions
+                .iter()
+                .position(|(action, _)| action.id == "package_advanced"),
             advanced_actions: actions
                 .iter()
                 .enumerate()
@@ -179,12 +190,17 @@ impl ShellSession {
         if matches!(key.key, InputKey::F(3 | 6..=8)) && !key.modifiers.shift {
             if key.phase == InputPhase::Press {
                 let index = match key.key {
-                    InputKey::F(6) => 2,
-                    InputKey::F(8) => 1,
-                    InputKey::F(7) => 0,
-                    _ => 3,
+                    InputKey::F(6) => Some(2),
+                    InputKey::F(8) => Some(1),
+                    InputKey::F(7) => Some(0),
+                    _ => {
+                        self.package_workspace_model(&self.management_actions())
+                            .advanced_toggle
+                    }
                 };
-                self.activate_management_action(index);
+                if let Some(index) = index {
+                    self.activate_management_action(index);
+                }
             }
             return true;
         }

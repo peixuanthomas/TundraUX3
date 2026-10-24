@@ -1,4 +1,5 @@
 use app::BUILT_IN_LAUNCHER_APPLICATIONS;
+use platform::PlatformKind;
 
 #[test]
 fn management_and_logs_are_fixed_launcher_apps_with_platform_visibility() {
@@ -21,10 +22,14 @@ fn management_and_logs_are_fixed_launcher_apps_with_platform_visibility() {
         assert!(application.fixed_in_launcher && !application.admin_only);
         assert!(!application.description.is_empty());
         assert_eq!(
-            application.available_on_platform(false),
-            id == "builtin.logs" || (id == "builtin.packages" && cfg!(target_os = "macos"))
+            application.available_on_platform(PlatformKind::Windows),
+            matches!(id, "builtin.logs" | "builtin.packages")
         );
-        assert!(application.available_on_platform(true));
+        assert_eq!(
+            application.available_on_platform(PlatformKind::Macos),
+            matches!(id, "builtin.logs" | "builtin.packages")
+        );
+        assert!(application.available_on_platform(PlatformKind::Linux));
     }
 }
 
@@ -35,5 +40,11 @@ fn user_management_is_a_fixed_launcher_application_on_all_platforms() {
         .find(|item| item.id == "builtin.users")
         .expect("user management entry");
     assert!(users.fixed_in_launcher && !users.admin_only);
-    assert!(users.available_on_platform(true) && users.available_on_platform(false));
+    for platform in [
+        PlatformKind::Linux,
+        PlatformKind::Windows,
+        PlatformKind::Macos,
+    ] {
+        assert!(users.available_on_platform(platform));
+    }
 }
