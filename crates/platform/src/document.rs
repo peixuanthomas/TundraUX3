@@ -217,7 +217,7 @@ fn read_document_snapshot_with_progress<F>(
 where
     F: FnMut(u64, u64) -> bool,
 {
-    validate_no_follow_path(path, true)?;
+    validate_regular_document_path(path)?;
     let file = File::open(path).map_err(|error| {
         PlatformError::from_io("open document", Some(path.to_path_buf()), &error)
     })?;
@@ -560,7 +560,7 @@ pub fn read_document_tail_bytes(
     path: &Path,
     max_bytes: usize,
 ) -> Result<DocumentReadWindow, PlatformError> {
-    validate_no_follow_path(path, true)?;
+    validate_regular_document_path(path)?;
     let mut file = File::open(path).map_err(|error| {
         PlatformError::from_io("open document tail", Some(path.to_path_buf()), &error)
     })?;
@@ -909,6 +909,19 @@ fn existing_permissions(path: &Path) -> Result<Option<fs::Permissions>, Platform
             &error,
         )),
     }
+}
+
+fn validate_regular_document_path(path: &Path) -> Result<(), PlatformError> {
+    validate_no_follow_path(path, true)?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        PlatformError::from_io("read document metadata", Some(path.to_path_buf()), &error)
+    })?;
+    if !metadata.is_file() {
+        return Err(PlatformError::InvalidInput {
+            message: format!("document is not a regular file: {}", path.display()),
+        });
+    }
+    Ok(())
 }
 
 pub fn validate_no_follow_path(path: &Path, must_exist: bool) -> Result<(), PlatformError> {

@@ -707,7 +707,68 @@ fn rejects_symbolic_link_targets() {
     let link = directory.join("link.md");
     symlink(&real, &link).unwrap();
     assert!(read_document_bytes(&link).is_err());
+    assert!(document_fingerprint(&link).is_err());
     assert!(read_document_tail_bytes(&link, 1024).is_err());
     assert!(atomic_write_document(&link, b"unsafe").is_err());
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn document_reads_and_fingerprint_reject_fifo_without_waiting_for_a_writer() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::time::Duration;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("document.fifo");
+    let native_path = CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(native_path.as_ptr(), 0o600) }, 0);
+
+    let operations: [(&str, fn(&Path) -> Result<(), PlatformError>); 5] = [
+        ("read", |path| read_document_bytes(path).map(|_| ())),
+        ("limited read", |path| {
+            read_document_bytes_limited(path, 1024).map(|_| ())
+        }),
+        ("prefix read", |path| {
+            read_document_prefix_snapshot_limited(path, 1024).map(|_| ())
+        }),
+        ("tail read", |path| {
+            read_document_tail_bytes(path, 1024).map(|_| ())
+        }),
+        ("fingerprint", |path| document_fingerprint(path).map(|_| ())),
+    ];
+    for (name, operation) in operations {
+        let (sender, receiver) = mpsc::channel();
+        let worker_path = path.clone();
+        let worker = std::thread::spawn(move || {
+            sender.send(operation(&worker_path)).unwrap();
+        });
+        let initial_result = receiver.recv_timeout(Duration::from_secs(2));
+        let blocked = matches!(initial_result, Err(RecvTimeoutError::Timeout));
+        let result = match initial_result {
+            Ok(result) => result,
+            Err(RecvTimeoutError::Timeout) => {
+                // Release a regressed blocking open so the test can fail and clean up.
+                let writer = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(&path)
+                    .unwrap();
+                let result = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+                drop(writer);
+                result
+            }
+            Err(RecvTimeoutError::Disconnected) => panic!("{name} worker disconnected"),
+        };
+        worker.join().unwrap();
+        assert!(!blocked, "{name} waited for a FIFO writer");
+        assert!(matches!(
+            result,
+            Err(PlatformError::InvalidInput { message })
+                if message.contains("not a regular file")
+        ));
+    }
 }
