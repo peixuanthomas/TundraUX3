@@ -17,6 +17,7 @@ shell-control = { path = "../shell-control" }
 auto-admin = { path = "../auto-admin" }
 terminal-runtime = { path = "../terminal-runtime" }
 vim-runtime = { path = "../vim-runtime" }
+script-runtime = { path = "../script-runtime" }
 serde_json = "1"
 zeroize = "1"
 ascii-assets = { path = "../ascii-assets" }

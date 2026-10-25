@@ -132,6 +132,7 @@ impl ExplorerFileService {
         storage: &StorageManager,
         entry: &ExplorerEntry,
         resolver: &dyn ExplorerOpenRouteResolver,
+        editor_requested: bool,
     ) -> Result<ExplorerEffect, ExplorerError> {
         if state.current_location.is_trash() {
             return Err(ExplorerError::Localized(LocalizedError::new(
@@ -139,10 +140,29 @@ impl ExplorerFileService {
                 msg!("app-explorer-restore-before-open"),
             )));
         }
+        let mut target = resolver.route(&entry.path, &entry.attributes);
+        if editor_requested && entry.attributes.is_file {
+            target = ExplorerOpenTarget::Editor;
+        }
+        let shell_document = entry
+            .path
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|suffix| {
+                ["sh", "bash", "zsh", "ksh"]
+                    .iter()
+                    .any(|shell| suffix.eq_ignore_ascii_case(shell))
+            });
         match &entry.open_policy {
             FileOpenPolicy::Blocked { reason } => {
                 return Err(ExplorerError::BlockedPath(reason.clone()));
             }
+            FileOpenPolicy::LauncherRequired {
+                kind: ExecutableKind::Script,
+                ..
+            } if entry.attributes.is_file
+                && target == ExplorerOpenTarget::Editor
+                && (editor_requested || shell_document) => {}
             FileOpenPolicy::LauncherRequired { kind, reason } => {
                 state.error = Some(
                     msg!(
@@ -166,7 +186,6 @@ impl ExplorerFileService {
             return Ok(ExplorerEffect::None);
         }
 
-        let target = resolver.route(&entry.path, &entry.attributes);
         let permission = if target == ExplorerOpenTarget::Editor {
             PermissionAction::ReadFile
         } else {

@@ -16,6 +16,7 @@ chrono = "0.4"
 chrono-tz = "0.10"
 comrak = { version = "0.54", default-features = false }
 regex = "1"
+shell-words = "1.1"
 lsh = { path = "../../third_party/lsh", default-features = false, features = ["glob"] }
 ropey = { version = "1.6", default-features = false, features = ["cr_lines", "simd"] }
 serde = { version = "1", features = ["derive"] }

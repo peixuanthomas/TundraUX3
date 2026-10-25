@@ -135,10 +135,10 @@ eval $cmd  # runs an ls command
 '
 
 _Dbg_do_print() {
-  typeset _Dbg_expr="$(_Dbg_unescape_arg "${@:-"$_Dbg_last_print_args"}")"
+  typeset _Dbg_expr="${*:-"$_Dbg_last_print_args"}"
   typeset dq_expr; dq_expr=$(_Dbg_esc_dq "$_Dbg_expr")
   . "${_Dbg_libdir}/set-d-vars.sh"
-  eval "_Dbg_msg $_Dbg_expr"
+  eval "_Dbg_msg_verbatim $_Dbg_expr"
   typeset -i rc=$?
   _Dbg_last_print_args="$dq_expr"
   return $rc

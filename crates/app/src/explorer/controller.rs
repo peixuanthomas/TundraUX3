@@ -34,7 +34,7 @@ impl ExplorerController {
             | ExplorerCommand::OpenParent
             | ExplorerCommand::OpenBack
             | ExplorerCommand::OpenForward => Some("navigate"),
-            ExplorerCommand::OpenSelected => Some("open"),
+            ExplorerCommand::OpenSelected | ExplorerCommand::OpenSelectedInEditor => Some("open"),
             ExplorerCommand::NewFolder(_) => Some("create_directory"),
             ExplorerCommand::NewTextFile(_) => Some("create_file"),
             ExplorerCommand::Rename(_) => Some("rename"),
@@ -294,7 +294,7 @@ impl ExplorerController {
                 )?;
                 ExplorerEffect::None
             }
-            ExplorerCommand::OpenSelected => {
+            command @ (ExplorerCommand::OpenSelected | ExplorerCommand::OpenSelectedInEditor) => {
                 let Some(entry) = state.single_selected_entry().cloned() else {
                     return Ok(ExplorerEffect::None);
                 };
@@ -305,6 +305,7 @@ impl ExplorerController {
                     storage,
                     &entry,
                     self.open_resolver.as_ref(),
+                    matches!(command, ExplorerCommand::OpenSelectedInEditor),
                 )?
             }
             ExplorerCommand::NewFolder(name) => {

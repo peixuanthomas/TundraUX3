@@ -16,6 +16,8 @@ pub mod soft_wrap;
 pub mod syntax;
 
 mod source_buffer;
+mod source_changes;
+pub use source_changes::SourceLineChange;
 
 mod document;
 
@@ -429,6 +431,7 @@ pub enum EditorPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditorCommand {
+    SetExecutionReadOnly(bool),
     SetEncoding {
         encoding: TextEncoding,
         utf8_bom: bool,
@@ -508,7 +511,8 @@ impl EditorCommand {
     pub const fn is_allowed_in_read_only(&self) -> bool {
         matches!(
             self,
-            Self::Find { .. }
+            Self::SetExecutionReadOnly(_)
+                | Self::Find { .. }
                 | Self::FindNext { .. }
                 | Self::MoveVisual { .. }
                 | Self::MoveCursor { .. }
@@ -1125,6 +1129,7 @@ enum EditTransaction {
         start: usize,
         removed: String,
         inserted: String,
+        line_changes: Option<(Vec<SourceLineChange>, Vec<SourceLineChange>)>,
         before_metadata: TextMetadata,
         after_metadata: TextMetadata,
         before_cursor: Cursor,
@@ -1169,6 +1174,9 @@ pub struct EditorState {
     pub document: EditorDocument,
     pub mode: EditorMode,
     access: EditorAccess,
+    execution_read_only: bool,
+    source_change_tracking: bool,
+    source_line_changes: Vec<SourceLineChange>,
     /// Source-mode caret retained for compatibility. Rich mode uses
     /// [`RichEditor::cursor`] and never interprets this as a Markdown offset.
     pub cursor: Cursor,
@@ -2123,8 +2131,14 @@ fn undo(state: &mut EditorState) -> bool {
             before_selection,
             before_revision,
             before_metadata,
+            line_changes,
             ..
         } => {
+            if let Some((_, undo_changes)) = line_changes {
+                state.record_external_line_changes(undo_changes.iter().copied());
+            } else {
+                state.record_source_line_change(*start..*start + inserted.len(), removed);
+            }
             let EditorBuffer::Source(buffer) = &mut state.buffer else {
                 unreachable!("mode checked before applying Source undo")
             };
@@ -2172,8 +2186,14 @@ fn redo(state: &mut EditorState) -> bool {
             after_selection,
             after_revision,
             after_metadata,
+            line_changes,
             ..
         } => {
+            if let Some((redo_changes, _)) = line_changes {
+                state.record_external_line_changes(redo_changes.iter().copied());
+            } else {
+                state.record_source_line_change(*start..*start + removed.len(), inserted);
+            }
             let EditorBuffer::Source(buffer) = &mut state.buffer else {
                 unreachable!("mode checked before applying Source redo")
             };

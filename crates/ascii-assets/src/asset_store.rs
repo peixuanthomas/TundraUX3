@@ -150,6 +150,11 @@ impl AsciiAssetStore {
     }
 
     pub fn launcher_icon(&self, key: &str) -> Option<&LauncherIcon> {
+        let key = if key == "builtin.script-editor" {
+            "builtin.editor"
+        } else {
+            key
+        };
         self.launcher_icons.get(key)
     }
 

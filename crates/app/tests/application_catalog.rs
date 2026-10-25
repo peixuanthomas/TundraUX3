@@ -2,7 +2,7 @@ use app::BUILT_IN_LAUNCHER_APPLICATIONS;
 use platform::PlatformKind;
 
 #[test]
-fn management_and_logs_are_fixed_launcher_apps_with_platform_visibility() {
+fn management_logs_and_scripts_are_fixed_launcher_apps_with_platform_visibility() {
     for id in [
         "builtin.services",
         "builtin.processes",
@@ -14,6 +14,7 @@ fn management_and_logs_are_fixed_launcher_apps_with_platform_visibility() {
         "builtin.backups",
         "builtin.scheduled-tasks",
         "builtin.logs",
+        "builtin.script-editor",
     ] {
         let application = BUILT_IN_LAUNCHER_APPLICATIONS
             .iter()

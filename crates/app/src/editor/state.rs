@@ -72,6 +72,9 @@ impl EditorState {
             document,
             mode,
             access,
+            execution_read_only: false,
+            source_change_tracking: false,
+            source_line_changes: Vec::new(),
             cursor: Cursor::default(),
             selection: None,
             viewport: EditorViewport::default(),
@@ -97,7 +100,38 @@ impl EditorState {
     }
 
     pub const fn is_read_only(&self) -> bool {
-        matches!(self.access, EditorAccess::ReadOnly)
+        self.execution_read_only || matches!(self.access, EditorAccess::ReadOnly)
+    }
+
+    pub fn set_source_change_tracking(&mut self, enabled: bool) {
+        self.source_change_tracking = enabled;
+        if !enabled {
+            self.source_line_changes.clear();
+        }
+    }
+
+    pub fn take_source_line_changes(&mut self) -> Vec<SourceLineChange> {
+        std::mem::take(&mut self.source_line_changes)
+    }
+
+    pub fn record_external_line_changes(
+        &mut self,
+        changes: impl IntoIterator<Item = SourceLineChange>,
+    ) {
+        if self.source_change_tracking {
+            self.source_line_changes.extend(changes);
+        }
+    }
+
+    pub(super) fn record_source_line_change(&mut self, range: Range<usize>, replacement: &str) {
+        if !self.source_change_tracking {
+            return;
+        }
+        let EditorBuffer::Source(buffer) = &self.buffer else {
+            return;
+        };
+        self.source_line_changes
+            .push(SourceLineChange::for_edit(&buffer.text, range, replacement));
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -718,6 +752,8 @@ impl EditorState {
         after_selection: Option<Selection>,
         kind: EditKind,
     ) -> bool {
+        let change_count = self.source_line_changes.len();
+        self.record_source_line_change(range.clone(), replacement);
         let before_metadata = self.document.metadata;
         let before_cursor = self.cursor;
         let before_selection = self.selection;
@@ -726,12 +762,14 @@ impl EditorState {
             EditorBuffer::Source(buffer) => buffer.replace_range(range.clone(), replacement),
             EditorBuffer::Rich(_) => None,
         }) else {
+            self.source_line_changes.truncate(change_count);
             return false;
         };
         self.search_job.cancel();
         self.cursor = after_cursor;
         self.selection = after_selection;
         if removed == replacement {
+            self.source_line_changes.truncate(change_count);
             return false;
         }
 
@@ -744,6 +782,7 @@ impl EditorState {
             start: range.start,
             removed,
             inserted: replacement.to_owned(),
+            line_changes: None,
             before_cursor,
             before_selection,
             before_revision,

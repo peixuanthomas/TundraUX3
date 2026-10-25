@@ -91,6 +91,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shell-words",
  "storage",
  "system-services",
  "tar",
@@ -4187,6 +4188,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "script-runtime"
+version = "1.4.1"
+dependencies = [
+ "app",
+ "base64",
+ "i18n",
+ "libc",
+ "tempfile",
+ "terminal-runtime",
+ "watchdog",
+]
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4354,6 +4368,7 @@ dependencies = [
  "platform",
  "ratatui",
  "runtime-log",
+ "script-runtime",
  "serde_json",
  "shell-control",
  "storage",

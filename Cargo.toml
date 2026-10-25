@@ -13,6 +13,7 @@ members = [
     "crates/storage",
     "crates/time",
     "crates/terminal-runtime",
+    "crates/script-runtime",
     "crates/vim-runtime",
     "crates/system-services",
     "crates/ui",

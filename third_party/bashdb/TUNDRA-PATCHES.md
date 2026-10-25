@@ -11,6 +11,7 @@ The original source and GPL-2.0-or-later license are retained here. Runtime file
 Local fixes:
 
 - Command input uses `read -r`, and eval/print/examine receive the complete argument string, preserving backslashes and spaces.
+- Print and examine keep expression text unchanged and use bashdb's existing verbatim output helper instead of interpreting backslash escapes again.
 - Eval writes its command with `printf` instead of `echo -e`, and captures errors in the debugger output channel.
 - The trace loader quotes its library path.
 - Quiet automatic exit preserves the debugged script's actual exit code.

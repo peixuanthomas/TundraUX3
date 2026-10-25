@@ -338,6 +338,145 @@ fn windows_executables_are_blocked_by_platform_open_policy() {
 }
 
 #[test]
+fn editor_open_intent_reads_scripts_without_changing_native_or_blocked_routes() {
+    use app::explorer::{ExplorerEffect, ExplorerOpenTarget};
+    use platform::{ExecutableKind, FileOpenPolicy};
+
+    let fixture = Fixture::new("script-open-intent");
+    for name in [
+        "script.sh",
+        "script.bash",
+        "script.zsh",
+        "script.ksh",
+        "script.py",
+        "without-suffix",
+        "native.sh",
+        "blocked.sh",
+    ] {
+        let path = fixture.documents.join(name);
+        fs::write(&path, "#!/bin/bash\necho ok\n").unwrap();
+        let policy = match name {
+            "native.sh" => {
+                FileOpenPolicy::launcher_required(ExecutableKind::NativeBinary, "native")
+            }
+            "blocked.sh" => FileOpenPolicy::Blocked {
+                reason: "blocked".into(),
+            },
+            _ => FileOpenPolicy::launcher_required(ExecutableKind::Script, "script"),
+        };
+        fixture.platform.set_file_open_policy(path, policy);
+    }
+    let storage = fixture.storage();
+    let controller = ExplorerController::default().with_editor_extensions(
+        ["sh", "bash", "zsh", "ksh", "py"]
+            .map(str::to_owned)
+            .to_vec(),
+    );
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    let actor = session();
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&actor),
+        &fixture.platform,
+        &storage,
+    );
+    for (name, explicit, target) in [
+        ("script.sh", false, Some(ExplorerOpenTarget::Editor)),
+        ("script.bash", false, Some(ExplorerOpenTarget::Editor)),
+        ("script.zsh", false, Some(ExplorerOpenTarget::Editor)),
+        ("script.ksh", false, Some(ExplorerOpenTarget::Editor)),
+        ("script.py", false, Some(ExplorerOpenTarget::Launcher)),
+        ("script.py", true, Some(ExplorerOpenTarget::Editor)),
+        ("without-suffix", false, Some(ExplorerOpenTarget::Launcher)),
+        ("without-suffix", true, Some(ExplorerOpenTarget::Editor)),
+        ("native.sh", true, Some(ExplorerOpenTarget::Launcher)),
+        ("blocked.sh", true, None),
+    ] {
+        select_name(&mut state, name);
+        let command = if explicit {
+            ExplorerCommand::OpenSelectedInEditor
+        } else {
+            ExplorerCommand::OpenSelected
+        };
+        let effect = controller.apply(
+            &mut state,
+            command,
+            Some(&actor),
+            &fixture.platform,
+            &storage,
+        );
+        if let Some(target) = target {
+            assert!(
+                matches!(effect, ExplorerEffect::OpenRequested(request) if request.target == target),
+                "wrong route for {name}, explicit={explicit}"
+            );
+        } else {
+            assert_eq!(effect, ExplorerEffect::None);
+            assert!(state.error.is_some());
+        }
+    }
+    assert!(
+        !fixture
+            .platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::OpenPath(_)))
+    );
+    select_name(&mut state, "script.sh");
+    let system_controller = ExplorerController::default().with_open_resolver(std::sync::Arc::new(
+        app::explorer::SystemDefaultOpenRouteResolver,
+    ));
+    assert!(
+        matches!(system_controller.apply(&mut state, ExplorerCommand::OpenSelected, Some(&actor), &fixture.platform, &storage), ExplorerEffect::OpenRequested(request) if request.target == ExplorerOpenTarget::Launcher)
+    );
+    let mut guest = actor;
+    guest.role = UserRole::Guest;
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            ExplorerCommand::OpenSelectedInEditor,
+            Some(&guest),
+            &fixture.platform,
+            &storage
+        ),
+        ExplorerEffect::None
+    );
+    assert!(state.error.is_some());
+}
+
+#[test]
+fn explicit_editor_picker_still_navigates_directories() {
+    let fixture = Fixture::new("editor-directory-navigation");
+    let child = fixture.documents.join("scripts");
+    fs::create_dir(&child).unwrap();
+    let storage = fixture.storage();
+    let controller = ExplorerController::default();
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    let actor = session();
+    controller.apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&actor),
+        &fixture.platform,
+        &storage,
+    );
+    select_name(&mut state, "scripts");
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            ExplorerCommand::OpenSelectedInEditor,
+            Some(&actor),
+            &fixture.platform,
+            &storage
+        ),
+        app::explorer::ExplorerEffect::None
+    );
+    assert_eq!(state.current_path, child);
+    assert!(state.error.is_none());
+}
+
+#[test]
 fn name_sort_is_natural_and_folders_remain_first() {
     let fixture = Fixture::new("natural-sort");
     fs::create_dir(fixture.documents.join("folder20")).expect("folder fixture");

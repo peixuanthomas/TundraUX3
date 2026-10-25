@@ -6,6 +6,7 @@ pub mod editor;
 pub mod explorer;
 pub mod launcher;
 pub mod runtime_logs;
+pub mod script;
 pub mod system_settings;
 pub mod update;
 
@@ -17,8 +18,8 @@ pub use explorer::tasks as explorer_tasks;
 
 pub use application::catalog::{
     BUILT_IN_LAUNCHER_APPLICATIONS, BuiltInApplicationDescriptor, COMMAND_LINE_APPLICATION,
-    EDITOR_APPLICATION, SetupLanguageOption, SetupTimezoneOption, setup_language_options,
-    setup_timezone_options,
+    EDITOR_APPLICATION, SCRIPT_EDITOR_APPLICATION, SetupLanguageOption, SetupTimezoneOption,
+    setup_language_options, setup_timezone_options,
 };
 pub use application::notification::{
     DEFAULT_ALERT_KEY, DEFAULT_TOAST_DURATION, MAX_ACTIVE_ALERTS, MAX_NOTIFICATION_RESPONSES,

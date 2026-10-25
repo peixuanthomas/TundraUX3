@@ -435,6 +435,20 @@ impl AppState {
         self.page_models.editor.state.as_ref()
     }
 
+    pub fn set_editor_source_change_tracking(&mut self, enabled: bool) {
+        if let Some(editor) = self.page_models.editor.state.as_mut() {
+            editor.set_source_change_tracking(enabled);
+        }
+    }
+
+    pub fn take_editor_source_line_changes(&mut self) -> Vec<crate::editor::SourceLineChange> {
+        self.page_models
+            .editor
+            .state
+            .as_mut()
+            .map_or_else(Vec::new, EditorState::take_source_line_changes)
+    }
+
     pub fn editor_state_for_page(&self, id: PageInstanceId) -> Option<&EditorState> {
         self.page_models.editor.get(id)?.state.as_ref()
     }

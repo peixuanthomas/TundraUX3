@@ -686,6 +686,7 @@ pub fn is_editor_document_path_with_extensions(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerCommand {
     OpenSelected,
+    OpenSelectedInEditor,
     OpenParent,
     OpenBack,
     OpenForward,

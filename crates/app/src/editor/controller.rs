@@ -6,6 +6,10 @@ impl EditorController {
             return Vec::new();
         }
         match command {
+            EditorCommand::SetExecutionReadOnly(read_only) => {
+                state.execution_read_only = read_only;
+                Vec::new()
+            }
             EditorCommand::SetEncoding { encoding, utf8_bom } => {
                 let mut metadata = state.document.metadata;
                 metadata.encoding = encoding;
@@ -484,8 +488,31 @@ fn replace_matches(
         }
         end = edit.range.end;
     }
-    // One existing Source transaction covers the affected span, so a batch is
-    // atomic and a single Undo restores the original text and selection.
+    // One transaction keeps the batch atomic; individual edits preserve line anchors.
+    // Higher matches keep lower offsets stable; Undo uses the opposite order.
+    let mut mapping_source = source.clone();
+    let mut forward_changes = Vec::new();
+    let mut inverse_changes = Vec::new();
+    for edit in replacements
+        .iter()
+        .rev()
+        .filter(|edit| edit.original != edit.replacement)
+    {
+        let change =
+            SourceLineChange::for_edit(&mapping_source, edit.range.clone(), &edit.replacement);
+        inverse_changes.push(change.inverse(
+            &mapping_source,
+            edit.range.clone(),
+            &edit.replacement,
+        ));
+        forward_changes.push(change);
+        let start = mapping_source.byte_to_char(edit.range.start);
+        let end = mapping_source.byte_to_char(edit.range.end);
+        mapping_source.remove(start..end);
+        mapping_source.insert(start, &edit.replacement);
+    }
+    inverse_changes.reverse();
+    let recorded_changes = state.source_line_changes.len();
     let start = replacements[0].range.start;
     let mut output = String::new();
     let mut offset = start;
@@ -513,11 +540,15 @@ fn replace_matches(
         && let Some(EditTransaction::Source {
             after_cursor,
             after_selection,
+            line_changes,
             ..
         }) = state.undo_stack.last_mut()
     {
         *after_cursor = state.cursor;
         *after_selection = state.selection;
+        *line_changes = Some((forward_changes.clone(), inverse_changes));
+        state.source_line_changes.truncate(recorded_changes);
+        state.record_external_line_changes(forward_changes);
     }
     Vec::new()
 }

@@ -91,6 +91,7 @@ impl BuiltInApplicationDescriptor {
         match self.id {
             "builtin.command-line" => msg!("app-catalog-command-line-name").into(),
             "builtin.editor" => msg!("app-catalog-editor-name").into(),
+            "builtin.script-editor" => msg!("app-catalog-script-editor-name").into(),
             "builtin.logs" => msg!("app-catalog-logs-name").into(),
             "builtin.services" => msg!("app-catalog-services-name").into(),
             "builtin.processes" => msg!("app-catalog-processes-name").into(),
@@ -109,6 +110,7 @@ impl BuiltInApplicationDescriptor {
         match self.id {
             "builtin.command-line" => msg!("app-catalog-command-line-description").into(),
             "builtin.editor" => msg!("app-catalog-editor-description").into(),
+            "builtin.script-editor" => msg!("app-catalog-script-editor-description").into(),
             "builtin.logs" => msg!("app-catalog-logs-description").into(),
             "builtin.services" => msg!("app-catalog-services-description").into(),
             "builtin.processes" => msg!("app-catalog-processes-description").into(),
@@ -152,6 +154,16 @@ pub const EDITOR_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationD
     platforms: ALL_PLATFORMS,
 };
 
+pub const SCRIPT_EDITOR_APPLICATION: BuiltInApplicationDescriptor = BuiltInApplicationDescriptor {
+    id: "builtin.script-editor",
+    name: "Script Editor",
+    description: "Edit, run and debug shell scripts",
+    type_label: "Built-in application",
+    admin_only: false,
+    fixed_in_launcher: true,
+    platforms: &[PlatformKind::Linux],
+};
+
 const fn management_application(
     id: &'static str,
     name: &'static str,
@@ -171,6 +183,7 @@ const fn management_application(
 pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
     COMMAND_LINE_APPLICATION,
     EDITOR_APPLICATION,
+    SCRIPT_EDITOR_APPLICATION,
     BuiltInApplicationDescriptor {
         id: "builtin.users",
         name: "Users",
