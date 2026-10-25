@@ -1,6 +1,7 @@
 mod actions;
 mod input;
 mod packages;
+mod selection;
 use crate::session::*;
 use platform::management::*;
 use std::hash::{Hash, Hasher};
@@ -115,7 +116,7 @@ pub(in crate::session) struct ManagementState {
     snapshot_query: Option<ManagementQuery>,
     last_language_attempt: Option<(String, u64)>,
     selected: usize,
-    package_selection: Option<std::collections::BTreeSet<String>>,
+    selection: Option<std::collections::BTreeSet<String>>,
     scroll: usize,
     list_scroll_explicit: bool,
     table_scroll: usize,
@@ -226,8 +227,13 @@ impl ManagementState {
         }
         self.snapshot_language = Some(language.clone());
         self.snapshot_query = query.cloned();
-        if let Some(selection) = &mut self.package_selection {
-            selection.retain(|id| snapshot.rows.iter().any(|row| row.id == *id));
+        if let Some(selection) = &mut self.selection {
+            selection.retain(|id| {
+                snapshot
+                    .rows
+                    .iter()
+                    .any(|row| selection::row_id(self.kind, row) == *id)
+            });
         }
     }
 }
@@ -496,10 +502,12 @@ fn merge_package_details(
 
 impl ShellSession {
     pub(in crate::session) fn management_help_screen(&self) -> ui::PageHelpScreen {
-        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-            ui::PageHelpScreen::Packages
-        } else {
-            ui::PageHelpScreen::Management
+        match self.pages.management.management_state.kind {
+            Some(ManagementKind::Packages) => ui::PageHelpScreen::Packages,
+            Some(ManagementKind::Services) => ui::PageHelpScreen::Services,
+            Some(ManagementKind::Processes) => ui::PageHelpScreen::Processes,
+            Some(ManagementKind::ScheduledTasks) => ui::PageHelpScreen::ScheduledTasks,
+            _ => ui::PageHelpScreen::Management,
         }
     }
     fn management_alert_key(&self) -> String {
@@ -1555,7 +1563,7 @@ impl ShellSession {
                         action.id,
                         row.as_ref().map(|row| (&row.id, &row.identity))
                     );
-                    if let Some(selection) = action.values.get(platform::management::package_selection::KEY) {
+                    if let Some(selection) = action.values.get(platform::management::selection::KEY) {
                         let mut hash = std::hash::DefaultHasher::new();
                         selection.hash(&mut hash);
                         id.push_str(&format!(".selection.{:x}", hash.finish()));
@@ -1583,7 +1591,7 @@ impl ShellSession {
             rows: s.snapshot.rows.iter().map(|r| r.cells.iter().enumerate().map(|(i,v)| {
                 if s.kind == Some(ManagementKind::Users) && s.snapshot.columns.get(i).is_some_and(|c| c == "Source") {management_detail_value(s.kind,"Source",v)} else if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()}
             }).collect()).collect(),
-            selected_rows: s.package_selection.as_ref().map(|selection| s.snapshot.rows.iter().enumerate().filter_map(|(index, row)| selection.contains(&row.id).then_some(index)).collect()),
+            selected_rows: s.selection.as_ref().map(|selection| s.snapshot.rows.iter().enumerate().filter_map(|(index, row)| selection.contains(&selection::row_id(s.kind, row)).then_some(index)).collect()),
             selected: s.selected,
             scroll: s.scroll,
             table_scroll: s.table_scroll,

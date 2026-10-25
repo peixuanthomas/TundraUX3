@@ -1,7 +1,7 @@
 use super::*;
 use crate::management::{
     ManagementKind,
-    package_selection::{KEY, PackageTarget},
+    selection::{KEY, Target},
 };
 use std::collections::BTreeMap;
 
@@ -27,7 +27,7 @@ fn selected_packages_share_one_native_transaction_and_invalid_targets_abort_it()
                 values: BTreeMap::new(),
             };
             for (second, valid) in [("omega", true), ("--all", false)] {
-                let targets = ["alpha", second].map(|id| PackageTarget {
+                let targets = ["alpha", second].map(|id| Target {
                     id: id.into(),
                     identity: BTreeMap::new(),
                 });

@@ -124,6 +124,46 @@ impl OperationInteraction for Interaction {
 }
 
 #[test]
+fn batches_validate_every_service_and_scope_before_contacting_the_manager() {
+    let context = ExecutionContext {
+        caller_pid: 0,
+        caller_start_ticks: 0,
+        actor_uid: unsafe { libc::getuid() },
+        helper_path: PathBuf::new(),
+    };
+    for (second, scope) in [("../bad.service", "system"), ("valid-two.service", "user")] {
+        let targets = [("valid-one.service", "system"), (second, scope)].map(|(id, scope)| {
+            selection::Target {
+                id: id.into(),
+                identity: BTreeMap::from([
+                    ("unit".into(), id.into()),
+                    ("scope".into(), scope.into()),
+                ]),
+            }
+        });
+        let request = ManagementCommand {
+            kind: ManagementKind::Services,
+            action: "start".into(),
+            target: None,
+            identity: BTreeMap::new(),
+            values: BTreeMap::from([(
+                selection::KEY.into(),
+                serde_json::to_string(&targets).unwrap(),
+            )]),
+        };
+        assert!(matches!(
+            execute(
+                &request,
+                &context,
+                &mut Interaction,
+                &AtomicBool::new(false)
+            ),
+            Err(ManagementError::InvalidInput(_))
+        ));
+    }
+}
+
+#[test]
 fn cancelled_and_malformed_operations_never_reach_systemctl() {
     let context = ExecutionContext {
         caller_pid: 0,

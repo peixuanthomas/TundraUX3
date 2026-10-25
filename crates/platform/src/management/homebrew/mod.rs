@@ -286,7 +286,7 @@ fn execute_with_program(
     interaction: &mut dyn OperationInteraction,
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
-    let commands = super::package_selection::expand(command)?;
+    let commands = super::selection::expand(command)?;
     let groups = command_groups(&commands)?;
     for command in &commands {
         if let Some(target) = command.target.as_deref() {

@@ -270,7 +270,7 @@ impl ShellSession {
             }
             return;
         }
-        if self.handle_package_workspace_key(key) {
+        if self.handle_management_selection_key(key) || self.handle_package_workspace_key(key) {
             return;
         }
         if self.pages.management.management_state.filtering {

@@ -580,7 +580,7 @@ pub fn execute(
 ) -> Result<String, ManagementError> {
     check_cancelled(cancelled)?;
     let program = executable()?;
-    let commands = super::package_selection::expand(command)?;
+    let commands = super::selection::expand(command)?;
     let specs = commands
         .iter()
         .map(|command| build_command(&program, command))

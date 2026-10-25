@@ -1,6 +1,9 @@
 use super::*;
 use std::time::{Duration, Instant};
 
+#[path = "scheduled_tasks_batch_isolated.rs"]
+mod batches;
+
 #[derive(Default)]
 struct Interaction;
 impl OperationInteraction for Interaction {

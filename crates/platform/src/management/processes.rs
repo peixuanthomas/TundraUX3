@@ -500,6 +500,7 @@ pub fn execute(
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
     check_cancelled(cancelled)?;
+    let commands = selection::expand(command)?;
     let signal = match command.action.as_str() {
         "term" => Some(libc::SIGTERM),
         "kill" => Some(libc::SIGKILL),
@@ -512,21 +513,6 @@ pub fn execute(
             ));
         }
     };
-    let pid = command
-        .target
-        .as_deref()
-        .and_then(|pid| pid.parse::<u32>().ok())
-        .filter(|pid| *pid > 1 && *pid <= i32::MAX as u32)
-        .ok_or_else(|| {
-            ManagementError::InvalidInput(
-                "A process operation requires a PID greater than 1".into(),
-            )
-        })?;
-    if pid == std::process::id() {
-        return Err(ManagementError::InvalidInput(
-            "The management process is protected".into(),
-        ));
-    }
     let actual_uid = unsafe { libc::getuid() };
     if actual_uid != 0 && actual_uid != context.actor_uid {
         return Err(ManagementError::PermissionDenied(
@@ -547,54 +533,78 @@ pub fn execute(
     } else {
         None
     };
-    let pidfd = open_pidfd(pid)?;
-    let current = validate_identity(command, pid)?;
-    if actual_uid != 0 && current.uid != actual_uid {
-        return Err(ManagementError::PermissionDenied(
-            "Managing another user's process requires temporary administrator authorization".into(),
-        ));
-    }
-    check_cancelled(cancelled)?;
-    interaction.emit(OperationEvent::Progress {
-        message: format!("Applying {} to PID {pid}", command.action),
-        percent: None,
-    });
-    if let Some(signal) = signal {
-        // The descriptor stays bound to this process even if its numeric PID
-        // is later reused. Never fall back to kill(pid) on old kernels.
-        let result = unsafe {
-            libc::syscall(
-                libc::SYS_pidfd_send_signal,
-                pidfd.as_raw_fd(),
-                signal,
-                std::ptr::null::<libc::siginfo_t>(),
-                0_u32,
-            )
-        };
-        if result < 0 {
-            return Err(process_error("send signal", io::Error::last_os_error()));
-        }
-        Ok(format!(
-            "{} sent to PID {pid}",
-            command.action.to_uppercase()
-        ))
-    } else {
-        // Linux has no pidfd-based setpriority. Recheck immediately before the
-        // numeric-PID syscall, keep the pidfd alive, and detect a changed target
-        // afterward. The narrow kernel race cannot be claimed as eliminated.
-        validate_identity(command, pid)?;
-        if unsafe { libc::setpriority(libc::PRIO_PROCESS, pid, nice.unwrap()) } != 0 {
-            return Err(process_error(
-                "change main-thread nice",
-                io::Error::last_os_error(),
+    let mut prepared = Vec::new();
+    for command in &commands {
+        let pid = command
+            .target
+            .as_deref()
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .filter(|pid| *pid > 1 && *pid <= i32::MAX as u32)
+            .ok_or_else(|| {
+                ManagementError::InvalidInput(
+                    "A process operation requires a PID greater than 1".into(),
+                )
+            })?;
+        if pid == std::process::id() {
+            return Err(ManagementError::InvalidInput(
+                "The management process is protected".into(),
             ));
         }
-        validate_identity(command, pid)?;
-        Ok(format!(
-            "PID {pid} main-thread nice set to {}. Other threads are unchanged.",
-            nice.unwrap()
-        ))
+        let pidfd = open_pidfd(pid)?;
+        let current = validate_identity(command, pid)?;
+        if actual_uid != 0 && current.uid != actual_uid {
+            return Err(ManagementError::PermissionDenied(
+                "Managing another user's process requires temporary administrator authorization"
+                    .into(),
+            ));
+        }
+        prepared.push((command, pid, pidfd));
     }
+    let mut messages = Vec::new();
+    for (command, pid, pidfd) in prepared {
+        check_cancelled(cancelled)?;
+        interaction.emit(OperationEvent::Progress {
+            message: format!("Applying {} to PID {pid}", command.action),
+            percent: None,
+        });
+        let message = if let Some(signal) = signal {
+            // Keep every descriptor bound to its original process through the batch.
+            let result = unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    pidfd.as_raw_fd(),
+                    signal,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    0_u32,
+                )
+            };
+            if result < 0 {
+                return Err(process_error("send signal", io::Error::last_os_error()));
+            }
+            format!("{} sent to PID {pid}", command.action.to_uppercase())
+        } else {
+            // Linux has no pidfd-based setpriority, so recheck around the numeric PID call.
+            validate_identity(command, pid)?;
+            if unsafe { libc::setpriority(libc::PRIO_PROCESS, pid, nice.unwrap()) } != 0 {
+                return Err(process_error(
+                    "change main-thread nice",
+                    io::Error::last_os_error(),
+                ));
+            }
+            validate_identity(command, pid)?;
+            format!(
+                "PID {pid} main-thread nice set to {}. Other threads are unchanged.",
+                nice.unwrap()
+            )
+        };
+        if commands.len() > 1 {
+            interaction.emit(OperationEvent::Output {
+                text: message.clone(),
+            });
+        }
+        messages.push(message);
+    }
+    Ok(messages.join("\n"))
 }
 
 fn open_pidfd(pid: u32) -> Result<OwnedFd, ManagementError> {

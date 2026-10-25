@@ -608,10 +608,9 @@ fn state(props: &BTreeMap<String, String>) -> serde_json::Value {
     serde_json::json!({"active":value(props,"ActiveState"), "enabled":value(props,"UnitFileState")})
 }
 
-pub(super) fn execute(
+pub(super) fn validate_action(
     command: &ManagementCommand,
     context: &ExecutionContext,
-    _interaction: &mut dyn OperationInteraction,
     flag: &AtomicBool,
 ) -> Result<String, ManagementError> {
     let scope = command
@@ -646,6 +645,18 @@ pub(super) fn execute(
     {
         return Err(invalid(reason.clone()));
     }
+    Ok(route)
+}
+
+pub(super) fn execute(
+    command: &ManagementCommand,
+    context: &ExecutionContext,
+    _interaction: &mut dyn OperationInteraction,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    let route = validate_action(command, context, flag)?;
+    let scope = command.identity["scope"].as_str();
+    let timer = &command.identity["timer"];
     let service = command
         .identity
         .get("service")

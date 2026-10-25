@@ -24,8 +24,8 @@ impl ShellSession {
         &self,
     ) -> Vec<(ManagementAction, Option<ManagementRow>)> {
         let mut actions = Vec::new();
-        if self.package_multiselect_available() {
-            actions.extend(self.selected_package_actions());
+        if self.management_multiselect_available() {
+            actions.extend(self.selected_management_actions());
         } else if let Some(row) = self
             .pages
             .management
@@ -369,11 +369,8 @@ impl ShellSession {
             .as_ref()
             .map(|r| r.cells.join(" · "))
             .unwrap_or_default();
-        if let Some(selection) = action
-            .values
-            .get(platform::management::package_selection::KEY)
-        {
-            let targets: Vec<platform::management::package_selection::PackageTarget> =
+        if let Some(selection) = action.values.get(platform::management::selection::KEY) {
+            let targets: Vec<platform::management::selection::Target> =
                 serde_json::from_str(selection).expect("selected package targets");
             message = targets
                 .into_iter()
@@ -574,6 +571,7 @@ impl ShellSession {
             return;
         }
         if management_view_action(&action) {
+            self.pages.management.management_state.selection = None;
             let package_view =
                 self.pages.management.management_state.kind == Some(ManagementKind::Packages);
             let previous_scope = self
@@ -619,7 +617,6 @@ impl ShellSession {
                 }
             }
             if package_view {
-                self.pages.management.management_state.package_selection = None;
                 if previous_scope.as_deref()
                     != self
                         .pages
@@ -739,12 +736,12 @@ impl ShellSession {
             .chain(
                 action
                     .values
-                    .get(platform::management::package_selection::KEY)
+                    .get(platform::management::selection::KEY)
                     .into_iter()
                     .flat_map(|selection| {
-                        serde_json::from_str::<
-                            Vec<platform::management::package_selection::PackageTarget>,
-                        >(selection)
+                        serde_json::from_str::<Vec<platform::management::selection::Target>>(
+                            selection,
+                        )
                         .expect("selected package targets")
                         .into_iter()
                         .map(|target| target.id)

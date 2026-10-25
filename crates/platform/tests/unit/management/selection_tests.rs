@@ -9,11 +9,11 @@ fn request() -> ManagementCommand {
         values: BTreeMap::from([(
             KEY.into(),
             serde_json::to_string(&[
-                PackageTarget {
+                Target {
                     id: "alpha".into(),
                     identity: BTreeMap::from([("installed_version".into(), "1".into())]),
                 },
-                PackageTarget {
+                Target {
                     id: "omega".into(),
                     identity: BTreeMap::from([("installed_version".into(), "2".into())]),
                 },
@@ -37,6 +37,22 @@ fn selection_preserves_each_package_identity_and_operation_options() {
             command.values,
             BTreeMap::from([("yes".into(), "true".into())])
         );
+    }
+}
+
+#[test]
+fn batches_are_limited_to_the_supported_actions_on_each_page() {
+    for (kind, action, unsupported) in [
+        (ManagementKind::Services, "restart", "view_logs"),
+        (ManagementKind::Processes, "nice", "inspect"),
+        (ManagementKind::ScheduledTasks, "pause", "create_task"),
+    ] {
+        let mut request = request();
+        request.kind = kind;
+        request.action = action.into();
+        assert_eq!(expand(&request).unwrap().len(), 2);
+        request.action = unsupported.into();
+        assert!(expand(&request).is_err());
     }
 }
 

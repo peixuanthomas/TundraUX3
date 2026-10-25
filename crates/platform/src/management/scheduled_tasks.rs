@@ -403,6 +403,7 @@ pub fn execute(
     flag: &AtomicBool,
 ) -> Result<String, ManagementError> {
     check_cancelled(flag)?;
+    let commands = selection::expand(command)?;
     if command.action == "inspect_scheduled_tasks" {
         require_root()?;
         interaction.emit(OperationEvent::Snapshot {
@@ -421,11 +422,55 @@ pub fn execute(
     if !matches!(command.action.as_str(), "pause" | "resume" | "run_now") {
         return Err(invalid(i18n::tr!("scheduled-task-unknown-operation")));
     }
-    match command.identity.get("source").map(String::as_str) {
-        Some("systemd") => systemd::execute(command, context, interaction, flag),
-        Some("crontab" | "cron-file") => cron::execute(command, context, interaction, flag),
-        _ => Err(invalid(i18n::tr!("scheduled-task-select-task"))),
+    enum PreparedTask {
+        Timer(ManagementCommand),
+        Cron(cron::Prepared),
     }
+    let mut groups: Vec<Vec<ManagementCommand>> = Vec::new();
+    for command in &commands {
+        match command.identity.get("source").map(String::as_str) {
+            Some("systemd") => groups.push(vec![command.clone()]),
+            Some("crontab" | "cron-file") => {
+                let group = groups.iter_mut().find(|group| {
+                    group[0].identity.get("source") == command.identity.get("source")
+                        && group[0].identity.get("location") == command.identity.get("location")
+                });
+                if let Some(group) = group {
+                    group.push(command.clone());
+                } else {
+                    groups.push(vec![command.clone()]);
+                }
+            }
+            _ => return Err(invalid(i18n::tr!("scheduled-task-select-task"))),
+        }
+    }
+    let mut prepared = Vec::new();
+    for group in groups {
+        check_cancelled(flag)?;
+        if group[0].identity.get("source").map(String::as_str) == Some("systemd") {
+            if commands.len() > 1 {
+                systemd::validate_action(&group[0], context, flag)?;
+            }
+            prepared.push(PreparedTask::Timer(group.into_iter().next().unwrap()));
+        } else {
+            prepared.push(PreparedTask::Cron(cron::prepare(&group, context, flag)?));
+        }
+    }
+    let mut messages = Vec::new();
+    for task in prepared {
+        check_cancelled(flag)?;
+        let message = match task {
+            PreparedTask::Timer(command) => systemd::execute(&command, context, interaction, flag)?,
+            PreparedTask::Cron(prepared) => cron::execute(prepared, flag)?,
+        };
+        if commands.len() > 1 {
+            interaction.emit(OperationEvent::Output {
+                text: message.clone(),
+            });
+        }
+        messages.push(message);
+    }
+    Ok(messages.join("\n"))
 }
 
 pub(crate) fn restore_backup(

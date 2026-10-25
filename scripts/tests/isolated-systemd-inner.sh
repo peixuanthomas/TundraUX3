@@ -2,7 +2,7 @@
 set -euo pipefail
 
 mount --make-rprivate /
-if [[ $fixture_case == ssh || $fixture_case == settings ]]; then
+if [[ $fixture_case == ssh || $fixture_case == settings || $fixture_case == selection ]]; then
     for name in passwd group nsswitch.conf protocols services; do cp "/etc/$name" "$output/$name"; done
     mount -t tmpfs -o mode=755 tmpfs /etc
     mount -t tmpfs -o mode=700 tmpfs /root
@@ -84,6 +84,16 @@ if [[ $fixture_case == settings ]]; then
 fi
 if [[ $fixture_case == ssh ]]; then
     printf 'Environment=TUNDRA_TEST_SSHD=%s\nEnvironment=LD_LIBRARY_PATH=%s\nEnvironment=TUNDRA_HOST_MNT_NS=%s\nEnvironment=TUNDRA_HOST_NET_NS=%s\nEnvironment=TUNDRA_HOST_PID_NS=%s\n' "$TUNDRA_TEST_SSHD" "$LD_LIBRARY_PATH" "$TUNDRA_HOST_MNT_NS" "$TUNDRA_HOST_NET_NS" "$TUNDRA_HOST_PID_NS" >> /etc/systemd/system/fixture.service
+fi
+if [[ $fixture_case == selection ]]; then
+    mkdir -p /run/dbus
+    echo 7315d2a789cb4cd2a731ebd021201367 > /etc/machine-id
+    cat > /run/selection-bus.conf <<'EOF'
+<busconfig><type>system</type><listen>unix:path=/run/dbus/system_bus_socket</listen><policy context="default"><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>
+EOF
+    printf '[Unit]\nDefaultDependencies=no\n[Socket]\nListenStream=/run/dbus/system_bus_socket\n' > /etc/systemd/system/dbus.socket
+    printf '[Unit]\nDefaultDependencies=no\nRequires=dbus.socket\nAfter=dbus.socket\n[Service]\nType=notify\nNotifyAccess=main\nExecStart=/usr/bin/dbus-daemon --nofork --nopidfile --address=systemd: --systemd-activation --config-file=/run/selection-bus.conf\n' > /etc/systemd/system/dbus.service
+    printf '[Unit]\nRequires=dbus.service\nAfter=dbus.service\n[Service]\nExecStartPre=/usr/bin/sleep 1\nEnvironment=TUNDRA_HOST_MNT_NS=%s\nEnvironment=TUNDRA_HOST_NET_NS=%s\nEnvironment=TUNDRA_HOST_PID_NS=%s\n' "$TUNDRA_HOST_MNT_NS" "$TUNDRA_HOST_NET_NS" "$TUNDRA_HOST_PID_NS" >> /etc/systemd/system/fixture.service
 fi
 export container=tundra-scheduled-fixture
 exec /usr/lib/systemd/systemd --system --unit=fixture.target --log-target=console --log-level=warning

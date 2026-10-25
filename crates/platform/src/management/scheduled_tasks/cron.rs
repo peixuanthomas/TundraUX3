@@ -401,24 +401,26 @@ fn validate_file(location: &str) -> Result<PathBuf, ManagementError> {
     Ok(path)
 }
 
-fn changed_text(text: &str, index: usize, pause: bool) -> Result<String, ManagementError> {
+fn changed_text(text: &str, indices: &[usize], pause: bool) -> Result<String, ManagementError> {
     let mut lines = text
         .split_inclusive('\n')
         .map(String::from)
         .collect::<Vec<_>>();
-    let line = lines.get_mut(index).ok_or_else(|| {
-        ManagementError::Conflict(i18n::tr!("scheduled-task-cron-line-missing").into())
-    })?;
-    if pause {
-        if line.starts_with(PAUSED) {
-            return Err(invalid(i18n::tr!("scheduled-task-cron-already-paused")));
+    for &index in indices {
+        let line = lines.get_mut(index).ok_or_else(|| {
+            ManagementError::Conflict(i18n::tr!("scheduled-task-cron-line-missing").into())
+        })?;
+        if pause {
+            if line.starts_with(PAUSED) {
+                return Err(invalid(i18n::tr!("scheduled-task-cron-already-paused")));
+            }
+            line.insert_str(0, PAUSED);
+        } else {
+            *line = line
+                .strip_prefix(PAUSED)
+                .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-resume-owned")))?
+                .to_string();
         }
-        line.insert_str(0, PAUSED);
-    } else {
-        *line = line
-            .strip_prefix(PAUSED)
-            .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-resume-owned")))?
-            .to_string();
     }
     Ok(lines.concat())
 }
@@ -459,25 +461,80 @@ fn replace_file(
     super::super::system_config::install_reviewed(path, &actual.version, replacement).map(|_| ())
 }
 
-pub(super) fn execute(
-    command: &ManagementCommand,
+pub(super) struct Prepared {
+    action: String,
+    location: String,
+    user: String,
+    text: String,
+    path: Option<PathBuf>,
+    version: String,
+    runs: Vec<PreparedRun>,
+    after: Option<String>,
+}
+
+fn selected_entries(
+    commands: &[ManagementCommand],
+    text: &str,
+    owner: &str,
+    source: &str,
+    location: &str,
+    version: &str,
+) -> Result<Vec<Entry>, ManagementError> {
+    let available = entries(text, source == "cron-file", owner);
+    let mut selected = Vec::new();
+    for command in commands {
+        if command.identity.get("source").map(String::as_str) != Some(source)
+            || command.identity.get("location").map(String::as_str) != Some(location)
+            || command.identity.get("version").map(String::as_str) != Some(version)
+        {
+            return Err(ManagementError::Conflict(i18n::tr!(
+                "scheduled-task-cron-source-changed"
+            )));
+        }
+        let index: usize = command
+            .identity
+            .get("line")
+            .and_then(|value| value.parse().ok())
+            .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-line-identity")))?;
+        if command.target.as_deref() != Some(&format!("{source}:{location}:{index}")) {
+            return Err(invalid(i18n::tr!("scheduled-task-cron-identity")));
+        }
+        let entry = available
+            .iter()
+            .find(|entry| entry.line == index)
+            .ok_or_else(|| {
+                ManagementError::Conflict(i18n::tr!("scheduled-task-cron-task-missing"))
+            })?;
+        if command.identity.get("user") != Some(&entry.user)
+            || command.identity.get("result_key") != Some(&key(source, location, entry))
+        {
+            return Err(ManagementError::Conflict(i18n::tr!(
+                "scheduled-task-cron-task-changed"
+            )));
+        }
+        selected.push(entry.clone());
+    }
+    Ok(selected)
+}
+
+pub(super) fn prepare(
+    commands: &[ManagementCommand],
     context: &ExecutionContext,
-    _interaction: &mut dyn OperationInteraction,
     flag: &AtomicBool,
-) -> Result<String, ManagementError> {
+) -> Result<Prepared, ManagementError> {
     require_root()?;
+    let command = &commands[0];
     let source = command
         .identity
         .get("source")
         .map(String::as_str)
         .unwrap_or("");
-    let system = source == "cron-file";
     let location = command
         .identity
         .get("location")
         .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-source-missing")))?;
     let current = actor(context.actor_uid)?;
-    let (text, path, version) = if system {
+    let (text, path, version) = if source == "cron-file" {
         let path = validate_file(location)?;
         let text = text_file(&path)?;
         let version = file_version(&path, &text)?;
@@ -487,58 +544,86 @@ pub(super) fn execute(
             return Err(invalid(i18n::tr!("scheduled-task-crontab-other-user")));
         }
         let text = crontab(&current.username, flag)?.ok_or_else(|| {
-            ManagementError::Conflict(i18n::tr!("scheduled-task-crontab-missing").into())
+            ManagementError::Conflict(i18n::tr!("scheduled-task-crontab-missing"))
         })?;
         let version = digest(text.as_bytes());
         (text, None, version)
     };
-    if command.identity.get("version") != Some(&version) {
-        return Err(ManagementError::Conflict(
-            i18n::tr!("scheduled-task-cron-source-changed").into(),
-        ));
+    let entries = selected_entries(
+        commands,
+        &text,
+        &current.username,
+        source,
+        location,
+        &version,
+    )?;
+    let after = if command.action == "run_now" {
+        None
+    } else {
+        Some(changed_text(
+            &text,
+            &entries.iter().map(|entry| entry.line).collect::<Vec<_>>(),
+            command.action == "pause",
+        )?)
+    };
+    let runs = if command.action == "run_now" {
+        entries
+            .iter()
+            .map(|entry| prepare_run(entry, &key(source, location, entry), flag))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+    Ok(Prepared {
+        action: command.action.clone(),
+        location: location.clone(),
+        user: current.username,
+        text,
+        path,
+        version,
+        runs,
+        after,
+    })
+}
+
+pub(super) fn execute(prepared: Prepared, flag: &AtomicBool) -> Result<String, ManagementError> {
+    check_cancelled(flag)?;
+    let Prepared {
+        action,
+        location,
+        user,
+        text,
+        path,
+        version,
+        runs,
+        after,
+    } = prepared;
+    if action == "run_now" {
+        return runs
+            .iter()
+            .map(|run| run_now(run, flag))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|messages| messages.join("\n"));
     }
-    let index: usize = command
-        .identity
-        .get("line")
-        .and_then(|value| value.parse().ok())
-        .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-line-identity")))?;
-    if command.target.as_deref() != Some(&format!("{source}:{location}:{index}")) {
-        return Err(invalid(i18n::tr!("scheduled-task-cron-identity")));
-    }
-    let entry = entries(&text, system, &current.username)
-        .into_iter()
-        .find(|entry| entry.line == index)
-        .ok_or_else(|| {
-            ManagementError::Conflict(i18n::tr!("scheduled-task-cron-task-missing").into())
-        })?;
-    if command.identity.get("user") != Some(&entry.user)
-        || command.identity.get("result_key") != Some(&key(source, location, &entry))
-    {
-        return Err(ManagementError::Conflict(
-            i18n::tr!("scheduled-task-cron-task-changed").into(),
-        ));
-    }
-    if command.action == "run_now" {
-        return run_now(&entry, &key(source, location, &entry), flag);
-    }
-    let after = changed_text(&text, index, command.action == "pause")?;
+    let after = after.expect("pause or resume prepared text");
+    let system = path.is_some();
     let paths = path.iter().cloned().collect::<Vec<_>>();
     let backup = super::super::config_backups::begin("scheduled-tasks", &paths)?;
     if !system {
-        backup.set_payload(serde_json::json!({"type":"crontab","user":current.username,"before":text,"after":after}))?;
+        backup.set_payload(
+            serde_json::json!({"type":"crontab","user":user,"before":text,"after":after}),
+        )?;
     } else {
         backup.set_payload(serde_json::json!({"type":"cron-file","path":location}))?;
     }
     let result = if let Some(path) = path {
         replace_file(&path, &text, &version, &after)
+    } else if crontab(&user, flag)?.as_deref() != Some(&text) {
+        Err(ManagementError::Conflict(i18n::tr!(
+            "scheduled-task-crontab-concurrent"
+        )))
     } else {
-        if crontab(&current.username, flag)?.as_deref() != Some(&text) {
-            Err(ManagementError::Conflict(
-                i18n::tr!("scheduled-task-crontab-concurrent").into(),
-            ))
-        } else {
-            install_crontab(&current.username, Some(&after), flag)
-        }
+        install_crontab(&user, Some(&after), flag)
     };
     backup.finish(if result.is_ok() {
         "completed"
@@ -546,14 +631,14 @@ pub(super) fn execute(
         "failed"
     })?;
     result?;
-    if !system && crontab(&current.username, flag)?.as_deref() != Some(&after) {
-        return Err(ManagementError::Failed(
-            i18n::tr!("scheduled-task-crontab-save-unconfirmed").into(),
-        ));
+    if !system && crontab(&user, flag)?.as_deref() != Some(&after) {
+        return Err(ManagementError::Failed(i18n::tr!(
+            "scheduled-task-crontab-save-unconfirmed"
+        )));
     }
     Ok(i18n::tr!(
         "scheduled-task-cron-completed",
-        action = state_action_label(&command.action),
+        action = state_action_label(&action),
         backup = backup.id()
     ))
 }
@@ -680,12 +765,21 @@ fn run_arguments(
     Ok(args)
 }
 
-fn run_now(entry: &Entry, result_key: &str, flag: &AtomicBool) -> Result<String, ManagementError> {
+struct PreparedRun {
+    account: users::UserAccount,
+    unit: String,
+    args: Vec<String>,
+}
+
+fn prepare_run(
+    entry: &Entry,
+    result_key: &str,
+    flag: &AtomicBool,
+) -> Result<PreparedRun, ManagementError> {
     let account = users::accounts(Some(&entry.user))?
         .into_iter()
         .find(|account| account.local && account.username == entry.user)
         .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-user-missing")))?;
-    prepare_results(account.uid, account.gid)?;
     let unit = format!(
         "tundra-manual-{}-{}",
         &result_key[5..21],
@@ -701,11 +795,20 @@ fn run_now(entry: &Entry, result_key: &str, flag: &AtomicBool) -> Result<String,
         flag,
     )?;
     let args = run_arguments(entry, &account, result_key, &unit, &manager_environment)?;
-    run("/usr/bin/systemd-run", &args, flag)?;
+    Ok(PreparedRun {
+        account,
+        unit,
+        args,
+    })
+}
+
+fn run_now(prepared: &PreparedRun, flag: &AtomicBool) -> Result<String, ManagementError> {
+    prepare_results(prepared.account.uid, prepared.account.gid)?;
+    run("/usr/bin/systemd-run", &prepared.args, flag)?;
     Ok(i18n::tr!(
         "scheduled-task-cron-started",
-        user = account.username,
-        unit = unit
+        user = prepared.account.username.as_str(),
+        unit = prepared.unit.as_str()
     ))
 }
 

@@ -32,7 +32,7 @@ TundraUX3 使用 Rust 编写，基于 Ratatui 和 crossterm。目前仍在积极
 
 - **让 agent 操作界面：**在“设置 → 系统”开启外部 CLI 控制后，用 `tundra-cli ui` 读取运行中的界面树和文字画面，模拟点击、拖动、滚动或输入。仅限本机同一操作系统用户连接，详见 [CLI 控制](../crates/cli/docs/ui-control.md)。
 
-- **管理 Linux 设备：**查看和控制服务、进程，管理软件包，配置受支持的网络连接，查看磁盘和挂载点。
+- **管理 Linux 设备：**查看和控制服务、进程，管理软件包，配置受支持的网络连接，查看磁盘和挂载点。服务、进程和计划任务支持 Shift+点击、Shift+Enter 逐项多选和批量操作，F1 查看说明。
 - **浏览软件包：**默认打开已安装，Tab/Shift+Tab 循环切换已安装、更新、搜索，↑/↓ 移动当前位置；Shift+点击或 Shift+Enter 逐项选中、取消，安装、卸载和更新处理全部已选包，授权窗口列出包名。F1 查看多选说明；展开详情后用四个方向键滚动内容。
 - **管理 macOS 软件包：**通过 Homebrew 搜索、安装、卸载和升级 Formula、Cask，原生确认与密码在任务终端输入，详见 [Homebrew 支持](../crates/platform/docs/homebrew.md)。
 - **管理 Windows 软件包：**同一个软件包页面通过 WinGet 搜索、安装、卸载、升级单个软件或全部升级，使用 `winget` 软件源。系统需要 App Installer 和已初始化的软件源，详见 [Windows 软件包](../crates/platform/docs/windows-packages.md)。

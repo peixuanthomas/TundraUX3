@@ -2,6 +2,35 @@ use super::*;
 use chrono::TimeZone;
 
 #[test]
+fn multiple_lines_in_one_source_are_checked_and_changed_together() {
+    let text = "# keep\r\nSHELL=/bin/sh\r\n@daily echo first\r\n@hourly echo untouched\r\n*/5 * * * * echo second\r\n";
+    let all = rows(text, "user:demo", false, "demo", "version");
+    let mut commands = [0, 2].map(|index| ManagementCommand {
+        kind: ManagementKind::ScheduledTasks,
+        action: "pause".into(),
+        target: Some(all[index].id.clone()),
+        identity: all[index].identity.clone(),
+        values: BTreeMap::new(),
+    });
+    let selected =
+        selected_entries(&commands, text, "demo", "crontab", "user:demo", "version").unwrap();
+    let indices = selected.iter().map(|entry| entry.line).collect::<Vec<_>>();
+    let paused = changed_text(text, &indices, true).unwrap();
+    assert_eq!(
+        paused,
+        "# keep\r\nSHELL=/bin/sh\r\n# TUNDRAUX3-PAUSED @daily echo first\r\n@hourly echo untouched\r\n# TUNDRAUX3-PAUSED */5 * * * * echo second\r\n"
+    );
+    assert_eq!(changed_text(&paused, &indices, false).unwrap(), text);
+    commands[1]
+        .identity
+        .insert("version".into(), "stale".into());
+    assert!(matches!(
+        selected_entries(&commands, text, "demo", "crontab", "user:demo", "version"),
+        Err(ManagementError::Conflict(_))
+    ));
+}
+
+#[test]
 fn chinese_cron_labels_keep_native_task_identity_and_schedule() {
     let snapshot = i18n::LanguageSnapshotData {
         code: "zh-CN".into(),
@@ -55,8 +84,8 @@ fn parsing_preserves_environment_owner_aliases_and_paused_lines() {
 #[test]
 fn pause_resume_changes_only_selected_line_and_detects_changed_source() {
     let text = "# comment\r\nSHELL=/bin/bash\r\n*/5 * * * * echo hello\r\n\n";
-    let paused = changed_text(text, 2, true).unwrap();
-    assert_eq!(changed_text(&paused, 2, false).unwrap(), text);
+    let paused = changed_text(text, &[2], true).unwrap();
+    assert_eq!(changed_text(&paused, &[2], false).unwrap(), text);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cron");
     fs::write(&path, text).unwrap();

@@ -17,13 +17,16 @@ pub enum PageHelpScreen {
     Logs,
     Management,
     Packages,
+    Services,
+    Processes,
+    ScheduledTasks,
     Diagnostics,
     SystemStatus,
     Clock,
 }
 
 impl PageHelpScreen {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 19] = [
         Self::Home,
         Self::Setup,
         Self::Login,
@@ -37,6 +40,9 @@ impl PageHelpScreen {
         Self::Logs,
         Self::Management,
         Self::Packages,
+        Self::Services,
+        Self::Processes,
+        Self::ScheduledTasks,
         Self::Diagnostics,
         Self::SystemStatus,
         Self::Clock,
@@ -91,6 +97,25 @@ fn navigation() -> PageHelpSection {
             row("Enter", i18n::tr!("ui-help-nav-activate")),
         ],
     )
+}
+
+fn management_selection_help(mut rows: Vec<PageHelpRow>) -> Vec<PageHelpSection> {
+    rows.insert(0, row("Shift+Click", i18n::tr!("ui-help-selection-toggle")));
+    rows.insert(0, row("Shift+Enter", i18n::tr!("ui-help-selection-toggle")));
+    vec![
+        actions(rows),
+        advanced(vec![
+            row(
+                "↑↓ / Home / End / PgUp / PgDn",
+                i18n::tr!("ui-help-selection-move"),
+            ),
+            row("Enter / Tab", i18n::tr!("ui-help-selection-actions")),
+            row("F4", i18n::tr!("ui-help-management-details")),
+            row("F5", i18n::tr!("ui-help-explorer-refresh")),
+            row("/", i18n::tr!("ui-help-explorer-search")),
+            row("", i18n::tr!("ui-help-selection-lifecycle")),
+        ]),
+    ]
 }
 
 pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
@@ -187,18 +212,38 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
             i18n::tr!("ui-help-packages-title"),
             vec![
                 actions(vec![
-                    row("Shift+Enter", i18n::tr!("ui-help-packages-toggle")),
-                    row("Shift+Click", i18n::tr!("ui-help-packages-toggle")),
+                    row("Shift+Enter", i18n::tr!("ui-help-selection-toggle")),
+                    row("Shift+Click", i18n::tr!("ui-help-selection-toggle")),
                     row("I / X / U", i18n::tr!("ui-help-packages-apply")),
                     row("Enter / F4", i18n::tr!("ui-help-management-details")),
                 ]),
                 advanced(vec![
-                    row("↑↓", i18n::tr!("ui-help-packages-move")),
+                    row("↑↓", i18n::tr!("ui-help-selection-move")),
                     row("Tab / Shift+Tab", i18n::tr!("ui-help-packages-pages")),
                     row("F5", i18n::tr!("ui-help-explorer-refresh")),
                     row("/", i18n::tr!("ui-help-explorer-search")),
                 ]),
             ],
+        ),
+        PageHelpScreen::Services => (
+            i18n::tr!("management-services"),
+            management_selection_help(vec![
+                row("A / X / T", i18n::tr!("ui-help-services-batch-state")),
+                row("E / D", i18n::tr!("ui-help-services-batch-startup")),
+                row("", i18n::tr!("ui-help-services-batch-more")),
+            ]),
+        ),
+        PageHelpScreen::Processes => (
+            i18n::tr!("management-processes"),
+            management_selection_help(vec![
+                row("P / C", i18n::tr!("ui-help-processes-batch-state")),
+                row("T / K", i18n::tr!("ui-help-processes-batch-stop")),
+                row("N", i18n::tr!("ui-help-processes-batch-priority")),
+            ]),
+        ),
+        PageHelpScreen::ScheduledTasks => (
+            i18n::tr!("management-scheduled-tasks"),
+            management_selection_help(vec![row("", i18n::tr!("ui-help-scheduled-batch-actions"))]),
         ),
         PageHelpScreen::Management => (
             i18n::tr!("ui-help-management-title"),

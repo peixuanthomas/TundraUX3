@@ -25,7 +25,9 @@
 
 查询使用当前进程权限。需要额外权限的操作先经过 AA，再由系统授权；保存的 Tundra 角色不会授予 Linux 权限。后端拒绝或无法确认写入结果时，先查询实际状态，不能换后端重复写入。
 
-软件包批量操作通过 `management::package_selection` 传递每个包的编号与查询时的信息。写入前核对全部目标；APT、DNF 和 pacman 一次处理全部包，pacman 安装和更新继续包含完整系统升级。Homebrew 按 Formula/Cask 分组，WinGet 按准确编号和版本依次处理；任一步失败即停止，已完成的操作保留。Homebrew 的命令和 PTY 夹具需在 macOS 运行。
+软件包、服务、进程和计划任务共用 `management::selection` 传递每个目标的编号和查询时的信息，并限制可批量执行的操作。服务先检查全部单元，再交给一次 systemctl；进程先核对全部身份并打开绑定原进程的句柄，再逐项发信号或设置同一主线程优先级。同一 cron 来源的多条任务先一起检查，再一次保存、生成一份备份；timer 保留原有逐项检查与备份。失败即停止，已完成的修改保留。
+
+APT、DNF 和 pacman 一次处理全部已选包，pacman 安装和更新继续包含完整系统升级。Homebrew 按 Formula/Cask 分组，WinGet 按准确编号和版本依次处理；Homebrew 的命令和 PTY 夹具需在 macOS 运行。
 
 macOS 软件包后端位于 `management/homebrew/`，与 Linux 后端共用查询、操作、AA 事件和子进程监督接口。通过 brew JSON v2 读取 Formula/Cask，类型与完整名称共同组成目标标识；提交前重新核对选中版本。写操作以当前用户运行，Cask 密码等原生提示通过 PTY 交互，关闭页面可继续后台运行，显式停止和强制结束沿用 AA。查询和普通操作不自动刷新、不清理其他包；刷新按钮显式执行 `brew update`。
 

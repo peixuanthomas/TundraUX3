@@ -1,9 +1,9 @@
 use super::*;
 
-#[path = "package_selection.rs"]
-mod package_selection;
 #[path = "package_workspace.rs"]
 mod package_workspace;
+#[path = "selection.rs"]
+mod selection;
 
 #[test]
 fn mouse_movement_before_redraw_does_not_animate_keyboard_details() {

@@ -207,8 +207,8 @@ fn build_command(
     command: &ManagementCommand,
     backend: PackageBackend,
 ) -> Result<PackageCommand, ManagementError> {
-    if command.values.contains_key(super::package_selection::KEY) {
-        let commands = super::package_selection::expand(command)?;
+    if command.values.contains_key(super::selection::KEY) {
+        let commands = super::selection::expand(command)?;
         let mut specs = commands
             .iter()
             .map(|command| build_command(command, backend));
@@ -503,7 +503,7 @@ pub fn execute(
         ));
     }
     let spec = build_command(command, backend)?;
-    for command in super::package_selection::expand(command)? {
+    for command in super::selection::expand(command)? {
         if command
             .identity
             .get("backend")

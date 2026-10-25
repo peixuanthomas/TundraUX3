@@ -6,8 +6,11 @@ if [[ $EUID != 0 ]]; then echo 'Run as root inside WSL.' >&2; exit 1; fi
 binary=$(realpath "$1")
 fixture_uid=$2
 fixture_case=${3:-scheduled}
-[[ $fixture_case == scheduled || $fixture_case == ssh || $fixture_case == settings ]]
+[[ $fixture_case == scheduled || $fixture_case == ssh || $fixture_case == settings || $fixture_case == selection ]]
 fixture_test=management::scheduled_tasks::isolated::private_systemd_create_execute_persist_pause_resume_and_restore
+if [[ $fixture_case == selection ]]; then
+    fixture_test=management::scheduled_tasks::isolated::batches::private_management_batches_preserve_targets_and_cron_sources
+fi
 if [[ $fixture_case == ssh ]]; then
     ssh_bundle=$(realpath "$4")
     TUNDRA_TEST_SSHD="$ssh_bundle/usr/sbin/sshd"

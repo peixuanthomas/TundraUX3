@@ -16,7 +16,7 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 
 软件包分栏页的主导航和高级区文字位于中英文 `modules/management-services-process-packages.ftl`；键盘操作统一放在 F1 帮助。
 
-软件包的 Shift+点击、Shift+Enter、多选保留和批量操作说明位于中英文 `modules/help.ftl`；无效选择及部分包不支持操作的提示位于 `modules/management-services-process-packages.ftl`。
+软件包、服务、进程和计划任务的 Shift+点击、Shift+Enter、多选保留和批量操作说明位于中英文 `modules/help.ftl`；无效选择、部分项目不支持操作及批量进度提示位于 `modules/management-services-process-packages.ftl`。
 
 中英文 `modules/management-homebrew.ftl` 提供 macOS Formula/Cask 类型、查询要求、原生交互和执行结果提示。
 

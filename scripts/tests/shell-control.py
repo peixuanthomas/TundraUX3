@@ -86,6 +86,7 @@ def main():
         def node_by(current, predicate):
             return next(node for node in current["nodes"] if predicate(node))
 
+        batch_children = []
         try:
             if os.geteuid() == 0:
                 deadline = time.monotonic() + 5
@@ -138,6 +139,51 @@ def main():
             key("Escape")
             current = until(lambda current: current["page"] == "Home")
             print("PASS: real Shift+click and Shift+Enter toggled package selection; F1 showed the controls")
+            process_filter = f"tundra-selection-{child.pid}"
+            batch_children = [subprocess.Popen(["/bin/bash", "-c", f"exec -a {process_filter} /bin/sleep 120"]) for _ in range(2)]
+            key("a")
+            current = until(lambda current: current["page"] == "Launcher")
+            processes = node_by(current, lambda node: node["role"] == "button" and "Processes" in node["name"])
+            click(processes["id"], double=True)
+            until(lambda current: current["page"] == "Management")
+            key("/")
+            ui("text", process_filter)
+            key("Enter")
+
+            def owned_process_rows(current):
+                rows = {node["rect"]["y"] for node in current["nodes"] if node["role"] == "cell" and node["id"].endswith("cell.1") and node["text"].strip() in {str(process.pid) for process in batch_children}}
+                return [node for node in package_rows(current) if node["rect"]["y"] in rows]
+
+            def process_row(current, process):
+                cell = node_by(current, lambda node: node["role"] == "cell" and node["id"].endswith("cell.1") and node["text"].strip() == str(process.pid))
+                return node_by(current, lambda node: node["role"] == "listitem" and node["rect"]["y"] == cell["rect"]["y"])
+
+            current = until(lambda current: len(owned_process_rows(current)) == 2)
+            first = process_row(current, batch_children[0])
+            click(first["id"])
+            current = snapshot()
+            second = process_row(current, batch_children[1])["rect"]
+            x, y = second["x"] + 1, second["y"] + 1
+            os.write(master, f"\x1b[<4;{x};{y}M\x1b[<4;{x};{y}m".encode())
+            current = until(lambda current: len([node for node in owned_process_rows(current) if node["selected"]]) == 2)
+            assert len([node for node in package_rows(current) if node["selected"]]) == 2
+            for action, paused in [("p", True), ("c", False)]:
+                key(action)
+                current = until(lambda current: any(node["role"] == "dialog" for node in current["nodes"]))
+                assert all(str(process.pid) in "\n".join(current["lines"]) for process in batch_children)
+                key("F10")
+                until(lambda current: all((Path(f"/proc/{process.pid}/stat").read_text().split(") ", 1)[1][0] == "T") == paused for process in batch_children))
+                current = until(lambda current: any(node["id"].endswith("aa.close") and node["actionable"] for node in current["nodes"]))
+                click(node_by(current, lambda node: node["id"].endswith("aa.close"))["id"])
+            for process in batch_children:
+                process.kill()
+                process.wait(timeout=5)
+            batch_children = []
+            key("Escape")
+            until(lambda current: current["page"] == "Launcher")
+            key("Escape")
+            current = until(lambda current: current["page"] == "Home")
+            print("PASS: one reviewed batch paused and continued both owned test processes")
             assert current["width"] == 140 and current["height"] == 40
             assert len(current["lines"]) == 40
             ids = [node["id"] for node in current["nodes"]]
@@ -272,6 +318,10 @@ def main():
             print("Shell status:", child.poll(), "\n", visible.decode(errors="replace"), file=sys.stderr)
             raise
         finally:
+            for process in batch_children:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
             if child.poll() is None:
                 os.killpg(child.pid, signal.SIGTERM)
                 try:

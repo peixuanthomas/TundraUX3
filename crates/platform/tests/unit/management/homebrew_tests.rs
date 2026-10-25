@@ -6,17 +6,17 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn batch_commands_group_formulae_and_casks_and_validate_before_writing() {
-    use crate::management::package_selection::{self, PackageTarget};
+    use crate::management::selection::{self, Target};
     let mut request = command("remove", None);
-    let targets = ["formula:demo", "cask:demo", "formula:other"].map(|id| PackageTarget {
+    let targets = ["formula:demo", "cask:demo", "formula:other"].map(|id| Target {
         id: id.into(),
         identity: BTreeMap::new(),
     });
     request.values.insert(
-        package_selection::KEY.into(),
+        selection::KEY.into(),
         serde_json::to_string(&targets).unwrap(),
     );
-    let commands = package_selection::expand(&request).unwrap();
+    let commands = selection::expand(&request).unwrap();
     assert_eq!(
         command_groups(&commands).unwrap(),
         vec![

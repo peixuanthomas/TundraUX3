@@ -492,6 +492,7 @@ pub fn execute(
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
     check_cancelled(cancelled)?;
+    let commands = selection::expand(command)?;
     if !matches!(
         command.action.as_str(),
         "start" | "stop" | "restart" | "reload" | "enable" | "disable" | "daemon_reload"
@@ -500,14 +501,17 @@ pub fn execute(
             "Unknown service operation".into(),
         ));
     }
-    let scope = Scope::parse(
-        command
-            .identity
-            .get("scope")
-            .or_else(|| command.values.get("scope"))
-            .map(String::as_str)
-            .unwrap_or(""),
-    )?;
+    let scope_of = |command: &ManagementCommand| {
+        Scope::parse(
+            command
+                .identity
+                .get("scope")
+                .or_else(|| command.values.get("scope"))
+                .map(String::as_str)
+                .unwrap_or(""),
+        )
+    };
+    let scope = scope_of(&commands[0])?;
     if command.action == "daemon_reload" {
         if command.target.is_some() {
             return Err(ManagementError::InvalidInput(
@@ -519,27 +523,36 @@ pub fn execute(
                 "Run user-service reload as the original user".into(),
             ));
         }
-        run_systemctl(scope, "daemon-reload", None, cancelled)?;
+        run_systemctl(scope, "daemon-reload", &[], cancelled)?;
         return Ok("Service definitions reloaded; refresh service details".into());
     }
-    let target = command
-        .target
-        .as_deref()
-        .filter(|name| valid_unit_name(name))
-        .ok_or_else(|| {
-            ManagementError::InvalidInput(
-                "Choose an exact .service unit name, not a path or pattern".into(),
-            )
-        })?;
-    if target.ends_with("@.service") {
-        return Err(ManagementError::InvalidInput(
-            "Choose an existing service instance rather than a template".into(),
-        ));
-    }
-    if command.identity.get("unit").map(String::as_str) != Some(target) {
-        return Err(ManagementError::Conflict(
-            "The selected service changed; refresh before retrying".into(),
-        ));
+    let mut targets = Vec::new();
+    for command in &commands {
+        let target = command
+            .target
+            .as_deref()
+            .filter(|name| valid_unit_name(name))
+            .ok_or_else(|| {
+                ManagementError::InvalidInput(
+                    "Choose an exact .service unit name, not a path or pattern".into(),
+                )
+            })?;
+        if target.ends_with("@.service") {
+            return Err(ManagementError::InvalidInput(
+                "Choose an existing service instance rather than a template".into(),
+            ));
+        }
+        if command.identity.get("unit").map(String::as_str) != Some(target) {
+            return Err(ManagementError::Conflict(
+                "The selected service changed; refresh before retrying".into(),
+            ));
+        }
+        if scope_of(command)? != scope {
+            return Err(ManagementError::InvalidInput(i18n::tr!(
+                "management-selection-invalid"
+            )));
+        }
+        targets.push(target);
     }
     let current_uid = unsafe { libc::getuid() };
     if (current_uid != 0 && current_uid != context.actor_uid)
@@ -549,36 +562,47 @@ pub fn execute(
             "Current-user services must be managed as the original Linux user".into(),
         ));
     }
-    // Refresh the selected unit's actual state rather than trusting stale UI
-    // booleans. This also rejects unknown unit names and non-toggleable files.
     let snapshot = query(
         &ManagementQuery {
             kind: ManagementKind::Services,
             scope: scope.id().into(),
-            filter: target.into(),
+            filter: if targets.len() == 1 {
+                targets[0].into()
+            } else {
+                String::new()
+            },
             target: None,
             options: BTreeMap::new(),
         },
         cancelled,
     )?;
-    let row = snapshot
-        .rows
-        .iter()
-        .find(|row| row.id == target)
-        .ok_or_else(|| ManagementError::Conflict("The selected service no longer exists".into()))?;
-    if let Some(reason) = row
-        .actions
-        .iter()
-        .find(|action| action.id == command.action)
-        .and_then(|action| action.disabled_reason.as_ref())
-    {
-        return Err(ManagementError::InvalidInput(reason.clone()));
+    for target in &targets {
+        let row = snapshot
+            .rows
+            .iter()
+            .find(|row| row.id == *target)
+            .ok_or_else(|| {
+                ManagementError::Conflict("The selected service no longer exists".into())
+            })?;
+        if let Some(reason) = row
+            .actions
+            .iter()
+            .find(|action| action.id == command.action)
+            .and_then(|action| action.disabled_reason.as_ref())
+        {
+            return Err(ManagementError::InvalidInput(reason.clone()));
+        }
     }
+    let names = targets.join(", ");
     interaction.emit(OperationEvent::Progress {
-        message: format!("{} {} service {target}", command.action, scope.id()),
+        message: if targets.len() == 1 {
+            format!("{} {} service {}", command.action, scope.id(), targets[0])
+        } else {
+            i18n::tr!("management-batch-running", targets = names.as_str())
+        },
         percent: None,
     });
-    let output = match run_systemctl(scope, &command.action, Some(target), cancelled) {
+    let output = match run_systemctl(scope, &command.action, &targets, cancelled) {
         Err(ManagementError::Cancelled) => {
             interaction.emit(OperationEvent::Output {
                 text: "Stopped waiting for systemctl. The systemd job may still complete; refresh the service state before retrying.".into(),
@@ -592,19 +616,25 @@ pub fn execute(
             text: runtime_log::sanitize_text(&output),
         });
     }
-    // systemctl normally waits for the job; no --no-block or shell expansion.
-    // Enable/disable intentionally do not imply --now.
-    Ok(format!(
-        "{} completed for {} service {target}",
-        command.action,
-        scope.id()
-    ))
+    if targets.len() == 1 {
+        Ok(format!(
+            "{} completed for {} service {}",
+            command.action,
+            scope.id(),
+            targets[0]
+        ))
+    } else {
+        Ok(i18n::tr!(
+            "management-batch-completed",
+            count = targets.len() as i64
+        ))
+    }
 }
 
 fn run_systemctl(
     scope: Scope,
     action: &str,
-    unit: Option<&str>,
+    units: &[&str],
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
     let mut command = Command::new("/usr/bin/systemctl");
@@ -615,8 +645,8 @@ fn run_systemctl(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(unit) = unit {
-        command.args(["--", unit]);
+    if !units.is_empty() {
+        command.arg("--").args(units);
     }
     let mut child = command.spawn_managed().map_err(|error| {
         ManagementError::Unavailable(format!("Cannot launch systemctl: {error}"))

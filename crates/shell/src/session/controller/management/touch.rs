@@ -335,7 +335,7 @@ impl ShellSession {
                 query.filter = filter;
                 query.target = None;
                 self.pages.management.management_state.list_scroll_explicit = false;
-                self.pages.management.management_state.package_selection = None;
+                self.pages.management.management_state.selection = None;
             }
         }
     }
@@ -833,11 +833,11 @@ impl ShellSession {
                     .len()
                     .saturating_sub(1),
             );
-            if self.package_multiselect_available() {
+            if self.management_multiselect_available() {
                 if mouse.modifiers.has_non_shift_modifier() {
                     return;
                 }
-                self.select_package_row(index, mouse.modifiers.shift);
+                self.select_management_row(index, mouse.modifiers.shift);
             } else {
                 self.pages.management.management_state.selected = index;
             }

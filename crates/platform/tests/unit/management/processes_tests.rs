@@ -51,6 +51,109 @@ fn context() -> ExecutionContext {
     }
 }
 
+fn batch(children: &[ChildGuard], action: &str) -> ManagementCommand {
+    let targets = children
+        .iter()
+        .map(|child| {
+            let command = child.command(action);
+            selection::Target {
+                id: command.target.unwrap(),
+                identity: command.identity,
+            }
+        })
+        .collect::<Vec<_>>();
+    ManagementCommand {
+        kind: ManagementKind::Processes,
+        action: action.into(),
+        target: None,
+        identity: BTreeMap::new(),
+        values: BTreeMap::from([(
+            selection::KEY.into(),
+            serde_json::to_string(&targets).unwrap(),
+        )]),
+    }
+}
+
+#[test]
+fn native_batches_stop_continue_set_priority_and_finish_all_owned_children() {
+    let flag = AtomicBool::new(false);
+    for finish in ["term", "kill"] {
+        let mut children = [ChildGuard::new(), ChildGuard::new()];
+        execute(
+            &batch(&children, "stop"),
+            &context(),
+            &mut Interaction,
+            &flag,
+        )
+        .unwrap();
+        for child in &children {
+            wait_state(child.0.id(), true);
+        }
+        execute(
+            &batch(&children, "cont"),
+            &context(),
+            &mut Interaction,
+            &flag,
+        )
+        .unwrap();
+        for child in &children {
+            wait_state(child.0.id(), false);
+        }
+        let mut nice = batch(&children, "nice");
+        nice.values.insert("nice".into(), "10".into());
+        execute(&nice, &context(), &mut Interaction, &flag).unwrap();
+        for child in &children {
+            assert_eq!(
+                read_process(Path::new("/proc"), child.0.id(), 4096)
+                    .unwrap()
+                    .nice,
+                10
+            );
+        }
+        execute(
+            &batch(&children, finish),
+            &context(),
+            &mut Interaction,
+            &flag,
+        )
+        .unwrap();
+        for child in &mut children {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while child.0.try_wait().unwrap().is_none() {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
+
+#[test]
+fn stale_identity_later_in_a_batch_prevents_changes_to_earlier_processes() {
+    let children = [ChildGuard::new(), ChildGuard::new()];
+    let mut request = batch(&children, "stop");
+    let mut targets: Vec<selection::Target> =
+        serde_json::from_str(&request.values[selection::KEY]).unwrap();
+    targets[1]
+        .identity
+        .insert("start_time_ticks".into(), "0".into());
+    request.values.insert(
+        selection::KEY.into(),
+        serde_json::to_string(&targets).unwrap(),
+    );
+    assert!(matches!(
+        execute(
+            &request,
+            &context(),
+            &mut Interaction,
+            &AtomicBool::new(false)
+        ),
+        Err(ManagementError::Conflict(_))
+    ));
+    for child in &children {
+        wait_state(child.0.id(), false);
+    }
+}
+
 #[test]
 fn stat_parser_keeps_parentheses_and_reads_correct_kernel_fields() {
     let mut fields = vec!["0"; 22];

@@ -48,31 +48,46 @@ fn package_actions_require_aa_approval_without_system_privileges() {
         ))
         .unwrap();
     let watchdog = process.register_app(shell_watchdog_descriptor()).unwrap();
-    let mut session = package_list_state();
-    session.settings_task_runtime = ShellSettingsTaskRuntime::new_managed(watchdog);
-    session.pages.management.management_state.kind = Some(ManagementKind::Packages);
-    session.select_package_row(2, true);
-    let (mut action, row) = session
-        .management_actions()
-        .into_iter()
-        .find(|(action, _)| action.id == "remove")
-        .unwrap();
-    action.requires_approval = true;
-    action.privileged = false;
-    session.perform_management_action(action, row);
-    let job = session
-        .pages
-        .management
-        .management_state
-        .auto_admin_job
-        .clone()
-        .unwrap();
-    assert_eq!(job.phase(), ::auto_admin::JobPhase::Waiting);
-    let description = job.view_model(true, None, 0).description;
-    assert!(description.contains("bash:amd64"));
-    assert!(description.contains("omega:amd64"));
-    assert!(!description.contains("alpha:amd64"));
-    job.decide(false);
+    for kind in [
+        ManagementKind::Packages,
+        ManagementKind::Services,
+        ManagementKind::Processes,
+        ManagementKind::ScheduledTasks,
+    ] {
+        let mut session = selection::list_state(kind);
+        session.settings_task_runtime = ShellSettingsTaskRuntime::new_managed(watchdog.clone());
+        session.select_management_row(2, true);
+        let ids = session
+            .pages
+            .management
+            .management_state
+            .snapshot
+            .rows
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>();
+        let (mut action, row) = session
+            .all_management_actions()
+            .into_iter()
+            .find(|(action, _)| platform::management::selection::supports(kind, &action.id))
+            .unwrap();
+        action.requires_approval = true;
+        action.privileged = false;
+        session.perform_management_action(action, row);
+        let job = session
+            .pages
+            .management
+            .management_state
+            .auto_admin_job
+            .clone()
+            .unwrap();
+        assert_eq!(job.phase(), ::auto_admin::JobPhase::Waiting);
+        let description = job.view_model(true, None, 0).description;
+        assert!(description.contains(&ids[1]));
+        assert!(description.contains(&ids[2]));
+        assert!(!description.contains(&ids[0]));
+        job.decide(false);
+    }
     runtime.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }

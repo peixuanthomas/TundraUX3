@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn batch_specs_keep_each_exact_id_and_version() {
-    use crate::management::package_selection::{self, PackageTarget};
+    use crate::management::selection::{self, Target};
     let first = package();
     let second = Record {
         id: "Vendor.Tool".into(),
@@ -11,7 +11,7 @@ fn batch_specs_keep_each_exact_id_and_version() {
         ..package()
     };
     for action in ["install", "remove", "upgrade"] {
-        let targets = [&first, &second].map(|record| PackageTarget {
+        let targets = [&first, &second].map(|record| Target {
             id: record.id.clone(),
             identity: row(record.clone(), "updates").identity,
         });
@@ -19,10 +19,10 @@ fn batch_specs_keep_each_exact_id_and_version() {
         request.target = None;
         request.identity.clear();
         request.values.insert(
-            package_selection::KEY.into(),
+            selection::KEY.into(),
             serde_json::to_string(&targets).unwrap(),
         );
-        let commands = package_selection::expand(&request).unwrap();
+        let commands = selection::expand(&request).unwrap();
         for (command, record) in commands.iter().zip([&first, &second]) {
             let spec = build_command(Path::new("winget.exe"), command).unwrap();
             let args = spec

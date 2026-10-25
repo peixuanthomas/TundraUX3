@@ -370,7 +370,6 @@ pub mod helper;
 mod listening_ports;
 #[cfg(target_os = "linux")]
 pub mod network;
-pub mod package_selection;
 #[cfg(target_os = "linux")]
 pub mod packages;
 #[cfg(target_os = "macos")]
@@ -381,6 +380,7 @@ pub mod problem;
 pub mod processes;
 #[cfg(target_os = "linux")]
 pub mod scheduled_tasks;
+pub mod selection;
 #[cfg(target_os = "linux")]
 pub mod services;
 #[cfg(target_os = "linux")]
