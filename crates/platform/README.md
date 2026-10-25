@@ -51,6 +51,8 @@ Shell 在主线程调用 `poll`，每次最多处理 16 个连接、每个连接
 
 验证：`cargo test --locked -p platform`。Linux 检查在 Linux/WSL 运行；真实授权窗口、服务变更、无线设备、挂载和物理盘行为需要对应测试主机。
 
+配置备份测试分别核对备份根目录和 `operations/` 的 `0700` 权限，以及根目录下普通 JSON 恢复记录的 `0600` 权限与内容。
+
 固定端口与进程测试使用离线数据核对解析和归属，不创建真实 TCP 监听端口。
 
 连接测试：`cargo test --locked -p platform --test shell_control`，覆盖独立进程发现与大请求收发、慢客户端、断线、超时、错误进程编号和退出清理。Windows 需在正常用户进程运行，附加沙箱身份不能通过当前用户 SID 专用权限。

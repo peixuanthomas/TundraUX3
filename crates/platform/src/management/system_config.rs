@@ -1708,7 +1708,19 @@ mod tests {
             assert_eq!(result.unwrap_err(), error);
             assert_eq!(fs::read_to_string(path).unwrap(), "original\n");
             assert_eq!(fs::metadata(&root).unwrap().mode() & 0o777, 0o700);
-            let file = fs::read_dir(root).unwrap().next().unwrap().unwrap().path();
+            assert_eq!(
+                fs::metadata(root.join("operations")).unwrap().mode() & 0o777,
+                0o700
+            );
+            let file = fs::read_dir(&root)
+                .unwrap()
+                .map(Result::unwrap)
+                .find(|entry| {
+                    entry.file_type().unwrap().is_file()
+                        && entry.path().extension() == Some(OsStr::new("json"))
+                })
+                .unwrap()
+                .path();
             assert_eq!(fs::metadata(&file).unwrap().mode() & 0o777, 0o600);
             assert_eq!(read_backup(&file).unwrap().document.content, "original\n");
         }
