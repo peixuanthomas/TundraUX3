@@ -13,5 +13,6 @@ temp.txt
 todo.md
 /third_party/*
 !/third_party/lsh/
+!/third_party/bashdb/
 /clear.bat
 temp.md
