@@ -24,6 +24,7 @@ pub enum EditorMenu {
     Insert,
     Format,
     View,
+    Script,
     Settings,
     Help,
 }
@@ -52,6 +53,8 @@ pub enum EditorToolbarAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorMenuAction {
+    ScriptWorkspace,
+    ScriptSettings,
     ToggleVim,
     VimHelp,
     SaveAs,
@@ -637,8 +640,21 @@ pub struct EditorVimInstallViewModel {
     pub cancelling: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorScriptBreakpoint {
+    /// One-based logical source line, independent of soft wrapping.
+    pub line: usize,
+    pub enabled: bool,
+    pub verified: bool,
+    pub rejected: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorViewModel {
+    pub script_available: bool,
+    pub script_settings_available: bool,
+    pub script_breakpoints: Option<Arc<[EditorScriptBreakpoint]>>,
+    pub script_execution_line: Option<usize>,
     pub vim_mode: Option<EditorVimMode>,
     pub vim_terminal: Option<Arc<crate::CommandLineTerminalSnapshot>>,
     pub vim_install: Option<EditorVimInstallViewModel>,
@@ -728,6 +744,10 @@ pub struct EditorViewModel {
 impl EditorViewModel {
     pub fn new(file_name: impl Into<String>, blocks: Vec<EditorRenderBlock>) -> Self {
         Self {
+            script_available: false,
+            script_settings_available: true,
+            script_breakpoints: None,
+            script_execution_line: None,
             vim_mode: None,
             vim_terminal: None,
             vim_install: None,

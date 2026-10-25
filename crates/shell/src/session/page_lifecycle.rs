@@ -120,6 +120,25 @@ impl ShellSession {
         if self.page_screen(id).is_none() {
             return;
         }
+        if self
+            .pages
+            .editor
+            .get(id)
+            .is_some_and(|page| page.script.state.status.is_active())
+        {
+            self.park_script_page(id);
+            self.notify_modal(
+                i18n::msg!("script-paused-title"),
+                i18n::msg!("script-background-running"),
+                ui::NotificationTone::Info,
+                vec![
+                    ShellNotificationAction::new("return-script", i18n::msg!("script-return"))
+                        .with_follow_up(ShellCommand::ScriptReturn(id)),
+                    ShellNotificationAction::new("close", i18n::msg!("shell-close")).cancel(),
+                ],
+            );
+            return;
+        }
         if self.page_screen(id) == Some(ShellScreen::Editor)
             && self.with_page_context(id, |session| session.prepare_editor_background_close())
                 != Some(true)

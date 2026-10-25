@@ -548,9 +548,11 @@ pub(super) struct TimedClick {
 pub struct UiSessionState {
     pub(super) pages: ShellPages,
     pub(super) command_line_close_request: Option<(PageInstanceId, bool)>,
+    pub(super) script_requests: VecDeque<(PageInstanceId, script_runtime::RuntimeCommand)>,
     pub(super) editor_vim_terminal: Option<Arc<ui::CommandLineTerminalSnapshot>>,
     pub(super) editor_vim_install: Option<(PageInstanceId, ui::EditorVimInstallViewModel)>,
     pub(super) editor_vim_toggle_requested: bool,
+    pub(super) editor_vim_script_export: Option<PageInstanceId>,
     pub(super) editor_vim_close_requested: bool,
 
     pub(super) language: Arc<i18n::LanguageSnapshot>,

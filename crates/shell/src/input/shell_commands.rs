@@ -121,6 +121,7 @@ pub enum ShellCommand {
     LauncherScroll(i8),
     ExplorerAddToLauncher,
     OpenEditor,
+    ScriptReturn(crate::PageInstanceId),
     CloseEditor,
     EditorKey(KeyInput),
     EditorPaste(String),

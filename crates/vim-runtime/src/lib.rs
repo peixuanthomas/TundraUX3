@@ -262,6 +262,16 @@ impl VimHost {
     }
 
     pub fn poll(&mut self) -> io::Result<VimPoll> {
+        if self
+            .state
+            .buffers
+            .iter()
+            .any(|buffer| !buffer.line_changes.is_empty())
+        {
+            for buffer in &mut Arc::make_mut(&mut self.state).buffers {
+                buffer.line_changes.clear();
+            }
+        }
         let saves = self.read_messages()?;
         if let Some(pty) = &self.pty
             && let Some(exit) = pty.try_wait()?
@@ -452,6 +462,17 @@ impl VimHost {
         }
         let mut buffers = Vec::with_capacity(raw.buffers.len());
         for mut buffer in raw.buffers {
+            if let Some(previous) = self
+                .state
+                .buffers
+                .iter()
+                .find(|old| old.number == buffer.number)
+                && !previous.line_changes.is_empty()
+            {
+                let mut changes = previous.line_changes.clone();
+                changes.append(&mut buffer.line_changes);
+                buffer.line_changes = changes;
+            }
             if let Some(lines) = buffer.text_lines.take() {
                 buffer.text = decode_lines(lines, buffer.line_ending, buffer.end_of_line).into();
             }

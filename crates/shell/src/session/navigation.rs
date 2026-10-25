@@ -14,6 +14,7 @@ pub(super) struct ShellNavigation {
     path: Vec<ShellScreen>,
     entries: Vec<NavigationEntry>,
     restored_checkpoints: HashSet<u64>,
+    parked: HashMap<PageInstanceId, NavigationEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +87,7 @@ impl ShellNavigation {
             path: Vec::new(),
             entries: Vec::new(),
             restored_checkpoints: HashSet::new(),
+            parked: HashMap::new(),
         };
         navigation.push(root);
         navigation
@@ -123,6 +125,7 @@ impl ShellNavigation {
     }
 
     fn reset(&mut self, root: ShellScreen) {
+        self.parked.clear();
         self.path.clear();
         self.entries.clear();
         self.push(root);
@@ -155,6 +158,38 @@ impl ShellNavigation {
 }
 
 impl ShellSession {
+    pub(in crate::session) fn park_script_page(&mut self, id: PageInstanceId) {
+        let Some(index) = self
+            .navigation
+            .entries
+            .iter()
+            .position(|entry| entry.id == id)
+        else {
+            return;
+        };
+        if self.navigation.entries.len() == 1 {
+            return;
+        }
+        self.cancel_pointer_gestures_for_modal();
+        self.navigation.path.remove(index);
+        let entry = self.navigation.entries.remove(index);
+        self.navigation.parked.insert(id, entry);
+        self.restore_navigation_page();
+        self.refresh_hit_map();
+    }
+
+    pub(in crate::session) fn restore_script_page(&mut self, id: PageInstanceId) {
+        if let Some(entry) = self.navigation.parked.remove(&id) {
+            self.cancel_pointer_gestures_for_modal();
+            self.navigation.path.push(ShellScreen::Editor);
+            self.navigation.entries.push(entry);
+            self.restore_navigation_page();
+            self.refresh_hit_map();
+        } else {
+            self.activate_editor_document_page(id);
+        }
+    }
+
     /// Documents opened together share the same return destination. Keep their
     /// page instances (including file tasks and recovery) intact when switching.
     pub(in crate::session) fn editor_document_pages(&self) -> Vec<PageInstanceId> {
@@ -387,6 +422,12 @@ impl ShellSession {
 
     /// Close an exact instance; a late terminal exit cannot close a different page.
     pub fn close_page_instance(&mut self, id: PageInstanceId) {
+        if self.navigation.parked.remove(&id).is_some() {
+            self.tasks.close_queries(id);
+            self.pages.remove(id);
+            self.app.remove_page(id);
+            return;
+        }
         let Some(index) = self
             .navigation
             .entries

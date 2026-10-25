@@ -132,6 +132,8 @@ impl ShellSession {
         self.pages.launcher.launcher_drag = None;
         self.drag_tracker = None;
         self.pages.editor.editor_table_resize = None;
+        self.pages.editor.script.pointer = None;
+        self.pages.editor.script.drag = None;
         self.cancel_auto_admin_pointer();
         self.cancel_touch_pages_pointer();
         self.cancel_management_pointer_gesture();

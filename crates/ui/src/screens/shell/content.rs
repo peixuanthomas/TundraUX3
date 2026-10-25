@@ -13,6 +13,7 @@ pub enum ScreenContent<'a> {
     Launcher(&'a LauncherViewModel),
     CommandLine(&'a CommandLineViewModel),
     Editor(&'a EditorViewModel),
+    Script(&'a ScriptViewModel),
     Settings(&'a SettingsViewModel),
     Logs(&'a LogsViewModel),
     Management(&'a ManagementViewModel),
@@ -26,6 +27,7 @@ impl ScreenContent<'_> {
         matches!(
             self,
             Self::Editor(_)
+                | Self::Script(_)
                 | Self::Settings(_)
                 | Self::Management(_)
                 | Self::Logs(_)
@@ -74,6 +76,9 @@ impl ScreenContent<'_> {
             ),
             Self::Editor(model) => {
                 render_editor_contextual(frame, main, model, context);
+            }
+            Self::Script(model) => {
+                render_script_contextual(frame, main, model, context);
             }
             Self::Settings(model) => {
                 render_settings_content(frame, &settings_layout(main, model), model, context)
@@ -132,6 +137,9 @@ impl ScreenContent<'_> {
             Self::Launcher(model) => render_launcher_overlay(frame, main, model, context),
             Self::Editor(model) => {
                 render_editor_overlay(frame, &editor_layout(main, model), model, context)
+            }
+            Self::Script(model) => {
+                render_script_overlay(frame, &script_layout(main, model), model, context)
             }
             Self::Settings(model) => crate::screens::settings::render_settings_overlay_top(
                 frame,

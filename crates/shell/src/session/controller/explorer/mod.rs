@@ -447,6 +447,15 @@ impl ShellSession {
         command: ExplorerCommand,
         platform: &dyn Platform,
     ) {
+        let command = if matches!(command, ExplorerCommand::OpenSelected)
+            && matches!(
+                self.pages.explorer.explorer_purpose,
+                ExplorerPurpose::EditorOpen
+            ) {
+            ExplorerCommand::OpenSelectedInEditor
+        } else {
+            command
+        };
         if matches!(
             command,
             ExplorerCommand::Paste

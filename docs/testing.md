@@ -137,6 +137,10 @@ Linux 使用真实 PTY 验证；Windows/macOS 的构建和 runtime 回归已加�
 
 ## 页面实例与任务关闭
 
+Linux 脚本工作区先运行 `cargo test --locked -p app --test script`、`cargo test --locked -p script-runtime`、`cargo test --locked -p ui --test script` 和 `cargo test --locked -p shell --lib controller::script::tests`。它们覆盖解释器选择、断点移动、过期结果、真实 bashdb、页面与输入。构建 Shell/CLI 后，在 WSL 执行 `python3 scripts/tests/editor-script-smoke.py target/debug/tundra-shell`，使用隔离目录和真实 PTY 验证六区、保存、运行输入、断点、步进、表达式、缩放和停止；真实触屏仍需独立设备验收。
+
+多文档 Vim 切换另用 `TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p shell --lib vim_host::script_tests -- --ignored` 验证导出归属、原进程、只读恢复和撤销历史。
+
 页面管理测试覆盖同类页面的独立数据、覆盖后返回、关闭后重开、迟到结果、旧登录会话结果、后台通知与前台焦点。编辑器测试额外检查独立恢复文件、进程文件锁、逐份认领草稿，以及保存或恢复记录清理失败时保留数据。
 
 Shell 的 `page_lifecycle`、`auto_admin` 和 `update_cancellation_tests` 覆盖三种关闭选择、等待实际收尾、AA 从关闭确认返回、后台输入自动显示，以及更新准备成功与取消同时发生。更新取消还测试取消记录写入失败、修复后重试和撤回自动重启请求。

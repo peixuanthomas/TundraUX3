@@ -17,6 +17,7 @@ pub(in crate::session) enum TaskDomain {
     UserManagement,
     AutoAdmin,
     CommandLine,
+    Script,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

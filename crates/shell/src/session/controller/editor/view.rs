@@ -358,6 +358,34 @@ impl ShellSession {
                 )
             });
         }
+        if self.pages.editor.script.enabled {
+            model.script_breakpoints = Some(
+                self.pages
+                    .editor
+                    .script
+                    .state
+                    .breakpoints
+                    .iter()
+                    .filter(|bp| state.document.path.as_ref() == Some(&bp.path))
+                    .map(|bp| ui::EditorScriptBreakpoint {
+                        line: bp.line,
+                        enabled: bp.enabled,
+                        verified: bp.verified,
+                        rejected: bp.rejected,
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            );
+            model.script_execution_line = self
+                .pages
+                .editor
+                .script
+                .state
+                .location
+                .as_ref()
+                .filter(|location| state.document.path.as_ref() == Some(&location.path))
+                .map(|location| location.line);
+        }
         if model.mode == app::editor::EditorMode::Source && self.pages.editor.editor_soft_wrap {
             model.soft_wrap = true;
             model.horizontal_scroll = 0;
@@ -366,7 +394,7 @@ impl ShellSession {
                 ui::ShellLayout::Compact(compact) => compact,
                 ui::ShellLayout::Full { main, .. } => main,
             };
-            let layout = ui::editor_layout(editor_area, &model);
+            let layout = ui::editor_layout(self.editor_content_area(editor_area), &model);
             model.wrap_layout = state.source_wrap_layout(usize::from(layout.canvas.width));
             if let Some(wrapped) = &model.wrap_layout {
                 let first = model.scroll_line.min(wrapped.row_count() - 1);
@@ -398,6 +426,7 @@ impl ShellSession {
             model.status_message = Some(error.clone());
         }
         model.vim_install = self.current_vim_install().cloned();
+        model.script_available = self.script_available();
         model
     }
 

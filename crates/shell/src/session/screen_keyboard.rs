@@ -7,6 +7,7 @@ use ui::{ScreenKeyboardAction as Action, ScreenKeyboardLayout, ScreenKeyboardMod
 enum KeyboardOwner {
     AutoAdmin(AutoAdminJob),
     CommandLine(PageInstanceId),
+    Script(PageInstanceId),
     Management(PageInstanceId, String),
 }
 
@@ -61,6 +62,11 @@ impl ShellSession {
     fn input_keyboard_owner(&self) -> Option<KeyboardOwner> {
         if self.auto_admin_visible() {
             self.auto_admin_keyboard_job().map(KeyboardOwner::AutoAdmin)
+        } else if self.active_screen() == ShellScreen::Editor
+            && self.pages.editor.script.enabled
+            && self.interactive_overlays().is_empty()
+        {
+            Some(KeyboardOwner::Script(self.active_page_id()))
         } else if self.active_screen() == ShellScreen::CommandLine
             && self.interactive_overlays().is_empty()
         {
@@ -157,7 +163,11 @@ impl ShellSession {
     ) -> ui::ShellFrameLayout {
         if matches!(
             self.input_keyboard_owner(),
-            Some(KeyboardOwner::CommandLine(_) | KeyboardOwner::Management(..))
+            Some(
+                KeyboardOwner::CommandLine(_)
+                    | KeyboardOwner::Script(_)
+                    | KeyboardOwner::Management(..)
+            )
         ) {
             layout.with_input_keyboard(
                 self.input_keyboard_layout().keyboard,

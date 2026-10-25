@@ -271,7 +271,8 @@ impl ShellSession {
                     // need the original stream to support drag and drop.
                     let native_release = region.id.as_str().starts_with("notification.")
                         && region.id.as_str() != "notification.page-help.action.close"
-                        || region.id.as_str().starts_with("launcher.item.");
+                        || region.id.as_str().starts_with("launcher.item.")
+                        || region.id.as_str().starts_with("script.");
                     self.interaction.button_capture = Some(ButtonPointerCapture {
                         region,
                         page: self.active_page_id(),

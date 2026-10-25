@@ -13,6 +13,9 @@ impl ShellSession {
         platform: &dyn Platform,
         received_at: Instant,
     ) {
+        if self.handle_script_key(&key, platform) {
+            return;
+        }
         if self.current_vim_install().is_some() {
             if key.phase == InputPhase::Press
                 && matches!(
@@ -406,6 +409,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn handle_editor_paste(&mut self, value: String) {
+        if self.script_paste(value.clone()) {
+            return;
+        }
         if self.config_editor_form_visible() {
             self.handle_management_paste(&value);
             return;
@@ -424,6 +430,9 @@ impl ShellSession {
         mouse: MouseInput,
         platform: &dyn Platform,
     ) {
+        if self.handle_script_pointer(mouse, platform) {
+            return;
+        }
         if self.current_vim_install().is_some() {
             let cancel = ui::editor_vim_install_layout(self.editor_current_layout().area).1;
             if matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
@@ -1079,12 +1088,18 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn editor_current_layout(&self) -> ui::EditorLayout {
+        if self.pages.editor.script.enabled {
+            return self.script_layout().editor;
+        }
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let editor_area = match self.shell_layout_for(area) {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
-        ui::editor_layout(editor_area, &self.to_editor_view_model())
+        ui::editor_layout(
+            self.editor_content_area(editor_area),
+            &self.to_editor_view_model(),
+        )
     }
 
     pub(in crate::session) fn begin_editor_scrollbar_drag(
@@ -1097,7 +1112,10 @@ impl ShellSession {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
-        let layout = ui::editor_layout(editor_area, &self.to_editor_view_model());
+        let layout = ui::editor_layout(
+            self.editor_content_area(editor_area),
+            &self.to_editor_view_model(),
+        );
         let scrollbar = match axis {
             ScrollbarAxis::Vertical => layout.vertical_scrollbar,
             ScrollbarAxis::Horizontal => layout.horizontal_scrollbar,
@@ -1128,7 +1146,7 @@ impl ShellSession {
             ui::ShellLayout::Full { main, .. } => main,
         };
         let model = self.to_editor_view_model();
-        let layout = ui::editor_layout(editor_area, &model);
+        let layout = ui::editor_layout(self.editor_content_area(editor_area), &model);
         let scrollbar = match axis {
             ScrollbarAxis::Vertical => layout.vertical_scrollbar,
             ScrollbarAxis::Horizontal => layout.horizontal_scrollbar,

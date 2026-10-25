@@ -599,8 +599,13 @@ fn render_canvas(
                 LineChange::Added => Color::Green,
                 LineChange::Modified => Color::Yellow,
             };
-            let number_width = usize::from(layout.gutter.width.saturating_sub(2));
-            let number = if wrapped.is_some_and(|row| row.continuation) {
+            let script_width = if model.script_breakpoints.is_some() {
+                2
+            } else {
+                0
+            };
+            let number_width = usize::from(layout.gutter.width.saturating_sub(2 + script_width));
+            let number = if wrapped.as_ref().is_some_and(|row| row.continuation) {
                 format!("{:>number_width$}", "↪")
             } else {
                 format!("{:>number_width$}", logical_line + 1)
@@ -611,16 +616,53 @@ fn render_canvas(
                 (false, true) => "▁",
                 _ => " ",
             };
+            let mut spans = Vec::new();
+            if let Some(breakpoints) = &model.script_breakpoints {
+                let first_row = wrapped.as_ref().is_none_or(|row| !row.continuation);
+                let breakpoint = breakpoints
+                    .iter()
+                    .find(|point| point.line == logical_line + 1);
+                let symbol = if !first_row {
+                    " "
+                } else {
+                    match breakpoint {
+                        Some(point) if !point.enabled => ".",
+                        Some(point) if point.rejected => "!",
+                        Some(point) if point.verified => "B",
+                        Some(_) => "?",
+                        None => " ",
+                    }
+                };
+                spans.push(Span::styled(
+                    symbol,
+                    Style::default().fg(match breakpoint {
+                        Some(point) if !point.enabled => context.theme.muted,
+                        Some(point) if point.rejected => context.theme.danger,
+                        Some(point) if !point.verified => context.theme.warning,
+                        _ => context.theme.accent,
+                    }),
+                ));
+                spans.push(Span::styled(
+                    if first_row && model.script_execution_line == Some(logical_line + 1) {
+                        ">"
+                    } else {
+                        " "
+                    },
+                    Style::default()
+                        .fg(context.theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            spans.extend([
+                Span::styled(number, Style::default().fg(color)),
+                Span::styled(
+                    deletion,
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+            ]);
             frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(number, Style::default().fg(color)),
-                    Span::styled(
-                        deletion,
-                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(" "),
-                ]))
-                .style(canvas_theme.body_style()),
+                Paragraph::new(Line::from(spans)).style(canvas_theme.body_style()),
                 Rect::new(layout.gutter.x, line_layout.area.y, layout.gutter.width, 1),
             );
         }

@@ -1,6 +1,53 @@
 use super::*;
 
 #[test]
+fn script_buttons_keep_shared_feedback_and_native_release_events() {
+    let mut session = ShellSession::new(ShellLaunchConfig::default(), (140, 40));
+    let point = (20, 10);
+    session.button_regions.push(ui::components::ButtonRegion {
+        id: "script.action.Debug".into(),
+        area: Rect::new(point.0, point.1, 14, 1),
+        disabled: false,
+    });
+    let now = Instant::now();
+    let down = InputEvent::mouse_down(PointerButton::Left, point);
+    let up = InputEvent::mouse_up(PointerButton::Left, point);
+    assert_eq!(session.prepare_button_input(down.clone(), now), Some(down));
+    let capture = session.interaction.button_capture.as_ref().unwrap();
+    assert!(capture.native_release);
+    assert_eq!(capture.region.id.as_str(), "script.action.Debug");
+    assert_eq!(session.prepare_button_input(up.clone(), now), Some(up));
+    assert!(session.interaction.button_capture.is_none());
+    assert_eq!(session.interaction.hover_position(), None);
+}
+
+#[test]
+fn ordinary_editor_buttons_keep_release_adapted_to_original_press() {
+    let mut session = ShellSession::new(ShellLaunchConfig::default(), (140, 40));
+    let point = (20, 10);
+    session.button_regions.push(ui::components::ButtonRegion {
+        id: "editor.menu.File".into(),
+        area: Rect::new(point.0, point.1, 14, 1),
+        disabled: false,
+    });
+    let now = Instant::now();
+    let down = InputEvent::mouse_down(PointerButton::Left, point);
+    assert_eq!(session.prepare_button_input(down.clone(), now), None);
+    assert!(
+        !session
+            .interaction
+            .button_capture
+            .as_ref()
+            .unwrap()
+            .native_release
+    );
+    assert_eq!(
+        session.prepare_button_input(InputEvent::mouse_up(PointerButton::Left, point), now),
+        Some(down)
+    );
+}
+
+#[test]
 fn stationary_pointer_and_key_releases_cannot_steal_keyboard_emphasis() {
     let mut state = InteractionState::default();
     let point = (10, 5);

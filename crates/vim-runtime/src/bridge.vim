@@ -1,5 +1,5 @@
 " The transport carries buffers in memory; this script contains no document text.
-if !has('eval') || !has('channel') || !has('timers') || !exists('*str2blob')
+if !has('eval') || !has('channel') || !has('timers') || !exists('*str2blob') || !exists('*listener_add')
   echoerr 'Tundra requires Vim with +eval, +channel, +timers and str2blob()'
   cquit 78
 endif
@@ -15,6 +15,7 @@ let s:error = v:null
 let s:mode = 'n'
 let s:busy = 0
 let s:writing = 0
+let s:importing = 0
 let s:deferred = []
 let s:initialized = 0
 let s:last_state = ''
@@ -25,6 +26,8 @@ endfunction
 
 function! s:Record(info, force) abort
   let n = a:info.bufnr
+  call s:Watch(n)
+  call listener_flush(n)
   call filter(s:removed, {_, value -> value != n})
   let path = bufname(n)
   let cursor = n == bufnr('%') ? [line('.') - 1, col('.') - 1] : getbufvar(n, 'tundra_cursor', [0, 0])
@@ -38,7 +41,9 @@ function! s:Record(info, force) abort
         \ 'cursor': {'line': cursor[0], 'column': cursor[1]},
         \ 'read_only': getbufvar(n, 'tundra_read_only', 0) ? v:true : v:false,
         \ 'protected': getbufvar(n, 'tundra_protected', 0) ? v:true : v:false,
-        \ 'changed_tick': a:info.changedtick}
+        \ 'changed_tick': a:info.changedtick,
+        \ 'line_changes': getbufvar(n, 'tundra_line_changes', [])}
+  call setbufvar(n, 'tundra_line_changes', [])
   let content_version = string([a:info.changedtick, record.line_ending, record.end_of_line])
   if a:force || get(s:text_versions, string(n), '') !=# content_version
     let truly_empty = n == bufnr('%') ? (line('$') == 1 && getline(1) ==# '' && wordcount().bytes == 0)
@@ -78,17 +83,38 @@ function! s:Snapshot(force) abort
   endif
 endfunction
 
+function! s:LinesChanged(buffer, start, end, added, changes) abort
+  if s:importing
+    return
+  endif
+  let pending = getbufvar(a:buffer, 'tundra_line_changes', [])
+  for change in a:changes
+    call add(pending, {'start_line': change.lnum, 'end_line': change.end,
+          \ 'added': change.added, 'column': change.col})
+  endfor
+  call setbufvar(a:buffer, 'tundra_line_changes', pending)
+endfunction
+
+function! s:Watch(buffer) abort
+  if !getbufvar(a:buffer, 'tundra_listener', 0)
+    call setbufvar(a:buffer, 'tundra_listener', listener_add(function('s:LinesChanged'), a:buffer))
+  endif
+endfunction
+
 function! s:Protect() abort
   if &l:buftype !=# '' && &l:buftype !=# 'acwrite'
     return
   endif
   setlocal buftype=acwrite noswapfile noundofile
+  call s:Watch(bufnr('%'))
   if get(b:, 'tundra_read_only', 0)
     setlocal readonly nomodifiable
   endif
 endfunction
 
 function! s:Open(buffer) abort
+  let s:importing += 1
+  try
   let input = a:buffer
   let found = -1
   for info in getbufinfo()
@@ -110,8 +136,8 @@ function! s:Open(buffer) abort
   let b:tundra_protected = input.protected
   let unchanged = found > 0 && getbufline(bufnr('%'), 1, '$') ==# input.lines
         \ && get(b:, 'tundra_empty', 0) == input.empty
+  setlocal modifiable noreadonly
   if !unchanged
-    setlocal modifiable noreadonly
     let saved_undo_levels = &l:undolevels
     if found < 0
       setlocal undolevels=-1
@@ -148,7 +174,11 @@ function! s:Open(buffer) abort
   let b:tundra_empty = input.empty
   call cursor(input.cursor.line + 1, input.cursor.column + 1)
   call s:Protect()
+  call listener_flush(bufnr('%'))
   call s:Snapshot(1)
+  finally
+    let s:importing -= 1
+  endtry
 endfunction
 
 function! s:Activate(message) abort

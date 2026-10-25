@@ -137,6 +137,7 @@ fn assert_page_leaves_shell_chrome_untouched(content: ScreenContent<'_>) {
         ScreenContent::Launcher(_) => "Launcher",
         ScreenContent::CommandLine(_) => "CommandLine",
         ScreenContent::Editor(_) => "Editor",
+        ScreenContent::Script(_) => "Script",
         ScreenContent::Settings(_) => "Settings",
         ScreenContent::Logs(_) => "Logs",
         ScreenContent::Management(_) => "Management",

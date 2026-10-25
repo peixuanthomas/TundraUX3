@@ -11,9 +11,11 @@ pub(super) struct EditorVimHost {
     installer: Option<install::VimInstaller>,
     pages: HashMap<u32, PageInstanceId>,
     imported: HashSet<PageInstanceId>,
+    policies: HashMap<PageInstanceId, (bool, bool)>,
     mirrored: HashMap<u32, MirrorRevision>,
     saves: HashMap<u64, PendingSave>,
     export: Option<u64>,
+    script_export_owner: Option<PageInstanceId>,
     import: Option<u64>,
     pending_input: Vec<InputEvent>,
     suspended: bool,
@@ -47,9 +49,11 @@ impl EditorVimHost {
             installer: None,
             pages: HashMap::new(),
             imported: HashSet::new(),
+            policies: HashMap::new(),
             mirrored: HashMap::new(),
             saves: HashMap::new(),
             export: None,
+            script_export_owner: None,
             import: None,
             pending_input: Vec::new(),
             suspended: false,
@@ -76,7 +80,8 @@ impl EditorVimHost {
             return Ok(());
         }
         let visible = state.content_screen() == ShellScreen::Editor;
-        let enabled = state.app.storage_config().editor.vim_mode_enabled;
+        let enabled = state.app.storage_config().editor.vim_mode_enabled
+            && !state.pages.editor.script.vim_suspended;
         if visible
             && enabled
             && self.host.is_none()
@@ -102,6 +107,8 @@ impl EditorVimHost {
             config.rows = area.height.max(1);
             for id in state.editor_document_pages().into_iter().rev() {
                 if let Some(buffer) = input_for_page(state, id) {
+                    self.policies
+                        .insert(id, (buffer.read_only, buffer.protected));
                     config.initial_buffers.push(buffer);
                     self.imported.insert(id);
                 }
@@ -135,10 +142,13 @@ impl EditorVimHost {
                 self.host.as_mut().unwrap().remove_buffer(number)?;
                 self.pages.remove(&number);
                 self.imported.remove(&page);
+                self.policies.remove(&page);
                 self.mirrored.remove(&number);
             }
             for id in state.editor_document_pages().into_iter().rev() {
                 if let Some(buffer) = input_for_page(state, id) {
+                    self.policies
+                        .insert(id, (buffer.read_only, buffer.protected));
                     self.host.as_mut().unwrap().open_buffer(buffer)?;
                     self.imported.insert(id);
                 }
@@ -158,6 +168,8 @@ impl EditorVimHost {
             for id in state.editor_document_pages().into_iter().rev() {
                 if !self.imported.contains(&id) {
                     if let Some(buffer) = input_for_page(state, id) {
+                        self.policies
+                            .insert(id, (buffer.read_only, buffer.protected));
                         self.host.as_mut().unwrap().open_buffer(buffer)?;
                         self.imported.insert(id);
                         imported = true;
@@ -179,14 +191,30 @@ impl EditorVimHost {
                 self.selected = Some(state.content_page_id());
             }
         }
-        if std::mem::take(&mut state.editor_vim_toggle_requested) && self.export.is_none() {
-            self.export = Some(self.host.as_mut().unwrap().request_export()?);
+        if self.export.is_none() {
+            let script_owner = state.editor_vim_script_export.take().or_else(|| {
+                state.pages.editor.ids().into_iter().find(|id| {
+                    state
+                        .pages
+                        .editor
+                        .get(*id)
+                        .is_some_and(|page| page.script.vim_pending)
+                })
+            });
+            if let Some(owner) = script_owner {
+                self.script_export_owner = Some(owner);
+                self.export = Some(self.host.as_mut().unwrap().request_export()?);
+            } else if std::mem::take(&mut state.editor_vim_toggle_requested) {
+                self.script_export_owner = None;
+                self.export = Some(self.host.as_mut().unwrap().request_export()?);
+            }
         }
         if std::mem::take(&mut state.editor_vim_close_requested) {
             self.host.as_mut().unwrap().request_close(false)?;
         }
         self.finish_saves(state)?;
         let poll = self.host.as_mut().unwrap().poll()?;
+        self.synchronize_policies(state, &poll.state.buffers)?;
         if self.import.is_some_and(|id| poll.state.last_command >= id) {
             self.import = None;
             for input in std::mem::take(&mut self.pending_input) {
@@ -205,12 +233,14 @@ impl EditorVimHost {
                 for number in &poll.state.removed_buffers {
                     if let Some(page) = self.pages.remove(number) {
                         self.imported.remove(&page);
+                        self.policies.remove(&page);
                         self.mirrored.remove(number);
                         state.request_page_close_after_editor_check(page, true);
                     }
                 }
                 if let Some(&page) = self.pages.get(&poll.state.active_buffer)
                     && visible
+                    && enabled
                     && state.editor_document_pages().contains(&page)
                     && state.content_page_id() != page
                 {
@@ -248,10 +278,13 @@ impl EditorVimHost {
             self.host = None;
             self.pages.clear();
             self.imported.clear();
+            self.policies.clear();
             self.mirrored.clear();
             self.saves.clear();
             self.selected = None;
             self.export = None;
+            self.script_export_owner = None;
+            state.editor_vim_script_export = None;
             self.import = None;
             self.pending_input.clear();
             return Ok(());
@@ -264,6 +297,14 @@ impl EditorVimHost {
                 .iter()
                 .find(|buffer| !gui_encoding(&buffer.encoding))
             {
+                self.fail_script_export(
+                    state,
+                    i18n::msg!(
+                        "shell-vim-unsupported-editor-encoding",
+                        encoding = buffer.encoding.clone()
+                    )
+                    .into(),
+                );
                 state.notify_alert_with_tone(
                     i18n::msg!(
                         "shell-vim-unsupported-editor-encoding",
@@ -276,6 +317,10 @@ impl EditorVimHost {
             if poll.state.buffers.iter().any(|buffer| {
                 buffer.encoding.to_ascii_lowercase().starts_with("utf-16") && !buffer.bom
             }) {
+                self.fail_script_export(
+                    state,
+                    i18n::msg!("shell-vim-unsupported-editor-bom").into(),
+                );
                 state.notify_alert_with_tone(
                     i18n::msg!("shell-vim-unsupported-editor-bom"),
                     ui::NotificationTone::Error,
@@ -283,7 +328,14 @@ impl EditorVimHost {
                 return Ok(());
             }
             self.suspended = true;
-            if state.set_editor_vim_enabled(false) {
+            if let Some(owner) = self.script_export_owner.take() {
+                state.with_page_context(owner, |state| {
+                    state.pages.editor.script.vim_pending = false;
+                    state.pages.editor.script.vim_suspended = true;
+                });
+                state.editor_vim_terminal = None;
+                state.refresh_hit_map();
+            } else if state.set_editor_vim_enabled(false) {
                 state.editor_vim_terminal = None;
                 state.refresh_hit_map();
             } else {
@@ -300,6 +352,51 @@ impl EditorVimHost {
             state.editor_vim_terminal = None;
         }
         Ok(())
+    }
+
+    fn synchronize_policies(
+        &mut self,
+        state: &mut ShellSession,
+        buffers: &[VimBuffer],
+    ) -> io::Result<()> {
+        for buffer in buffers {
+            let Some(&page) = self.pages.get(&buffer.number) else {
+                continue;
+            };
+            let Some(policy) = state
+                .with_page_context(page, |state| {
+                    state
+                        .app
+                        .editor_state()
+                        .map(|editor| (editor.is_read_only(), state.config_editor_active()))
+                })
+                .flatten()
+            else {
+                continue;
+            };
+            if self
+                .policies
+                .get(&page)
+                .is_some_and(|previous| *previous != policy)
+            {
+                self.import = Some(self.host.as_mut().unwrap().set_buffer_policy(
+                    buffer.number,
+                    policy.0,
+                    policy.1,
+                )?);
+            }
+            self.policies.insert(page, policy);
+        }
+        Ok(())
+    }
+
+    fn fail_script_export(&mut self, state: &mut ShellSession, error: i18n::LocalizedText) {
+        if let Some(owner) = self.script_export_owner.take() {
+            state.with_page_context(owner, |state| {
+                state.pages.editor.script.vim_pending = false;
+                state.fail_script(error);
+            });
+        }
     }
 
     fn synchronize(&mut self, state: &mut ShellSession, buffers: &[VimBuffer]) {
@@ -528,16 +625,39 @@ impl EditorVimHost {
     }
 
     fn fail(&mut self, state: &mut ShellSession, error: io::Error) {
+        let script_exporting =
+            self.script_export_owner.is_some() || state.editor_vim_script_export.is_some();
+        let message: i18n::LocalizedText =
+            i18n::msg!("shell-vim-runtime-error", reason = error.to_string()).into();
+        self.fail_script_export(state, message.clone());
+        for id in state.pages.editor.ids() {
+            if state
+                .pages
+                .editor
+                .get(id)
+                .is_some_and(|page| page.script.vim_pending)
+            {
+                state.with_page_context(id, |state| {
+                    state.pages.editor.script.vim_pending = false;
+                    state.fail_script(message.clone());
+                });
+            }
+        }
         self.host = None;
         state.editor_vim_terminal = None;
         state.editor_vim_toggle_requested = false;
+        state.editor_vim_script_export = None;
         state.editor_vim_close_requested = false;
-        state.set_editor_vim_enabled(false);
+        if !script_exporting {
+            state.set_editor_vim_enabled(false);
+        }
         self.pages.clear();
         self.imported.clear();
+        self.policies.clear();
         self.mirrored.clear();
         self.saves.clear();
         self.export = None;
+        self.script_export_owner = None;
         self.import = None;
         self.pending_input.clear();
         self.selected = None;
@@ -549,6 +669,8 @@ impl EditorVimHost {
 
     pub(super) fn captures_input(&self, state: &ShellSession, input: &InputEvent) -> bool {
         if state.active_screen() != ShellScreen::Editor
+            || (state.pages.editor.script.enabled
+                && state.pages.editor.script.focus != ui::ScriptPane::Source)
             || state.editor_vim_terminal.is_none()
             || !state.interactive_overlays().is_empty()
             || state.config_editor_form_visible()
@@ -558,6 +680,9 @@ impl EditorVimHost {
         }
         match input {
             InputEvent::Key(key) => {
+                if state.script_host_key(key) {
+                    return false;
+                }
                 !(key.key == InputKey::F(8)
                     && !key.has_non_shift_modifier()
                     && !key.modifiers.shift)
@@ -652,7 +777,7 @@ fn vim_area(state: &ShellSession) -> Rect {
         ui::ShellLayout::Full { main, .. } => main,
         ui::ShellLayout::Compact(main) => main,
     };
-    ui::editor_vim_terminal_area(main)
+    ui::editor_vim_terminal_area(state.editor_content_area(main))
 }
 
 fn input_for_page(state: &mut ShellSession, id: PageInstanceId) -> Option<BufferInput> {
@@ -743,6 +868,14 @@ fn mirror_buffer(state: &mut ShellSession, buffer: &VimBuffer) {
     let cursor = line_start
         .saturating_add(buffer.cursor.column)
         .min(buffer.text.len());
+    editor.record_external_line_changes(buffer.line_changes.iter().map(|change| {
+        app::editor::SourceLineChange::from_vim(
+            change.start_line,
+            change.end_line,
+            change.added,
+            change.column,
+        )
+    }));
     editor.synchronize_external_source(
         &buffer.text,
         buffer.path.clone(),
@@ -785,3 +918,7 @@ fn ending_for(ending: app::editor::LineEnding) -> LineEnding {
         app::editor::LineEnding::Cr => LineEnding::Mac,
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../tests/unit/session/vim_script.rs"]
+mod script_tests;

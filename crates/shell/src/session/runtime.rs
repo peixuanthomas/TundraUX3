@@ -989,6 +989,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         shell_watchdog.clone(),
     ));
     let mut command_line_hosts = CommandLineHosts::new(shell_watchdog.clone());
+    let mut script_hosts = super::script_host::ScriptHosts::new(shell_watchdog.clone());
     let mut editor_vim = super::vim_host::EditorVimHost::new(shell_watchdog.clone());
     let mut vim_cursor_style = ui::CommandLineCursorStyle::Default;
     let mut reset_requested = false;
@@ -1117,6 +1118,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 redraw.request_redraw();
             }
             if editor_vim.poll(&mut state, platform.as_ref()) {
+                redraw.request_redraw();
+            }
+            if script_hosts.poll(&mut state, platform.as_ref()) {
                 redraw.request_redraw();
             }
 
@@ -1264,8 +1268,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                     vim_cursor_style = cursor_style;
                 }
                 if let Some(mut snapshot) = compositor.snapshot.take() {
-                    snapshot.background_tasks_running |=
-                        command_line_hosts.has_running_processes() || editor_vim.running();
+                    snapshot.background_tasks_running |= command_line_hosts.has_running_processes()
+                        || editor_vim.running()
+                        || script_hosts.running();
                     control.publish(snapshot);
                 }
                 if !update_ready_marked {
@@ -1331,6 +1336,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             let (poll_timeout, command_line_timeout_is_state) = command_line_poll_timeout(
                 command_line_hosts.has_running_processes()
                     || editor_vim.running()
+                    || script_hosts.running()
                     || (state.auto_admin_visible() && state.auto_admin_running()),
                 combined_timeout,
             );
@@ -1396,7 +1402,9 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         continue;
                     };
                     let command_line_captures = command_line_captures_input(&state, &input);
-                    if editor_vim.captures_input(&state, &input) {
+                    if script_hosts.handle_input(&state, &input) {
+                        action = Some(ShellAction::Redraw);
+                    } else if editor_vim.captures_input(&state, &input) {
                         if let Err(error) = editor_vim.handle_input(&state, &input) {
                             state.report_editor_error(i18n::msg!(
                                 "shell-vim-runtime-error",
@@ -1498,6 +1506,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         control.invalidate();
     }
     editor_vim.stop(&mut state);
+    script_hosts.stop_all();
     if !matches!(&execution, Ok(Ok(None))) {
         let _ = state.persist_all_editor_recovery_now(Instant::now());
     }

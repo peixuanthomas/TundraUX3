@@ -15,6 +15,7 @@ pub(super) enum ScreenViewModel {
     Launcher(Box<ui::LauncherViewModel>),
     CommandLine(Box<ui::CommandLineViewModel>),
     Editor(Box<ui::EditorViewModel>),
+    Script(Box<ui::ScriptViewModel>),
     Settings(Box<ui::SettingsViewModel>),
     Logs(Box<ui::LogsViewModel>),
     Management(Box<ui::ManagementViewModel>),
@@ -44,6 +45,9 @@ impl ScreenViewModel {
             ShellScreen::Explorer => Self::Explorer(Box::new(state.to_explorer_view_model())),
             ShellScreen::Launcher => Self::Launcher(Box::new(state.to_launcher_view_model())),
             ShellScreen::CommandLine => Self::CommandLine(Box::new(command_line.view_model())),
+            ShellScreen::Editor if state.pages.editor.script.enabled => {
+                Self::Script(Box::new(state.to_script_view_model()))
+            }
             ShellScreen::Editor => Self::Editor(Box::new(state.to_editor_view_model())),
             ShellScreen::Settings => Self::Settings(Box::new(
                 state
@@ -78,6 +82,7 @@ impl ScreenViewModel {
             Self::Launcher(model) => ui::ScreenContent::Launcher(model),
             Self::CommandLine(model) => ui::ScreenContent::CommandLine(model),
             Self::Editor(model) => ui::ScreenContent::Editor(model),
+            Self::Script(model) => ui::ScreenContent::Script(model),
             Self::Settings(model) => ui::ScreenContent::Settings(model),
             Self::Logs(model) => ui::ScreenContent::Logs(model),
             Self::Management(model) => ui::ScreenContent::Management(model),
@@ -100,7 +105,11 @@ pub(super) struct PreparedFrame {
 
 impl PreparedFrame {
     pub(super) fn rainbow_running(&self) -> bool {
-        matches!(&self.page, ScreenViewModel::Editor(model) if model.vim_mode.is_some())
+        match &self.page {
+            ScreenViewModel::Editor(model) => model.vim_mode.is_some(),
+            ScreenViewModel::Script(model) => model.editor.vim_mode.is_some(),
+            _ => false,
+        }
     }
 }
 

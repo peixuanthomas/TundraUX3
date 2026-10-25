@@ -13,6 +13,7 @@ pub enum PageHelpScreen {
     Launcher,
     CommandLine,
     Editor,
+    Script,
     Settings,
     Logs,
     Management,
@@ -26,7 +27,7 @@ pub enum PageHelpScreen {
 }
 
 impl PageHelpScreen {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Home,
         Self::Setup,
         Self::Login,
@@ -36,6 +37,7 @@ impl PageHelpScreen {
         Self::Launcher,
         Self::CommandLine,
         Self::Editor,
+        Self::Script,
         Self::Settings,
         Self::Logs,
         Self::Management,
@@ -325,6 +327,27 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 } else {
                     vec![row("Tab / ←→↑↓", i18n::tr!("ui-help-auth-focus"))]
                 }),
+            ],
+        ),
+        PageHelpScreen::Script => (
+            i18n::tr!("app-catalog-script-editor-name"),
+            vec![
+                actions(vec![
+                    row("Ctrl+F5", i18n::tr!("script-help-run")),
+                    row("F5", i18n::tr!("script-help-debug")),
+                    row("F7 / F11 / Shift+F11", i18n::tr!("script-help-step")),
+                    row("Shift+F5", i18n::tr!("script-help-stop")),
+                    row("F9", i18n::tr!("script-help-breakpoint")),
+                    row("B / ? / ! / . / >", i18n::tr!("script-help-markers")),
+                ]),
+                advanced(vec![
+                    row("F6 / Shift+F6", i18n::tr!("script-help-panes")),
+                    row("Tab / Shift+Tab", i18n::tr!("script-help-controls")),
+                    row("Enter / Ctrl+Enter", i18n::tr!("script-help-expression")),
+                    row("Ctrl+C", i18n::tr!("script-help-stdin")),
+                    row("F8", i18n::tr!("script-help-vim")),
+                    row("F10", i18n::tr!("script-help-menu")),
+                ]),
             ],
         ),
         PageHelpScreen::Editor => (

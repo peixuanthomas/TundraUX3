@@ -54,6 +54,14 @@ impl BufferInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VimLineChange {
+    pub start_line: usize,
+    pub end_line: usize,
+    pub added: i64,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VimBuffer {
     pub number: u32,
     pub host_id: Option<u64>,
@@ -62,6 +70,8 @@ pub struct VimBuffer {
     pub text: Arc<str>,
     #[serde(default)]
     pub text_changed: bool,
+    #[serde(default)]
+    pub line_changes: Vec<VimLineChange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_lines: Option<Vec<String>>,
     pub encoding: String,

@@ -454,6 +454,7 @@ impl ShellSession {
             match application.id {
                 id if id == app::COMMAND_LINE_APPLICATION.id => self.open_command_line(),
                 id if id == app::EDITOR_APPLICATION.id => self.open_editor(),
+                "builtin.script-editor" => self.open_script_editor(),
                 "builtin.logs" => self.open_logs(),
                 "builtin.users" => self.open_user_management(),
                 "builtin.services" => {

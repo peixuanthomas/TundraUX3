@@ -345,13 +345,23 @@ pub(crate) fn render_native_terminal_snapshot(
     snapshot: &CommandLineTerminalSnapshot,
     theme: &TundraTheme,
 ) {
+    render_native_terminal_snapshot_with_focus(frame, area, snapshot, theme, true);
+}
+
+pub(crate) fn render_native_terminal_snapshot_with_focus(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    snapshot: &CommandLineTerminalSnapshot,
+    theme: &TundraTheme,
+    focused: bool,
+) {
     crate::automation::control(
         "terminal",
         "terminal",
         "",
         area,
         crate::components::ComponentState {
-            focused: true,
+            focused,
             ..Default::default()
         },
         &["click", "text", "key", "scroll"],
@@ -360,7 +370,8 @@ pub(crate) fn render_native_terminal_snapshot(
         .map(|row| terminal_snapshot_line(snapshot, row, theme, false))
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), area);
-    if snapshot.scrollback_offset == 0
+    if focused
+        && snapshot.scrollback_offset == 0
         && let Some((column, row)) = (0..snapshot.rows.min(area.height)).find_map(|row| {
             (0..snapshot.columns.min(area.width))
                 .find(|column| snapshot.cell(*column, row).is_some_and(|cell| cell.cursor))

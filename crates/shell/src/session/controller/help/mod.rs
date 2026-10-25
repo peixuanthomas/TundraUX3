@@ -42,6 +42,7 @@ impl ShellSession {
             ShellScreen::Explorer => ui::PageHelpScreen::Explorer,
             ShellScreen::Launcher => ui::PageHelpScreen::Launcher,
             ShellScreen::CommandLine => ui::PageHelpScreen::CommandLine,
+            ShellScreen::Editor if self.pages.editor.script.enabled => ui::PageHelpScreen::Script,
             ShellScreen::Editor => ui::PageHelpScreen::Editor,
             ShellScreen::Settings => ui::PageHelpScreen::Settings,
             ShellScreen::Logs => ui::PageHelpScreen::Logs,

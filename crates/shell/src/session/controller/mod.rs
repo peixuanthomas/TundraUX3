@@ -10,6 +10,7 @@ mod explorer;
 mod help;
 mod launcher;
 mod notifications;
+pub(super) mod script;
 mod settings;
 pub(in crate::session) use settings::SystemTimeSettings;
 pub(super) mod system_status;

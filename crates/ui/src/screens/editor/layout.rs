@@ -603,8 +603,14 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         canvas_panel
     };
     let gutter_width = if model.mode == EditorMode::Source {
-        (source_document_line_count(model).to_string().len() as u16 + 2)
-            .min(base_canvas.width.saturating_sub(2))
+        (source_document_line_count(model).to_string().len() as u16
+            + 2
+            + if model.script_breakpoints.is_some() {
+                2
+            } else {
+                0
+            })
+        .min(base_canvas.width.saturating_sub(2))
     } else {
         0
     };
@@ -821,10 +827,13 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
         to_u16(vim_width).min(menu_bar.width),
         menu_bar.height,
     );
-    let (menus, modes) = menu_layout(Rect {
-        width: vim_toggle.x.saturating_sub(menu_bar.x),
-        ..menu_bar
-    });
+    let (menus, modes) = menu_layout(
+        Rect {
+            width: vim_toggle.x.saturating_sub(menu_bar.x),
+            ..menu_bar
+        },
+        model.script_available,
+    );
     let (menu_popup, menu_items) = menu_popup_layout(area, &menus, model);
     let settings = model
         .settings
@@ -1036,7 +1045,10 @@ pub fn editor_search_layout(
     items
 }
 
-pub(super) fn menu_layout(area: Rect) -> (Vec<EditorMenuLayout>, Vec<EditorModeLayout>) {
+pub(super) fn menu_layout(
+    area: Rect,
+    script: bool,
+) -> (Vec<EditorMenuLayout>, Vec<EditorModeLayout>) {
     if area.is_empty() {
         return (Vec::new(), Vec::new());
     }
@@ -1044,8 +1056,11 @@ pub(super) fn menu_layout(area: Rect) -> (Vec<EditorMenuLayout>, Vec<EditorModeL
         EditorMenu::File,
         EditorMenu::Edit,
         EditorMenu::View,
+        EditorMenu::Script,
         EditorMenu::Help,
     ]
+    .into_iter()
+    .filter(|menu| script || *menu != EditorMenu::Script)
     .map(|menu| (menu, to_u16(terminal_width(&menu_bar_label(menu)))));
     let mut menus = Vec::new();
     let mut x = area.x;
@@ -1116,6 +1131,7 @@ pub(super) fn menu_popup_layout(
                         .is_enabled(action, model.read_only, model.mode)
                 }
                 EditorMenuAction::Mode(_) => true,
+                EditorMenuAction::ScriptSettings => model.script_settings_available,
                 EditorMenuAction::ToggleWrap => model.mode == EditorMode::Source,
                 EditorMenuAction::Replace => !model.read_only,
                 EditorMenuAction::FormatJson => {
@@ -1389,6 +1405,10 @@ pub fn editor_menu_actions(menu: EditorMenu) -> Vec<EditorMenuAction> {
             EditorMenuAction::GoToLine,
             EditorMenuAction::ToggleWrap,
         ],
+        EditorMenu::Script => vec![
+            EditorMenuAction::ScriptWorkspace,
+            EditorMenuAction::ScriptSettings,
+        ],
         EditorMenu::Settings => Vec::new(),
         EditorMenu::Help => vec![EditorMenuAction::VimHelp, EditorMenuAction::About],
     }
@@ -1518,6 +1538,7 @@ pub(super) fn menu_label(menu: EditorMenu) -> String {
         EditorMenu::Insert => i18n::tr!("ui-editor-insert"),
         EditorMenu::Format => i18n::tr!("ui-editor-format"),
         EditorMenu::View => i18n::tr!("ui-editor-view"),
+        EditorMenu::Script => i18n::tr!("script-menu"),
         EditorMenu::Settings => i18n::tr!("ui-editor-settings"),
         EditorMenu::Help => i18n::tr!("ui-editor-help"),
     }
@@ -1528,6 +1549,7 @@ pub(super) fn menu_bar_label(menu: EditorMenu) -> String {
         EditorMenu::File => "F",
         EditorMenu::Edit => "E",
         EditorMenu::View => "V",
+        EditorMenu::Script => "S",
         EditorMenu::Help => "H",
         _ => "",
     };
@@ -1536,6 +1558,8 @@ pub(super) fn menu_bar_label(menu: EditorMenu) -> String {
 
 pub(super) fn menu_action_label(action: EditorMenuAction) -> String {
     let label = match action {
+        EditorMenuAction::ScriptWorkspace => i18n::tr!("script-workspace"),
+        EditorMenuAction::ScriptSettings => i18n::tr!("script-settings"),
         EditorMenuAction::ToggleVim => i18n::tr!("ui-editor-vim-toggle"),
         EditorMenuAction::VimHelp => i18n::tr!("ui-editor-vim-help"),
         EditorMenuAction::SaveAs => i18n::tr!("ui-editor-save-as"),

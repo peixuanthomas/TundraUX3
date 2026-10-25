@@ -8,6 +8,8 @@ pub(crate) mod command_line;
 mod context;
 pub(crate) mod diagnostics;
 pub(crate) mod editor;
+mod script;
+pub use script::*;
 pub(crate) mod explorer;
 mod help;
 pub(crate) mod home;

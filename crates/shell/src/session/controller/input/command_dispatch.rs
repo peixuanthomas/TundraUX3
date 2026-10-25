@@ -914,6 +914,10 @@ impl ShellSession {
                 self.open_editor();
                 ShellAction::Redraw
             }
+            ShellCommand::ScriptReturn(id) => {
+                self.restore_script_page(id);
+                ShellAction::Redraw
+            }
             ShellCommand::CloseEditor => {
                 self.request_editor_close(platform);
                 ShellAction::Redraw

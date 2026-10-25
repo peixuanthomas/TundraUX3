@@ -6,10 +6,17 @@ use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRun
 fn until(host: &mut VimHost, predicate: impl Fn(&VimPoll) -> bool) -> VimPoll {
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut saves = Vec::new();
+    let mut line_changes =
+        std::collections::BTreeMap::<u32, Vec<vim_runtime::VimLineChange>>::new();
     loop {
         let mut poll = host.poll().expect("poll real Vim");
         saves.append(&mut poll.save_requests);
         poll.save_requests = saves.clone();
+        for buffer in &mut std::sync::Arc::make_mut(&mut poll.state).buffers {
+            let changes = line_changes.entry(buffer.number).or_default();
+            changes.extend(buffer.line_changes.iter().cloned());
+            buffer.line_changes = changes.clone();
+        }
         if predicate(&poll) {
             return poll;
         }
@@ -387,6 +394,79 @@ fn real_vim_preserves_encoded_bytes_write_policies_and_forced_discard() {
     host.send_bytes(b"iX\x1b").unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(buffer_text(&export(&mut host), 40), "immutable log\n");
+
+    let command = host
+        .open_buffer(BufferInput::new(60, "one\ntwo\nthree\n"))
+        .unwrap();
+    let imported = until(&mut host, |poll| poll.state.last_command >= command);
+    assert!(
+        imported
+            .state
+            .buffers
+            .iter()
+            .find(|buffer| buffer.host_id == Some(60))
+            .unwrap()
+            .line_changes
+            .is_empty()
+    );
+    host.send_bytes(b"ggOinserted\x1b").unwrap();
+    let inserted = until(&mut host, |poll| {
+        buffer_text(poll, 60) == "inserted\none\ntwo\nthree\n"
+    });
+    assert!(
+        inserted
+            .state
+            .buffers
+            .iter()
+            .find(|buffer| buffer.host_id == Some(60))
+            .unwrap()
+            .line_changes
+            .iter()
+            .any(|change| change.start_line == 1 && change.added == 1)
+    );
+    host.send_bytes(b"2G2dd").unwrap();
+    let deleted = until(&mut host, |poll| {
+        buffer_text(poll, 60) == "inserted\nthree\n"
+    });
+    assert_eq!(
+        deleted
+            .state
+            .buffers
+            .iter()
+            .find(|buffer| buffer.host_id == Some(60))
+            .unwrap()
+            .line_changes
+            .iter()
+            .map(|change| change.added)
+            .sum::<i64>(),
+        -2
+    );
+    host.send_bytes(b"u").unwrap();
+    let undone = until(&mut host, |poll| {
+        buffer_text(poll, 60) == "inserted\none\ntwo\nthree\n"
+    });
+    assert_eq!(
+        undone
+            .state
+            .buffers
+            .iter()
+            .find(|buffer| buffer.host_id == Some(60))
+            .unwrap()
+            .line_changes
+            .iter()
+            .map(|change| change.added)
+            .sum::<i64>(),
+        2
+    );
+    assert!(
+        host.poll()
+            .unwrap()
+            .state
+            .buffers
+            .iter()
+            .all(|buffer| buffer.line_changes.is_empty()),
+        "later polls must not replay already delivered edits"
+    );
 
     let mut dirty = BufferInput::new(50, "unsaved protected draft\n");
     dirty.modified = true;

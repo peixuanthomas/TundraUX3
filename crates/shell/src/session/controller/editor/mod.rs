@@ -511,6 +511,10 @@ pub(in crate::session) fn editor_rich_spans_in(
 
 impl ShellSession {
     pub(in crate::session) fn request_editor_close(&mut self, _platform: &dyn Platform) {
+        if self.pages.editor.script.source_view.take().is_some() {
+            self.pages.editor.script.focus = ui::ScriptPane::Source;
+            return;
+        }
         if self.current_vim_install().is_some() {
             self.cancel_vim_install();
             return;
@@ -696,7 +700,7 @@ impl ShellSession {
             ui::ShellLayout::Full { main, .. } => main,
         };
         let model = self.to_editor_view_model();
-        let layout = ui::editor_layout(editor_area, &model);
+        let layout = ui::editor_layout(self.editor_content_area(editor_area), &model);
         let (cursor_line, cursor_column) = model
             .wrap_layout
             .as_ref()
@@ -775,7 +779,22 @@ impl ShellSession {
             app::editor::EditorEffect::SaveFilePicker {
                 suggested_name,
                 snapshot,
-            } => self.open_editor_save_picker(platform, suggested_name, snapshot),
+            } => {
+                let suggested_name = if self.pages.editor.script.enabled
+                    && self
+                        .app
+                        .editor_state()
+                        .is_some_and(|editor| editor.document.path.is_none())
+                {
+                    PathBuf::from(suggested_name)
+                        .with_extension("sh")
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    suggested_name
+                };
+                self.open_editor_save_picker(platform, suggested_name, snapshot);
+            }
             app::editor::EditorEffect::ConfirmClose => self.confirm_editor_close(),
             app::editor::EditorEffect::Close => self.finish_editor_close(false),
         }

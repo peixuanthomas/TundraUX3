@@ -67,8 +67,11 @@ impl ShellSession {
             }
             _ => EditorLoadNavigation::Editor,
         };
+        let script_workspace =
+            navigation == EditorLoadNavigation::EditorPicker && self.pages.editor.script.enabled;
         let rollback =
             self.begin_editor_navigation(navigation == EditorLoadNavigation::EditorPicker);
+        self.pages.editor.script.enabled = script_workspace;
         let operation = EditorLoadOperation::Open {
             navigation,
             rollback,
@@ -139,7 +142,7 @@ impl ShellSession {
             ui::ShellLayout::Compact(compact) => compact,
             ui::ShellLayout::Full { main, .. } => main,
         };
-        let layout = ui::editor_layout(editor_area, &model);
+        let layout = ui::editor_layout(self.editor_content_area(editor_area), &model);
         let visible_capacity = layout.visible_capacity.max(1);
         let old_maximum = layout.document_line_count.saturating_sub(visible_capacity);
         let was_at_bottom = layout.visible_start >= old_maximum;
@@ -487,6 +490,18 @@ impl ShellSession {
         match result {
             Ok(fingerprint) => {
                 self.refresh_explorers_containing(&path, platform);
+                if let Some(previous) = self
+                    .app
+                    .editor_state()
+                    .and_then(|editor| editor.document.path.clone())
+                {
+                    for breakpoint in &mut self.pages.editor.script.state.breakpoints {
+                        if breakpoint.path == previous {
+                            breakpoint.path = path.clone();
+                            breakpoint.verified = false;
+                        }
+                    }
+                }
                 self.app.dispatch_at(
                     app::AppCommand::Editor(app::editor::EditorCommand::MarkSaved {
                         path: Some(path.clone()),
@@ -602,6 +617,9 @@ impl ShellSession {
                     });
                 self.app
                     .dispatch_at(app::AppCommand::SetEditorState(Some(state)), Instant::now());
+                if self.pages.editor.script.enabled {
+                    self.app.set_editor_source_change_tracking(true);
+                }
                 self.pages.editor.editor_cursor_acceleration = None;
                 self.pages.editor.editor_settings_dialog = None;
                 self.pages.editor.editor_fingerprint = Some(fingerprint);

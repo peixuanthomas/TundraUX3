@@ -156,9 +156,11 @@ impl ShellSession {
         let ui = UiSessionState {
             pages: ShellPages::default(),
             command_line_close_request: None,
+            script_requests: VecDeque::new(),
             editor_vim_terminal: None,
             editor_vim_install: None,
             editor_vim_toggle_requested: false,
+            editor_vim_script_export: None,
             editor_vim_close_requested: false,
             language,
             language_catalog,

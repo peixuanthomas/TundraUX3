@@ -7,11 +7,22 @@ impl ShellSession {
             self.notify_toast(i18n::msg!("config-editor-finish-document"));
             return;
         }
+        let script_workspace =
+            self.active_screen() == ShellScreen::Editor && self.pages.editor.script.enabled;
         self.enter_new_page(ShellScreen::Editor);
         self.app.dispatch_at(
             app::AppCommand::SetEditorState(Some(EditorState::new())),
             Instant::now(),
         );
+        if script_workspace {
+            self.app.dispatch_at(
+                app::AppCommand::Editor(app::editor::EditorCommand::InsertText(
+                    app::script::NEW_SCRIPT.into(),
+                )),
+                Instant::now(),
+            );
+            self.enable_script_workspace();
+        }
         self.pages.common.focused_component = ShellComponent::Editor;
         self.refresh_hit_map();
     }
@@ -25,6 +36,15 @@ impl ShellSession {
         self.pages.editor.editor_open_menu = None;
         self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
         let command = match action {
+            Action::ScriptWorkspace => {
+                self.enable_script_workspace();
+                return;
+            }
+            Action::ScriptSettings => {
+                self.enable_script_workspace();
+                self.activate_script_action(ui::ScriptAction::Settings, platform);
+                return;
+            }
             Action::ToggleVim => {
                 self.toggle_editor_vim();
                 return;
@@ -113,6 +133,9 @@ impl ShellSession {
                 InputKey::Char('f' | 'F') => Some(ui::EditorMenu::File),
                 InputKey::Char('e' | 'E') => Some(ui::EditorMenu::Edit),
                 InputKey::Char('v' | 'V') => Some(ui::EditorMenu::View),
+                InputKey::Char('s' | 'S') if self.script_available() => {
+                    Some(ui::EditorMenu::Script)
+                }
                 InputKey::Char('h' | 'H') => Some(ui::EditorMenu::Help),
                 _ => None,
             }
@@ -159,12 +182,15 @@ impl ShellSession {
         if self.pages.editor.editor_focus != ui::EditorFocus::MenuBar {
             return false;
         }
-        let menus = [
+        let mut menus = vec![
             ui::EditorMenu::File,
             ui::EditorMenu::Edit,
             ui::EditorMenu::View,
             ui::EditorMenu::Help,
         ];
+        if self.script_available() {
+            menus.insert(3, ui::EditorMenu::Script);
+        }
         let index = menus
             .iter()
             .position(|m| *m == self.pages.editor.editor_selected_menu)
@@ -358,6 +384,10 @@ impl ShellSession {
         action: &str,
         fields: Vec<ManagementField>,
     ) {
+        if action == "edit-script-settings" {
+            self.submit_script_settings(&fields);
+            return;
+        }
         let value = fields
             .iter()
             .find(|f| f.id == "value")
