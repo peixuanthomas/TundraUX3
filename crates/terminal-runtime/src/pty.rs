@@ -110,6 +110,45 @@ impl CommandLineExitStatus {
     }
 }
 
+/// Retained terminal contents after the process, PTY and output reader close.
+pub struct TerminalOutput {
+    parser: Arc<Mutex<vt100::Parser>>,
+}
+
+impl std::fmt::Debug for TerminalOutput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TerminalOutput")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TerminalOutput {
+    pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
+        let mut parser = lock_io(&self.parser)?;
+        let size = (rows.max(1), columns.max(1));
+        if parser.screen().size() != size {
+            parser.set_size(size.0, size.1);
+        }
+        Ok(())
+    }
+
+    pub fn set_scrollback(&self, rows: usize) -> io::Result<bool> {
+        let mut parser = lock_io(&self.parser)?;
+        let previous = parser.screen().scrollback();
+        parser.set_scrollback(rows);
+        Ok(parser.screen().scrollback() != previous)
+    }
+
+    pub fn snapshot(&self) -> TerminalSnapshot {
+        let mut parser = self
+            .parser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        TerminalSnapshot::from_parser(&mut parser)
+    }
+}
+
 /// Running terminal process with a reader thread that owns the clone of the
 /// PTY read handle.  The process must be killed before the reader is joined;
 /// `Drop` enforces that order.
@@ -346,6 +385,9 @@ impl CommandLinePty {
         let master = master.as_ref().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "command line PTY is closed")
         })?;
+        if lock_io(&self.parser)?.screen().size() == (size.rows, size.cols) {
+            return Ok(());
+        }
         master.resize(size).map_err(portable_error)?;
         let mut parser = lock_io(&self.parser)?;
         parser.set_size(size.rows, size.cols);
@@ -435,26 +477,43 @@ impl CommandLinePty {
         self.snapshot()
     }
 
+    /// Cleans up the process tree and drains output before retaining its parser.
+    pub fn into_output(mut self) -> io::Result<TerminalOutput> {
+        self.force_terminate()?;
+        self.close_pty_handles();
+        if !self.join_reader_bounded(Duration::from_millis(500)) {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "terminal output reader did not stop after closing its PTY",
+            ));
+        }
+        Ok(TerminalOutput {
+            parser: Arc::clone(&self.parser),
+        })
+    }
+
     fn close_pty_handles(&mut self) {
         self.writer.take();
         self.master.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 
-    fn join_reader_bounded(&mut self, timeout: Duration) {
+    fn join_reader_bounded(&mut self, timeout: Duration) -> bool {
         if self.reader_task.is_none() {
-            return;
+            return true;
         }
         match self.reader_done.recv_timeout(timeout) {
             Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if let Some(reader_task) = self.reader_task.take() {
                     let _ = reader_task.join();
                 }
+                true
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // Keep the worker in watchdog's registry. A broken PTY must
                 // not freeze the UI; watchdog reports a shutdown failure if
                 // closing our process tree does not unblock the reader.
                 self.reader_task.take();
+                false
             }
         }
     }

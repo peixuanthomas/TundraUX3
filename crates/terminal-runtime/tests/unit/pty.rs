@@ -442,6 +442,85 @@ fn watchdog_shutdown_stops_terminal_even_if_the_view_still_owns_it() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn retained_output_scrolls_and_resizes_after_the_process_and_watchdog_close() {
+    use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
+
+    let root = std::env::temp_dir().join(format!(
+        "tundra-pty-retained-output-{}-{}",
+        std::process::id(),
+        NEXT_PTY_READER_TASK_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let (runtime, process) = WatchdogRuntime::start_isolated(WatchdogConfig::new(
+        root.join("reports"),
+        root.join("fallback"),
+        root.join("data"),
+        "pty-retained-output-test",
+        env!("CARGO_PKG_VERSION"),
+    ))
+    .unwrap();
+    let app = process
+        .register_app(AppDescriptor::new(
+            AppId::from_static("terminal.retained-output-test"),
+            "Terminal retained output test",
+            env!("CARGO_PKG_VERSION"),
+            AppCriticality::Optional,
+        ))
+        .unwrap();
+    let tasks = app.task_group("terminal");
+    let pty = CommandLinePty::spawn(
+        CommandLinePtyConfig {
+            program: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "i=0; while [ \"$i\" -lt 40 ]; do printf 'line-%02d\\n' \"$i\"; i=$((i+1)); done"
+                    .into(),
+            ],
+            env: Vec::new(),
+            cwd: None,
+            columns: 20,
+            rows: 4,
+            scrollback_lines: 100,
+        },
+        &tasks,
+    )
+    .unwrap();
+    let pid = pty.process_id().unwrap().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while pty.try_wait().unwrap().is_none() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = pty.into_output().unwrap();
+    assert!(!Path::new(&format!("/proc/{pid}")).exists());
+    drop(tasks);
+    drop(app);
+    runtime.shutdown().unwrap();
+    assert!(process.drain_incidents().is_empty());
+    drop(process);
+
+    let snapshot_text = |snapshot: TerminalSnapshot| {
+        snapshot
+            .cells
+            .iter()
+            .flatten()
+            .map(|cell| cell.text.as_str())
+            .collect::<String>()
+    };
+    assert!(snapshot_text(output.snapshot()).contains("line-39"));
+    assert!(output.set_scrollback(usize::MAX).unwrap());
+    assert!(snapshot_text(output.snapshot()).contains("line-00"));
+    output.resize(32, 6).unwrap();
+    output.set_scrollback(usize::MAX).unwrap();
+    let resized = output.snapshot();
+    assert_eq!((resized.columns, resized.rows), (32, 6));
+    assert!(snapshot_text(resized).contains("line-00"));
+    output.set_scrollback(0).unwrap();
+    assert!(snapshot_text(output.snapshot()).contains("line-39"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(any(windows, target_os = "linux"))]
 fn assert_snapshot_contains(
     pty: &CommandLinePty,
@@ -610,6 +689,10 @@ fn child_selected_mouse_mode_receives_content_relative_drag_and_release() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+    assert_snapshot_contains(&pty, "READY", Duration::from_secs(5), "mouse setup");
+    let (_, revision) = pty.snapshot_with_revision();
+    pty.resize(100, 10).unwrap();
+    assert!(pty.snapshot_if_changed(revision).is_none());
     let area = ratatui::layout::Rect::new(10, 5, 100, 10);
     assert!(
         !pty.send_mouse(&ui::MouseEvent::down(9, 8, ui::MouseButton::Left), area)
