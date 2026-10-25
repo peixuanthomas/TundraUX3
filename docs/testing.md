@@ -15,6 +15,8 @@ cargo build --locked -p shell -p cli -p weathr
 
 固定测试不发起 HTTP 请求，也不启动本地 HTTP 模拟服务器，避免代理、连接失败或阻塞等待使测试卡住。更新和 Vim 安装保留离线校验、解压安全、取消前置检查与回退验证；网络管理保留配置解析和模拟后端测试，不创建真实监听端口。
 
+软件包多选覆盖 Shift 鼠标事件、Shift+Enter、按键重复、取消全部、排序与刷新、混合选择的操作限制和 AA 完整包名。Linux 后端检查 APT/DNF/pacman 的多包命令；WinGet 检查逐包准确编号与版本；Homebrew 的分组与执行前检查需在 macOS 运行。构建 Shell 和 CLI 后，用 `python3 scripts/tests/shell-control.py target/debug/tundra-shell` 在真实 Linux PTY 中发送带 Shift 的 SGR 鼠标报告和 `CSI 13;2u`，读取实际已选项并检查 F1 帮助；不安装或卸载软件包。
+
 依赖下载完成后，可用 `cargo test --workspace --locked --offline` 避免 Cargo 访问网络。资源紧张或排查并发时可加 `-- --test-threads=1`；串行仍执行全部用例，交付时应注明运行方式及默认并发结果。
 
 最低支持版本为 Rust 1.95；修改工具链或依赖后，还需验证最低版本：

@@ -111,6 +111,33 @@ def main():
                 time.sleep(0.1)
             current = until(lambda current: current["page"] == "Home")
             print("PASS: external CLI completed first-use setup")
+            key("a")
+            current = until(lambda current: current["page"] == "Launcher")
+            packages = node_by(current, lambda node: node["role"] == "button" and "Packages" in node["name"])
+            click(packages["id"], double=True)
+
+            def package_rows(current):
+                return [node for node in current["nodes"] if node["role"] == "listitem" and node["id"].startswith("page/")]
+
+            current = until(lambda current: current["page"] == "Management" and len(package_rows(current)) >= 3)
+            rows = package_rows(current)
+            first_id = next(row["id"] for row in rows if row["selected"])
+            second = rows[1]["rect"]
+            x, y = second["x"] + 1, second["y"] + 1
+            os.write(master, f"\x1b[<4;{x};{y}M\x1b[<4;{x};{y}m".encode())
+            current = until(lambda current: sum(row["selected"] for row in package_rows(current)) == 2)
+            os.write(master, b"\x1b[13;2u")
+            current = until(lambda current: [row["id"] for row in package_rows(current) if row["selected"]] == [first_id])
+            os.write(master, b"\x1b[B\x1b[13;2u")
+            current = until(lambda current: sum(row["selected"] for row in package_rows(current)) == 2)
+            key("F1")
+            until(lambda current: "Shift+Enter" in "\n".join(current["lines"]))
+            key("Escape")
+            key("Escape")
+            until(lambda current: current["page"] == "Launcher")
+            key("Escape")
+            current = until(lambda current: current["page"] == "Home")
+            print("PASS: real Shift+click and Shift+Enter toggled package selection; F1 showed the controls")
             assert current["width"] == 140 and current["height"] == 40
             assert len(current["lines"]) == 40
             ids = [node["id"] for node in current["nodes"]]

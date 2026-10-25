@@ -16,13 +16,14 @@ pub enum PageHelpScreen {
     Settings,
     Logs,
     Management,
+    Packages,
     Diagnostics,
     SystemStatus,
     Clock,
 }
 
 impl PageHelpScreen {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Home,
         Self::Setup,
         Self::Login,
@@ -35,6 +36,7 @@ impl PageHelpScreen {
         Self::Settings,
         Self::Logs,
         Self::Management,
+        Self::Packages,
         Self::Diagnostics,
         Self::SystemStatus,
         Self::Clock,
@@ -178,6 +180,23 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 advanced(vec![
                     row("Tab", i18n::tr!("ui-help-users-focus")),
                     row("Enter", i18n::tr!("ui-help-users-activate")),
+                ]),
+            ],
+        ),
+        PageHelpScreen::Packages => (
+            i18n::tr!("ui-help-packages-title"),
+            vec![
+                actions(vec![
+                    row("Shift+Enter", i18n::tr!("ui-help-packages-toggle")),
+                    row("Shift+Click", i18n::tr!("ui-help-packages-toggle")),
+                    row("I / X / U", i18n::tr!("ui-help-packages-apply")),
+                    row("Enter / F4", i18n::tr!("ui-help-management-details")),
+                ]),
+                advanced(vec![
+                    row("↑↓", i18n::tr!("ui-help-packages-move")),
+                    row("Tab / Shift+Tab", i18n::tr!("ui-help-packages-pages")),
+                    row("F5", i18n::tr!("ui-help-explorer-refresh")),
+                    row("/", i18n::tr!("ui-help-explorer-search")),
                 ]),
             ],
         ),

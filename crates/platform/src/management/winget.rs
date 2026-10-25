@@ -580,51 +580,59 @@ pub fn execute(
 ) -> Result<String, ManagementError> {
     check_cancelled(cancelled)?;
     let program = executable()?;
-    let args = build_command(&program, command)?;
-    if let Some(target) = command.target.as_deref() {
-        let scope = match command.action.as_str() {
-            "install" => "search",
-            "upgrade" => "updates",
-            _ => "installed",
-        };
-        let current = records(&program, scope, "", Some(target), cancelled)?;
-        if current.len() != 1 {
-            return Err(stale());
-        }
-        validate_identity(command, &current[0])?;
-        if command.action == "install"
-            && !records(&program, "installed", "", Some(target), cancelled)?.is_empty()
-        {
-            return Err(stale());
-        }
-    } else if command.action == "upgrade_all" {
-        let current = records(&program, "updates", "", None, cancelled)?;
-        if current.iter().any(|record| {
-            validate_id(&record.id).is_err()
-                || !complete_version(&record.installed)
-                || !complete_version(&record.available)
-        }) || command.values.get("winget_plan") != Some(&update_plan(&current))
-        {
-            return Err(stale());
+    let commands = super::package_selection::expand(command)?;
+    let specs = commands
+        .iter()
+        .map(|command| build_command(&program, command))
+        .collect::<Result<Vec<_>, _>>()?;
+    for command in &commands {
+        if let Some(target) = command.target.as_deref() {
+            let scope = match command.action.as_str() {
+                "install" => "search",
+                "upgrade" => "updates",
+                _ => "installed",
+            };
+            let current = records(&program, scope, "", Some(target), cancelled)?;
+            if current.len() != 1 {
+                return Err(stale());
+            }
+            validate_identity(command, &current[0])?;
+            if command.action == "install"
+                && !records(&program, "installed", "", Some(target), cancelled)?.is_empty()
+            {
+                return Err(stale());
+            }
+        } else if command.action == "upgrade_all" {
+            let current = records(&program, "updates", "", None, cancelled)?;
+            if current.iter().any(|record| {
+                validate_id(&record.id).is_err()
+                    || !complete_version(&record.installed)
+                    || !complete_version(&record.available)
+            }) || command.values.get("winget_plan") != Some(&update_plan(&current))
+            {
+                return Err(stale());
+            }
         }
     }
-    check_cancelled(cancelled)?;
-    interaction.terminal_input(std::time::Duration::ZERO)?;
-    interaction.emit(OperationEvent::Output {
-        text: i18n::tr!("management-winget-running"),
-    });
-    // An AA cancellation must not interrupt an installer that is already modifying packages.
-    let output = crate::native_platform()
-        .spawn_streaming(&args, &mut |output| {
-            interaction.emit(OperationEvent::Output { text: output.text });
-        })
-        .map_err(|error| {
-            ManagementError::Failed(format!(
-                "{}\n{error}",
-                i18n::tr!("management-winget-failed")
-            ))
-        })?;
-    verified_output(&output, "write")?;
+    for args in specs {
+        check_cancelled(cancelled)?;
+        interaction.terminal_input(std::time::Duration::ZERO)?;
+        interaction.emit(OperationEvent::Output {
+            text: i18n::tr!("management-winget-running"),
+        });
+        // An AA cancellation must not interrupt an installer that is already modifying packages.
+        let output = crate::native_platform()
+            .spawn_streaming(&args, &mut |output| {
+                interaction.emit(OperationEvent::Output { text: output.text });
+            })
+            .map_err(|error| {
+                ManagementError::Failed(format!(
+                    "{}\n{error}",
+                    i18n::tr!("management-winget-failed")
+                ))
+            })?;
+        verified_output(&output, "write")?;
+    }
     Ok(i18n::tr!("management-winget-completed"))
 }
 

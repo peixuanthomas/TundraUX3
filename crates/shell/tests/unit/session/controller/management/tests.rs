@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "package_selection.rs"]
+mod package_selection;
 #[path = "package_workspace.rs"]
 mod package_workspace;
 

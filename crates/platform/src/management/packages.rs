@@ -207,6 +207,18 @@ fn build_command(
     command: &ManagementCommand,
     backend: PackageBackend,
 ) -> Result<PackageCommand, ManagementError> {
+    if command.values.contains_key(super::package_selection::KEY) {
+        let commands = super::package_selection::expand(command)?;
+        let mut specs = commands
+            .iter()
+            .map(|command| build_command(command, backend));
+        let mut spec = specs.next().expect("nonempty package selection")?;
+        for next in specs {
+            spec.args
+                .push(next?.args.pop().expect("validated package target"));
+        }
+        return Ok(spec);
+    }
     let (non_interactive, policy) = script_options(command, backend)?;
     if backend == PackageBackend::Pacman {
         return build_pacman_command(command);
@@ -490,22 +502,26 @@ pub fn execute(
             "Package changes must be run by the authorized system helper".into(),
         ));
     }
-    if let Some(expected) = command.identity.get("backend") {
-        if expected != backend.id() {
+    let spec = build_command(command, backend)?;
+    for command in super::package_selection::expand(command)? {
+        if command
+            .identity
+            .get("backend")
+            .is_some_and(|expected| expected != backend.id())
+        {
             return Err(ManagementError::Conflict(
                 "The package backend changed; refresh the list before continuing".into(),
             ));
         }
-    }
-    let spec = build_command(command, backend)?;
-    if let Some(target) = command.target.as_deref() {
-        query::validate_identity(
-            target,
-            backend,
-            &command.action,
-            &command.identity,
-            cancelled,
-        )?;
+        if let Some(target) = command.target.as_deref() {
+            query::validate_identity(
+                target,
+                backend,
+                &command.action,
+                &command.identity,
+                cancelled,
+            )?;
+        }
     }
     let _ = context;
     let busy = status::busy_status(backend)?;
@@ -520,6 +536,10 @@ pub fn execute(
     }
     runner::execute(spec, backend, interaction, cancelled)
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/management/package_batch_tests.rs"]
+mod batch_tests;
 
 #[cfg(test)]
 mod tests {

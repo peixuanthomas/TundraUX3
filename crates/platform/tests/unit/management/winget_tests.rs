@@ -1,4 +1,48 @@
 use super::*;
+
+#[test]
+fn batch_specs_keep_each_exact_id_and_version() {
+    use crate::management::package_selection::{self, PackageTarget};
+    let first = package();
+    let second = Record {
+        id: "Vendor.Tool".into(),
+        installed: "3.0".into(),
+        available: "3.1".into(),
+        ..package()
+    };
+    for action in ["install", "remove", "upgrade"] {
+        let targets = [&first, &second].map(|record| PackageTarget {
+            id: record.id.clone(),
+            identity: row(record.clone(), "updates").identity,
+        });
+        let mut request = command(action, &first);
+        request.target = None;
+        request.identity.clear();
+        request.values.insert(
+            package_selection::KEY.into(),
+            serde_json::to_string(&targets).unwrap(),
+        );
+        let commands = package_selection::expand(&request).unwrap();
+        for (command, record) in commands.iter().zip([&first, &second]) {
+            let spec = build_command(Path::new("winget.exe"), command).unwrap();
+            let args = spec
+                .args_slice()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            assert!(
+                args.windows(3)
+                    .any(|args| args == ["--id", &record.id, "--exact"])
+            );
+            if action != "remove" {
+                assert!(
+                    args.windows(2)
+                        .any(|args| args == ["--version", &record.available])
+                );
+            }
+        }
+    }
+}
 use crate::ProcessStream;
 
 fn table(headers: &[&str], widths: &[usize], rows: &[Vec<&str>]) -> String {

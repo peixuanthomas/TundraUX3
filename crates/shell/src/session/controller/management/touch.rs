@@ -335,6 +335,7 @@ impl ShellSession {
                 query.filter = filter;
                 query.target = None;
                 self.pages.management.management_state.list_scroll_explicit = false;
+                self.pages.management.management_state.package_selection = None;
             }
         }
     }
@@ -821,18 +822,25 @@ impl ShellSession {
         {
             self.activate_management_action(layout.action_start + index);
         } else if layout.list_rows.contains(position) {
-            self.pages.management.management_state.selected =
-                (self.pages.management.management_state.scroll
-                    + usize::from(point.1 - layout.list_rows.y))
-                .min(
-                    self.pages
-                        .management
-                        .management_state
-                        .snapshot
-                        .rows
-                        .len()
-                        .saturating_sub(1),
-                );
+            let index = (self.pages.management.management_state.scroll
+                + usize::from(point.1 - layout.list_rows.y))
+            .min(
+                self.pages
+                    .management
+                    .management_state
+                    .snapshot
+                    .rows
+                    .len()
+                    .saturating_sub(1),
+            );
+            if self.package_multiselect_available() {
+                if mouse.modifiers.has_non_shift_modifier() {
+                    return;
+                }
+                self.select_package_row(index, mouse.modifiers.shift);
+            } else {
+                self.pages.management.management_state.selected = index;
+            }
             self.pages.management.management_state.actions_focused = false;
             self.pages.management.management_state.details_scroll = 0;
             self.pages

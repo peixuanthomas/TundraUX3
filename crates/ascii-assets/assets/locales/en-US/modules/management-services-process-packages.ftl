@@ -92,3 +92,5 @@ management-package-signature = Package verification failed. Check the signing ke
 management-package-dependencies = Dependencies could not be resolved. Check the database and repair options.
 management-package-space = There is not enough disk space. Check space and file-count limits.
 management-package-partial = The package operation failed. Check the database and task output.
+management-package-selection-invalid = Invalid package selection. Select the packages again.
+management-package-selection-unavailable = This action is not available for every selected package. Adjust the selection.

@@ -3,6 +3,7 @@ mod input;
 mod packages;
 use crate::session::*;
 use platform::management::*;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone)]
@@ -114,6 +115,7 @@ pub(in crate::session) struct ManagementState {
     snapshot_query: Option<ManagementQuery>,
     last_language_attempt: Option<(String, u64)>,
     selected: usize,
+    package_selection: Option<std::collections::BTreeSet<String>>,
     scroll: usize,
     list_scroll_explicit: bool,
     table_scroll: usize,
@@ -224,6 +226,9 @@ impl ManagementState {
         }
         self.snapshot_language = Some(language.clone());
         self.snapshot_query = query.cloned();
+        if let Some(selection) = &mut self.package_selection {
+            selection.retain(|id| snapshot.rows.iter().any(|row| row.id == *id));
+        }
     }
 }
 
@@ -490,6 +495,13 @@ fn merge_package_details(
 }
 
 impl ShellSession {
+    pub(in crate::session) fn management_help_screen(&self) -> ui::PageHelpScreen {
+        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
+            ui::PageHelpScreen::Packages
+        } else {
+            ui::PageHelpScreen::Management
+        }
+    }
     fn management_alert_key(&self) -> String {
         format!(
             "management.page.{}",
@@ -1015,7 +1027,11 @@ impl ShellSession {
         for event in events {
             if cfg!(windows)
                 && self.pages.management.management_state.kind == Some(ManagementKind::Packages)
-                && !self.pages.management.management_state.configuration_operation
+                && !self
+                    .pages
+                    .management
+                    .management_state
+                    .configuration_operation
                 && matches!(&event, OperationEvent::Completed { .. })
             {
                 self.pages.management.management_state.refresh_requested = true;
@@ -1533,12 +1549,18 @@ impl ShellSession {
             action_ids: actions
                 .iter()
                 .map(|(action, row)| {
-                    format!(
+                    let mut id = format!(
                         "management.action.{:?}.{}.{:?}",
                         s.kind,
                         action.id,
                         row.as_ref().map(|row| (&row.id, &row.identity))
-                    )
+                    );
+                    if let Some(selection) = action.values.get(platform::management::package_selection::KEY) {
+                        let mut hash = std::hash::DefaultHasher::new();
+                        selection.hash(&mut hash);
+                        id.push_str(&format!(".selection.{:x}", hash.finish()));
+                    }
+                    id
                 })
                 .collect(),
             title: s.kind.map(|kind| {
@@ -1561,6 +1583,7 @@ impl ShellSession {
             rows: s.snapshot.rows.iter().map(|r| r.cells.iter().enumerate().map(|(i,v)| {
                 if s.kind == Some(ManagementKind::Users) && s.snapshot.columns.get(i).is_some_and(|c| c == "Source") {management_detail_value(s.kind,"Source",v)} else if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()}
             }).collect()).collect(),
+            selected_rows: s.package_selection.as_ref().map(|selection| s.snapshot.rows.iter().enumerate().filter_map(|(index, row)| selection.contains(&row.id).then_some(index)).collect()),
             selected: s.selected,
             scroll: s.scroll,
             table_scroll: s.table_scroll,

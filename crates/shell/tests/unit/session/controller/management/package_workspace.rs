@@ -48,18 +48,18 @@ fn package_actions_require_aa_approval_without_system_privileges() {
         ))
         .unwrap();
     let watchdog = process.register_app(shell_watchdog_descriptor()).unwrap();
-    let mut session = state();
+    let mut session = package_list_state();
     session.settings_task_runtime = ShellSettingsTaskRuntime::new_managed(watchdog);
     session.pages.management.management_state.kind = Some(ManagementKind::Packages);
-    session.perform_management_action(
-        ManagementAction {
-            id: "invalid-test-action".into(),
-            requires_approval: true,
-            privileged: false,
-            ..Default::default()
-        },
-        None,
-    );
+    session.select_package_row(2, true);
+    let (mut action, row) = session
+        .management_actions()
+        .into_iter()
+        .find(|(action, _)| action.id == "remove")
+        .unwrap();
+    action.requires_approval = true;
+    action.privileged = false;
+    session.perform_management_action(action, row);
     let job = session
         .pages
         .management
@@ -68,6 +68,10 @@ fn package_actions_require_aa_approval_without_system_privileges() {
         .clone()
         .unwrap();
     assert_eq!(job.phase(), ::auto_admin::JobPhase::Waiting);
+    let description = job.view_model(true, None, 0).description;
+    assert!(description.contains("bash:amd64"));
+    assert!(description.contains("omega:amd64"));
+    assert!(!description.contains("alpha:amd64"));
     job.decide(false);
     runtime.shutdown().unwrap();
     std::fs::remove_dir_all(root).unwrap();

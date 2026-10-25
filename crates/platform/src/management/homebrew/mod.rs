@@ -286,32 +286,55 @@ fn execute_with_program(
     interaction: &mut dyn OperationInteraction,
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
-    let args = command_args(command)?;
-    if let Some(target) = command.target.as_deref() {
-        let current = info(program, Some(parse_target(target)?), cancelled)?
-            .into_iter()
-            .find(|package| package.id() == target)
-            .ok_or_else(|| ManagementError::Conflict(i18n::tr!("management-brew-changed")))?;
-        let identity = current.identity();
-        if command
+    let commands = super::package_selection::expand(command)?;
+    let groups = command_groups(&commands)?;
+    for command in &commands {
+        if let Some(target) = command.target.as_deref() {
+            let current = info(program, Some(parse_target(target)?), cancelled)?
+                .into_iter()
+                .find(|package| package.id() == target)
+                .ok_or_else(|| ManagementError::Conflict(i18n::tr!("management-brew-changed")))?;
+            let identity = current.identity();
+            if command
+                .identity
+                .iter()
+                .any(|(key, expected)| identity.get(key) != Some(expected))
+            {
+                return Err(ManagementError::Conflict(i18n::tr!(
+                    "management-brew-changed"
+                )));
+            }
+        } else if command
             .identity
-            .iter()
-            .any(|(key, expected)| identity.get(key) != Some(expected))
+            .get("backend")
+            .is_some_and(|backend| backend != "brew")
         {
             return Err(ManagementError::Conflict(i18n::tr!(
                 "management-brew-changed"
             )));
         }
-    } else if command
-        .identity
-        .get("backend")
-        .is_some_and(|backend| backend != "brew")
-    {
-        return Err(ManagementError::Conflict(i18n::tr!(
-            "management-brew-changed"
-        )));
     }
-    process::execute(program, &args, interaction, cancelled)
+    let mut message = String::new();
+    for args in groups {
+        check_cancelled(cancelled)?;
+        message = process::execute(program, &args, interaction, cancelled)?;
+    }
+    Ok(message)
+}
+
+fn command_groups(commands: &[ManagementCommand]) -> Result<Vec<Vec<String>>, ManagementError> {
+    let mut groups: Vec<Vec<String>> = Vec::new();
+    for command in commands {
+        let args = command_args(command)?;
+        if command.target.is_some()
+            && let Some(group) = groups.iter_mut().find(|group| group[..2] == args[..2])
+        {
+            group.push(args.last().expect("package target").clone());
+        } else {
+            groups.push(args);
+        }
+    }
+    Ok(groups)
 }
 
 #[cfg(test)]

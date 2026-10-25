@@ -57,6 +57,11 @@ ui-help-management-action = Run primary action
 ui-help-management-focus = Switch area
 ui-help-management-details = Show details
 ui-help-management-pages = Switch page
+ui-help-packages-title = Package manager
+ui-help-packages-toggle = Select or deselect this item, keeping other selections
+ui-help-packages-apply = Install, remove or upgrade all selected packages when every item supports the action
+ui-help-packages-move = Move the current row, keeping multiple selections; a plain click selects one item
+ui-help-packages-pages = Switch Installed, Updates and Search, clearing multiple selections
 
 ui-help-system-status-title = System Status
 ui-help-system-status-edit = Edit dashboard

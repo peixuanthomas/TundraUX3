@@ -45,7 +45,7 @@ impl ShellSession {
             ShellScreen::Editor => ui::PageHelpScreen::Editor,
             ShellScreen::Settings => ui::PageHelpScreen::Settings,
             ShellScreen::Logs => ui::PageHelpScreen::Logs,
-            ShellScreen::Management => ui::PageHelpScreen::Management,
+            ShellScreen::Management => self.management_help_screen(),
             ShellScreen::Diagnostics => ui::PageHelpScreen::Diagnostics,
             ShellScreen::SystemStatus => ui::PageHelpScreen::SystemStatus,
             ShellScreen::Clock => ui::PageHelpScreen::Clock,

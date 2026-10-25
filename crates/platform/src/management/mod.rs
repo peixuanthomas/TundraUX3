@@ -370,6 +370,7 @@ pub mod helper;
 mod listening_ports;
 #[cfg(target_os = "linux")]
 pub mod network;
+pub mod package_selection;
 #[cfg(target_os = "linux")]
 pub mod packages;
 #[cfg(target_os = "macos")]

@@ -57,6 +57,11 @@ ui-help-management-action = 执行主操作
 ui-help-management-focus = 切换区域
 ui-help-management-details = 查看详情
 ui-help-management-pages = 切换页面
+ui-help-packages-title = 软件包管理器
+ui-help-packages-toggle = 选中或取消当前一项，保留其他已选项
+ui-help-packages-apply = 安装、卸载或更新全部已选包；仅全部已选包都支持时可用
+ui-help-packages-move = 移动当前位置，保留多选；普通点击恢复单选
+ui-help-packages-pages = 切换已安装、更新、搜索，清除多选
 
 ui-help-system-status-title = 系统状态
 ui-help-system-status-edit = 编辑仪表板

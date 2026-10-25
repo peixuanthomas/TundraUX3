@@ -73,6 +73,7 @@ pub struct ManagementViewModel {
     pub rows: Vec<Vec<String>>,
     pub empty_message: String,
     pub selected: usize,
+    pub selected_rows: Option<Vec<usize>>,
     pub scroll: usize,
     pub table_scroll: usize,
     pub details: String,
@@ -1639,7 +1640,10 @@ pub fn render_management_content(
                     "",
                     row_area,
                     crate::components::ComponentState {
-                        selected: index == model.selected,
+                        selected: model
+                            .selected_rows
+                            .as_ref()
+                            .map_or(index == model.selected, |rows| rows.contains(&index)),
                         focused: index == model.selected
                             && !model.filtering
                             && !model.actions_focused,
@@ -1668,14 +1672,24 @@ pub fn render_management_content(
             .skip(model.scroll)
             .take(layout.list_capacity)
         {
-            lines.push(Line::styled(
-                table_line(row),
-                if index == model.selected {
-                    selected
-                } else {
-                    theme.body_style()
-                },
-            ));
+            let mut style = if model
+                .selected_rows
+                .as_ref()
+                .map_or(index == model.selected, |rows| rows.contains(&index))
+            {
+                selected
+            } else {
+                theme.body_style()
+            };
+            if model.selected_rows.is_some()
+                && index == model.selected
+                && !model.actions_focused
+                && !model.filtering
+                && theme.keyboard_focus_visible()
+            {
+                style = style.add_modifier(Modifier::UNDERLINED);
+            }
+            lines.push(Line::styled(table_line(row), style));
         }
         if model.rows.is_empty() {
             lines.push(Line::from(if model.loading {

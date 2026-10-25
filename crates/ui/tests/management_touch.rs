@@ -2,6 +2,40 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn multiple_selected_rows_and_the_current_keyboard_row_are_distinct() {
+    use ratatui::style::Modifier;
+    let theme = TundraTheme::default_dark();
+    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let bounds = Rect::new(0, 0, 140, 40);
+    let mut model = ManagementViewModel {
+        columns: vec!["包名".into()],
+        rows: ["软件甲", "软件乙", "软件丙"]
+            .map(|name| vec![name.into()])
+            .into(),
+        selected: 1,
+        selected_rows: Some(vec![0, 2]),
+        ..Default::default()
+    };
+    let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+    for selected in [vec![0, 2], vec![]] {
+        model.selected_rows = Some(selected.clone());
+        terminal
+            .draw(|frame| render_management_content(frame, bounds, &model, &context))
+            .unwrap();
+        let layout = management_layout(bounds, &model);
+        for index in 0..3 {
+            let cell =
+                &terminal.backend().buffer()[(layout.list_rows.x, layout.list_rows.y + index)];
+            assert_eq!(
+                cell.modifier.contains(Modifier::REVERSED),
+                selected.contains(&(index as usize))
+            );
+            assert_eq!(cell.modifier.contains(Modifier::UNDERLINED), index == 1);
+        }
+    }
+}
+
+#[test]
 fn package_actions_remain_visible_in_real_shell_content_areas() {
     let theme = TundraTheme::default_dark();
     let context = RenderContext::from_theme(&theme, Default::default(), Default::default());

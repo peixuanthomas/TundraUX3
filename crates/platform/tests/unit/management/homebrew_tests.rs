@@ -4,6 +4,39 @@ use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::time::{Duration, Instant};
 
+#[test]
+fn batch_commands_group_formulae_and_casks_and_validate_before_writing() {
+    use crate::management::package_selection::{self, PackageTarget};
+    let mut request = command("remove", None);
+    let targets = ["formula:demo", "cask:demo", "formula:other"].map(|id| PackageTarget {
+        id: id.into(),
+        identity: BTreeMap::new(),
+    });
+    request.values.insert(
+        package_selection::KEY.into(),
+        serde_json::to_string(&targets).unwrap(),
+    );
+    let commands = package_selection::expand(&request).unwrap();
+    assert_eq!(
+        command_groups(&commands).unwrap(),
+        vec![
+            vec!["uninstall", "--formula", "--", "demo", "other"],
+            vec!["uninstall", "--cask", "--", "demo"],
+        ]
+    );
+    let fixture = Fixture::new("exit 0");
+    assert!(
+        execute_with_program(
+            &fixture.program(),
+            &request,
+            &mut Interaction::default(),
+            &AtomicBool::new(false)
+        )
+        .is_err()
+    );
+    assert!(!fixture.operation().exists());
+}
+
 const INFO: &str = r#"{
     "formulae":[{"full_name":"demo","versions":{"stable":"1.1"},"revision":1,
         "installed":[{"version":"1.0"}],"desc":"命令行工具","tap":"homebrew/core"}],

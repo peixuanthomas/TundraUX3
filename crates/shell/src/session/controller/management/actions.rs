@@ -24,7 +24,9 @@ impl ShellSession {
         &self,
     ) -> Vec<(ManagementAction, Option<ManagementRow>)> {
         let mut actions = Vec::new();
-        if let Some(row) = self
+        if self.package_multiselect_available() {
+            actions.extend(self.selected_package_actions());
+        } else if let Some(row) = self
             .pages
             .management
             .management_state
@@ -367,6 +369,18 @@ impl ShellSession {
             .as_ref()
             .map(|r| r.cells.join(" · "))
             .unwrap_or_default();
+        if let Some(selection) = action
+            .values
+            .get(platform::management::package_selection::KEY)
+        {
+            let targets: Vec<platform::management::package_selection::PackageTarget> =
+                serde_json::from_str(selection).expect("selected package targets");
+            message = targets
+                .into_iter()
+                .map(|target| target.id)
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
         if action
             .fields
             .iter()
@@ -605,6 +619,7 @@ impl ShellSession {
                 }
             }
             if package_view {
+                self.pages.management.management_state.package_selection = None;
                 if previous_scope.as_deref()
                     != self
                         .pages
@@ -721,6 +736,20 @@ impl ShellSession {
         let description = std::iter::once(management_title(kind))
             .chain(std::iter::once(management_label(&action.id, &action.label)))
             .chain(row.as_ref().map(|r| r.id.clone()))
+            .chain(
+                action
+                    .values
+                    .get(platform::management::package_selection::KEY)
+                    .into_iter()
+                    .flat_map(|selection| {
+                        serde_json::from_str::<
+                            Vec<platform::management::package_selection::PackageTarget>,
+                        >(selection)
+                        .expect("selected package targets")
+                        .into_iter()
+                        .map(|target| target.id)
+                    }),
+            )
             .chain(
                 action
                     .fields
