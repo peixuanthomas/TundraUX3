@@ -17,6 +17,10 @@ cargo build --locked -p shell -p cli -p weathr
 
 软件包多选覆盖 Shift 鼠标事件、Shift+Enter、按键重复、取消全部、排序与刷新、混合选择的操作限制和 AA 完整包名。Linux 后端检查 APT/DNF/pacman 的多包命令；WinGet 检查逐包准确编号与版本；Homebrew 的分组与执行前检查需在 macOS 运行。构建 Shell 和 CLI 后，用 `python3 scripts/tests/shell-control.py target/debug/tundra-shell` 在真实 Linux PTY 中发送带 Shift 的 SGR 鼠标报告和 `CSI 13;2u`，读取实际已选项并检查 F1 帮助；不安装或卸载软件包。
 
+服务、进程和计划任务使用同一组终端事件测试，并检查批量目标、操作限制、筛选清理、进程编号复用和 cron 条目替换。平台测试只对自己创建的临时子进程执行批量信号和优先级操作，验证后一个目标失效时前面的进程也不被修改；cron 用固定文本检查同来源多行的原版本校验、合并暂停与恢复。真实服务和计划任务的写入仍限于隔离 systemd 环境。
+
+`isolated-systemd.sh /absolute/path/to/platform-test-binary 原用户UID selection` 复用私有挂载、PID、网络及 cgroup，并启动私有 D-Bus，验证两项服务的批量启停、重启、重载与启停用，两项 timer 的暂停、恢复、立即执行，以及同一 crontab 两条任务的合并保存、备份恢复和立即执行。`shell-control.py` 还按准确 PID 选择自己创建的两个临时进程，验证一次确认后全部暂停、继续；结束时清理子进程。
+
 依赖下载完成后，可用 `cargo test --workspace --locked --offline` 避免 Cargo 访问网络。资源紧张或排查并发时可加 `-- --test-threads=1`；串行仍执行全部用例，交付时应注明运行方式及默认并发结果。
 
 最低支持版本为 Rust 1.95；修改工具链或依赖后，还需验证最低版本：

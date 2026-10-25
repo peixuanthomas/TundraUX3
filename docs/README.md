@@ -11,7 +11,7 @@
 | 检查命令、PTY 和 CI | [测试指南](testing.md) |
 | 新增 Linux 管理功能的真实工具与输入验收 | [2026-10-16 验收记录](linux-administration-validation.md) |
 | 所有页面的共同交互要求 | [UI 要求](UI-requirements.md) |
-| 各页面是否适合多选、软件包多选规则 | [列表多选检查](list-selection.md) |
+| 各页面是否适合多选、管理页的多选规则 | [列表多选检查](list-selection.md) |
 | 已发布版本的变化 | [CHANGELOG](CHANGELOG.md) |
 | Linux 运行依赖和便携安装 | [Linux 说明](packaging/linux/README-LINUX.txt) |
 
