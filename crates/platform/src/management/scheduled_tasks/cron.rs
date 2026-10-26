@@ -156,6 +156,51 @@ fn next_run(entry: &Entry, now: DateTime<Utc>) -> String {
     }
 }
 
+pub(super) fn preview_plan(values: &BTreeMap<String, String>) -> Result<String, ManagementError> {
+    let schedule = super::planning::cron_calendar(values)?;
+    let mut environment = BTreeMap::new();
+    if let Some(zone) = values.get("cron_tz").filter(|zone| !zone.is_empty()) {
+        environment.insert("CRON_TZ".into(), zone.clone());
+    }
+    let entry = Entry {
+        line: 0,
+        schedule: schedule.clone(),
+        user: String::new(),
+        command: String::new(),
+        environment,
+        paused: false,
+    };
+    let mut now = Utc::now();
+    let mut times = Vec::new();
+    for _ in 0..5 {
+        let next = next_run(&entry, now);
+        match chrono::DateTime::parse_from_rfc3339(&next) {
+            Ok(date) => {
+                times.push(date.format("%Y-%m-%d %H:%M:%S %:z").to_string());
+                now = date.with_timezone(&Utc);
+            }
+            Err(_) => {
+                times.push(next);
+                break;
+            }
+        }
+    }
+    let zone = values
+        .get("cron_tz")
+        .filter(|zone| !zone.is_empty())
+        .cloned()
+        .unwrap_or_else(|| Local::now().format("%Z (%:z)").to_string());
+    Ok(i18n::tr!(
+        "schedule-review",
+        name = values.get("name").cloned().unwrap_or_default(),
+        user = values.get("user").cloned().unwrap_or_default(),
+        description = super::planning::description(values),
+        operation = super::planning::operation_description(values),
+        zone = zone,
+        times = times.join("\n")
+    ))
+}
+
 fn standard_fields(pattern: &str) -> bool {
     let fields = pattern.split_whitespace().collect::<Vec<_>>();
     fields.iter().enumerate().all(|(index, field)| {
@@ -256,6 +301,83 @@ fn rows(
             let manual = local_identity(&entry.user)
                 .map(|(uid, _)| result_detail(&result_key, uid))
                 .unwrap_or_else(|| i18n::tr!("scheduled-task-no-result").into());
+            let mut actions = [
+                ("pause", i18n::tr!("scheduled-task-pause"), entry.paused),
+                ("resume", i18n::tr!("scheduled-task-resume"), !entry.paused),
+                ("run_now", i18n::tr!("scheduled-task-run-now"), false),
+            ]
+            .into_iter()
+            .map(|(id, label, disabled)| ManagementAction {
+                id: id.into(),
+                label,
+                privileged: true,
+                confirm: true,
+                primary: true,
+                disabled_reason: disabled
+                    .then(|| i18n::tr!("scheduled-task-cron-operation-disabled")),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+            actions.push(ManagementAction {
+                id: "edit_task".into(),
+                label: i18n::tr!("schedule-edit"),
+                privileged: true,
+                confirm: true,
+                group: "configuration".into(),
+                fields: vec![
+                    ManagementField {
+                        id: "schedule".into(),
+                        label: i18n::tr!("scheduled-task-field-schedule"),
+                        value: entry.schedule.clone(),
+                        required: true,
+                        ..Default::default()
+                    },
+                    ManagementField {
+                        id: "command".into(),
+                        label: i18n::tr!("scheduled-task-field-command"),
+                        value: entry.command.clone(),
+                        required: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            });
+            let mut advanced = actions.last().unwrap().clone();
+            advanced.label = i18n::tr!("schedule-advanced-command");
+            advanced.values.insert("__advanced".into(), "true".into());
+            advanced.fields.retain(|field| field.id == "command");
+            if system {
+                advanced.fields.push(ManagementField {
+                    id: "user".into(),
+                    label: i18n::tr!("scheduled-task-field-user"),
+                    value: entry.user.clone(),
+                    required: true,
+                    control: FieldControl::SearchableChoice,
+                    choices: users::accounts(None)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|account| account.local)
+                        .map(|account| account.username)
+                        .collect(),
+                    ..Default::default()
+                });
+            }
+            actions.push(advanced);
+            actions.push(ManagementAction {
+                id: "delete_task".into(),
+                label: i18n::tr!("schedule-delete"),
+                privileged: true,
+                confirm: true,
+                group: "configuration".into(),
+                disabled_reason: (system
+                    && (location == "/etc/crontab"
+                        || super::systemd::system_file_is_owned(
+                            Path::new(location),
+                            &AtomicBool::new(false),
+                        )))
+                .then(|| i18n::tr!("schedule-preinstalled")),
+                ..Default::default()
+            });
             ManagementRow {
                 id: format!("{source}:{location}:{}", entry.line),
                 cells: vec![
@@ -304,23 +426,7 @@ fn rows(
                     ),
                     (i18n::tr!("scheduled-task-manual-result").into(), manual),
                 ],
-                actions: [
-                    ("pause", i18n::tr!("scheduled-task-pause"), entry.paused),
-                    ("resume", i18n::tr!("scheduled-task-resume"), !entry.paused),
-                    ("run_now", i18n::tr!("scheduled-task-run-now"), false),
-                ]
-                .into_iter()
-                .map(|(id, label, disabled)| ManagementAction {
-                    id: id.into(),
-                    label: label.into(),
-                    privileged: true,
-                    confirm: true,
-                    primary: true,
-                    disabled_reason: disabled
-                        .then(|| i18n::tr!("scheduled-task-cron-operation-disabled").into()),
-                    ..Default::default()
-                })
-                .collect(),
+                actions,
                 identity,
             }
         })
@@ -557,7 +663,26 @@ pub(super) fn prepare(
         location,
         &version,
     )?;
-    let after = if command.action == "run_now" {
+    let after = if matches!(command.action.as_str(), "edit_task" | "delete_task") {
+        if entries.len() != 1 {
+            return Err(invalid(i18n::tr!("scheduled-task-select-task")));
+        }
+        if command.action == "delete_task"
+            && path.as_ref().is_some_and(|path| {
+                path == Path::new("/etc/crontab")
+                    || super::systemd::system_file_is_owned(path, flag)
+            })
+        {
+            return Err(invalid(i18n::tr!("schedule-preinstalled")));
+        }
+        Some(change_entry(
+            &text,
+            &entries[0],
+            &command.values,
+            command.action == "delete_task",
+            source == "cron-file",
+        )?)
+    } else if command.action == "run_now" {
         None
     } else {
         Some(changed_text(
@@ -584,6 +709,124 @@ pub(super) fn prepare(
         runs,
         after,
     })
+}
+
+fn change_entry(
+    text: &str,
+    entry: &Entry,
+    values: &BTreeMap<String, String>,
+    delete: bool,
+    system: bool,
+) -> Result<String, ManagementError> {
+    let mut lines = text
+        .split_inclusive('\n')
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let line = lines
+        .get_mut(entry.line)
+        .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-line-missing")))?;
+    if delete {
+        line.clear();
+    } else {
+        let schedule = if values.contains_key("schedule_kind") {
+            super::planning::cron_calendar(values)?
+        } else {
+            values
+                .get("schedule")
+                .cloned()
+                .unwrap_or_else(|| entry.schedule.clone())
+        };
+        let schedule = schedule.trim();
+        let command = values
+            .get("command")
+            .map(String::as_str)
+            .unwrap_or(&entry.command);
+        if command.trim().is_empty() || command.chars().any(|c| matches!(c, '\n' | '\r' | '\0')) {
+            return Err(invalid(i18n::tr!("schedule-cron-command-invalid")));
+        }
+        if schedule != entry.schedule
+            && !matches!(
+                schedule,
+                "@reboot"
+                    | "@yearly"
+                    | "@annually"
+                    | "@monthly"
+                    | "@weekly"
+                    | "@daily"
+                    | "@midnight"
+                    | "@hourly"
+            )
+            && (schedule.split_whitespace().count() != 5
+                || CronParser::new().parse(schedule).is_err())
+        {
+            return Err(invalid(i18n::tr!("scheduled-task-schedule-invalid")));
+        }
+        let ending = if line.ends_with("\r\n") {
+            "\r\n"
+        } else if line.ends_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
+        let user = if system {
+            values
+                .get("user")
+                .map(String::as_str)
+                .unwrap_or(&entry.user)
+        } else {
+            entry.user.as_str()
+        };
+        if system && local_identity(user).is_none() {
+            return Err(invalid(i18n::tr!("scheduled-task-user-invalid")));
+        }
+        *line = format!(
+            "{}{} {}{}{ending}",
+            if entry.paused { PAUSED } else { "" },
+            schedule,
+            if system {
+                format!("{user} ")
+            } else {
+                String::new()
+            },
+            command
+        );
+    }
+    Ok(lines.concat())
+}
+
+pub(super) fn maintain(
+    command: &ManagementCommand,
+    context: &ExecutionContext,
+    io: &mut dyn OperationInteraction,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    let prepared = prepare(std::slice::from_ref(command), context, flag)?;
+    let index = command
+        .identity
+        .get("line")
+        .and_then(|line| line.parse::<usize>().ok())
+        .ok_or_else(|| invalid(i18n::tr!("scheduled-task-cron-line-identity")))?;
+    let before = prepared.text.lines().nth(index).unwrap_or_default();
+    let after = prepared
+        .after
+        .as_ref()
+        .and_then(|text| text.lines().nth(index))
+        .unwrap_or_default();
+    super::super::configuration::confirm_preview(
+        "cron_task_change",
+        &i18n::tr!("schedule-change-review"),
+        &[
+            prepared.location.clone(),
+            before.into(),
+            if command.action == "delete_task" {
+                i18n::tr!("schedule-delete")
+            } else {
+                after.into()
+            },
+        ],
+        io,
+    )?;
+    execute(prepared, flag)
 }
 
 pub(super) fn execute(prepared: Prepared, flag: &AtomicBool) -> Result<String, ManagementError> {

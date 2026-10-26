@@ -11,9 +11,11 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 mod cron;
+mod history;
 #[cfg(test)]
 #[path = "../../tests/unit/management/scheduled_tasks_isolated.rs"]
 mod isolated;
+mod planning;
 #[cfg(test)]
 #[path = "../../tests/unit/management/scheduled_tasks_query_tests.rs"]
 mod query_tests;
@@ -21,6 +23,38 @@ mod systemd;
 
 const RESULTS: &str = "/var/lib/tundraux3/scheduled-results";
 const MAX_DATA: usize = 4 * 1024 * 1024;
+
+pub fn preview_plan(
+    values: &std::collections::BTreeMap<String, String>,
+    uid: u32,
+    cancelled: &AtomicBool,
+) -> Result<String, ManagementError> {
+    if values.get("__source").map(String::as_str) == Some("cron") {
+        return cron::preview_plan(values);
+    }
+    if values.get("__source").map(String::as_str) == Some("native-timer") {
+        return systemd::preview_time_plan(values, cancelled);
+    }
+    systemd::preview_plan(values, uid, cancelled)
+}
+
+pub(crate) fn reload_timer(
+    unit: &str,
+    scope: &str,
+    context: &ExecutionContext,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    systemd::reload_timer(unit, scope, context, flag)
+}
+
+pub fn cancel_run(
+    unit: &str,
+    invocation_id: &str,
+    context: &ExecutionContext,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    systemd::cancel_run(unit, invocation_id, context, flag)
+}
 
 fn check_cancelled(flag: &AtomicBool) -> Result<(), ManagementError> {
     if flag.load(Ordering::Relaxed) {
@@ -38,6 +72,8 @@ fn state_action_label(action: &str) -> String {
     match action {
         "pause" => i18n::tr!("scheduled-task-operation-pause"),
         "resume" => i18n::tr!("scheduled-task-operation-resume"),
+        "edit_task" => i18n::tr!("schedule-edit"),
+        "delete_task" => i18n::tr!("schedule-delete"),
         _ => action.into(),
     }
 }
@@ -419,8 +455,19 @@ pub fn execute(
     if matches!(command.action.as_str(), "preview_task" | "create_task") {
         return systemd::create(command, context, interaction, flag);
     }
-    if !matches!(command.action.as_str(), "pause" | "resume" | "run_now") {
+    if !matches!(
+        command.action.as_str(),
+        "pause" | "resume" | "run_now" | "edit_task" | "delete_task"
+    ) {
         return Err(invalid(i18n::tr!("scheduled-task-unknown-operation")));
+    }
+    if matches!(command.action.as_str(), "edit_task" | "delete_task")
+        && command.identity.get("source").map(String::as_str) != Some("systemd")
+    {
+        if commands.len() != 1 {
+            return Err(invalid(i18n::tr!("scheduled-task-select-task")));
+        }
+        return cron::maintain(command, context, interaction, flag);
     }
     enum PreparedTask {
         Timer(ManagementCommand),

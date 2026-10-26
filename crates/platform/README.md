@@ -21,7 +21,7 @@
 | 按操作分组的配置、账户和用户组恢复 | [配置备份与恢复](docs/config-backups.md) |
 | 监听端口、UFW 与 firewalld 放行规则 | [防火墙与端口](docs/firewall.md) |
 | SSH 登录设置、端口与新连接确认 | [SSH 服务管理](docs/ssh-management.md) |
-| systemd timer 与已有 cron 任务 | [定时任务](docs/scheduled-tasks.md) |
+| 定时任务的创建、编辑、停用、恢复及执行结果 | [定时任务](docs/scheduled-tasks.md) |
 | 页面、授权助手和定时执行的摘要、输出与手动清理 | [任务历史](docs/task-history.md) |
 | 脚本调用、任务编号与退出码 | [运维 CLI](../cli/docs/operations.md) |
 | 进程、日志、文档、目录性能及复测方式 | [性能优化](docs/performance.md) |

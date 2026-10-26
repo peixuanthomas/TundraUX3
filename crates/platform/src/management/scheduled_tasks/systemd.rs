@@ -1,7 +1,78 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+mod maintenance;
 
-const PROPERTIES: &str = "Id,LoadState,ActiveState,UnitFileState,Unit,TimersCalendar,TimersMonotonic,NextElapseUSecRealtime,NextElapseUSecMonotonic,LastTriggerUSec,FragmentPath,DropInPaths,User,Result,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp,Description";
+pub(super) fn system_file_is_owned(path: &Path, flag: &AtomicBool) -> bool {
+    maintenance::owns_file(path, flag)
+}
+
+pub(super) fn reload_timer(
+    unit: &str,
+    scope: &str,
+    context: &ExecutionContext,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    if !valid_timer(unit) || !matches!(scope, "system" | "user") {
+        return Err(invalid(i18n::tr!("scheduled-task-select-timer")));
+    }
+    let route = routed_scope(scope, context);
+    let before = properties(&route, unit, flag)?;
+    ctl(&route, &["daemon-reload"], flag)?;
+    if value(&before, "ActiveState") == "active" {
+        ctl(&route, &["restart", "--", unit], flag)?;
+    }
+    let after = properties(&route, unit, flag)?;
+    if value(&after, "LoadState") != "loaded" {
+        return Err(invalid(i18n::tr!("scheduled-task-timer-missing")));
+    }
+    Ok(i18n::tr!("schedule-change-saved"))
+}
+
+pub(super) fn cancel_run(
+    unit: &str,
+    invocation_id: &str,
+    _context: &ExecutionContext,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    require_root()?;
+    if !services::valid_unit_name(unit)
+        || !unit.starts_with("tundra-scheduled-")
+        || invocation_id.is_empty()
+        || !invocation_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(invalid(i18n::tr!("scheduled-task-service-identity")));
+    }
+    let text = ctl("system", &["cat", "--", unit], flag)?;
+    let manifest = maintenance::manifest(&text)
+        .ok_or_else(|| invalid(i18n::tr!("scheduled-task-service-identity")))?;
+    if manifest.get("task_type").map(String::as_str) == Some("packages_update") {
+        return Err(invalid(i18n::tr!("schedule-package-running")));
+    }
+    let invocation = ctl(
+        "system",
+        &["show", "--property=InvocationID", "--value", "--", unit],
+        flag,
+    )?;
+    if invocation.trim() != invocation_id {
+        return Err(ManagementError::Conflict(i18n::tr!("schedule-run-changed")));
+    }
+    ctl("system", &["stop", "--no-block", "--", unit], flag)?;
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(120) {
+        check_cancelled(flag)?;
+        let props = properties("system", unit, flag)?;
+        if !matches!(
+            value(&props, "ActiveState"),
+            "active" | "activating" | "deactivating"
+        ) {
+            return Ok(i18n::tr!("schedule-run-stopped"));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(ManagementError::Failed(i18n::tr!("schedule-run-stopping")))
+}
+
+const PROPERTIES: &str = "Id,LoadState,ActiveState,UnitFileState,Unit,TimersCalendar,TimersMonotonic,NextElapseUSecRealtime,NextElapseUSecMonotonic,LastTriggerUSec,FragmentPath,DropInPaths,User,Result,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp,Description,Persistent,OnClockChange,OnTimezoneChange";
 
 fn ctl(scope: &str, arguments: &[&str], flag: &AtomicBool) -> Result<String, ManagementError> {
     check_cancelled(flag)?;
@@ -240,7 +311,7 @@ fn row(scope: &str, name: &str, flag: &AtomicBool) -> Result<ManagementRow, Mana
     let unsupported = config_version
         .err()
         .map(|error| i18n::tr!("scheduled-task-cannot-verify", error = error.to_string()));
-    let actions = [
+    let mut actions = [
         (
             "pause",
             i18n::tr!("scheduled-task-pause"),
@@ -265,11 +336,33 @@ fn row(scope: &str, name: &str, flag: &AtomicBool) -> Result<ManagementRow, Mana
         primary: true,
         ..Default::default()
     })
-    .collect();
+    .collect::<Vec<_>>();
+    maintenance::append_actions(
+        &mut actions,
+        scope,
+        name,
+        service,
+        &props,
+        &service_props,
+        flag,
+    )?;
+    let friendly_name = actions
+        .iter()
+        .find(|action| action.id == "edit_task")
+        .filter(|action| {
+            action.values.contains_key("task_type")
+                || action
+                    .values
+                    .get("name")
+                    .is_some_and(|value| !value.is_ascii())
+        })
+        .and_then(|action| action.values.get("name"))
+        .cloned()
+        .unwrap_or_else(|| name.into());
     Ok(ManagementRow {
         id: format!("systemd:{}:{name}", scope_id(scope)),
         cells: vec![
-            name.into(),
+            friendly_name,
             source_label(scope),
             user,
             schedule.into(),
@@ -350,6 +443,24 @@ pub(super) fn create_actions(uid: u32) -> Result<Vec<ManagementAction>, Manageme
             ..Default::default()
         },
     ];
+    let services = ctl(
+        "system",
+        &[
+            "list-unit-files",
+            "--type=service",
+            "--no-legend",
+            "--plain",
+        ],
+        &AtomicBool::new(false),
+    )
+    .map(|text| {
+        text.lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|unit| services::valid_unit_name(unit))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
     Ok([
         ("preview_task", i18n::tr!("scheduled-task-preview"), false),
         ("create_task", i18n::tr!("scheduled-task-create"), true),
@@ -362,6 +473,10 @@ pub(super) fn create_actions(uid: u32) -> Result<Vec<ManagementAction>, Manageme
         privileged,
         confirm: privileged,
         primary: true,
+        values: BTreeMap::from([(
+            "service_choices".into(),
+            serde_json::to_string(&services).expect("service list serializes"),
+        )]),
         ..Default::default()
     })
     .collect())
@@ -392,18 +507,11 @@ fn definition(
     current_uid: u32,
 ) -> Result<Definition, ManagementError> {
     let name = values.get("name").map(String::as_str).unwrap_or("").trim();
-    if name.is_empty()
-        || name.len() > 120
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-    {
+    if name.is_empty() || name.len() > 240 || name.chars().any(char::is_control) {
         return Err(invalid(i18n::tr!("scheduled-task-name-invalid")));
     }
-    let command = values.get("command").map(String::as_str).unwrap_or("");
-    if command.trim().is_empty() || command.len() > 65536 || command.contains('\0') {
-        return Err(invalid(i18n::tr!("scheduled-task-command-invalid")));
-    }
+    let display_name = name.to_string();
+    let (command, system_operation) = planning::operation(values, &AtomicBool::new(false))?;
     let directory = values
         .get("working_directory")
         .map(String::as_str)
@@ -414,14 +522,8 @@ fn definition(
     {
         return Err(invalid(i18n::tr!("scheduled-task-directory-invalid")));
     }
-    let schedule = values
-        .get("schedule")
-        .map(String::as_str)
-        .unwrap_or("")
-        .trim();
-    if schedule.is_empty() || schedule.len() > 2048 || schedule.chars().any(char::is_control) {
-        return Err(invalid(i18n::tr!("scheduled-task-schedule-invalid")));
-    }
+    let schedule = planning::calendar(values)?;
+    let persistent = planning::persistent(values)?;
     let username = values
         .get("user")
         .filter(|value| !value.is_empty())
@@ -431,15 +533,41 @@ fn definition(
         .into_iter()
         .find(|account| account.local && account.username == username)
         .ok_or_else(|| invalid(i18n::tr!("scheduled-task-user-invalid")))?;
-    let name = format!("tundra-scheduled-{name}");
+    if system_operation && user.uid != 0 {
+        return Err(invalid(i18n::tr!("schedule-system-user-required")));
+    }
+    let name = if let Some(unit) = values.get("unit_name") {
+        if !unit.starts_with("tundra-scheduled-") || !valid_timer(&format!("{unit}.timer")) {
+            return Err(invalid(i18n::tr!("scheduled-task-name-invalid")));
+        }
+        unit.clone()
+    } else if name.len() <= 120
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+    {
+        format!("tundra-scheduled-{name}")
+    } else {
+        format!("tundra-scheduled-{}", &digest(name.as_bytes())[..24])
+    };
+    let (history_start, history_stop) = history::commands(&name, &display_name, user.uid);
     // The recorder must still start when the chosen working directory disappears.
     let script = format!(
-        "cd -- {} && exec /bin/sh -c {}",
+        "{history_start}cd -- {} && exec {command}",
         super::cron::shell_quote(directory),
-        super::cron::shell_quote(command)
     );
+    let manifest = serde_json::to_string(
+        &values
+            .iter()
+            .filter(|(key, _)| {
+                !matches!(key.as_str(), "service_choices" | "yes" | "non_interactive")
+            })
+            .collect::<BTreeMap<_, _>>(),
+    )
+    .expect("task values serialize");
     let service = format!(
-        "[Unit]\nDescription=Tundra scheduled task {name}\n\n[Service]\nType=oneshot\nUser={}\nGroup={}\nWorkingDirectory=/\nEnvironment={} {} {} {}\nExecStart=:/bin/sh -c {}\nExecStopPost={}\nTimeoutStartSec=infinity\n",
+        "# TundraUX3-Task={manifest}\n[Unit]\nDescription={}\n\n[Service]\nType=oneshot\nUser={}\nGroup={}\nWorkingDirectory=/\nEnvironment={} {} {} {}\nStandardInput=null\nExecStart=:/bin/sh -c {}\nExecStopPost=:/bin/sh -c {}\nTimeoutStartSec=infinity\n",
+        display_name.replace('%', "%%"),
         user.uid,
         user.gid,
         quote(&format!("HOME={}", user.home.display())),
@@ -447,17 +575,18 @@ fn definition(
         quote(&format!("LOGNAME={}", user.username)),
         quote("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
         quote(&script),
-        result_command(&name, user.uid)
+        quote(&history_stop)
     );
     let timer = format!(
-        "[Unit]\nDescription=Tundra schedule {name}\n\n[Timer]\nOnCalendar={}\nUnit={name}.service\nPersistent=false\n\n[Install]\nWantedBy=timers.target\n",
+        "[Unit]\nDescription={}\n\n[Timer]\nOnCalendar={}\nUnit={name}.service\nPersistent={persistent}\n\n[Install]\nWantedBy=timers.target\n",
+        display_name.replace('%', "%%"),
         schedule.replace('%', "%%")
     );
     Ok(Definition {
         name,
         service,
         timer,
-        schedule: schedule.into(),
+        schedule,
         uid: user.uid,
         gid: user.gid,
     })
@@ -474,6 +603,12 @@ fn validate(definition: &Definition, flag: &AtomicBool) -> Result<String, Manage
         ],
         flag,
     )?;
+    if !calendar
+        .lines()
+        .any(|line| line.trim_start().starts_with("Next elapse:") && !line.ends_with("never"))
+    {
+        return Err(invalid(i18n::tr!("schedule-no-future-time")));
+    }
     let normalized = calendar
         .lines()
         .find_map(|line| line.trim().strip_prefix("Normalized form:"))
@@ -506,6 +641,78 @@ fn validate(definition: &Definition, flag: &AtomicBool) -> Result<String, Manage
     Ok(calendar)
 }
 
+pub(super) fn preview_plan(
+    values: &BTreeMap<String, String>,
+    uid: u32,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    let definition = definition(values, uid)?;
+    let calendar = validate(&definition, flag)?;
+    Ok(review_text(
+        values,
+        &calendar,
+        chrono::Local::now().format("%Z (%:z)").to_string(),
+    ))
+}
+
+pub(super) fn preview_time_plan(
+    values: &BTreeMap<String, String>,
+    flag: &AtomicBool,
+) -> Result<String, ManagementError> {
+    let expression = planning::calendar(values)?;
+    let calendar = run(
+        "/usr/bin/systemd-analyze",
+        &[
+            "calendar".into(),
+            "--iterations=5".into(),
+            "--".into(),
+            expression,
+        ],
+        flag,
+    )?;
+    if !calendar.lines().any(|line| {
+        line.trim_start().starts_with("Next elapse:") && !line.trim_end().ends_with("never")
+    }) {
+        return Err(invalid(i18n::tr!("schedule-no-future-time")));
+    }
+    Ok(review_text(
+        values,
+        &calendar,
+        chrono::Local::now().format("%Z (%:z)").to_string(),
+    ))
+}
+
+pub(super) fn review_text(
+    values: &BTreeMap<String, String>,
+    calendar: &str,
+    zone: String,
+) -> String {
+    let next = calendar
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let (_, value) = line.split_once(':')?;
+            (line.starts_with("Next elapse:") || line.starts_with("Iteration #")).then(|| {
+                value
+                    .split_whitespace()
+                    .skip(1)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    i18n::tr!(
+        "schedule-review",
+        name = values.get("name").cloned().unwrap_or_default(),
+        user = values.get("user").cloned().unwrap_or_default(),
+        description = planning::description(values),
+        operation = planning::operation_description(values),
+        zone = zone,
+        times = next
+    )
+}
+
 pub(super) fn create(
     command: &ManagementCommand,
     context: &ExecutionContext,
@@ -515,13 +722,21 @@ pub(super) fn create(
     let definition = definition(&command.values, context.actor_uid)?;
     let calendar = validate(&definition, flag)?;
     interaction.emit(OperationEvent::Output {
-        text: i18n::tr!(
-            "scheduled-task-definition-preview",
-            name = definition.name.clone(),
-            service = definition.service.clone(),
-            timer = definition.timer.clone(),
-            calendar = calendar
-        ),
+        text: if command.values.contains_key("task_type") {
+            review_text(
+                &command.values,
+                &calendar,
+                chrono::Local::now().format("%Z (%:z)").to_string(),
+            )
+        } else {
+            i18n::tr!(
+                "scheduled-task-definition-preview",
+                name = definition.name.clone(),
+                service = definition.service.clone(),
+                timer = definition.timer.clone(),
+                calendar = calendar
+            )
+        },
     });
     if command.action == "preview_task" {
         return Ok(i18n::tr!("scheduled-task-preview-validated").into());
@@ -563,7 +778,7 @@ pub(super) fn create(
     let mut payload = serde_json::json!({"type":"created-timer", "timer":timer_name,"scope":"system","before":{"active":"inactive","enabled":"disabled"},"after":{"active":"inactive","enabled":"disabled"}});
     backup.set_payload(payload.clone())?;
     let result = (|| {
-        prepare_results(definition.uid, definition.gid)?;
+        history::prepare(definition.uid, definition.gid)?;
         write_new(&service, &definition.service)?;
         write_new(&timer, &definition.timer)?;
         ctl("system", &["daemon-reload"], flag)?;
@@ -651,9 +866,12 @@ pub(super) fn validate_action(
 pub(super) fn execute(
     command: &ManagementCommand,
     context: &ExecutionContext,
-    _interaction: &mut dyn OperationInteraction,
+    interaction: &mut dyn OperationInteraction,
     flag: &AtomicBool,
 ) -> Result<String, ManagementError> {
+    if matches!(command.action.as_str(), "edit_task" | "delete_task") {
+        return maintenance::execute(command, context, interaction, flag);
+    }
     let route = validate_action(command, context, flag)?;
     let scope = command.identity["scope"].as_str();
     let timer = &command.identity["timer"];

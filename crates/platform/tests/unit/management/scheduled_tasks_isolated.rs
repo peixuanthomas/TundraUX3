@@ -10,12 +10,16 @@ impl OperationInteraction for Interaction {
     fn emit(&mut self, _event: OperationEvent) {}
     fn ask(
         &mut self,
-        _id: &str,
+        id: &str,
         _prompt: &str,
-        _choices: &[String],
+        choices: &[String],
         _secret: bool,
     ) -> Result<String, ManagementError> {
-        Ok("Save and enable".into())
+        Ok(if id == "scheduled_task_save" {
+            "Save and enable".into()
+        } else {
+            choices.get(1).cloned().unwrap_or_default()
+        })
     }
 }
 
@@ -145,6 +149,51 @@ fn private_systemd_create_execute_persist_pause_resume_and_restore() {
     recover(backup_id(&removed), &context, &mut io, &flag).unwrap();
     assert!(selected(timer, &flag).cells[4].contains("active; enabled"));
     // A lost working directory must fail before running the task and still record a result.
+    let history_store = crate::task_history::HistoryStore::new(history::directory(uid));
+    let runs = history_store
+        .list(&crate::task_history::HistoryQuery::default())
+        .unwrap();
+    assert!(
+        runs.records
+            .iter()
+            .any(|record| record.status == crate::task_history::TaskStatus::Succeeded)
+    );
+    let row = selected(timer, &flag);
+    let mut change = command("edit_task", &row);
+    change.values = row
+        .actions
+        .iter()
+        .find(|action| action.id == "edit_task")
+        .unwrap()
+        .values
+        .clone();
+    change.values.insert("persistent".into(), "true".into());
+    change
+        .values
+        .insert("schedule".into(), "2099-02-01 00:00:00".into());
+    execute(&change, &context, &mut io, &flag).unwrap();
+    assert!(
+        fs::read_to_string("/etc/systemd/system/tundra-scheduled-isolated.timer")
+            .unwrap()
+            .contains("Persistent=true")
+    );
+    let deleted = execute(
+        &command("delete_task", &selected(timer, &flag)),
+        &context,
+        &mut io,
+        &flag,
+    )
+    .unwrap();
+    assert!(!Path::new("/etc/systemd/system/tundra-scheduled-isolated.timer").exists());
+    assert!(
+        !history_store
+            .list(&crate::task_history::HistoryQuery::default())
+            .unwrap()
+            .records
+            .is_empty()
+    );
+    recover(backup_id(&deleted), &context, &mut io, &flag).unwrap();
+    assert!(selected(timer, &flag).cells[4].contains("active; enabled"));
     let directory = Path::new("/tmp/tundra-fixture-work");
     fs::create_dir(directory).unwrap();
     let values = BTreeMap::from([

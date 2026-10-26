@@ -353,6 +353,35 @@ fn build_command(
     })
 }
 
+pub(crate) fn scheduled_update_commands(
+    flag: &AtomicBool,
+) -> Result<Vec<PackageCommand>, ManagementError> {
+    let backend = detect_backend(flag)?;
+    let actions: &[&str] = if backend == PackageBackend::Pacman {
+        &["pacman_upgrade_all"]
+    } else {
+        &["refresh", "upgrade_all"]
+    };
+    actions
+        .iter()
+        .map(|action| {
+            build_command(
+                &ManagementCommand {
+                    kind: super::ManagementKind::Packages,
+                    action: (*action).into(),
+                    target: None,
+                    values: std::collections::BTreeMap::from([
+                        ("non_interactive".into(), "true".into()),
+                        ("yes".into(), "true".into()),
+                    ]),
+                    identity: Default::default(),
+                },
+                backend,
+            )
+        })
+        .collect()
+}
+
 fn script_options(
     command: &ManagementCommand,
     backend: PackageBackend,

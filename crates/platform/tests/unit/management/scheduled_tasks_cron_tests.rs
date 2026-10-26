@@ -2,6 +2,27 @@ use super::*;
 use chrono::TimeZone;
 
 #[test]
+fn editing_and_deleting_one_entry_preserve_other_lines_and_pause_state() {
+    let original = "# keep\r\nCRON_TZ=Asia/Shanghai\r\n# TUNDRAUX3-PAUSED 0 9 * * 1-5 echo old\\%value\r\n@hourly echo untouched\r\n";
+    let entry = entries(original, false, "demo").remove(0);
+    let values = BTreeMap::from([
+        ("schedule".into(), "30 10 * * 1-5".into()),
+        ("command".into(), "echo 新任务\\%".into()),
+    ]);
+    let changed = change_entry(original, &entry, &values, false, false).unwrap();
+    assert_eq!(
+        changed,
+        "# keep\r\nCRON_TZ=Asia/Shanghai\r\n# TUNDRAUX3-PAUSED 30 10 * * 1-5 echo 新任务\\%\r\n@hourly echo untouched\r\n"
+    );
+    assert_eq!(
+        change_entry(original, &entry, &values, true, false).unwrap(),
+        "# keep\r\nCRON_TZ=Asia/Shanghai\r\n@hourly echo untouched\r\n"
+    );
+    let bad = BTreeMap::from([("command".into(), "echo a\necho b".into())]);
+    assert!(change_entry(original, &entry, &bad, false, false).is_err());
+}
+
+#[test]
 fn multiple_lines_in_one_source_are_checked_and_changed_together() {
     let text = "# keep\r\nSHELL=/bin/sh\r\n@daily echo first\r\n@hourly echo untouched\r\n*/5 * * * * echo second\r\n";
     let all = rows(text, "user:demo", false, "demo", "version");

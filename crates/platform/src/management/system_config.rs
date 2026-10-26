@@ -361,7 +361,12 @@ fn detect_validator(path: &Path) -> &'static str {
         "timesyncd"
     } else if p == "/etc/fstab" {
         "fstab"
-    } else if p.contains("/systemd/") && (p.ends_with(".service") || p.contains(".service.d/")) {
+    } else if p.contains("/systemd/")
+        && (p.ends_with(".service")
+            || p.contains(".service.d/")
+            || p.ends_with(".timer")
+            || p.contains(".timer.d/"))
+    {
         "systemd"
     } else if p == "/etc/apt/sources.list"
         || p.starts_with("/etc/apt/sources.list.d/")
@@ -411,11 +416,15 @@ fn systemd_unit(path: &Path) -> Option<String> {
                 None
             }
         })
-        .find_map(|s| s.strip_suffix(".service.d").map(|n| format!("{n}.service")))
+        .find_map(|s| {
+            s.strip_suffix(".service.d")
+                .map(|n| format!("{n}.service"))
+                .or_else(|| s.strip_suffix(".timer.d").map(|n| format!("{n}.timer")))
+        })
         .or_else(|| {
             path.file_name()
                 .and_then(OsStr::to_str)
-                .filter(|s| s.ends_with(".service"))
+                .filter(|s| s.ends_with(".service") || s.ends_with(".timer"))
                 .map(str::to_owned)
         })
 }
@@ -425,7 +434,7 @@ fn systemd_directory(path: &Path) -> PathBuf {
     if parent
         .file_name()
         .and_then(OsStr::to_str)
-        .is_some_and(|n| n.ends_with(".service.d"))
+        .is_some_and(|n| n.ends_with(".service.d") || n.ends_with(".timer.d"))
     {
         parent
             .parent()
@@ -1355,6 +1364,9 @@ pub fn execute(
         if detect_validator(path) == "systemd" {
             super::services::execute(
                 &ManagementCommand {
+            if unit.ends_with(".timer") {
+                return super::scheduled_tasks::reload_timer(unit, scope, _context, flag);
+            }
                     kind: ManagementKind::Services,
                     action: "daemon_reload".into(),
                     target: None,
