@@ -604,6 +604,15 @@ impl ShellSession {
                 ui::components::WorkspaceFocus::List
             });
         }
+        if self.pages.management.management_state.kind == Some(ManagementKind::Backups)
+            && !self.pages.management.management_state.details_only
+        {
+            if let Some(query) = &mut self.pages.management.management_state.query {
+                query.target = None;
+            }
+            self.clamp_management_scroll();
+            return;
+        }
         if self.pages.management.management_state.problem.is_some()
             || self
                 .pages
@@ -659,6 +668,26 @@ impl ShellSession {
         state.sort = Some(ui::TableSort::toggle(state.sort, column));
         state.sort_columns = state.snapshot.columns.clone();
         let sort = state.sort.unwrap();
+        if state.kind == Some(ManagementKind::Backups) {
+            if let Some(query) = &mut state.query {
+                query
+                    .options
+                    .insert("sort_column".into(), sort.column.to_string());
+                query
+                    .options
+                    .insert("sort_descending".into(), sort.descending.to_string());
+                query.options.remove("cursor");
+                if let Some(id) = &selected {
+                    query.options.insert("anchor".into(), id.clone());
+                }
+                query.target = None;
+            }
+            state.details_only = false;
+            state.list_scroll_explicit = false;
+            state.actions_focused = false;
+            self.refresh_management();
+            return;
+        }
         state.snapshot.rows.sort_by(|a, b| {
             sort.compare(
                 a.cells.get(column).map_or("", String::as_str),

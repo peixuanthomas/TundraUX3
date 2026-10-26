@@ -8,6 +8,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const ROOT: &str = "/var/lib/tundraux3/ssh";
 const BOOT_UNIT: &str = "/etc/systemd/system/tundra-ssh-recovery.service";
 
+pub(crate) fn active_backup_ids() -> Result<std::collections::BTreeSet<String>, ManagementError> {
+    let mut ids = std::collections::BTreeSet::new();
+    if !Path::new(ROOT).exists() {
+        return Ok(ids);
+    }
+    private(Path::new(ROOT))?;
+    for entry in fs::read_dir(ROOT).map_err(failure)? {
+        let entry = entry.map_err(failure)?;
+        if !entry.file_type().map_err(failure)?.is_dir() {
+            continue;
+        }
+        let journal = read(&entry.path())?;
+        if !finished(journal.state) {
+            ids.insert(journal.backup_id);
+            ids.extend(journal.rollback_backup_id);
+            ids.extend(journal.plan.seed_backup);
+        }
+    }
+    Ok(ids)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum State {
     Prepared,

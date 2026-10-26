@@ -56,6 +56,9 @@ impl ShellSession {
                 }
             }
         }
+        if self.pages.management.management_state.kind == Some(ManagementKind::Backups) {
+            actions.push((self.backup_filter_action(), None));
+        }
         if self.management_multiselect_available() {
             actions.push((
                 ManagementAction {
@@ -169,11 +172,30 @@ impl ShellSession {
                 "user_ssh_add",
                 "user_ssh_remove",
             ],
+            Some(ManagementKind::Backups)
+                if self
+                    .pages
+                    .management
+                    .management_state
+                    .query
+                    .as_ref()
+                    .is_some_and(|query| query.scope == "cleanup-preview") =>
+            {
+                &[
+                    "cleanup_backups",
+                    "cancel_cleanup_preview",
+                    "backups_next_page",
+                    "filter_backups",
+                ]
+            }
             Some(ManagementKind::Backups) => &[
-                "inspect_backups",
                 "preview_restore",
                 "restore",
                 "restore_legacy",
+                "inspect_backups",
+                "filter_backups",
+                "backups_next_page",
+                "backups_first_page",
             ],
             Some(ManagementKind::ScheduledTasks) => {
                 &["create_task", "preview_task", "pause", "resume", "run_now"]
@@ -302,6 +324,18 @@ impl ShellSession {
                     None,
                 ));
             }
+        }
+        if kind == Some(ManagementKind::Backups) && primary.len() > 5 {
+            primary.retain(|(action, _)| action.id != "more_actions");
+            primary.truncate(4);
+            primary.push((
+                ManagementAction {
+                    id: "more_actions".into(),
+                    label: i18n::tr!("management-more-actions"),
+                    ..Default::default()
+                },
+                None,
+            ));
         }
         primary
     }
@@ -484,6 +518,9 @@ impl ShellSession {
         row: Option<ManagementRow>,
     ) {
         if self.perform_task_center_action(&action, row.as_ref()) {
+            return;
+        }
+        if self.handle_backup_view_action(&action) {
             return;
         }
         let mut values = action.values.clone();

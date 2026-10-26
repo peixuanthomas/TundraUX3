@@ -334,6 +334,8 @@ impl ShellSession {
             if query.filter != filter {
                 query.filter = filter;
                 query.target = None;
+                query.options.remove("cursor");
+                query.options.remove("anchor");
                 self.pages.management.management_state.list_scroll_explicit = false;
                 self.pages.management.management_state.selection = self
                     .pages

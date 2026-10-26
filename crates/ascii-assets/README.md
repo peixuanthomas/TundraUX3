@@ -6,6 +6,8 @@
 
 `modules/management-schedule-workflow.ftl` 提供定时任务向导、原生编辑和补执行说明。
 
+`modules/backup-filters.ftl` 和 `backup-history.ftl` 提供日期、来源筛选、分页、保留和清理预览说明。
+
 中英文 `modules/script.ftl` 提供脚本编辑器入口、运行与调试操作、六区工作区、表达式和执行状态文字。语言资源沿用目录自动收集，不新增单独的加载路径。
 脚本编辑器复用当前主题的编辑器图片和 ASCII 图案，已有自定义主题也使用同一图案。
 

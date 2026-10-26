@@ -803,6 +803,7 @@ pub fn check(
 }
 
 fn backup(previous: &StoredFile, root: &Path) -> Result<String, ManagementError> {
+    let history = super::config_backups::lock_history(root)?;
     let dummy = root.join("record");
     let (directory, _) = parent(&dummy, true)?;
     let metadata = directory.metadata().map_err(failure)?;
@@ -839,7 +840,7 @@ fn backup(previous: &StoredFile, root: &Path) -> Result<String, ManagementError>
         .map_err(|e| ManagementError::Failed(e.to_string()))?;
     file.sync_all().map_err(failure)?;
     directory.sync_all().map_err(failure)?;
-    super::config_backups::start_legacy(root, &id, previous)?;
+    super::config_backups::start_legacy(root, &id, previous, history.current)?;
     Ok(id)
 }
 
@@ -1289,7 +1290,8 @@ pub(super) fn read_backup(path: &Path) -> Result<StoredFile, ManagementError> {
     if metadata.len() > MAX_BACKUP {
         return Err(invalid("Recovery file is too large"));
     }
-    serde_json::from_reader(file.take(MAX_BACKUP)).map_err(|_| invalid("Recovery file is damaged"))
+    serde_json::from_reader(std::io::BufReader::new(file.take(MAX_BACKUP)))
+        .map_err(|_| invalid("Recovery file is damaged"))
 }
 
 pub fn execute(

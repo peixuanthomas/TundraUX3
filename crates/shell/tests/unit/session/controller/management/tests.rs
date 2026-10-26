@@ -6,6 +6,138 @@ mod package_workspace;
 mod selection;
 
 #[test]
+fn backup_detail_queries_keep_the_page_and_clear_the_target_when_closed() {
+    for authorized in [false, true] {
+        let mut session = shortcut_action_state(ManagementKind::Backups, "inspect");
+        session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+        let state = &mut session.pages.management.management_state;
+        let selected_id = state.snapshot.rows[0].id.clone();
+        let mut other = state.snapshot.rows[0].clone();
+        other.id = "other-backup".into();
+        state.snapshot.rows.push(other);
+        state.snapshot.notices = vec!["2 records, 2048 bytes".into()];
+        state.snapshot.actions.push(ManagementAction {
+            id: "backups_next_page".into(),
+            ..Default::default()
+        });
+        state.query.as_mut().unwrap().target = Some(selected_id.clone());
+        state.details_only = true;
+        let mut detail = ManagementSnapshot::default();
+        let mut row = state.snapshot.rows[0].clone();
+        row.detail = vec![("Difference".into(), "Only this record was read".into())];
+        detail.rows.push(row);
+        detail.details_complete = true;
+        let (job, _) = session.management_job();
+        let domain = if authorized {
+            job.0
+                .events
+                .lock()
+                .unwrap()
+                .push_back(OperationEvent::Snapshot { snapshot: detail });
+            session.pages.management.management_state.operation_job = Some(job.clone());
+            TaskDomain::ManagementOperation
+        } else {
+            *job.0.snapshot.lock().unwrap() = Some(Ok(detail));
+            session.pages.management.management_state.query_job = Some(job.clone());
+            TaskDomain::ManagementQuery
+        };
+        session.register_management_job(&job, domain, TaskClass::Query);
+        session.poll_management();
+        let state = &session.pages.management.management_state;
+        assert_eq!(state.snapshot.rows.len(), 2);
+        assert_eq!(state.snapshot.rows[0].id, selected_id);
+        assert_eq!(
+            state.snapshot.rows[0].detail[0].1,
+            "Only this record was read"
+        );
+        assert_eq!(state.snapshot.notices, ["2 records, 2048 bytes"]);
+        assert!(
+            state
+                .snapshot
+                .actions
+                .iter()
+                .any(|action| action.id == "backups_next_page")
+        );
+        assert!(!state.snapshot.details_complete);
+        session.toggle_management_details();
+        assert!(!session.pages.management.management_state.details_only);
+        assert!(
+            session
+                .pages
+                .management
+                .management_state
+                .query
+                .as_ref()
+                .unwrap()
+                .target
+                .is_none()
+        );
+        assert!(
+            session
+                .pages
+                .management
+                .management_state
+                .query_job
+                .is_none()
+        );
+        assert_eq!(
+            session
+                .pages
+                .management
+                .management_state
+                .snapshot
+                .rows
+                .len(),
+            2
+        );
+    }
+}
+
+#[test]
+fn backup_filters_keep_valid_dates_and_reject_reversed_ranges_without_querying() {
+    let mut session = shortcut_action_state(ManagementKind::Backups, "inspect");
+    let mut query = ManagementQuery::new(ManagementKind::Backups);
+    query.options.insert("cursor".into(), "old-page".into());
+    query.options.insert("page_size".into(), "50".into());
+    session.pages.management.management_state.query = Some(query);
+    let mut action = session.backup_filter_action();
+    action.fields[0].value = "2026-10-26".into();
+    action.fields[1].value = "2026-10-01".into();
+    session.perform_management_action(action.clone(), None);
+    assert!(session.pages.management.management_state.form.is_some());
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .query
+            .as_ref()
+            .unwrap()
+            .options
+            .get("cursor")
+            .map(String::as_str),
+        Some("old-page")
+    );
+    session.pages.management.management_state.form = None;
+    action.fields[0].value = "2026-10-01".into();
+    action.fields[1].value = "2026-10-26".into();
+    session.perform_management_action(action, None);
+    let query = session
+        .pages
+        .management
+        .management_state
+        .query
+        .as_ref()
+        .unwrap();
+    assert!(!query.options.contains_key("cursor"));
+    assert!(
+        query.options["from_timestamp"].parse::<i64>().unwrap()
+            < query.options["to_timestamp"].parse::<i64>().unwrap()
+    );
+    assert_eq!(query.options["page_size"], "50");
+}
+
+#[test]
 fn mouse_movement_before_redraw_does_not_animate_keyboard_details() {
     let mut session = shortcut_action_state(ManagementKind::Services, "inspect");
     session
@@ -333,6 +465,12 @@ fn cached_management_language_refreshes_once_and_keeps_authorized_query_and_sort
     session.sort_management(0);
     let expected_query = session.pages.management.management_state.query.clone();
     let expected_sort = session.pages.management.management_state.sort;
+    let previous_attempt = session
+        .pages
+        .management
+        .management_state
+        .last_language_attempt
+        .clone();
     session.enter_new_page(ShellScreen::Settings);
     let generation = session.language.generation() + 1;
     session.publish_language(
@@ -343,15 +481,15 @@ fn cached_management_language_refreshes_once_and_keeps_authorized_query_and_sort
         },
     );
     session.poll_management();
-    assert!(
+    assert_eq!(
         session
             .pages
             .management
             .get(page)
             .unwrap()
             .management_state
-            .last_language_attempt
-            .is_none()
+            .last_language_attempt,
+        previous_attempt
     );
     session.return_from_screen(ShellScreen::Settings);
     assert_eq!(session.active_page_id(), page);
@@ -3451,6 +3589,29 @@ fn all_management_modules_sort_headers_and_keep_action_target_after_refresh() {
         }
         let header = layout.headers[0].1;
         click_management_point(&mut session, (header.x, header.y));
+        if kind == ManagementKind::Backups {
+            let query = session
+                .pages
+                .management
+                .management_state
+                .query
+                .as_ref()
+                .unwrap();
+            assert_eq!(query.options["sort_column"], "0");
+            assert_eq!(query.options["sort_descending"], "false");
+            assert_eq!(query.options["anchor"], "mock-selected-item");
+            let mut response = original.clone();
+            response.rows.reverse();
+            let (job, _) = session.management_job();
+            *job.0.snapshot.lock().unwrap() = Some(Ok(response));
+            session.register_management_job(&job, TaskDomain::ManagementQuery, TaskClass::Query);
+            session.pages.management.management_state.query_job = Some(job);
+            session.poll_management();
+            let state = &session.pages.management.management_state;
+            assert_eq!(state.snapshot.rows[0].id, "other");
+            assert_eq!(state.snapshot.rows[state.selected].id, "mock-selected-item");
+            continue;
+        }
         assert_eq!(
             session.pages.management.management_state.snapshot.rows[0].id,
             "other"

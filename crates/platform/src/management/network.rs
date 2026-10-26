@@ -22,6 +22,7 @@ use zbus::blocking::{Connection, Proxy, connection::Builder};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 pub(crate) use history::{restore_backup, restore_preflight};
+pub(crate) use transaction::active_backup_ids;
 pub use transaction::rollback_transaction;
 pub use transaction::{confirm_transaction, transaction_status};
 pub use wifi::{WifiAccessPoint, scan_wifi};

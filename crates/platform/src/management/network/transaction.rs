@@ -10,6 +10,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const ROOT: &str = "/run/tundraux3-network";
 
+pub(crate) fn active_backup_ids() -> Result<std::collections::BTreeSet<String>, ManagementError> {
+    let mut ids = std::collections::BTreeSet::new();
+    if !Path::new(ROOT).exists() {
+        return Ok(ids);
+    }
+    private_directory(Path::new(ROOT))?;
+    for entry in fs::read_dir(ROOT).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        if !entry.file_type().map_err(io_error)?.is_dir() {
+            continue;
+        }
+        let journal = read_journal(&entry.path())?;
+        if !matches!(journal.state, State::Committed | State::Restored) {
+            ids.extend(journal.backup_id);
+            ids.extend(journal.rollback_backup_id);
+            ids.extend(journal.plan.restore_record);
+        }
+    }
+    Ok(ids)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum State {
     Prepared,

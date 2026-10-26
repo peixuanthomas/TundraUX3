@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 mod connection;
 mod transaction;
+pub(crate) use transaction::active_backup_ids;
 pub use transaction::{recover_pending, rollback_transaction};
 
 const MAIN: &str = "/etc/ssh/sshd_config";

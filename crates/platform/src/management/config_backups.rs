@@ -13,6 +13,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const ROOT: &str = "/var/lib/tundraux3/config-backups";
 const MAX_RECORD: u64 = 16 * 1024 * 1024;
 
+mod history;
+mod index;
+pub(super) use index::lock as lock_history;
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Record {
     format_version: u32,
@@ -24,6 +28,8 @@ struct Record {
     result: String,
     #[serde(default)]
     payload: Value,
+    #[serde(default)]
+    retained: bool,
 }
 
 pub struct BackupSession {
@@ -50,6 +56,22 @@ fn record_path(root: &Path, id: &str) -> Result<PathBuf, ManagementError> {
     Ok(root.join("operations").join(format!("{id}.json")))
 }
 fn write_record(root: &Path, record: &Record) -> Result<(), ManagementError> {
+    let history = lock_history(root)?;
+    let mut record = record.clone();
+    if record_path(root, &record.id)?.exists() {
+        record.retained = read_record(root, &record.id)?.retained;
+    } else if record.result != "pending" {
+        return Err(ManagementError::Conflict(i18n::tr!(
+            "backup-history-record-changed"
+        )));
+    }
+    write_record_locked(root, &record, history.current)
+}
+fn write_record_locked(
+    root: &Path,
+    record: &Record,
+    index_current: bool,
+) -> Result<(), ManagementError> {
     let (base, _) = system_config::parent(&root.join("record"), true)?;
     let m = base.metadata().map_err(error)?;
     if m.uid() != unsafe { libc::geteuid() } || m.mode() & 0o022 != 0 {
@@ -91,7 +113,8 @@ fn write_record(root: &Path, record: &Record) -> Result<(), ManagementError> {
     {
         return Err(error(std::io::Error::last_os_error()));
     }
-    directory.sync_all().map_err(error)
+    directory.sync_all().map_err(error)?;
+    index::record_written(root, record, index_current)
 }
 fn read_record(root: &Path, id: &str) -> Result<Record, ManagementError> {
     let path = record_path(root, id)?;
@@ -117,7 +140,8 @@ fn read_record(root: &Path, id: &str) -> Result<Record, ManagementError> {
             i18n::tr!("platform-backups-unsafe-record").into(),
         ));
     }
-    let record: Record = serde_json::from_reader(file.take(MAX_RECORD)).map_err(error)?;
+    let record: Record =
+        serde_json::from_reader(std::io::BufReader::new(file.take(MAX_RECORD))).map_err(error)?;
     if record.id != id || record.format_version != 1 {
         return Err(ManagementError::InvalidInput(
             i18n::tr!("platform-backups-unsupported-record").into(),
@@ -169,6 +193,7 @@ pub(crate) fn begin_from_backup(
             after,
             result: "pending".into(),
             payload: Value::Null,
+            retained: false,
         },
     )?;
     Ok(BackupSession {
@@ -194,6 +219,7 @@ pub(super) fn begin_at(
         after: None,
         result: "pending".into(),
         payload: Value::Null,
+        retained: false,
     };
     write_record(root, &record)?;
     Ok(BackupSession {
@@ -293,8 +319,9 @@ pub(super) fn start_legacy(
     root: &Path,
     id: &str,
     before: &StoredFile,
+    index_current: bool,
 ) -> Result<(), ManagementError> {
-    write_record(
+    write_record_locked(
         root,
         &Record {
             format_version: 1,
@@ -308,7 +335,9 @@ pub(super) fn start_legacy(
             after: None,
             result: "pending".into(),
             payload: Value::Null,
+            retained: false,
         },
+        index_current,
     )
 }
 
@@ -381,6 +410,8 @@ fn restore_record(
     record: &Record,
     candidates: Option<&BTreeMap<PathBuf, (String, bool)>>,
 ) -> Result<(), ManagementError> {
+    let _lease = index::restore_lease(root, &record.id)?;
+    read_record(root, &record.id)?;
     let current = verify_current(record, candidates)?;
     let session = begin_at(
         root,
@@ -663,6 +694,9 @@ fn query_at(
     query: &ManagementQuery,
     flag: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
+    if !query.options.is_empty() || !query.scope.is_empty() || query.target.is_some() {
+        return history::query_at(root, query, flag);
+    }
     let mut snapshot = ManagementSnapshot {
         details_complete: true,
         backend: i18n::tr!("platform-backups-backend").into(),
@@ -907,6 +941,9 @@ pub fn execute(
     flag: &AtomicBool,
 ) -> Result<String, ManagementError> {
     check_cancelled(flag)?;
+    if let Some(result) = history::execute_at(Path::new(ROOT), command, io, flag)? {
+        return Ok(result);
+    }
     if command.action == "inspect_backups" {
         io.emit(OperationEvent::Snapshot {
             snapshot: query(&ManagementQuery::from_inspection(command), flag)?
@@ -915,6 +952,11 @@ pub fn execute(
         return Ok(i18n::tr!("platform-backups-loaded").into());
     }
     if command.action == "restore_legacy" {
+        let _lease = command
+            .values
+            .get("backup_id")
+            .map(|id| index::restore_lease(Path::new(ROOT), id))
+            .transpose()?;
         let path = command.values.get("path").ok_or_else(|| {
             ManagementError::InvalidInput(i18n::tr!("platform-backups-select-configuration").into())
         })?;
@@ -953,6 +995,14 @@ pub fn execute(
                 .into(),
         ));
     }
+    let _lease = if matches!(
+        record.source.as_str(),
+        "ssh" | "users" | "network" | "firewall" | "scheduled-tasks"
+    ) {
+        Some(index::restore_lease(Path::new(ROOT), id)?)
+    } else {
+        None
+    };
     if record.source == "ssh" {
         return super::ssh::restore_backup(&record.payload, context, io, flag);
     }

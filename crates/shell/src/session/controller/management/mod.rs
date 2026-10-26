@@ -5,6 +5,7 @@ mod scheduled;
 mod selection;
 mod task_center;
 use scheduled::ScheduledWizard;
+mod backups;
 use crate::session::*;
 use platform::management::*;
 use std::hash::{Hash, Hasher};
@@ -209,7 +210,7 @@ impl ManagementState {
             .is_some_and(|(before, after)| {
                 before.kind == after.kind
                     && before.scope == after.scope
-                    && before.options == after.options
+                    && (before.options == after.options || before.kind == ManagementKind::Backups)
             });
         if self.sort_columns != snapshot.columns {
             if self
@@ -223,7 +224,9 @@ impl ManagementState {
             }
             self.sort_columns = snapshot.columns.clone();
         }
-        if let Some(sort) = self.sort {
+        if let Some(sort) = self.sort
+            && self.kind != Some(ManagementKind::Backups)
+        {
             snapshot.rows.sort_by(|a, b| {
                 sort.compare(
                     a.cells.get(sort.column).map_or("", String::as_str),
@@ -470,6 +473,11 @@ fn management_view_action(action: &ManagementAction) -> bool {
             | "task_filter"
             | "task_next_page"
             | "task_first_page"
+            | "backups_next_page"
+            | "backups_first_page"
+            | "preview_cleanup"
+            | "cancel_cleanup_preview"
+            | "filter_backups"
     ) || action.id.starts_with("scope_")
 }
 
@@ -552,7 +560,13 @@ impl ShellSession {
         self.open_management_query(query);
     }
 
-    pub(in crate::session) fn open_management_query(&mut self, query: ManagementQuery) {
+    pub(in crate::session) fn open_management_query(&mut self, mut query: ManagementQuery) {
+        if query.kind == ManagementKind::Backups {
+            query
+                .options
+                .entry("page_size".into())
+                .or_insert_with(|| "50".into());
+        }
         let kind = query.kind;
         let supported = kind == ManagementKind::Tasks
             || cfg!(target_os = "linux")
@@ -994,6 +1008,7 @@ impl ShellSession {
                             });
                         }
                     }
+                    self.merge_backup_details(&mut snapshot, query.as_ref());
                     self.pages.management.management_state.sort_snapshot(
                         &mut snapshot,
                         &language,
@@ -1150,6 +1165,12 @@ impl ShellSession {
                     }
                     self.cancel_management_query();
                     let mut snapshot = snapshot;
+                    self.merge_backup_details(
+                        &mut snapshot,
+                        operation_source
+                            .as_ref()
+                            .and_then(|source| source.query.as_ref()),
+                    );
                     self.merge_task_history_snapshot(
                         &mut snapshot,
                         operation_source
@@ -1742,7 +1763,7 @@ impl ShellSession {
             filtering: s.filtering,
             status: if let Some(selection) = &s.selection {
                 format!("{} · {}", i18n::tr!("selection-count", count = selection.len()), s.status)
-            } else if s.kind == Some(ManagementKind::Tasks) {
+            } else if matches!(s.kind,Some(ManagementKind::Backups|ManagementKind::Tasks)) {
                 std::iter::once(s.status.as_str()).chain(s.snapshot.notices.iter().map(String::as_str))
                     .filter(|message| !message.is_empty()).collect::<Vec<_>>().join(" · ")
             } else { s.status.clone() },
