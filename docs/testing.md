@@ -4,6 +4,10 @@
 
 新增 Linux 管理功能的真实工具、PTY、触屏事件与尚未实机验证的范围见 [2026-10-16 验收记录](linux-administration-validation.md)。
 
+可见多选、全部内置文字输入、任务历史、脚本界面、定时维护和备份分页的本轮结果见 [2026-10-26 验收记录](operations-usability-validation.md)。设备点按与自动生成的点按事件分别记录。
+
+脚本真实 PTY 检查使用 `python3 scripts/tests/editor-script-smoke.py target/debug/tundra-shell`，需要同目录 CLI 和配套 Vim。仅验核心运行与调试时可显式传 `--skip-vim`，该结果不包含真实 Vim 交接；默认仍要求完整引擎。
+
 本地推荐检查：
 
 ```console
