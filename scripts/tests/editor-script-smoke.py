@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the script workspace and real bashdb through a Linux Shell PTY.
 
-Usage: python3 scripts/tests/editor-script-smoke.py [target/debug/tundra-shell] [--dump]
+Usage: python3 scripts/tests/editor-script-smoke.py [target/debug/tundra-shell] [--dump] [--skip-vim]
 The companion CLI is used for visible controls. XDG state and scripts are temporary.
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ bump
 printf 'SCRIPT_VALUE:%s\\n' "$value"
 printf 'WAITING_FOR_INPUT\\n'
 read -r answer
-printf 'SCRIPT_ANSWER:%s\\n' "$answer"
+for output_line in {1..80}; do printf 'OUTPUT_LINE:%s\\n' "$output_line"; done; printf 'SCRIPT_ANSWER:%s\\n' "$answer"
 """
 
 
@@ -229,7 +229,7 @@ def main():
 
             output = next(item["rect"] for item in current["nodes"] if item["role"] == "terminal")
             column, row = output["x"] + 1, output["y"] + output["height"] // 2
-            shell.send((f"\x1b[<64;{column+1};{row+1}M" * 8).encode())
+            shell.send((f"\x1b[<64;{column+1};{row+1}M" * 50).encode())
             current = until(lambda current: has_terminal(current, f"SCRIPT_START:{document}"))
             track = next(item["rect"] for item in current["nodes"] if item["role"] == "scrollbar"
                          and item["rect"]["x"] == output["x"] + output["width"]
@@ -266,8 +266,9 @@ def main():
             if "--dump" in sys.argv:
                 print("SCREEN 144x46:\n" + text(current), flush=True)
             key("F11")
-            current = paused()
-            assert any("script.row.Stack." in item["id"] and "bump" in item["name"] for item in current["nodes"]), text(current)
+            click("script.tab.Stack")
+            current = until(lambda current: "Paused" in text(current) and any(
+                "script.row.Stack." in item["id"] and "bump" in item["name"] for item in current["nodes"]))
             key("F7")
             paused()
             key("F11", "shift")
@@ -305,6 +306,9 @@ def main():
             assert shell.child.poll() is None, "Ctrl+C exited the host instead of the script"
             print("PASS: Ctrl+C in Output interrupted the script while keeping Shell alive", flush=True)
 
+            if "--skip-vim" in sys.argv:
+                print("SKIP: real Vim handoff was explicitly excluded", flush=True)
+                return
             assert binary.with_name("vim").joinpath("vim").is_file(), "Build the pinned Vim engine before this test"
             source_focus()
             key("F8")
