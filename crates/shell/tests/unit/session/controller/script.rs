@@ -254,6 +254,8 @@ fn expression_tab_cycles_its_controls_and_returns_to_input_while_disabled_input_
     saved_script(&mut state);
     state.pages.editor.script.state.status = ScriptStatus::Paused;
     state.pages.editor.script.focus = Pane::Expression;
+    state.pages.editor.script.detail = Pane::Expression;
+    state.advance_script_details(ui::MotionFrame::default());
     state.pages.editor.script.expression.set_value("value");
     let platform = platform::mock::UnsupportedPlatform;
     for expected in [Some(Action::Examine), Some(Action::Evaluate), None] {
@@ -271,6 +273,94 @@ fn expression_tab_cycles_its_controls_and_returns_to_input_while_disabled_input_
     assert!(state.script_paste("hidden paste".into()));
     assert_eq!(state.pages.editor.script.expression.value(), "valuex");
     assert!(state.script_requests.is_empty());
+}
+
+#[test]
+fn wide_detail_tabs_open_and_close_without_hover_and_output_keeps_primary_keyboard_actions() {
+    let mut state = session();
+    saved_script(&mut state);
+    let platform = platform::mock::UnsupportedPlatform;
+    state.advance_script_details(ui::MotionFrame::default());
+    let source_width = state.script_layout().editor_area.width;
+    for _ in 0..2 {
+        let (_, tab) = state
+            .script_layout()
+            .tabs
+            .into_iter()
+            .find(|(pane, _)| *pane == Pane::Variables)
+            .unwrap();
+        state.handle_script_pointer(
+            MouseInput::down(tab.x, tab.y, PointerButton::Left),
+            &platform,
+        );
+        state.handle_script_pointer(MouseInput::up(tab.x, tab.y, PointerButton::Left), &platform);
+        state.advance_script_details(ui::MotionFrame::default());
+        assert!(!state.script_layout().output_area.is_empty());
+        if state.pages.editor.script.detail == Pane::Variables {
+            assert!(state.script_layout().editor_area.width < source_width);
+        } else {
+            assert_eq!(state.pages.editor.script.detail, Pane::Output);
+            assert_eq!(state.script_layout().editor_area.width, source_width);
+        }
+    }
+    assert_eq!(state.pages.editor.script.focus, Pane::Output);
+    for expected in [
+        Some(Action::Run),
+        Some(Action::Debug),
+        Some(Action::Settings),
+        None,
+    ] {
+        state.handle_script_key(&KeyInput::from_label("Tab"), &platform);
+        assert_eq!(state.pages.editor.script.selected_action, expected);
+    }
+}
+
+#[test]
+fn wide_detail_motion_keeps_source_output_and_hits_on_the_same_frame() {
+    let mut state = session();
+    saved_script(&mut state);
+    state.interaction.pointer_motion = true;
+    let mut frame = ui::MotionFrame::default();
+    state.advance_script_details(frame);
+    let initial = state.script_layout().editor_area;
+    state.pages.editor.script.detail = Pane::Variables;
+    assert!(state.advance_script_details(frame));
+    frame.now = Duration::from_millis(60);
+    assert!(state.advance_script_details(frame));
+    let middle = state.script_layout();
+    assert!(middle.editor_area.width < initial.width);
+    assert_eq!(
+        middle.editor_area,
+        state.editor_content_area(state.script_main_area())
+    );
+    assert!(!middle.output_area.is_empty());
+    let pane = middle.pane(Pane::Variables);
+    assert_eq!(
+        middle.hit_test(pane.x, pane.y),
+        Some(Hit::Pane(Pane::Variables))
+    );
+    let platform = platform::mock::UnsupportedPlatform;
+    let (_, tab) = middle
+        .tabs
+        .iter()
+        .find(|(pane, _)| *pane == Pane::Variables)
+        .unwrap();
+    state.handle_script_pointer(
+        MouseInput::down(tab.x, tab.y, PointerButton::Left),
+        &platform,
+    );
+    frame.now = Duration::from_millis(80);
+    state.advance_script_details(frame);
+    let before_reverse = state.script_layout().editor_area;
+    state.handle_script_pointer(MouseInput::up(tab.x, tab.y, PointerButton::Left), &platform);
+    assert_eq!(state.pages.editor.script.detail, Pane::Output);
+    state.advance_script_details(frame);
+    assert_eq!(state.script_layout().editor_area, before_reverse);
+    assert!(state.script_layout().editor_area.width < initial.width);
+    state.interaction.pointer_motion = false;
+    assert!(!state.advance_script_details(frame));
+    assert_eq!(state.script_layout().editor_area.width, initial.width);
+    assert_eq!(state.pages.editor.script.closing_detail, None);
 }
 
 #[test]

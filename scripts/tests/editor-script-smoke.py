@@ -200,7 +200,7 @@ def main():
             entry = next(item for item in current["nodes"] if item["role"] == "button" and item["name"] == "Script Editor")
             ui("click", "--id", entry["id"], "--double")
             until(lambda current: current["page"] == "Editor" and "Breakpoints" in text(current))
-            print("PASS: Linux launcher opened the six-pane script workspace at 144x46", flush=True)
+            print("PASS: Linux launcher opened source, output and optional detail tabs at 144x46", flush=True)
 
             key("o", "ctrl")
             until(lambda current: current["page"] == "Explorer")
@@ -284,7 +284,7 @@ def main():
             if "--dump" in sys.argv:
                 print("SCREEN 108x24:\n" + text(current), flush=True)
             shell.resize(144, 46)
-            until(lambda current: current["width"] == 144 and "Call stack" in text(current))
+            until(lambda current: current["width"] == 144 and any(item["role"] == "textbox" and "script.expression" in item["id"] for item in current["nodes"]))
             print("PASS: compact 108x24 tabs and wide 144x46 layout kept the paused session", flush=True)
 
             source_focus()

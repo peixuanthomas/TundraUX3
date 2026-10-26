@@ -259,6 +259,7 @@ impl ScreenCompositor {
         let keyboard_animating = state.advance_input_keyboard(prepared.context.motion);
         let details_animating = state.advance_management_details(prepared.context.motion);
         if self.keyboard_open != state.input_keyboard_open() {
+        let script_animating = state.advance_script_details(prepared.context.motion);
             self.keyboard_open = state.input_keyboard_open();
             self.motion.cancel_for_bounds_change();
         }
@@ -305,9 +306,13 @@ impl ScreenCompositor {
         ui::components::Surface::new().render_frame(frame, bounds, context);
         let management = matches!(prepared.page, ScreenViewModel::Management(_))
             .then(|| state.to_management_view_model());
-        let content = management
+        let script = matches!(prepared.page, ScreenViewModel::Script(_))
+            .then(|| state.to_script_view_model());
+        let content = script
             .as_ref()
-            .map_or_else(|| prepared.page.content(), ui::ScreenContent::Management);
+            .map(ui::ScreenContent::Script)
+            .or_else(|| management.as_ref().map(ui::ScreenContent::Management))
+            .unwrap_or_else(|| prepared.page.content());
         let visible_content = !layout.is_compact() || content.renders_in_compact();
         let icons = icons.filter(|_| state.graphical_icons_enabled());
         if visible_content {
@@ -444,6 +449,7 @@ impl ScreenCompositor {
             || details_animating
             || self.motion.is_running()
             || self
+            || script_animating
                 .toast
                 .as_ref()
                 .is_some_and(|toast| toast.requests_redraw(context.motion));
@@ -468,8 +474,10 @@ impl ScreenCompositor {
                     node.actions.clear();
                 }
             }
-            let layout_animating =
-                keyboard_animating || details_animating || self.motion.is_running();
+            let layout_animating = keyboard_animating
+                || details_animating
+                || script_animating
+                || self.motion.is_running();
             let sensitive = snapshot.nodes.iter().any(|node| node.sensitive);
             if layout_animating {
                 for node in &mut snapshot.nodes {

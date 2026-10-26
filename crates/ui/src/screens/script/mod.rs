@@ -126,6 +126,7 @@ pub struct ScriptViewModel {
     pub expression: TextInput,
     pub focus: ScriptPane,
     pub detail: ScriptPane,
+    pub detail_expansion: Option<u16>,
     pub selected_variable: usize,
     pub selected_stack: usize,
     pub selected_breakpoint: usize,
@@ -143,6 +144,7 @@ impl ScriptViewModel {
             expression: TextInput::new("script.expression.input").with_horizontal_scroll(true),
             focus: ScriptPane::Source,
             detail: ScriptPane::Output,
+            detail_expansion: None,
             selected_variable: 0,
             selected_stack: 0,
             selected_breakpoint: 0,
@@ -248,5 +250,15 @@ impl ScriptViewModel {
 }
 
 pub fn script_editor_area(area: Rect) -> Rect {
-    workspace_areas(area).0
+    script_editor_area_with_state(area, ScriptStatus::Idle, false, ScriptPane::Output, None)
+}
+
+pub fn script_editor_area_with_state(
+    area: Rect,
+    status: ScriptStatus,
+    dirty: bool,
+    detail: ScriptPane,
+    detail_expansion: Option<u16>,
+) -> Rect {
+    workspace_areas(area, status, dirty, detail, detail_expansion).0
 }

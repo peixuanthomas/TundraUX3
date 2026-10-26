@@ -5,7 +5,8 @@ use app::script::{ScriptBreakpoint, ScriptLocation, ScriptState, ScriptStatus, S
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::{
     EditorViewModel, RenderContext, ScriptAction, ScriptHitTarget, ScriptPane, ScriptViewModel,
-    TundraTheme, render_script_contextual, script_editor_area, script_layout,
+    TundraTheme, render_script_contextual, script_editor_area, script_editor_area_with_state,
+    script_layout,
 };
 
 fn model() -> ScriptViewModel {
@@ -31,13 +32,30 @@ fn script_launcher_reuses_editor_art_in_existing_themes() {
 }
 
 #[test]
-fn wide_workspace_has_six_nonoverlapping_reachable_panes() {
-    let model = model();
+fn wide_workspace_defaults_to_source_and_output_and_opens_one_detail_at_a_time() {
+    let mut model = model();
     let area = Rect::new(4, 3, 140, 36);
     let layout = script_layout(area, &model);
     assert!(layout.wide);
     assert_eq!(layout.editor_area, script_editor_area(area));
-    assert_eq!(layout.panes.len(), 5);
+    assert_eq!(layout.panes.len(), 1);
+    assert!(!layout.pane(ScriptPane::Output).is_empty());
+    assert_eq!(layout.tabs.len(), 5);
+    let default_source = layout.editor_area;
+    for pane in ScriptPane::ALL.into_iter().skip(2) {
+        model.detail = pane;
+        let expanded = script_layout(area, &model);
+        assert_eq!(expanded.panes.len(), 2);
+        assert!(!expanded.pane(pane).is_empty());
+        assert!(!expanded.pane(ScriptPane::Output).is_empty());
+        assert!(expanded.editor_area.width < default_source.width);
+        assert!(!expanded.pane(pane).intersects(expanded.editor_area));
+        assert!(
+            !expanded
+                .pane(pane)
+                .intersects(expanded.pane(ScriptPane::Output))
+        );
+    }
     for (_, pane) in &layout.panes {
         assert!(!pane.is_empty());
         assert!(area.contains((pane.x, pane.y).into()));
@@ -67,13 +85,86 @@ fn compact_workspace_keeps_all_details_accessible_after_resize() {
             layout
                 .actions
                 .iter()
-                .any(|(action, _)| *action == ScriptAction::Stop)
+                .any(|(action, _)| *action == ScriptAction::Run)
         );
         for (tab, area) in &layout.tabs {
             assert_eq!(
                 layout.hit_test(area.x, area.y),
                 Some(ScriptHitTarget::Tab(*tab))
             );
+        }
+    }
+}
+
+#[test]
+fn primary_actions_follow_runtime_state_and_share_source_geometry_after_wrapping() {
+    let mut model = model();
+    for (status, expected) in [
+        (
+            ScriptStatus::Idle,
+            vec![
+                ScriptAction::Run,
+                ScriptAction::Debug,
+                ScriptAction::Settings,
+            ],
+        ),
+        (
+            ScriptStatus::Finished,
+            vec![
+                ScriptAction::Run,
+                ScriptAction::Debug,
+                ScriptAction::Settings,
+            ],
+        ),
+        (
+            ScriptStatus::Failed,
+            vec![
+                ScriptAction::Run,
+                ScriptAction::Debug,
+                ScriptAction::Settings,
+            ],
+        ),
+        (ScriptStatus::Running, vec![ScriptAction::Stop]),
+        (ScriptStatus::Saving, vec![ScriptAction::Stop]),
+        (ScriptStatus::Starting, vec![ScriptAction::Stop]),
+        (ScriptStatus::Stopping, vec![ScriptAction::Stop]),
+        (
+            ScriptStatus::Paused,
+            vec![
+                ScriptAction::Continue,
+                ScriptAction::Next,
+                ScriptAction::Step,
+                ScriptAction::Finish,
+                ScriptAction::Stop,
+            ],
+        ),
+    ] {
+        model.state.status = status;
+        model.editor.dirty = true;
+        for (width, height) in [(108, 20), (140, 36), (48, 20)] {
+            let area = Rect::new(3, 2, width, height);
+            let layout = script_layout(area, &model);
+            assert_eq!(
+                layout
+                    .actions
+                    .iter()
+                    .map(|(action, _)| *action)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(
+                layout.editor_area,
+                script_editor_area_with_state(area, status, true, ScriptPane::Output, None)
+            );
+            for (action, rect) in &layout.actions {
+                assert!(rect.y > layout.status.y);
+                assert!(rect.bottom() <= area.bottom());
+                assert!(rect.right() <= area.right());
+                assert_eq!(
+                    layout.hit_test(rect.x, rect.y),
+                    Some(ScriptHitTarget::Action(*action))
+                );
+            }
         }
     }
 }
@@ -140,6 +231,7 @@ fn variable_expansion_exposes_children_without_losing_parent_values() {
 #[test]
 fn rejected_pending_and_verified_breakpoints_have_distinct_markers_and_labels() {
     let mut model = model();
+    model.detail = ScriptPane::Breakpoints;
     model.editor =
         EditorViewModel::source("test.sh", "#!/usr/bin/env bash\nprintf one\nprintf two\n");
     model.editor.path_hint = Some("/tmp/test.sh".into());
@@ -238,13 +330,7 @@ fn long_directory_paths_keep_breakpoint_status_and_stack_line_visible() {
     });
     let area = Rect::new(0, 0, 140, 36);
     let context = RenderContext::default();
-    let layout = script_layout(area, &model);
     let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-    terminal
-        .draw(|frame| {
-            render_script_contextual(frame, area, &model, &context);
-        })
-        .unwrap();
     for (pane, index, number, status) in [
         (
             ScriptPane::Breakpoints,
@@ -260,6 +346,13 @@ fn long_directory_paths_keep_breakpoint_status_and_stack_line_visible() {
         ),
         (ScriptPane::Stack, 0, "bump:2345", None),
     ] {
+        model.detail = pane;
+        let layout = script_layout(area, &model);
+        terminal
+            .draw(|frame| {
+                render_script_contextual(frame, area, &model, &context);
+            })
+            .unwrap();
         let (_, _, rect) = layout
             .rows
             .iter()
@@ -280,6 +373,7 @@ fn long_directory_paths_keep_breakpoint_status_and_stack_line_visible() {
 #[test]
 fn multiline_expression_results_wrap_and_output_scrollbar_uses_terminal_offset() {
     let mut model = model();
+    model.detail = ScriptPane::Expression;
     model
         .state
         .expression_log

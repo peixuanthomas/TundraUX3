@@ -11,6 +11,9 @@ pub(in crate::session) struct ScriptPageState {
     pub state: ScriptState,
     pub focus: Pane,
     pub detail: Pane,
+    pub detail_motion: ui::PanelMotion,
+    pub closing_detail: Option<Pane>,
+    pub motion_area: Rect,
     pub expression: ui::components::TextInput,
     pub output: Option<Arc<ui::CommandLineTerminalSnapshot>>,
     pub selected_variable: usize,
@@ -37,6 +40,9 @@ impl Default for ScriptPageState {
             state: ScriptState::default(),
             focus: Pane::Source,
             detail: Pane::Output,
+            detail_motion: ui::PanelMotion::default(),
+            closing_detail: None,
+            motion_area: Rect::default(),
             expression: ui::components::TextInput::new("script.expression")
                 .with_horizontal_scroll(true),
             output: None,
@@ -59,6 +65,37 @@ impl Default for ScriptPageState {
 }
 
 impl ShellSession {
+    pub(in crate::session) fn advance_script_details(&mut self, frame: ui::MotionFrame) -> bool {
+        if self.content_screen() != ShellScreen::Editor || !self.pages.editor.script.enabled {
+            return false;
+        }
+        let area = self.script_main_area();
+        let frame = self.interaction_motion_frame(frame);
+        let phases = ui::MotionPhases::from_millis(self.animation_timings().dialog);
+        let page = &mut self.pages.editor.script;
+        let target = if matches!(page.detail, Pane::Source | Pane::Output) {
+            0
+        } else {
+            1_000
+        };
+        if page.motion_area != area || area.width < 140 || area.height < 36 {
+            page.detail_motion = ui::PanelMotion::new(target);
+            page.motion_area = area;
+        }
+        let before = page.detail_motion.value();
+        let running = page.detail_motion.update_with_phases(target, frame, phases);
+        if before != page.detail_motion.value() {
+            if !matches!(page.pointer, Some(Hit::Tab(_))) {
+                page.pointer = None;
+            }
+            page.drag = None;
+        }
+        if page.detail_motion.value() == 0 {
+            page.closing_detail = None;
+        }
+        running
+    }
+
     pub(in crate::session) fn script_available(&self) -> bool {
         cfg!(target_os = "linux")
             && !self.config_editor_active()
@@ -122,7 +159,20 @@ impl ShellSession {
 
     pub(in crate::session) fn editor_content_area(&self, main: Rect) -> Rect {
         if self.pages.editor.script.enabled {
-            ui::script_editor_area(main)
+            let page = &self.pages.editor.script;
+            let dirty = self
+                .app
+                .editor_state()
+                .is_some_and(|editor| editor.is_dirty() || editor.document.path.is_none());
+            ui::script_editor_area_with_state(
+                main,
+                page.state.status,
+                dirty,
+                page.closing_detail
+                    .filter(|_| page.detail == Pane::Output)
+                    .unwrap_or(page.detail),
+                Some(page.detail_motion.value()),
+            )
         } else {
             main
         }
@@ -169,6 +219,10 @@ impl ShellSession {
         model.expression = page.expression.clone();
         model.focus = page.focus;
         model.detail = page.detail;
+        if model.detail == Pane::Output {
+            model.detail = page.closing_detail.unwrap_or(model.detail);
+        }
+        model.detail_expansion = Some(page.detail_motion.value());
         model.selected_variable = page.selected_variable;
         model.selected_stack = page.selected_stack;
         model.selected_breakpoint = page.selected_breakpoint;
@@ -667,6 +721,17 @@ impl ShellSession {
                             Pane::Expression => {
                                 matches!(action, Action::Examine | Action::Evaluate)
                             }
+                            Pane::Output => matches!(
+                                action,
+                                Action::Run
+                                    | Action::Debug
+                                    | Action::Continue
+                                    | Action::Next
+                                    | Action::Step
+                                    | Action::Finish
+                                    | Action::Stop
+                                    | Action::Settings
+                            ),
                             _ => false,
                         }
                 })
@@ -1030,10 +1095,25 @@ impl ShellSession {
                         }
                         Some(Hit::Action(action)) => self.activate_script_action(action, platform),
                         Some(Hit::BreakpointLine(line)) => self.toggle_script_line(line),
-                        Some(Hit::Tab(pane) | Hit::Pane(pane)) => {
+                        Some(Hit::Tab(pane)) => {
+                            if layout.wide && self.pages.editor.script.detail == pane {
+                                self.pages.editor.script.closing_detail = Some(pane);
+                            }
+                            let pane = if layout.wide && self.pages.editor.script.detail == pane {
+                                Pane::Output
+                            } else {
+                                pane
+                            };
                             self.pages.editor.script.selected_action = None;
                             self.pages.editor.script.focus = pane;
                             self.pages.editor.script.detail = pane;
+                        }
+                        Some(Hit::Pane(pane)) => {
+                            self.pages.editor.script.selected_action = None;
+                            self.pages.editor.script.focus = pane;
+                            if !layout.wide || pane != Pane::Output {
+                                self.pages.editor.script.detail = pane;
+                            }
                         }
                         Some(Hit::ExpressionInput) => {
                             self.pages.editor.script.focus = Pane::Expression;

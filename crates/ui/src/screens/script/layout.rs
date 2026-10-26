@@ -1,5 +1,5 @@
 use super::*;
-use crate::components::{Scrollbar, contains_point, terminal_width};
+use crate::components::{PageAction, PageActionBar, Scrollbar, contains_point, terminal_width};
 use crate::{
     EditorHitTarget, EditorLayout, EditorScrollbarLayout, editor_layout, right_aligned_actions,
 };
@@ -100,8 +100,53 @@ pub(super) fn inset(area: Rect) -> Rect {
     )
 }
 
-pub(super) fn workspace_areas(area: Rect) -> (Rect, Vec<(ScriptPane, Rect)>, Rect, Rect, Rect) {
-    let action_height = area.height.min(2);
+pub(super) fn primary_actions(status: ScriptStatus) -> &'static [ScriptAction] {
+    match status {
+        ScriptStatus::Idle | ScriptStatus::Finished | ScriptStatus::Failed => &[
+            ScriptAction::Run,
+            ScriptAction::Debug,
+            ScriptAction::Settings,
+        ],
+        ScriptStatus::Paused => &[
+            ScriptAction::Continue,
+            ScriptAction::Next,
+            ScriptAction::Step,
+            ScriptAction::Finish,
+            ScriptAction::Stop,
+        ],
+        _ => &[ScriptAction::Stop],
+    }
+}
+
+pub(super) fn primary_action_bar(status: ScriptStatus, dirty: bool) -> PageActionBar {
+    PageActionBar::new("script").with_actions(
+        primary_actions(status)
+            .iter()
+            .map(|action| {
+                let button = PageAction::new(format!("action.{action:?}"), action.label(dirty))
+                    .disabled(status == ScriptStatus::Stopping);
+                match action {
+                    ScriptAction::Run | ScriptAction::Debug | ScriptAction::Continue => {
+                        button.primary()
+                    }
+                    ScriptAction::Stop => button.danger(),
+                    _ => button,
+                }
+            })
+            .collect(),
+    )
+}
+
+pub(super) fn workspace_areas(
+    area: Rect,
+    status: ScriptStatus,
+    dirty: bool,
+    detail: ScriptPane,
+    detail_expansion: Option<u16>,
+) -> (Rect, Vec<(ScriptPane, Rect)>, Rect, Rect, Rect) {
+    let action_height = area
+        .height
+        .min(primary_action_bar(status, dirty).height(area.width));
     let actions = Rect::new(
         area.x,
         area.bottom().saturating_sub(action_height),
@@ -117,29 +162,36 @@ pub(super) fn workspace_areas(area: Rect) -> (Rect, Vec<(ScriptPane, Rect)>, Rec
     let body = Rect::new(area.x, area.y, area.width, status.y.saturating_sub(area.y));
     let wide = area.width >= 140 && area.height >= 36;
     if wide {
-        let left = body.width * 2 / 3;
-        let upper = body.height * 3 / 4;
-        let source = Rect::new(body.x, body.y, left, upper);
-        let right = Rect::new(body.x + left, body.y, body.width - left, upper);
-        let a = right.height / 3;
-        let output = Rect::new(right.x, right.y, right.width, a);
-        let variables = Rect::new(right.x, right.y + a, right.width, a);
-        let stack = Rect::new(right.x, right.y + a * 2, right.width, right.height - a * 2);
-        let expression = Rect::new(body.x, source.bottom(), left, body.height - upper);
-        let breakpoints = Rect::new(right.x, source.bottom(), right.width, body.height - upper);
-        (
-            source,
-            vec![
-                (ScriptPane::Output, output),
-                (ScriptPane::Variables, variables),
-                (ScriptPane::Stack, stack),
-                (ScriptPane::Expression, expression),
-                (ScriptPane::Breakpoints, breakpoints),
-            ],
-            status,
-            actions,
-            Rect::default(),
-        )
+        let tabs = Rect::new(body.x, body.y, body.width, u16::from(body.height > 0));
+        let content = Rect::new(
+            body.x,
+            tabs.bottom(),
+            body.width,
+            body.height.saturating_sub(tabs.height),
+        );
+        let show_detail = !matches!(detail, ScriptPane::Source | ScriptPane::Output);
+        let (left, right) = crate::expand_trailing_pane(
+            content,
+            Rect::new(content.right(), content.y, 0, content.height),
+            if show_detail {
+                detail_expansion.unwrap_or(1_000) / 3
+            } else {
+                0
+            },
+        );
+        let upper = content.height * 2 / 3;
+        let source = Rect::new(content.x, content.y, left.width, upper);
+        let output = Rect::new(
+            content.x,
+            source.bottom(),
+            left.width,
+            content.height - upper,
+        );
+        let mut panes = vec![(ScriptPane::Output, output)];
+        if show_detail && !right.is_empty() {
+            panes.push((detail, right));
+        }
+        (source, panes, status, actions, tabs)
     } else {
         let source_height = (body.height * 3 / 5).max(body.height.min(5));
         let source = Rect::new(body.x, body.y, body.width, source_height);
@@ -149,7 +201,7 @@ pub(super) fn workspace_areas(area: Rect) -> (Rect, Vec<(ScriptPane, Rect)>, Rec
             body.width,
             u16::from(source.bottom() < body.bottom()),
         );
-        let detail = Rect::new(
+        let detail_area = Rect::new(
             body.x,
             tabs.bottom(),
             body.width,
@@ -157,7 +209,14 @@ pub(super) fn workspace_areas(area: Rect) -> (Rect, Vec<(ScriptPane, Rect)>, Rec
         );
         (
             source,
-            vec![(ScriptPane::Output, detail)],
+            vec![(
+                if matches!(detail, ScriptPane::Source) {
+                    ScriptPane::Output
+                } else {
+                    detail
+                },
+                detail_area,
+            )],
             status,
             actions,
             tabs,
@@ -166,41 +225,25 @@ pub(super) fn workspace_areas(area: Rect) -> (Rect, Vec<(ScriptPane, Rect)>, Rec
 }
 
 pub fn script_layout(area: Rect, model: &ScriptViewModel) -> ScriptLayout {
-    let (editor_area, mut panes, status, action_area, tab_area) = workspace_areas(area);
+    let (editor_area, panes, status, action_area, tab_area) = workspace_areas(
+        area,
+        model.state.status,
+        model.editor.dirty,
+        model.detail,
+        model.detail_expansion,
+    );
     let wide = area.width >= 140 && area.height >= 36;
-    if !wide {
-        panes[0].0 = if model.detail == ScriptPane::Source {
-            ScriptPane::Output
-        } else {
-            model.detail
-        };
-    }
     let editor_model = model.decorated_editor();
     let mut editor = editor_layout(editor_area, &editor_model);
     editor.settings = editor_layout(area, &editor_model).settings;
     let mut actions = Vec::new();
-    let primary = [
-        ScriptAction::Run,
-        if model.state.status == ScriptStatus::Paused {
-            ScriptAction::Continue
-        } else {
-            ScriptAction::Debug
-        },
-        ScriptAction::Next,
-        ScriptAction::Step,
-        ScriptAction::Finish,
-        ScriptAction::Stop,
-        ScriptAction::Settings,
-    ];
-    let widths = primary.map(|action| {
-        (terminal_width(&action.label(model.editor.dirty)) + 2).min(u16::MAX as usize) as u16
-    });
-    for (action, rect) in primary
-        .into_iter()
-        .zip(right_aligned_actions(action_area, &widths))
+    let primary = primary_actions(model.state.status);
+    for action in primary_action_bar(model.state.status, model.editor.dirty)
+        .layout(action_area)
+        .actions
     {
-        if !rect.is_empty() {
-            actions.push((action, rect));
+        if !action.area.is_empty() {
+            actions.push((primary[action.index], action.area));
         }
     }
     let mut tabs = Vec::new();

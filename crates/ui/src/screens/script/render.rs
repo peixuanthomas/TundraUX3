@@ -164,8 +164,15 @@ pub fn render_script_contextual(
             context,
         );
     }
+    primary_action_bar(model.state.status, model.editor.dirty)
+        .with_selected(
+            model
+                .selected_action
+                .map(|action| format!("action.{action:?}").into()),
+        )
+        .render(frame, area, context);
     for (action, rect) in &layout.actions {
-        if rect.is_empty() {
+        if rect.is_empty() || primary_actions(model.state.status).contains(action) {
             continue;
         }
         let mut button = Button::new(
