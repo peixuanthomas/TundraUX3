@@ -18,6 +18,7 @@ impl ExplorerState {
             entries: Vec::new(),
             selected_index: 0,
             selected_paths: BTreeSet::new(),
+            selection_mode: false,
             selection_anchor: None,
             selection_cleared: false,
             query: String::new(),
@@ -69,7 +70,7 @@ impl ExplorerState {
     }
 
     pub fn effective_selected_paths(&self) -> Vec<PathBuf> {
-        if self.selection_cleared {
+        if self.selection_cleared || (self.selection_mode && self.selected_paths.is_empty()) {
             Vec::new()
         } else if self.selected_paths.is_empty() {
             self.selected_path().into_iter().collect()
@@ -83,7 +84,7 @@ impl ExplorerState {
     }
 
     pub fn is_selected(&self, path: &Path) -> bool {
-        if self.selection_cleared {
+        if self.selection_cleared || (self.selection_mode && self.selected_paths.is_empty()) {
             false
         } else if self.selected_paths.is_empty() {
             self.selected_entry()
@@ -106,7 +107,8 @@ impl ExplorerState {
                 self.selection_cleared = false;
             }
             ExplorerSelectionMode::Toggle => {
-                if self.selected_paths.is_empty() && !self.selection_cleared {
+                if self.selected_paths.is_empty() && !self.selection_cleared && !self.selection_mode
+                {
                     self.selected_paths.extend(self.selected_path());
                 }
                 if !self.selected_paths.remove(&path) {
@@ -147,7 +149,8 @@ impl ExplorerState {
             }
             ExplorerSelectionMode::FocusOnly => {
                 // Freeze the implicit selection before moving the focus.
-                if self.selected_paths.is_empty() && !self.selection_cleared {
+                if self.selected_paths.is_empty() && !self.selection_cleared && !self.selection_mode
+                {
                     self.selected_paths.extend(self.selected_path());
                 }
                 if self.selection_anchor.is_none() {

@@ -18,6 +18,7 @@ impl ShellSession {
                         | "current_task"
                         | "package_advanced"
                         | "query_details"
+                        | "selection_mode"
                 ))
     }
     pub(in crate::session) fn all_management_actions(
@@ -48,6 +49,27 @@ impl ShellSession {
                 .cloned()
                 .map(|a| (a, None)),
         );
+        if self.pages.management.management_state.selection_mode {
+            for (action, _) in &mut actions {
+                if matches!(action.id.as_str(), "upgrade_all" | "pacman_upgrade_all") {
+                    action.disabled_reason = Some(i18n::tr!("selection-all-action"));
+                }
+            }
+        }
+        if self.management_multiselect_available() {
+            actions.push((
+                ManagementAction {
+                    id: "selection_mode".into(),
+                    label: i18n::tr!(if self.pages.management.management_state.selection_mode {
+                        "selection-finish"
+                    } else {
+                        "selection-start"
+                    }),
+                    ..Default::default()
+                },
+                None,
+            ));
+        }
         if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
             // Navigation must also remain available after a failed query or
             // when a subview has no rows.
@@ -204,7 +226,7 @@ impl ShellSession {
                 None,
             ));
         }
-        if !all.is_empty() {
+        if all.iter().any(|(action, _)| action.id != "selection_mode") {
             primary.push((
                 ManagementAction {
                     id: "more_actions".into(),
@@ -287,6 +309,22 @@ impl ShellSession {
             self.pages.management.management_state.selected_action = index;
             self.pages.management.management_state.filtering = false;
         }
+        if let Some(selection) = all.iter().find(|(action, _)| action.id == "selection_mode") {
+            primary.retain(|(action, _)| action.id != "selection_mode");
+            primary.retain(|(action, _)| action.id != "more_actions");
+            primary.truncate(3);
+            primary.push(selection.clone());
+            if all.iter().any(|(action, _)| action.id != "selection_mode") {
+                primary.push((
+                    ManagementAction {
+                        id: "more_actions".into(),
+                        label: i18n::tr!("management-more-actions"),
+                        ..Default::default()
+                    },
+                    None,
+                ));
+            }
+        }
         self.activate_management_item(action, row);
     }
 
@@ -332,6 +370,10 @@ impl ShellSession {
             self.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
                 title: i18n::tr!("management-more-actions"),
+        if action.id == "selection_mode" {
+            self.toggle_management_selection_mode();
+            return;
+        }
                 message: String::new(),
                 message_scroll: 0,
                 fields: vec![ManagementField {
@@ -358,6 +400,7 @@ impl ShellSession {
             .operation_job
             .is_some()
             || self.pages.management.management_state.draft_job.is_some())
+            items.retain(|(action, _)| action.id != "selection_mode");
             && action.id != "cancel_operation"
             && !management_view_action(&action)
         {
@@ -630,6 +673,7 @@ impl ShellSession {
                         &mut self.pages.management.management_state.snapshot.backend,
                     );
                     self.pages.management.management_state.snapshot = ManagementSnapshot {
+            self.pages.management.management_state.selection_mode = false;
                         backend,
                         ..Default::default()
                     };

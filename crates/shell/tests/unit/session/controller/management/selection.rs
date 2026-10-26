@@ -1,5 +1,79 @@
 use super::*;
 
+#[test]
+fn visible_selection_mode_supports_unmodified_taps_and_empty_selection() {
+    for hover in [false, true] {
+        for kind in [
+            ManagementKind::Packages,
+            ManagementKind::Services,
+            ManagementKind::Processes,
+            ManagementKind::ScheduledTasks,
+        ] {
+            let mut session = list_state(kind);
+            while session.notification_dismiss_active_modal_without_response() {}
+            session.refresh_hit_map();
+            let index = session
+                .management_actions()
+                .iter()
+                .position(|(action, _)| action.id == "selection_mode")
+                .unwrap();
+            let area = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            )
+            .actions[index];
+            let point = (area.x, area.y);
+            assert!(!area.is_empty());
+            if hover {
+                session.apply_input(InputEvent::mouse_moved(point));
+            }
+            session.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            session.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+            session.refresh_hit_map();
+            assert!(session.to_management_view_model().selection_mode);
+            assert_eq!(
+                session.to_management_view_model().selected_rows,
+                Some(vec![])
+            );
+            assert!(session.selected_management_actions().is_empty());
+            for row in [0, 2] {
+                let layout = ui::management_layout(
+                    session.management_main(),
+                    &session.to_management_view_model(),
+                );
+                let point = (layout.list_rows.x, layout.list_rows.y + row);
+                session.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+                session.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+            }
+            let model = session.to_management_view_model();
+            assert_eq!(
+                model.selected_rows,
+                Some(vec![0, 2]),
+                "{kind:?}: last={:?}, filtering={}, focus={:?}",
+                session.last_command,
+                session.pages.management.management_state.filtering,
+                session.pages.common.focused_component
+            );
+            assert!(model.rows[0][0].starts_with("[x] "));
+            assert!(model.rows[1][0].starts_with("[ ] "));
+            assert!(model.status.contains('2'));
+            let index = session
+                .management_actions()
+                .iter()
+                .position(|(action, _)| action.id == "selection_mode")
+                .unwrap();
+            let area = ui::management_layout(session.management_main(), &model).actions[index];
+            session.apply_input(InputEvent::mouse_down(
+                PointerButton::Left,
+                (area.x, area.y),
+            ));
+            session.apply_input(InputEvent::mouse_up(PointerButton::Left, (area.x, area.y)));
+            assert!(!session.to_management_view_model().selection_mode);
+            assert_eq!(session.to_management_view_model().selected_rows, None);
+        }
+    }
+}
+
 pub(super) fn list_state(kind: ManagementKind) -> ShellSession {
     let mut session = package_list_state();
     if kind == ManagementKind::Packages {

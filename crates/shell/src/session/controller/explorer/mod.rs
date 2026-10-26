@@ -111,6 +111,16 @@ impl ShellSession {
             InputKey::PageDown => current.saturating_add(page_size).min(last),
             _ => return,
         };
+        let mode = if self
+            .app
+            .explorer_state()
+            .is_some_and(|state| state.selection_mode)
+            && mode == app::explorer::ExplorerSelectionMode::Replace
+        {
+            app::explorer::ExplorerSelectionMode::FocusOnly
+        } else {
+            mode
+        };
         self.apply_explorer_command(ExplorerCommand::SelectIndexWithMode(index, mode), platform);
     }
 
@@ -947,20 +957,28 @@ impl ShellSession {
             }
             ui::ExplorerHitTarget::OverlaySurface => return,
         };
-        let selection_mode =
-            if modifiers.shift && explorer_toggle_modifier(platform.kind(), modifiers) {
-                app::explorer::ExplorerSelectionMode::AddRange
-            } else if modifiers.shift {
-                app::explorer::ExplorerSelectionMode::Range
-            } else if explorer_toggle_modifier(platform.kind(), modifiers) {
-                app::explorer::ExplorerSelectionMode::Toggle
-            } else {
-                app::explorer::ExplorerSelectionMode::Replace
-            };
+        let selecting = self
+            .app
+            .explorer_state()
+            .is_some_and(|state| state.selection_mode);
+        let selection_mode = if selecting {
+            app::explorer::ExplorerSelectionMode::Toggle
+        } else if modifiers.shift && explorer_toggle_modifier(platform.kind(), modifiers) {
+            app::explorer::ExplorerSelectionMode::AddRange
+        } else if modifiers.shift {
+            app::explorer::ExplorerSelectionMode::Range
+        } else if explorer_toggle_modifier(platform.kind(), modifiers) {
+            app::explorer::ExplorerSelectionMode::Toggle
+        } else {
+            app::explorer::ExplorerSelectionMode::Replace
+        };
         self.apply_explorer_command(
             ExplorerCommand::SelectIndexWithMode(index, selection_mode),
             platform,
         );
+        if selecting {
+            return;
+        }
         if click == ClickKind::Double
             && selection_mode == app::explorer::ExplorerSelectionMode::Replace
         {
@@ -984,6 +1002,18 @@ impl ShellSession {
         use ui::ExplorerToolbarAction;
 
         match action {
+            ExplorerToolbarAction::SelectionMode => {
+                let _ = self.update_explorer_state(|state| {
+                    state.selection_mode = !state.selection_mode;
+                    if state.selection_mode {
+                        state.selection_cleared = state.selected_paths.is_empty();
+                    } else {
+                        state.selected_paths.clear();
+                        state.selection_cleared = false;
+                    }
+                    state.drag = None;
+                });
+            }
             ExplorerToolbarAction::Open => {
                 self.apply_explorer_command(ExplorerCommand::OpenSelected, platform)
             }
@@ -1540,6 +1570,36 @@ impl ShellSession {
             Some(ui::ExplorerHitTarget::Entry(index)) => Some(index),
             _ => None,
         }
+    }
+
+    pub(in crate::session) fn explorer_selection_button_at(
+        &self,
+        point: CellPosition,
+    ) -> Option<ui::components::ButtonRegion> {
+        if self.active_screen() != ShellScreen::Explorer
+            || !self.interactive_overlays().is_empty()
+            || !self
+                .app
+                .explorer_state()
+                .is_some_and(|state| state.selection_mode)
+        {
+            return None;
+        }
+        let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
+        let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(bounds) else {
+            return None;
+        };
+        let model = self.to_explorer_view_model();
+        let layout = ui::explorer_layout(main, &model);
+        let ui::ExplorerHitTarget::Entry(index) = layout.hit_test(point.0, point.1)? else {
+            return None;
+        };
+        let entry = self.app.explorer_state()?.entries.get(index)?;
+        Some(ui::components::ButtonRegion {
+            id: format!("explorer.selection.{:?}", entry.path).into(),
+            area: layout.rows.iter().find(|row| row.index == index)?.area,
+            disabled: false,
+        })
     }
 
     pub(in crate::session) fn explorer_hit_target_at(

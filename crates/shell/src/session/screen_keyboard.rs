@@ -2,6 +2,7 @@
 use super::*;
 use crate::previews::screen_keyboard::physical::PhysicalKeyboard;
 use ui::{ScreenKeyboardAction as Action, ScreenKeyboardLayout, ScreenKeyboardModifiers};
+mod page;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum KeyboardOwner {
@@ -9,11 +10,13 @@ enum KeyboardOwner {
     CommandLine(PageInstanceId),
     Script(PageInstanceId),
     Management(PageInstanceId, String),
+    Page(PageInstanceId, String),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct InputKeyboard {
     owner: Option<KeyboardOwner>,
+    target: String,
     pub open: bool,
     pub visibility: u16,
     motion: ui::PanelMotion,
@@ -60,7 +63,7 @@ impl ShellSession {
         changed
     }
     fn input_keyboard_owner(&self) -> Option<KeyboardOwner> {
-        if self.auto_admin_visible() {
+        let owner = if self.auto_admin_visible() {
             self.auto_admin_keyboard_job().map(KeyboardOwner::AutoAdmin)
         } else if self.active_screen() == ShellScreen::Editor
             && self.pages.editor.script.enabled
@@ -83,17 +86,29 @@ impl ShellSession {
                 .map(|identity| KeyboardOwner::Management(self.active_page_id(), identity))
         } else {
             None
-        }
+        };
+        owner.or_else(|| {
+            self.page_keyboard_identity()
+                .map(|id| KeyboardOwner::Page(self.active_page_id(), id))
+        })
     }
 
     pub(super) fn sync_input_keyboard(&mut self) -> bool {
         let owner = self.input_keyboard_owner();
+        let target = self.page_keyboard_target();
         if self.screen_keyboard.owner == owner {
-            return false;
+            if self.screen_keyboard.target == target {
+                return false;
+            }
+            self.screen_keyboard.target = target;
+            self.screen_keyboard.pressed = None;
+            self.screen_keyboard.physical.clear();
+            return true;
         }
         let was_open = self.screen_keyboard.visibility > 0;
         self.screen_keyboard = InputKeyboard {
             owner,
+            target,
             ..Default::default()
         };
         self.screen_keyboard.physical.reports_release = cfg!(windows);
@@ -161,12 +176,18 @@ impl ShellSession {
         &self,
         layout: ui::ShellFrameLayout,
     ) -> ui::ShellFrameLayout {
+        if matches!(self.input_keyboard_owner(), Some(KeyboardOwner::Page(..)))
+            && self.input_keyboard_visibility() == 0
+        {
+            return layout;
+        }
         if matches!(
             self.input_keyboard_owner(),
             Some(
                 KeyboardOwner::CommandLine(_)
                     | KeyboardOwner::Script(_)
                     | KeyboardOwner::Management(..)
+                    | KeyboardOwner::Page(..)
             )
         ) {
             layout.with_input_keyboard(
@@ -212,6 +233,10 @@ impl ShellSession {
             )
         {
             self.focus_management_keyboard_input();
+            self.sync_input_keyboard();
+        }
+        if opening && matches!(self.screen_keyboard.owner, Some(KeyboardOwner::Page(..))) {
+            self.focus_page_keyboard_input();
             self.sync_input_keyboard();
         }
         self.screen_keyboard.open = opening;
@@ -362,7 +387,7 @@ fn keyboard_key(action: Action, modifiers: ScreenKeyboardModifiers) -> Option<Ke
         Action::Tab => InputKey::Tab,
         Action::Backspace => InputKey::Backspace,
         Action::Enter => InputKey::Enter,
-        Action::Space => InputKey::Space,
+        Action::Space => InputKey::Char(' '),
         Action::Function(number) => InputKey::F(number),
         Action::Letter(_) | Action::Character(_) => InputKey::Char(action.character(modifiers)?),
         _ => return None,

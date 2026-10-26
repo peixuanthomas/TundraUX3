@@ -5921,6 +5921,92 @@ fn explorer_test_context_menu(state: &ShellSession) -> ui::ExplorerContextMenuVi
     menu
 }
 
+#[test]
+fn explorer_selection_taps_wait_for_release_and_cancel_when_a_form_opens() {
+    for hover in [false, true] {
+        let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+        state.storage_manager = Some(
+            StorageManager::open(platform.app_paths().unwrap())
+                .unwrap()
+                .manager,
+        );
+        while state.notification_dismiss_active_modal_without_response() {}
+        state
+            .update_explorer_state(|explorer| explorer.clear_selection())
+            .unwrap();
+        state.activate_explorer_toolbar(
+            ui::ExplorerToolbarAction::SelectionMode,
+            (0, 0),
+            &platform,
+        );
+        assert!(
+            state
+                .app
+                .explorer_state()
+                .unwrap()
+                .effective_selected_paths()
+                .is_empty()
+        );
+        let row = explorer_test_layout(&state).rows[0].area;
+        let point = (row.x, row.y);
+        assert!(state.explorer_selection_button_at(point).is_some());
+        if hover {
+            state.apply_input_with_platform(InputEvent::mouse_moved(point), &platform);
+        }
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            &platform,
+        );
+        assert!(state.interaction.button_capture.is_some());
+        assert!(
+            state
+                .app
+                .explorer_state()
+                .unwrap()
+                .effective_selected_paths()
+                .is_empty()
+        );
+        state
+            .apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, point), &platform);
+        assert_eq!(
+            state
+                .app
+                .explorer_state()
+                .unwrap()
+                .effective_selected_paths()
+                .len(),
+            1
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            &platform,
+        );
+        state.begin_explorer_input(ExplorerInputMode::NewFolder);
+        state
+            .apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, point), &platform);
+        assert_eq!(
+            state
+                .app
+                .explorer_state()
+                .unwrap()
+                .effective_selected_paths()
+                .len(),
+            1
+        );
+        state.apply_input_with_platform(InputEvent::key(InputKey::Escape), &platform);
+        state.activate_explorer_toolbar(
+            ui::ExplorerToolbarAction::SelectionMode,
+            (0, 0),
+            &platform,
+        );
+        let explorer = state.app.explorer_state().unwrap();
+        assert!(!explorer.selection_mode);
+        assert!(explorer.selected_paths.is_empty());
+        assert_eq!(explorer.effective_selected_paths().len(), 1);
+    }
+}
+
 fn open_explorer_blank_context_for_test(state: &mut ShellSession, platform: &dyn Platform) {
     let layout = explorer_test_layout(state);
     let point = (layout.table_body.x, layout.table_body.bottom() - 1);

@@ -233,7 +233,13 @@ fn explorer_table_row(
         .unwrap_or(model.selected_index == Some(row.index));
     let cut = presentation.is_some_and(|presentation| presentation.cut);
     let drop_target = presentation.is_some_and(|presentation| presentation.drop_target);
-    let marker = if selected { "* " } else { "  " };
+    let marker = if model.selection_mode {
+        if selected { "[x] " } else { "[ ] " }
+    } else if selected {
+        "* "
+    } else {
+        "  "
+    };
     let name = format!("{marker}{icon} {}", entry.name);
     let values = [
         (ExplorerSortColumn::Name, name),
@@ -430,7 +436,9 @@ pub(super) fn explorer_action_bar(model: &ExplorerViewModel) -> PageActionBar {
         });
     }
     let names = selected_entry_names(model);
-    let text = if names.is_empty() {
+    let text = if model.selection_mode {
+        i18n::tr!("selection-count", count = model.effective_selected_count())
+    } else if names.is_empty() {
         i18n::tr!(
             "ui-explorer-selected-count",
             count = model.effective_selected_count()

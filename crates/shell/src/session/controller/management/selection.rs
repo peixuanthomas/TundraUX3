@@ -13,6 +13,28 @@ pub(super) fn row_id(kind: Option<ManagementKind>, row: &ManagementRow) -> Strin
 }
 
 impl ShellSession {
+    pub(in crate::session) fn management_keyboard_target(&self) -> String {
+        self.pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .map(|form| format!("{}:{}", form.instance, form.selected))
+            .unwrap_or_default()
+    }
+
+    pub(super) fn toggle_management_selection_mode(&mut self) {
+        let state = &mut self.pages.management.management_state;
+        state.selection_mode = !state.selection_mode;
+        if state.selection_mode {
+            state.selection.get_or_insert_with(Default::default);
+        } else {
+            state.selection = None;
+        }
+        state.actions_focused = false;
+        state.revision = state.revision.wrapping_add(1);
+    }
+
     pub(super) fn management_multiselect_available(&self) -> bool {
         let state = &self.pages.management.management_state;
         match state.kind {
@@ -36,7 +58,7 @@ impl ShellSession {
         let Some(row) = state.snapshot.rows.get(index) else {
             return;
         };
-        if toggle {
+        if toggle || state.selection_mode {
             let selection = state.selection.get_or_insert_with(|| {
                 state
                     .snapshot
@@ -140,9 +162,17 @@ impl ShellSession {
 
     pub(super) fn handle_management_selection_key(&mut self, key: &KeyInput) -> bool {
         let state = &self.pages.management.management_state;
-        if key.key != InputKey::Enter
-            || !key.modifiers.shift
-            || key.has_non_shift_modifier()
+        let direct = state.selection_mode
+            && !state.actions_focused
+            && !key.modifiers.shift
+            && !key.has_non_shift_modifier()
+            && matches!(
+                key.key,
+                InputKey::Enter | InputKey::Space | InputKey::Char(' ')
+            );
+        let shortcut =
+            key.key == InputKey::Enter && key.modifiers.shift && !key.has_non_shift_modifier();
+        if (!direct && !shortcut)
             || state.filtering
             || state.details_only
             || state.terminal_mode

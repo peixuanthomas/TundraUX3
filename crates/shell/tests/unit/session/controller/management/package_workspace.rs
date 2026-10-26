@@ -171,8 +171,16 @@ fn windows_package_actions_have_no_empty_advanced_menu_or_f3_install() {
     let workspace = session.package_workspace_model(&actions);
     assert_eq!(workspace.advanced_toggle, None);
     assert!(workspace.advanced_actions.is_empty());
-    assert_eq!(actions[3].0.id, "install");
-    assert!(workspace.primary_actions.contains(&3));
+    let install = actions
+        .iter()
+        .position(|(action, _)| action.id == "install")
+        .unwrap();
+    assert!(workspace.primary_actions.contains(&install));
+    assert!(
+        actions
+            .iter()
+            .any(|(action, _)| action.id == "selection_mode")
+    );
     session.handle_management_key(&KeyInput::new(InputKey::F(3)));
     assert!(
         !session

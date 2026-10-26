@@ -12,6 +12,107 @@ fn session() -> ShellSession {
 }
 
 #[test]
+fn native_forms_accept_virtual_keys_spaces_and_safe_multilingual_paste() {
+    for screen in [
+        ShellScreen::Login,
+        ShellScreen::BootstrapAdmin,
+        ShellScreen::FirstRunSetup,
+    ] {
+        let mut state = session();
+        state.enter_screen(screen);
+        if screen == ShellScreen::FirstRunSetup {
+            state.pages.setup.setup_step = ui::SetupStep::Admin;
+        }
+        state.toggle_input_keyboard();
+        state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+        assert!(state.input_keyboard_open());
+        for action in [Action::Letter('a'), Action::Space] {
+            let event = click(&mut state, action).unwrap();
+            state.apply_input(event);
+        }
+        state.apply_input(InputEvent::Paste("中文\n文档".into()));
+        let text = match screen {
+            ShellScreen::Login => &state.pages.login.login_password,
+            ShellScreen::BootstrapAdmin => &state.pages.bootstrap.bootstrap_username,
+            _ => &state.pages.setup.setup_admin_username,
+        };
+        assert!(text.ends_with("a 中文文档"), "{screen:?}: {text:?}");
+        assert_eq!(state.active_screen(), screen);
+    }
+}
+
+#[test]
+fn explorer_and_editor_keyboard_follow_page_and_field_changes() {
+    let mut state = session();
+    state.enter_screen(ShellScreen::Explorer);
+    state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    assert_eq!(
+        state.pages.explorer.explorer_input_mode,
+        ExplorerInputMode::Search
+    );
+    assert!(state.input_keyboard_open());
+    state.pages.explorer.explorer_input_mode = ExplorerInputMode::Rename;
+    state.sync_input_keyboard();
+    assert!(!state.input_keyboard_open());
+    state.enter_screen(ShellScreen::Editor);
+    assert!(state.keyboard_launcher_area().is_some());
+    state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    let region = state.input_keyboard_layout().buttons[0].region();
+    state.screen_keyboard.pressed = Some((region, Instant::now()));
+    state.pages.editor.editor_search_bar = Some(ui::EditorSearchBar::default());
+    state.sync_input_keyboard();
+    assert!(state.screen_keyboard.pressed.is_none());
+    assert!(state.input_keyboard_open());
+    state.help_open = true;
+    state.sync_input_keyboard();
+    assert!(state.keyboard_launcher_area().is_none());
+}
+
+#[test]
+fn account_and_clock_dialogs_focus_text_when_opening_the_keyboard() {
+    let mut state = session();
+    state.enter_screen(ShellScreen::UserManagement);
+    state.pages.user_management.user_management_mode =
+        UserManagementMode::Create(UserManagementCreateForm {
+            username: String::new(),
+            display_name: String::new(),
+            password: String::new(),
+            role: UserRole::User,
+            focused_field: UserManagementFormField::Submit,
+        });
+    state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    let event = click(&mut state, Action::Letter('a')).unwrap();
+    state.apply_input(event);
+    let UserManagementMode::Create(form) = &state.pages.user_management.user_management_mode else {
+        panic!("form was submitted");
+    };
+    assert_eq!(form.username, "a");
+    state.enter_screen(ShellScreen::Clock);
+    state.pages.clock.clock_create_state = Some(ClockCreateState {
+        focus: ui::ClockCreateDialogFocus::Cancel,
+        ..Default::default()
+    });
+    state.sync_input_keyboard();
+    state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    let event = click(&mut state, Action::Character('1')).unwrap();
+    state.apply_input(event);
+    assert_eq!(
+        state
+            .pages
+            .clock
+            .clock_create_state
+            .as_ref()
+            .unwrap()
+            .values[0],
+        1
+    );
+}
+
+#[test]
 fn keyboard_reads_custom_page_phase_times() {
     let mut state = session();
     let mut appearance = storage::AppearanceConfig::default();

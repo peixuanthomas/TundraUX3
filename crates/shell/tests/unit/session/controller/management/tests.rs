@@ -1158,7 +1158,21 @@ fn services_expose_restart_and_logs_but_keep_startup_changes_in_more() {
     assert_eq!(layout.actions.len(), 5);
     assert!(layout.action_next.is_empty());
     assert!(model.actions[2].0.starts_with("[T]"));
-    assert!(model.actions[3].0.starts_with("[L]"));
+    assert!(
+        session
+            .management_actions()
+            .iter()
+            .any(|(action, _)| action.id == "selection_mode")
+    );
+    let more = session
+        .management_actions()
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    session.activate_management_action(more);
+    assert!(
+        matches!(&session.pages.management.management_state.form.as_ref().unwrap().purpose, FormPurpose::Menu(items) if items.iter().any(|(action, _)| action.id == "view_logs"))
+    );
 }
 
 fn click_management_point(session: &mut ShellSession, point: (u16, u16)) {
@@ -1976,10 +1990,18 @@ fn management_menu_paging_keys_keep_secondary_actions_reachable() {
     );
     assert_eq!(
         layout.actions.len(),
-        1,
-        "only the more-actions entry stays on the page"
+        2,
+        "selection and more-actions stay on the page"
     );
-    click_management_point(&mut session, (layout.actions[0].x, layout.actions[0].y));
+    let more = session
+        .management_actions()
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    click_management_point(
+        &mut session,
+        (layout.actions[more].x, layout.actions[more].y),
+    );
     let visible_rows = ui::management_layout(
         session.management_main(),
         &session.to_management_view_model(),
@@ -2049,7 +2071,12 @@ fn held_enter_does_not_confirm_an_action() {
             confirm: true,
             ..Default::default()
         });
-    state.activate_management_action(0);
+    let more = state
+        .management_actions()
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    state.activate_management_action(more);
     state.handle_management_key(&KeyInput::new(InputKey::Enter).repeated());
     assert!(state.pages.management.management_state.form.is_some());
     assert!(
@@ -2706,9 +2733,14 @@ fn compact_more_actions_makes_every_secondary_action_touch_reachable() {
     for index in 0..6 {
         let layout =
             ui::management_layout(state.management_main(), &state.to_management_view_model());
-        assert_eq!(layout.actions.len(), 1);
+        assert_eq!(layout.actions.len(), 2);
         assert!(layout.action_next.is_empty());
-        state.handle_management_pointer(tap(layout.actions[0]));
+        let more = state
+            .management_actions()
+            .iter()
+            .position(|(action, _)| action.id == "more_actions")
+            .unwrap();
+        state.handle_management_pointer(tap(layout.actions[more]));
         let mut layout =
             ui::management_layout(state.management_main(), &state.to_management_view_model());
         if !layout.choice_rows.iter().any(|(i, _)| *i == index) {
@@ -2761,7 +2793,12 @@ fn more_menu_keyboard_and_touch_cannot_execute_a_disabled_item() {
             disabled_reason: Some("Protected object".into()),
             ..Default::default()
         }];
-        state.activate_management_action(0);
+        let more = state
+            .management_actions()
+            .iter()
+            .position(|(action, _)| action.id == "more_actions")
+            .unwrap();
+        state.activate_management_action(more);
         assert!(matches!(
             &state
                 .pages
@@ -2815,7 +2852,7 @@ fn more_menu_keyboard_and_touch_cannot_execute_a_disabled_item() {
 }
 
 #[test]
-fn main_actions_are_limited_to_two_and_tab_enter_reaches_the_more_menu() {
+fn main_actions_keep_selection_and_more_keyboard_reachable() {
     let mut state = state();
     state.pages.management.management_state.snapshot.actions = (0..5)
         .map(|index| ManagementAction {
@@ -2827,11 +2864,12 @@ fn main_actions_are_limited_to_two_and_tab_enter_reaches_the_more_menu() {
         })
         .collect();
     let actions = state.management_actions();
-    assert_eq!(actions.len(), 3);
-    assert_eq!(actions[2].0.id, "more_actions");
+    assert_eq!(actions.len(), 4);
+    assert_eq!(actions[2].0.id, "selection_mode");
+    assert_eq!(actions[3].0.id, "more_actions");
     state.handle_management_key(&KeyInput::new(InputKey::Tab));
     state.handle_management_key(&KeyInput::new(InputKey::End));
-    assert_eq!(state.pages.management.management_state.selected_action, 2);
+    assert_eq!(state.pages.management.management_state.selected_action, 3);
     state.handle_management_key(&KeyInput::new(InputKey::Enter));
     assert!(
         matches!(&state.pages.management.management_state.form.as_ref().unwrap().purpose,FormPurpose::Menu(items) if items.len()==5)
@@ -3397,7 +3435,10 @@ fn all_management_modules_sort_headers_and_keep_action_target_after_refresh() {
         let model = session.to_management_view_model();
         let layout = ui::management_layout(session.management_main(), &model);
         if let Some(workspace) = &model.workspace {
-            assert!(!layout.actions_panel.is_empty());
+            assert_eq!(
+                !layout.actions_panel.is_empty(),
+                workspace.advanced_toggle.is_some()
+            );
             for index in &workspace.primary_actions {
                 let area = layout.actions[*index];
                 assert_eq!(area.intersection(layout.detail_actions_panel), area);

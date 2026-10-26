@@ -15,6 +15,58 @@ use platform::{
 use storage::StorageManager;
 
 #[test]
+fn explicit_selection_mode_never_uses_the_unchecked_focused_file() {
+    let fixture = Fixture::new("visible-selection");
+    for name in ["a.txt", "b.txt", "中文.txt"] {
+        fs::write(fixture.documents.join(name), name).unwrap();
+    }
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    ExplorerController::default().apply(
+        &mut state,
+        ExplorerCommand::Refresh,
+        Some(&session()),
+        &fixture.platform,
+        &fixture.storage(),
+    );
+    state.selection_mode = true;
+    assert!(state.effective_selected_paths().is_empty());
+    assert!(
+        state
+            .entries
+            .iter()
+            .all(|entry| !state.is_selected(&entry.path))
+    );
+    state.select_index(1, ExplorerSelectionMode::Toggle);
+    assert_eq!(
+        state.effective_selected_paths(),
+        vec![state.entries[1].path.clone()]
+    );
+    state.select_index(2, ExplorerSelectionMode::FocusOnly);
+    assert_eq!(
+        state.effective_selected_paths(),
+        vec![state.entries[1].path.clone()]
+    );
+    state.select_index(1, ExplorerSelectionMode::Toggle);
+    assert!(state.effective_selected_paths().is_empty());
+    let next = fixture.documents.join("next");
+    fs::create_dir(&next).unwrap();
+    for name in ["first.txt", "second.txt"] {
+        fs::write(next.join(name), name).unwrap();
+    }
+    ExplorerController::default().apply(
+        &mut state,
+        ExplorerCommand::Navigate(next),
+        Some(&session()),
+        &fixture.platform,
+        &fixture.storage(),
+    );
+    assert!(state.selection_mode);
+    assert!(state.effective_selected_paths().is_empty());
+    state.select_index(1, ExplorerSelectionMode::FocusOnly);
+    assert!(state.effective_selected_paths().is_empty());
+}
+
+#[test]
 fn refresh_keeps_search_selection_and_scroll_while_reloading_metadata() {
     let fixture = Fixture::new("refresh-context");
     for name in ["a.txt", "b.txt", "other.md"] {

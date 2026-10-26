@@ -63,6 +63,7 @@ pub struct ExplorerState {
     pub entries: Vec<ExplorerEntry>,
     pub selected_index: usize,
     pub selected_paths: BTreeSet<PathBuf>,
+    pub selection_mode: bool,
     pub selection_anchor: Option<PathBuf>,
     pub selection_cleared: bool,
     pub query: String,

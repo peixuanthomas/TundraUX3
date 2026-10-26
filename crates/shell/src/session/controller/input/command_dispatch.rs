@@ -29,6 +29,16 @@ impl ShellSession {
         let Some(input) = self.prepare_input(input, platform, received_at) else {
             return ShellAction::Redraw;
         };
+        if let InputEvent::Paste(value) = &input
+            && !matches!(
+                self.active_screen(),
+                ShellScreen::Editor | ShellScreen::Explorer
+            )
+            && self.page_keyboard_identity().is_some()
+        {
+            self.paste_native_text(value, platform, received_at);
+            return ShellAction::Redraw;
+        }
         if let Some(action) = self.apply_input_preamble_at(&input, received_at) {
             return action;
         }
@@ -1043,11 +1053,23 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerNext => {
-                self.apply_explorer_command(ExplorerCommand::SelectNext, platform);
+                self.navigate_explorer_selection(
+                    InputKey::Down,
+                    app::explorer::ExplorerSelectionMode::Replace,
+                    platform,
+                );
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerToggleSelection => {
+                self.apply_explorer_command(ExplorerCommand::ToggleFocused, platform);
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerPrevious => {
-                self.apply_explorer_command(ExplorerCommand::SelectPrevious, platform);
+                self.navigate_explorer_selection(
+                    InputKey::Up,
+                    app::explorer::ExplorerSelectionMode::Replace,
+                    platform,
+                );
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerNextQuickLocation => {

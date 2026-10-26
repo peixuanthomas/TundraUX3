@@ -154,6 +154,25 @@ impl ShellSession {
             .app
             .explorer_state()
             .is_some_and(|state| state.current_location.is_trash());
+        if self
+            .app
+            .explorer_state()
+            .is_some_and(|state| state.selection_mode)
+            && key.is_unmodified_action_key()
+            && matches!(
+                key.key,
+                InputKey::Enter | InputKey::Space | InputKey::Char(' ')
+            )
+        {
+            return (
+                target,
+                if key.phase == InputPhase::Press {
+                    ShellCommand::ExplorerToggleSelection
+                } else {
+                    ShellCommand::Noop
+                },
+            );
+        }
         let quick_locations_visible = || {
             let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
             let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {

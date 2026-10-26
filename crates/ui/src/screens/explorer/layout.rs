@@ -899,6 +899,7 @@ pub(super) fn explorer_page_action_buttons(
         &[
             ExplorerToolbarAction::Restore,
             ExplorerToolbarAction::DumpTrash,
+            ExplorerToolbarAction::SelectionMode,
             ExplorerToolbarAction::Menu,
         ]
     } else if model.entries.is_empty() {
@@ -911,7 +912,7 @@ pub(super) fn explorer_page_action_buttons(
         &[
             ExplorerToolbarAction::Open,
             ExplorerToolbarAction::New,
-            ExplorerToolbarAction::Rename,
+            ExplorerToolbarAction::SelectionMode,
             ExplorerToolbarAction::Delete,
             ExplorerToolbarAction::Menu,
         ]

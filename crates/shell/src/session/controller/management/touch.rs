@@ -335,7 +335,12 @@ impl ShellSession {
                 query.filter = filter;
                 query.target = None;
                 self.pages.management.management_state.list_scroll_explicit = false;
-                self.pages.management.management_state.selection = None;
+                self.pages.management.management_state.selection = self
+                    .pages
+                    .management
+                    .management_state
+                    .selection_mode
+                    .then(Default::default);
             }
         }
     }

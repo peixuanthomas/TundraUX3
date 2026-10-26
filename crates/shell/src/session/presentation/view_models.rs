@@ -1813,6 +1813,7 @@ impl ShellSession {
         model.viewport_follows_focus = state.viewport_follows_focus;
         model.show_sidebar = state.show_sidebar;
         model.selected_count = state.effective_selected_paths().len();
+        model.selection_mode = state.selection_mode;
         model.listing_warning_count = state.listing_warning_count;
         model.set_history_availability(
             !state.back_history.is_empty(),
@@ -1828,6 +1829,14 @@ impl ShellSession {
             );
         }
         for button in &mut model.toolbar.buttons {
+            if button.action == ui::ExplorerToolbarAction::SelectionMode {
+                button.label = i18n::tr!(if state.selection_mode {
+                    "selection-finish"
+                } else {
+                    "selection-start"
+                });
+                button.active = state.selection_mode;
+            }
             button.enabled = match button.action {
                 ui::ExplorerToolbarAction::Back => !state.back_history.is_empty(),
                 ui::ExplorerToolbarAction::Forward => !state.forward_history.is_empty(),

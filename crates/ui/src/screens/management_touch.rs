@@ -75,6 +75,7 @@ pub struct ManagementViewModel {
     pub selected: usize,
     pub selected_rows: Option<Vec<usize>>,
     pub scroll: usize,
+    pub selection_mode: bool,
     pub table_scroll: usize,
     pub details: String,
     pub details_scroll: u16,

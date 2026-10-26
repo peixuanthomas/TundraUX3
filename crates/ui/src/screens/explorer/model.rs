@@ -35,6 +35,7 @@ pub(crate) const fn explorer_sort_direction_icon_key(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExplorerToolbarAction {
+    SelectionMode,
     Open,
     Menu,
     Back,
@@ -57,11 +58,12 @@ impl ExplorerToolbarAction {
     pub const fn is_page_action(self) -> bool {
         matches!(
             self,
-            Self::Open | Self::New | Self::Rename | Self::Delete | Self::Menu
+            Self::Open | Self::New | Self::SelectionMode | Self::Delete | Self::Menu
         )
     }
 
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
+        Self::SelectionMode,
         Self::Open,
         Self::Menu,
         Self::Back,
@@ -80,7 +82,8 @@ impl ExplorerToolbarAction {
         Self::Options,
     ];
 
-    pub const REGULAR: [Self; 14] = [
+    pub const REGULAR: [Self; 15] = [
+        Self::SelectionMode,
         Self::Open,
         Self::Menu,
         Self::Back,
@@ -97,7 +100,8 @@ impl ExplorerToolbarAction {
         Self::Options,
     ];
 
-    pub const TRASH: [Self; 8] = [
+    pub const TRASH: [Self; 9] = [
+        Self::SelectionMode,
         Self::Menu,
         Self::Back,
         Self::Forward,
@@ -110,6 +114,7 @@ impl ExplorerToolbarAction {
 
     pub fn label(self) -> String {
         match self {
+            Self::SelectionMode => i18n::tr!("selection-start"),
             Self::Open => i18n::tr!("ui-explorer-open-selected"),
             Self::Menu => i18n::tr!("ui-explorer-actions-menu"),
             Self::Back => i18n::tr!("ui-explorer-back"),
@@ -131,6 +136,7 @@ impl ExplorerToolbarAction {
 
     pub const fn icon_key(self) -> &'static str {
         match self {
+            Self::SelectionMode => "options",
             Self::Open => "forward",
             Self::Menu => "options",
             Self::Back => "back",
@@ -152,6 +158,7 @@ impl ExplorerToolbarAction {
 
     pub const fn shortcut_label(self) -> &'static str {
         match self {
+            Self::SelectionMode => "",
             Self::Open => "Enter",
             Self::Menu => "Shift+F10",
             Self::Back => "Left",
@@ -555,6 +562,7 @@ pub struct ExplorerViewModel {
     pub can_go_back: bool,
     pub can_go_forward: bool,
     pub selected_count: usize,
+    pub selection_mode: bool,
     pub listing_warning_count: usize,
     pub operation: Option<ExplorerOperationProgressViewModel>,
     pub overlay: Option<ExplorerOverlayViewModel>,
@@ -621,6 +629,7 @@ impl ExplorerViewModel {
             can_go_back: false,
             can_go_forward: false,
             selected_count,
+            selection_mode: false,
             listing_warning_count: 0,
             operation: None,
             overlay: None,

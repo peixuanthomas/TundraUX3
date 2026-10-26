@@ -122,6 +122,7 @@ pub(in crate::session) struct ManagementState {
     table_scroll: usize,
     sort: Option<ui::TableSort>,
     sort_columns: Vec<String>,
+    selection_mode: bool,
     action_scroll: Option<usize>,
     form_field_scroll: Option<usize>,
     choice_field: Option<usize>,
@@ -1571,7 +1572,8 @@ impl ShellSession {
                     id
                 })
                 .collect(),
-            title: s.kind.map(|kind| {
+            title: {
+                let title = s.kind.map(|kind| {
                 let title = management_title(kind);
                 if kind == ManagementKind::Packages {
                     let scope = s.query.as_ref().map(|query| query.scope.as_str()).filter(|scope| !scope.is_empty()).unwrap_or("installed");
@@ -1579,7 +1581,11 @@ impl ShellSession {
                 } else {
                     title
                 }
-            }).unwrap_or_default(),
+                }).unwrap_or_default();
+                if let Some(selection) = &s.selection {
+                    format!("{title} · {}", i18n::tr!("selection-count", count = selection.len()))
+                } else { title }
+            },
             columns: s
                 .snapshot
                 .columns
@@ -1589,7 +1595,11 @@ impl ShellSession {
                 } else { management_text("column", c, c) })
                 .collect(),
             rows: s.snapshot.rows.iter().map(|r| r.cells.iter().enumerate().map(|(i,v)| {
-                if s.kind == Some(ManagementKind::Users) && s.snapshot.columns.get(i).is_some_and(|c| c == "Source") {management_detail_value(s.kind,"Source",v)} else if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()}
+                let value = if s.kind == Some(ManagementKind::Users) && s.snapshot.columns.get(i).is_some_and(|c| c == "Source") {management_detail_value(s.kind,"Source",v)} else if s.snapshot.columns.get(i).is_some_and(|c|matches!(c.as_str(),"Check"|"Result"|"Next step"|"Source"|"State"|"Status"|"Disk health"|"Result type")) {management_text("value",v,v)}else{v.clone()};
+                if i == 0 && s.selection_mode {
+                    let checked = s.selection.as_ref().is_some_and(|selection| selection.contains(&selection::row_id(s.kind, r)));
+                    format!("[{}] {value}", if checked { "x" } else { " " })
+                } else { value }
             }).collect()).collect(),
             selected_rows: s.selection.as_ref().map(|selection| s.snapshot.rows.iter().enumerate().filter_map(|(index, row)| selection.contains(&selection::row_id(s.kind, row)).then_some(index)).collect()),
             selected: s.selected,
@@ -1666,7 +1676,9 @@ impl ShellSession {
             actions_focused: s.actions_focused,
             filter: s.filter_input.clone(),
             filtering: s.filtering,
-            status: s.status.clone(),
+            status: if let Some(selection) = &s.selection {
+                format!("{} · {}", i18n::tr!("selection-count", count = selection.len()), s.status)
+            } else { s.status.clone() },
             loading: s.query_job.is_some() || s.draft_job.is_some(),
             running: s.operation_job.is_some(),
             output: s.output.clone(),
@@ -1676,6 +1688,7 @@ impl ShellSession {
             details_only: s.details_only,
             details_expansion: self.details_motion.as_ref()
                 .filter(|(page, _)| *page == self.active_page_id() && self.interaction.pointer_motion)
+            selection_mode: s.selection_mode,
                 .map(|(_, motion)| motion.value()),
             terminal: s.terminal_mode,
             terminal_snapshot: if s.terminal_mode {
