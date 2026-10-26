@@ -45,6 +45,7 @@ pub struct ManagementChoices {
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagementForm {
+    pub cancel_label: Option<String>,
     pub identity: String,
     pub title: String,
     pub message: String,
@@ -359,6 +360,9 @@ fn content_form_inner(form: Rect, spacious: bool) -> Rect {
     )
 }
 fn form_cancel_text(form: &ManagementForm) -> String {
+    if let Some(label) = &form.cancel_label {
+        return format!("Esc {label}");
+    }
     if form.dismiss_only {
         i18n::tr!("management-form-close")
     } else {

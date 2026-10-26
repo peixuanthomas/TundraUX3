@@ -1,8 +1,10 @@
 mod actions;
 mod input;
 mod packages;
+mod scheduled;
 mod selection;
 mod task_center;
+use scheduled::ScheduledWizard;
 use crate::session::*;
 use platform::management::*;
 use std::hash::{Hash, Hasher};
@@ -73,6 +75,7 @@ impl Drop for ManagementJobShared {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FormPurpose {
+    Scheduled(ScheduledWizard),
     Action(ManagementAction, Option<ManagementRow>),
     Answer(String),
     Menu(Vec<(ManagementAction, Option<ManagementRow>)>),
@@ -153,6 +156,7 @@ pub(in crate::session) struct ManagementState {
     details_horizontal_scroll: u16,
     details_only: bool,
     query_job: Option<ManagementJob>,
+    scheduled_preview: Option<ManagementJob>,
     draft_job: Option<ManagementJob>,
     pending_draft: Option<ConfigDraft>,
     operation_job: Option<ManagementJob>,
@@ -374,6 +378,11 @@ fn editor_dialog_title_key(action: &str) -> Option<&'static str> {
 }
 
 fn form_value_text(purpose: &FormPurpose, field: &ManagementField, value: &str) -> String {
+    if matches!(purpose, FormPurpose::Scheduled(_))
+        && let Some(label) = scheduled::choice_label(&field.id, value)
+    {
+        return label;
+    }
     if field.choices.iter().all(|v| v == "true" || v == "false") && !field.choices.is_empty() {
         return match value {
             "true" => i18n::tr!("management-value-yes"),
@@ -837,6 +846,7 @@ impl ShellSession {
     }
 
     fn poll_management_page(&mut self, visible: bool) {
+        self.poll_scheduled_preview();
         if let Some(job) = self.pages.management.management_state.query_job.clone()
             && !self.management_job_belongs_here(TaskDomain::ManagementQuery, &job)
         {
@@ -1765,8 +1775,10 @@ impl ShellSession {
                 .as_ref()
                 .filter(|_| !s.terminal_mode)
                 .map(|f| ui::ManagementForm {
+                    cancel_label:match &f.purpose{FormPurpose::Scheduled(wizard)=>wizard.back_label(),_=>None},
                     dismiss_only: matches!(&f.purpose, FormPurpose::Configuration(action) if action == "edit-about"),
                     submit_label: Some(match &f.purpose {
+                        FormPurpose::Scheduled(wizard)=>wizard.submit_label(),
                         FormPurpose::Action(action,_)=>action_label(action),
                         FormPurpose::Configuration(action) if action.starts_with("edit-") => match action.as_str() {
                             "edit-goto" => i18n::tr!("ui-editor-go-to-line"),
@@ -1780,8 +1792,9 @@ impl ShellSession {
                         })),
                         _=>i18n::tr!("management-form-submit"),
                     }),
-                    submit_disabled: matches!(&f.purpose,FormPurpose::Configuration(action) if action=="check" && self.config_save_disabled(&f.fields)),
+                    submit_disabled: matches!(&f.purpose,FormPurpose::Configuration(action) if action=="check" && self.config_save_disabled(&f.fields)) || matches!(&f.purpose,FormPurpose::Scheduled(wizard) if wizard.submit_disabled()),
                     identity: format!("{}.{}",f.instance,match &f.purpose {
+                        FormPurpose::Scheduled(_)=>"scheduled-task".into(),
                         FormPurpose::Action(action, row) => format!(
                             "{}.{:?}",
                             action.id,

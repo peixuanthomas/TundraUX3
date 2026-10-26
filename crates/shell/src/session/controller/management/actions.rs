@@ -340,6 +340,17 @@ impl ShellSession {
             self.toggle_management_selection_mode();
             return;
         }
+        if self.pages.management.management_state.kind == Some(ManagementKind::ScheduledTasks)
+            && matches!(
+                action.id.as_str(),
+                "create_task" | "preview_task" | "edit_task"
+            )
+            && action.values.get("__advanced").map(String::as_str) != Some("true")
+            && self.management_action_enabled(&action)
+        {
+            self.begin_scheduled_wizard(action, row);
+            return;
+        }
         if action.id == "package_advanced" {
             self.pages.management.management_state.package_advanced_open =
                 !self.pages.management.management_state.package_advanced_open;
@@ -1090,6 +1101,7 @@ impl ShellSession {
             .is_some_and(|form| {
                 matches!(&form.purpose, FormPurpose::Configuration(action) if action == "check")
                     && self.config_save_disabled(&form.fields)
+                    || matches!(&form.purpose,FormPurpose::Scheduled(wizard) if wizard.submit_disabled())
             })
         {
             return;
@@ -1107,6 +1119,7 @@ impl ShellSession {
             return;
         }
         match form.purpose {
+            FormPurpose::Scheduled(wizard) => self.submit_scheduled_step(wizard, form.fields),
             FormPurpose::Configuration(action) => self.submit_config_form(&action, form.fields),
             FormPurpose::Menu(items) => {
                 let selected = self.pages.management.management_state.choice_selected;
@@ -1131,6 +1144,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn cancel_management_form(&mut self) {
+        if self.cancel_scheduled_step() {
+            return;
+        }
         if self.confirm_management_discard(false) {
             return;
         }
