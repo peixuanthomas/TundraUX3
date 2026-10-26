@@ -1362,11 +1362,11 @@ pub fn execute(
             return super::ssh::activate_saved_configuration(command, _context, io, flag);
         }
         if detect_validator(path) == "systemd" {
-            super::services::execute(
-                &ManagementCommand {
             if unit.ends_with(".timer") {
                 return super::scheduled_tasks::reload_timer(unit, scope, _context, flag);
             }
+            super::services::execute(
+                &ManagementCommand {
                     kind: ManagementKind::Services,
                     action: "daemon_reload".into(),
                     target: None,

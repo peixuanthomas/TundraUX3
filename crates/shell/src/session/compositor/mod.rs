@@ -258,8 +258,8 @@ impl ScreenCompositor {
         let previous_keyboard = state.input_keyboard_layout().keyboard;
         let keyboard_animating = state.advance_input_keyboard(prepared.context.motion);
         let details_animating = state.advance_management_details(prepared.context.motion);
-        if self.keyboard_open != state.input_keyboard_open() {
         let script_animating = state.advance_script_details(prepared.context.motion);
+        if self.keyboard_open != state.input_keyboard_open() {
             self.keyboard_open = state.input_keyboard_open();
             self.motion.cancel_for_bounds_change();
         }
@@ -447,9 +447,9 @@ impl ScreenCompositor {
             || prepared.rainbow_running()
             || keyboard_animating
             || details_animating
+            || script_animating
             || self.motion.is_running()
             || self
-            || script_animating
                 .toast
                 .as_ref()
                 .is_some_and(|toast| toast.requests_redraw(context.motion));

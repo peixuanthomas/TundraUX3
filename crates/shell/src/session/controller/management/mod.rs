@@ -117,12 +117,12 @@ pub(in crate::session) struct ManagementState {
     last_language_attempt: Option<(String, u64)>,
     selected: usize,
     selection: Option<std::collections::BTreeSet<String>>,
+    selection_mode: bool,
     scroll: usize,
     list_scroll_explicit: bool,
     table_scroll: usize,
     sort: Option<ui::TableSort>,
     sort_columns: Vec<String>,
-    selection_mode: bool,
     action_scroll: Option<usize>,
     form_field_scroll: Option<usize>,
     choice_field: Option<usize>,
@@ -1602,6 +1602,7 @@ impl ShellSession {
                 } else { value }
             }).collect()).collect(),
             selected_rows: s.selection.as_ref().map(|selection| s.snapshot.rows.iter().enumerate().filter_map(|(index, row)| selection.contains(&selection::row_id(s.kind, row)).then_some(index)).collect()),
+            selection_mode: s.selection_mode,
             selected: s.selected,
             scroll: s.scroll,
             table_scroll: s.table_scroll,
@@ -1688,7 +1689,6 @@ impl ShellSession {
             details_only: s.details_only,
             details_expansion: self.details_motion.as_ref()
                 .filter(|(page, _)| *page == self.active_page_id() && self.interaction.pointer_motion)
-            selection_mode: s.selection_mode,
                 .map(|(_, motion)| motion.value()),
             terminal: s.terminal_mode,
             terminal_snapshot: if s.terminal_mode {
