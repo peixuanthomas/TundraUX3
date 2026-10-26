@@ -12,6 +12,7 @@ pub use crate::input::{
 pub use crate::snapshot::{
     TerminalCell, TerminalColor, TerminalCursorStyle, TerminalSnapshot, to_ui_snapshot,
 };
+pub use platform::task_history::TaskRecorder;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -178,6 +179,14 @@ impl CommandLinePty {
         config: CommandLinePtyConfig,
         reader_tasks: &ManagedTaskGroup,
     ) -> io::Result<Self> {
+        Self::spawn_recorded(config, reader_tasks, None)
+    }
+
+    pub fn spawn_recorded(
+        config: CommandLinePtyConfig,
+        reader_tasks: &ManagedTaskGroup,
+        history: Option<platform::task_history::TaskRecorder>,
+    ) -> io::Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(config.size()).map_err(portable_error)?;
         let mut command = CommandBuilder::new(config.program);
@@ -298,7 +307,7 @@ impl CommandLinePty {
                 ) else {
                     return;
                 };
-                read_pty_output(reader, parser, output_revision, writer);
+                read_pty_output_recorded(reader, parser, output_revision, writer, history.as_ref());
                 if let Some(sender) = reader_done_sender.take() {
                     let _ = sender.send(());
                 }
@@ -693,11 +702,22 @@ impl Drop for ProcessTreeGuard {
     }
 }
 
+#[cfg(test)]
 fn read_pty_output(
+    reader: Box<dyn Read + Send>,
+    parser: Arc<Mutex<vt100::Parser>>,
+    output_revision: Arc<AtomicU64>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+) {
+    read_pty_output_recorded(reader, parser, output_revision, writer, None);
+}
+
+fn read_pty_output_recorded(
     mut reader: Box<dyn Read + Send>,
     parser: Arc<Mutex<vt100::Parser>>,
     output_revision: Arc<AtomicU64>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    history: Option<&platform::task_history::TaskRecorder>,
 ) {
     let mut buffer = [0_u8; 8_192];
     let mut osc_filter = OscFilter::default();
@@ -709,6 +729,9 @@ fn read_pty_output(
                 let safe = osc_filter.filter(&buffer[..count]);
                 if safe.is_empty() {
                     continue;
+                }
+                if let Some(history) = history {
+                    history.output(&safe);
                 }
                 let cursor_position = match parser.lock() {
                     Ok(mut parser) => {

@@ -103,6 +103,7 @@ impl BuiltInApplicationDescriptor {
             "builtin.ssh" => msg!("app-catalog-ssh-name").into(),
             "builtin.backups" => msg!("app-catalog-backups-name").into(),
             "builtin.scheduled-tasks" => msg!("app-catalog-scheduled-tasks-name").into(),
+            "builtin.tasks" => msg!("app-catalog-tasks-name").into(),
             _ => LocalizedText::Raw(self.name.to_string()),
         }
     }
@@ -122,6 +123,7 @@ impl BuiltInApplicationDescriptor {
             "builtin.ssh" => msg!("app-catalog-ssh-description").into(),
             "builtin.backups" => msg!("app-catalog-backups-description").into(),
             "builtin.scheduled-tasks" => msg!("app-catalog-scheduled-tasks-description").into(),
+            "builtin.tasks" => msg!("app-catalog-tasks-description").into(),
             _ => LocalizedText::Raw(self.description.to_string()),
         }
     }
@@ -254,6 +256,19 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         "Scheduled tasks",
         "Inspect, create, pause and run systemd and cron tasks",
     ),
+    BuiltInApplicationDescriptor {
+        id: "builtin.tasks",
+        name: "Tasks",
+        description: "Find running tasks and review saved results",
+        type_label: "Built-in application",
+        admin_only: false,
+        fixed_in_launcher: true,
+        platforms: &[
+            PlatformKind::Linux,
+            PlatformKind::Windows,
+            PlatformKind::Macos,
+        ],
+    },
 ];
 
 pub fn setup_language_options() -> Vec<SetupLanguageOption> {

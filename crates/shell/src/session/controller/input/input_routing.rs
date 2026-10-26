@@ -207,6 +207,14 @@ impl ShellSession {
                     self.clock_button_activation_command(),
                 )
             }
+            _ if self.pages.common.focused_component == ShellComponent::TasksButton
+                && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::TasksButton),
+                    ShellCommand::OpenTasks,
+                )
+            }
             _ if self.pages.common.focused_component == ShellComponent::HelpButton
                 && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
             {
@@ -661,6 +669,11 @@ impl ShellSession {
                 if hit_target == Some(ShellComponent::HelpButton) =>
             {
                 (target, ShellCommand::OpenPageHelp)
+            }
+            ui::MouseEventKind::Down(PointerButton::Left)
+                if hit_target == Some(ShellComponent::TasksButton) =>
+            {
+                (target, ShellCommand::OpenTasks)
             }
             ui::MouseEventKind::Down(_)
             | ui::MouseEventKind::Up(_)

@@ -5,6 +5,7 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
+    OpenTasks,
     PageAction(crate::PageInstanceId, Box<ShellCommand>),
     PageCloseBackground(crate::PageInstanceId),
     PageCloseCancelTasks(crate::PageInstanceId),

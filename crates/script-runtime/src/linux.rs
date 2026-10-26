@@ -50,6 +50,18 @@ impl ScriptSession {
         columns: u16,
         rows: u16,
     ) -> io::Result<Self> {
+        Self::spawn_recorded(spec, debug, session_id, tasks, columns, rows, None)
+    }
+
+    pub fn spawn_recorded(
+        spec: &ScriptLaunchSpec,
+        debug: bool,
+        session_id: u64,
+        tasks: &ManagedTaskGroup,
+        columns: u16,
+        rows: u16,
+        history: Option<terminal_runtime::pty::TaskRecorder>,
+    ) -> io::Result<Self> {
         if debug && !spec.is_bash() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -114,7 +126,7 @@ impl ScriptSession {
         let mut args = spec.interpreter_args.clone();
         args.push(spec.path.as_os_str().to_owned());
         args.extend(spec.args.iter().cloned());
-        let pty = CommandLinePty::spawn(
+        let pty = CommandLinePty::spawn_recorded(
             CommandLinePtyConfig {
                 program: spec.interpreter.as_os_str().to_owned(),
                 args,
@@ -125,6 +137,7 @@ impl ScriptSession {
                 scrollback_lines: 2_000,
             },
             tasks,
+            history,
         )?;
         Ok(Self {
             pty: Some(pty),

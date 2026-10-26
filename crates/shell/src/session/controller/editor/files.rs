@@ -238,6 +238,19 @@ impl ShellSession {
             };
             let owner = self.tasks.owner(TaskDomain::Editor, id);
             if done {
+                use platform::task_history::TaskStatus;
+                let status = match &event {
+                    EditorTaskEvent::SaveFinished { result, .. } => Some(if result.is_ok() {
+                        TaskStatus::Succeeded
+                    } else {
+                        TaskStatus::Failed
+                    }),
+                    _ => None,
+                };
+                if let Some(status) = status {
+                    self.tasks
+                        .finish_history(TaskDomain::Editor, id, status, status.label());
+                }
                 self.tasks.complete(TaskDomain::Editor, id);
             }
             match owner {

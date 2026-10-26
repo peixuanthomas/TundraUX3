@@ -35,6 +35,7 @@ pub struct CommandLineHost {
     ui_snapshot: Arc<ui::CommandLineTerminalSnapshot>,
     scrollbar_drag_offset: Option<u16>,
     reader_tasks: ManagedTaskGroup,
+    history: Option<platform::task_history::TaskRecorder>,
 }
 
 impl CommandLineHost {
@@ -47,6 +48,7 @@ impl CommandLineHost {
             snapshot_revision: 0,
             ui_snapshot,
             scrollbar_drag_offset: None,
+            history: None,
             reader_tasks: watchdog
                 .child_component(ComponentId::from_static("command-line"))
                 .task_group("pty-reader"),
@@ -60,9 +62,21 @@ impl CommandLineHost {
         accent: ratatui::style::Color,
         directory: Option<&Path>,
     ) {
+        self.ensure_started_recorded(platform, username, accent, directory, None);
+    }
+
+    fn ensure_started_recorded(
+        &mut self,
+        platform: &dyn Platform,
+        username: &str,
+        accent: ratatui::style::Color,
+        directory: Option<&Path>,
+        history: Option<platform::task_history::TaskRecorder>,
+    ) {
         if !matches!(self.state, CommandLineHostState::Inactive) {
             return;
         }
+        self.history = history;
 
         let result = resolve_tundra_cli_program().and_then(|program| {
             let mut config = CommandLinePtyConfig::tundra_cli(program)
@@ -79,7 +93,7 @@ impl CommandLineHost {
                     config.cwd = Some(documents.to_path_buf());
                 }
             }
-            CommandLinePty::spawn(config, &self.reader_tasks)
+            CommandLinePty::spawn_recorded(config, &self.reader_tasks, self.history.clone())
         });
         match result {
             Ok(pty) => {
@@ -88,6 +102,12 @@ impl CommandLineHost {
                 self.state = CommandLineHostState::Running(pty);
             }
             Err(error) => {
+                if let Some(history) = &self.history {
+                    history.finish(
+                        platform::task_history::TaskStatus::Failed,
+                        error.to_string(),
+                    );
+                }
                 self.state = CommandLineHostState::Failed {
                     message: format!("Could not start tundra-cli: {error}"),
                 };
@@ -151,12 +171,30 @@ impl CommandLineHost {
         }
 
         if status.code == EMBEDDED_RESET_EXIT_CODE {
+            if let Some(history) = &self.history {
+                history.finish(
+                    platform::task_history::TaskStatus::Succeeded,
+                    i18n::tr!("task-exit-code", code = status.code),
+                );
+            }
             return CommandLineHostEvent::ResetRequested;
         }
         if status.code == crate::COMMAND_LINE_PANIC_EXIT_CODE {
+            if let Some(history) = &self.history {
+                history.finish(
+                    platform::task_history::TaskStatus::Failed,
+                    i18n::tr!("task-exit-code", code = status.code),
+                );
+            }
             return CommandLineHostEvent::PanicRequested;
         }
         if status.success {
+            if let Some(history) = &self.history {
+                history.finish(
+                    platform::task_history::TaskStatus::Succeeded,
+                    i18n::tr!("task-exit-code", code = status.code),
+                );
+            }
             self.install_blank_snapshot();
             return CommandLineHostEvent::ExitToCaller;
         }
@@ -164,6 +202,12 @@ impl CommandLineHost {
         self.state = CommandLineHostState::Exited {
             code: i32::try_from(status.code).unwrap_or(i32::MAX),
         };
+        if let Some(history) = &self.history {
+            history.finish(
+                platform::task_history::TaskStatus::Failed,
+                i18n::tr!("task-exit-code", code = status.code),
+            );
+        }
         CommandLineHostEvent::None
     }
 
@@ -254,6 +298,12 @@ impl CommandLineHost {
     pub fn try_terminate(&mut self) -> io::Result<()> {
         if let CommandLineHostState::Running(pty) = &self.state {
             pty.force_terminate()?;
+            if let Some(history) = &self.history {
+                history.finish(
+                    platform::task_history::TaskStatus::Cancelled,
+                    i18n::tr!("task-status-cancelled"),
+                );
+            }
         }
         let previous = std::mem::replace(&mut self.state, CommandLineHostState::Inactive);
         drop(previous);
@@ -444,7 +494,7 @@ impl CommandLineHosts {
             let finished = Arc::new(AtomicBool::new(false));
             let cancel_signal = cancelled.clone();
             let finished_signal = finished.clone();
-            state.tasks.register(
+            state.tasks.register_recorded(
                 TaskDomain::CommandLine,
                 request,
                 TaskOwner::Page(*id),
@@ -453,6 +503,7 @@ impl CommandLineHosts {
                     move || cancel_signal.store(true, Ordering::Relaxed),
                     move || finished_signal.load(Ordering::Relaxed),
                 ),
+                host.history.clone(),
             );
             self.tasks.insert(
                 *id,
@@ -498,15 +549,29 @@ impl CommandLineHosts {
 
         if state.content_screen() == crate::ShellScreen::CommandLine {
             let id = state.content_page_id();
+            let history = if self
+                .hosts
+                .get(&id)
+                .is_none_or(|host| matches!(host.state, CommandLineHostState::Inactive))
+            {
+                state.tasks.new_recorder(
+                    "command-line",
+                    i18n::tr!("task-source-command-line"),
+                    "command-line",
+                )
+            } else {
+                None
+            };
             let host = self
                 .hosts
                 .entry(id)
                 .or_insert_with(|| CommandLineHost::new(self.watchdog.clone()));
-            host.ensure_started(
+            host.ensure_started_recorded(
                 platform,
                 state.current_home_username().unwrap_or("tundra"),
                 accent,
                 state.command_line_start_directory_for(id),
+                history,
             );
         }
 

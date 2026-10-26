@@ -254,6 +254,7 @@ fn windows_conpty_receives_initial_and_typed_output() {
         snapshot_revision,
         ui_snapshot,
         scrollbar_drag_offset: None,
+        history: None,
         reader_tasks,
     };
 

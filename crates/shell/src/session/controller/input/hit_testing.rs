@@ -333,6 +333,13 @@ pub(in crate::session) fn build_shell_hit_map(
             layer: ShellHitLayer::ShellChrome,
         });
     }
+    if let Some(area) = frame_layout.task_button {
+        regions.push(ShellHitRegion {
+            component: ShellComponent::TasksButton,
+            area,
+            layer: ShellHitLayer::ShellChrome,
+        });
+    }
 
     let overlay_interaction_ready =
         !overlay_blocks_interaction || motion_context.overlay_interaction_ready();

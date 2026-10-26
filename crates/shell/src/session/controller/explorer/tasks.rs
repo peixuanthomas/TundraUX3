@@ -778,6 +778,35 @@ impl ShellSession {
             &event,
             ExplorerTaskEvent::Finished { .. } | ExplorerTaskEvent::Panicked { .. }
         );
+        match &event {
+            ExplorerTaskEvent::Finished { summary, .. } => {
+                use platform::task_history::TaskStatus;
+                let status = if summary.cancelled {
+                    TaskStatus::Cancelled
+                } else if summary.failed_items > 0 || summary.fatal_error.is_some() {
+                    TaskStatus::Failed
+                } else {
+                    TaskStatus::Succeeded
+                };
+                self.tasks.finish_history(
+                    TaskDomain::Explorer,
+                    id.0,
+                    status,
+                    i18n::tr!(
+                        "task-explorer-result",
+                        succeeded = summary.succeeded_items,
+                        failed = summary.failed_items
+                    ),
+                );
+            }
+            ExplorerTaskEvent::Panicked { message, .. } => self.tasks.finish_history(
+                TaskDomain::Explorer,
+                id.0,
+                platform::task_history::TaskStatus::Failed,
+                message.clone(),
+            ),
+            _ => {}
+        }
         match self.tasks.owner(TaskDomain::Explorer, id.0) {
             Some(TaskOwner::Page(owner)) if self.page_screen(owner).is_some() => {
                 self.with_page_context(owner, |session| {

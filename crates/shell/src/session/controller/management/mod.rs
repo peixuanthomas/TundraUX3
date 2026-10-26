@@ -2,6 +2,7 @@ mod actions;
 mod input;
 mod packages;
 mod selection;
+mod task_center;
 use crate::session::*;
 use platform::management::*;
 use std::hash::{Hash, Hasher};
@@ -252,6 +253,7 @@ pub(in crate::session) fn management_title(kind: ManagementKind) -> String {
         ManagementKind::Ssh => i18n::tr!("management-ssh"),
         ManagementKind::Backups => i18n::tr!("management-backups"),
         ManagementKind::ScheduledTasks => i18n::tr!("management-scheduled-tasks"),
+        ManagementKind::Tasks => i18n::tr!("tasks-title"),
         ManagementKind::FilePermissions => i18n::tr!("permissions-title"),
         ManagementKind::SystemSettings => i18n::tr!("system-settings-title"),
     }
@@ -380,6 +382,9 @@ fn form_value_text(purpose: &FormPurpose, field: &ManagementField, value: &str) 
         };
     }
     if let FormPurpose::Action(action, _) = purpose {
+        if action.id == "task_filter" && field.id == "status" {
+            return value.into();
+        }
         let key = match (action.id.as_str(), field.id.as_str(), value) {
             ("add_rule", "duration", "runtime") => Some("management-value-runtime"),
             ("add_rule", "duration", "permanent") => Some("management-value-permanent"),
@@ -446,7 +451,16 @@ fn management_detail_value(kind: Option<ManagementKind>, key: &str, value: &str)
 fn management_view_action(action: &ManagementAction) -> bool {
     matches!(
         action.id.as_str(),
-        "set_view" | "show_listening_ports" | "show_firewall_rules"
+        "set_view"
+            | "show_listening_ports"
+            | "show_firewall_rules"
+            | "task_output"
+            | "task_output_previous"
+            | "task_output_next"
+            | "task_return"
+            | "task_filter"
+            | "task_next_page"
+            | "task_first_page"
     ) || action.id.starts_with("scope_")
 }
 
@@ -531,7 +545,8 @@ impl ShellSession {
 
     pub(in crate::session) fn open_management_query(&mut self, query: ManagementQuery) {
         let kind = query.kind;
-        let supported = cfg!(target_os = "linux")
+        let supported = kind == ManagementKind::Tasks
+            || cfg!(target_os = "linux")
             || (cfg!(any(target_os = "macos", windows)) && kind == ManagementKind::Packages);
         if !supported || self.app.auth_session().is_none() || self.is_strict_guest() {
             return;
@@ -939,6 +954,7 @@ impl ShellSession {
             match result {
                 Ok(snapshot) => {
                     let mut snapshot = snapshot;
+                    self.merge_task_history_snapshot(&mut snapshot, query.as_ref());
                     #[cfg(target_os = "linux")]
                     {
                         let uid = unsafe { libc::getuid() };
@@ -1124,6 +1140,12 @@ impl ShellSession {
                     }
                     self.cancel_management_query();
                     let mut snapshot = snapshot;
+                    self.merge_task_history_snapshot(
+                        &mut snapshot,
+                        operation_source
+                            .as_ref()
+                            .and_then(|source| source.query.as_ref()),
+                    );
                     if let Some(source) = &operation_source {
                         self.pages.management.management_state.sort_snapshot(
                             &mut snapshot,
@@ -1170,6 +1192,14 @@ impl ShellSession {
                         }
                         self.pages.management.management_state.output.drain(..start);
                     }
+                }
+                OperationEvent::TaskOutput {
+                    offset,
+                    end,
+                    total,
+                    text,
+                } => {
+                    self.apply_task_output(offset, end, total, text);
                 }
                 OperationEvent::TerminalOutput { bytes } => {
                     let area = ui::management_layout(
@@ -1293,7 +1323,20 @@ impl ShellSession {
                 self.tasks
                     .complete(TaskDomain::ManagementOperation, job.0.id);
             }
-            self.pages.management.management_state.terminal_mode = false;
+            self.pages.management.management_state.terminal_mode =
+                self.pages.management.management_state.kind == Some(ManagementKind::Tasks)
+                    && self
+                        .pages
+                        .management
+                        .management_state
+                        .query
+                        .as_ref()
+                        .is_some_and(|query| {
+                            query
+                                .options
+                                .get("output_view")
+                                .is_some_and(|value| value == "true")
+                        });
             if let Some(kind) = self.pages.management.management_state.kind {
                 self.resolve_notification_alert(&self.management_alert_key());
                 if !visible {
@@ -1349,7 +1392,11 @@ impl ShellSession {
             }
         }
         if visible
-            && self.pages.management.management_state.kind == Some(ManagementKind::Processes)
+            && matches!(
+                self.pages.management.management_state.kind,
+                Some(ManagementKind::Processes | ManagementKind::Tasks)
+            )
+            && !self.pages.management.management_state.terminal_mode
             && self.pages.management.management_state.query_job.is_none()
             && self
                 .pages
@@ -1365,7 +1412,11 @@ impl ShellSession {
                 .refreshed
                 .is_some_and(|t| t.elapsed() > Duration::from_secs(5))
         {
-            self.refresh_management();
+            if self.pages.management.management_state.kind == Some(ManagementKind::Tasks) {
+                self.refresh_personal_task_history();
+            } else {
+                self.refresh_management();
+            }
         }
         self.clamp_management_scroll();
         if visible
@@ -1578,6 +1629,8 @@ impl ShellSession {
                 if kind == ManagementKind::Packages {
                     let scope = s.query.as_ref().map(|query| query.scope.as_str()).filter(|scope| !scope.is_empty()).unwrap_or("installed");
                     format!("{title} · {}", management_label(&format!("scope-{scope}"), scope))
+                } else if kind == ManagementKind::Tasks {
+                    i18n::tr!("tasks-title-usage",size=crate::session::controller::system_status::format_bytes(s.snapshot.task_history_usage.iter().map(|usage|usage.bytes).sum()))
                 } else {
                     title
                 }
@@ -1679,6 +1732,9 @@ impl ShellSession {
             filtering: s.filtering,
             status: if let Some(selection) = &s.selection {
                 format!("{} · {}", i18n::tr!("selection-count", count = selection.len()), s.status)
+            } else if s.kind == Some(ManagementKind::Tasks) {
+                std::iter::once(s.status.as_str()).chain(s.snapshot.notices.iter().map(String::as_str))
+                    .filter(|message| !message.is_empty()).collect::<Vec<_>>().join(" · ")
             } else { s.status.clone() },
             loading: s.query_job.is_some() || s.draft_job.is_some(),
             running: s.operation_job.is_some(),

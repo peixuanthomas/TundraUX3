@@ -13,6 +13,7 @@ struct RunningScript {
     revision: u64,
     fingerprints: HashMap<PathBuf, DocumentFingerprint>,
     last_check: Instant,
+    history_result: Option<(platform::task_history::TaskStatus, String)>,
 }
 
 struct CompletedScript {
@@ -88,7 +89,19 @@ impl ScriptHosts {
                         (area.width.max(1), area.height.max(1))
                     })
                     .unwrap_or((80, 10));
-                match ScriptSession::spawn(&spec, debug, session_id, &self.tasks, columns, rows) {
+                let history =
+                    state
+                        .tasks
+                        .new_recorder("script", spec.path.display().to_string(), "script");
+                match ScriptSession::spawn_recorded(
+                    &spec,
+                    debug,
+                    session_id,
+                    &self.tasks,
+                    columns,
+                    rows,
+                    history.clone(),
+                ) {
                     Ok(mut session) => {
                         let breakpoints = state
                             .with_page_context(page, |state| {
@@ -99,6 +112,12 @@ impl ScriptHosts {
                             if let Err(error) =
                                 session.command(RuntimeCommand::SetBreakpoints(breakpoints))
                             {
+                                if let Some(history) = &history {
+                                    history.finish(
+                                        platform::task_history::TaskStatus::Failed,
+                                        error.to_string(),
+                                    );
+                                }
                                 fail(state, page, error);
                                 let _ = session.stop();
                                 continue;
@@ -113,7 +132,7 @@ impl ScriptHosts {
                         let finished = done.clone();
                         self.next_request = self.next_request.wrapping_add(1).max(1);
                         let request = self.next_request;
-                        state.tasks.register(
+                        state.tasks.register_recorded(
                             TaskDomain::Script,
                             request,
                             TaskOwner::Page(page),
@@ -122,6 +141,7 @@ impl ScriptHosts {
                                 move || cancel_task.store(true, Ordering::Release),
                                 move || finished.load(Ordering::Acquire),
                             ),
+                            history,
                         );
                         let mut fingerprints = HashMap::new();
                         if let Ok(value) = platform::document_fingerprint(&spec.path) {
@@ -138,10 +158,19 @@ impl ScriptHosts {
                                 revision: u64::MAX,
                                 fingerprints,
                                 last_check: Instant::now(),
+                                history_result: None,
                             },
                         );
                     }
-                    Err(error) => fail(state, page, error),
+                    Err(error) => {
+                        if let Some(history) = &history {
+                            history.finish(
+                                platform::task_history::TaskStatus::Failed,
+                                error.to_string(),
+                            );
+                        }
+                        fail(state, page, error);
+                    }
                 }
             } else if let Some(host) = self.hosts.get_mut(&page) {
                 if command == RuntimeCommand::Stop {
@@ -238,6 +267,23 @@ impl ScriptHosts {
                 let finished =
                     matches!(event, RuntimeEvent::Exited { .. } | RuntimeEvent::Failed(_));
                 let stopped = matches!(event, RuntimeEvent::Stopped { .. });
+                match &event {
+                    RuntimeEvent::Exited { code } => {
+                        host.history_result = Some((
+                            if *code == 0 {
+                                platform::task_history::TaskStatus::Succeeded
+                            } else {
+                                platform::task_history::TaskStatus::Failed
+                            },
+                            i18n::tr!("task-exit-code", code = *code),
+                        ))
+                    }
+                    RuntimeEvent::Failed(reason) => {
+                        host.history_result =
+                            Some((platform::task_history::TaskStatus::Failed, reason.clone()))
+                    }
+                    _ => {}
+                }
                 state.with_page_context(page, |state| {
                     let script = &mut state.pages.editor.script.state;
                     if script.session_id != session_id {
@@ -343,6 +389,8 @@ impl ScriptHosts {
                 let request = host.request;
                 let host = self.hosts.remove(&page).unwrap();
                 let done = host.done.clone();
+                let cancelled = host.cancel.load(Ordering::Acquire);
+                let history_result = host.history_result;
                 state.with_page_context(page, |state| {
                     state.pages.editor.script.process_running = false;
                     state.pages.editor.script.source_view = None;
@@ -366,6 +414,30 @@ impl ScriptHosts {
                             .insert(page, CompletedScript { output, view: None });
                     }
                     Err(error) => fail(state, page, error),
+                }
+                let failure = state
+                    .pages
+                    .editor
+                    .get(page)
+                    .and_then(|page| page.script.state.error.clone());
+                if let Some(failure) = failure {
+                    state.tasks.finish_history(
+                        TaskDomain::Script,
+                        request,
+                        platform::task_history::TaskStatus::Failed,
+                        failure.render_current(),
+                    );
+                } else if cancelled {
+                    state.tasks.finish_history(
+                        TaskDomain::Script,
+                        request,
+                        platform::task_history::TaskStatus::Cancelled,
+                        i18n::tr!("task-status-cancelled"),
+                    );
+                } else if let Some((status, result)) = history_result {
+                    state
+                        .tasks
+                        .finish_history(TaskDomain::Script, request, status, result);
                 }
                 done.store(true, Ordering::Release);
                 state.tasks.complete(TaskDomain::Script, request);

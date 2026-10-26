@@ -55,6 +55,17 @@ pub use linux::ScriptSession;
 pub struct ScriptSession;
 #[cfg(not(target_os = "linux"))]
 impl ScriptSession {
+    pub fn spawn_recorded(
+        spec: &ScriptLaunchSpec,
+        debug: bool,
+        session_id: u64,
+        tasks: &watchdog::ManagedTaskGroup,
+        columns: u16,
+        rows: u16,
+        _: Option<terminal_runtime::pty::TaskRecorder>,
+    ) -> io::Result<Self> {
+        Self::spawn(spec, debug, session_id, tasks, columns, rows)
+    }
     pub fn spawn(
         _: &ScriptLaunchSpec,
         _: bool,

@@ -1160,7 +1160,8 @@ mod linux {
                     OperationEvent::Snapshot { snapshot } => result.snapshot = Some(snapshot),
                     OperationEvent::Transaction { id, .. } => result.transaction_id = Some(id),
                     OperationEvent::ConfigDocument { document } => result.document = Some(document),
-                    OperationEvent::Output { text: message } => {
+                    OperationEvent::Output { text: message }
+                    | OperationEvent::TaskOutput { text: message, .. } => {
                         result.output.push(runtime_log::sanitize_text(&message));
                         let _ = writeln!(stderr, "{}", runtime_log::sanitize_text(&message));
                     }

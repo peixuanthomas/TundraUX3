@@ -9,6 +9,49 @@ fn job(policy: storage::AutoAdminPolicy) -> (AutoAdminJob, mpsc::Receiver<Operat
 }
 
 #[test]
+fn history_keeps_output_and_result_without_secret_input_or_snapshot_contents() {
+    use platform::task_history::{HistoryStore, TaskRecorder, TaskStatus, TaskSummary};
+    let root =
+        platform::create_temp_dir(&std::env::temp_dir().join("TundraUX3"), "aa-history-test")
+            .unwrap();
+    let store = HistoryStore::new(&root);
+    let recorder = TaskRecorder::new(
+        store.clone(),
+        TaskSummary::new("task".into(), "auto-admin".into(), "services".into()),
+    )
+    .unwrap();
+    let id = recorder.id().to_owned();
+    let (job, _) = job(storage::AutoAdminPolicy::Automatic);
+    job.record_history(recorder, "services".into());
+    job.emit(&OperationEvent::Question {
+        id: "password".into(),
+        prompt: "Secret prompt".into(),
+        choices: vec![],
+        secret: true,
+    });
+    job.paste("private-password");
+    job.emit(&OperationEvent::Snapshot {
+        snapshot: platform::management::ManagementSnapshot {
+            notices: vec!["protected configuration contents".into()],
+            ..Default::default()
+        },
+    });
+    job.emit(&OperationEvent::Output {
+        text: "safe output".into(),
+    });
+    job.finish(Ok("done".into()));
+    let (bytes, _) = store.output(&id, 0, 4096).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.contains("safe output"));
+    assert!(!text.contains("private-password"));
+    assert!(!text.contains("protected configuration"));
+    assert!(!text.contains("Secret prompt"));
+    assert_eq!(store.read(&id).unwrap().status, TaskStatus::Succeeded);
+    drop(job);
+    platform::cleanup_temp_path(&root).unwrap();
+}
+
+#[test]
 fn approval_is_required_before_worker_runs_and_denial_never_runs_it() {
     let (manual, _) = job(storage::AutoAdminPolicy::Manual);
     assert_eq!(manual.phase(), WAITING);

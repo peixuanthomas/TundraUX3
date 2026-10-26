@@ -158,6 +158,35 @@ impl ShellNavigation {
 }
 
 impl ShellSession {
+    pub(in crate::session) fn activate_task_page(&mut self, id: PageInstanceId) -> bool {
+        if self.page_screen(id).is_none() {
+            return false;
+        }
+        if self.navigation.parked.contains_key(&id) {
+            self.restore_script_page(id);
+            return true;
+        }
+        let Some(index) = self
+            .navigation
+            .entries
+            .iter()
+            .position(|entry| entry.id == id)
+        else {
+            return false;
+        };
+        if index + 1 == self.navigation.entries.len() {
+            return true;
+        }
+        self.cancel_pointer_gestures_for_modal();
+        let screen = self.navigation.path.remove(index);
+        let entry = self.navigation.entries.remove(index);
+        self.navigation.path.push(screen);
+        self.navigation.entries.push(entry);
+        self.restore_navigation_page();
+        self.refresh_hit_map();
+        true
+    }
+
     pub(in crate::session) fn park_script_page(&mut self, id: PageInstanceId) {
         let Some(index) = self
             .navigation

@@ -185,7 +185,8 @@ impl ScreenCompositor {
             &context,
         )
         .with_back_shortcut(chrome.back_shortcut)
-        .with_help_button(state.help_button_available());
+        .with_help_button(state.help_button_available())
+        .with_tasks_button(state.tasks_button_count());
         let layout = state.input_keyboard_content_layout(layout);
         if state.graphical_icons_enabled()
             && !layout.is_compact()
@@ -296,7 +297,8 @@ impl ScreenCompositor {
         let layout =
             ui::ShellFrameLayout::new(bounds, chrome.status.time_button_label.as_deref(), context)
                 .with_back_shortcut(chrome.back_shortcut)
-                .with_help_button(state.help_button_available());
+                .with_help_button(state.help_button_available())
+                .with_tasks_button(state.tasks_button_count());
         let layout = state.input_keyboard_content_layout(layout);
         // Use the actual frame bounds, including a resize arriving just before draw.
         state.terminal_size = (bounds.width, bounds.height);
@@ -545,7 +547,8 @@ impl ScreenCompositor {
             &context,
         )
         .with_back_shortcut(chrome.back_shortcut)
-        .with_help_button(state.help_button_available());
+        .with_help_button(state.help_button_available())
+        .with_tasks_button(state.tasks_button_count());
         self.motion.update_layout(
             state,
             &state.input_keyboard_content_layout(layout),

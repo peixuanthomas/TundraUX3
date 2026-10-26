@@ -2,6 +2,8 @@
 
 中英文 `modules/selection.ftl` 提供可点击多选入口、已选数量和整页操作限制，沿用现有语言包自动加载。
 
+`modules/tasks.ftl` 提供统一任务页、运行状态和清理说明。
+
 `modules/management-schedule-workflow.ftl` 提供定时任务向导、原生编辑和补执行说明。
 
 中英文 `modules/script.ftl` 提供脚本编辑器入口、运行与调试操作、六区工作区、表达式和执行状态文字。语言资源沿用目录自动收集，不新增单独的加载路径。

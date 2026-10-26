@@ -237,6 +237,7 @@ fn chrome(width: u16, height: u16) -> ShellChromeViewModel {
         help_available: false,
         help_button_hovered: false,
         help_button_focused: false,
+        tasks: None,
         back_shortcut: "Esc",
         screen_stack: vec!["Clock".to_string()],
         status: StatusViewModel {

@@ -132,6 +132,9 @@ impl ShellSession {
     pub(in crate::session) fn management_actions(
         &self,
     ) -> Vec<(ManagementAction, Option<ManagementRow>)> {
+        if self.pages.management.management_state.kind == Some(ManagementKind::Tasks) {
+            return self.task_center_actions();
+        }
         if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
             return self.package_actions();
         }
@@ -443,7 +446,12 @@ impl ShellSession {
                 }
             );
         }
-        if (action.confirm && !action.privileged) || !action.fields.is_empty() {
+        if action.id == "task_cancel" {
+            message = format!("{}\n{message}", i18n::tr!("task-cancel-description"));
+        }
+        if (action.confirm && (!action.privileged || action.id == "task_cancel"))
+            || !action.fields.is_empty()
+        {
             self.reset_management_form_view();
             self.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
@@ -464,6 +472,9 @@ impl ShellSession {
         action: ManagementAction,
         row: Option<ManagementRow>,
     ) {
+        if self.perform_task_center_action(&action, row.as_ref()) {
+            return;
+        }
         let mut values = action.values.clone();
         values.extend(
             action
@@ -774,9 +785,15 @@ impl ShellSession {
                 values.insert("scope".into(), query.scope.clone());
             }
         }
-        let description = std::iter::once(management_title(kind))
+        let mut description = std::iter::once(management_title(kind))
             .chain(std::iter::once(management_label(&action.id, &action.label)))
-            .chain(row.as_ref().map(|r| r.id.clone()))
+            .chain(row.as_ref().map(|r| {
+                if kind == ManagementKind::Tasks {
+                    r.cells.first().cloned().unwrap_or_else(|| r.id.clone())
+                } else {
+                    r.id.clone()
+                }
+            }))
             .chain(
                 action
                     .values
@@ -800,6 +817,9 @@ impl ShellSession {
             )
             .collect::<Vec<_>>()
             .join("\n");
+        if action.id == "task_cancel" {
+            description = format!("{}\n{description}", i18n::tr!("task-cancel-description"));
+        }
         let command = ManagementCommand {
             kind,
             action: action.id,
@@ -881,7 +901,7 @@ impl ShellSession {
 
     pub(in crate::session) fn start_management_operation(
         &mut self,
-        command: Option<ManagementCommand>,
+        mut command: Option<ManagementCommand>,
         privileged: bool,
         requires_approval: bool,
         socket: Option<PathBuf>,
@@ -900,11 +920,14 @@ impl ShellSession {
             .as_ref()
             .is_some_and(|c| c.kind == ManagementKind::SystemConfig);
         let task_class = if command.as_ref().is_some_and(|command| {
-            command.kind == ManagementKind::SystemConfig
-                && matches!(
-                    command.action.as_str(),
-                    "read" | "rebase" | "compare" | "check" | "history"
-                )
+            (command.kind == ManagementKind::Tasks && command.action == "task_output")
+                || command.action.starts_with("inspect_")
+                || command.action.starts_with("preview_")
+                || (command.kind == ManagementKind::SystemConfig
+                    && matches!(
+                        command.action.as_str(),
+                        "read" | "rebase" | "compare" | "check" | "history"
+                    ))
         }) {
             TaskClass::Query
         } else {
@@ -925,12 +948,24 @@ impl ShellSession {
             || command
                 .as_ref()
                 .is_some_and(|c| c.kind == ManagementKind::SystemConfig && c.action == "reload");
-        let Some(aa) =
-            self.begin_auto_admin(description, requires_approval, job.0.responses.clone())
-        else {
+        let Some(aa) = self.begin_auto_admin_with_class(
+            description,
+            requires_approval,
+            job.0.responses.clone(),
+            task_class,
+        ) else {
             return;
         };
         self.pages.management.management_state.auto_admin_job = Some(aa.clone());
+        #[cfg(target_os = "linux")]
+        if let Some(command) = &mut command {
+            if let Some(id) = aa.history_id() {
+                command.values.insert("__tundra_history_id".into(), id);
+                command
+                    .values
+                    .insert("__tundra_history_name".into(), aa.history_name());
+            }
+        }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         aa.enable_helper_control();
         let worker_aa = aa.clone();

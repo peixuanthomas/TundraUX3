@@ -20,6 +20,7 @@ pub enum ManagementKind {
     Firewall,
     Ssh,
     ScheduledTasks,
+    Tasks,
     FilePermissions,
     SystemSettings,
 }
@@ -38,6 +39,7 @@ impl ManagementKind {
             Self::Firewall => "firewall",
             Self::Ssh => "ssh",
             Self::ScheduledTasks => "scheduled-tasks",
+            Self::Tasks => "tasks",
             Self::FilePermissions => "file-permissions",
             Self::SystemSettings => "system-settings",
         }
@@ -179,6 +181,8 @@ pub struct ManagementSnapshot {
     pub refresh_action: Option<ManagementAction>,
     #[serde(default)]
     pub needs_authorization: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_history_usage: Vec<crate::task_history::HistoryUsage>,
 }
 
 impl ManagementSnapshot {
@@ -249,6 +253,12 @@ pub enum OperationEvent {
         percent: Option<u8>,
     },
     Output {
+        text: String,
+    },
+    TaskOutput {
+        offset: u64,
+        end: u64,
+        total: u64,
         text: String,
     },
     Question {
@@ -389,6 +399,7 @@ pub mod ssh;
 pub mod system_config;
 #[cfg(target_os = "linux")]
 pub mod system_settings;
+pub mod task_history;
 #[cfg(target_os = "linux")]
 pub mod termination;
 #[cfg(target_os = "linux")]
@@ -400,6 +411,9 @@ pub fn query(
     query: &ManagementQuery,
     cancelled: &AtomicBool,
 ) -> Result<ManagementSnapshot, ManagementError> {
+    if query.kind == ManagementKind::Tasks {
+        return task_history::query(query, cancelled);
+    }
     #[cfg(target_os = "macos")]
     if query.kind == ManagementKind::Packages {
         return packages::query(query, cancelled);
@@ -417,6 +431,7 @@ pub fn query(
         ManagementKind::Firewall => firewall::query(query, cancelled),
         ManagementKind::Ssh => ssh::query(query, cancelled),
         ManagementKind::ScheduledTasks => scheduled_tasks::query(query, cancelled),
+        ManagementKind::Tasks => unreachable!("task history is platform independent"),
         ManagementKind::FilePermissions => file_permissions::query(query, cancelled),
         ManagementKind::SystemSettings => system_settings::query(query, cancelled),
     };
@@ -439,6 +454,9 @@ pub fn execute(
     interaction: &mut dyn OperationInteraction,
     cancelled: &AtomicBool,
 ) -> Result<String, ManagementError> {
+    if command.kind == ManagementKind::Tasks {
+        return task_history::execute(command, context, interaction, cancelled);
+    }
     #[cfg(target_os = "macos")]
     if command.kind == ManagementKind::Packages {
         return packages::execute(command, context, interaction, cancelled);
@@ -462,6 +480,7 @@ pub fn execute(
         ManagementKind::ScheduledTasks => {
             scheduled_tasks::execute(command, context, interaction, cancelled)
         }
+        ManagementKind::Tasks => unreachable!("task history is platform independent"),
         ManagementKind::FilePermissions => {
             file_permissions::execute(command, context, interaction, cancelled)
         }

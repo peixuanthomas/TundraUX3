@@ -506,7 +506,46 @@ fn serve(
         })
         .transpose()?;
     let _language = language.map(i18n::enter_snapshot);
-    serve_operation(
+    let history_id = command.values.remove("__tundra_history_id");
+    let history_name = command.values.remove("__tundra_history_name");
+    let read_only = command.action.starts_with("inspect_")
+        || command.action.starts_with("preview_")
+        || (command.kind == ManagementKind::Tasks && command.action == "task_output")
+        || (command.kind == ManagementKind::SystemConfig
+            && matches!(
+                command.action.as_str(),
+                "read" | "rebase" | "compare" | "check" | "history"
+            ));
+    let history = if command.kind == ManagementKind::Tasks || read_only {
+        None
+    } else {
+        let mut summary = crate::task_history::TaskSummary::new(
+            history_name.unwrap_or_else(|| super::task_history::source_label(command.kind.id())),
+            format!("management:{}", command.kind.id()),
+            command.kind.id().into(),
+        );
+        summary.has_personal_copy = history_id.is_some() && unsafe { libc::geteuid() } == 0;
+        if let Some(id) = history_id.filter(|id| {
+            !id.is_empty()
+                && id.len() <= 200
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+        }) {
+            summary.id = id;
+        }
+        summary.operation_id = private
+            .parent()
+            .map(|path| path.join("control.sock").display().to_string());
+        summary.action = command.action.clone();
+        let store = if unsafe { libc::geteuid() } == 0 {
+            super::task_history::system_store(context.actor_uid)
+        } else {
+            super::task_history::local_store()?
+        };
+        crate::task_history::TaskRecorder::new(store, summary).ok()
+    };
+    serve_operation_recorded(
         listener,
         OperationEvent::Started {
             kind: command.kind,
@@ -514,14 +553,47 @@ fn serve(
             target: command.target.clone(),
         },
         private,
+        history,
+        !read_only,
         move |io, cancelled| execute(&command, &context, io, cancelled),
     )
 }
 
+#[cfg(test)]
 fn serve_operation(
     listener: UnixListener,
     started: OperationEvent,
     private: &std::path::Path,
+    operation: impl FnOnce(
+        &mut dyn OperationInteraction,
+        &AtomicBool,
+    ) -> Result<String, ManagementError>
+    + Send
+    + 'static,
+) -> Result<(), ManagementError> {
+    serve_operation_recorded(listener, started, private, None, true, operation)
+}
+
+fn record_archived_event(
+    event: OperationEvent,
+    sequence: &mut u64,
+    replay: &mut VecDeque<Vec<u8>>,
+    replay_bytes: &mut usize,
+    pending: &mut Option<PendingQuestion>,
+    history: Option<&crate::task_history::TaskRecorder>,
+) -> Result<Vec<u8>, ManagementError> {
+    if let Some(history) = history {
+        history.event(&event);
+    }
+    record_event(event, sequence, replay, replay_bytes, pending)
+}
+
+fn serve_operation_recorded(
+    listener: UnixListener,
+    started: OperationEvent,
+    private: &std::path::Path,
+    history: Option<crate::task_history::TaskRecorder>,
+    linger_finished: bool,
     operation: impl FnOnce(
         &mut dyn OperationInteraction,
         &AtomicBool,
@@ -588,6 +660,7 @@ fn serve_operation(
         )
         .map_err(failure)?;
     let mut peer: Option<Peer> = None;
+    let mut had_peer = false;
     let mut replay = VecDeque::<Vec<u8>>::new();
     let mut replay_bytes = 0;
     let mut pending_question: Option<PendingQuestion> = None;
@@ -616,7 +689,7 @@ fn serve_operation(
                 Err(error) => {
                     let message = error.to_string();
                     if last_signal_error.as_ref() != Some(&message) {
-                        let bytes = record_event(
+                        let bytes = record_archived_event(
                             OperationEvent::Output {
                                 text: format!("Could not signal task: {message}"),
                             },
@@ -624,6 +697,7 @@ fn serve_operation(
                             &mut replay,
                             &mut replay_bytes,
                             &mut pending_question,
+                            history.as_ref(),
                         )?;
                         if let Some(p) = &mut peer {
                             p.outgoing.push_back(bytes);
@@ -636,6 +710,7 @@ fn serve_operation(
         }
         if let Ok((stream, _)) = listener.accept() {
             if peer_uid(&stream).is_ok_and(|uid| uid == controller_uid) {
+                had_peer = true;
                 stream.set_nonblocking(true).map_err(failure)?;
                 let outgoing = reconnect_outgoing(
                     &replay,
@@ -669,12 +744,13 @@ fn serve_operation(
                             break;
                         }
                     }
-                    let bytes = record_event(
+                    let bytes = record_archived_event(
                         event,
                         &mut sequence,
                         &mut replay,
                         &mut replay_bytes,
                         &mut pending_question,
+                        history.as_ref(),
                     )?;
                     if terminal {
                         finished = Some(Instant::now());
@@ -697,12 +773,13 @@ fn serve_operation(
                         {
                             pending_result = Some(event);
                         } else {
-                            let bytes = record_event(
+                            let bytes = record_archived_event(
                                 event,
                                 &mut sequence,
                                 &mut replay,
                                 &mut replay_bytes,
                                 &mut pending_question,
+                                history.as_ref(),
                             )?;
                             if let Some(p) = &mut peer {
                                 p.outgoing.push_back(bytes);
@@ -720,12 +797,13 @@ fn serve_operation(
             .is_some_and(|tree| !tree.has_live_children())
             && let Some(event) = pending_result.take()
         {
-            let bytes = record_event(
+            let bytes = record_archived_event(
                 event,
                 &mut sequence,
                 &mut replay,
                 &mut replay_bytes,
                 &mut pending_question,
+                history.as_ref(),
             )?;
             if let Some(p) = &mut peer {
                 p.outgoing.push_back(bytes);
@@ -776,6 +854,8 @@ fn serve_operation(
                         },
                     )?);
                     sequence += 1;
+                } else if let Some(history) = &history {
+                    history.status(crate::task_history::TaskStatus::Cancelling);
                 }
             }
             while let Some(end) = p.incoming.iter().position(|b| *b == b'\n') {
@@ -809,6 +889,13 @@ fn serve_operation(
         }
         if disconnected {
             peer = None;
+        }
+        if !linger_finished
+            && had_peer
+            && finished.is_some()
+            && peer.as_ref().is_none_or(|peer| peer.outgoing.is_empty())
+        {
+            break;
         }
         if finished.is_some_and(|at| at.elapsed() > Duration::from_secs(600)) {
             break;

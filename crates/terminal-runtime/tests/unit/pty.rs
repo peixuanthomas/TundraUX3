@@ -43,6 +43,36 @@ fn parsed_pty_output_marks_the_terminal_frame_dirty() {
 }
 
 #[test]
+fn recorded_output_survives_beyond_the_terminal_scrollback_without_osc_controls() {
+    let root =
+        platform::create_temp_dir(&std::env::temp_dir().join("TundraUX3"), "recorded-pty-test")
+            .unwrap();
+    let store = platform::task_history::HistoryStore::new(&root);
+    let summary =
+        platform::task_history::TaskSummary::new("output".into(), "script".into(), "script".into());
+    let recorder = TaskRecorder::new(store.clone(), summary).unwrap();
+    let mut text = "中文输出\r\n".repeat(3000).into_bytes();
+    text.extend_from_slice(b"\x1b]52;c;blocked\x07END");
+    let parser = Arc::new(Mutex::new(vt100::Parser::new(2, 12, 0)));
+    let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(
+        CollectingWriter(Arc::new(Mutex::new(Vec::new()))),
+    )));
+    read_pty_output_recorded(
+        Box::new(io::Cursor::new(text)),
+        parser,
+        Arc::new(AtomicU64::new(0)),
+        writer,
+        Some(&recorder),
+    );
+    let (bytes, _) = store.output(recorder.id(), 0, 256 * 1024).unwrap();
+    let archived = String::from_utf8(bytes).unwrap();
+    assert_eq!(archived.matches("中文输出").count(), 3000);
+    assert!(!archived.contains("blocked"));
+    assert!(archived.ends_with("END"));
+    platform::cleanup_temp_path(&root).unwrap();
+}
+
+#[test]
 fn clearing_a_resized_row_does_not_leave_half_a_wide_character_or_stop_the_reader() {
     // The reported crash erased column 173 in a 174-column terminal: resizing
     // had removed the second cell of a wide character at the right edge.

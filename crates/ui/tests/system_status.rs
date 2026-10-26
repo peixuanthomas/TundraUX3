@@ -406,6 +406,7 @@ fn chrome(w: u16, h: u16) -> ShellChromeViewModel {
         help_available: false,
         help_button_hovered: false,
         help_button_focused: false,
+        tasks: None,
         back_shortcut: "Esc",
         screen_stack: vec!["System Status".into()],
         status: StatusViewModel {

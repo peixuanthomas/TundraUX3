@@ -86,6 +86,15 @@ impl AutoAdminJob {
             return;
         }
         self.0.stop_requested.store(true, Ordering::Release);
+        if let Some(history) = self
+            .0
+            .history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            history.status(platform::task_history::TaskStatus::Cancelling);
+        }
         if force {
             self.0.force_requested.store(true, Ordering::Release);
         }

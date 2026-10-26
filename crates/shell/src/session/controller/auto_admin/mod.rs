@@ -205,6 +205,16 @@ impl ShellSession {
         privileged: bool,
         responses: mpsc::Sender<OperationInput>,
     ) -> Option<AutoAdminJob> {
+        self.begin_auto_admin_with_class(description, privileged, responses, TaskClass::Operation)
+    }
+
+    pub(in crate::session) fn begin_auto_admin_with_class(
+        &mut self,
+        description: String,
+        privileged: bool,
+        responses: mpsc::Sender<OperationInput>,
+        task_class: TaskClass,
+    ) -> Option<AutoAdminJob> {
         self.synchronize_overlay_focus();
         if self
             .auto_admin
@@ -237,7 +247,7 @@ impl ShellSession {
         self.register_page_task(
             TaskDomain::AutoAdmin,
             task_request,
-            TaskClass::Operation,
+            task_class,
             TaskControl::new(
                 move || {
                     if cancel.phase() == WAITING {
@@ -249,6 +259,10 @@ impl ShellSession {
                 move || finished.task_finished(),
             ),
         );
+        if let Some(history) = self.tasks.recorder(TaskDomain::AutoAdmin, task_request) {
+            let origin = self.task_origin();
+            job.record_history(history, origin);
+        }
         self.auto_admin = AutoAdminState {
             job: Some(job.clone()),
             task_request: Some(task_request),

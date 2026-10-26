@@ -1,5 +1,7 @@
 //! Page ownership is checked here before a worker result reaches any page state.
 use super::*;
+use platform::task_history::{HistoryStore, TaskRecorder, TaskStatus, TaskSummary};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::session) enum TaskDomain {
@@ -20,6 +22,27 @@ pub(in crate::session) enum TaskDomain {
     Script,
 }
 
+impl TaskDomain {
+    fn history_source(self) -> &'static str {
+        match self {
+            Self::Launcher => "launcher",
+            Self::Editor => "editor",
+            Self::Explorer => "explorer",
+            Self::Diagnostics => "diagnostics",
+            Self::SettingsTimeSync | Self::SettingsSystemTime => "settings",
+            Self::Update => "update",
+            Self::Logs => "logs",
+            Self::UserManagement => "users",
+            Self::AutoAdmin => "auto-admin",
+            Self::CommandLine => "command-line",
+            Self::Script => "script",
+            Self::ManagementQuery | Self::ManagementDraft | Self::ManagementOperation => {
+                "management"
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::session) enum TaskOwner {
     Page(PageInstanceId),
@@ -37,6 +60,7 @@ pub(in crate::session) enum TaskClass {
 pub(in crate::session) struct TaskControl {
     cancel: Arc<dyn Fn() + Send + Sync>,
     finished: Arc<dyn Fn() -> bool + Send + Sync>,
+    record_history: bool,
 }
 impl TaskControl {
     pub(in crate::session) fn new(
@@ -46,7 +70,12 @@ impl TaskControl {
         Self {
             cancel: Arc::new(cancel),
             finished: Arc::new(finished),
+            record_history: true,
         }
+    }
+    fn without_history(mut self) -> Self {
+        self.record_history = false;
+        self
     }
 }
 impl fmt::Debug for TaskControl {
@@ -71,22 +100,98 @@ pub(in crate::session) struct PageTask {
     accepts_result: bool,
     completed: bool,
     control: TaskControl,
+    history: Option<TaskRecorder>,
+    origin_page: Option<PageInstanceId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::session) struct ShellTasks {
     epoch: PageInstanceId,
     records: BTreeMap<(TaskDomain, u64), PageTask>,
+    history_root: Option<PathBuf>,
+    history_pages: BTreeMap<String, (TaskDomain, u64, Option<PageInstanceId>)>,
+    known_active: BTreeSet<String>,
 }
 impl Default for ShellTasks {
     fn default() -> Self {
         Self {
             epoch: PageInstanceId::new(),
             records: BTreeMap::new(),
+            history_root: None,
+            history_pages: BTreeMap::new(),
+            known_active: BTreeSet::new(),
         }
     }
 }
 impl ShellTasks {
+    pub(in crate::session) fn with_history(root: Option<PathBuf>) -> Self {
+        Self {
+            history_root: root,
+            ..Default::default()
+        }
+    }
+
+    pub(in crate::session) fn recorder(
+        &self,
+        domain: TaskDomain,
+        request: u64,
+    ) -> Option<TaskRecorder> {
+        self.records.get(&(domain, request))?.history.clone()
+    }
+
+    pub(in crate::session) fn new_recorder(
+        &self,
+        source: &str,
+        name: String,
+        origin: &str,
+    ) -> Option<TaskRecorder> {
+        TaskRecorder::new(
+            HistoryStore::new(self.history_root.as_ref()?),
+            TaskSummary::new(name, source.into(), origin.into()),
+        )
+        .ok()
+    }
+
+    pub(in crate::session) fn history_task(
+        &self,
+        id: &str,
+    ) -> Option<(TaskDomain, u64, Option<PageInstanceId>)> {
+        self.history_pages.get(id).copied()
+    }
+
+    pub(in crate::session) fn running_operations(&self) -> usize {
+        let mut ids = self.known_active.clone();
+        for task in self.records.values().filter(|task| {
+            task.epoch == self.epoch
+                && task.class == TaskClass::Operation
+                && !(task.control.finished)()
+        }) {
+            if let Some(history) = &task.history {
+                ids.insert(history.id().into());
+            }
+        }
+        ids.len()
+    }
+
+    pub(in crate::session) fn known_active_history(&mut self, ids: BTreeSet<String>) {
+        self.known_active = ids;
+    }
+
+    pub(in crate::session) fn finish_history(
+        &self,
+        domain: TaskDomain,
+        request: u64,
+        status: TaskStatus,
+        result: String,
+    ) {
+        if let Some(history) = self.recorder(domain, request) {
+            if !result.is_empty() {
+                history.output(result.as_bytes());
+                history.output(b"\n");
+            }
+            history.finish(status, result);
+        }
+    }
     pub(in crate::session) fn register(
         &mut self,
         domain: TaskDomain,
@@ -95,12 +200,58 @@ impl ShellTasks {
         class: TaskClass,
         control: TaskControl,
     ) -> PageInstanceId {
+        self.register_recorded(domain, request, owner, class, control, None)
+    }
+
+    pub(in crate::session) fn register_recorded(
+        &mut self,
+        domain: TaskDomain,
+        request: u64,
+        owner: TaskOwner,
+        class: TaskClass,
+        control: TaskControl,
+        recorded: Option<TaskRecorder>,
+    ) -> PageInstanceId {
         // Native request ids must stay unique until their completion is consumed.
         assert!(
             !self.records.contains_key(&(domain, request)),
             "task request id reused"
         );
         let generation = PageInstanceId::new();
+        let history = recorded.or_else(|| {
+            self.history_root
+                .as_ref()
+                .filter(|_| {
+                    control.record_history
+                        && class == TaskClass::Operation
+                        && domain != TaskDomain::ManagementOperation
+                })
+                .and_then(|root| {
+                    let source = domain.history_source();
+                    TaskRecorder::new(
+                        HistoryStore::new(root),
+                        TaskSummary::new(
+                            platform::management::task_history::source_label(source),
+                            source.into(),
+                            source.into(),
+                        ),
+                    )
+                    .ok()
+                })
+        });
+        if let Some(history) = &history {
+            self.history_pages.insert(
+                history.id().into(),
+                (
+                    domain,
+                    request,
+                    match owner {
+                        TaskOwner::Page(page) => Some(page),
+                        TaskOwner::Session => None,
+                    },
+                ),
+            );
+        }
         self.records.insert(
             (domain, request),
             PageTask {
@@ -112,6 +263,11 @@ impl ShellTasks {
                 accepts_result: true,
                 completed: false,
                 control,
+                history,
+                origin_page: match owner {
+                    TaskOwner::Page(page) => Some(page),
+                    TaskOwner::Session => None,
+                },
             },
         );
         generation
@@ -141,6 +297,25 @@ impl ShellTasks {
     pub(in crate::session) fn complete(&mut self, domain: TaskDomain, request: u64) {
         if let Some(task) = self.records.get_mut(&(domain, request)) {
             task.completed = true;
+            if let Some(history) = &task.history {
+                self.known_active.remove(history.id());
+            }
+            if let Some(history) = &task.history {
+                if history
+                    .store()
+                    .read(history.id())
+                    .is_ok_and(|record| record.status.active())
+                {
+                    history.finish(
+                        if task.cancelling {
+                            TaskStatus::Cancelled
+                        } else {
+                            TaskStatus::Unknown
+                        },
+                        String::new(),
+                    );
+                }
+            }
         }
         self.reap();
     }
@@ -148,6 +323,9 @@ impl ShellTasks {
     pub(in crate::session) fn cancel(&mut self, domain: TaskDomain, request: u64) {
         if let Some(task) = self.records.get_mut(&(domain, request)) {
             task.cancelling = true;
+            if let Some(history) = &task.history {
+                history.status(TaskStatus::Cancelling);
+            }
             (task.control.cancel)();
         }
     }
@@ -212,6 +390,8 @@ impl ShellTasks {
 
     pub(in crate::session) fn stop_session(&mut self, preserve_prepared_update: bool) {
         self.epoch = PageInstanceId::new();
+        self.known_active.clear();
+        self.history_pages.clear();
         // A prepared transaction handed to the replacement helper is no longer
         // a Shell task. Cancelling it here would delete the helper's input.
         if preserve_prepared_update {
@@ -281,6 +461,11 @@ impl ShellSession {
             .common
             .selected_id()
             .expect("tasks require a page instance");
+        let control = if self.task_origin() == "tasks" {
+            control.without_history()
+        } else {
+            control
+        };
         self.tasks
             .register(domain, request, TaskOwner::Page(owner), class, control)
     }

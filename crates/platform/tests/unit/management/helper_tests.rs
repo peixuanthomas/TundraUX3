@@ -151,6 +151,96 @@ fn elevated_reconnect_is_recognized_without_an_operation_command() {
 }
 
 #[test]
+#[ignore = "subprocess fixture used only by completed_read_only_helper_exits_after_delivering_result"]
+fn read_only_helper_process_fixture() {
+    let Some(directory) = std::env::var_os("TUNDRA_AA_READ_ONLY_FIXTURE") else {
+        return;
+    };
+    let directory = PathBuf::from(directory);
+    let listener = UnixListener::bind(directory.join("control.sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let finished = directory.join("finished");
+    serve_operation_recorded(
+        listener,
+        OperationEvent::Started {
+            kind: ManagementKind::Tasks,
+            action: "inspect_tasks".into(),
+            target: None,
+        },
+        &directory,
+        None,
+        false,
+        move |_, _| {
+            fs::write(finished, b"complete").unwrap();
+            Ok("Read complete".into())
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn completed_read_only_helper_exits_after_delivering_result() {
+    use std::process::{Command, Stdio};
+    let temporary = tempfile::tempdir().unwrap();
+    let directory = temporary.path().to_path_buf();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "management::helper::tests::read_only_helper_process_fixture",
+            "--nocapture",
+        ])
+        .env("TUNDRA_AA_READ_ONLY_FIXTURE", &directory)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !directory.join("finished").exists() {
+            assert!(Instant::now() < deadline, "read-only helper did not finish");
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "helper exited before attachment"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(child.try_wait().unwrap().is_none());
+        let stream = UnixStream::connect(directory.join("control.sock")).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut reader = std::io::BufReader::new(stream);
+        loop {
+            let mut line = String::new();
+            assert!(reader.read_line(&mut line).unwrap() > 0);
+            let record: OperationRecord = serde_json::from_str(&line).unwrap();
+            if matches!(record.event, OperationEvent::Completed { .. }) {
+                break;
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "read-only helper remained alive after delivery"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }));
+    let _ = child.kill();
+    let _ = child.wait();
+    fs::remove_dir_all(directory).unwrap();
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
+#[test]
 fn attach_rejects_paths_outside_the_actors_fixed_socket_namespace() {
     for path in [
         "/tmp/operation/control.sock",

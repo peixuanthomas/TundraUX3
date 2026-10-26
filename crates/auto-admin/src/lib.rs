@@ -61,6 +61,8 @@ struct Shared {
     force_requested: std::sync::atomic::AtomicBool,
     helper_control: std::sync::atomic::AtomicBool,
     helper_connected: std::sync::atomic::AtomicBool,
+    history: Mutex<Option<platform::task_history::TaskRecorder>>,
+    history_handed_off: std::sync::atomic::AtomicBool,
     #[cfg(target_os = "linux")]
     process: Mutex<Option<platform::management::termination::ProcessTree>>,
     #[cfg(target_os = "linux")]
@@ -117,12 +119,49 @@ impl AutoAdminJob {
             force_requested: std::sync::atomic::AtomicBool::new(false),
             helper_control: std::sync::atomic::AtomicBool::new(false),
             helper_connected: std::sync::atomic::AtomicBool::new(false),
+            history: Mutex::new(None),
+            history_handed_off: std::sync::atomic::AtomicBool::new(false),
             #[cfg(target_os = "linux")]
             process: Mutex::new(None),
             #[cfg(target_os = "linux")]
             terminal: Mutex::new(None),
         }))
     }
+    pub fn record_history(&self, history: platform::task_history::TaskRecorder, origin: String) {
+        use platform::task_history::TaskStatus;
+        let _ = history.store().update(history.id(), |summary| {
+            summary.name = self.history_name();
+            summary.origin = origin;
+            summary.status = match self.phase() {
+                WAITING => TaskStatus::WaitingApproval,
+                DENIED => TaskStatus::Cancelled,
+                _ => TaskStatus::Running,
+            };
+            if self.phase() == DENIED {
+                summary.finished_at = Some(platform::task_history::now());
+            }
+        });
+        *self.0.history.lock().unwrap_or_else(|e| e.into_inner()) = Some(history);
+    }
+
+    pub fn history_id(&self) -> Option<String> {
+        self.0
+            .history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|history| history.id().to_owned())
+    }
+
+    pub fn history_name(&self) -> String {
+        self.0
+            .description
+            .lines()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
     pub fn phase(&self) -> JobPhase {
         match self.0.phase.load(Ordering::Acquire) {
             0 => WAITING,
@@ -190,8 +229,58 @@ impl AutoAdminJob {
         display.status = i18n::tr!(if approve { "aa-running" } else { "aa-rejected" });
         display.revision += 1;
         self.0.approved.notify_all();
+        if let Some(history) = self
+            .0
+            .history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            if approve {
+                history.status(platform::task_history::TaskStatus::Running);
+            } else {
+                history.finish(
+                    platform::task_history::TaskStatus::Cancelled,
+                    i18n::tr!("aa-rejected"),
+                );
+            }
+        }
     }
     pub fn emit(&self, event: &OperationEvent) {
+        if !self.0.history_handed_off.load(Ordering::Acquire)
+            && let Some(history) = self
+                .0
+                .history
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+        {
+            if (self.phase() == DENIED || self.0.stop_requested.load(Ordering::Acquire))
+                && matches!(
+                    event,
+                    OperationEvent::Completed { .. } | OperationEvent::Failed { .. }
+                )
+            {
+                let message = match event {
+                    OperationEvent::Completed { message } | OperationEvent::Failed { message } => {
+                        message.clone()
+                    }
+                    _ => unreachable!(),
+                };
+                history.finish(platform::task_history::TaskStatus::Cancelled, message);
+            } else {
+                history.event(event);
+            }
+            #[cfg(target_os = "linux")]
+            if matches!(event,OperationEvent::Connected{operation_id} if !operation_id.starts_with("/run/tundraux3-management/"))
+                && history
+                    .store()
+                    .read(history.id())
+                    .is_ok_and(|record| record.process_id != std::process::id())
+            {
+                self.0.history_handed_off.store(true, Ordering::Release);
+            }
+        }
         let mut d = self.0.display.lock().unwrap_or_else(|e| e.into_inner());
         d.revision = d.revision.wrapping_add(1);
         match event {
@@ -203,6 +292,23 @@ impl AutoAdminJob {
                 d.parser.process(bytes);
             }
             OperationEvent::Output { text } => print_line(&mut d.parser, text),
+            OperationEvent::TaskOutput {
+                offset,
+                end,
+                total,
+                text,
+            } => {
+                print_line(
+                    &mut d.parser,
+                    &i18n::tr!(
+                        "task-output-range",
+                        start = *offset,
+                        end = *end,
+                        total = *total
+                    ),
+                );
+                print_line(&mut d.parser, text);
+            }
             OperationEvent::Progress { message, percent } => {
                 d.status = percent.map_or_else(|| message.clone(), |p| format!("{p}% {message}"));
                 if !d.terminal_stream {

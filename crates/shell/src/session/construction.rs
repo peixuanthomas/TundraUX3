@@ -196,7 +196,12 @@ impl ShellSession {
                     app::system_settings::UnavailableReason::UnsupportedPlatform
                 },
             },
-            tasks: ShellTasks::default(),
+            tasks: ShellTasks::with_history(
+                startup
+                    .storage_manager
+                    .as_ref()
+                    .map(|storage| storage.layout().data_path.join("task-history")),
+            ),
             pending_page_closes: HashSet::new(),
             pending_login_reset: None,
             pending_lockscreen_after_logout: false,

@@ -482,6 +482,7 @@ impl ShellSession {
                 "builtin.scheduled-tasks" => {
                     self.open_management(platform::management::ManagementKind::ScheduledTasks)
                 }
+                "builtin.tasks" => self.open_tasks(),
                 _ => self.notify_status(i18n::LocalizedText::from(i18n::msg!(
                     "shell-arg1-is-not-available-in-this-build",
                     arg1 = application.localized_name()
