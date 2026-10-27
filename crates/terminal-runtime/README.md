@@ -2,6 +2,10 @@
 
 `terminal-runtime` 管理宿主终端和子终端。PTY 是供子进程使用的终端连接，让命令行程序可以读取按键、移动光标并输出完整终端画面。
 
+`PtyConfig`、`PtyProcess`、`PtyExitStatus` 供命令行、Vim 和脚本共用；配置默认不添加参数或私有环境变量。内置 CLI 的启动参数、主题和特殊退出码由 Shell 的命令行宿主管理。
+
+`PtyProcess::send_key` 和 `send_paste` 在发送时读取子终端当前模式，分别处理按键与粘贴。`input::mouse_to_terminal` 将宿主坐标换算为从零开始的终端内部坐标，保留按钮、拖动和修饰键，排除内容区之外的事件；发送时再按子程序选用的鼠标协议编码。
+
 | 模块 | 职责 |
 | --- | --- |
 | `session` | `TerminalGuard`：进入和恢复 raw mode、备用屏幕、鼠标、焦点、粘贴和增强按键报告 |
@@ -14,7 +18,7 @@ Shell 决定何时进入或交还终端，本 crate 执行具体设置；UI 只�
 
 子终端尺寸没有变化时，`resize` 直接返回，不重复发送尺寸通知或增加画面版本；脚本工作区持续轮询时也能保持空闲画面稳定。
 
-`CommandLinePty::into_output` 清理进程树、关闭 PTY 并收完输出后返回 `TerminalOutput`。它只保留终端解析结果，支持调整尺寸、回滚和快照，让已结束脚本仍可查看早期输出。
+`PtyProcess::into_output` 清理进程树、关闭 PTY 并收完输出后返回 `TerminalOutput`。它只保留终端解析结果，支持调整尺寸、回滚和快照，让已结束脚本仍可查看早期输出。
 
 可注册输出接收函数，在读取线程中逐块转交完整输出，供任务历史保存；不把输入事件写入历史，也不依赖终端回滚的行数保存全部结果。
 
@@ -42,4 +46,4 @@ Shell 从自身二进制目录启动 `tundra-cli repl --embedded`，使用 `xter
 
 子终端快照保留逐格斜体和子进程通过 DECSCUSR 选择的光标形状、闪烁状态；形状由 vt100 解析，不按应用名称或文字推断。按键保留 Ctrl+W/N/P/R/V、F1–F12 和带修饰键的导航序列；松键事件不重复发送字符，粘贴继续遵守子终端的 bracketed-paste 模式。
 
-`CommandLinePty::send_mouse` 按子进程当前启用的鼠标跟踪模式和 Default、UTF-8、SGR 编码发送物理按下、释放、拖动和滚轮事件，并将坐标转换为内容区内的坐标。没有启用子终端鼠标或事件落在内容区外时返回 `false`，宿主可以继续处理自己的控件和回滚；子终端已接管内容区时返回 `true`，不会把 Vim 等终端程序的滚轮再送入宿主回滚。合成的 Click/DoubleClick 不重复生成已有的按下/释放报告。协议、边界和快照回归位于 `tests/unit/input.rs`、`tests/unit/pty.rs`。
+`PtyProcess::send_mouse` 按子进程当前启用的鼠标跟踪模式和 Default、UTF-8、SGR 编码发送物理按下、释放、拖动和滚轮事件，并将坐标转换为内容区内的坐标。没有启用子终端鼠标或事件落在内容区外时返回 `false`，宿主可以继续处理自己的控件和回滚；子终端已接管内容区时返回 `true`，不会把 Vim 等终端程序的滚轮再送入宿主回滚。合成的 Click/DoubleClick 不重复生成已有的按下/释放报告。协议、边界和快照回归位于 `tests/unit/input.rs`、`tests/unit/pty.rs`。

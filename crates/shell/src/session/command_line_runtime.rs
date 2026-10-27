@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) use terminal_runtime::pty::*;
 use watchdog::{AppWatchdog, ComponentId, ManagedTaskGroup};
 const SCROLL_LINES_PER_NOTCH: usize = 3;
+const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandLineHostEvent {
     None,
@@ -21,7 +22,7 @@ pub enum CommandLineHostEvent {
 #[derive(Debug)]
 enum CommandLineHostState {
     Inactive,
-    Running(CommandLinePty),
+    Running(PtyProcess),
     Exited { code: i32 },
     Failed { message: String },
 }
@@ -79,9 +80,15 @@ impl CommandLineHost {
         self.history = history;
 
         let result = resolve_tundra_cli_program().and_then(|program| {
-            let mut config = CommandLinePtyConfig::tundra_cli(program)
-                .with_username(username)
-                .with_accent_color(accent);
+            let mut config = PtyConfig::new(program);
+            config.args = vec!["repl".into(), "--embedded".into()];
+            config.env = vec![
+                ("TUNDRA_COMMAND_LINE_USERNAME".into(), username.into()),
+                (
+                    "TUNDRA_COMMAND_LINE_ACCENT".into(),
+                    terminal_runtime::ansi_foreground(accent).into(),
+                ),
+            ];
             if let Some(directory) = directory {
                 config.cwd = Some(directory.to_path_buf());
             } else {
@@ -93,7 +100,7 @@ impl CommandLineHost {
                     config.cwd = Some(documents.to_path_buf());
                 }
             }
-            CommandLinePty::spawn_recorded(config, &self.reader_tasks, self.history.clone())
+            PtyProcess::spawn_recorded(config, &self.reader_tasks, self.history.clone())
         });
         match result {
             Ok(pty) => {
@@ -256,12 +263,9 @@ impl CommandLineHost {
             (CommandLineHostState::Running(pty), InputEvent::Key(key))
                 if key.phase.is_press_like() =>
             {
-                key_event_bytes(key, self.snapshot.application_cursor)
-                    .map_or(Ok(()), |bytes| pty.write(&bytes))
+                pty.send_key(key)
             }
-            (CommandLineHostState::Running(pty), InputEvent::Paste(text)) => {
-                pty.write(&paste_bytes(text, self.snapshot.bracketed_paste))
-            }
+            (CommandLineHostState::Running(pty), InputEvent::Paste(text)) => pty.send_paste(text),
             _ => Ok(()),
         };
         if let Err(error) = write_result {

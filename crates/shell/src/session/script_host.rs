@@ -487,17 +487,11 @@ impl ScriptHosts {
                     && !matches!(key.key, InputKey::F(1 | 8 | 10))
                     && key.phase.is_press_like() =>
             {
-                let (application_cursor, _) = pty.input_modes();
-                if let Some(bytes) =
-                    terminal_runtime::input::key_event_bytes(key, application_cursor)
-                {
-                    let _ = pty.write(&bytes);
-                }
+                let _ = pty.send_key(key);
                 true
             }
             InputEvent::Paste(text) => {
-                let (_, bracketed) = pty.input_modes();
-                let _ = pty.write(&terminal_runtime::input::paste_bytes(text, bracketed));
+                let _ = pty.send_paste(text);
                 true
             }
             _ => false,

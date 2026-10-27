@@ -4,7 +4,7 @@ use std::fs::File;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use terminal_runtime::pty::{CommandLinePty, CommandLinePtyConfig};
+use terminal_runtime::pty::{PtyConfig, PtyProcess};
 use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
 
 const DAEMON_MODE: &str = "TUNDRA_TEST_EMBEDDED_DAEMON";
@@ -58,7 +58,7 @@ fn daemon_fixture() {
 }
 
 struct Session {
-    pty: Option<CommandLinePty>,
+    pty: Option<PtyProcess>,
     runtime: Option<WatchdogRuntime>,
     root: PathBuf,
     daemons: Vec<(libc::pid_t, OwnedFd)>,
@@ -108,8 +108,8 @@ impl Session {
             "repl".into(),
             "--embedded".into(),
         ]);
-        let pty = CommandLinePty::spawn(
-            CommandLinePtyConfig {
+        let pty = PtyProcess::spawn(
+            PtyConfig {
                 program: "/usr/bin/env".into(),
                 args,
                 env: Vec::new(),
@@ -139,7 +139,7 @@ impl Session {
         session
     }
 
-    fn pty(&self) -> &CommandLinePty {
+    fn pty(&self) -> &PtyProcess {
         self.pty.as_ref().unwrap()
     }
 

@@ -37,8 +37,8 @@ fn embedded_panic_exit_enters_fullscreen_panic_without_login_or_dialog() {
     let (program, args) = ("cmd.exe", vec!["/D", "/C", "exit", "76"]);
     #[cfg(unix)]
     let (program, args) = ("/bin/sh", vec!["-c", "exit 76"]);
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
+    let pty = PtyProcess::spawn(
+        PtyConfig {
             program: program.into(),
             args: args.into_iter().map(OsString::from).collect(),
             env: Vec::new(),
@@ -228,8 +228,8 @@ fn windows_conpty_receives_initial_and_typed_output() {
         ))
         .expect("test app watchdog");
     let reader_tasks = app.task_group("pty-reader");
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
+    let pty = PtyProcess::spawn(
+        PtyConfig {
             program: OsString::from("cmd.exe"),
             args: vec![
                 OsString::from("/D"),
@@ -301,7 +301,7 @@ fn windows_conpty_receives_initial_and_typed_output() {
 }
 
 fn assert_snapshot_contains(
-    pty: &CommandLinePty,
+    pty: &PtyProcess,
     expected: &str,
     timeout: Duration,
     description: &str,
@@ -355,8 +355,8 @@ fn physical_escape_ctrl_shift_x_and_f1_reach_the_real_child_terminal() {
     );
     let mut host = CommandLineHost::new(fixture.app.clone());
     host.state = CommandLineHostState::Running(
-        CommandLinePty::spawn(
-            CommandLinePtyConfig {
+        PtyProcess::spawn(
+            PtyConfig {
                 program,
                 args,
                 env: Vec::new(),
@@ -825,8 +825,8 @@ impl PtyFixture {
         #[cfg(unix)]
         let (program, args) = ("/bin/sh", Vec::<&str>::new());
         let mut host = CommandLineHost::new(self.app.clone());
-        let pty = CommandLinePty::spawn(
-            CommandLinePtyConfig {
+        let pty = PtyProcess::spawn(
+            PtyConfig {
                 program: program.into(),
                 args: args.into_iter().map(OsString::from).collect(),
                 env: Vec::new(),
@@ -879,7 +879,7 @@ impl Drop for PtyFixture {
     }
 }
 
-fn running_pty(host: &CommandLineHost) -> &CommandLinePty {
+fn running_pty(host: &CommandLineHost) -> &PtyProcess {
     match &host.state {
         CommandLineHostState::Running(pty) => pty,
         other => panic!("expected running PTY, got {other:?}"),

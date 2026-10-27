@@ -153,8 +153,8 @@ fn pty_rejects_invalid_start_directories_before_running_the_child() {
         vec![OsString::from("-c"), ": > \"$TUNDRA_CWD_MARKER\"".into()],
     );
     let spawn_marker = |cwd: &Path, marker: &Path| {
-        CommandLinePty::spawn(
-            CommandLinePtyConfig {
+        PtyProcess::spawn(
+            PtyConfig {
                 program: program.into(),
                 args: args.clone(),
                 env: vec![("TUNDRA_CWD_MARKER".into(), marker.as_os_str().to_owned())],
@@ -269,8 +269,8 @@ fn pty_process_runs_inside_platform_containment() {
     ];
     #[cfg(not(target_os = "linux"))]
     let environment = Vec::new();
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
+    let pty = PtyProcess::spawn(
+        PtyConfig {
             program,
             args,
             env: environment,
@@ -379,8 +379,8 @@ fn pty_cleanup_is_repeatable_for_running_and_exited_children() {
         } else {
             "exec sleep 60"
         };
-        let pty = CommandLinePty::spawn(
-            CommandLinePtyConfig {
+        let pty = PtyProcess::spawn(
+            PtyConfig {
                 program: "/bin/sh".into(),
                 args: vec!["-c".into(), command.into()],
                 env: Vec::new(),
@@ -449,8 +449,8 @@ fn watchdog_shutdown_stops_terminal_even_if_the_view_still_owns_it() {
     let (program, args) = ("cmd.exe", vec!["/D".into(), "/Q".into()]);
     #[cfg(unix)]
     let (program, args) = ("/bin/sh", Vec::new());
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
+    let pty = PtyProcess::spawn(
+        PtyConfig {
             program: program.into(),
             args,
             env: Vec::new(),
@@ -499,8 +499,8 @@ fn retained_output_scrolls_and_resizes_after_the_process_and_watchdog_close() {
         ))
         .unwrap();
     let tasks = app.task_group("terminal");
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
+    let pty = PtyProcess::spawn(
+        PtyConfig {
             program: "/bin/sh".into(),
             args: vec![
                 "-c".into(),
@@ -553,7 +553,7 @@ fn retained_output_scrolls_and_resizes_after_the_process_and_watchdog_close() {
 
 #[cfg(any(windows, target_os = "linux"))]
 fn assert_snapshot_contains(
-    pty: &CommandLinePty,
+    pty: &PtyProcess,
     expected: &str,
     timeout: Duration,
     description: &str,
@@ -664,7 +664,7 @@ fn snapshot_keeps_terminal_attributes() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn child_selected_mouse_mode_receives_content_relative_drag_and_release() {
+fn child_input_modes_receive_keys_paste_and_content_relative_mouse_reports() {
     use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
 
     let root = std::env::temp_dir().join(format!(
@@ -689,12 +689,12 @@ fn child_selected_mouse_mode_receives_content_relative_drag_and_release() {
         ))
         .unwrap();
     let tasks = app.task_group("pty-reader");
-    let pty = CommandLinePty::spawn(
-        CommandLinePtyConfig {
+    let pty = PtyProcess::spawn(
+        PtyConfig {
             program: "/bin/sh".into(),
             args: vec![
                 "-c".into(),
-                r"stty raw -echo; printf '\033[?1002h\033[?1006hREADY'; dd bs=1 count=28 2>/dev/null | od -An -v -tx1 | tr -d ' \n'; printf DONE".into(),
+                r"stty raw -echo; printf '\033[?1h\033[?2004h\033[?1002h\033[?1006hREADY'; dd bs=1 count=46 2>/dev/null | od -An -v -tx1 | tr -d ' \n'; printf '\033[?1l\033[?2004lNEXT'; dd bs=1 count=6 2>/dev/null | od -An -v -tx1 | tr -d ' \n'; printf DONE".into(),
             ],
             env: Vec::new(),
             cwd: None,
@@ -735,11 +735,23 @@ fn child_selected_mouse_mode_receives_content_relative_drag_and_release() {
     ] {
         assert!(pty.send_mouse(&event, area).unwrap());
     }
+    pty.send_key(&ui::KeyEvent::new(ui::Key::Up)).unwrap();
+    pty.send_key(&ui::KeyEvent::new(ui::Key::Up).released())
+        .unwrap();
+    pty.send_paste("a\nb").unwrap();
     assert_snapshot_contains(
         &pty,
-        "1b5b3c303b333b344d1b5b3c33323b353b354d1b5b3c303b353b356dDONE",
+        "1b5b3c303b333b344d1b5b3c33323b353b354d1b5b3c303b353b356d1b4f411b5b3230307e610a621b5b3230317eNEXT",
         Duration::from_secs(5),
-        "child mouse reports",
+        "child application keys, bracketed paste and mouse reports",
+    );
+    pty.send_key(&ui::KeyEvent::new(ui::Key::Down)).unwrap();
+    pty.send_paste("a\nb").unwrap();
+    assert_snapshot_contains(
+        &pty,
+        "1b5b42610a62DONE",
+        Duration::from_secs(5),
+        "child reset input modes",
     );
     drop(pty);
     drop(tasks);
@@ -817,23 +829,11 @@ fn cursor_keys_follow_application_cursor_mode() {
 }
 
 #[test]
-fn cli_config_passes_the_current_tundra_username_and_accent() {
-    let config = CommandLinePtyConfig::tundra_cli("tundra-cli")
-        .with_username("AdminUser")
-        .with_accent_color(ratatui::style::Color::Rgb(12, 34, 56));
-    assert_eq!(
-        config.env,
-        [
-            (
-                OsString::from(COMMAND_LINE_USERNAME_ENV),
-                OsString::from("AdminUser")
-            ),
-            (
-                OsString::from(COMMAND_LINE_ACCENT_ENV),
-                OsString::from("\x1b[38;2;12;34;56m")
-            )
-        ]
-    );
+fn generic_config_does_not_add_cli_arguments_or_private_environment() {
+    let config = PtyConfig::new("example-tui");
+    assert_eq!(config.program, OsString::from("example-tui"));
+    assert!(config.args.is_empty());
+    assert!(config.env.is_empty());
 }
 
 #[test]

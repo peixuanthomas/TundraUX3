@@ -156,7 +156,10 @@ pub(super) fn append_keys(
             area.height,
         );
         let nav = Rect::new(main.right() + 2, area.y, nav_width, area.height);
-        append_functions(layout, Rect::new(main.x, rows[0].y, main.width, rows[0].height));
+        append_functions(
+            layout,
+            Rect::new(main.x, rows[0].y, main.width, rows[0].height),
+        );
         for (row, keys) in rows[1..].iter().zip(&letters) {
             append_row(
                 &mut layout.buttons,
@@ -180,13 +183,25 @@ pub(super) fn append_keys(
 
 fn append_functions(layout: &mut ScreenKeyboardLayout, area: Rect) {
     let groups = Layout::horizontal([
-        Constraint::Fill(2), Constraint::Length(1),
-        Constraint::Fill(4), Constraint::Length(1),
-        Constraint::Fill(4), Constraint::Length(1), Constraint::Fill(4),
-    ]).split(area);
-    append_row(&mut layout.buttons, groups[0], &[(Action::Escape, 1)], layout.bordered_buttons);
+        Constraint::Fill(2),
+        Constraint::Length(1),
+        Constraint::Fill(4),
+        Constraint::Length(1),
+        Constraint::Fill(4),
+        Constraint::Length(1),
+        Constraint::Fill(4),
+    ])
+    .split(area);
+    append_row(
+        &mut layout.buttons,
+        groups[0],
+        &[(Action::Escape, 1)],
+        layout.bordered_buttons,
+    );
     for (area, first) in [groups[2], groups[4], groups[6]].into_iter().zip([1, 5, 9]) {
-        let keys = (first..first + 4).map(|number| (Action::Function(number), 1)).collect::<KeyRow>();
+        let keys = (first..first + 4)
+            .map(|number| (Action::Function(number), 1))
+            .collect::<KeyRow>();
         append_row(&mut layout.buttons, area, &keys, layout.bordered_buttons);
     }
 }

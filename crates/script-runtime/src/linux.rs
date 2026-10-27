@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use terminal_runtime::pty::CommandLinePtyConfig;
+use terminal_runtime::pty::PtyConfig;
 use watchdog::ManagedTaskGroup;
 include!(concat!(env!("OUT_DIR"), "/bundle.rs"));
 
@@ -33,7 +33,7 @@ struct Debugger {
 }
 
 pub struct ScriptSession {
-    pty: Option<CommandLinePty>,
+    pty: Option<PtyProcess>,
     debugger: Option<Debugger>,
     session_id: u64,
     exited: bool,
@@ -126,8 +126,8 @@ impl ScriptSession {
         let mut args = spec.interpreter_args.clone();
         args.push(spec.path.as_os_str().to_owned());
         args.extend(spec.args.iter().cloned());
-        let pty = CommandLinePty::spawn_recorded(
-            CommandLinePtyConfig {
+        let pty = PtyProcess::spawn_recorded(
+            PtyConfig {
                 program: spec.interpreter.as_os_str().to_owned(),
                 args,
                 env,
@@ -149,7 +149,7 @@ impl ScriptSession {
         })
     }
 
-    pub fn terminal(&self) -> &CommandLinePty {
+    pub fn terminal(&self) -> &PtyProcess {
         self.pty.as_ref().unwrap()
     }
     pub fn session_id(&self) -> u64 {

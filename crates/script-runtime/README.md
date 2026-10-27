@@ -2,6 +2,8 @@
 
 Linux 脚本运行与 bashdb 调试后端。普通运行按调用方提供的解释器、参数和目录启动；调试要求 Bash 5.2 以上。两种方式都复用 `terminal-runtime` 的 PTY、输出解析和 watchdog 进程树清理。
 
+运行进程使用共享 `PtyConfig` 与 `PtyProcess`；交互输出的按键和粘贴通过其独立输入方法发送，遵守子程序当前选择的终端模式。
+
 `ScriptSession::spawn` 创建一轮运行；`command` 接收继续、步进、断点和表达式命令，`poll` 返回启动、暂停快照、表达式结果和退出码。查询通过私有通道异步完成，不在 UI 线程等待调试器回应。Shell 负责文档保存、页实例检查、只读状态、Vim 切换和界面。
 
 结束后 `into_output` 清理进程、PTY 和调试临时目录，只保留支持回滚与调整尺寸的终端输出；`into_final_snapshot` 继续提供最后一屏快照。

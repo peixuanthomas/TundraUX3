@@ -11,10 +11,7 @@ use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::Arc;
-use terminal_runtime::pty::{
-    CommandLineExitStatus, CommandLinePty, CommandLinePtyConfig, TerminalSnapshot, key_event_bytes,
-    paste_bytes,
-};
+use terminal_runtime::pty::{PtyConfig, PtyExitStatus, PtyProcess, TerminalSnapshot};
 use watchdog::ManagedTaskGroup;
 
 const BRIDGE: &str = include_str!("bridge.vim");
@@ -46,12 +43,12 @@ pub struct VimPoll {
     pub terminal: TerminalSnapshot,
     pub state: Arc<VimState>,
     pub save_requests: Vec<SaveRequest>,
-    pub exit: Option<CommandLineExitStatus>,
+    pub exit: Option<PtyExitStatus>,
 }
 
 /// Process resources stay outside cloneable application/page state.
 pub struct VimHost {
-    pty: Option<CommandLinePty>,
+    pty: Option<PtyProcess>,
     _directory: tempfile::TempDir,
     command: u64,
     revision: u64,
@@ -65,7 +62,7 @@ pub struct VimHost {
     incoming: Vec<u8>,
     outgoing: VecDeque<Vec<u8>>,
     written: usize,
-    exit: Option<CommandLineExitStatus>,
+    exit: Option<PtyExitStatus>,
     final_terminal: Option<TerminalSnapshot>,
     size: Cell<(u16, u16)>,
 }
@@ -109,8 +106,8 @@ impl VimHost {
         if let Some(runtime) = config.runtime_path {
             env.push((OsString::from("VIMRUNTIME"), runtime.into_os_string()));
         }
-        let pty = CommandLinePty::spawn(
-            CommandLinePtyConfig {
+        let pty = PtyProcess::spawn(
+            PtyConfig {
                 program: config.program.into_os_string(),
                 args,
                 env,
@@ -208,18 +205,11 @@ impl VimHost {
     }
 
     pub fn send_key(&self, key: &ui::KeyEvent) -> io::Result<()> {
-        let pty = self.running()?;
-        if key.phase.is_press_like()
-            && let Some(bytes) = key_event_bytes(key, pty.input_modes().0)
-        {
-            pty.write(&bytes)?;
-        }
-        Ok(())
+        self.running()?.send_key(key)
     }
 
     pub fn paste(&self, text: &str) -> io::Result<()> {
-        let pty = self.running()?;
-        pty.write(&paste_bytes(text, pty.input_modes().1))
+        self.running()?.send_paste(text)
     }
 
     pub fn send_bytes(&self, bytes: &[u8]) -> io::Result<()> {
@@ -277,7 +267,7 @@ impl VimHost {
             && let Some(exit) = pty.try_wait()?
         {
             self.exit = Some(exit);
-            self.final_terminal = self.pty.take().map(CommandLinePty::snapshot_after_exit);
+            self.final_terminal = self.pty.take().map(PtyProcess::snapshot_after_exit);
             let _ = self.read_messages()?;
         }
         if self.authenticated && self.stream.is_none() && self.exit.is_none() && !self.state.exiting
@@ -329,7 +319,7 @@ impl VimHost {
         Ok(())
     }
 
-    fn running(&self) -> io::Result<&CommandLinePty> {
+    fn running(&self) -> io::Result<&PtyProcess> {
         self.pty
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "Vim has already exited"))

@@ -2,7 +2,32 @@ use super::*;
 use ui::{InputPhase, KeyModifiers};
 
 #[test]
+fn mouse_coordinates_follow_the_actual_viewport_after_keyboard_and_window_resizes() {
+    let event = MouseEvent::drag(14, 9, MouseButton::Left).with_modifiers(KeyModifiers::CTRL);
+    for (area, expected) in [
+        (Rect::new(10, 5, 40, 20), Some((4, 4))),
+        (Rect::new(12, 8, 20, 8), Some((2, 1))),
+        (Rect::new(10, 5, 40, 4), None),
+        (Rect::new(15, 5, 20, 20), None),
+        (Rect::new(10, 5, 0, 20), None),
+    ] {
+        let translated = mouse_to_terminal(&event, area);
+        assert_eq!(translated.map(|mouse| mouse.coordinates()), expected);
+        if let Some(mouse) = translated {
+            assert_eq!(mouse.kind, event.kind);
+            assert_eq!(mouse.modifiers, event.modifiers);
+        }
+    }
+}
+
+#[test]
 fn vim_control_keys_and_function_keys_keep_their_terminal_bytes() {
+    for key in [InputKey::Space, InputKey::Char(' ')] {
+        assert_eq!(
+            key_event_bytes(&KeyInput::with_modifiers(key, KeyModifiers::CTRL), false),
+            Some(vec![0])
+        );
+    }
     for (character, expected) in [
         ('w', 0x17),
         ('n', 0x0e),

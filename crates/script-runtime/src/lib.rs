@@ -3,7 +3,7 @@ use app::script::{
     ScriptBreakpoint, ScriptLaunchSpec, ScriptLocation, ScriptStackFrame, ScriptVariable,
 };
 use std::io;
-use terminal_runtime::pty::CommandLinePty;
+use terminal_runtime::pty::PtyProcess;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCommand {
@@ -76,7 +76,7 @@ impl ScriptSession {
     ) -> io::Result<Self> {
         Err(io::ErrorKind::Unsupported.into())
     }
-    pub fn terminal(&self) -> &CommandLinePty {
+    pub fn terminal(&self) -> &PtyProcess {
         unreachable!("Linux-only script session")
     }
     pub fn poll(&mut self) -> io::Result<Vec<RuntimeEvent>> {

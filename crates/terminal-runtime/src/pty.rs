@@ -1,4 +1,4 @@
-//! The isolated pseudo-terminal used by the Command Line Launcher app.
+//! Isolated child terminals shared by Command Line, Vim and scripts.
 //!
 //! This module deliberately never writes child output to the host terminal.
 //! Child output is decoded into a `vt100` screen and the UI consumes a safe,
@@ -7,7 +7,7 @@
 
 pub use crate::input::{
     MouseProtocolEncoding, MouseProtocolMode, TerminalInput, encode_terminal_input,
-    key_event_bytes, mouse_event_bytes, paste_bytes,
+    key_event_bytes, mouse_event_bytes, mouse_to_terminal, paste_bytes,
 };
 pub use crate::snapshot::{
     TerminalCell, TerminalColor, TerminalCursorStyle, TerminalSnapshot, to_ui_snapshot,
@@ -33,20 +33,13 @@ use ui::KeyModifiers as InputModifiers;
 #[cfg(test)]
 use ui::{Key as InputKey, KeyEvent as KeyInput};
 
-/// The child exit code reserved by `tundra-cli repl --embedded` for a
-/// confirmed `new` request.  The shell owns the reset/restart action.
-pub const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
 pub const DEFAULT_COLUMNS: u16 = 108;
 pub const DEFAULT_ROWS: u16 = 20;
-
-/// Private environment contract with the embedded `tundra-cli` REPL.
-const COMMAND_LINE_USERNAME_ENV: &str = "TUNDRA_COMMAND_LINE_USERNAME";
-const COMMAND_LINE_ACCENT_ENV: &str = "TUNDRA_COMMAND_LINE_ACCENT";
 
 static NEXT_PTY_READER_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
-pub struct CommandLinePtyConfig {
+pub struct PtyConfig {
     pub program: OsString,
     pub args: Vec<OsString>,
     pub env: Vec<(OsString, OsString)>,
@@ -56,34 +49,17 @@ pub struct CommandLinePtyConfig {
     pub scrollback_lines: usize,
 }
 
-impl CommandLinePtyConfig {
-    /// Creates the exact command used by the embedded Command Line app.
-    pub fn tundra_cli(program: impl Into<OsString>) -> Self {
+impl PtyConfig {
+    pub fn new(program: impl Into<OsString>) -> Self {
         Self {
             program: program.into(),
-            args: vec![OsString::from("repl"), OsString::from("--embedded")],
+            args: Vec::new(),
             env: Vec::new(),
             cwd: None,
             columns: DEFAULT_COLUMNS,
             rows: DEFAULT_ROWS,
             scrollback_lines: 2_000,
         }
-    }
-
-    pub fn with_username(mut self, username: &str) -> Self {
-        self.env.push((
-            OsString::from(COMMAND_LINE_USERNAME_ENV),
-            OsString::from(username),
-        ));
-        self
-    }
-
-    pub fn with_accent_color(mut self, color: ratatui::style::Color) -> Self {
-        self.env.push((
-            OsString::from(COMMAND_LINE_ACCENT_ENV),
-            OsString::from(crate::ansi_foreground(color)),
-        ));
-        self
     }
 
     fn size(&self) -> PtySize {
@@ -97,12 +73,12 @@ impl CommandLinePtyConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommandLineExitStatus {
+pub struct PtyExitStatus {
     pub code: u32,
     pub success: bool,
 }
 
-impl CommandLineExitStatus {
+impl PtyExitStatus {
     fn from_portable(status: portable_pty::ExitStatus) -> Self {
         Self {
             code: status.exit_code(),
@@ -153,7 +129,7 @@ impl TerminalOutput {
 /// Running terminal process with a reader thread that owns the clone of the
 /// PTY read handle.  The process must be killed before the reader is joined;
 /// `Drop` enforces that order.
-pub struct CommandLinePty {
+pub struct PtyProcess {
     #[allow(dead_code)]
     master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
@@ -165,25 +141,20 @@ pub struct CommandLinePty {
     reader_done: mpsc::Receiver<()>,
 }
 
-impl std::fmt::Debug for CommandLinePty {
+impl std::fmt::Debug for PtyProcess {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("CommandLinePty")
-            .finish_non_exhaustive()
+        formatter.debug_struct("PtyProcess").finish_non_exhaustive()
     }
 }
 
 #[allow(dead_code)]
-impl CommandLinePty {
-    pub fn spawn(
-        config: CommandLinePtyConfig,
-        reader_tasks: &ManagedTaskGroup,
-    ) -> io::Result<Self> {
+impl PtyProcess {
+    pub fn spawn(config: PtyConfig, reader_tasks: &ManagedTaskGroup) -> io::Result<Self> {
         Self::spawn_recorded(config, reader_tasks, None)
     }
 
     pub fn spawn_recorded(
-        config: CommandLinePtyConfig,
+        config: PtyConfig,
         reader_tasks: &ManagedTaskGroup,
         history: Option<platform::task_history::TaskRecorder>,
     ) -> io::Result<Self> {
@@ -208,7 +179,7 @@ impl CommandLinePty {
                 io::Error::new(
                     error.kind(),
                     format!(
-                        "Could not open Command Line directory {}: {error}",
+                        "Could not open terminal directory {}: {error}",
                         cwd.display()
                     ),
                 )
@@ -216,7 +187,7 @@ impl CommandLinePty {
             if !metadata.is_dir() {
                 return Err(io::Error::new(
                     io::ErrorKind::NotADirectory,
-                    format!("Command Line directory is not a folder: {}", cwd.display()),
+                    format!("Terminal directory is not a folder: {}", cwd.display()),
                 ));
             }
             command.cwd(cwd);
@@ -278,7 +249,7 @@ impl CommandLinePty {
         let (reader, writer) = {
             let master = lock_io(&master)?;
             let master = master.as_ref().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::BrokenPipe, "command line PTY is closed")
+                io::Error::new(io::ErrorKind::BrokenPipe, "terminal PTY is closed")
             })?;
             (
                 master.try_clone_reader().map_err(portable_error)?,
@@ -313,7 +284,7 @@ impl CommandLinePty {
                 }
             })
             .map_err(|error| {
-                io::Error::other(format!("could not start CLI output reader: {error}"))
+                io::Error::other(format!("could not start terminal output reader: {error}"))
             })?;
 
         Ok(Self {
@@ -329,9 +300,10 @@ impl CommandLinePty {
     }
 
     pub fn write(&self, bytes: &[u8]) -> io::Result<()> {
-        let writer = self.writer.as_ref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "command line PTY is closed")
-        })?;
+        let writer = self
+            .writer
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "terminal PTY is closed"))?;
         let mut writer = lock_io(writer)?;
         writer.write_all(bytes)?;
         writer.flush()
@@ -340,6 +312,17 @@ impl CommandLinePty {
     pub fn send(&self, input: &TerminalInput) -> io::Result<()> {
         let application_cursor = self.input_modes().0;
         self.write(&encode_terminal_input(input, application_cursor))
+    }
+
+    pub fn send_key(&self, key: &ui::KeyEvent) -> io::Result<()> {
+        if let Some(bytes) = key_event_bytes(key, self.input_modes().0) {
+            self.write(&bytes)?;
+        }
+        Ok(())
+    }
+
+    pub fn send_paste(&self, text: &str) -> io::Result<()> {
+        self.write(&paste_bytes(text, self.input_modes().1))
     }
 
     /// Reads input encoding modes without cloning terminal cells or scrollback.
@@ -359,20 +342,17 @@ impl CommandLinePty {
         mouse: &ui::MouseEvent,
         content_area: ratatui::layout::Rect,
     ) -> io::Result<bool> {
+        let Some(mouse) = mouse_to_terminal(mouse, content_area) else {
+            return Ok(false);
+        };
         let bytes = {
             let parser = lock_io(&self.parser)?;
             let screen = parser.screen();
-            if screen.mouse_protocol_mode() == MouseProtocolMode::None
-                || mouse.column() < content_area.x
-                || mouse.column() >= content_area.right()
-                || mouse.row() < content_area.y
-                || mouse.row() >= content_area.bottom()
-            {
+            if screen.mouse_protocol_mode() == MouseProtocolMode::None {
                 return Ok(false);
             }
-            mouse_event_bytes(
-                mouse,
-                content_area,
+            crate::input::terminal_mouse_bytes(
+                &mouse,
                 screen.mouse_protocol_mode(),
                 screen.mouse_protocol_encoding(),
             )
@@ -391,9 +371,9 @@ impl CommandLinePty {
             pixel_height: 0,
         };
         let master = lock_io(&self.master)?;
-        let master = master.as_ref().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "command line PTY is closed")
-        })?;
+        let master = master
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "terminal PTY is closed"))?;
         if lock_io(&self.parser)?.screen().size() == (size.rows, size.cols) {
             return Ok(());
         }
@@ -442,14 +422,14 @@ impl CommandLinePty {
         }
     }
 
-    pub fn try_wait(&self) -> io::Result<Option<CommandLineExitStatus>> {
+    pub fn try_wait(&self) -> io::Result<Option<PtyExitStatus>> {
         let mut child = lock_io(&self.child)?;
         child
             .try_wait()
-            .map(|status| status.map(CommandLineExitStatus::from_portable))
+            .map(|status| status.map(PtyExitStatus::from_portable))
     }
 
-    pub fn wait(&self) -> io::Result<CommandLineExitStatus> {
+    pub fn wait(&self) -> io::Result<PtyExitStatus> {
         loop {
             if let Some(status) = self.try_wait()? {
                 return Ok(status);
@@ -528,7 +508,7 @@ impl CommandLinePty {
     }
 }
 
-impl Drop for CommandLinePty {
+impl Drop for PtyProcess {
     fn drop(&mut self) {
         // Killing first closes the slave end and lets the reader finish. It is
         // intentionally best-effort: teardown must never panic.
@@ -544,7 +524,7 @@ fn next_reader_task_spec() -> io::Result<TaskSpec> {
         .fetch_add(1, Ordering::Relaxed)
         .max(1);
     let id = TaskId::new(format!("pty-reader-{sequence}"))
-        .map_err(|error| io::Error::other(format!("invalid CLI reader task id: {error}")))?;
+        .map_err(|error| io::Error::other(format!("invalid terminal reader task id: {error}")))?;
     Ok(TaskSpec::one_shot(id))
 }
 
@@ -562,7 +542,7 @@ fn wait_stopped(child: &mut (dyn Child + Send + Sync)) -> io::Result<()> {
     Ok(())
 }
 
-/// Keeps all descendants of the embedded CLI in a platform containment
+/// Keeps all descendants of the child terminal in a platform containment
 /// boundary so closing a terminal cannot leave commands running behind it.
 #[cfg(windows)]
 struct ProcessTreeGuard {
@@ -794,7 +774,7 @@ impl TerminalResponder {
 fn lock_io<T>(mutex: &Mutex<T>) -> io::Result<std::sync::MutexGuard<'_, T>> {
     mutex
         .lock()
-        .map_err(|_| io::Error::other("command line runtime lock was poisoned"))
+        .map_err(|_| io::Error::other("terminal runtime lock was poisoned"))
 }
 
 fn portable_error(error: impl ToString) -> io::Error {

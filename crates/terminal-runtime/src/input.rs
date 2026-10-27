@@ -124,6 +124,7 @@ pub fn key_event_bytes(key: &KeyInput, application_cursor: bool) -> Option<Vec<u
 fn control_character(character: char) -> Option<u8> {
     let value = u8::try_from(character).ok()?;
     match value {
+        b' ' => Some(0),
         b'@'..=b'_' => Some(value & 0x1f),
         b'a'..=b'z' => Some(value.to_ascii_uppercase() & 0x1f),
         b'?' => Some(0x7f),
@@ -161,20 +162,36 @@ pub fn paste_bytes(text: &str, bracketed_paste: bool) -> Vec<u8> {
     bytes
 }
 
-/// Encodes physical terminal mouse events in the mode selected by the child.
-/// Synthetic Click/DoubleClick events must not duplicate their Down/Up reports.
+/// Converts host coordinates to zero-based child coordinates, excluding chrome.
+pub fn mouse_to_terminal(mouse: &MouseEvent, content_area: Rect) -> Option<MouseEvent> {
+    content_area
+        .contains((mouse.column(), mouse.row()).into())
+        .then(|| {
+            MouseEvent::new(
+                mouse.column() - content_area.x,
+                mouse.row() - content_area.y,
+                mouse.kind,
+            )
+            .with_modifiers(mouse.modifiers)
+        })
+}
+
+/// Encodes a mouse event within the supplied terminal viewport.
 pub fn mouse_event_bytes(
     mouse: &MouseEvent,
     content_area: Rect,
     mode: MouseProtocolMode,
     encoding: MouseProtocolEncoding,
 ) -> Option<Vec<u8>> {
-    if mode == MouseProtocolMode::None
-        || mouse.column() < content_area.x
-        || mouse.column() >= content_area.right()
-        || mouse.row() < content_area.y
-        || mouse.row() >= content_area.bottom()
-    {
+    terminal_mouse_bytes(&mouse_to_terminal(mouse, content_area)?, mode, encoding)
+}
+
+pub(crate) fn terminal_mouse_bytes(
+    mouse: &MouseEvent,
+    mode: MouseProtocolMode,
+    encoding: MouseProtocolEncoding,
+) -> Option<Vec<u8>> {
+    if mode == MouseProtocolMode::None {
         return None;
     }
     let button_code = |button| match button {
@@ -216,8 +233,8 @@ pub fn mouse_event_bytes(
     if mouse.modifiers.is_control() {
         code |= 16;
     }
-    let column = u32::from(mouse.column() - content_area.x) + 1;
-    let row = u32::from(mouse.row() - content_area.y) + 1;
+    let column = u32::from(mouse.column()) + 1;
+    let row = u32::from(mouse.row()) + 1;
     if encoding == MouseProtocolEncoding::Sgr {
         return Some(
             format!(
