@@ -649,6 +649,9 @@ fn management_text_forms_and_search_accept_mouse_and_no_hover_touch_keyboard_inp
             keyboard_tap(&mut session, ui::ScreenKeyboardAction::Letter('x'), hover);
             assert_eq!(session.pages.management.management_state.filter_input, "x");
             assert!(session.pages.management.management_state.filtering);
+            if session.input_keyboard_layout().compact {
+                keyboard_tap(&mut session, ui::ScreenKeyboardAction::Functions, hover);
+            }
             keyboard_tap(&mut session, ui::ScreenKeyboardAction::Escape, hover);
             assert!(!session.pages.management.management_state.filtering);
             session.sync_input_keyboard();

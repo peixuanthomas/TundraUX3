@@ -17,7 +17,7 @@ const CHILD_ROOT: &str = "TUNDRA_TEST_SCREEN_KEYBOARD_ROOT";
 const PRIMARY_MARKER: &str = "SCREEN_KEYBOARD_PRIMARY_SCREEN";
 const RESTORED_MARKER: &str = "SCREEN_KEYBOARD_TERMINAL_RESTORED";
 const ROWS: u16 = 24;
-const COLS: u16 = 80;
+const COLS: u16 = 160;
 const ACCENT: vt100::Color = vt100::Color::Rgb(12, 34, 56);
 // Held keycaps use the configured accent fill and contrasting white legends.
 const PRESSED: vt100::Color = vt100::Color::Idx(15);
@@ -392,6 +392,27 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     });
 
     terminal.resize(36, 80);
+    terminal.wait_for("compact letters", |screen| {
+        screen.contents().contains("Fn") && !screen.contents().contains("F12")
+    });
+    terminal.click(
+        ScreenKeyboardAction::Functions,
+        false,
+        "compact functions",
+        |screen| screen.contents().contains("F12") && screen.contents().contains("Home"),
+    );
+    terminal.click(
+        ScreenKeyboardAction::Home,
+        false,
+        "navigation key",
+        |screen| last_key(screen, false).contains("Home"),
+    );
+    terminal.click(
+        ScreenKeyboardAction::Letters,
+        false,
+        "compact letters restored",
+        |screen| screen.contents().contains("Fn") && !screen.contents().contains("F12"),
+    );
     terminal.wait_for("taller keys show only the current digit", |screen| {
         let area = button_area(screen, false, ScreenKeyboardAction::Character('1'));
         let labels = text_in(screen, area);
@@ -459,7 +480,10 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
         "clear before wrapping",
         |screen| typed_text(screen, false) == empty_text,
     );
-    let wrapped = format!("wrap-{}\n中文", "0123456789".repeat(8));
+    let wrapped = format!(
+        "wrap-{}\n中文",
+        "0123456789".repeat(usize::from(COLS) / 10 + 1)
+    );
     terminal.send(wrapped.replace('\n', "\r").as_bytes());
     terminal.wait_for("long text wraps without losing characters", |screen| {
         let lines = typed_lines(screen, false);
@@ -476,7 +500,7 @@ fn screen_keyboard_accepts_keyboard_and_pointer_input_and_restores_terminal() {
     });
     terminal.resize(20, 64);
     terminal.wait_for("responsive keyboard after resize", |screen| {
-        screen.contents().contains("F12")
+        screen.contents().contains("Fn")
             && text_in(
                 screen,
                 button_area(screen, false, ScreenKeyboardAction::Letter('q')),
@@ -1114,9 +1138,30 @@ fn layout(screen: &vt100::Screen, collapsed: bool) -> ui::ScreenKeyboardLayout {
             collapsed,
             if collapsed { 0 } else { 1_000 },
             &ui::RenderContext::default(),
+            Default::default(),
         )
     } else {
-        ui::screen_keyboard_layout(Rect::new(0, 0, cols, rows), collapsed)
+        let bounds = Rect::new(0, 0, cols, rows);
+        let functions = ui::screen_keyboard_layout_with_visibility(
+            bounds,
+            collapsed,
+            if collapsed { 0 } else { 1_000 },
+            ui::ScreenKeyboardSection::Functions,
+        );
+        let function_section_visible = functions
+            .buttons
+            .iter()
+            .find(|key| key.action == ScreenKeyboardAction::Letters)
+            .is_some_and(|key| {
+                text_in(screen, key.area)
+                    .iter()
+                    .any(|line| line.trim() == "ABC")
+            });
+        if function_section_visible {
+            functions
+        } else {
+            ui::screen_keyboard_layout(bounds, collapsed)
+        }
     }
 }
 

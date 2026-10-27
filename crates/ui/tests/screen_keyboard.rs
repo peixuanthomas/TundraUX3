@@ -151,7 +151,11 @@ fn live_paste_and_hide_are_regular_keys_at_the_bottom_corners() {
                 }
                 for visibility in [1_000, 750, 500, 1, 0] {
                     let sliding = ui::screen_keyboard_input_layout_with_visibility(
-                        bounds, true, visibility, auto_admin,
+                        bounds,
+                        true,
+                        visibility,
+                        auto_admin,
+                        Default::default(),
                     );
                     for (index, key) in sliding.buttons.iter().enumerate() {
                         assert_eq!(key.area.intersection(sliding.keyboard), key.area);
@@ -171,11 +175,17 @@ fn aa_dialog_stays_inside_screen_and_above_every_animation_frame() {
     for width in [0, 1, 12, 40, 59, 60, 80, 120, 160] {
         for height in [0, 1, 4, 12, 17, 18, 24, 42, 60] {
             let bounds = Rect::new(3, 4, width, height);
-            let hidden = ui::screen_keyboard_aa_layout(bounds, true, 0, &context);
+            let hidden =
+                ui::screen_keyboard_aa_layout(bounds, true, 0, &context, Default::default());
             for visibility in [0, 1, 100, 500, 999, 1_000] {
                 for collapsed in [false, true] {
-                    let layout =
-                        ui::screen_keyboard_aa_layout(bounds, collapsed, visibility, &context);
+                    let layout = ui::screen_keyboard_aa_layout(
+                        bounds,
+                        collapsed,
+                        visibility,
+                        &context,
+                        Default::default(),
+                    );
                     if !layout.aa_dialog.is_empty() {
                         assert_eq!(layout.aa_dialog.intersection(bounds), layout.aa_dialog);
                     }
@@ -237,7 +247,7 @@ fn aa_dialog_stays_inside_screen_and_above_every_animation_frame() {
 fn keyboard_panel_clears_page_and_chrome_text_between_keycaps() {
     let bounds = Rect::new(0, 0, 80, 24);
     let context = RenderContext::default();
-    let layout = ui::screen_keyboard_aa_layout(bounds, false, 1_000, &context);
+    let layout = ui::screen_keyboard_aa_layout(bounds, false, 1_000, &context, Default::default());
     let render = |underlying_text: bool| {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal
@@ -292,9 +302,93 @@ fn key_area(layout: &ScreenKeyboardLayout, action: ScreenKeyboardAction) -> Rect
 }
 
 #[test]
+fn compact_keyboard_switches_between_qwerty_and_function_navigation_keys() {
+    use ScreenKeyboardAction::*;
+    let bounds = Rect::new(4, 3, 80, 24);
+    let letters = screen_keyboard_layout(bounds, false);
+    let functions = screen_keyboard_layout_with_visibility(
+        bounds,
+        false,
+        1_000,
+        ui::ScreenKeyboardSection::Functions,
+    );
+    assert!(letters.compact && functions.compact);
+    assert!(letters.buttons.iter().any(|key| key.action == Functions));
+    assert!(!letters.buttons.iter().any(|key| key.action == Up));
+    for row in ["qwertyuiop", "asdfghjkl", "zxcvbnm"] {
+        let areas = row
+            .chars()
+            .map(|c| key_area(&letters, Letter(c)))
+            .collect::<Vec<_>>();
+        for pair in areas.windows(2) {
+            assert_eq!(pair[0].y, pair[1].y);
+            assert!(pair[0].right() < pair[1].x);
+        }
+    }
+    for action in [
+        Letters, Insert, Delete, Home, End, PageUp, PageDown, Up, Down, Left, Right,
+    ] {
+        assert!(!key_area(&functions, action).is_empty());
+    }
+    for number in 1..=12 {
+        assert!(!key_area(&functions, Function(number)).is_empty());
+    }
+    assert!(
+        !functions
+            .buttons
+            .iter()
+            .any(|key| key.action == Letter('q'))
+    );
+}
+
+#[test]
+fn full_keyboard_keeps_physical_navigation_positions_and_resizes_without_overlapping() {
+    use ScreenKeyboardAction::*;
+    for section in [
+        ui::ScreenKeyboardSection::Letters,
+        ui::ScreenKeyboardSection::Functions,
+    ] {
+        let full =
+            screen_keyboard_layout_with_visibility(Rect::new(0, 0, 180, 48), false, 1_000, section);
+        assert!(!full.compact);
+        assert!(!key_area(&full, Letter('q')).is_empty());
+        assert!(!key_area(&full, Function(12)).is_empty());
+        assert!(key_area(&full, Insert).x > key_area(&full, Backspace).right());
+        for (top, bottom) in [
+            (Insert, Delete),
+            (Home, End),
+            (PageUp, PageDown),
+            (Up, Down),
+        ] {
+            assert_eq!(key_area(&full, top).x, key_area(&full, bottom).x);
+            assert!(key_area(&full, top).y < key_area(&full, bottom).y);
+        }
+        assert!(key_area(&full, Left).x < key_area(&full, Down).x);
+        assert!(key_area(&full, Down).x < key_area(&full, Right).x);
+        for width in [60, 80, 104, 120, 140, 180] {
+            for visibility in [1_000, 750, 500, 1] {
+                let layout = ui::screen_keyboard_input_layout_with_visibility(
+                    Rect::new(4, 3, width, 48),
+                    true,
+                    visibility,
+                    false,
+                    section,
+                );
+                for (index, key) in layout.buttons.iter().enumerate() {
+                    assert_eq!(key.area.intersection(layout.keyboard), key.area);
+                    for other in &layout.buttons[index + 1..] {
+                        assert!(key.area.intersection(other.area).is_empty());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn keys_and_shift_cover_all_printable_ascii() {
     use ScreenKeyboardAction::*;
-    let layout = screen_keyboard_layout(Rect::new(0, 0, 80, 24), false);
+    let layout = screen_keyboard_layout(Rect::new(0, 0, 180, 48), false);
     for action in [
         Escape,
         Tab,
@@ -507,7 +601,12 @@ fn sliding_keyboard_keeps_toolbar_fixed_and_matches_visible_hit_regions() {
         let toolbar = key_area(&expanded, ToggleKeyboard);
         let mut previous_y = expanded.keyboard.y;
         for visibility in [1_000, 875, 500, 250, 1, 0] {
-            let layout = screen_keyboard_layout_with_visibility(bounds, true, visibility);
+            let layout = screen_keyboard_layout_with_visibility(
+                bounds,
+                true,
+                visibility,
+                Default::default(),
+            );
             assert_eq!(key_area(&layout, ToggleKeyboard), toolbar);
             assert!(layout.keyboard.y >= previous_y);
             previous_y = layout.keyboard.y;

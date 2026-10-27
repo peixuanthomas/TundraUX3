@@ -21,6 +21,8 @@
 
 `ascii-assets` 加载和校验主题、ASCII 图案、图标及字体，统计绘制所需尺寸，并提供内置资源用于修复。语言源码也随资源分发；加载和翻译由 `i18n` 负责。
 
+中英文 `modules/screen-keyboard.ftl` 包含 QWERTY 键盘的导航键与字母区／功能区切换标签。
+
 AA 自动策略的显示名称统一为“一律放行” / “Always allow”，帮助文字继续说明其只跳过 AA 确认。
 
 编辑器 Vim 开关、“VIM模式已启用／未启用”状态按钮和按需打开的使用帮助位于中英文 `modules/editor-vim.ftl`；模式、命令行和错误提示保留原生 Vim 的显示。

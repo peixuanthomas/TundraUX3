@@ -63,6 +63,8 @@ Independent use of all three input methods is a core design requirement:
 
 Mouse and touch need a terminal that forwards pointer events. Packages, services, processes, scheduled tasks and files have a visible **Select multiple** button, checkboxes and a selection count. The shared screen keyboard covers built-in text fields, including setup, login, accounts, settings, the ordinary editor, search/replace and file names and paths. Opening it leaves the current form and its submit/cancel buttons above the keys. AA and embedded Command Line use the same keyboard. Real-device coverage is recorded in the [operations acceptance notes](docs/operations-usability-validation.md); see [keyboard input](crates/shell/docs/session.md#aa-与命令行的屏幕键盘) for details.
 
+The QWERTY screen keyboard shows navigation keys beside the main keys when space permits. Smaller windows use **Fn / ABC** to switch between letters and function/navigation keys. Paste sends clipboard text as a paste event.
+
 Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action. File Explorer keeps the specific error reason in the status bar when you change the selection.
 
 AA output includes a draggable scrollbar for reviewing retained output while a task runs and after it finishes.

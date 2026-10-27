@@ -71,11 +71,12 @@ impl ScreenCompositor {
         visibility: u16,
         aa_test: bool,
         context: &RenderContext,
+        section: ui::ScreenKeyboardSection,
     ) -> ScreenKeyboardLayout {
         if aa_test {
-            ui::screen_keyboard_aa_layout(bounds, collapsed, visibility, context)
+            ui::screen_keyboard_aa_layout(bounds, collapsed, visibility, context, section)
         } else {
-            ui::screen_keyboard_layout_with_visibility(bounds, collapsed, visibility)
+            ui::screen_keyboard_layout_with_visibility(bounds, collapsed, visibility, section)
         }
     }
 

@@ -216,7 +216,12 @@ fn screen_keyboard_animation_reverses_without_jumping_and_keeps_toolbar_capture(
     );
 
     let expanded = layout();
-    let moving = ui::screen_keyboard_layout_with_visibility(Rect::new(0, 0, 80, 24), true, 500);
+    let moving = ui::screen_keyboard_layout_with_visibility(
+        Rect::new(0, 0, 80, 24),
+        true,
+        500,
+        Default::default(),
+    );
     let mut state = ScreenKeyboardState::default();
     state.handle_input(
         mouse(&expanded, 'q', MouseEventKind::Down(MouseButton::Left)),
@@ -555,7 +560,7 @@ fn physical_keys_map_shifted_symbols_and_modifiers_without_changing_latches() {
         (Code::Modifier(Mod::RightControl), Action::RightCtrl),
         (Code::Modifier(Mod::LeftControl), Action::LeftCtrl),
         (Code::Modifier(Mod::LeftShift), Action::Shift),
-        (Code::Modifier(Mod::RightAlt), Action::Alt),
+        (Code::Modifier(Mod::RightAlt), Action::RightAlt),
     ] {
         let mut state = ScreenKeyboardState::default();
         state.handle_terminal_event(
@@ -727,8 +732,14 @@ fn aa_test_compositor_keeps_popup_text_and_controls_above_keyboard() {
     let context = RenderContext::default();
     let bounds = Rect::new(0, 0, 80, 24);
     for visibility in [0, 100, 500, 1_000] {
-        let layout =
-            ScreenCompositor::keyboard_demo_layout(bounds, false, visibility, true, &context);
+        let layout = ScreenCompositor::keyboard_demo_layout(
+            bounds,
+            false,
+            visibility,
+            true,
+            &context,
+            Default::default(),
+        );
         assert!(layout.aa_dialog.intersection(layout.keyboard).is_empty());
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal

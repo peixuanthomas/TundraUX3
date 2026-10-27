@@ -74,7 +74,10 @@ impl PhysicalKeyboard {
             (
                 KeyModifiers::SHIFT,
                 ModifierKeyCode::LeftShift,
-                &[ScreenKeyboardAction::Shift][..],
+                &[
+                    ScreenKeyboardAction::Shift,
+                    ScreenKeyboardAction::RightShift,
+                ][..],
             ),
             (
                 KeyModifiers::CONTROL,
@@ -87,7 +90,7 @@ impl PhysicalKeyboard {
             (
                 KeyModifiers::ALT,
                 ModifierKeyCode::LeftAlt,
-                &[ScreenKeyboardAction::Alt][..],
+                &[ScreenKeyboardAction::Alt, ScreenKeyboardAction::RightAlt][..],
             ),
         ] {
             let active = key.modifiers.contains(flag)
@@ -138,12 +141,22 @@ fn action_for(code: KeyCode) -> Option<ScreenKeyboardAction> {
         KeyCode::Enter => Action::Enter,
         KeyCode::Backspace => Action::Backspace,
         KeyCode::CapsLock => Action::CapsLock,
-        KeyCode::Modifier(ModifierKeyCode::LeftShift | ModifierKeyCode::RightShift) => {
-            Action::Shift
-        }
+        KeyCode::Insert => Action::Insert,
+        KeyCode::Delete => Action::Delete,
+        KeyCode::Home => Action::Home,
+        KeyCode::End => Action::End,
+        KeyCode::PageUp => Action::PageUp,
+        KeyCode::PageDown => Action::PageDown,
+        KeyCode::Up => Action::Up,
+        KeyCode::Down => Action::Down,
+        KeyCode::Left => Action::Left,
+        KeyCode::Right => Action::Right,
+        KeyCode::Modifier(ModifierKeyCode::LeftShift) => Action::Shift,
+        KeyCode::Modifier(ModifierKeyCode::RightShift) => Action::RightShift,
         KeyCode::Modifier(ModifierKeyCode::LeftControl) => Action::LeftCtrl,
         KeyCode::Modifier(ModifierKeyCode::RightControl) => Action::RightCtrl,
-        KeyCode::Modifier(ModifierKeyCode::LeftAlt | ModifierKeyCode::RightAlt) => Action::Alt,
+        KeyCode::Modifier(ModifierKeyCode::LeftAlt) => Action::Alt,
+        KeyCode::Modifier(ModifierKeyCode::RightAlt) => Action::RightAlt,
         _ => return None,
     })
 }

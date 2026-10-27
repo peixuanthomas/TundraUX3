@@ -2,6 +2,8 @@
 
 `cli` 提供 `tundra-cli`：公开配置、诊断、日志、Linux 运维命令、运行中 Shell 的 UI 控制和交互命令行。它也承载更新及授权助手入口；这些内部入口不作为普通脚本接口。
 
+`debug screen-keyboard` 复用 QWERTY 屏幕键盘：小窗口通过 Fn / ABC 切换区域，宽窗口同时显示功能键与导航区，实体导航键也提供按下反馈。
+
 `src/commands/` 按命令分组；参数解析、REPL 和程序入口留在 crate 根模块，Linux 管理连接使用共享的 platform 接口。
 
 运维命令包括 `firewall`（监听端口与放行规则）、`ssh`（生效设置、公钥和新连接确认）、`backups`（集中差异与恢复）和 `scheduled-tasks`（既有任务及持久 service/timer）。需要系统权限的只读查询也使用同一授权流程；查询及预览支持 JSON。

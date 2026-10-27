@@ -123,6 +123,7 @@ pub fn run_screen_keyboard(
                     motion.visibility(motion_frame),
                     model.aa_test,
                     &context,
+                    model.section,
                 );
                 if layout != next_layout {
                     layout = next_layout;
@@ -188,6 +189,7 @@ struct PointerPress {
 }
 
 struct ScreenKeyboardState {
+    section: ui::ScreenKeyboardSection,
     text: String,
     last_key: String,
     message: String,
@@ -207,6 +209,7 @@ struct ScreenKeyboardState {
 impl Default for ScreenKeyboardState {
     fn default() -> Self {
         Self {
+            section: ui::ScreenKeyboardSection::Letters,
             text: String::new(),
             last_key: String::new(),
             message: String::new(),
@@ -322,7 +325,22 @@ impl ScreenKeyboardState {
             ScreenKeyboardAction::Copy | ScreenKeyboardAction::Paste => {
                 self.pending_clipboard = Some(action);
             }
-            ScreenKeyboardAction::Shift => self.modifiers.shift = !self.modifiers.shift,
+            ScreenKeyboardAction::Letters | ScreenKeyboardAction::Functions => {
+                self.section = if action == ScreenKeyboardAction::Letters {
+                    ui::ScreenKeyboardSection::Letters
+                } else {
+                    ui::ScreenKeyboardSection::Functions
+                };
+                self.cancel_pointer();
+                self.focus = if action == ScreenKeyboardAction::Letters {
+                    ScreenKeyboardAction::Functions
+                } else {
+                    ScreenKeyboardAction::Letters
+                };
+            }
+            ScreenKeyboardAction::Shift | ScreenKeyboardAction::RightShift => {
+                self.modifiers.shift = !self.modifiers.shift
+            }
             ScreenKeyboardAction::CapsLock => {
                 self.modifiers.caps_lock = !self.modifiers.caps_lock;
             }
@@ -330,7 +348,9 @@ impl ScreenKeyboardState {
             ScreenKeyboardAction::RightCtrl => {
                 self.modifiers.right_ctrl = !self.modifiers.right_ctrl
             }
-            ScreenKeyboardAction::Alt => self.modifiers.alt = !self.modifiers.alt,
+            ScreenKeyboardAction::Alt | ScreenKeyboardAction::RightAlt => {
+                self.modifiers.alt = !self.modifiers.alt
+            }
             _ => {
                 self.type_key(action, action.character(self.modifiers), self.modifiers);
                 return false;

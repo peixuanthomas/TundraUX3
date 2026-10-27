@@ -21,6 +21,7 @@ pub(super) struct InputKeyboard {
     pub visibility: u16,
     motion: ui::PanelMotion,
     pub modifiers: ScreenKeyboardModifiers,
+    pub section: ui::ScreenKeyboardSection,
     pub physical: PhysicalKeyboard,
     pub pressed: Option<(ui::components::ButtonRegion, Instant)>,
 }
@@ -137,6 +138,7 @@ impl ShellSession {
             self.input_keyboard_open(),
             self.input_keyboard_visibility(),
             self.auto_admin_visible(),
+            self.screen_keyboard.section,
         )
     }
 
@@ -345,11 +347,19 @@ impl ShellSession {
                 self.toggle_input_keyboard();
                 return None;
             }
-            Action::Shift => modifiers.shift = !modifiers.shift,
+            Action::Letters | Action::Functions => {
+                self.screen_keyboard.section = if action == Action::Letters {
+                    ui::ScreenKeyboardSection::Letters
+                } else {
+                    ui::ScreenKeyboardSection::Functions
+                };
+                return None;
+            }
+            Action::Shift | Action::RightShift => modifiers.shift = !modifiers.shift,
             Action::CapsLock => modifiers.caps_lock = !modifiers.caps_lock,
             Action::LeftCtrl => modifiers.left_ctrl = !modifiers.left_ctrl,
             Action::RightCtrl => modifiers.right_ctrl = !modifiers.right_ctrl,
-            Action::Alt => modifiers.alt = !modifiers.alt,
+            Action::Alt | Action::RightAlt => modifiers.alt = !modifiers.alt,
             _ => {
                 let event = if action == Action::Paste {
                     match platform.read_clipboard_text() {
@@ -389,6 +399,16 @@ fn keyboard_key(action: Action, modifiers: ScreenKeyboardModifiers) -> Option<Ke
         Action::Enter => InputKey::Enter,
         Action::Space => InputKey::Char(' '),
         Action::Function(number) => InputKey::F(number),
+        Action::Insert => InputKey::Insert,
+        Action::Delete => InputKey::Delete,
+        Action::Home => InputKey::Home,
+        Action::End => InputKey::End,
+        Action::PageUp => InputKey::PageUp,
+        Action::PageDown => InputKey::PageDown,
+        Action::Up => InputKey::Up,
+        Action::Down => InputKey::Down,
+        Action::Left => InputKey::Left,
+        Action::Right => InputKey::Right,
         Action::Letter(_) | Action::Character(_) => InputKey::Char(action.character(modifiers)?),
         _ => return None,
     };

@@ -15,7 +15,16 @@ use crate::{
     components::{Button, ButtonRegion, Surface},
 };
 
+mod keys;
+
 pub const SCREEN_KEYBOARD_LETTERS: &str = "qwertyuiopasdfghjklzxcvbnm";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScreenKeyboardSection {
+    #[default]
+    Letters,
+    Functions,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScreenKeyboardModifiers {
@@ -37,10 +46,24 @@ pub enum ScreenKeyboardAction {
     Backspace,
     Enter,
     Shift,
+    RightShift,
     Space,
     LeftCtrl,
     RightCtrl,
     Alt,
+    RightAlt,
+    Insert,
+    Delete,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Up,
+    Down,
+    Left,
+    Right,
+    Letters,
+    Functions,
     TestAutoAdmin,
     ToggleKeyboard,
     Copy,
@@ -66,10 +89,24 @@ impl ScreenKeyboardAction {
                     Self::Backspace => "backspace",
                     Self::Enter => "enter",
                     Self::Shift => "shift",
+                    Self::RightShift => "right-shift",
                     Self::Space => "space",
                     Self::LeftCtrl => "left-ctrl",
                     Self::RightCtrl => "right-ctrl",
                     Self::Alt => "alt",
+                    Self::RightAlt => "right-alt",
+                    Self::Insert => "insert",
+                    Self::Delete => "delete",
+                    Self::Home => "home",
+                    Self::End => "end",
+                    Self::PageUp => "page-up",
+                    Self::PageDown => "page-down",
+                    Self::Up => "up",
+                    Self::Down => "down",
+                    Self::Left => "left",
+                    Self::Right => "right",
+                    Self::Letters => "letters",
+                    Self::Functions => "functions",
                     Self::TestAutoAdmin => "test-aa",
                     Self::ToggleKeyboard => "toggle",
                     Self::Copy => "copy",
@@ -136,11 +173,23 @@ impl ScreenKeyboardAction {
             Self::CapsLock => i18n::tr!("screen-keyboard-caps-lock"),
             Self::Backspace => i18n::tr!("screen-keyboard-backspace"),
             Self::Enter => i18n::tr!("screen-keyboard-enter"),
-            Self::Shift => i18n::tr!("screen-keyboard-shift"),
+            Self::Shift | Self::RightShift => i18n::tr!("screen-keyboard-shift"),
             Self::Space => i18n::tr!("screen-keyboard-space"),
             Self::LeftCtrl => i18n::tr!("screen-keyboard-left-ctrl"),
             Self::RightCtrl => i18n::tr!("screen-keyboard-right-ctrl"),
-            Self::Alt => i18n::tr!("screen-keyboard-alt"),
+            Self::Alt | Self::RightAlt => i18n::tr!("screen-keyboard-alt"),
+            Self::Insert => i18n::tr!("screen-keyboard-insert"),
+            Self::Delete => i18n::tr!("screen-keyboard-delete"),
+            Self::Home => i18n::tr!("screen-keyboard-home"),
+            Self::End => i18n::tr!("screen-keyboard-end"),
+            Self::PageUp => i18n::tr!("screen-keyboard-page-up"),
+            Self::PageDown => i18n::tr!("screen-keyboard-page-down"),
+            Self::Up => i18n::tr!("screen-keyboard-up"),
+            Self::Down => i18n::tr!("screen-keyboard-down"),
+            Self::Left => i18n::tr!("screen-keyboard-left"),
+            Self::Right => i18n::tr!("screen-keyboard-right"),
+            Self::Letters => i18n::tr!("screen-keyboard-letters"),
+            Self::Functions => i18n::tr!("screen-keyboard-functions"),
             Self::TestAutoAdmin => i18n::tr!("screen-keyboard-test-aa"),
             Self::ToggleKeyboard => i18n::tr!(if collapsed {
                 "screen-keyboard-show"
@@ -156,11 +205,11 @@ impl ScreenKeyboardAction {
 
     pub fn is_latched(self, modifiers: ScreenKeyboardModifiers) -> bool {
         match self {
-            Self::Shift => modifiers.shift,
+            Self::Shift | Self::RightShift => modifiers.shift,
             Self::CapsLock => modifiers.caps_lock,
             Self::LeftCtrl => modifiers.left_ctrl,
             Self::RightCtrl => modifiers.right_ctrl,
-            Self::Alt => modifiers.alt,
+            Self::Alt | Self::RightAlt => modifiers.alt,
             _ => false,
         }
     }
@@ -220,6 +269,7 @@ pub struct ScreenKeyboardLayout {
     pub bordered_buttons: bool,
     pub usable: bool,
     pub collapsed: bool,
+    pub compact: bool,
     /// Nonempty only in the AA test. It is always above the keyboard panel.
     pub aa_dialog: Rect,
 }
@@ -336,7 +386,12 @@ fn toolbar(width: u16) -> Vec<(ScreenKeyboardAction, u16)> {
 
 /// Rendering and input both consume these exact button rectangles.
 pub fn screen_keyboard_layout(bounds: Rect, collapsed: bool) -> ScreenKeyboardLayout {
-    screen_keyboard_layout_with_visibility(bounds, collapsed, if collapsed { 0 } else { 1_000 })
+    screen_keyboard_layout_with_visibility(
+        bounds,
+        collapsed,
+        if collapsed { 0 } else { 1_000 },
+        ScreenKeyboardSection::Letters,
+    )
 }
 
 /// Slides key rows while keeping the toolbar stationary and sharing hit regions.
@@ -345,6 +400,7 @@ pub fn screen_keyboard_layout_with_visibility(
     bounds: Rect,
     collapsed: bool,
     visibility: u16,
+    section: ScreenKeyboardSection,
 ) -> ScreenKeyboardLayout {
     keyboard_layout(
         bounds,
@@ -353,6 +409,7 @@ pub fn screen_keyboard_layout_with_visibility(
         bounds.height / 2,
         bounds.width >= 60 && bounds.height >= 14,
         false,
+        section,
     )
 }
 
@@ -368,6 +425,7 @@ pub fn screen_keyboard_input_layout(
         open,
         if open { 1_000 } else { 0 },
         auto_admin,
+        ScreenKeyboardSection::Letters,
     )
 }
 
@@ -376,6 +434,7 @@ pub fn screen_keyboard_input_layout_with_visibility(
     open: bool,
     visibility: u16,
     auto_admin: bool,
+    section: ScreenKeyboardSection,
 ) -> ScreenKeyboardLayout {
     let reserved = if auto_admin { 14 } else { 6 };
     let height = (bounds.height / 2).min(bounds.height.saturating_sub(reserved));
@@ -388,6 +447,7 @@ pub fn screen_keyboard_input_layout_with_visibility(
         bounds.height.saturating_sub(height),
         usable,
         true,
+        section,
     );
     if !visible {
         layout.keyboard = Rect::new(bounds.x, bounds.bottom(), bounds.width, 0);
@@ -436,8 +496,8 @@ fn keyboard_layout(
     upper_height: u16,
     usable: bool,
     input: bool,
+    section: ScreenKeyboardSection,
 ) -> ScreenKeyboardLayout {
-    use ScreenKeyboardAction::*;
     let expanded_y = bounds.y + upper_height;
     let toolbar_y = bounds
         .bottom()
@@ -497,6 +557,7 @@ fn keyboard_layout(
         bordered_buttons,
         usable,
         collapsed,
+        compact: true,
         aa_dialog: Rect::default(),
     };
     if keyboard.is_empty() {
@@ -512,53 +573,7 @@ fn keyboard_layout(
         return layout;
     }
 
-    let mut function_row = vec![(Escape, 2)];
-    function_row.extend((1..=12).map(|number| (Function(number), 1)));
-    let mut number_row: Vec<_> = "\u{0060}1234567890-="
-        .chars()
-        .map(|character| (Character(character), 1))
-        .collect();
-    number_row.push((Backspace, 3));
-    let mut qwerty_row = vec![(Tab, 2)];
-    qwerty_row.extend("qwertyuiop".chars().map(|letter| (Letter(letter), 1)));
-    qwerty_row.extend("[]\\".chars().map(|character| (Character(character), 1)));
-    let mut home_row = vec![(CapsLock, 2)];
-    home_row.extend("asdfghjkl".chars().map(|letter| (Letter(letter), 1)));
-    home_row.extend(";'".chars().map(|character| (Character(character), 1)));
-    home_row.push((Enter, 2));
-    let mut shift_row = vec![(Shift, 2)];
-    shift_row.extend("zxcvbnm".chars().map(|letter| (Letter(letter), 1)));
-    shift_row.extend(",./".chars().map(|character| (Character(character), 1)));
-    let mut bottom_row = vec![(LeftCtrl, 2), (Alt, 2), (Space, 8), (RightCtrl, 2)];
-    if input {
-        bottom_row.insert(0, (Paste, 2));
-        bottom_row.push((ToggleKeyboard, 2));
-    }
-    let rows = [
-        function_row,
-        number_row,
-        qwerty_row,
-        home_row,
-        shift_row,
-        bottom_row,
-    ];
-    let visible_keys = Rect::new(bounds.x, keyboard_y, bounds.width, toolbar_y - keyboard_y);
-    let spare = keys_height.saturating_sub(row_heights.iter().sum());
-    let mut preceding_height = 0_u32;
-    for (index, keys) in rows.iter().enumerate() {
-        let y = u32::from(keyboard.y) + preceding_height + index as u32 * u32::from(spare) / 5;
-        let height = row_heights[index];
-        preceding_height += u32::from(height);
-        if y >= u32::from(toolbar_y) {
-            continue;
-        }
-        append_row(
-            &mut layout.buttons,
-            Rect::new(bounds.x, y as u16, bounds.width, height).intersection(visible_keys),
-            keys,
-            bordered_buttons,
-        );
-    }
+    keys::append_keys(&mut layout, toolbar_y, row_heights, input, section);
     if !input {
         append_row(
             &mut layout.buttons,
@@ -577,6 +592,7 @@ pub fn screen_keyboard_aa_layout(
     collapsed: bool,
     visibility: u16,
     context: &RenderContext,
+    section: ScreenKeyboardSection,
 ) -> ScreenKeyboardLayout {
     let shell = crate::ShellFrameLayout::new(bounds, None, context);
     let top = if shell.is_compact() {
@@ -593,6 +609,7 @@ pub fn screen_keyboard_aa_layout(
         bounds.height.saturating_sub(height),
         usable,
         false,
+        section,
     );
     layout.title = Rect::default();
     if !usable || visibility == 0 {

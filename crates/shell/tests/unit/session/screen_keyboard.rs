@@ -324,6 +324,50 @@ fn click(state: &mut ShellSession, action: Action) -> Option<InputEvent> {
     click_with_platform(state, action, platform::native_platform().as_ref())
 }
 
+#[test]
+fn compact_sections_keep_modifiers_and_emit_navigation_keys_without_typing_the_switch() {
+    let mut state = session();
+    state.terminal_size = (80, 32);
+    state.toggle_input_keyboard();
+    state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+    assert!(click(&mut state, Action::LeftCtrl).is_none());
+    assert!(click(&mut state, Action::Functions).is_none());
+    for (action, key) in [
+        (Action::Insert, InputKey::Insert),
+        (Action::Delete, InputKey::Delete),
+        (Action::Home, InputKey::Home),
+        (Action::End, InputKey::End),
+        (Action::PageUp, InputKey::PageUp),
+        (Action::PageDown, InputKey::PageDown),
+        (Action::Up, InputKey::Up),
+        (Action::Down, InputKey::Down),
+        (Action::Left, InputKey::Left),
+        (Action::Right, InputKey::Right),
+        (Action::Function(12), InputKey::F(12)),
+    ] {
+        let Some(InputEvent::Key(event)) = click(&mut state, action) else {
+            panic!("{action:?}");
+        };
+        assert_eq!(event.key, key);
+        assert!(event.modifiers.is_control());
+    }
+    assert!(click(&mut state, Action::Letters).is_none());
+    let Some(InputEvent::Key(event)) = click(&mut state, Action::Letter('q')) else {
+        panic!();
+    };
+    assert_eq!(event.key, InputKey::Char('q'));
+    assert!(event.modifiers.is_control());
+    state.terminal_size = (180, 48);
+    assert!(!state.input_keyboard_layout().compact);
+    assert!(
+        state
+            .input_keyboard_layout()
+            .buttons
+            .iter()
+            .any(|key| key.action == Action::Up)
+    );
+}
+
 fn click_with_platform(
     state: &mut ShellSession,
     action: Action,
