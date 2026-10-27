@@ -174,7 +174,7 @@ impl ShellHitRegion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellHitMap {
     terminal_size: CellPosition,
-    generation: u64,
+    pub(crate) generation: u64,
     regions: Vec<ShellHitRegion>,
     hit_map: HitMap,
     region_ids: Vec<UiId>,

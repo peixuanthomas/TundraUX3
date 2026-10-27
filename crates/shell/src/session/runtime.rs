@@ -1033,7 +1033,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             state.resize_auto_admin();
             language_runtime.update_from(&state);
             let _language = i18n::enter_snapshot(state.language.clone());
-            let state_before_polling = state.clone();
+            let mut state_before_polling = state.clone();
             let theme_before_polling = theme.clone();
             drain_system_status_snapshot(&mut system_status_snapshots, &mut state);
             // logind signals are delivered by a backend worker and drained here so
@@ -1148,7 +1148,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             theme_reloader.poll_at(frame_now, &mut theme, &mut state);
             let clock_snapshot = state.app.snapshot().clock;
             state.advance_clock_background_at(&clock_snapshot, frame_now);
-            if session_render_state_changed(&state_before_polling, &state)
+            if session_render_state_changed(&mut state_before_polling, &state)
                 || theme != theme_before_polling
             {
                 redraw.request_redraw();
@@ -1354,7 +1354,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 let first = event::read()?;
                 let native_input = matches!(&first, event::Event::Key(_) | event::Event::Paste(_))
                     && !state.input_keyboard_open()
-                    && editor_vim.captures_input(&state, &crossterm_event_to_input(first.clone()));
+                    && {
+                        let input = crossterm_event_to_input(first.clone());
+                        editor_vim.captures_input(&state, &input)
+                            || (command_line_hosts.visible_host(&state).is_running()
+                                && command_line_captures_input(&state, &input))
+                    };
                 terminal_events.extend(if native_input {
                     read_ready_child_terminal_event_batch(first)?
                 } else {
@@ -1485,7 +1490,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
             if terminal_event_received && action == Some(ShellAction::Redraw) {
                 redraw.request_redraw();
             }
-            if session_render_state_changed(&state_before_polling, &state) {
+            if session_render_state_changed(&mut state_before_polling, &state) {
                 redraw.request_redraw();
             }
 
@@ -1768,11 +1773,14 @@ fn synchronize_motion_hit_map_after_input(
     state.refresh_hit_map_with_motion(redraw.transitions(now));
 }
 
-fn session_render_state_changed(before: &ShellSession, after: &ShellSession) -> bool {
-    let mut before = before.clone();
-    let after = after.clone();
+pub(super) fn session_render_state_changed(
+    before: &mut ShellSession,
+    after: &ShellSession,
+) -> bool {
     before.ui.tick_count = after.ui.tick_count;
-    before != after
+    before.ui.hit_map_generation = after.ui.hit_map_generation;
+    before.ui.hit_map.generation = after.ui.hit_map.generation;
+    *before != *after
 }
 
 fn session_has_background_work(state: &ShellSession) -> bool {

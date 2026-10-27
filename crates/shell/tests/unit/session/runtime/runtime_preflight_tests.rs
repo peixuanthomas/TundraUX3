@@ -507,6 +507,43 @@ fn startup_uses_memory_when_asset_root_is_not_writable() {
 }
 
 #[test]
+fn runtime_redraw_tracks_visible_changes_without_mutating_the_live_state() {
+    let mut state = ShellSession::new(ShellLaunchConfig::default(), (120, 40));
+    state.open_editor();
+    let mut before = state.clone();
+    assert!(!session_render_state_changed(&mut before, &state));
+
+    state.ui.tick_count += 1;
+    let expected = state.clone();
+    assert!(!session_render_state_changed(&mut before, &state));
+    assert_eq!(state, expected);
+
+    state.pages.common.error_message = Some("A visible error".into());
+    assert!(session_render_state_changed(&mut before, &state));
+    state.pages.common.error_message = before.pages.common.error_message.clone();
+    assert!(!session_render_state_changed(&mut before, &state));
+
+    let mut regions = state.hit_map().regions().to_vec();
+    regions[0].area.width = regions[0].area.width.saturating_sub(1);
+    state.ui.hit_map =
+        ShellHitMap::new(state.terminal_size(), state.hit_map().generation(), regions);
+    assert!(session_render_state_changed(&mut before, &state));
+    state.ui.hit_map = before.ui.hit_map.clone();
+    assert!(!session_render_state_changed(&mut before, &state));
+
+    state.pages.common.focused_component = ShellComponent::StatusBar;
+    assert!(session_render_state_changed(&mut before, &state));
+    state.pages.common.focused_component = before.pages.common.focused_component;
+
+    state.app.dispatch_at(
+        app::AppCommand::Editor(app::editor::EditorCommand::InsertText("changed".into())),
+        Instant::now(),
+    );
+    assert!(session_render_state_changed(&mut before, &state));
+    assert!(state.app.editor_state().unwrap().is_dirty());
+}
+
+#[test]
 fn command_line_uses_a_low_latency_refresh_without_advancing_state_ticks() {
     assert_eq!(
         command_line_poll_timeout(true, Duration::from_millis(250)),
