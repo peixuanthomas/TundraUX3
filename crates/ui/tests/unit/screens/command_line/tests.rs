@@ -61,3 +61,41 @@ fn live_terminal_without_history_uses_the_full_width() {
     assert!(command_line_scrollbar_layout(area, &snapshot).is_none());
     assert_eq!(command_line_content_area(area, &snapshot), area);
 }
+
+#[test]
+fn terminal_lines_preserve_wide_graphemes_styles_and_partial_rows() {
+    let mut snapshot = CommandLineTerminalSnapshot::blank(9, 1);
+    for (column, symbol) in ["界", " ", "e\u{301}", "👩‍💻", " ", "\u{1b}", "X"]
+        .into_iter()
+        .enumerate()
+    {
+        snapshot.cells[column].symbol = symbol.to_string();
+    }
+    snapshot.cells[0].style.bold = true;
+    snapshot.cells[6].cursor = true;
+    snapshot.cells.truncate(7);
+
+    let theme = TundraTheme::default_dark();
+    let line = terminal_snapshot_line(&snapshot, 0, &theme, true);
+    assert_eq!(line.to_string(), "界e\u{301}👩‍💻 X");
+    assert_eq!(line.width(), 7);
+    assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+    assert!(
+        line.spans
+            .last()
+            .unwrap()
+            .style
+            .add_modifier
+            .contains(Modifier::REVERSED)
+    );
+    let native_line = terminal_snapshot_line(&snapshot, 0, &theme, false);
+    assert!(
+        !native_line
+            .spans
+            .last()
+            .unwrap()
+            .style
+            .add_modifier
+            .contains(Modifier::REVERSED)
+    );
+}

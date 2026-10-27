@@ -31,7 +31,6 @@ enum CommandLineHostState {
 /// Shell state remains cloneable and deterministic for controller tests.
 pub struct CommandLineHost {
     state: CommandLineHostState,
-    snapshot: TerminalSnapshot,
     snapshot_revision: u64,
     ui_snapshot: Arc<ui::CommandLineTerminalSnapshot>,
     scrollbar_drag_offset: Option<u16>,
@@ -41,11 +40,9 @@ pub struct CommandLineHost {
 
 impl CommandLineHost {
     pub fn new(watchdog: AppWatchdog) -> Self {
-        let snapshot = blank_terminal_snapshot();
-        let ui_snapshot = Arc::new(to_ui_snapshot(&snapshot));
+        let ui_snapshot = Arc::new(blank_terminal_snapshot());
         Self {
             state: CommandLineHostState::Inactive,
-            snapshot,
             snapshot_revision: 0,
             ui_snapshot,
             scrollbar_drag_offset: None,
@@ -104,7 +101,7 @@ impl CommandLineHost {
         });
         match result {
             Ok(pty) => {
-                let (snapshot, revision) = pty.snapshot_with_revision();
+                let (snapshot, revision) = pty.ui_snapshot_with_revision();
                 self.install_snapshot(snapshot, revision);
                 self.state = CommandLineHostState::Running(pty);
             }
@@ -130,7 +127,7 @@ impl CommandLineHost {
         if columns == 0 || rows == 0 {
             return;
         }
-        let needs_resize = self.snapshot.columns != columns || self.snapshot.rows != rows;
+        let needs_resize = self.ui_snapshot.columns != columns || self.ui_snapshot.rows != rows;
         if !needs_resize {
             return;
         }
@@ -173,7 +170,7 @@ impl CommandLineHost {
 
         let previous = std::mem::replace(&mut self.state, CommandLineHostState::Inactive);
         if let CommandLineHostState::Running(pty) = previous {
-            let snapshot = pty.snapshot_after_exit();
+            let snapshot = pty.ui_snapshot_after_exit();
             self.install_snapshot(snapshot, self.snapshot_revision);
         }
 
@@ -255,7 +252,7 @@ impl CommandLineHost {
             InputEvent::Paste(_) => true,
             _ => false,
         };
-        if returns_to_live_output && self.snapshot.scrollback_offset > 0 {
+        if returns_to_live_output && self.ui_snapshot.scrollback_offset > 0 {
             self.set_scrollback(0);
         }
 
@@ -333,7 +330,7 @@ impl CommandLineHost {
         ) = (self.scrollbar_drag_offset, mouse.kind, scrollbar)
         {
             let offset = command_line_scrollback_offset_for_thumb(
-                self.snapshot.scrollback_rows,
+                self.ui_snapshot.scrollback_rows,
                 scrollbar,
                 mouse.row(),
                 grab_offset,
@@ -349,14 +346,14 @@ impl CommandLineHost {
         match (mouse.kind, scrollbar) {
             (ui::MouseEventKind::Scroll(ui::ScrollDirection::Up), Some(_)) => {
                 self.set_scrollback(
-                    self.snapshot
+                    self.ui_snapshot
                         .scrollback_offset
                         .saturating_add(SCROLL_LINES_PER_NOTCH),
                 );
             }
             (ui::MouseEventKind::Scroll(ui::ScrollDirection::Down), Some(_)) => {
                 self.set_scrollback(
-                    self.snapshot
+                    self.ui_snapshot
                         .scrollback_offset
                         .saturating_sub(SCROLL_LINES_PER_NOTCH),
                 );
@@ -393,7 +390,9 @@ impl CommandLineHost {
 
     fn refresh_snapshot(&mut self) {
         let update = match &self.state {
-            CommandLineHostState::Running(pty) => pty.snapshot_if_changed(self.snapshot_revision),
+            CommandLineHostState::Running(pty) => {
+                pty.ui_snapshot_if_changed(self.snapshot_revision)
+            }
             _ => None,
         };
         if let Some((snapshot, revision)) = update {
@@ -401,12 +400,11 @@ impl CommandLineHost {
         }
     }
 
-    fn install_snapshot(&mut self, snapshot: TerminalSnapshot, revision: u64) {
+    fn install_snapshot(&mut self, snapshot: ui::CommandLineTerminalSnapshot, revision: u64) {
         if snapshot.scrollback_rows == 0 {
             self.scrollbar_drag_offset = None;
         }
-        self.ui_snapshot = Arc::new(to_ui_snapshot(&snapshot));
-        self.snapshot = snapshot;
+        self.ui_snapshot = Arc::new(snapshot);
         self.snapshot_revision = revision;
     }
 
@@ -689,8 +687,12 @@ fn resolve_tundra_cli_program() -> io::Result<PathBuf> {
     Ok(program)
 }
 
-fn blank_terminal_snapshot() -> TerminalSnapshot {
-    TerminalSnapshot::from_parser(&mut vt100::Parser::new(DEFAULT_ROWS, DEFAULT_COLUMNS, 0))
+fn blank_terminal_snapshot() -> ui::CommandLineTerminalSnapshot {
+    terminal_runtime::snapshot::ui_snapshot_from_parser(&mut vt100::Parser::new(
+        DEFAULT_ROWS,
+        DEFAULT_COLUMNS,
+        0,
+    ))
 }
 
 fn rect_contains(area: Rect, column: u16, row: u16) -> bool {

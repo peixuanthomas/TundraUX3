@@ -246,11 +246,10 @@ fn windows_conpty_receives_initial_and_typed_output() {
         &reader_tasks,
     )
     .expect("interactive ConPTY child");
-    let (snapshot, snapshot_revision) = pty.snapshot_with_revision();
-    let ui_snapshot = Arc::new(to_ui_snapshot(&snapshot));
+    let (snapshot, snapshot_revision) = pty.ui_snapshot_with_revision();
+    let ui_snapshot = Arc::new(snapshot);
     let mut host = CommandLineHost {
         state: CommandLineHostState::Running(pty),
-        snapshot,
         snapshot_revision,
         ui_snapshot,
         scrollbar_drag_offset: None,
@@ -262,7 +261,7 @@ fn windows_conpty_receives_initial_and_typed_output() {
     // terminal.  This guards against accidentally applying the outer
     // minimum to the already-inset PTY dimensions.
     host.resize_terminal(106, 14);
-    assert_eq!((host.snapshot.columns, host.snapshot.rows), (106, 14));
+    assert_eq!((host.ui_snapshot.columns, host.ui_snapshot.rows), (106, 14));
     let pty = match &host.state {
         CommandLineHostState::Running(pty) => pty,
         state => panic!("expected running ConPTY host, got {state:?}"),
@@ -592,8 +591,8 @@ fn covered_terminal_output_input_and_completion_are_bound_to_page_ids() {
     loop {
         let (_, event) = hosts.poll(&mut state, platform.as_ref(), ratatui::style::Color::Cyan);
         assert_eq!(event, CommandLineHostEvent::None);
-        let first_output = snapshot_text(&hosts.hosts[&first_id].snapshot);
-        let second_output = snapshot_text(&hosts.hosts[&second_id].snapshot);
+        let first_output = snapshot_text(&hosts.hosts[&first_id].ui_snapshot);
+        let second_output = snapshot_text(&hosts.hosts[&second_id].ui_snapshot);
         if first_output.contains("FIRST_BACKGROUND_OUTPUT")
             && second_output.contains("SECOND_ONLY_INPUT")
         {
@@ -673,12 +672,11 @@ fn nonrunning_terminal_returns_without_confirmation_and_stale_confirmation_is_ig
     assert_eq!(state.active_page_id(), replacement_id);
 }
 
-fn snapshot_text(snapshot: &TerminalSnapshot) -> String {
+fn snapshot_text(snapshot: &ui::CommandLineTerminalSnapshot) -> String {
     snapshot
         .cells
         .iter()
-        .flat_map(|row| row.iter())
-        .map(|cell| cell.text.as_str())
+        .map(|cell| cell.symbol.as_str())
         .collect()
 }
 

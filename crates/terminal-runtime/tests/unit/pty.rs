@@ -375,7 +375,7 @@ fn pty_cleanup_is_repeatable_for_running_and_exited_children() {
     let tasks = app.task_group("terminal");
     for attempt in 0..34 {
         let command = if attempt == 0 {
-            "exit 0"
+            "printf FINAL; exit 0"
         } else {
             "exec sleep 60"
         };
@@ -402,7 +402,13 @@ fn pty_cleanup_is_repeatable_for_running_and_exited_children() {
                 assert!(std::time::Instant::now() < deadline);
                 std::thread::sleep(Duration::from_millis(10));
             }
-            pty.snapshot_after_exit();
+            let snapshot = pty.ui_snapshot_after_exit();
+            let text = snapshot
+                .cells
+                .iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>();
+            assert!(text.contains("FINAL"));
         } else if attempt == 1 {
             pty.force_terminate().unwrap();
             std::thread::sleep(Duration::from_millis(50));
@@ -523,6 +529,7 @@ fn retained_output_scrolls_and_resizes_after_the_process_and_watchdog_close() {
         std::thread::sleep(Duration::from_millis(10));
     }
     let output = pty.into_output().unwrap();
+    assert_eq!(output.ui_snapshot(), to_ui_snapshot(&output.snapshot()));
     assert!(!Path::new(&format!("/proc/{pid}")).exists());
     drop(tasks);
     drop(app);
@@ -662,6 +669,35 @@ fn snapshot_keeps_terminal_attributes() {
     assert_eq!(rendered.cursor_style, ui::CommandLineCursorStyle::SteadyBar);
 }
 
+#[test]
+fn direct_ui_snapshot_preserves_cells_modes_and_scrolled_viewports() {
+    let mut parser = vt100::Parser::new(4, 20, 30);
+    for output in [
+        "",
+        "\x1b[31;44;1;3;4;7m中e\u{301}\x1b[0m text\r\n",
+        "○\x1b[777;0z user >> test\r\nline\r\nline\r\n\x1b[777;1;0z",
+        "○\x1b[777;0z user >> \x1b[6 q\x1b[?1h\x1b[?2004h",
+        "\x1b[?1049h\x1b[?25lalternate 中",
+        "\x1b[?1049l",
+    ] {
+        parser.process(output.as_bytes());
+        for offset in [0, 1, usize::MAX] {
+            parser.set_scrollback(offset);
+            let expected = to_ui_snapshot(&TerminalSnapshot::from_parser(&mut parser));
+            let previous_offset = parser.screen().scrollback();
+            let actual = crate::snapshot::ui_snapshot_from_parser(&mut parser);
+            assert_eq!(actual, expected);
+            assert_eq!(parser.screen().scrollback(), previous_offset);
+        }
+        parser.set_scrollback(0);
+    }
+    parser.set_size(3, 12);
+    assert_eq!(
+        crate::snapshot::ui_snapshot_from_parser(&mut parser),
+        to_ui_snapshot(&TerminalSnapshot::from_parser(&mut parser)),
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn child_input_modes_receive_keys_paste_and_content_relative_mouse_reports() {
@@ -721,8 +757,12 @@ fn child_input_modes_receive_keys_paste_and_content_relative_mouse_reports() {
     }
     assert_snapshot_contains(&pty, "READY", Duration::from_secs(5), "mouse setup");
     let (_, revision) = pty.snapshot_with_revision();
+    let (ui_snapshot, ui_revision) = pty.ui_snapshot_with_revision();
+    assert_eq!(ui_revision, revision);
+    assert_eq!(ui_snapshot, to_ui_snapshot(&pty.snapshot()));
     pty.resize(100, 10).unwrap();
     assert!(pty.snapshot_if_changed(revision).is_none());
+    assert!(pty.ui_snapshot_if_changed(ui_revision).is_none());
     let area = ratatui::layout::Rect::new(10, 5, 100, 10);
     assert!(
         !pty.send_mouse(&ui::MouseEvent::down(9, 8, ui::MouseButton::Left), area)

@@ -79,7 +79,7 @@ impl Cell {
     /// width.
     #[must_use]
     pub fn contents(&self) -> String {
-        let mut s = String::with_capacity(CODEPOINTS_IN_CELL * 4);
+        let mut s = String::with_capacity(self.len() * 4);
         for c in self.contents.iter().take(self.len()) {
             s.push(*c);
         }

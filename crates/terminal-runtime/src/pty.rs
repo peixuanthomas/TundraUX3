@@ -124,6 +124,14 @@ impl TerminalOutput {
             .unwrap_or_else(|error| error.into_inner());
         TerminalSnapshot::from_parser(&mut parser)
     }
+
+    pub fn ui_snapshot(&self) -> ui::CommandLineTerminalSnapshot {
+        let mut parser = self
+            .parser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        crate::snapshot::ui_snapshot_from_parser(&mut parser)
+    }
 }
 
 /// Running terminal process with a reader thread that owns the clone of the
@@ -406,6 +414,27 @@ impl PtyProcess {
         Some(self.snapshot_with_revision())
     }
 
+    pub fn ui_snapshot_if_changed(
+        &self,
+        previous_revision: u64,
+    ) -> Option<(ui::CommandLineTerminalSnapshot, u64)> {
+        if self.output_revision.load(Ordering::Acquire) == previous_revision {
+            return None;
+        }
+        Some(self.ui_snapshot_with_revision())
+    }
+
+    pub fn ui_snapshot_with_revision(&self) -> (ui::CommandLineTerminalSnapshot, u64) {
+        let mut parser = self
+            .parser
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        (
+            crate::snapshot::ui_snapshot_from_parser(&mut parser),
+            self.output_revision.load(Ordering::Acquire),
+        )
+    }
+
     pub fn snapshot_with_revision(&self) -> (TerminalSnapshot, u64) {
         // A poisoned parser only indicates that the reader panicked. Keep the
         // runtime usable and show the last valid state instead of panicking in
@@ -464,6 +493,12 @@ impl PtyProcess {
         self.close_pty_handles();
         self.join_reader_bounded(Duration::from_millis(250));
         self.snapshot()
+    }
+
+    pub fn ui_snapshot_after_exit(mut self) -> ui::CommandLineTerminalSnapshot {
+        self.close_pty_handles();
+        self.join_reader_bounded(Duration::from_millis(250));
+        self.ui_snapshot_with_revision().0
     }
 
     /// Cleans up the process tree and drains output before retaining its parser.

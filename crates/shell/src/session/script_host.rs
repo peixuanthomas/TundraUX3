@@ -375,13 +375,13 @@ impl ScriptHosts {
                 }
                 let offset = state.pages.editor.script.scrolls[ui::ScriptPane::Output.index()];
                 let _ = host.session.terminal().set_scrollback(offset);
-                if let Some((snapshot, revision)) =
-                    host.session.terminal().snapshot_if_changed(host.revision)
+                if let Some((snapshot, revision)) = host
+                    .session
+                    .terminal()
+                    .ui_snapshot_if_changed(host.revision)
                 {
                     host.revision = revision;
-                    state.pages.editor.script.output = Some(Arc::new(
-                        terminal_runtime::snapshot::to_ui_snapshot(&snapshot),
-                    ));
+                    state.pages.editor.script.output = Some(Arc::new(snapshot));
                     changed = true;
                 }
             });
@@ -404,11 +404,9 @@ impl ScriptHosts {
                 });
                 match host.session.into_output() {
                     Ok(output) => {
-                        let snapshot = output.snapshot();
+                        let snapshot = output.ui_snapshot();
                         state.with_page_context(page, |state| {
-                            state.pages.editor.script.output = Some(Arc::new(
-                                terminal_runtime::snapshot::to_ui_snapshot(&snapshot),
-                            ));
+                            state.pages.editor.script.output = Some(Arc::new(snapshot));
                         });
                         self.completed
                             .insert(page, CompletedScript { output, view: None });
@@ -459,9 +457,7 @@ impl ScriptHosts {
                 }
                 let _ = completed.output.resize(area.width, area.height);
                 let _ = completed.output.set_scrollback(offset);
-                state.pages.editor.script.output = Some(Arc::new(
-                    terminal_runtime::snapshot::to_ui_snapshot(&completed.output.snapshot()),
-                ));
+                state.pages.editor.script.output = Some(Arc::new(completed.output.ui_snapshot()));
                 completed.view = Some(view);
                 changed = true;
             });

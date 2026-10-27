@@ -394,12 +394,13 @@ fn terminal_snapshot_line(
     }
 
     let mut spans = Vec::new();
-    let mut text = String::new();
+    let mut text = String::with_capacity(usize::from(row_end));
     let mut text_style = None;
     let mut column = 0_u16;
     while column < row_end {
-        let default_cell = CommandLineCell::default();
-        let cell = snapshot.cell(column, row).unwrap_or(&default_cell);
+        let Some(cell) = snapshot.cell(column, row) else {
+            break;
+        };
         let marker = cell.command_status.map(|status| status.span(theme));
         let symbol = marker.as_ref().map_or_else(
             || visible_symbol(&cell.symbol),
@@ -420,7 +421,7 @@ fn terminal_snapshot_line(
         // The terminal snapshot stores a wide grapheme in its leading cell
         // and leaves its continuation cells blank. Ratatui advances by the
         // grapheme's full display width, so those placeholders must be skipped.
-        let symbol_width = u16::try_from(Line::from(symbol).width())
+        let symbol_width = u16::try_from(Span::raw(symbol).width())
             .unwrap_or(u16::MAX)
             .max(1);
         column = column.saturating_add(symbol_width);

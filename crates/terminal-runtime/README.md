@@ -18,6 +18,8 @@ Shell 决定何时进入或交还终端，本 crate 执行具体设置；UI 只�
 
 子终端尺寸没有变化时，`resize` 直接返回，不重复发送尺寸通知或增加画面版本；脚本工作区持续轮询时也能保持空闲画面稳定。
 
+绘制可使用 `ui_snapshot_with_revision`、`ui_snapshot_if_changed` 和退出后的 `ui_snapshot_after_exit`，直接从解析器生成一份 UI 快照，避免先复制整屏终端单元格再转换。已结束的输出提供 `TerminalOutput::ui_snapshot`；原有结构化快照接口继续可用。空白单元格读取不分配文字缓冲。
+
 `PtyProcess::into_output` 清理进程树、关闭 PTY 并收完输出后返回 `TerminalOutput`。它只保留终端解析结果，支持调整尺寸、回滚和快照，让已结束脚本仍可查看早期输出。
 
 可注册输出接收函数，在读取线程中逐块转交完整输出，供任务历史保存；不把输入事件写入历史，也不依赖终端回滚的行数保存全部结果。

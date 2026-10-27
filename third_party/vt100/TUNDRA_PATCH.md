@@ -2,6 +2,10 @@
 
 This directory vendors `vt100` 0.15.2 under its original MIT license.
 
+`Cell::contents()` sizes its text buffer to the number of retained codepoints.
+Empty cells therefore return an unallocated empty string instead of allocating
+24 bytes for every blank cell in each embedded-terminal snapshot.
+
 TundraUX3 uses `ratatui` 0.29, which pins `unicode-width` 0.2.0. The upstream
 `vt100` 0.16 releases contain the required scrollback fix but require
 `unicode-width` 0.2.1 or newer, so they cannot be selected in the current

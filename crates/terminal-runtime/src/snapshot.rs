@@ -114,10 +114,92 @@ impl TerminalSnapshot {
 }
 
 pub fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSnapshot {
-    let mut result = ui::CommandLineTerminalSnapshot::blank(snapshot.columns, snapshot.rows);
-    result.scrollback_rows = snapshot.scrollback_rows;
-    result.scrollback_offset = snapshot.scrollback_offset;
-    result.cursor_style = match snapshot.cursor_style {
+    let mut cells = Vec::with_capacity(usize::from(snapshot.rows) * usize::from(snapshot.columns));
+    for row in 0..snapshot.rows {
+        for column in 0..snapshot.columns {
+            let Some(cell) = snapshot
+                .cells
+                .get(usize::from(row))
+                .and_then(|cells| cells.get(usize::from(column)))
+                .filter(|cell| !cell.wide_continuation)
+            else {
+                cells.push(ui::CommandLineCell::default());
+                continue;
+            };
+            cells.push(ui::CommandLineCell {
+                symbol: cell.text.clone(),
+                style: ui::CommandLineCellStyle {
+                    foreground: to_ui_color(&cell.foreground),
+                    background: to_ui_color(&cell.background),
+                    bold: cell.bold,
+                    italic: cell.italic,
+                    underline: cell.underline,
+                    inverse: cell.inverse,
+                },
+                command_status: to_ui_command_status(cell.command_status),
+                cursor: snapshot.cursor_visible
+                    && snapshot.cursor_row == row
+                    && snapshot.cursor_column == column,
+            });
+        }
+    }
+    ui::CommandLineTerminalSnapshot {
+        columns: snapshot.columns,
+        rows: snapshot.rows,
+        cursor_style: to_ui_cursor_style(snapshot.cursor_style),
+        scrollback_rows: snapshot.scrollback_rows,
+        scrollback_offset: snapshot.scrollback_offset,
+        cells,
+    }
+}
+
+/// Builds the render snapshot without first allocating an intermediate copy
+/// of every terminal cell and its text.
+pub fn ui_snapshot_from_parser(parser: &mut vt100::Parser) -> ui::CommandLineTerminalSnapshot {
+    let scrollback_offset = parser.screen().scrollback();
+    parser.set_scrollback(usize::MAX);
+    let scrollback_rows = parser.screen().scrollback();
+    parser.set_scrollback(scrollback_offset);
+    let screen = parser.screen();
+    let (rows, columns) = screen.size();
+    let (cursor_row, cursor_column) = screen.cursor_position();
+    let cursor_visible = scrollback_offset == 0 && !screen.hide_cursor();
+    let mut cells = Vec::with_capacity(usize::from(rows) * usize::from(columns));
+    for row in 0..rows {
+        for column in 0..columns {
+            let cell = screen
+                .cell(row, column)
+                .filter(|cell| !cell.is_wide_continuation());
+            cells.push(match cell {
+                Some(cell) => ui::CommandLineCell {
+                    symbol: cell.contents(),
+                    style: ui::CommandLineCellStyle {
+                        foreground: to_ui_color(&cell.fgcolor().into()),
+                        background: to_ui_color(&cell.bgcolor().into()),
+                        bold: cell.bold(),
+                        italic: cell.italic(),
+                        underline: cell.underline(),
+                        inverse: cell.inverse(),
+                    },
+                    cursor: cursor_visible && cursor_row == row && cursor_column == column,
+                    command_status: to_ui_command_status(cell.command_status()),
+                },
+                None => ui::CommandLineCell::default(),
+            });
+        }
+    }
+    ui::CommandLineTerminalSnapshot {
+        columns,
+        rows,
+        cursor_style: to_ui_cursor_style(screen.cursor_style()),
+        scrollback_rows,
+        scrollback_offset,
+        cells,
+    }
+}
+
+fn to_ui_cursor_style(style: TerminalCursorStyle) -> ui::CommandLineCursorStyle {
+    match style {
         TerminalCursorStyle::Default => ui::CommandLineCursorStyle::Default,
         TerminalCursorStyle::BlinkingBlock => ui::CommandLineCursorStyle::BlinkingBlock,
         TerminalCursorStyle::SteadyBlock => ui::CommandLineCursorStyle::SteadyBlock,
@@ -125,44 +207,15 @@ pub fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSna
         TerminalCursorStyle::SteadyUnderline => ui::CommandLineCursorStyle::SteadyUnderline,
         TerminalCursorStyle::BlinkingBar => ui::CommandLineCursorStyle::BlinkingBar,
         TerminalCursorStyle::SteadyBar => ui::CommandLineCursorStyle::SteadyBar,
-    };
-    for (row, cells) in snapshot.cells.iter().enumerate() {
-        let Ok(row) = u16::try_from(row) else {
-            break;
-        };
-        for (column, cell) in cells.iter().enumerate() {
-            let Ok(column) = u16::try_from(column) else {
-                break;
-            };
-            if cell.wide_continuation {
-                continue;
-            }
-            result.set_cell(
-                column,
-                row,
-                ui::CommandLineCell {
-                    symbol: cell.text.clone(),
-                    style: ui::CommandLineCellStyle {
-                        foreground: to_ui_color(&cell.foreground),
-                        background: to_ui_color(&cell.background),
-                        bold: cell.bold,
-                        italic: cell.italic,
-                        underline: cell.underline,
-                        inverse: cell.inverse,
-                    },
-                    command_status: cell.command_status.map(|status| match status {
-                        None => ui::components::CommandStatus::Pending,
-                        Some(true) => ui::components::CommandStatus::Succeeded,
-                        Some(false) => ui::components::CommandStatus::Failed,
-                    }),
-                    cursor: snapshot.cursor_visible
-                        && snapshot.cursor_row == row
-                        && snapshot.cursor_column == column,
-                },
-            );
-        }
     }
-    result
+}
+
+fn to_ui_command_status(status: Option<Option<bool>>) -> Option<ui::components::CommandStatus> {
+    status.map(|status| match status {
+        None => ui::components::CommandStatus::Pending,
+        Some(true) => ui::components::CommandStatus::Succeeded,
+        Some(false) => ui::components::CommandStatus::Failed,
+    })
 }
 
 fn to_ui_color(color: &TerminalColor) -> ui::CommandLineColor {
