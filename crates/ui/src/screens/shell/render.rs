@@ -205,8 +205,7 @@ pub fn render_shell_chrome_with_status_focus(
         top.x,
         top.y,
         layout
-            .task_button
-            .or(layout.help_button)
+            .help_button
             .or(layout.back_button)
             // Share the separator with the button instead of drawing two borders.
             .map_or(top.width, |button| {
@@ -231,12 +230,6 @@ pub fn render_shell_chrome_with_status_focus(
         let mut button = Button::new("shell.help", i18n::tr!("ui-shell-help-button"));
         button.state.hovered = chrome.help_button_hovered;
         button.state.focused = chrome.help_button_focused;
-        button.render_frame(frame, area, &context.compatibility_theme());
-    }
-    if let (Some(area), Some((count, hovered, focused))) = (layout.task_button, chrome.tasks) {
-        let mut button = Button::new("shell.tasks", i18n::tr!("tasks-title-count", count = count));
-        button.state.hovered = hovered;
-        button.state.focused = focused;
         button.render_frame(frame, area, &context.compatibility_theme());
     }
     render_status(frame, status, layout, chrome, context, status_focused);

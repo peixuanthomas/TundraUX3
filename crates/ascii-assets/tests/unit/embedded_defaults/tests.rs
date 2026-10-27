@@ -23,6 +23,7 @@ fn embedded_default_theme_covers_required_ascii_assets_and_images() {
         "launcher_icons/packages.png",
         "launcher_icons/network.png",
         "launcher_icons/disks.png",
+        "launcher_icons/tasks.png",
     ] {
         assert!(
             embedded.contains(&(path, path)),
@@ -30,7 +31,7 @@ fn embedded_default_theme_covers_required_ascii_assets_and_images() {
         );
     }
     assert!(!embedded.iter().any(|(key, _)| key.contains("diagnostics")));
-    assert_eq!(embedded.len(), required.len() + 15);
+    assert_eq!(embedded.len(), required.len() + 16);
     assert_eq!(
         EMBEDDED_DEFAULT_THEME_FILES
             .iter()
@@ -38,7 +39,7 @@ fn embedded_default_theme_covers_required_ascii_assets_and_images() {
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("png")))
             .count(),
-        15
+        16
     );
     assert!(
         EMBEDDED_DEFAULT_THEME_FILES

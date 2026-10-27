@@ -23,6 +23,8 @@
 
 中英文 `modules/screen-keyboard.ftl` 包含 QWERTY 键盘的导航键与字母区／功能区切换标签。
 
+启动器的任务模块使用 `builtin.tasks`，同时提供四行 ASCII 图案与 `launcher_icons/tasks.png`。默认图标会嵌入程序，旧主题升级时补齐缺少的任务图标并保留已有自定义内容。图片由内置 imagegen 根据现有青色发光图标风格生成，内容为两项已完成、一项运行中的任务清单，不含文字。
+
 AA 自动策略的显示名称统一为“一律放行” / “Always allow”，帮助文字继续说明其只跳过 AA 确认。
 
 编辑器 Vim 开关、“VIM模式已启用／未启用”状态按钮和按需打开的使用帮助位于中英文 `modules/editor-vim.ftl`；模式、命令行和错误提示保留原生 Vim 的显示。

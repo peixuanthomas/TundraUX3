@@ -11,7 +11,6 @@ fn chrome(width: u16, height: u16) -> ShellChromeViewModel {
         help_available: false,
         help_button_hovered: false,
         help_button_focused: false,
-        tasks: None,
         back_shortcut: "Esc",
         screen_stack: vec!["中文页面路径很长需要正确截断".repeat(8)],
         status: StatusViewModel {
@@ -31,22 +30,20 @@ fn row(terminal: &Terminal<TestBackend>, y: u16) -> String {
 }
 
 #[test]
-fn tasks_button_shares_header_geometry_and_shrinks_with_the_keyboard() {
-    let mut model = chrome(120, 40);
-    model.tasks = Some((3, false, false));
+fn header_keeps_help_and_back_without_a_tasks_entry() {
+    let model = chrome(120, 40);
     let context = RenderContext::default();
-    let layout = ShellFrameLayout::new(Rect::new(0, 0, 120, 40), None, &context)
-        .with_help_button(true)
-        .with_tasks_button(Some(3));
-    let task = layout.task_button.unwrap();
-    assert!(task.right() < layout.help_button.unwrap().x);
+    let layout =
+        ShellFrameLayout::new(Rect::new(0, 0, 120, 40), None, &context).with_help_button(true);
+    assert!(layout.help_button.unwrap().right() < layout.back_button.unwrap().x);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     terminal
         .draw(|frame| render_shell_chrome(frame, &layout, &model, &context))
         .unwrap();
-    assert!(row(&terminal, 1).contains("Tasks (3)"));
+    assert!(!row(&terminal, 1).contains("Tasks"));
     let collapsed = layout.with_input_keyboard(Rect::new(0, 20, 120, 20), 1000);
-    assert_eq!(collapsed.task_button.unwrap().height, 1);
+    assert_eq!(collapsed.help_button.unwrap().height, 1);
+    assert_eq!(collapsed.back_button.unwrap().height, 1);
 }
 
 fn render(

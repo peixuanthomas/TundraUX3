@@ -144,6 +144,7 @@ pub fn restore_default_theme_file(
                 "builtin.ssh",
                 "builtin.backups",
                 "builtin.scheduled-tasks",
+                "builtin.tasks",
             ],
             &["builtin.command-line", "builtin.editor"],
         ),

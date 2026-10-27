@@ -75,3 +75,8 @@ lines = ['  [o]  ', '   |   ', ' --+-- ', ' o   o ']
 label = "Disks"
 image = "launcher_icons/disks.png"
 lines = [' _____ ', '| (o) |', '|     |', '|___o_|']
+
+[items."builtin.tasks"]
+label = "Tasks"
+image = "launcher_icons/tasks.png"
+lines = [' _____ ', '|v == |', '|v == |', '|o____|']

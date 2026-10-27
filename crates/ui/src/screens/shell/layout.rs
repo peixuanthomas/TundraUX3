@@ -85,7 +85,6 @@ pub struct ShellFrameLayout {
     pub main: Rect,
     pub back_button: Option<Rect>,
     pub help_button: Option<Rect>,
-    pub task_button: Option<Rect>,
     pub status_message: Option<Rect>,
     pub time_button: Option<Rect>,
 }
@@ -129,7 +128,6 @@ impl ShellFrameLayout {
             main,
             back_button,
             help_button: None,
-            task_button: None,
             status_message,
             time_button,
         }
@@ -166,9 +164,6 @@ impl ShellFrameLayout {
                     button.height = if top.height < 3 { 1 } else { 3 };
                 }
                 if let Some(button) = &mut self.help_button {
-                    button.height = if top.height < 3 { 1 } else { 3 };
-                }
-                if let Some(button) = &mut self.task_button {
                     button.height = if top.height < 3 { 1 } else { 3 };
                 }
                 self.status_message = self
@@ -236,26 +231,6 @@ impl ShellFrameLayout {
         let x = back.x.saturating_sub(width.saturating_add(1));
         self.help_button =
             (width > 0 && x >= self.bounds.x).then(|| Rect::new(x, back.y, width, back.height));
-        self
-    }
-
-    pub fn with_tasks_button(mut self, running: Option<usize>) -> Self {
-        self.task_button = None;
-        let Some(running) = running else {
-            return self;
-        };
-        if self.is_compact() {
-            return self;
-        }
-        let Some(anchor) = self.help_button.or(self.back_button) else {
-            return self;
-        };
-        let label = i18n::tr!("tasks-title-count", count = running);
-        let width = usize_to_u16(crate::components::terminal_width(&label).saturating_add(4));
-        let x = anchor.x.saturating_sub(width.saturating_add(1));
-        if x >= self.bounds.x.saturating_add(20) {
-            self.task_button = Some(Rect::new(x, anchor.y, width, anchor.height));
-        }
         self
     }
 

@@ -2266,13 +2266,6 @@ impl ShellSession {
             help_available: self.help_button_available(),
             help_button_hovered: self.hovered_component == Some(ShellComponent::HelpButton),
             help_button_focused: self.pages.common.focused_component == ShellComponent::HelpButton,
-            tasks: self.tasks_button_count().map(|count| {
-                (
-                    count,
-                    self.hovered_component == Some(ShellComponent::TasksButton),
-                    self.pages.common.focused_component == ShellComponent::TasksButton,
-                )
-            }),
             back_shortcut: self.shell_back_shortcut(),
             app_name: "TundraUX 3".to_string(),
             build_mode: build_mode_label().to_string(),

@@ -890,7 +890,6 @@ pub(in crate::session) fn component_message(component: ShellComponent) -> i18n::
         ShellComponent::TopBar => i18n::msg!("shell-component-top-bar"),
         ShellComponent::BackButton => i18n::msg!("shell-component-back-button"),
         ShellComponent::HelpButton => i18n::msg!("shell-component-help-button"),
-        ShellComponent::TasksButton => i18n::msg!("tasks-title"),
         ShellComponent::HelpDialog => i18n::msg!("shell-component-help-dialog"),
         ShellComponent::Home => i18n::msg!("shell-component-home"),
         ShellComponent::ClockButton => i18n::msg!("shell-component-clock-button"),

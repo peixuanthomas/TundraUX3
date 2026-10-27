@@ -159,20 +159,6 @@ impl ShellTasks {
         self.history_pages.get(id).copied()
     }
 
-    pub(in crate::session) fn running_operations(&self) -> usize {
-        let mut ids = self.known_active.clone();
-        for task in self.records.values().filter(|task| {
-            task.epoch == self.epoch
-                && task.class == TaskClass::Operation
-                && !(task.control.finished)()
-        }) {
-            if let Some(history) = &task.history {
-                ids.insert(history.id().into());
-            }
-        }
-        ids.len()
-    }
-
     pub(in crate::session) fn known_active_history(&mut self, ids: BTreeSet<String>) {
         self.known_active = ids;
     }

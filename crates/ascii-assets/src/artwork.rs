@@ -268,6 +268,7 @@ pub(crate) fn load_launcher_icons(
             "builtin.ssh",
             "builtin.backups",
             "builtin.scheduled-tasks",
+            "builtin.tasks",
         ] {
             if icons.get(required).is_none() {
                 return Err(AssetError::InvalidAsset {

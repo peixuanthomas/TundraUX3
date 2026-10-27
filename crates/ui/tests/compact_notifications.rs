@@ -11,7 +11,6 @@ fn chrome() -> ShellChromeViewModel {
         help_available: false,
         help_button_hovered: false,
         help_button_focused: false,
-        tasks: None,
         back_shortcut: "Esc",
         screen_stack: vec!["Compact".into()],
         status: StatusViewModel {

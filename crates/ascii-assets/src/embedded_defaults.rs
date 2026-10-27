@@ -48,6 +48,7 @@ pub(crate) static EMBEDDED_DEFAULT_THEME_FILES: &[EmbeddedDefaultThemeFile] = &[
     ),
     embedded_default_theme_file!("launcher_icons/editor.png", "launcher_icons/editor.png"),
     embedded_default_theme_file!("launcher_icons/services.png", "launcher_icons/services.png"),
+    embedded_default_theme_file!("launcher_icons/tasks.png", "launcher_icons/tasks.png"),
     embedded_default_theme_file!(
         "launcher_icons/processes.png",
         "launcher_icons/processes.png"

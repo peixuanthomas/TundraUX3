@@ -3,18 +3,6 @@ use platform::task_history::HistoryStore;
 use std::collections::BTreeSet;
 
 impl ShellSession {
-    pub(in crate::session) fn tasks_button_count(&self) -> Option<usize> {
-        (self.app.auth_session().is_some()
-            && !self.is_strict_guest()
-            && !matches!(
-                self.active_screen(),
-                ShellScreen::FirstRunSetup
-                    | ShellScreen::BootstrapAdmin
-                    | ShellScreen::Login
-                    | ShellScreen::ExitConfirm
-            ))
-        .then(|| self.tasks.running_operations())
-    }
     pub(in crate::session) fn task_origin(&self) -> String {
         match self.active_screen() {
             ShellScreen::Management => self

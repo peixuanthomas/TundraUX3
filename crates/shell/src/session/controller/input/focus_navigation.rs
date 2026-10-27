@@ -53,7 +53,6 @@ impl ShellSession {
         motion: ui::MotionTransitions,
         layout: ui::ShellFrameLayout,
     ) {
-        let layout = layout.with_tasks_button(self.tasks_button_count());
         if self.pages.common.selected_id() != Some(self.active_page_id()) {
             return;
         }
@@ -279,13 +278,6 @@ impl ShellSession {
             order.push(ShellComponent::HomeLogout);
         }
         order.push(ShellComponent::ClockButton);
-        if self
-            .frame_layout
-            .and_then(|layout| layout.task_button)
-            .is_some()
-        {
-            order.push(ShellComponent::TasksButton);
-        }
         if self
             .frame_layout
             .and_then(|layout| layout.help_button)

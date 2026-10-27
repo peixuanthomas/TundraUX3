@@ -29,7 +29,6 @@ fn status_message_uses_shared_hover_pressed_and_keyboard_colors() {
         help_available: false,
         help_button_hovered: false,
         help_button_focused: false,
-        tasks: None,
         back_shortcut: "Esc",
         status: StatusViewModel {
             status: "Complete status message".into(),

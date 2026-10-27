@@ -33,17 +33,25 @@ fn management_icons_upgrade_preserves_existing_custom_artwork() {
         "builtin.backups",
         "builtin.scheduled-tasks",
         "builtin.logs",
+        "builtin.tasks",
     ] {
         assert!(store.launcher_icon(key).is_some());
     }
 }
 
 #[test]
-fn five_management_images_are_distinct_embedded_and_recoverable() {
+fn management_and_task_images_are_distinct_embedded_and_recoverable() {
     let root = TempDir::new("management-png-recovery");
     restore_default_theme(root.path()).unwrap();
     let mut seen = std::collections::BTreeSet::new();
-    for key in ["services", "processes", "packages", "network", "disks"] {
+    for key in [
+        "services",
+        "processes",
+        "packages",
+        "network",
+        "disks",
+        "tasks",
+    ] {
         let relative = format!("launcher_icons/{key}.png");
         let file = embedded_default_theme_file(&relative).expect("embedded management PNG");
         assert!(
@@ -57,7 +65,14 @@ fn five_management_images_are_distinct_embedded_and_recoverable() {
         assert_eq!(fs::read(path).unwrap(), file.contents);
     }
     let store = AsciiAssetStore::load_with_root(root.path(), DEFAULT_THEME_ID).unwrap();
-    for key in ["services", "processes", "packages", "network", "disks"] {
+    for key in [
+        "services",
+        "processes",
+        "packages",
+        "network",
+        "disks",
+        "tasks",
+    ] {
         let id = format!("builtin.{key}");
         assert_eq!(
             store.launcher_icon(&id).unwrap().image_path(),
