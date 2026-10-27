@@ -6,7 +6,6 @@ use std::{
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
-    time::Duration,
 };
 
 use platform::ExecutableSearchPath;
@@ -27,7 +26,7 @@ pub(super) struct PathCommands {
     cache: RefCell<Cache>,
     search: Option<ExecutableSearchPath>,
     generation: Arc<AtomicU64>,
-    requests: mpsc::Sender<ScanRequest>,
+    requests: mpsc::Sender<Option<ScanRequest>>,
     worker: Option<watchdog::ManagedThreadHandle<()>>,
 }
 
@@ -44,7 +43,7 @@ impl PathCommands {
     {
         let fallback: Arc<[String]> = system_candidates(Vec::new()).into();
         let generation = Arc::new(AtomicU64::new(0));
-        let (requests, incoming) = mpsc::channel::<ScanRequest>();
+        let (requests, incoming) = mpsc::channel::<Option<ScanRequest>>();
         let (completed, results) = mpsc::channel();
         // Library callers without a managed runtime still get static hints;
         // they must not fall back to scanning on the input thread.
@@ -55,19 +54,27 @@ impl PathCommands {
                 NEXT_WORKER.fetch_add(1, Ordering::Relaxed)
             ));
             let latest = Arc::clone(&generation);
+            let cancel_requests = requests.clone();
             let mut spec = watchdog::TaskSpec::one_shot(watchdog::TaskId::from_static("scan-path"));
             spec.replay_safety = watchdog::ReplaySafety::Idempotent;
             group
                 .spawn_thread_with_cancellation(spec, move |cancel| {
+                    // Cancellation wakes the receiver without an idle polling timer.
+                    let cancel_requests = cancel_requests.clone();
+                    cancel.on_cancel(move || {
+                        let _ = cancel_requests.send(None);
+                    });
                     while !cancel.is_cancelled() {
-                        let mut request = match incoming.recv_timeout(Duration::from_millis(50)) {
-                            Ok(request) => request,
-                            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        let mut request = match incoming.recv() {
+                            Ok(Some(request)) => request,
+                            _ => return,
                         };
                         // Rapid prompt/PATH changes need only the newest scan.
                         for newer in incoming.try_iter() {
-                            request = newer;
+                            match newer {
+                                Some(newer) => request = newer,
+                                None => return,
+                            }
                         }
                         let (generation, search) = request;
                         let cancelled = || {
@@ -113,7 +120,7 @@ impl PathCommands {
         }
         self.search = Some(search.clone());
         let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
-        cache.pending = self.requests.send((generation, search)).is_ok();
+        cache.pending = self.requests.send(Some((generation, search))).is_ok();
     }
 
     pub(super) fn commands(&self) -> Arc<[String]> {

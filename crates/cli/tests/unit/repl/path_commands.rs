@@ -1,9 +1,35 @@
 use super::*;
 use rustyline::hint::Hint;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[path = "../../support/repl_watchdog.rs"]
 mod support;
+
+#[test]
+fn cancellation_wakes_the_idle_scanner_with_its_request_channel_still_open() {
+    let runtime = support::ReplWatchdog::new(None);
+    let mut cache = PathCommands::with_scanner(Some(&runtime.app), |_, _| Vec::new());
+    let session = platform::SystemCommandSession::new().unwrap();
+    cache.refresh(session.executable_search_path());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while cache.cache.borrow().pending {
+        cache.commands();
+        assert!(Instant::now() < deadline, "scanner did not finish");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let worker = cache.worker.take().unwrap();
+    worker.cancel();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !worker.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "cancellation did not wake scanner"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(worker.join().unwrap(), None);
+    assert!(runtime.process.try_recv_incident().is_none());
+}
 
 #[test]
 fn blocked_scan_never_delays_input_or_publishes_an_old_paths_result() {
