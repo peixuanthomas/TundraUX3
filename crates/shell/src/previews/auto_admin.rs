@@ -163,6 +163,7 @@ fn preview_model() -> AutoAdminViewModel {
         button_focus: None,
         scroll: 0,
         input_sensitive: false,
+        input_editing: Default::default(),
         input: Some(i18n::tr!("aa-preview-safe")),
         terminal: Arc::new(snapshot),
     }

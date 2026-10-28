@@ -229,6 +229,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
         accent_color: ratatui::style::Color::Cyan,
         accent_color_value: "cyan".into(),
         custom_color_target: None,
+        custom_color_editing: Default::default(),
         custom_color_input: String::new(),
         custom_color_valid: true,
         custom_color_conflicts_with_theme: false,
@@ -317,6 +318,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
     setup.custom_color_target = Some(SetupCustomColorTarget::Theme);
     assert_page_leaves_shell_chrome_untouched(ScreenContent::Setup(&setup));
     users.form = Some(UserManagementFormViewModel {
+        editing: Default::default(),
         kind: UserManagementFormKind::Create,
         title: "Create user".into(),
         username: "User".into(),
@@ -349,6 +351,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
         assert_page_leaves_shell_chrome_untouched(ScreenContent::Editor(&editor));
     }
     settings.color_editor = Some(SettingsColorEditorViewModel {
+        editing: Default::default(),
         title: "Color".into(),
         value: "#123456".into(),
         error: None,

@@ -116,6 +116,7 @@ fn running_auto_admin_highlights_buttons_and_preserves_masked_input() {
         let layout = ui::auto_admin_layout(bounds, &model(false, false));
         let mut model = AutoAdminViewModel {
             input_sensitive: false,
+            input_editing: Default::default(),
             description: "Remove demo".into(),
             status: "Running".into(),
             confirming: false,
@@ -328,6 +329,7 @@ fn auto_admin_and_previews_show_close_only_after_the_task_ends() {
 fn model(confirming: bool, finished: bool) -> AutoAdminViewModel {
     AutoAdminViewModel {
         input_sensitive: false,
+        input_editing: Default::default(),
         description: "Remove demo\nTarget: demo-1.0".into(),
         status: "Waiting".into(),
         confirming,

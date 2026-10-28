@@ -156,9 +156,6 @@ impl ShellSession {
                     self.apply_settings_number();
                 }
             }
-            InputKey::Left | InputKey::Right => {
-                self.adjust_settings_number(if key.key == InputKey::Left { -1 } else { 1 })
-            }
             InputKey::Up | InputKey::Down | InputKey::Tab | InputKey::BackTab => {
                 let backwards =
                     matches!(key.key, InputKey::Up | InputKey::BackTab) || key.modifiers.shift;

@@ -99,6 +99,16 @@ fn numeric_settings_wait_for_confirmation_and_escape_discards_changes() {
     press(&mut state, &platform, "Enter");
     assert_eq!(saved_speed(), 100);
     press(&mut state, &platform, "Right");
+    press(&mut state, &platform, "Left");
+    let input = state
+        .to_settings_view_model()
+        .unwrap()
+        .number_editor
+        .unwrap()
+        .input;
+    assert_eq!(input.value(), "100");
+    assert_eq!(input.cursor(), 2);
+    adjust_number(&mut state, &platform, true);
     assert_eq!(saved_speed(), 100);
     press(&mut state, &platform, "Enter");
     assert_eq!(saved_speed(), 125);
@@ -831,9 +841,9 @@ fn system_settings_show_defaults_and_persist_confirmed_values() {
         ["5 GiB", "10%", "1 GiB", "5%"]
     );
     assert_eq!(model.selected_field, SettingsField::SystemLowAvailable);
-    for key in ["Enter", "Left", "Enter"] {
-        press(&mut state, &platform, key);
-    }
+    press(&mut state, &platform, "Enter");
+    adjust_number(&mut state, &platform, false);
+    press(&mut state, &platform, "Enter");
     assert_eq!(
         manager
             .load_config()
@@ -853,9 +863,11 @@ fn system_settings_show_defaults_and_persist_confirmed_values() {
     let saved = manager.load_config().unwrap();
     assert_eq!(saved.system_status.low_available_gib, 4);
     assert_eq!(saved.system_status.critical_available_gib, 4);
-    for key in ["Down", "Down", "Enter", "Right", "Enter"] {
+    for key in ["Down", "Down", "Enter"] {
         press(&mut state, &platform, key);
     }
+    adjust_number(&mut state, &platform, true);
+    press(&mut state, &platform, "Enter");
     assert_eq!(
         manager
             .load_config()
@@ -1353,9 +1365,10 @@ fn advanced_animation_phases_save_per_user_and_restore_with_speed_defaults() {
     for _ in 0..5 {
         press(&mut state, &platform, "Down");
     }
-    for key in ["Enter", "Right", "Enter", "Down"] {
-        press(&mut state, &platform, key);
-    }
+    press(&mut state, &platform, "Enter");
+    adjust_number(&mut state, &platform, true);
+    press(&mut state, &platform, "Enter");
+    press(&mut state, &platform, "Down");
     let phases = [
         SettingsField::PageAcceleration,
         SettingsField::PageCruise,
@@ -1382,9 +1395,9 @@ fn advanced_animation_phases_save_per_user_and_restore_with_speed_defaults() {
         let editor = model.animation_editor.as_ref().expect("advanced modal");
         assert_eq!(model.selected_field, SettingsField::AnimationAdvanced);
         assert_eq!(editor.items[editor.selected_index].field, field);
-        for key in ["Enter", "Right", "Enter"] {
-            press(&mut state, &platform, key);
-        }
+        press(&mut state, &platform, "Enter");
+        adjust_number(&mut state, &platform, true);
+        press(&mut state, &platform, "Enter");
         if index < phases.len() - 1 {
             press(&mut state, &platform, "Down");
         }
@@ -1500,9 +1513,8 @@ fn animation_modal_blocks_background_supports_pointer_reset_and_restores_focus()
             .number_editor
             .is_some()
     );
-    for key in ["Right", "Enter"] {
-        press(&mut state, &platform, key);
-    }
+    adjust_number(&mut state, &platform, true);
+    press(&mut state, &platform, "Enter");
     assert_eq!(
         state
             .to_settings_view_model()
@@ -1618,9 +1630,9 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
     assert_eq!(speed.kind, ui::SettingsControlKind::Stepper);
     assert!(speed.enabled);
 
-    for key in ["Enter", "Right", "Enter"] {
-        press(&mut state, &platform, key);
-    }
+    press(&mut state, &platform, "Enter");
+    adjust_number(&mut state, &platform, true);
+    press(&mut state, &platform, "Enter");
     let normal_appearance = || {
         manager
             .load_users()
@@ -1665,9 +1677,9 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
             .number_editor
             .is_none()
     );
-    for key in ["Enter", "Left", "Enter"] {
-        press(&mut state, &platform, key);
-    }
+    press(&mut state, &platform, "Enter");
+    adjust_number(&mut state, &platform, false);
+    press(&mut state, &platform, "Enter");
     assert_eq!(normal_appearance().animation_speed_percent, 175);
 
     press(&mut state, &platform, "Down");
@@ -2070,4 +2082,53 @@ fn unavailable_device_pages_are_removed_from_settings_on_every_platform() {
             assert_eq!(manager.load_users().unwrap(), users_before);
         }
     }
+}
+
+#[test]
+fn picker_search_edits_at_the_visible_cursor() {
+    let fixture = FixtureRoot::new("picker-text-cursor");
+    let platform = mock_platform(fixture.path());
+    initialize_users(&platform, false, false);
+    let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
+    open_settings_from_home(&mut state, &platform);
+    select_category(&mut state, &platform, SettingsCategory::RegionTime);
+    select_field(&mut state, &platform, SettingsField::Language);
+    for key in ["Enter", "E", "n", "g", "Left", "X"] {
+        press(&mut state, &platform, key);
+    }
+    let picker = state.to_settings_view_model().unwrap().picker.unwrap();
+    assert_eq!(picker.query, "EnXg");
+    assert_eq!(picker.editing.input("query", &picker.query).cursor(), 3);
+    press(&mut state, &platform, "Backspace");
+    assert_eq!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .picker
+            .unwrap()
+            .query,
+        "Eng"
+    );
+    press(&mut state, &platform, "Esc");
+}
+
+fn adjust_number(state: &mut ShellSession, platform: &MockPlatform, increase: bool) {
+    let model = state.to_settings_view_model().unwrap();
+    let (width, height) = state.terminal_size();
+    let main = match ui::compute_shell_layout(Rect::new(0, 0, width, height)) {
+        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+    };
+    let layout = ui::settings_layout(main, &model);
+    let number = layout.number_editor.unwrap();
+    let area = if increase {
+        number.increase
+    } else {
+        number.decrease
+    };
+    let point = (area.x, area.y);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(ui::MouseButton::Left, point),
+        platform,
+    );
+    state.apply_input_with_platform(InputEvent::mouse_up(ui::MouseButton::Left, point), platform);
 }

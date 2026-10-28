@@ -752,6 +752,10 @@ impl ShellSession {
                 let activated = match mouse.kind {
                     ui::MouseEventKind::Down(ui::MouseButton::Left) => {
                         self.auto_admin.button_focus = None;
+                        if model.input.is_some() && rect_contains(layout.input, mouse.coordinates())
+                        {
+                            job.click_input(mouse.coordinates(), layout.input);
+                        }
                         if job.phase() == WAITING
                             && let Some(index) = hit
                         {

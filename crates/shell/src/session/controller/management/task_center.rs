@@ -445,6 +445,7 @@ impl ShellSession {
                             message: text,
                             message_scroll: 0,
                             instance: PageInstanceId::new().get(),
+                            input_states: Default::default(),
                             fields: vec![],
                             selected: 0,
                             purpose: FormPurpose::Action(action, Some(row.clone())),

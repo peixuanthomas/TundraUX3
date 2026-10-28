@@ -2,6 +2,65 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn clicked_form_field_keeps_accent_and_blinking_cursor_in_mouse_mode() {
+    use ratatui::style::Modifier;
+    let theme = TundraTheme::default_dark();
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut buttons = ui::components::ButtonFrame::new(None, None, &theme);
+    buttons.keyboard_focus_visible = false;
+    context.buttons = Some(buttons);
+    let mut model = ManagementViewModel {
+        form: Some(ManagementForm {
+            fields: vec![
+                ManagementFormField {
+                    label: "账户名称".into(),
+                    ..Default::default()
+                },
+                ManagementFormField {
+                    label: "密码".into(),
+                    value: "secret".into(),
+                    secret: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let bounds = Rect::new(0, 0, 60, 20);
+    let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+    for selected in [0, 1] {
+        model.form.as_mut().unwrap().selected = selected;
+        let layout = management_layout(bounds, &model);
+        terminal
+            .draw(|frame| render_management_overlay(frame, bounds, &model, &context))
+            .unwrap();
+        let field = &model.form.as_ref().unwrap().fields[selected];
+        let area = management_field_input_area(&layout, selected, field);
+        let cursor = (area.x + if selected == 0 { 0 } else { 6 }, area.y);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[cursor].symbol(), "|");
+        assert_eq!(buffer[cursor].fg, context.theme.accent);
+        assert!(buffer[cursor].modifier.contains(Modifier::SLOW_BLINK));
+        assert_eq!(buffer[(area.x, area.y - 1)].fg, context.theme.accent);
+        assert!(
+            !buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("secret")
+        );
+        let blinks = buffer
+            .content
+            .iter()
+            .filter(|cell| cell.modifier.contains(Modifier::SLOW_BLINK))
+            .count();
+        assert_eq!(blinks, 1);
+    }
+}
+
+#[test]
 fn editable_form_fields_use_the_shared_text_cursor_and_keep_actions_visible() {
     let mut input = ui::components::TextInput::new("arguments").with_horizontal_scroll(true);
     input.set_value("abcd");

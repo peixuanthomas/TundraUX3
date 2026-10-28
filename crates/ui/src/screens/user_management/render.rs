@@ -11,7 +11,7 @@ use super::model::{
     UserManagementFeedbackTone, UserManagementField, UserManagementFocus,
     UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
 };
-use crate::components::{Button, ComponentTone, DataTable, Scrollbar, Surface, TextInput};
+use crate::components::{Button, ComponentTone, DataTable, Scrollbar, Surface};
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
 use crate::{RenderContext, TundraTheme};
@@ -258,6 +258,11 @@ fn render_user_management_form(
                 &label,
                 value,
                 form.focused_field == field.field,
+                &form.editing[match field.field {
+                    UserManagementField::Username => 0,
+                    UserManagementField::DisplayName => 1,
+                    _ => 2,
+                }],
                 theme,
             );
         } else {
@@ -308,6 +313,7 @@ fn render_user_management_input(
     label: &str,
     value: String,
     focused: bool,
+    editing: &crate::components::TextEditState,
     theme: &TundraTheme,
 ) {
     if area.width == 0 || area.height == 0 {
@@ -315,11 +321,11 @@ fn render_user_management_input(
     }
 
     let prefix = format!("[ {label}: ");
-    let mut input = TextInput::new(id)
+    let mut input = editing
+        .input(id, &value)
         .with_capture_name(label)
         .with_sensitive(id == "user-management.form.password")
         .with_cursor_symbol("_");
-    input.set_value(&value);
     input.set_focused(focused);
     input.state.hovered = focused;
     let mut input_theme = theme.clone();

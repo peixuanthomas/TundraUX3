@@ -450,6 +450,7 @@ impl ShellSession {
         self.pages.management.management_state.terminal_mode = false;
         self.pages.management.management_state.form = Some(ManagementEditor {
             instance: next_management_form_instance(),
+            input_states: Default::default(),
             title: if let Some(key) = editor_dialog_title_key(action) {
                 i18n::tr!(key)
             } else {

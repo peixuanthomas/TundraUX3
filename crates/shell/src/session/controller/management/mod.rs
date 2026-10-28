@@ -89,8 +89,39 @@ struct ManagementEditor {
     message: String,
     message_scroll: u16,
     fields: Vec<ManagementField>,
+    input_states: BTreeMap<usize, ui::components::TextEditState>,
     selected: usize,
     purpose: FormPurpose,
+}
+
+impl ManagementEditor {
+    fn edit_field(&mut self, index: usize, event: InputEvent, area: Rect) {
+        let Some(field) = self.fields.get_mut(index) else {
+            return;
+        };
+        if field.control != FieldControl::Text || !field.choices.is_empty() {
+            return;
+        }
+        let added = match &event {
+            InputEvent::Paste(value) => value.len(),
+            InputEvent::Key(key) => match key.key {
+                InputKey::Char(c) => c.len_utf8(),
+                InputKey::Space => 1,
+                _ => 0,
+            },
+            _ => 0,
+        };
+        if added > 0 && field.value.len() + added > 16 * 1024 {
+            return;
+        }
+        let editing = self.input_states.entry(index).or_default();
+        if field.secret && matches!(event, InputEvent::Mouse(_)) {
+            let mut masked = "•".repeat(field.value.chars().count());
+            editing.handle_event(&mut masked, event, area);
+        } else {
+            editing.handle_event(&mut field.value, event, area);
+        }
+    }
 }
 
 fn next_management_form_instance() -> u64 {
@@ -1297,6 +1328,7 @@ impl ShellSession {
                     }
                     self.pages.management.management_state.form = Some(ManagementEditor {
                         instance: next_management_form_instance(),
+                        input_states: Default::default(),
                         message_scroll: 0,
                         title: i18n::tr!("management-input-required"),
                         message: prompt,
@@ -1845,7 +1877,8 @@ impl ShellSession {
                     fields: f
                         .fields
                         .iter()
-                        .map(|v| ui::ManagementFormField {
+                        .enumerate()
+                        .map(|(index, v)| ui::ManagementFormField {
                             id: v.id.clone(),
                             label: if matches!(f.purpose, FormPurpose::Configuration(_))
                                 || s.kind == Some(ManagementKind::ScheduledTasks) {
@@ -1860,7 +1893,7 @@ impl ShellSession {
                             } else {
                                 form_value_text(&f.purpose, v, &v.value)
                             },
-                            secret: false,
+                            secret: v.secret,
                             choices: v.choices.clone(),
                             control: match v.control {
                                 FieldControl::Text | FieldControl::SearchableChoice => ui::ManagementFormControl::Text,
@@ -1868,7 +1901,11 @@ impl ShellSession {
                                 FieldControl::Permissions => ui::ManagementFormControl::Permissions,
                             },
                             selected_cell: Some(self.pages.management.management_state.permission_cell),
-                            input: None,
+                            input: (v.control == FieldControl::Text && v.choices.is_empty()).then(|| {
+                                let value = if v.secret { "•".repeat(v.value.chars().count()) } else { v.value.clone() };
+                                f.input_states.get(&index).cloned().unwrap_or_default()
+                                    .input(v.id.as_str(), &value)
+                            }),
                         })
                         .collect(),
                 }),

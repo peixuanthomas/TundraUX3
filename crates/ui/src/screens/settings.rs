@@ -316,6 +316,7 @@ impl SettingsPickerOptionViewModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsPickerViewModel {
+    pub editing: crate::components::TextEditState,
     pub kind: SettingsPickerKind,
     pub title: String,
     pub query: String,
@@ -327,6 +328,7 @@ pub struct SettingsPickerViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsColorEditorViewModel {
+    pub editing: crate::components::TextEditState,
     pub title: String,
     pub value: String,
     pub error: Option<String>,
@@ -334,18 +336,21 @@ pub struct SettingsColorEditorViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsWeatherLocationEditorViewModel {
+    pub editing: crate::components::TextEditState,
     pub value: String,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsFileExtensionsEditorViewModel {
+    pub editing: crate::components::TextEditState,
     pub value: String,
     pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsTimeSyncServerEditorViewModel {
+    pub editing: crate::components::TextEditState,
     pub system_server_label: Option<String>,
     pub value: String,
     pub error: Option<String>,
@@ -1451,15 +1456,16 @@ fn render_picker(
         1,
     );
     if picker.searchable {
-        render_controlled_text_input(
-            frame,
-            query_area,
-            "settings.picker-search",
-            &picker.query,
-            &i18n::tr!("ui-settings-search-padded"),
-            theme,
-            theme.muted,
-        );
+        picker
+            .editing
+            .input("settings.picker-search", &picker.query)
+            .with_cursor_symbol("_")
+            .render_borderless_frame_with_prefix(
+                frame,
+                query_area,
+                theme,
+                &i18n::tr!("ui-settings-search-padded"),
+            );
     }
     let list = picker_list_area(
         dialog,
@@ -1548,7 +1554,14 @@ fn render_color_editor(
             .wrap(Wrap { trim: true }),
         inner,
     );
-    render_editor_text_input(frame, dialog, "settings.color-editor", &editor.value, theme);
+    render_editor_text_input(
+        frame,
+        dialog,
+        "settings.color-editor",
+        &editor.value,
+        &editor.editing,
+        theme,
+    );
 }
 
 fn render_weather_location_editor(
@@ -1595,6 +1608,7 @@ fn render_weather_location_editor(
         dialog,
         "settings.weather-location-editor",
         &editor.value,
+        &editor.editing,
         theme,
     );
 }
@@ -1647,6 +1661,7 @@ fn render_file_extensions_editor(
         dialog,
         "settings.file-extensions-editor",
         &editor.value,
+        &editor.editing,
         theme,
     );
 }
@@ -1721,6 +1736,7 @@ fn render_time_sync_server_editor(
         dialog,
         "settings.time-sync-server-editor",
         &editor.value,
+        &editor.editing,
         theme,
     );
 }
@@ -1730,45 +1746,23 @@ fn render_editor_text_input(
     dialog: Rect,
     id: &'static str,
     value: &str,
+    editing: &crate::components::TextEditState,
     theme: &TundraTheme,
 ) {
-    render_controlled_text_input(
-        frame,
-        Rect::new(
-            dialog.x.saturating_add(1),
-            dialog.y.saturating_add(2),
-            dialog.width.saturating_sub(2),
-            1,
-        ),
-        id,
-        value,
-        "> ",
-        theme,
-        theme.accent_color,
-    );
+    editing
+        .input(id, value)
+        .with_cursor_symbol("_")
+        .render_borderless_frame_with_prefix(frame, settings_text_input_area(dialog), theme, "> ");
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_controlled_text_input(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    id: &'static str,
-    value: &str,
-    prefix: &str,
-    theme: &TundraTheme,
-    foreground: Color,
-) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let mut input = TextInput::new(id).with_cursor_symbol("_");
-    input.set_value(value);
-    input.set_focused(true);
-
-    let mut input_theme = theme.clone();
-    input_theme.foreground = foreground;
-    input.render_borderless_frame_with_prefix(frame, area, &input_theme, prefix);
+pub fn settings_text_input_area(dialog: Rect) -> Rect {
+    Rect::new(
+        dialog.x.saturating_add(1),
+        dialog.y.saturating_add(2),
+        dialog.width.saturating_sub(2),
+        1,
+    )
+    .intersection(dialog)
 }
 
 fn settings_raw_detail_area(layout: &SettingsLayout) -> Rect {

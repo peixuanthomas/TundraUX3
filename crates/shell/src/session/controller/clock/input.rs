@@ -44,16 +44,20 @@ impl ShellSession {
                     (target, ShellCommand::ClockCreateFocusPrevious)
                 }
                 InputKey::Tab => (target, ShellCommand::ClockCreateFocusNext),
-                InputKey::Up if create.focus == ui::ClockCreateDialogFocus::Input => (
-                    target,
-                    ShellCommand::ClockCreateAdjust(create.active_field, 1),
-                ),
-                InputKey::Down if create.focus == ui::ClockCreateDialogFocus::Input => (
-                    target,
-                    ShellCommand::ClockCreateAdjust(create.active_field, -1),
-                ),
-                InputKey::Up | InputKey::Left => (target, ShellCommand::ClockCreateFocusPrevious),
-                InputKey::Down | InputKey::Right => (target, ShellCommand::ClockCreateFocusNext),
+                InputKey::Left | InputKey::Right
+                    if create.focus == ui::ClockCreateDialogFocus::Input =>
+                {
+                    (
+                        target,
+                        ShellCommand::ClockCreateMoveCursor(if key.key == InputKey::Left {
+                            -1
+                        } else {
+                            1
+                        }),
+                    )
+                }
+                InputKey::Up => (target, ShellCommand::ClockCreateFocusPrevious),
+                InputKey::Down => (target, ShellCommand::ClockCreateFocusNext),
                 InputKey::Enter => match create.focus {
                     ui::ClockCreateDialogFocus::Input => {
                         (target, ShellCommand::ClockCreateFocusNext)

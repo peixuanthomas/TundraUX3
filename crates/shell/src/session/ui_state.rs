@@ -100,6 +100,7 @@ pub(super) struct EditorSettingsDialogState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsPickerState {
+    pub(super) editing: ui::components::TextEditState,
     pub(super) options: Vec<(String, String)>,
     pub(super) kind: ui::SettingsPickerKind,
     pub(super) query: String,
@@ -110,6 +111,7 @@ pub(super) struct SettingsPickerState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsColorEditorState {
+    pub(super) editing: ui::components::TextEditState,
     pub(super) kind: ui::SettingsPickerKind,
     pub(super) value: String,
     pub(super) error: Option<i18n::LocalizedText>,
@@ -117,18 +119,21 @@ pub(super) struct SettingsColorEditorState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsWeatherLocationEditorState {
+    pub(super) editing: ui::components::TextEditState,
     pub(super) value: String,
     pub(super) error: Option<i18n::LocalizedText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsFileExtensionsEditorState {
+    pub(super) editing: ui::components::TextEditState,
     pub(super) value: String,
     pub(super) error: Option<i18n::LocalizedText>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsTimeSyncServerEditorState {
+    pub(super) editing: ui::components::TextEditState,
     pub(super) value: String,
     pub(super) error: Option<i18n::LocalizedText>,
     pub(super) validating: bool,
@@ -432,6 +437,7 @@ pub(super) enum UserManagementFormField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct UserManagementCreateForm {
+    pub(super) editing: [ui::components::TextEditState; 3],
     pub(super) username: String,
     pub(super) display_name: String,
     pub(super) password: String,
@@ -441,6 +447,7 @@ pub(super) struct UserManagementCreateForm {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct UserManagementInfoForm {
+    pub(super) editing: [ui::components::TextEditState; 3],
     pub(super) username: String,
     pub(super) display_name: String,
     pub(super) focused_field: UserManagementFormField,
@@ -520,6 +527,7 @@ pub(super) struct ClockCreateState {
     pub(super) values: [u8; 3],
     pub(super) active_field: usize,
     pub(super) pending_digit: bool,
+    pub(super) cursor: usize,
     pub(super) error: Option<i18n::LocalizedText>,
     pub(super) focus: ui::ClockCreateDialogFocus,
 }
@@ -530,6 +538,7 @@ impl Default for ClockCreateState {
             values: [0; 3],
             active_field: 0,
             pending_digit: false,
+            cursor: 2,
             error: None,
             focus: ui::ClockCreateDialogFocus::Input,
         }

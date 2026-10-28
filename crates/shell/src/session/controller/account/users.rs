@@ -130,6 +130,7 @@ impl ShellSession {
         }
         self.pages.user_management.user_management_mode =
             UserManagementMode::Create(UserManagementCreateForm {
+                editing: Default::default(),
                 username: String::new(),
                 display_name: String::new(),
                 password: String::new(),
@@ -149,6 +150,7 @@ impl ShellSession {
         {
             self.pages.user_management.user_management_mode =
                 UserManagementMode::EditInfo(UserManagementInfoForm {
+                    editing: Default::default(),
                     username: user.username,
                     display_name: user.display_name,
                     focused_field: UserManagementFormField::DisplayName,
@@ -215,49 +217,31 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn append_user_management_char(&mut self, character: char) {
-        match &mut self.pages.user_management.user_management_mode {
-            UserManagementMode::Create(form) => match form.focused_field {
-                UserManagementFormField::Username => form.username.push(character),
-                UserManagementFormField::DisplayName => form.display_name.push(character),
-                UserManagementFormField::Password => form.password.push(character),
-                UserManagementFormField::Role
-                | UserManagementFormField::Submit
-                | UserManagementFormField::Cancel => {}
-            },
-            UserManagementMode::EditInfo(form)
-                if form.focused_field == UserManagementFormField::DisplayName =>
-            {
-                form.display_name.push(character);
-            }
-            UserManagementMode::EditInfo(_) => {}
-            UserManagementMode::Browse => {}
-        }
+        self.edit_user_management_text(&KeyInput::new(InputKey::Char(character)));
     }
 
     pub(in crate::session) fn user_management_backspace(&mut self) {
-        match &mut self.pages.user_management.user_management_mode {
+        self.edit_user_management_text(&KeyInput::new(InputKey::Backspace));
+    }
+
+    pub(in crate::session) fn edit_user_management_text(&mut self, key: &KeyInput) {
+        let (value, editing) = match &mut self.pages.user_management.user_management_mode {
             UserManagementMode::Create(form) => match form.focused_field {
-                UserManagementFormField::Username => {
-                    form.username.pop();
-                }
+                UserManagementFormField::Username => (&mut form.username, &mut form.editing[0]),
                 UserManagementFormField::DisplayName => {
-                    form.display_name.pop();
+                    (&mut form.display_name, &mut form.editing[1])
                 }
-                UserManagementFormField::Password => {
-                    form.password.pop();
-                }
-                UserManagementFormField::Role
-                | UserManagementFormField::Submit
-                | UserManagementFormField::Cancel => {}
+                UserManagementFormField::Password => (&mut form.password, &mut form.editing[2]),
+                _ => return,
             },
             UserManagementMode::EditInfo(form)
                 if form.focused_field == UserManagementFormField::DisplayName =>
             {
-                form.display_name.pop();
+                (&mut form.display_name, &mut form.editing[1])
             }
-            UserManagementMode::EditInfo(_) => {}
-            UserManagementMode::Browse => {}
-        }
+            _ => return,
+        };
+        editing.handle_event(value, InputEvent::Key(key.clone()), Rect::default());
     }
 
     pub(in crate::session) fn move_user_management_form_focus(&mut self, direction: i8) {

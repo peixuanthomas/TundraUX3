@@ -385,7 +385,9 @@ fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
     } else {
         management_wrapped_lines(&field.label, width)
     };
-    if field.input.is_some() {
+    if field.input.is_some()
+        || (field.control == ManagementFormControl::Text && field.choices.is_empty())
+    {
         lines.push(String::new());
         return lines;
     }
@@ -1952,7 +1954,16 @@ pub fn render_management_overlay(
         let skip = layout
             .field_start
             .saturating_sub(layout.field_ranges[*index].0);
-        if let Some(input) = &field.input {
+        if field.input.is_some()
+            || (field.control == ManagementFormControl::Text && field.choices.is_empty())
+        {
+            if let Some(buttons) = &theme.buttons {
+                buttons.register_region(crate::components::ButtonRegion {
+                    id: management_field_id(form, *index).into(),
+                    area: *area,
+                    disabled: false,
+                });
+            }
             let label_rows = lines.len().saturating_sub(1);
             frame.render_widget(
                 Paragraph::new(
@@ -1963,14 +1974,28 @@ pub fn render_management_overlay(
                         .map(Line::from)
                         .collect::<Vec<_>>(),
                 )
-                .style(theme.body_style()),
+                .style(if form.selected == *index {
+                    theme.title_style()
+                } else {
+                    theme.body_style()
+                }),
                 *area,
             );
             if skip <= label_rows && label_rows - skip < usize::from(area.height) {
-                let input_area =
-                    Rect::new(area.x, area.y + (label_rows - skip) as u16, area.width, 1);
-                let mut input = input
+                let input_area = management_field_input_area(&layout, *index, field);
+                let mut input = field
+                    .input
                     .clone()
+                    .unwrap_or_else(|| {
+                        let mut input = TextInput::new(management_field_id(form, *index))
+                            .with_horizontal_scroll(true);
+                        input.set_value(if field.secret {
+                            "•".repeat(field.value.chars().count())
+                        } else {
+                            field.value.clone()
+                        });
+                        input
+                    })
                     .with_capture_name(&field.label)
                     .with_sensitive(field.secret);
                 input.id = management_field_id(form, *index).into();
@@ -2011,6 +2036,7 @@ pub fn render_management_overlay(
             management_field_id(form, *index),
             lines.into_iter().skip(skip).collect::<Vec<_>>().join("\n"),
         )
+        .with_current(form.selected == *index)
         .with_capture_name(&field.label)
         .with_sensitive(field.secret)
         .with_capture_role(match field.control {
@@ -2057,6 +2083,25 @@ pub fn render_management_overlay(
         ) {
             bar.render(frame, context);
         }
+    }
+}
+
+pub fn management_field_input_area(
+    layout: &ManagementLayout,
+    index: usize,
+    field: &ManagementFormField,
+) -> Rect {
+    let Some((_, area)) = layout.fields.iter().find(|(i, _)| *i == index) else {
+        return Rect::default();
+    };
+    let label_rows = field_lines(field, area.width).len().saturating_sub(1);
+    let skip = layout
+        .field_start
+        .saturating_sub(layout.field_ranges[index].0);
+    if skip <= label_rows && label_rows - skip < usize::from(area.height) {
+        Rect::new(area.x, area.y + (label_rows - skip) as u16, area.width, 1)
+    } else {
+        Rect::default()
     }
 }
 

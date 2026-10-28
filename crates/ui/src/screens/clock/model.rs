@@ -28,6 +28,7 @@ impl ClockEntryViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockCreateDialogViewModel {
+    pub cursor: usize,
     pub values: [u8; 3],
     pub active_field: usize,
     pub error: Option<String>,
@@ -39,6 +40,7 @@ impl ClockCreateDialogViewModel {
         Self {
             values,
             active_field: 0,
+            cursor: 2,
             error: None,
             focus: ClockCreateDialogFocus::Input,
         }

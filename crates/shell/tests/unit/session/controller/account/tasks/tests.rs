@@ -341,11 +341,13 @@ fn rejected_and_forbidden_account_operations_do_not_write_user_data() {
                     username: "other".into(),
                 },
                 5 => UserManagementOperation::EditInfo(UserManagementInfoForm {
+                    editing: Default::default(),
                     username: "other".into(),
                     display_name: "Changed".into(),
                     focused_field: UserManagementFormField::DisplayName,
                 }),
                 _ => UserManagementOperation::Create(UserManagementCreateForm {
+                    editing: Default::default(),
                     username: "created".into(),
                     display_name: "Created".into(),
                     password: "CreatedPassword123!".into(),

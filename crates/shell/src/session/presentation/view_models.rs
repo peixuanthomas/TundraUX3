@@ -1470,6 +1470,7 @@ impl ShellSession {
         model.entry_window_start = self.pages.clock.clock_entry_window_start;
         model.create_dialog = self.pages.clock.clock_create_state.as_ref().map(|state| {
             ui::ClockCreateDialogViewModel {
+                cursor: state.cursor,
                 values: state.values,
                 active_field: state.active_field,
                 error: state
@@ -1609,6 +1610,7 @@ impl ShellSession {
             accent_color_value: self.pages.setup.setup_accent_color.to_string(),
             custom_color_target: self.pages.setup.setup_custom_color_target,
             custom_color_input: self.pages.setup.setup_custom_color_input.clone(),
+            custom_color_editing: self.pages.setup.setup_custom_color_editing.clone(),
             custom_color_valid: !self.pages.setup.setup_custom_color_input.trim().is_empty()
                 && custom_color.is_some()
                 && !custom_color_conflicts_with_theme,
@@ -2205,6 +2207,7 @@ impl ShellSession {
         match &self.pages.user_management.user_management_mode {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(form) => Some(ui::UserManagementFormViewModel {
+                editing: form.editing.clone(),
                 kind: ui::UserManagementFormKind::Create,
                 title: i18n::tr!("shell-create-user"),
                 username: form.username.clone(),
@@ -2215,6 +2218,7 @@ impl ShellSession {
                 error: self.user_management_form_error(),
             }),
             UserManagementMode::EditInfo(form) => Some(ui::UserManagementFormViewModel {
+                editing: form.editing.clone(),
                 kind: ui::UserManagementFormKind::EditInfo,
                 title: i18n::tr!("shell-edit-user-info"),
                 username: form.username.clone(),

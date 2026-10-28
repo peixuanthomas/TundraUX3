@@ -98,6 +98,7 @@ fn slider_options_keep_visible_labels_and_share_rendered_hit_areas() {
                     }
                 }
                 model.color_editor = Some(SettingsColorEditorViewModel {
+                    editing: Default::default(),
                     title: "Color".into(),
                     value: String::new(),
                     error: None,
@@ -156,6 +157,7 @@ fn application_list_stays_left_of_settings_and_uses_the_same_hit_areas() {
         }
         let button = applications.options[0].1;
         model.color_editor = Some(SettingsColorEditorViewModel {
+            editing: Default::default(),
             title: "Color".into(),
             value: "#123456".into(),
             error: None,
@@ -202,6 +204,7 @@ fn operating_system_group_has_a_separate_hittable_entry_and_respects_overlays() 
             .unwrap();
         assert!(terminal_output(&terminal).contains("F8"));
         model.color_editor = Some(SettingsColorEditorViewModel {
+            editing: Default::default(),
             title: "Color".into(),
             value: "#123456".into(),
             error: None,
@@ -391,6 +394,7 @@ fn field_and_category_hit_targets_match_their_visible_areas() {
 fn picker_options_take_hit_priority_and_respect_the_visible_window() {
     let mut model = sample_model();
     model.picker = Some(SettingsPickerViewModel {
+        editing: Default::default(),
         kind: SettingsPickerKind::Timezone,
         title: "Choose timezone".to_string(),
         query: "tok".to_string(),
@@ -424,6 +428,7 @@ fn picker_options_take_hit_priority_and_respect_the_visible_window() {
 fn color_editor_captures_clicks_above_settings_content() {
     let mut model = sample_model();
     model.color_editor = Some(SettingsColorEditorViewModel {
+        editing: Default::default(),
         title: "Custom accent".to_string(),
         value: "#00FFFF".to_string(),
         error: Some("Accent must differ from border color.".to_string()),
@@ -457,6 +462,7 @@ fn color_editor_captures_clicks_above_settings_content() {
 fn file_extensions_editor_captures_clicks_and_shows_examples() {
     let mut model = sample_model();
     model.file_extensions_editor = Some(SettingsFileExtensionsEditorViewModel {
+        editing: Default::default(),
         value: ".md, .rs, .d.ts".to_string(),
         error: None,
     });
@@ -492,6 +498,7 @@ fn file_extensions_editor_captures_clicks_and_shows_examples() {
 fn time_sync_server_editor_shows_validation_state_and_captures_clicks() {
     let mut model = sample_model();
     model.time_sync_server_editor = Some(SettingsTimeSyncServerEditorViewModel {
+        editing: Default::default(),
         system_server_label: None,
         value: "https://time.example.test/".to_string(),
         error: None,
@@ -529,6 +536,7 @@ fn time_sync_server_editor_shows_validation_state_and_captures_clicks() {
 fn picker_truncates_wide_labels_by_terminal_columns() {
     let mut model = sample_model();
     model.picker = Some(SettingsPickerViewModel {
+        editing: Default::default(),
         kind: SettingsPickerKind::Language,
         title: "Choose language".to_string(),
         query: String::new(),

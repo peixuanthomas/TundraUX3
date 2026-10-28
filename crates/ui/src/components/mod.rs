@@ -57,7 +57,7 @@ pub use sidebar_workspace::{SidebarWorkspaceLayout, WorkspaceFocus};
 pub use skeleton::Skeleton;
 pub use surface::{Panel, Surface};
 pub use tabs::{TabItem, Tabs};
-pub use text_input::TextInput;
+pub use text_input::{TextEditState, TextInput};
 pub use update_activity::{UpdateActivity, UpdateActivityViewModel, UpdateMeterViewModel};
 /// Glacier name for the established editable text component.
 pub type TextField = TextInput;

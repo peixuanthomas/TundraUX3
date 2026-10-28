@@ -179,6 +179,7 @@ pub struct SetupViewModel {
     pub accent_color_value: String,
     pub custom_color_target: Option<SetupCustomColorTarget>,
     pub custom_color_input: String,
+    pub custom_color_editing: crate::components::TextEditState,
     pub custom_color_valid: bool,
     pub custom_color_conflicts_with_theme: bool,
     pub custom_color_error: Option<String>,

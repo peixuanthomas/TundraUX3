@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Borders, Paragraph, Widget};
 
@@ -14,6 +14,40 @@ use super::{
     ComponentEvent, ComponentId, ComponentState, InputEvent, Key, MouseButton, MouseKind,
     byte_index_for_char, char_count, contains_point, inner_area, interactive_style,
 };
+
+/// Keeps the cursor and selection when the text belongs to an existing form model.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextEditState {
+    cursor: Option<usize>,
+    selection_anchor: Option<usize>,
+}
+
+impl TextEditState {
+    pub fn input(&self, id: impl Into<ComponentId>, value: &str) -> TextInput {
+        let mut input = TextInput::new(id).with_horizontal_scroll(true);
+        input.set_value(value);
+        if let Some(cursor) = self.cursor {
+            input.set_cursor(cursor);
+        }
+        input.set_selection_anchor(self.selection_anchor);
+        input.set_focused(true);
+        input
+    }
+
+    pub fn handle_event(
+        &mut self,
+        value: &mut String,
+        event: InputEvent,
+        area: Rect,
+    ) -> ComponentEvent {
+        let mut input = self.input("", value);
+        let result = input.handle_event_borderless(event, area);
+        *value = input.value().to_owned();
+        self.cursor = Some(input.cursor());
+        self.selection_anchor = input.selection_anchor();
+        result
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextInput {
@@ -336,7 +370,7 @@ impl TextInput {
             self.text.clone()
         };
 
-        let cursor_visible = self.state.focused && !placeholder_visible;
+        let cursor_visible = self.state.focused && !self.state.disabled && !placeholder_visible;
         if cursor_visible {
             let insert_at = byte_index_for_char(&display, self.cursor);
             display.insert_str(insert_at, &self.cursor_symbol);
@@ -355,7 +389,7 @@ impl TextInput {
         let selected_style = Style::default().fg(tokens.surface).bg(tokens.focus);
         let mut spans = Vec::new();
         let mut run = String::new();
-        let mut run_selected = false;
+        let mut run_style = Style::default();
         for (index, character) in visible.chars().enumerate() {
             let display_index = start + index;
             let is_cursor =
@@ -369,27 +403,20 @@ impl TextInput {
                 && selection
                     .as_ref()
                     .is_some_and(|range| range.contains(&text_index));
-            if selected != run_selected && !run.is_empty() {
-                spans.push(Span::styled(
-                    std::mem::take(&mut run),
-                    if run_selected {
-                        selected_style
-                    } else {
-                        Style::default()
-                    },
-                ));
-            }
-            run_selected = selected;
-            run.push(character);
-        }
-        spans.push(Span::styled(
-            run,
-            if run_selected {
+            let style = if is_cursor {
+                theme.title_style().add_modifier(Modifier::SLOW_BLINK)
+            } else if selected {
                 selected_style
             } else {
                 Style::default()
-            },
-        ));
+            };
+            if style != run_style && !run.is_empty() {
+                spans.push(Span::styled(std::mem::take(&mut run), run_style));
+            }
+            run_style = style;
+            run.push(character);
+        }
+        spans.push(Span::styled(run, run_style));
         Line::from(spans)
     }
 
@@ -400,13 +427,20 @@ impl TextInput {
             .block()
             .borders(Borders::ALL)
             .style(style)
-            .border_style(theme.selectable_border_style(self.state.selected));
+            .border_style(if self.state.focused && !self.state.disabled {
+                theme.border_style().fg(theme.accent_color)
+            } else {
+                theme.selectable_border_style(self.state.selected)
+            });
         let line = self.display_line(block.inner(area).width as usize, theme);
         let text_style = if self.placeholder_is_visible() {
             theme.muted_style()
+        } else if self.state.focused && !self.state.disabled {
+            theme.title_style()
         } else {
             theme.body_style()
-        };
+        }
+        .remove_modifier(Modifier::SLOW_BLINK);
         Paragraph::new(line)
             .alignment(HorizontalAlignment::Left)
             .style(text_style)
@@ -427,7 +461,8 @@ impl TextInput {
             theme.muted_style()
         } else {
             interactive_style(self.state, theme)
-        };
+        }
+        .remove_modifier(Modifier::SLOW_BLINK);
         Paragraph::new(line)
             .alignment(HorizontalAlignment::Left)
             .style(style)

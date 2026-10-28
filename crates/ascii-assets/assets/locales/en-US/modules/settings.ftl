@@ -413,7 +413,7 @@ settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
 settings-animation-phase-help = Open a value to adjust or type 1–2000 ms, then confirm. Times apply at 100% speed.
 settings-number-range = Enter a number from { $min } to { $max }.
-settings-number-help = Left/Right: adjust · Type digits · Enter: confirm · Esc: cancel
+settings-number-help = Left/Right: move cursor · Type digits · −/+: adjust · Enter: confirm · Esc: cancel
 
 
 ui-control-settings-title = External CLI control

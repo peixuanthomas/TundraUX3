@@ -318,10 +318,23 @@ fn render_clock_create_input(
         for (area, text) in [
             (layout.labels[index], label),
             (layout.increments[index], "▲".to_string()),
-            (layout.values[index], value),
+            (layout.values[index], value.clone()),
             (layout.decrements[index], "▼".to_string()),
         ] {
             render_clock_line(frame, area, text, style, HorizontalAlignment::Center);
+        }
+        if focused {
+            let area = layout.values[index];
+            let width =
+                crate::components::terminal_width(&value).min(usize::from(area.width)) as u16;
+            let input_area =
+                Rect::new(area.x + (area.width - width) / 2 + 2, area.y, 3, 1).intersection(area);
+            let mut input =
+                crate::components::TextInput::new(format!("clock.create.{index}.input"));
+            input.set_value(format!("{:02}", model.values[index]));
+            input.set_cursor(model.cursor);
+            input.set_focused(true);
+            input.render_borderless_frame(frame, input_area, theme);
         }
     }
 }

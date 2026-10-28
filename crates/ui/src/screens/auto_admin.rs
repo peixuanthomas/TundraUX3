@@ -25,6 +25,7 @@ pub struct AutoAdminViewModel {
     pub button_focus: Option<usize>,
     pub scroll: u16,
     pub input: Option<String>,
+    pub input_editing: crate::components::TextEditState,
     pub input_sensitive: bool,
     pub terminal: Arc<CommandLineTerminalSnapshot>,
     pub stop: AutoAdminStopState,
@@ -355,14 +356,23 @@ pub(super) fn render_auto_admin_contents(
     let hint = hint_override
         .map(str::to_owned)
         .unwrap_or_else(|| auto_admin_hint(model));
-    if model.input.is_some() && crate::automation::enabled() {
-        let mut input = crate::automation::node("aa.input", "textbox", "", layout.input);
-        input.focused = model.button_focus.is_none();
-        input.sensitive = model.input_sensitive;
-        input.actions = vec!["click".into(), "text".into(), "key".into()];
-        crate::automation::record(input);
+    if let Some(value) = &model.input
+        && model.stop != AutoAdminStopState::Warning
+    {
+        let mut input = model
+            .input_editing
+            .input("aa.input", value.strip_prefix("> ").unwrap_or(value))
+            .with_sensitive(model.input_sensitive);
+        input.set_focused(model.button_focus.is_none());
+        input.render_borderless_frame_with_prefix(
+            frame,
+            layout.input,
+            &context.compatibility_theme(),
+            "> ",
+        );
+    } else {
+        frame.render_widget(wrapped_paragraph(&hint, layout.input.width), layout.input);
     }
-    frame.render_widget(wrapped_paragraph(&hint, layout.input.width), layout.input);
     let labels = if model.stop == AutoAdminStopState::Warning {
         vec![
             (

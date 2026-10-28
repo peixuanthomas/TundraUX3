@@ -752,6 +752,7 @@ impl ShellSession {
     ) {
         self.capture_modal_focus_context();
         self.pages.setup.setup_custom_color_target = Some(target);
+        self.pages.setup.setup_custom_color_editing = Default::default();
         self.pages.setup.setup_custom_color_input = match target {
             ui::SetupCustomColorTarget::Theme => self.pages.setup.setup_theme_color.to_string(),
             ui::SetupCustomColorTarget::Accent => self.pages.setup.setup_accent_color.to_string(),
@@ -767,15 +768,25 @@ impl ShellSession {
         {
             return;
         }
-        self.pages.setup.setup_custom_color_input.push(character);
+        self.edit_setup_custom_color(&KeyInput::new(InputKey::Char(character)));
         self.pages.setup.setup_custom_color_error = None;
     }
 
     pub(in crate::session) fn setup_custom_color_backspace(&mut self) {
         if self.pages.setup.setup_custom_color_target.is_some() {
-            self.pages.setup.setup_custom_color_input.pop();
+            self.edit_setup_custom_color(&KeyInput::new(InputKey::Backspace));
             self.pages.setup.setup_custom_color_error = None;
         }
+    }
+
+    pub(in crate::session) fn edit_setup_custom_color(&mut self, key: &KeyInput) {
+        let state = &mut *self.pages.setup;
+        state.setup_custom_color_editing.handle_event(
+            &mut state.setup_custom_color_input,
+            InputEvent::Key(key.clone()),
+            Rect::default(),
+        );
+        state.setup_custom_color_error = None;
     }
 
     pub(in crate::session) fn apply_setup_custom_color(&mut self) {

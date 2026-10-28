@@ -27,6 +27,7 @@ pub enum UserManagementFormKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserManagementFormViewModel {
+    pub editing: [crate::components::TextEditState; 3],
     pub kind: UserManagementFormKind,
     pub title: String,
     pub username: String,

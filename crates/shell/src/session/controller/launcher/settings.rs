@@ -327,6 +327,26 @@ impl ShellSession {
                 });
             }
             ui::MouseEventKind::Down(PointerButton::Left) => {
+                if let Some((index, _)) = layout
+                    .fields
+                    .iter()
+                    .find(|(_, area)| rect_contains(*area, point))
+                    && *index > 0
+                    && state.embedded
+                {
+                    state.selected = *index;
+                    let field = &self.launcher_run_settings_form().unwrap().fields[*index];
+                    let area = ui::management_field_input_area(&layout, *index, field);
+                    let state = self.pages.launcher.launcher_run_settings.as_mut().unwrap();
+                    let input = if *index == 1 {
+                        &mut state.arguments
+                    } else {
+                        &mut state.directory
+                    };
+                    input.set_focused(true);
+                    input.handle_event_borderless(InputEvent::Mouse(mouse), area);
+                    return;
+                }
                 if let Some(bar) = layout.scrollbars.iter().find(|bar| {
                     matches!(
                         bar.target,

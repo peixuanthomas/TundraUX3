@@ -101,6 +101,7 @@ fn entry_window_slices_alarms_then_countdowns_and_preserves_ids() {
 fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
+        cursor: 2,
         values: [0; 3],
         active_field: 0,
         error: Some("Use hh mm ss".to_string()),
@@ -147,6 +148,7 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
 fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
+        cursor: 2,
         values: [1, 2, 3],
         active_field: 0,
         error: Some("Example error".to_string()),

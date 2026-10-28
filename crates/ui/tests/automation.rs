@@ -297,6 +297,7 @@ fn aa_secret_is_hidden_while_real_terminal_text_and_wide_characters_remain_visib
         scroll: 0,
         input: Some(secret.into()),
         input_sensitive: true,
+        input_editing: Default::default(),
         terminal: std::sync::Arc::new(terminal_output),
         stop: Default::default(),
         can_kill: false,

@@ -370,6 +370,7 @@ fn reduced_motion_cancels_effects_and_flushes_pending_close() {
 fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     fn theme_picker() -> SettingsPickerState {
         SettingsPickerState {
+            editing: Default::default(),
             options: Vec::new(),
             kind: ui::SettingsPickerKind::Theme,
             query: String::new(),
@@ -1080,6 +1081,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
         status: String::new().into(),
         scroll_offset: 0,
         picker: Some(SettingsPickerState {
+            editing: Default::default(),
             options: Vec::new(),
             kind: ui::SettingsPickerKind::Theme,
             query: String::new(),

@@ -355,6 +355,7 @@ impl ShellSession {
         };
         state.focus = focus;
         state.pending_digit = false;
+        state.cursor = 2;
         self.pages.common.focused_component = match focus {
             ui::ClockCreateDialogFocus::Input => ShellComponent::ClockCreateInput,
             ui::ClockCreateDialogFocus::CreateAlarm => ShellComponent::ClockCreateAlarmButton,
@@ -398,7 +399,13 @@ impl ShellSession {
         let field = state.active_field;
         let digit = character as u8 - b'0';
         let limit = if field == 0 { 23 } else { 59 };
-        let value = if state.pending_digit {
+        let value = if state.cursor < 2 {
+            if state.cursor == 0 {
+                digit * 10 + state.values[field] % 10
+            } else {
+                state.values[field] / 10 * 10 + digit
+            }
+        } else if state.pending_digit {
             state.values[field] * 10 + digit
         } else {
             digit
@@ -408,11 +415,13 @@ impl ShellSession {
         }
         state.values[field] = value;
         state.error = None;
+        if state.cursor < 2 {
+            state.cursor += 1;
+            state.pending_digit = false;
+            return;
+        }
         if state.pending_digit {
             state.pending_digit = false;
-            if field < 2 {
-                state.active_field += 1;
-            }
         } else {
             state.pending_digit = true;
         }
@@ -423,7 +432,15 @@ impl ShellSession {
             return;
         };
         if state.focus == ui::ClockCreateDialogFocus::Input {
-            state.values[state.active_field] = 0;
+            if state.cursor == 0 {
+                return;
+            }
+            state.cursor -= 1;
+            if state.cursor == 0 {
+                state.values[state.active_field] %= 10;
+            } else {
+                state.values[state.active_field] = state.values[state.active_field] / 10 * 10;
+            }
             state.pending_digit = false;
             state.error = None;
         }

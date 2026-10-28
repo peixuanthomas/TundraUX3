@@ -224,6 +224,9 @@ impl ShellSession {
             self.refresh_hit_map();
             return;
         }
+        if self.handle_settings_text_edit_key(key) {
+            return;
+        }
         if self
             .pages
             .settings
@@ -548,9 +551,22 @@ impl ShellSession {
             Some(ui::SettingsHitTarget::ColorEditor)
             | Some(ui::SettingsHitTarget::WeatherLocationEditor)
             | Some(ui::SettingsHitTarget::FileExtensionsEditor)
-            | Some(ui::SettingsHitTarget::TimeSyncServerEditor)
-            | Some(ui::SettingsHitTarget::NumberEditor)
-            | None => {}
+            | Some(ui::SettingsHitTarget::TimeSyncServerEditor) => {
+                if let Some(dialog) = layout
+                    .color_editor
+                    .or(layout.weather_location_editor)
+                    .or(layout.file_extensions_editor)
+                    .or(layout.time_sync_server_editor)
+                {
+                    let mut area = ui::settings_text_input_area(dialog);
+                    area.x += 2;
+                    area.width = area.width.saturating_sub(2);
+                    if rect_contains(area, coordinates) {
+                        self.edit_settings_text(InputEvent::Mouse(input), area);
+                    }
+                }
+            }
+            Some(ui::SettingsHitTarget::NumberEditor) | None => {}
         }
         self.refresh_hit_map();
     }

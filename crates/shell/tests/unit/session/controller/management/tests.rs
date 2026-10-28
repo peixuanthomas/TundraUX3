@@ -6,6 +6,88 @@ mod package_workspace;
 mod selection;
 
 #[test]
+fn management_form_click_navigation_and_editing_keep_the_same_input_position() {
+    let mut session = shortcut_action_state(ManagementKind::Users, "create_user");
+    session.pages.management.management_state.form = Some(ManagementEditor {
+        instance: next_management_form_instance(),
+        input_states: Default::default(),
+        title: "Create account".into(),
+        message: String::new(),
+        message_scroll: 0,
+        selected: 0,
+        fields: vec![
+            ManagementField {
+                id: "username".into(),
+                label: "账户".into(),
+                value: "甲乙".into(),
+                ..Default::default()
+            },
+            ManagementField {
+                id: "password".into(),
+                label: "密码".into(),
+                secret: true,
+                ..Default::default()
+            },
+        ],
+        purpose: FormPurpose::Configuration("test".into()),
+    });
+    let model = session.to_management_view_model();
+    let layout = ui::management_layout(session.management_main(), &model);
+    let area = ui::management_field_input_area(&layout, 0, &model.form.as_ref().unwrap().fields[0]);
+    click_management_point(&mut session, (area.x + 2, area.y));
+    for key in [
+        InputKey::Char('文'),
+        InputKey::Down,
+        InputKey::Char('密'),
+        InputKey::Up,
+        InputKey::Left,
+    ] {
+        session.handle_management_key(&KeyInput::new(key));
+    }
+    session.handle_management_paste("X");
+    let form = session
+        .pages
+        .management
+        .management_state
+        .form
+        .as_ref()
+        .unwrap();
+    assert_eq!(form.selected, 0);
+    assert_eq!(form.fields[0].value, "甲X文乙");
+    assert_eq!(form.fields[1].value, "密");
+    let model = session.to_management_view_model();
+    let secret = &model.form.unwrap().fields[1];
+    assert!(secret.secret);
+    assert_eq!(secret.input.as_ref().unwrap().value(), "•");
+    session
+        .pages
+        .management
+        .management_state
+        .form
+        .as_mut()
+        .unwrap()
+        .fields[1]
+        .value = "秘密".into();
+    let model = session.to_management_view_model();
+    let layout = ui::management_layout(session.management_main(), &model);
+    let area = ui::management_field_input_area(&layout, 1, &model.form.as_ref().unwrap().fields[1]);
+    click_management_point(&mut session, (area.x + 1, area.y));
+    session.handle_management_key(&KeyInput::new(InputKey::Char('X')));
+    assert_eq!(
+        session
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .unwrap()
+            .fields[1]
+            .value,
+        "秘X密"
+    );
+}
+
+#[test]
 fn task_output_returns_to_the_list_with_escape_or_the_back_button() {
     for pointer in [false, true] {
         let mut session = shortcut_action_state(ManagementKind::Tasks, "task_output");
@@ -437,6 +519,7 @@ fn management_form_f10_answers_once_and_tab_applies_pending_search() {
     session.pages.management.management_state.operation_job = Some(job);
     session.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Scheduled task answer".into(),
         message: String::new(),
         message_scroll: 0,
@@ -1285,6 +1368,7 @@ fn account_view_field_keeps_its_meaning_in_both_languages() {
                 session.language = language.clone();
                 session.pages.management.management_state.form = Some(ManagementEditor {
                     instance: next_management_form_instance(),
+                    input_states: Default::default(),
                     title: "View".into(),
                     message: String::new(),
                     message_scroll: 0,
@@ -2021,6 +2105,7 @@ fn management_choice_enter_and_form_control_enter_preserve_input_and_required_ch
     session.pages.management.management_state.operation_job = Some(job);
     session.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Mock question".into(),
         message: String::new(),
         message_scroll: 0,
@@ -2337,6 +2422,7 @@ fn terminal_ctrl_c_is_routed_to_task_and_configuration_cannot_be_dismissed() {
     ));
     state.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         message_scroll: 0,
         title: "Configuration".into(),
         message: String::new(),
@@ -2425,6 +2511,7 @@ fn text_fields_take_priority_over_actions_and_keep_secrets_out_of_view_model() {
     let mut state = state();
     state.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         message_scroll: 0,
         title: "Authorization".into(),
         message: String::new(),
@@ -2463,6 +2550,7 @@ fn choice_fields_reject_free_text_and_paste() {
     let mut state = state();
     state.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         message_scroll: 0,
         title: "Choice".into(),
         message: String::new(),
@@ -2656,6 +2744,7 @@ fn touch_choice_list_selects_without_cycling_or_submitting() {
     let mut state = state();
     state.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Choice".into(),
         message: String::new(),
         message_scroll: 0,
@@ -2844,6 +2933,7 @@ fn terminal_events_close_the_choice_list_and_release_form_drag() {
         let mut state = state();
         state.pages.management.management_state.form = Some(ManagementEditor {
             instance: next_management_form_instance(),
+            input_states: Default::default(),
             title: "Question".into(),
             message: String::new(),
             message_scroll: 0,
@@ -3855,6 +3945,7 @@ fn scheduled_task_name_and_account_source_keep_their_context_in_chinese() {
         let mut session = shortcut_action_state(ManagementKind::ScheduledTasks, "create_task");
         session.pages.management.management_state.form = Some(ManagementEditor {
             instance: next_management_form_instance(),
+            input_states: Default::default(),
             title: "create".into(),
             message: String::new(),
             message_scroll: 0,

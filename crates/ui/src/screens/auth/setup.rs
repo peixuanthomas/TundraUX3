@@ -727,11 +727,14 @@ fn render_setup_custom_color_dialog(
         let input_inner = input_surface.inner(input_area);
         input_surface.render_frame(frame, input_area, &input_context);
 
-        let mut input = TextInput::new("setup.appearance.custom-color-input")
+        let mut input = model
+            .custom_color_editing
+            .input(
+                "setup.appearance.custom-color-input",
+                &model.custom_color_input,
+            )
             .with_placeholder("#38BDF8")
-            .with_placeholder_when_focused(true)
             .with_cursor_symbol("_");
-        input.set_value(&model.custom_color_input);
         input.set_focused(true);
         input.render_borderless_frame(
             frame,

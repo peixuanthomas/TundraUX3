@@ -718,6 +718,10 @@ impl ShellSession {
                 self.append_setup_custom_color_char(character);
                 ShellAction::Redraw
             }
+            ShellCommand::EditSetupCustomColor(key) => {
+                self.edit_setup_custom_color(&key);
+                ShellAction::Redraw
+            }
             ShellCommand::SetupCustomColorBackspace => {
                 self.setup_custom_color_backspace();
                 ShellAction::Redraw
@@ -1905,6 +1909,14 @@ impl ShellSession {
                 self.append_clock_create_char(character);
                 ShellAction::Redraw
             }
+            ShellCommand::ClockCreateMoveCursor(direction) => {
+                if let Some(state) = &mut self.pages.clock.clock_create_state {
+                    state.cursor =
+                        (state.cursor as isize + isize::from(direction)).clamp(0, 2) as usize;
+                    state.pending_digit = false;
+                }
+                ShellAction::Redraw
+            }
             ShellCommand::ClockCreateBackspace => {
                 self.clock_create_backspace();
                 ShellAction::Redraw
@@ -2088,6 +2100,10 @@ impl ShellSession {
             }
             ShellCommand::UserManagementBackspace => {
                 self.user_management_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::EditUserManagementText(key) => {
+                self.edit_user_management_text(&key);
                 ShellAction::Redraw
             }
             ShellCommand::UserManagementFocusNext => {

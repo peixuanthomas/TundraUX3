@@ -219,6 +219,11 @@ impl ShellSession {
                 InputKey::Escape => (target, ShellCommand::CancelSetupCustomColor),
                 InputKey::Enter => (target, ShellCommand::ApplySetupCustomColor),
                 InputKey::Backspace => (target, ShellCommand::SetupCustomColorBackspace),
+                InputKey::Left
+                | InputKey::Right
+                | InputKey::Home
+                | InputKey::End
+                | InputKey::Delete => (target, ShellCommand::EditSetupCustomColor(key.clone())),
                 InputKey::Char(character) => {
                     (target, ShellCommand::AppendSetupCustomColorChar(*character))
                 }
@@ -383,6 +388,15 @@ impl ShellSession {
                 }
                 InputKey::Tab | InputKey::Down => (target, ShellCommand::UserManagementFocusNext),
                 InputKey::Up => (target, ShellCommand::UserManagementFocusPrevious),
+                InputKey::Left
+                | InputKey::Right
+                | InputKey::Home
+                | InputKey::End
+                | InputKey::Delete
+                    if editing_text =>
+                {
+                    (target, ShellCommand::EditUserManagementText(key.clone()))
+                }
                 InputKey::Left | InputKey::Right
                     if field == Some(UserManagementFormField::Role) =>
                 {

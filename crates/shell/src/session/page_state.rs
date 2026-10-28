@@ -92,6 +92,7 @@ pub(super) struct SetupPageState {
     pub(super) setup_accent_color: storage::AccentColor,
     pub(super) setup_custom_color_target: Option<ui::SetupCustomColorTarget>,
     pub(super) setup_custom_color_input: String,
+    pub(super) setup_custom_color_editing: ui::components::TextEditState,
     pub(super) setup_custom_color_error: Option<i18n::LocalizedText>,
 }
 impl Default for SetupPageState {
@@ -111,6 +112,7 @@ impl Default for SetupPageState {
             setup_accent_color: storage::AppearanceConfig::default().accent_color,
             setup_custom_color_target: None,
             setup_custom_color_input: String::new(),
+            setup_custom_color_editing: Default::default(),
             setup_custom_color_error: None,
         }
     }

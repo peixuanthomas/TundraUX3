@@ -451,6 +451,7 @@ impl ShellSession {
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.system_time.server_field = None;
             state.picker = Some(SettingsPickerState {
+                editing: Default::default(),
                 kind: ui::SettingsPickerKind::SystemTimeServers,
                 query: String::new(),
                 selected_index: 0,
@@ -477,6 +478,7 @@ impl ShellSession {
             state.system_time.server_field = Some(field.id);
             state.picker = None;
             state.time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
+                editing: Default::default(),
                 value: field.value,
                 error: None,
                 validating: false,

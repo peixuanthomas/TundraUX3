@@ -2790,7 +2790,8 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         ui::SettingsField::SystemLowAvailable
     );
     state.apply_input(InputEvent::from_key_label("Enter"));
-    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("Ctrl+A"));
+    state.apply_input(InputEvent::from_key_label("6"));
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(
         manager
@@ -3369,6 +3370,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     users.set_navigation_path(vec![ShellScreen::UserManagement]);
     users.pages.user_management.user_management_mode =
         UserManagementMode::Create(UserManagementCreateForm {
+            editing: Default::default(),
             username: "first".into(),
             display_name: "First".into(),
             password: "secret".into(),
@@ -3386,6 +3388,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     );
     users.pages.user_management.user_management_mode =
         UserManagementMode::EditInfo(UserManagementInfoForm {
+            editing: Default::default(),
             username: "user".into(),
             display_name: "Display".into(),
             focused_field: UserManagementFormField::DisplayName,
@@ -3393,6 +3396,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     let edit = users.active_overlay_descriptor().expect("edit user");
     users.pages.user_management.user_management_mode =
         UserManagementMode::EditInfo(UserManagementInfoForm {
+            editing: Default::default(),
             username: "other-user".into(),
             display_name: "Typed name".into(),
             focused_field: UserManagementFormField::DisplayName,
@@ -3443,6 +3447,7 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
     users.set_navigation_path(vec![ShellScreen::UserManagement]);
     users.pages.user_management.user_management_mode =
         UserManagementMode::EditInfo(UserManagementInfoForm {
+            editing: Default::default(),
             username: "user".into(),
             display_name: String::new(),
             focused_field: UserManagementFormField::DisplayName,
@@ -3919,6 +3924,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
             .as_mut()
             .expect("settings");
         settings.color_editor = Some(SettingsColorEditorState {
+            editing: Default::default(),
             kind,
             value: "#112233".into(),
             error: Some("first error".into()),
@@ -3954,6 +3960,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         .as_mut()
         .expect("settings")
         .weather_location_editor = Some(SettingsWeatherLocationEditorState {
+        editing: Default::default(),
         value: "first".into(),
         error: None,
     });
@@ -3977,6 +3984,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         .as_mut()
         .expect("settings")
         .file_extensions_editor = Some(SettingsFileExtensionsEditorState {
+        editing: Default::default(),
         value: "md".into(),
         error: None,
     });
@@ -4000,6 +4008,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
         .as_mut()
         .expect("settings")
         .time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
+        editing: Default::default(),
         value: "time.example".into(),
         error: Some("error".into()),
         validating: true,
@@ -4769,7 +4778,7 @@ fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
     state.set_navigation_path(vec![ShellScreen::Clock]);
     state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     state.refresh_hit_map();
-    for key in ["2", "3", "5", "9", "5", "9"] {
+    for key in ["2", "3", "Down", "5", "9", "Down", "5", "9"] {
         state.apply_input(InputEvent::from_key_label(key));
     }
     assert_eq!(
@@ -4791,7 +4800,7 @@ fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
             .as_ref()
             .unwrap()
             .values,
-        [23, 59, 0]
+        [23, 59, 59]
     );
     state.apply_input(InputEvent::from_key_label("Down"));
     assert_eq!(
@@ -4816,9 +4825,8 @@ fn clock_create_keyboard_edits_three_fields_and_cycles_actions() {
             .as_ref()
             .unwrap()
             .values,
-        [23, 4, 59]
+        [23, 59, 49]
     );
-    state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(
         state.pages.common.focused_component,
         ShellComponent::ClockCreateAlarmButton
@@ -5289,6 +5297,7 @@ fn clock_button_routes_before_explorer_popup_and_app_forms() {
     user_management.set_navigation_path(vec![ShellScreen::UserManagement]);
     user_management.pages.user_management.user_management_mode =
         UserManagementMode::Create(UserManagementCreateForm {
+            editing: Default::default(),
             username: String::new(),
             display_name: String::new(),
             password: String::new(),

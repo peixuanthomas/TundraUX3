@@ -422,6 +422,7 @@ impl ShellSession {
                 .collect::<Vec<_>>();
             self.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
+                input_states: Default::default(),
                 title: i18n::tr!("management-more-actions"),
                 message: String::new(),
                 message_scroll: 0,
@@ -500,6 +501,7 @@ impl ShellSession {
             self.reset_management_form_view();
             self.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
+                input_states: Default::default(),
                 message_scroll: 0,
                 title: management_label(&action.id, &action.label),
                 message,

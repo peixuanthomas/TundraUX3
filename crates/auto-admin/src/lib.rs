@@ -38,6 +38,7 @@ struct Question {
     choices: Vec<String>,
     secret: bool,
     value: Zeroizing<String>,
+    editing: ui::components::TextEditState,
 }
 
 struct Display {
@@ -338,6 +339,7 @@ impl AutoAdminJob {
                     choices: choices.clone(),
                     secret: *secret,
                     value: Zeroizing::new(String::new()),
+                    editing: Default::default(),
                 });
             }
             OperationEvent::Completed { message }
@@ -471,18 +473,20 @@ impl AutoAdminJob {
                     let _ = self.0.responses.send(OperationInput::Cancel);
                     d.question = None;
                 }
-                InputKey::Backspace => {
-                    q.value.pop();
+                _ => {
+                    let added = match key.key {
+                        InputKey::Char(c) => c.len_utf8(),
+                        InputKey::Space => 1,
+                        _ => 0,
+                    };
+                    if q.value.len() + added <= 16 * 1024 {
+                        q.editing.handle_event(
+                            &mut q.value,
+                            ui::InputEvent::Key(key.clone()),
+                            Rect::default(),
+                        );
+                    }
                 }
-                InputKey::Char(c)
-                    if !c.is_control()
-                        && !key.modifiers.is_control()
-                        && q.value.len() < 16 * 1024 =>
-                {
-                    q.value.push(c)
-                }
-                InputKey::Space if q.value.len() < 16 * 1024 => q.value.push(' '),
-                _ => {}
             }
             d.revision += 1;
             return key.key == InputKey::Enter && key.phase == InputPhase::Press;
@@ -495,18 +499,42 @@ impl AutoAdminJob {
         }
         false
     }
+    pub fn click_input(&self, point: (u16, u16), mut area: Rect) {
+        let mut d = self.0.display.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(q) = &mut d.question {
+            let mut value = if q.secret {
+                "•".repeat(q.value.chars().count())
+            } else {
+                q.value.to_string()
+            };
+            area.x += 2;
+            area.width = area.width.saturating_sub(2);
+            q.editing.handle_event(
+                &mut value,
+                ui::InputEvent::mouse_down(ui::MouseButton::Left, point),
+                area,
+            );
+            d.revision += 1;
+        }
+    }
+
     pub fn paste(&self, text: &str) {
         if !self.accepts_input() {
             return;
         }
         let mut d = self.0.display.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(q) = &mut d.question {
-            for c in text.chars().filter(|c| !c.is_control()) {
-                if q.value.len() + c.len_utf8() > 16 * 1024 {
-                    break;
-                }
-                q.value.push(c);
-            }
+            let mut length = q.value.len();
+            let text: String = text
+                .chars()
+                .filter(|c| !c.is_control())
+                .take_while(|c| {
+                    length += c.len_utf8();
+                    length <= 16 * 1024
+                })
+                .collect();
+            q.editing
+                .handle_event(&mut q.value, ui::InputEvent::Paste(text), Rect::default());
             d.revision += 1;
             return;
         }
@@ -611,7 +639,7 @@ impl AutoAdminJob {
         let snapshot = TerminalSnapshot::from_parser(&mut d.parser);
         let finished = matches!(self.phase(), DENIED | FINISHED);
         let mut terminal = to_ui_snapshot(&snapshot);
-        if finished {
+        if finished || d.question.is_some() || button_focus.is_some() {
             for cell in &mut terminal.cells {
                 cell.cursor = false;
             }
@@ -626,6 +654,11 @@ impl AutoAdminJob {
             scroll,
             input,
             input_sensitive: d.question.as_ref().is_some_and(|question| question.secret),
+            input_editing: d
+                .question
+                .as_ref()
+                .map(|question| question.editing.clone())
+                .unwrap_or_default(),
             terminal: Arc::new(terminal),
             stop: d
                 .stop

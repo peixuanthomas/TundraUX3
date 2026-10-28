@@ -157,6 +157,7 @@ impl ShellSession {
                 let Ok((from, to)) = range else {
                     state.form = Some(ManagementEditor {
                         instance: next_management_form_instance(),
+                        input_states: Default::default(),
                         title: action.label.clone(),
                         message: i18n::tr!("backup-filter-invalid-date"),
                         message_scroll: 0,

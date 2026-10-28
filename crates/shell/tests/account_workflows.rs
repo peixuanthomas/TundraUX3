@@ -1898,7 +1898,12 @@ fn open_clock(state: &mut ShellSession) {
 fn create_clock_entry(state: &mut ShellSession, input: &str, countdown: bool) {
     state.apply_input(InputEvent::from_key_label("n"));
     assert_eq!(state.focused_component(), ShellComponent::ClockCreateInput);
-    type_text(state, input);
+    for (index, digits) in input.split_whitespace().enumerate() {
+        if index > 0 {
+            state.apply_input(InputEvent::from_key_label("Down"));
+        }
+        type_text(state, digits);
+    }
     state.apply_input(InputEvent::from_key_label("Tab"));
     if countdown {
         state.apply_input(InputEvent::from_key_label("Tab"));

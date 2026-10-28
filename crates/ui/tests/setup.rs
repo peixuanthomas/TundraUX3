@@ -165,6 +165,7 @@ fn sample_model_with_timezone(
         accent_color: Color::Cyan,
         accent_color_value: "cyan".to_string(),
         custom_color_target: None,
+        custom_color_editing: Default::default(),
         custom_color_input: String::new(),
         custom_color_valid: false,
         custom_color_conflicts_with_theme: false,

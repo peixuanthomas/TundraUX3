@@ -2,6 +2,40 @@ use super::*;
 use crate::session::*;
 
 impl ShellSession {
+    pub(super) fn handle_settings_text_edit_key(&mut self, key: &KeyInput) -> bool {
+        if !matches!(
+            key.key,
+            InputKey::Left | InputKey::Right | InputKey::Home | InputKey::End | InputKey::Delete
+        ) && !(key.modifiers.control && matches!(key.key, InputKey::Char('a' | 'A')))
+        {
+            return false;
+        }
+        self.edit_settings_text(InputEvent::Key(key.clone()), Rect::default())
+    }
+
+    pub(super) fn edit_settings_text(&mut self, event: InputEvent, area: Rect) -> bool {
+        let Some(state) = self.pages.settings.settings_state.as_mut() else {
+            return false;
+        };
+        let (value, editing, error) = if let Some(editor) = &mut state.color_editor {
+            (&mut editor.value, &mut editor.editing, &mut editor.error)
+        } else if let Some(editor) = &mut state.weather_location_editor {
+            (&mut editor.value, &mut editor.editing, &mut editor.error)
+        } else if let Some(editor) = &mut state.file_extensions_editor {
+            (&mut editor.value, &mut editor.editing, &mut editor.error)
+        } else if let Some(editor) = &mut state.time_sync_server_editor {
+            if editor.validating {
+                return true;
+            }
+            (&mut editor.value, &mut editor.editing, &mut editor.error)
+        } else {
+            return false;
+        };
+        editing.handle_event(value, event, area);
+        *error = None;
+        true
+    }
+
     pub(in crate::session) fn open_settings_picker(&mut self, kind: ui::SettingsPickerKind) {
         if !matches!(
             kind,
@@ -18,6 +52,7 @@ impl ShellSession {
         let image_icons_supported = self.terminal_image_support;
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.picker = Some(SettingsPickerState {
+                editing: Default::default(),
                 options: Vec::new(),
                 kind,
                 query: String::new(),
@@ -101,6 +136,30 @@ impl ShellSession {
         if key.has_non_shift_modifier() {
             return;
         }
+        if matches!(key.key, InputKey::Left | InputKey::Right | InputKey::Delete) {
+            if let Some(picker) = self
+                .pages
+                .settings
+                .settings_state
+                .as_mut()
+                .and_then(|state| state.picker.as_mut())
+                && matches!(
+                    picker.kind,
+                    ui::SettingsPickerKind::Language | ui::SettingsPickerKind::Timezone
+                )
+            {
+                picker.editing.handle_event(
+                    &mut picker.query,
+                    InputEvent::Key(key.clone()),
+                    Rect::default(),
+                );
+                if key.key == InputKey::Delete {
+                    picker.selected_index = 0;
+                    picker.window_start = 0;
+                }
+            }
+            return;
+        }
         match &key.key {
             InputKey::Escape => {
                 let return_to_theme = self
@@ -143,7 +202,11 @@ impl ShellSession {
                         ui::SettingsPickerKind::Language | ui::SettingsPickerKind::Timezone
                     )
                 {
-                    picker.query.pop();
+                    picker.editing.handle_event(
+                        &mut picker.query,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     picker.selected_index = 0;
                     picker.window_start = 0;
                 }
@@ -166,7 +229,11 @@ impl ShellSession {
                 if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(picker) = state.picker.as_mut()
                 {
-                    picker.query.push(*character);
+                    picker.editing.handle_event(
+                        &mut picker.query,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     picker.selected_index = 0;
                     picker.window_start = 0;
                 }
@@ -328,6 +395,7 @@ impl ShellSession {
                     if let Some(state) = self.pages.settings.settings_state.as_mut() {
                         state.picker = None;
                         state.color_editor = Some(SettingsColorEditorState {
+                            editing: Default::default(),
                             kind: picker.kind,
                             value: "#".to_string(),
                             error: None,
@@ -451,8 +519,11 @@ impl ShellSession {
             .clone()
             .unwrap_or_default();
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
-            state.weather_location_editor =
-                Some(SettingsWeatherLocationEditorState { value, error: None });
+            state.weather_location_editor = Some(SettingsWeatherLocationEditorState {
+                editing: Default::default(),
+                value,
+                error: None,
+            });
             state.picker = None;
             state.color_editor = None;
             state.file_extensions_editor = None;
@@ -471,8 +542,11 @@ impl ShellSession {
             &self.app.storage_config().editor.explorer_open_extensions,
         );
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
-            state.file_extensions_editor =
-                Some(SettingsFileExtensionsEditorState { value, error: None });
+            state.file_extensions_editor = Some(SettingsFileExtensionsEditorState {
+                editing: Default::default(),
+                value,
+                error: None,
+            });
             state.picker = None;
             state.color_editor = None;
             state.weather_location_editor = None;
@@ -504,6 +578,7 @@ impl ShellSession {
             .unwrap_or_default();
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
+                editing: Default::default(),
                 value,
                 error: None,
                 validating: false,
@@ -546,7 +621,11 @@ impl ShellSession {
                     .as_mut()
                     .and_then(|state| state.time_sync_server_editor.as_mut())
                 {
-                    editor.value.pop();
+                    editor.editing.handle_event(
+                        &mut editor.value,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     editor.error = None;
                 }
             }
@@ -567,7 +646,11 @@ impl ShellSession {
                             .into(),
                         );
                     } else {
-                        editor.value.push(*character);
+                        editor.editing.handle_event(
+                            &mut editor.value,
+                            InputEvent::Key(key.clone()),
+                            Rect::default(),
+                        );
                         editor.error = None;
                     }
                 }
@@ -636,7 +719,11 @@ impl ShellSession {
                     .as_mut()
                     .and_then(|state| state.file_extensions_editor.as_mut())
                 {
-                    editor.value.pop();
+                    editor.editing.handle_event(
+                        &mut editor.value,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     editor.error = None;
                 }
             }
@@ -661,7 +748,11 @@ impl ShellSession {
                         .into(),
                     );
                 } else {
-                    editor.value.push(*character);
+                    editor.editing.handle_event(
+                        &mut editor.value,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     editor.error = None;
                 }
             }
@@ -745,7 +836,11 @@ impl ShellSession {
                 if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(editor) = state.weather_location_editor.as_mut()
                 {
-                    editor.value.pop();
+                    editor.editing.handle_event(
+                        &mut editor.value,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     editor.error = None;
                 }
             }
@@ -767,7 +862,11 @@ impl ShellSession {
                             .into(),
                     );
                 } else {
-                    editor.value.push(*character);
+                    editor.editing.handle_event(
+                        &mut editor.value,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     editor.error = None;
                 }
             }
@@ -871,7 +970,11 @@ impl ShellSession {
                 if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(editor) = state.color_editor.as_mut()
                 {
-                    editor.value.pop();
+                    editor.editing.handle_event(
+                        &mut editor.value,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     editor.error = None;
                 }
             }
@@ -888,7 +991,11 @@ impl ShellSession {
                 if let Some(state) = self.pages.settings.settings_state.as_mut()
                     && let Some(editor) = state.color_editor.as_mut()
                 {
-                    editor.value.push(*character);
+                    editor.editing.handle_event(
+                        &mut editor.value,
+                        InputEvent::Key(key.clone()),
+                        Rect::default(),
+                    );
                     editor.error = None;
                 }
             }

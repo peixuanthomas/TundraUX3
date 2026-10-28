@@ -248,6 +248,30 @@ fn text_input_edits_text_and_maps_mouse_clicks_to_cursor_positions() {
 }
 
 #[test]
+fn focused_text_input_keeps_accent_and_blinks_only_the_cursor() {
+    use ratatui::style::Modifier;
+    let area = Rect::new(0, 0, 12, 3);
+    let theme = TundraTheme::default();
+    let mut input = TextInput::new("dialog.input");
+    input.set_value("中文");
+    input.set_focused(true);
+    let mut buffer = Buffer::empty(area);
+    input.render(area, &mut buffer, &theme);
+    assert_eq!(buffer[(1, 1)].fg, theme.accent_color);
+    assert_eq!(buffer[(0, 0)].fg, theme.accent_color);
+    assert!(buffer[(5, 1)].modifier.contains(Modifier::SLOW_BLINK));
+    assert!(!buffer[(1, 1)].modifier.contains(Modifier::SLOW_BLINK));
+    input.set_focused(false);
+    input.render(area, &mut buffer, &theme);
+    assert!(
+        buffer
+            .content
+            .iter()
+            .all(|cell| !cell.modifier.contains(Modifier::SLOW_BLINK))
+    );
+}
+
+#[test]
 fn focused_empty_text_input_can_keep_placeholder_without_overlapping_cursor() {
     let area = Rect::new(0, 0, 18, 3);
     let theme = TundraTheme::default();

@@ -203,6 +203,7 @@ fn minimum_full_create_form_keeps_every_control_visible_and_hittable() {
 fn edit_and_password_forms_only_render_relevant_inputs() {
     let mut model = model_with_users(1);
     model.form = Some(UserManagementFormViewModel {
+        editing: Default::default(),
         kind: UserManagementFormKind::EditInfo,
         title: "Edit user info".to_string(),
         username: "user0".to_string(),
@@ -219,6 +220,7 @@ fn edit_and_password_forms_only_render_relevant_inputs() {
     assert!(!edit.contains("Password:"));
 
     model.form = Some(UserManagementFormViewModel {
+        editing: Default::default(),
         kind: UserManagementFormKind::Password,
         title: "Set password".to_string(),
         username: "user0".to_string(),
@@ -270,6 +272,7 @@ fn user(
 
 fn create_form(focused_field: UserManagementField) -> UserManagementFormViewModel {
     UserManagementFormViewModel {
+        editing: Default::default(),
         kind: UserManagementFormKind::Create,
         title: "Create user".to_string(),
         username: "alice".to_string(),

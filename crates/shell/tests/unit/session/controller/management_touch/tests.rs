@@ -33,6 +33,7 @@ fn physical_space_reaches_permissions_and_recursive_checkboxes() {
         session.pages.management.management_state.permission_cell = 4;
         session.pages.management.management_state.form = Some(ManagementEditor {
             instance: next_management_form_instance(),
+            input_states: Default::default(),
             title: "Permissions".into(),
             message: String::new(),
             message_scroll: 0,
@@ -137,6 +138,7 @@ fn physical_space_preserves_checkbox_modifiers_and_text_input() {
     session.pages.management.management_state.kind = Some(ManagementKind::FilePermissions);
     session.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Permissions".into(),
         message: String::new(),
         message_scroll: 0,
@@ -267,6 +269,7 @@ fn permission_boxes_work_with_keyboard_mouse_and_touch() {
         };
         session.pages.management.management_state.form = Some(ManagementEditor {
             instance: next_management_form_instance(),
+            input_states: Default::default(),
             title: "Permissions".into(),
             message: String::new(),
             message_scroll: 0,
@@ -335,6 +338,7 @@ fn permissions_switched_back_still_apply_to_recursive_children() {
     };
     session.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Permissions".into(),
         message: String::new(),
         message_scroll: 0,
@@ -372,6 +376,7 @@ fn searchable_account_choices_keep_the_keyboard_bound_to_the_same_form() {
     let mut session = session((108, 30));
     session.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Owner".into(),
         message: String::new(),
         message_scroll: 0,
@@ -414,6 +419,7 @@ fn choice_navigation_keeps_the_selected_item_visible_in_short_windows() {
         let mut session = session(size);
         session.pages.management.management_state.form = Some(ManagementEditor {
             instance: next_management_form_instance(),
+            input_states: Default::default(),
             title: "Select an option".into(),
             message: String::new(),
             message_scroll: 0,
@@ -505,6 +511,7 @@ fn management_forms_block_buttons_from_the_previous_frame_registry() {
             session.button_regions = vec![background];
             session.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
+                input_states: Default::default(),
                 title: "Review".into(),
                 message: String::new(),
                 message_scroll: 0,
@@ -597,6 +604,7 @@ fn management_text_forms_and_search_accept_mouse_and_no_hover_touch_keyboard_inp
             let mut session = session(size);
             session.pages.management.management_state.form = Some(ManagementEditor {
                 instance: next_management_form_instance(),
+                input_states: Default::default(),
                 title: "Enter value".into(),
                 message: String::new(),
                 message_scroll: 0,
@@ -665,6 +673,7 @@ fn management_keyboard_loses_old_press_on_form_choice_modal_and_page_changes() {
     let mut session = session((120, 40));
     session.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Form".into(),
         message: String::new(),
         message_scroll: 0,
@@ -732,6 +741,7 @@ fn editor_configuration_text_form_uses_the_same_keyboard_and_bounded_layout() {
     session.enter_screen(ShellScreen::Editor);
     session.pages.management.management_state.form = Some(ManagementEditor {
         instance: next_management_form_instance(),
+        input_states: Default::default(),
         title: "Configuration".into(),
         message: String::new(),
         message_scroll: 0,

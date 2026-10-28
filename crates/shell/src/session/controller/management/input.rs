@@ -14,16 +14,11 @@ impl ShellSession {
             return;
         }
         if let Some(form) = &mut self.pages.management.management_state.form {
-            if let Some(field) = form.fields.get_mut(form.selected) {
-                if field.control == FieldControl::Text
-                    && field.choices.is_empty()
-                    && field.value.len() + value.len() <= 16 * 1024
-                {
-                    field
-                        .value
-                        .extend(value.chars().filter(|c| !c.is_control()));
-                }
-            }
+            form.edit_field(
+                form.selected,
+                InputEvent::Paste(value.to_owned()),
+                Rect::default(),
+            );
         } else if self.pages.management.management_state.filtering {
             if self.pages.management.management_state.filter_input.len() + value.len() <= 16 * 1024
             {
@@ -189,8 +184,25 @@ impl ShellSession {
                     if field.choices.is_empty() {
                         use zeroize::Zeroize;
                         field.value.zeroize();
+                        form.input_states.remove(&form.selected);
                     }
                 }
+                return;
+            }
+            if matches!(
+                key.key,
+                InputKey::Left
+                    | InputKey::Right
+                    | InputKey::Home
+                    | InputKey::End
+                    | InputKey::Backspace
+                    | InputKey::Delete
+                    | InputKey::Space
+                    | InputKey::Char(_)
+            ) && form.fields.get(form.selected).is_some_and(|field| {
+                field.control == FieldControl::Text && field.choices.is_empty()
+            }) {
+                form.edit_field(form.selected, InputEvent::Key(key.clone()), Rect::default());
                 return;
             }
             if key.has_non_shift_modifier() {
@@ -239,30 +251,6 @@ impl ShellSession {
                                 (current + field.choices.len() - 1) % field.choices.len()
                             };
                             field.value = field.choices[next].clone();
-                        }
-                    }
-                }
-                InputKey::Backspace => {
-                    if let Some(field) = form.fields.get_mut(form.selected) {
-                        if field.choices.is_empty() {
-                            field.value.pop();
-                        }
-                    }
-                }
-                InputKey::Space => {
-                    if let Some(field) = form.fields.get_mut(form.selected) {
-                        if field.choices.is_empty() && field.value.len() < 16 * 1024 {
-                            field.value.push(' ');
-                        }
-                    }
-                }
-                InputKey::Char(c) => {
-                    if let Some(field) = form.fields.get_mut(form.selected) {
-                        if field.choices.is_empty()
-                            && field.value.len() < 16 * 1024
-                            && !c.is_control()
-                        {
-                            field.value.push(c);
                         }
                     }
                 }

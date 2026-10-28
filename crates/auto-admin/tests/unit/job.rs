@@ -9,6 +9,39 @@ fn job(policy: storage::AutoAdminPolicy) -> (AutoAdminJob, mpsc::Receiver<Operat
 }
 
 #[test]
+fn structured_questions_edit_at_the_cursor_and_keep_passwords_masked() {
+    for secret in [false, true] {
+        let (job, responses) = job(storage::AutoAdminPolicy::Automatic);
+        job.emit(&OperationEvent::Question {
+            id: "answer".into(),
+            prompt: "Input".into(),
+            choices: vec![],
+            secret,
+        });
+        job.paste("甲乙");
+        job.key(&KeyInput::new(InputKey::Left));
+        job.paste("文");
+        let model = job.view_model(false, None, 0);
+        assert_eq!(
+            model.input.as_deref(),
+            Some(if secret { "> •••" } else { "> 甲文乙" })
+        );
+        assert_eq!(
+            model
+                .input_editing
+                .input("answer", if secret { "•••" } else { "甲文乙" })
+                .cursor(),
+            2
+        );
+        job.key(&KeyInput::new(InputKey::Enter));
+        assert!(
+            matches!(responses.recv_timeout(Duration::from_secs(1)).unwrap(),
+            OperationInput::Answer { value, .. } if value == "甲文乙")
+        );
+    }
+}
+
+#[test]
 fn history_keeps_output_and_result_without_secret_input_or_snapshot_contents() {
     use platform::task_history::{HistoryStore, TaskRecorder, TaskStatus, TaskSummary};
     let root =

@@ -45,6 +45,7 @@ impl ShellSession {
         let picker = state.picker.as_ref().map(|picker| {
             let options = settings_picker_options(picker, &self.language_options());
             ui::SettingsPickerViewModel {
+                editing: picker.editing.clone(),
                 kind: picker.kind,
                 title: picker_title(picker.kind),
                 query: picker.query.clone(),
@@ -62,6 +63,7 @@ impl ShellSession {
                 .color_editor
                 .as_ref()
                 .map(|editor| ui::SettingsColorEditorViewModel {
+                    editing: editor.editing.clone(),
                     title: i18n::tr!("settings-custom-label", label = picker_label(editor.kind)),
                     value: editor.value.clone(),
                     error: editor
@@ -71,6 +73,7 @@ impl ShellSession {
                 });
         let weather_location_editor = state.weather_location_editor.as_ref().map(|editor| {
             ui::SettingsWeatherLocationEditorViewModel {
+                editing: editor.editing.clone(),
                 value: editor.value.clone(),
                 error: editor
                     .error
@@ -80,6 +83,7 @@ impl ShellSession {
         });
         let file_extensions_editor = state.file_extensions_editor.as_ref().map(|editor| {
             ui::SettingsFileExtensionsEditorViewModel {
+                editing: editor.editing.clone(),
                 value: editor.value.clone(),
                 error: editor
                     .error
@@ -89,6 +93,7 @@ impl ShellSession {
         });
         let time_sync_server_editor = state.time_sync_server_editor.as_ref().map(|editor| {
             ui::SettingsTimeSyncServerEditorViewModel {
+                editing: editor.editing.clone(),
                 system_server_label: state.system_time.server_field.as_ref().and_then(|id| {
                     state
                         .system_time

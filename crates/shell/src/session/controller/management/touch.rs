@@ -776,6 +776,11 @@ impl ShellSession {
                                 .unwrap_or(0),
                         )
                     } else {
+                        let input_area =
+                            ui::management_field_input_area(&layout, *index, field_view);
+                        if input_area.contains(position) {
+                            form.edit_field(*index, InputEvent::Mouse(mouse), input_area);
+                        }
                         None
                     }
                 } else {
