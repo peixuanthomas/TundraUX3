@@ -45,7 +45,7 @@ System-management development focuses on Linux. Windows supports software packag
 
 See [Linux system management](crates/platform/docs/linux-management.md) for supported operations and their requirements.
 
-Use **Tasks** in Launcher to find running work, read saved output, return to its page or request cancellation. Scheduled tasks offer guided actions and daily, weekly or one-time schedules. Configuration backups have filters, 50-record pages, retained records and a cleanup preview. See the [operations acceptance notes](docs/operations-usability-validation.md) for checks and remaining device tests.
+Use **Tasks** in Launcher to find running work, read saved output, return to its page or request cancellation. Esc or the title-bar Back button returns from saved task output to the task list. Scheduled tasks offer guided actions and daily, weekly or one-time schedules. Configuration backups have filters, 50-record pages, retained records and a cleanup preview. See the [operations acceptance notes](docs/operations-usability-validation.md) for checks and remaining device tests.
 
 Vim mode displays Vim's own terminal interface, including Visual modes, counts, registers, macros, windows, command line and `:help`. `Ctrl+W` operates Vim windows. F8 or the VIM mode enabled button returns to the ordinary editor without saving the document; F8 again resumes the same Vim process and its existing state. Document writes such as `:w` and `:wq` use Tundra's existing save workers and protected-configuration checks; `:q!` follows Vim's discard behavior. See the [editor guide](docs/source-editor.md#真实-vim-模式).
 

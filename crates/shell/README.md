@@ -160,3 +160,5 @@ macOS 可用 `TMPDIR=/private/tmp cargo test --locked -p shell -p terminal-runti
 运行时先读取真实终端输入，再处理外部请求。读取过控件后，真实按键、点击、拖动、滚轮、粘贴或窗口缩放会使旧信息失效，并取消尚未完成的外部手势；`snapshot` 和 `wait` 重新获取后恢复控制。`--snapshot` 同样只按用户操作判断旧编号，自动重绘不影响使用。单纯移动鼠标、动画、进度条、时钟等自动变化及天气画面不参与这项检查。
 
 Linux 实际终端验证：`python3 scripts/tests/shell-control.py target/debug/tundra-shell`（从项目根目录运行）。包含设置 30 秒超时、保留帮助弹窗的键盘唤醒，以及命令行后台运行时的点按唤醒。
+
+任务历史输出只供查看，Esc 和右上角返回先关闭输出，恢复原任务列表与选择，再次返回才离开任务页。

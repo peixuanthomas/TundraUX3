@@ -340,6 +340,33 @@ impl ShellSession {
             return;
         }
         if self.pages.management.management_state.terminal_mode {
+            if self.pages.management.management_state.kind == Some(ManagementKind::Tasks) {
+                match key.key {
+                    InputKey::Escape => {
+                        let state = &mut self.pages.management.management_state;
+                        state.terminal_mode = false;
+                        if let Some(query) = &mut state.query {
+                            query.options.remove("output_view");
+                        }
+                    }
+                    InputKey::Up | InputKey::PageUp => {
+                        self.scroll_management_terminal(if key.key == InputKey::PageUp {
+                            10
+                        } else {
+                            1
+                        })
+                    }
+                    InputKey::Down | InputKey::PageDown => {
+                        self.scroll_management_terminal(if key.key == InputKey::PageDown {
+                            -10
+                        } else {
+                            -1
+                        })
+                    }
+                    _ => {}
+                }
+                return;
+            }
             if key.modifiers.shift && matches!(key.key, InputKey::PageUp | InputKey::PageDown) {
                 self.scroll_management_terminal(if key.key == InputKey::PageUp { 10 } else { -10 });
                 return;

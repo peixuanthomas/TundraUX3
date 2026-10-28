@@ -6,6 +6,46 @@ mod package_workspace;
 mod selection;
 
 #[test]
+fn task_output_returns_to_the_list_with_escape_or_the_back_button() {
+    for pointer in [false, true] {
+        let mut session = shortcut_action_state(ManagementKind::Tasks, "task_output");
+        let page = session.active_page_id();
+        session.apply_task_output(0, 194, 194, "saved task output".into());
+        session.refresh_hit_map();
+        if pointer {
+            let area = session
+                .hit_map
+                .regions()
+                .iter()
+                .find(|region| region.component == ShellComponent::BackButton)
+                .unwrap()
+                .area;
+            let point = (area.x, area.y);
+            session.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            session.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        } else {
+            session.apply_input(InputEvent::key(InputKey::Escape));
+        }
+        assert_eq!(session.active_page_id(), page);
+        assert!(!session.pages.management.management_state.terminal_mode);
+        assert!(
+            !session
+                .pages
+                .management
+                .management_state
+                .query
+                .as_ref()
+                .unwrap()
+                .options
+                .contains_key("output_view")
+        );
+        assert_eq!(session.pages.management.management_state.selected, 0);
+        session.apply_input(InputEvent::key(InputKey::Escape));
+        assert_ne!(session.active_page_id(), page);
+    }
+}
+
+#[test]
 fn backup_detail_queries_keep_the_page_and_clear_the_target_when_closed() {
     for authorized in [false, true] {
         let mut session = shortcut_action_state(ManagementKind::Backups, "inspect");
