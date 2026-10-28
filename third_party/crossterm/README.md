@@ -8,6 +8,7 @@ Crossterm is a pure-rust, terminal manipulation library that makes it possible t
 see [Tested Terminals](#tested-terminals) for more info).
 
 TundraUX3's local copy re-arms terminal input before returning a resize event, so input received in the same batch does not wait for another keystroke.
+It also preserves complete Kitty modifier masks, keyboard lock state and Keypad Begin events; local changes are documented in [TUNDRA_PATCH.md](TUNDRA_PATCH.md).
 
 ## Table of Contents
 

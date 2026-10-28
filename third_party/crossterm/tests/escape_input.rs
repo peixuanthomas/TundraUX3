@@ -5,6 +5,62 @@ fn key(code: KeyCode) -> InternalEvent {
     InternalEvent::Event(Event::Key(code.into()))
 }
 
+#[test]
+fn kitty_maximum_modifier_mask_and_keypad_begin_survive_fragmentation() {
+    use crate::event::{KeyEventKind, KeyEventState};
+    let modifiers = KeyModifiers::SHIFT
+        | KeyModifiers::ALT
+        | KeyModifiers::CONTROL
+        | KeyModifiers::SUPER
+        | KeyModifiers::HYPER
+        | KeyModifiers::META;
+    let locks = KeyEventState::CAPS_LOCK | KeyEventState::NUM_LOCK;
+    for (report, expected) in [
+        (
+            b"\x1b[57406;256:3u".as_slice(),
+            KeyEvent::new_with_kind_and_state(
+                KeyCode::Char('7'),
+                modifiers,
+                KeyEventKind::Release,
+                locks | KeyEventState::KEYPAD,
+            ),
+        ),
+        (
+            b"\x1b[1;256:2A",
+            KeyEvent::new_with_kind_and_state(KeyCode::Up, modifiers, KeyEventKind::Repeat, locks),
+        ),
+        (
+            b"\x1b[E",
+            KeyEvent::new_with_kind_and_state(
+                KeyCode::KeypadBegin,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+                KeyEventState::KEYPAD,
+            ),
+        ),
+        (
+            b"\x1b[1;256:3E",
+            KeyEvent::new_with_kind_and_state(
+                KeyCode::KeypadBegin,
+                modifiers,
+                KeyEventKind::Release,
+                locks | KeyEventState::KEYPAD,
+            ),
+        ),
+    ] {
+        for split in 0..=report.len() {
+            let mut parser = Parser::default();
+            parser.advance(&report[..split], split < report.len());
+            parser.advance(&report[split..], false);
+            assert_eq!(
+                parser.collect::<Vec<_>>(),
+                vec![InternalEvent::Event(Event::Key(expected))],
+                "report {report:?}, split {split}"
+            );
+        }
+    }
+}
+
 fn mouse(kind: MouseEventKind) -> InternalEvent {
     InternalEvent::Event(Event::Mouse(MouseEvent {
         kind,

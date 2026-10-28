@@ -158,6 +158,12 @@ pub(crate) fn parse_csi(buffer: &[u8]) -> io::Result<Option<InternalEvent>> {
         b'C' => Some(Event::Key(KeyCode::Right.into())),
         b'A' => Some(Event::Key(KeyCode::Up.into())),
         b'B' => Some(Event::Key(KeyCode::Down.into())),
+        b'E' => Some(Event::Key(KeyEvent::new_with_kind_and_state(
+            KeyCode::KeypadBegin,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+            KeyEventState::KEYPAD,
+        ))),
         b'H' => Some(Event::Key(KeyCode::Home.into())),
         b'F' => Some(Event::Key(KeyCode::End.into())),
         b'Z' => Some(Event::Key(KeyEvent::new_with_kind(
@@ -223,13 +229,13 @@ where
         .map_err(|_| could_not_parse_event_error())
 }
 
-fn modifier_and_kind_parsed(iter: &mut dyn Iterator<Item = &str>) -> io::Result<(u8, u8)> {
+fn modifier_and_kind_parsed(iter: &mut dyn Iterator<Item = &str>) -> io::Result<(u16, u8)> {
     let mut sub_split = iter
         .next()
         .ok_or_else(could_not_parse_event_error)?
         .split(':');
 
-    let modifier_mask = next_parsed::<u8>(&mut sub_split)?;
+    let modifier_mask = next_parsed::<u16>(&mut sub_split)?;
 
     if let Ok(kind_code) = next_parsed::<u8>(&mut sub_split) {
         Ok((modifier_mask, kind_code))
@@ -307,7 +313,7 @@ fn parse_csi_primary_device_attributes(buffer: &[u8]) -> io::Result<Option<Inter
     Ok(Some(InternalEvent::PrimaryDeviceAttributes))
 }
 
-fn parse_modifiers(mask: u8) -> KeyModifiers {
+fn parse_modifiers(mask: u16) -> KeyModifiers {
     let modifier_mask = mask.saturating_sub(1);
     let mut modifiers = KeyModifiers::empty();
     if modifier_mask & 1 != 0 {
@@ -331,7 +337,7 @@ fn parse_modifiers(mask: u8) -> KeyModifiers {
     modifiers
 }
 
-fn parse_modifiers_to_state(mask: u8) -> KeyEventState {
+fn parse_modifiers_to_state(mask: u16) -> KeyEventState {
     let modifier_mask = mask.saturating_sub(1);
     let mut state = KeyEventState::empty();
     if modifier_mask & 64 != 0 {
@@ -361,23 +367,25 @@ pub(crate) fn parse_csi_modifier_key_code(buffer: &[u8]) -> io::Result<Option<In
 
     split.next();
 
-    let (modifiers, kind) =
+    let (modifiers, kind, mut state) =
         if let Ok((modifier_mask, kind_code)) = modifier_and_kind_parsed(&mut split) {
             (
                 parse_modifiers(modifier_mask),
                 parse_key_event_kind(kind_code),
+                parse_modifiers_to_state(modifier_mask),
             )
         } else if buffer.len() > 3 {
             (
                 parse_modifiers(
                     (buffer[buffer.len() - 2] as char)
                         .to_digit(10)
-                        .ok_or_else(could_not_parse_event_error)? as u8,
+                        .ok_or_else(could_not_parse_event_error)? as u16,
                 ),
                 KeyEventKind::Press,
+                KeyEventState::NONE,
             )
         } else {
-            (KeyModifiers::NONE, KeyEventKind::Press)
+            (KeyModifiers::NONE, KeyEventKind::Press, KeyEventState::NONE)
         };
     let key = buffer[buffer.len() - 1];
 
@@ -386,6 +394,7 @@ pub(crate) fn parse_csi_modifier_key_code(buffer: &[u8]) -> io::Result<Option<In
         b'B' => KeyCode::Down,
         b'C' => KeyCode::Right,
         b'D' => KeyCode::Left,
+        b'E' => KeyCode::KeypadBegin,
         b'F' => KeyCode::End,
         b'H' => KeyCode::Home,
         b'P' => KeyCode::F(1),
@@ -395,7 +404,12 @@ pub(crate) fn parse_csi_modifier_key_code(buffer: &[u8]) -> io::Result<Option<In
         _ => return Err(could_not_parse_event_error()),
     };
 
-    let input_event = Event::Key(KeyEvent::new_with_kind(keycode, modifiers, kind));
+    if keycode == KeyCode::KeypadBegin {
+        state |= KeyEventState::KEYPAD;
+    }
+    let input_event = Event::Key(KeyEvent::new_with_kind_and_state(
+        keycode, modifiers, kind, state,
+    ));
 
     Ok(Some(InternalEvent::Event(input_event)))
 }

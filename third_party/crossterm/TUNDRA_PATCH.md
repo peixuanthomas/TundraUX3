@@ -53,6 +53,12 @@ codes distinguish left/right Shift; the enhanced-key bit distinguishes right
 Ctrl/Alt, including on release. Alt-code character completion is unchanged.
 These regressions are in `src/event/sys/windows/parse.rs` and require Windows.
 
+Embedded TUI keyboard forwarding retains Kitty's maximum modifier mask of 256
+(all six modifiers plus Caps Lock and Num Lock), including repeat/release
+events. CSI navigation reports retain lock state, and `CSI E`/modified `CSI E`
+decode as Keypad Begin with keypad state. The regressions in
+`tests/escape_input.rs` exercise every read boundary.
+
 ## Verification
 
 The added parser regressions are in `tests/escape_input.rs`; the original
