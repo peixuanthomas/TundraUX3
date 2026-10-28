@@ -15,7 +15,8 @@ use identity::{AuthSession, PermissionAction, PermissionService};
 use platform::{ExecutableKind as PlatformExecutableKind, FileOpenPolicy, Platform};
 use sha2::{Digest, Sha256};
 use storage::{
-    LauncherConfig, LauncherEntryRecord, LauncherExecutableKind, StorageError, StorageManager,
+    LauncherConfig, LauncherEntryRecord, LauncherExecutableKind, LauncherTerminalSettings,
+    StorageError, StorageManager,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -115,6 +116,11 @@ pub enum LauncherEffect {
         path: PathBuf,
         kind: PlatformExecutableKind,
     },
+    OpenTerminalRequested {
+        path: PathBuf,
+        args: Vec<String>,
+        directory: Option<PathBuf>,
+    },
     ConfirmationRequired {
         id: String,
         path: PathBuf,
@@ -126,8 +132,15 @@ pub enum LauncherEffect {
 pub enum LauncherCommand {
     Refresh,
     AddPaths(Vec<PathBuf>),
-    Reorder { id: String, insertion_index: usize },
+    Reorder {
+        id: String,
+        insertion_index: usize,
+    },
     Remove(Vec<String>),
+    SetTerminalSettings {
+        id: String,
+        settings: Option<LauncherTerminalSettings>,
+    },
     RequestLaunch(String),
     ConfirmLaunch(String),
 }
@@ -243,6 +256,9 @@ impl LauncherController {
                 insertion_index,
             } => self.reorder(state, &id, insertion_index, session, storage),
             LauncherCommand::Remove(ids) => self.remove(state, &ids, session, storage),
+            LauncherCommand::SetTerminalSettings { id, settings } => {
+                self.set_terminal_settings(state, &id, settings, session, platform, storage)
+            }
             LauncherCommand::RequestLaunch(id) => {
                 self.launch(state, &id, session, platform, storage, false)
             }
@@ -387,6 +403,38 @@ impl LauncherController {
         Ok(LauncherEffect::None)
     }
 
+    fn set_terminal_settings(
+        &self,
+        state: &mut LauncherState,
+        id: &str,
+        settings: Option<LauncherTerminalSettings>,
+        session: Option<&AuthSession>,
+        platform: &dyn Platform,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        let mut config = storage.load_config()?;
+        let entry = config
+            .launcher
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| LauncherError::MissingEntry(id.to_string()))?;
+        if let Some(settings) = &settings {
+            validate_terminal_settings(entry, settings, platform)?;
+        }
+        entry.terminal = settings;
+        let saved = entry.clone();
+        storage.save_config(&config)?;
+        if let Some(item) = state.items.iter_mut().find(|item| item.record.id == id) {
+            item.record = saved;
+        } else {
+            state.reset(&config.launcher);
+        }
+        state.message = Some(msg!("app-launcher-terminal-settings-saved").into());
+        Ok(LauncherEffect::None)
+    }
+
     fn launch(
         &self,
         state: &mut LauncherState,
@@ -413,11 +461,26 @@ impl LauncherController {
             .executable_kind
             .expect("a Ready Launcher entry has a kind");
         let path = PathBuf::from(&entry.path);
+        if let Some(settings) = &entry.terminal {
+            self.authorize(session, PermissionAction::ExecuteCommandLine)?;
+            validate_terminal_settings(entry, settings, platform)?;
+        }
         if !confirmed && needs_confirmation(kind) {
             return Ok(LauncherEffect::ConfirmationRequired {
                 id: id.to_string(),
                 path,
                 kind,
+            });
+        }
+        if let Some(settings) = &entry.terminal {
+            return Ok(LauncherEffect::OpenTerminalRequested {
+                path,
+                args: settings.arguments.clone(),
+                directory: settings
+                    .working_directory
+                    .as_deref()
+                    .filter(|directory| !directory.is_empty())
+                    .map(PathBuf::from),
             });
         }
         Ok(LauncherEffect::OpenRequested {
@@ -478,7 +541,56 @@ pub fn prepare_launcher_entry(
         fingerprint: None,
         added_by_user_id: added_by_user_id.to_string(),
         added_at_epoch_ms: epoch_millis(),
+        terminal: None,
     }))
+}
+
+fn validate_terminal_settings(
+    entry: &LauncherEntryRecord,
+    settings: &LauncherTerminalSettings,
+    platform: &dyn Platform,
+) -> Result<(), LauncherError> {
+    let supported = match entry.executable_kind {
+        Some(LauncherExecutableKind::NativeBinary) => true,
+        Some(LauncherExecutableKind::Script) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                matches!(
+                    platform.kind(),
+                    platform::PlatformKind::Linux | platform::PlatformKind::Macos
+                ) && fs::metadata(&entry.path).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = platform;
+                false
+            }
+        }
+        _ => false,
+    };
+    if !supported {
+        return Err(LauncherError::Localized(LocalizedError::new(
+            "LAUNCHER_TERMINAL_UNSUPPORTED",
+            msg!("app-launcher-terminal-unsupported"),
+        )));
+    }
+    if let Some(directory) = settings
+        .working_directory
+        .as_deref()
+        .filter(|directory| !directory.is_empty())
+    {
+        let path = Path::new(directory);
+        if !path.is_absolute() || !path.is_dir() {
+            return Err(LauncherError::Localized(LocalizedError::new(
+                "LAUNCHER_TERMINAL_INVALID_DIRECTORY",
+                msg!("app-launcher-terminal-directory-invalid", path = directory),
+            )));
+        }
+    }
+    Ok(())
 }
 
 struct Target {

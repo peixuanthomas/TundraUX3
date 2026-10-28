@@ -26,6 +26,8 @@ pub(super) struct ScriptHosts {
     completed: HashMap<PageInstanceId, CompletedScript>,
     tasks: ManagedTaskGroup,
     next_request: u64,
+    window_focused: bool,
+    cell_size: (u16, u16),
 }
 
 impl ScriptHosts {
@@ -35,10 +37,13 @@ impl ScriptHosts {
             completed: HashMap::new(),
             tasks: watchdog.task_group("script-editor"),
             next_request: 0,
+            window_focused: true,
+            cell_size: (8, 16),
         }
     }
 
     pub(super) fn poll(&mut self, state: &mut ShellSession, platform: &dyn Platform) -> bool {
+        let cell_size = self.cell_size;
         let mut changed = false;
         for id in state.pages.editor.ids() {
             state.with_page_context(id, |state| {
@@ -103,6 +108,7 @@ impl ScriptHosts {
                     history.clone(),
                 ) {
                     Ok(mut session) => {
+                        let _ = session.terminal().set_cell_size(cell_size.0, cell_size.1);
                         let breakpoints = state
                             .with_page_context(page, |state| {
                                 state.pages.editor.script.state.breakpoints.clone()
@@ -371,6 +377,10 @@ impl ScriptHosts {
             state.with_page_context(page, |state| {
                 let area = state.script_layout().output_area;
                 if area.width > 0 && area.height > 0 {
+                    let _ = host
+                        .session
+                        .terminal()
+                        .set_cell_size(cell_size.0, cell_size.1);
                     let _ = host.session.resize(area.width, area.height);
                 }
                 let offset = state.pages.editor.script.scrolls[ui::ScriptPane::Output.index()];
@@ -462,7 +472,30 @@ impl ScriptHosts {
                 changed = true;
             });
         }
+        self.sync_focus(state);
         changed
+    }
+
+    pub(super) fn observe_window_focus(&mut self, state: &ShellSession, focused: bool) {
+        self.window_focused = focused;
+        self.sync_focus(state);
+    }
+
+    pub(super) fn set_cell_size(&mut self, width: u16, height: u16) {
+        self.cell_size = (width.max(1), height.max(1));
+    }
+
+    fn sync_focus(&self, state: &ShellSession) {
+        let visible = (self.window_focused
+            && state.active_screen() == ShellScreen::Editor
+            && state.pages.editor.script.enabled
+            && state.pages.editor.script.focus == ui::ScriptPane::Output
+            && state.interactive_overlays().is_empty()
+            && !state.auto_admin_visible())
+        .then(|| state.active_page_id());
+        for (page, host) in &self.hosts {
+            let _ = host.session.terminal().send_focus(visible == Some(*page));
+        }
     }
 
     pub(super) fn handle_input(&mut self, state: &ShellSession, input: &InputEvent) -> bool {
@@ -479,9 +512,7 @@ impl ScriptHosts {
         let pty = host.session.terminal();
         match input {
             InputEvent::Key(key)
-                if !state.script_host_key(key)
-                    && !matches!(key.key, InputKey::F(1 | 8 | 10))
-                    && key.phase.is_press_like() =>
+                if !state.script_host_key(key) && !matches!(key.key, InputKey::F(1 | 8 | 10)) =>
             {
                 let _ = pty.send_key(key);
                 true
@@ -490,6 +521,9 @@ impl ScriptHosts {
                 let _ = pty.send_paste(text);
                 true
             }
+            InputEvent::Mouse(mouse) => pty
+                .send_mouse(mouse, state.script_layout().output_area)
+                .unwrap_or(false),
             _ => false,
         }
     }

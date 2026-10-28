@@ -21,6 +21,8 @@ pub(super) struct EditorVimHost {
     suspended: bool,
     selected: Option<PageInstanceId>,
     started_at: Instant,
+    window_focused: bool,
+    cell_size: (u16, u16),
 }
 
 #[derive(PartialEq, Eq)]
@@ -59,11 +61,17 @@ impl EditorVimHost {
             suspended: false,
             selected: None,
             started_at: Instant::now(),
+            window_focused: true,
+            cell_size: (8, 16),
         }
     }
 
     pub(super) fn running(&self) -> bool {
         self.installer.is_some() || self.host.as_ref().is_some_and(VimHost::is_running)
+    }
+
+    pub(super) fn set_cell_size(&mut self, width: u16, height: u16) {
+        self.cell_size = (width.max(1), height.max(1));
     }
 
     pub(super) fn poll(&mut self, state: &mut ShellSession, platform: &dyn Platform) -> bool {
@@ -72,7 +80,22 @@ impl EditorVimHost {
         if let Err(error) = self.poll_inner(state, platform) {
             self.fail(state, error);
         }
+        self.sync_focus(state);
         before != state.editor_vim_terminal || before_install != state.editor_vim_install
+    }
+
+    pub(super) fn observe_window_focus(&mut self, state: &ShellSession, focused: bool) {
+        self.window_focused = focused;
+        self.sync_focus(state);
+    }
+
+    fn sync_focus(&self, state: &ShellSession) {
+        if let Some(host) = &self.host
+            && host.is_running()
+        {
+            let _ = host
+                .send_focus(self.window_focused && !self.suspended && self.input_visible(state));
+        }
     }
 
     fn poll_inner(&mut self, state: &mut ShellSession, platform: &dyn Platform) -> io::Result<()> {
@@ -117,6 +140,10 @@ impl EditorVimHost {
                 config,
                 &self.watchdog.task_group("vim-editor"),
             )?);
+            self.host
+                .as_ref()
+                .unwrap()
+                .set_cell_size(self.cell_size.0, self.cell_size.1)?;
             self.import = Some(
                 self.host
                     .as_mut()
@@ -130,6 +157,10 @@ impl EditorVimHost {
         if self.host.is_none() {
             return Ok(());
         }
+        self.host
+            .as_ref()
+            .unwrap()
+            .set_cell_size(self.cell_size.0, self.cell_size.1)?;
         if visible && enabled && self.suspended {
             let closed = self
                 .pages
@@ -667,15 +698,18 @@ impl EditorVimHost {
         ));
     }
 
+    fn input_visible(&self, state: &ShellSession) -> bool {
+        state.active_screen() == ShellScreen::Editor
+            && (!state.pages.editor.script.enabled
+                || state.pages.editor.script.focus == ui::ScriptPane::Source)
+            && state.editor_vim_terminal.is_some()
+            && state.interactive_overlays().is_empty()
+            && !state.config_editor_form_visible()
+            && !state.auto_admin_visible()
+    }
+
     pub(super) fn captures_input(&self, state: &ShellSession, input: &InputEvent) -> bool {
-        if state.active_screen() != ShellScreen::Editor
-            || (state.pages.editor.script.enabled
-                && state.pages.editor.script.focus != ui::ScriptPane::Source)
-            || state.editor_vim_terminal.is_none()
-            || !state.interactive_overlays().is_empty()
-            || state.config_editor_form_visible()
-            || state.auto_admin_visible()
-        {
+        if !self.input_visible(state) {
             return false;
         }
         match input {

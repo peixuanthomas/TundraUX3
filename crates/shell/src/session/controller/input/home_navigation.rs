@@ -121,6 +121,7 @@ impl ShellSession {
         self.detached_user_management_jobs.clear();
         self.pages.launcher.launcher_drag = None;
         self.pages.command_line.command_line_start_directory = None;
+        self.pages.command_line.command_line_external = None;
         self.replace_explorer_state(None);
         self.pages.explorer.explorer_input_mode = ExplorerInputMode::Browse;
         self.pages.explorer.explorer_input.clear();

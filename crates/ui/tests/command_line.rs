@@ -33,6 +33,43 @@ fn chrome(size: (u16, u16)) -> ShellChromeViewModel {
 }
 
 #[test]
+fn failed_external_terminal_keeps_output_and_uses_the_application_title() {
+    let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
+    terminal.set_cell(
+        0,
+        0,
+        CommandLineCell {
+            symbol: "R".into(),
+            ..Default::default()
+        },
+    );
+    let mut model = CommandLineViewModel::new(terminal);
+    model.title = Some("neovim".into());
+    model.process_state = CommandLineProcessState::Exited { code: 17 };
+    let mut screen = Terminal::new(TestBackend::new(108, 22)).unwrap();
+    screen
+        .draw(|frame| {
+            render_command_line(
+                frame,
+                frame.area(),
+                &chrome((108, 22)),
+                &model,
+                &TundraTheme::default_dark(),
+            )
+        })
+        .unwrap();
+    let buffer = screen.backend().buffer();
+    assert_eq!(buffer[(1, 4)].symbol(), "R");
+    let text = buffer
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(text.contains("neovim"));
+    assert!(text.contains("17"));
+}
+
+#[test]
 fn command_line_renders_snapshot_inside_the_standard_shell_chrome() {
     let mut terminal = CommandLineTerminalSnapshot::blank(106, 14);
     terminal.set_cell(

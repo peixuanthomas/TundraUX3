@@ -1,14 +1,15 @@
 //! Isolated child terminals shared by Command Line, Vim and scripts.
 //!
 //! This module deliberately never writes child output to the host terminal.
-//! Child output is decoded into a `vt100` screen and the UI consumes a safe,
-//! structured snapshot instead.  In particular, OSC sequences (including
-//! OSC 52 clipboard requests) are discarded before they reach the parser.
+//! Child output is decoded into an isolated terminal model. The UI receives
+//! text and images; host-side operations such as OSC 52 remain blocked.
 
+use crate::emulator::Emulator;
 pub use crate::input::{
     MouseProtocolEncoding, MouseProtocolMode, TerminalInput, encode_terminal_input,
     key_event_bytes, mouse_event_bytes, mouse_to_terminal, paste_bytes,
 };
+use crate::input_queue::InputQueue;
 pub use crate::snapshot::{
     TerminalCell, TerminalColor, TerminalCursorStyle, TerminalSnapshot, to_ui_snapshot,
 };
@@ -66,8 +67,8 @@ impl PtyConfig {
         PtySize {
             rows: self.rows.max(1),
             cols: self.columns.max(1),
-            pixel_width: 0,
-            pixel_height: 0,
+            pixel_width: self.columns.saturating_mul(8),
+            pixel_height: self.rows.saturating_mul(16),
         }
     }
 }
@@ -89,7 +90,7 @@ impl PtyExitStatus {
 
 /// Retained terminal contents after the process, PTY and output reader close.
 pub struct TerminalOutput {
-    parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<Emulator>>,
 }
 
 impl std::fmt::Debug for TerminalOutput {
@@ -104,17 +105,15 @@ impl TerminalOutput {
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
         let mut parser = lock_io(&self.parser)?;
         let size = (rows.max(1), columns.max(1));
-        if parser.screen().size() != size {
-            parser.set_size(size.0, size.1);
+        if parser.size() != size {
+            parser.resize(columns, rows);
         }
         Ok(())
     }
 
     pub fn set_scrollback(&self, rows: usize) -> io::Result<bool> {
         let mut parser = lock_io(&self.parser)?;
-        let previous = parser.screen().scrollback();
-        parser.set_scrollback(rows);
-        Ok(parser.screen().scrollback() != previous)
+        Ok(parser.set_scrollback(rows))
     }
 
     pub fn snapshot(&self) -> TerminalSnapshot {
@@ -122,7 +121,7 @@ impl TerminalOutput {
             .parser
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        TerminalSnapshot::from_parser(&mut parser)
+        parser.snapshot()
     }
 
     pub fn ui_snapshot(&self) -> ui::CommandLineTerminalSnapshot {
@@ -130,7 +129,7 @@ impl TerminalOutput {
             .parser
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        crate::snapshot::ui_snapshot_from_parser(&mut parser)
+        parser.ui_snapshot()
     }
 }
 
@@ -143,10 +142,13 @@ pub struct PtyProcess {
     writer: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     process_registration: Option<watchdog::ManagedResource>,
-    parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<Emulator>>,
     output_revision: Arc<AtomicU64>,
     reader_task: Option<ManagedThreadHandle<()>>,
     reader_done: mpsc::Receiver<()>,
+    writer_task: Option<ManagedThreadHandle<()>>,
+    writer_done: mpsc::Receiver<()>,
+    input: Arc<InputQueue>,
 }
 
 impl std::fmt::Debug for PtyProcess {
@@ -204,6 +206,21 @@ impl PtyProcess {
         // parser, rather than the outer shell, renders all escape sequences.
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        command.env("TERM_PROGRAM", "TundraUX3");
+        command.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        for name in [
+            "KITTY_WINDOW_ID",
+            "KITTY_LISTEN_ON",
+            "WEZTERM_PANE",
+            "WEZTERM_UNIX_SOCKET",
+            "ITERM_SESSION_ID",
+            "WT_SESSION",
+            "WT_PROFILE_ID",
+            "TMUX",
+            "STY",
+        ] {
+            command.env_remove(name);
+        }
         let mut child = pair.slave.spawn_command(command).map_err(portable_error)?;
         let process_tree = match ProcessTreeGuard::attach(pair.master.as_ref(), child.as_ref()) {
             Ok(guard) => guard,
@@ -222,7 +239,10 @@ impl PtyProcess {
         let cleanup_child = child.clone();
         let cleanup_tree = process_tree.clone();
         let cleanup_master = master.clone();
+        let input = Arc::new(InputQueue::default());
+        let cleanup_input = input.clone();
         let process_registration = reader_tasks.manage_resource("terminal-process", move || {
+            cleanup_input.close();
             let stopped = cleanup_tree
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -254,39 +274,55 @@ impl PtyProcess {
                 return Err(io::Error::other(error));
             }
         };
-        let (reader, writer) = {
+        let (reader, physical_writer) = {
             let master = lock_io(&master)?;
             let master = master.as_ref().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "terminal PTY is closed")
             })?;
             (
                 master.try_clone_reader().map_err(portable_error)?,
-                Arc::new(Mutex::new(master.take_writer().map_err(portable_error)?)),
+                master.take_writer().map_err(portable_error)?,
             )
         };
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(
+        let writer = Arc::new(Mutex::new(input.writer()));
+        let worker_input = input.clone();
+        let (writer_done_sender, writer_done) = mpsc::channel();
+        let mut physical_writer = Some(physical_writer);
+        let mut writer_done_sender = Some(writer_done_sender);
+        let writer_task = reader_tasks
+            .spawn_thread(next_terminal_task_spec("pty-writer")?, move || {
+                if let Some(writer) = physical_writer.take() {
+                    worker_input.run(writer);
+                }
+                if let Some(sender) = writer_done_sender.take() {
+                    let _ = sender.send(());
+                }
+            })
+            .map_err(|error| {
+                io::Error::other(format!("could not start terminal input writer: {error}"))
+            })?;
+        let parser = Arc::new(Mutex::new(Emulator::new(
             config.rows.max(1),
             config.columns.max(1),
             config.scrollback_lines,
+            Arc::clone(&writer),
         )));
         let output_revision = Arc::new(AtomicU64::new(0));
         let mut parser_for_reader = Some(Arc::clone(&parser));
         let mut output_revision_for_reader = Some(Arc::clone(&output_revision));
-        let mut writer_for_reader = Some(Arc::clone(&writer));
         let mut reader = Some(reader);
         let (reader_done_sender, reader_done) = mpsc::channel();
         let mut reader_done_sender = Some(reader_done_sender);
         let reader_task = reader_tasks
             .spawn_thread(next_reader_task_spec()?, move || {
-                let (Some(reader), Some(parser), Some(output_revision), Some(writer)) = (
+                let (Some(reader), Some(parser), Some(output_revision)) = (
                     reader.take(),
                     parser_for_reader.take(),
                     output_revision_for_reader.take(),
-                    writer_for_reader.take(),
                 ) else {
                     return;
                 };
-                read_pty_output_recorded(reader, parser, output_revision, writer, history.as_ref());
+                read_terminal_output_recorded(reader, parser, output_revision, history.as_ref());
                 if let Some(sender) = reader_done_sender.take() {
                     let _ = sender.send(());
                 }
@@ -304,6 +340,9 @@ impl PtyProcess {
             output_revision,
             reader_task: Some(reader_task),
             reader_done,
+            writer_task: Some(writer_task),
+            writer_done,
+            input,
         })
     }
 
@@ -323,14 +362,40 @@ impl PtyProcess {
     }
 
     pub fn send_key(&self, key: &ui::KeyEvent) -> io::Result<()> {
-        if let Some(bytes) = key_event_bytes(key, self.input_modes().0) {
-            self.write(&bytes)?;
-        }
-        Ok(())
+        lock_io(&self.parser)?.send_key(key)
     }
 
     pub fn send_paste(&self, text: &str) -> io::Result<()> {
-        self.write(&paste_bytes(text, self.input_modes().1))
+        lock_io(&self.parser)?.send_paste(text)
+    }
+
+    pub fn send_focus(&self, focused: bool) -> io::Result<()> {
+        lock_io(&self.parser)?.send_focus(focused);
+        Ok(())
+    }
+
+    pub fn set_cell_size(&self, width: u16, height: u16) -> io::Result<()> {
+        let mut parser = lock_io(&self.parser)?;
+        let cell_size = (width.max(1), height.max(1));
+        if parser.cell_size() == cell_size {
+            return Ok(());
+        }
+        parser.set_cell_size(cell_size.0, cell_size.1);
+        let (rows, columns) = parser.size();
+        drop(parser);
+        let master = lock_io(&self.master)?;
+        if let Some(master) = master.as_ref() {
+            master
+                .resize(PtySize {
+                    rows,
+                    cols: columns,
+                    pixel_width: columns.saturating_mul(cell_size.0),
+                    pixel_height: rows.saturating_mul(cell_size.1),
+                })
+                .map_err(portable_error)?;
+        }
+        self.output_revision.fetch_add(1, Ordering::Release);
+        Ok(())
     }
 
     /// Reads input encoding modes without cloning terminal cells or scrollback.
@@ -339,8 +404,7 @@ impl PtyProcess {
             .parser
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let screen = parser.screen();
-        (screen.application_cursor(), screen.bracketed_paste())
+        parser.input_modes()
     }
 
     /// Returns false when the child has not requested mouse input or the event
@@ -353,50 +417,34 @@ impl PtyProcess {
         let Some(mouse) = mouse_to_terminal(mouse, content_area) else {
             return Ok(false);
         };
-        let bytes = {
-            let parser = lock_io(&self.parser)?;
-            let screen = parser.screen();
-            if screen.mouse_protocol_mode() == MouseProtocolMode::None {
-                return Ok(false);
-            }
-            crate::input::terminal_mouse_bytes(
-                &mouse,
-                screen.mouse_protocol_mode(),
-                screen.mouse_protocol_encoding(),
-            )
-        };
-        if let Some(bytes) = bytes {
-            self.write(&bytes)?;
-        }
-        Ok(true)
+        lock_io(&self.parser)?.send_mouse(mouse)
     }
 
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
+        let cell_size = lock_io(&self.parser)?.cell_size();
         let size = PtySize {
             rows: rows.max(1),
             cols: columns.max(1),
-            pixel_width: 0,
-            pixel_height: 0,
+            pixel_width: columns.saturating_mul(cell_size.0),
+            pixel_height: rows.saturating_mul(cell_size.1),
         };
         let master = lock_io(&self.master)?;
         let master = master
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "terminal PTY is closed"))?;
-        if lock_io(&self.parser)?.screen().size() == (size.rows, size.cols) {
+        if lock_io(&self.parser)?.size() == (size.rows, size.cols) {
             return Ok(());
         }
         master.resize(size).map_err(portable_error)?;
         let mut parser = lock_io(&self.parser)?;
-        parser.set_size(size.rows, size.cols);
+        parser.resize(size.cols, size.rows);
         self.output_revision.fetch_add(1, Ordering::Release);
         Ok(())
     }
 
     pub fn set_scrollback(&self, rows: usize) -> io::Result<bool> {
         let mut parser = lock_io(&self.parser)?;
-        let previous = parser.screen().scrollback();
-        parser.set_scrollback(rows);
-        let changed = parser.screen().scrollback() != previous;
+        let changed = parser.set_scrollback(rows);
         if changed {
             self.output_revision.fetch_add(1, Ordering::Release);
         }
@@ -408,6 +456,7 @@ impl PtyProcess {
     }
 
     pub fn snapshot_if_changed(&self, previous_revision: u64) -> Option<(TerminalSnapshot, u64)> {
+        self.refresh_synchronized_output();
         if self.output_revision.load(Ordering::Acquire) == previous_revision {
             return None;
         }
@@ -418,10 +467,22 @@ impl PtyProcess {
         &self,
         previous_revision: u64,
     ) -> Option<(ui::CommandLineTerminalSnapshot, u64)> {
+        self.refresh_synchronized_output();
         if self.output_revision.load(Ordering::Acquire) == previous_revision {
             return None;
         }
         Some(self.ui_snapshot_with_revision())
+    }
+
+    fn refresh_synchronized_output(&self) {
+        if self
+            .parser
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .refresh_sync()
+        {
+            self.output_revision.fetch_add(1, Ordering::Release);
+        }
     }
 
     pub fn ui_snapshot_with_revision(&self) -> (ui::CommandLineTerminalSnapshot, u64) {
@@ -430,7 +491,7 @@ impl PtyProcess {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         (
-            crate::snapshot::ui_snapshot_from_parser(&mut parser),
+            parser.ui_snapshot(),
             self.output_revision.load(Ordering::Acquire),
         )
     }
@@ -441,11 +502,11 @@ impl PtyProcess {
         // the shell UI.
         match self.parser.lock() {
             Ok(mut parser) => (
-                TerminalSnapshot::from_parser(&mut parser),
+                parser.snapshot(),
                 self.output_revision.load(Ordering::Acquire),
             ),
             Err(poisoned) => (
-                TerminalSnapshot::from_parser(&mut poisoned.into_inner()),
+                poisoned.into_inner().snapshot(),
                 self.output_revision.load(Ordering::Acquire),
             ),
         }
@@ -453,9 +514,11 @@ impl PtyProcess {
 
     pub fn try_wait(&self) -> io::Result<Option<PtyExitStatus>> {
         let mut child = lock_io(&self.child)?;
-        child
-            .try_wait()
-            .map(|status| status.map(PtyExitStatus::from_portable))
+        let status = child.try_wait()?.map(PtyExitStatus::from_portable);
+        if status.is_none() {
+            self.input.check_error()?;
+        }
+        Ok(status)
     }
 
     pub fn wait(&self) -> io::Result<PtyExitStatus> {
@@ -492,12 +555,14 @@ impl PtyProcess {
     pub fn snapshot_after_exit(mut self) -> TerminalSnapshot {
         self.close_pty_handles();
         self.join_reader_bounded(Duration::from_millis(250));
+        self.join_writer_bounded(Duration::from_millis(250));
         self.snapshot()
     }
 
     pub fn ui_snapshot_after_exit(mut self) -> ui::CommandLineTerminalSnapshot {
         self.close_pty_handles();
         self.join_reader_bounded(Duration::from_millis(250));
+        self.join_writer_bounded(Duration::from_millis(250));
         self.ui_snapshot_with_revision().0
     }
 
@@ -511,35 +576,29 @@ impl PtyProcess {
                 "terminal output reader did not stop after closing its PTY",
             ));
         }
+        if !self.join_writer_bounded(Duration::from_millis(500)) {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "terminal input writer did not stop after closing its PTY",
+            ));
+        }
         Ok(TerminalOutput {
             parser: Arc::clone(&self.parser),
         })
     }
 
     fn close_pty_handles(&mut self) {
+        self.input.close();
         self.writer.take();
         self.master.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 
     fn join_reader_bounded(&mut self, timeout: Duration) -> bool {
-        if self.reader_task.is_none() {
-            return true;
-        }
-        match self.reader_done.recv_timeout(timeout) {
-            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                if let Some(reader_task) = self.reader_task.take() {
-                    let _ = reader_task.join();
-                }
-                true
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Keep the worker in watchdog's registry. A broken PTY must
-                // not freeze the UI; watchdog reports a shutdown failure if
-                // closing our process tree does not unblock the reader.
-                self.reader_task.take();
-                false
-            }
-        }
+        join_worker(&mut self.reader_task, &self.reader_done, timeout)
+    }
+
+    fn join_writer_bounded(&mut self, timeout: Duration) -> bool {
+        join_worker(&mut self.writer_task, &self.writer_done, timeout)
     }
 }
 
@@ -551,16 +610,44 @@ impl Drop for PtyProcess {
         self.process_registration.take();
         self.close_pty_handles();
         self.join_reader_bounded(Duration::from_millis(500));
+        self.join_writer_bounded(Duration::from_millis(500));
     }
 }
 
 fn next_reader_task_spec() -> io::Result<TaskSpec> {
+    next_terminal_task_spec("pty-reader")
+}
+
+fn next_terminal_task_spec(prefix: &str) -> io::Result<TaskSpec> {
     let sequence = NEXT_PTY_READER_TASK_ID
         .fetch_add(1, Ordering::Relaxed)
         .max(1);
-    let id = TaskId::new(format!("pty-reader-{sequence}"))
+    let id = TaskId::new(format!("{prefix}-{sequence}"))
         .map_err(|error| io::Error::other(format!("invalid terminal reader task id: {error}")))?;
     Ok(TaskSpec::one_shot(id))
+}
+
+fn join_worker(
+    worker: &mut Option<ManagedThreadHandle<()>>,
+    done: &mpsc::Receiver<()>,
+    timeout: Duration,
+) -> bool {
+    if worker.is_none() {
+        return true;
+    }
+    match done.recv_timeout(timeout) {
+        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+            if let Some(worker) = worker.take() {
+                let _ = worker.join();
+            }
+            true
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            // Watchdog retains the worker and reports a cleanup failure.
+            worker.take();
+            false
+        }
+    }
 }
 
 fn wait_stopped(child: &mut (dyn Child + Send + Sync)) -> io::Result<()> {
@@ -717,92 +804,36 @@ impl Drop for ProcessTreeGuard {
     }
 }
 
-#[cfg(test)]
-fn read_pty_output(
-    reader: Box<dyn Read + Send>,
-    parser: Arc<Mutex<vt100::Parser>>,
-    output_revision: Arc<AtomicU64>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
-) {
-    read_pty_output_recorded(reader, parser, output_revision, writer, None);
-}
-
-fn read_pty_output_recorded(
+fn read_terminal_output_recorded(
     mut reader: Box<dyn Read + Send>,
-    parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<Emulator>>,
     output_revision: Arc<AtomicU64>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     history: Option<&platform::task_history::TaskRecorder>,
 ) {
     let mut buffer = [0_u8; 8_192];
-    let mut osc_filter = OscFilter::default();
-    let mut terminal_responder = TerminalResponder::default();
     loop {
         match reader.read(&mut buffer) {
-            Ok(0) | Err(_) => return,
+            Ok(0) | Err(_) => {
+                if parser
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .finish_output()
+                {
+                    output_revision.fetch_add(1, Ordering::Release);
+                }
+                return;
+            }
             Ok(count) => {
-                let safe = osc_filter.filter(&buffer[..count]);
-                if safe.is_empty() {
-                    continue;
-                }
+                let recorded = parser
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .process(&buffer[..count]);
                 if let Some(history) = history {
-                    history.output(&safe);
+                    history.output(&recorded);
                 }
-                let cursor_position = match parser.lock() {
-                    Ok(mut parser) => {
-                        parser.process(&safe);
-                        output_revision.fetch_add(1, Ordering::Release);
-                        parser.screen().cursor_position()
-                    }
-                    Err(poisoned) => {
-                        let mut parser = poisoned.into_inner();
-                        parser.process(&safe);
-                        output_revision.fetch_add(1, Ordering::Release);
-                        parser.screen().cursor_position()
-                    }
-                };
-                let _ = terminal_responder.respond(&safe, cursor_position, &writer);
+                output_revision.fetch_add(1, Ordering::Release);
             }
         }
-    }
-}
-
-/// Implements the minimum terminal-query response required by Windows
-/// ConPTY.  At startup it sends CSI 6 n and waits for the terminal emulator
-/// to return a cursor-position report before it emits the interactive prompt.
-#[derive(Default)]
-struct TerminalResponder {
-    dsr_prefix_len: usize,
-}
-
-impl TerminalResponder {
-    fn respond(
-        &mut self,
-        bytes: &[u8],
-        cursor_position: (u16, u16),
-        writer: &Arc<Mutex<Box<dyn Write + Send>>>,
-    ) -> io::Result<()> {
-        const CURSOR_POSITION_QUERY: &[u8] = b"\x1b[6n";
-        for &byte in bytes {
-            if byte == CURSOR_POSITION_QUERY[self.dsr_prefix_len] {
-                self.dsr_prefix_len += 1;
-                if self.dsr_prefix_len == CURSOR_POSITION_QUERY.len() {
-                    self.dsr_prefix_len = 0;
-                    let (row, column) = cursor_position;
-                    let reply = format!(
-                        "\x1b[{};{}R",
-                        row.saturating_add(1),
-                        column.saturating_add(1)
-                    );
-                    let mut writer = lock_io(writer)?;
-                    writer.write_all(reply.as_bytes())?;
-                    writer.flush()?;
-                }
-            } else {
-                self.dsr_prefix_len = usize::from(byte == CURSOR_POSITION_QUERY[0]);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -814,84 +845,6 @@ fn lock_io<T>(mutex: &Mutex<T>) -> io::Result<std::sync::MutexGuard<'_, T>> {
 
 fn portable_error(error: impl ToString) -> io::Error {
     io::Error::other(error.to_string())
-}
-
-#[derive(Default)]
-struct OscFilter {
-    state: OscFilterState,
-    utf8_continuations: u8,
-}
-
-#[derive(Default)]
-enum OscFilterState {
-    #[default]
-    Ground,
-    Escape,
-    Osc {
-        escape_seen: bool,
-    },
-}
-
-impl OscFilter {
-    /// Removes OSC control strings, including split sequences.  This protects
-    /// against clipboard / hyperlink / title side effects while preserving all
-    /// ordinary ANSI CSI and printable output for `vt100`.
-    fn filter(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let mut output = Vec::with_capacity(bytes.len());
-        for &byte in bytes {
-            let utf8_continuation = self.advance_utf8(byte);
-            match &mut self.state {
-                OscFilterState::Ground => {
-                    if utf8_continuation {
-                        output.push(byte);
-                    } else if byte == 0x1b {
-                        self.state = OscFilterState::Escape;
-                    } else if byte == 0x9d {
-                        self.state = OscFilterState::Osc { escape_seen: false };
-                    } else {
-                        output.push(byte);
-                    }
-                }
-                OscFilterState::Escape => {
-                    if byte == b']' {
-                        self.state = OscFilterState::Osc { escape_seen: false };
-                    } else {
-                        output.push(0x1b);
-                        output.push(byte);
-                        self.state = OscFilterState::Ground;
-                    }
-                }
-                OscFilterState::Osc { escape_seen } => {
-                    if !utf8_continuation
-                        && (byte == 0x07 || byte == 0x9c || (*escape_seen && byte == b'\\'))
-                    {
-                        self.state = OscFilterState::Ground;
-                    } else if !utf8_continuation {
-                        *escape_seen = byte == 0x1b;
-                    }
-                }
-            }
-        }
-        output
-    }
-
-    /// Keeps C1 control bytes distinct from identical byte values inside a
-    /// UTF-8 character. For example, `保` ends in `0x9d`; only a standalone
-    /// `0x9d` starts an eight-bit OSC sequence.
-    fn advance_utf8(&mut self, byte: u8) -> bool {
-        if self.utf8_continuations > 0 && (0x80..=0xbf).contains(&byte) {
-            self.utf8_continuations -= 1;
-            return true;
-        }
-
-        self.utf8_continuations = match byte {
-            0xc2..=0xdf => 1,
-            0xe0..=0xef => 2,
-            0xf0..=0xf4 => 3,
-            _ => 0,
-        };
-        false
-    }
 }
 
 #[cfg(test)]

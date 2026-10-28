@@ -1,9 +1,11 @@
 //! Encoding keys and paste according to the child terminal mode.
 use ratatui::layout::Rect;
 use ui::{
-    Key as InputKey, KeyEvent as KeyInput, MouseButton, MouseEvent, MouseEventKind, ScrollDirection,
+    InputPhase, Key as InputKey, KeyEvent as KeyInput, MediaKey, ModifierKey, MouseButton,
+    MouseEvent, MouseEventKind, ScrollDirection,
 };
 pub use vt100::{MouseProtocolEncoding, MouseProtocolMode};
+pub const SUPPORTED_KITTY_KEYBOARD_FLAGS: u16 = 1 | 2 | 8;
 /// A key-independent input representation.  The controller can use this
 /// instead of leaking terminal escape sequences into UI code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,12 +115,179 @@ pub fn key_event_bytes(key: &KeyInput, application_cursor: bool) -> Option<Vec<u
         InputKey::PageUp => encode_terminal_input(&TerminalInput::PageUp, application_cursor),
         InputKey::PageDown => encode_terminal_input(&TerminalInput::PageDown, application_cursor),
         InputKey::F(number) => function_key_bytes(*number)?,
-        InputKey::Other(_) => return None,
+        InputKey::Null => vec![0],
+        InputKey::KeypadBegin => b"\x1b[E".to_vec(),
+        InputKey::CapsLock
+        | InputKey::ScrollLock
+        | InputKey::NumLock
+        | InputKey::PrintScreen
+        | InputKey::Pause
+        | InputKey::Menu
+        | InputKey::Media(_)
+        | InputKey::Modifier(_)
+        | InputKey::Other(_) => return None,
     };
     if key.modifiers.alt {
         bytes.insert(0, 0x1b);
     }
     Some(bytes)
+}
+
+/// Encodes the supported Kitty enhancements: disambiguation, event types and all keys.
+pub fn kitty_key_event_bytes(key: &KeyInput, flags: u16) -> Option<Vec<u8>> {
+    if flags & SUPPORTED_KITTY_KEYBOARD_FLAGS == 0 {
+        return key_event_bytes(key, false);
+    }
+    let all_keys = flags & 8 != 0;
+    let event_types = flags & 2 != 0;
+    let disambiguate = flags & 1 != 0 || all_keys;
+    if key.phase == InputPhase::Release && !event_types {
+        return None;
+    }
+    if matches!(key.key, InputKey::Modifier(_)) && !all_keys {
+        return None;
+    }
+    let keypad = (key.state.keypad && disambiguate)
+        .then(|| kitty_keypad_code(&key.key))
+        .flatten();
+    // Text and these three controls retain their recovery-friendly legacy form.
+    if !all_keys
+        && keypad.is_none()
+        && (matches!(
+            key.key,
+            InputKey::Enter | InputKey::Tab | InputKey::BackTab | InputKey::Backspace
+        ) || matches!(key.key, InputKey::Char(_) | InputKey::Space)
+            && (!key.has_non_shift_modifier() || !disambiguate))
+    {
+        return key
+            .phase
+            .is_press_like()
+            .then(|| key_event_bytes(key, false))
+            .flatten();
+    }
+    let (mut code, suffix) = keypad.or_else(|| kitty_key_code(&key.key))?;
+    // Win32 and legacy input already apply ASCII letter case to the character.
+    if let InputKey::Char(character) = key.key
+        && character.is_ascii_uppercase()
+        && (key.modifiers.shift || key.state.caps_lock)
+    {
+        code = u32::from(character.to_ascii_lowercase());
+    }
+    let modifiers = 1
+        + u16::from(key.modifiers.shift || matches!(key.key, InputKey::BackTab))
+        + 2 * u16::from(key.modifiers.alt)
+        + 4 * u16::from(key.modifiers.is_control())
+        + 8 * u16::from(key.modifiers.super_key)
+        + 16 * u16::from(key.modifiers.hyper)
+        + 32 * u16::from(key.modifiers.meta)
+        + 64 * u16::from(key.state.caps_lock)
+        + 128 * u16::from(key.state.num_lock);
+    let phase = match (event_types, key.phase) {
+        (true, InputPhase::Repeat) => ":2",
+        (true, InputPhase::Release) => ":3",
+        _ => "",
+    };
+    Some(format!("\x1b[{code};{modifiers}{phase}{}", char::from(suffix)).into_bytes())
+}
+
+fn kitty_key_code(key: &InputKey) -> Option<(u32, u8)> {
+    let code = match key {
+        InputKey::Char(character) => *character as u32,
+        InputKey::Space => 32,
+        InputKey::Null => 0,
+        InputKey::Escape => 27,
+        InputKey::Enter => 13,
+        InputKey::Tab | InputKey::BackTab => 9,
+        InputKey::Backspace => 127,
+        InputKey::Insert => return Some((2, b'~')),
+        InputKey::Delete => return Some((3, b'~')),
+        InputKey::PageUp => return Some((5, b'~')),
+        InputKey::PageDown => return Some((6, b'~')),
+        InputKey::Left => return Some((1, b'D')),
+        InputKey::Right => return Some((1, b'C')),
+        InputKey::Up => return Some((1, b'A')),
+        InputKey::Down => return Some((1, b'B')),
+        InputKey::Home => return Some((1, b'H')),
+        InputKey::End => return Some((1, b'F')),
+        InputKey::F(1) => return Some((1, b'P')),
+        InputKey::F(2) => return Some((1, b'Q')),
+        InputKey::F(3) => return Some((13, b'~')),
+        InputKey::F(4) => return Some((1, b'S')),
+        InputKey::F(number @ 5..=12) => {
+            return Some((
+                [15, 17, 18, 19, 20, 21, 23, 24][usize::from(number - 5)],
+                b'~',
+            ));
+        }
+        InputKey::F(number @ 13..=35) => 57376 + u32::from(number - 13),
+        InputKey::CapsLock => 57358,
+        InputKey::ScrollLock => 57359,
+        InputKey::NumLock => 57360,
+        InputKey::PrintScreen => 57361,
+        InputKey::Pause => 57362,
+        InputKey::Menu => 57363,
+        InputKey::KeypadBegin => return Some((1, b'E')),
+        InputKey::Media(key) => match key {
+            MediaKey::Play => 57428,
+            MediaKey::Pause => 57429,
+            MediaKey::PlayPause => 57430,
+            MediaKey::Reverse => 57431,
+            MediaKey::Stop => 57432,
+            MediaKey::FastForward => 57433,
+            MediaKey::Rewind => 57434,
+            MediaKey::TrackNext => 57435,
+            MediaKey::TrackPrevious => 57436,
+            MediaKey::Record => 57437,
+            MediaKey::LowerVolume => 57438,
+            MediaKey::RaiseVolume => 57439,
+            MediaKey::MuteVolume => 57440,
+        },
+        InputKey::Modifier(key) => match key {
+            ModifierKey::LeftShift => 57441,
+            ModifierKey::LeftControl => 57442,
+            ModifierKey::LeftAlt => 57443,
+            ModifierKey::LeftSuper => 57444,
+            ModifierKey::LeftHyper => 57445,
+            ModifierKey::LeftMeta => 57446,
+            ModifierKey::RightShift => 57447,
+            ModifierKey::RightControl => 57448,
+            ModifierKey::RightAlt => 57449,
+            ModifierKey::RightSuper => 57450,
+            ModifierKey::RightHyper => 57451,
+            ModifierKey::RightMeta => 57452,
+            ModifierKey::IsoLevel3Shift => 57453,
+            ModifierKey::IsoLevel5Shift => 57454,
+        },
+        InputKey::F(_) | InputKey::Other(_) => return None,
+    };
+    Some((code, b'u'))
+}
+
+fn kitty_keypad_code(key: &InputKey) -> Option<(u32, u8)> {
+    let code = match key {
+        InputKey::Char(character @ '0'..='9') => 57399 + u32::from(*character) - u32::from('0'),
+        InputKey::Char('.') => 57409,
+        InputKey::Char('/') => 57410,
+        InputKey::Char('*') => 57411,
+        InputKey::Char('-') => 57412,
+        InputKey::Char('+') => 57413,
+        InputKey::Enter => 57414,
+        InputKey::Char('=') => 57415,
+        InputKey::Char(',') => 57416,
+        InputKey::Left => 57417,
+        InputKey::Right => 57418,
+        InputKey::Up => 57419,
+        InputKey::Down => 57420,
+        InputKey::PageUp => 57421,
+        InputKey::PageDown => 57422,
+        InputKey::Home => 57423,
+        InputKey::End => 57424,
+        InputKey::Insert => 57425,
+        InputKey::Delete => 57426,
+        InputKey::KeypadBegin => return Some((1, b'E')),
+        _ => return None,
+    };
+    Some((code, b'u'))
 }
 
 fn control_character(character: char) -> Option<u8> {

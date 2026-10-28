@@ -1,5 +1,7 @@
 # ascii-assets
 
+中英文 `modules/terminal-launcher.ftl` 提供 Launcher 运行设置、参数和目录检查，以及嵌入终端的启动、输入和关闭提示。
+
 中英文 `modules/selection.ftl` 提供可点击多选入口、已选数量和整页操作限制，沿用现有语言包自动加载。
 
 `modules/tasks.ftl` 提供统一任务页、运行状态和清理说明。

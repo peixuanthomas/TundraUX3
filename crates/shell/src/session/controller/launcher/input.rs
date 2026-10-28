@@ -6,6 +6,9 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Launcher);
+        if self.pages.launcher.launcher_run_settings.is_some() {
+            return (target, ShellCommand::LauncherRunSettingsKey(key.clone()));
+        }
         if self.pages.launcher.launcher_pending_confirmation.is_some() {
             if key.phase != InputPhase::Press || key.has_non_shift_modifier() {
                 return (target, ShellCommand::CaptureOverlayInput);
@@ -59,6 +62,9 @@ impl ShellSession {
             InputKey::Delete if key.phase == InputPhase::Press => {
                 (target, ShellCommand::LauncherRemove)
             }
+            InputKey::F(4) if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherRunSettings)
+            }
             InputKey::Char('v' | 'V') if key.phase == InputPhase::Press => {
                 (target, ShellCommand::LauncherToggleView)
             }
@@ -76,6 +82,9 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Launcher);
         let coordinates = mouse.coordinates();
+        if self.pages.launcher.launcher_run_settings.is_some() {
+            return (target, ShellCommand::LauncherRunSettingsPointer(mouse));
+        }
         match mouse.kind {
             ui::MouseEventKind::Scroll(direction) => {
                 let delta = match direction {

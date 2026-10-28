@@ -6,6 +6,12 @@ impl ShellSession {
         let overlay = overlays.last();
         if let Some(overlay) = overlay {
             let accepts_text = match overlay.component() {
+                Some(ShellComponent::Launcher) => self
+                    .pages
+                    .launcher
+                    .launcher_run_settings
+                    .as_ref()
+                    .is_some_and(|state| state.embedded && matches!(state.selected, 1 | 2)),
                 Some(ShellComponent::Explorer) => matches!(
                     self.resolved_explorer_overlay(),
                     Some(overlays::ResolvedExplorerOverlay::Input(_))
@@ -59,6 +65,11 @@ impl ShellSession {
             target.push_str(&self.management_keyboard_target());
         }
         match self.active_screen() {
+            ShellScreen::Launcher => {
+                if let Some(state) = &self.pages.launcher.launcher_run_settings {
+                    target.push_str(&format!(":{}:{}", state.id, state.selected));
+                }
+            }
             ShellScreen::Editor => {
                 target.push_str(&format!(":{:?}", self.pages.editor.editor_focus));
                 if let Some(search) = &self.pages.editor.editor_search_bar {
@@ -89,6 +100,15 @@ impl ShellSession {
 
     pub(super) fn focus_page_keyboard_input(&mut self) {
         match self.active_screen() {
+            ShellScreen::Launcher => {
+                self.pages.common.focused_component = ShellComponent::Launcher;
+                if let Some(state) = &mut self.pages.launcher.launcher_run_settings
+                    && state.embedded
+                    && !matches!(state.selected, 1 | 2)
+                {
+                    state.selected = 1;
+                }
+            }
             ShellScreen::Login => {
                 self.pages.common.focused_component = ShellComponent::LoginPassword
             }

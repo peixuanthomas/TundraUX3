@@ -11,6 +11,24 @@ pub(super) use terminal_runtime::pty::*;
 use watchdog::{AppWatchdog, ComponentId, ManagedTaskGroup};
 const SCROLL_LINES_PER_NOTCH: usize = 3;
 const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ExternalTerminalLaunch {
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
+
+impl ExternalTerminalLaunch {
+    pub(super) fn title(&self) -> String {
+        self.program
+            .file_name()
+            .unwrap_or(self.program.as_os_str())
+            .to_string_lossy()
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect()
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandLineHostEvent {
     None,
@@ -31,9 +49,13 @@ enum CommandLineHostState {
 /// Shell state remains cloneable and deterministic for controller tests.
 pub struct CommandLineHost {
     state: CommandLineHostState,
+    launch: Option<ExternalTerminalLaunch>,
+    output: Option<TerminalOutput>,
+    focused: bool,
     snapshot_revision: u64,
     ui_snapshot: Arc<ui::CommandLineTerminalSnapshot>,
     scrollbar_drag_offset: Option<u16>,
+    child_mouse_buttons: Vec<ui::MouseButton>,
     reader_tasks: ManagedTaskGroup,
     history: Option<platform::task_history::TaskRecorder>,
 }
@@ -43,24 +65,18 @@ impl CommandLineHost {
         let ui_snapshot = Arc::new(blank_terminal_snapshot());
         Self {
             state: CommandLineHostState::Inactive,
+            launch: None,
+            output: None,
+            focused: false,
             snapshot_revision: 0,
             ui_snapshot,
             scrollbar_drag_offset: None,
+            child_mouse_buttons: Vec::new(),
             history: None,
             reader_tasks: watchdog
                 .child_component(ComponentId::from_static("command-line"))
                 .task_group("pty-reader"),
         }
-    }
-
-    pub fn ensure_started(
-        &mut self,
-        platform: &dyn Platform,
-        username: &str,
-        accent: ratatui::style::Color,
-        directory: Option<&Path>,
-    ) {
-        self.ensure_started_recorded(platform, username, accent, directory, None);
     }
 
     fn ensure_started_recorded(
@@ -69,23 +85,37 @@ impl CommandLineHost {
         username: &str,
         accent: ratatui::style::Color,
         directory: Option<&Path>,
+        external: Option<&ExternalTerminalLaunch>,
         history: Option<platform::task_history::TaskRecorder>,
     ) {
         if !matches!(self.state, CommandLineHostState::Inactive) {
             return;
         }
         self.history = history;
+        self.launch = external.cloned();
+        self.output = None;
+        self.child_mouse_buttons.clear();
+        self.focused = false;
 
-        let result = resolve_tundra_cli_program().and_then(|program| {
+        let program = external.map_or_else(resolve_tundra_cli_program, |launch| {
+            Ok(launch.program.clone())
+        });
+        let result = program.and_then(|program| {
             let mut config = PtyConfig::new(program);
-            config.args = vec!["repl".into(), "--embedded".into()];
-            config.env = vec![
-                ("TUNDRA_COMMAND_LINE_USERNAME".into(), username.into()),
-                (
-                    "TUNDRA_COMMAND_LINE_ACCENT".into(),
-                    terminal_runtime::ansi_foreground(accent).into(),
-                ),
-            ];
+            config.columns = self.ui_snapshot.columns;
+            config.rows = self.ui_snapshot.rows;
+            if let Some(external) = external {
+                config.args = external.args.iter().map(Into::into).collect();
+            } else {
+                config.args = vec!["repl".into(), "--embedded".into()];
+                config.env = vec![
+                    ("TUNDRA_COMMAND_LINE_USERNAME".into(), username.into()),
+                    (
+                        "TUNDRA_COMMAND_LINE_ACCENT".into(),
+                        terminal_runtime::ansi_foreground(accent).into(),
+                    ),
+                ];
+            }
             if let Some(directory) = directory {
                 config.cwd = Some(directory.to_path_buf());
             } else {
@@ -113,7 +143,14 @@ impl CommandLineHost {
                     );
                 }
                 self.state = CommandLineHostState::Failed {
-                    message: format!("Could not start tundra-cli: {error}"),
+                    message: i18n::tr!(
+                        "shell-terminal-start-failed",
+                        program = self.launch.as_ref().map_or_else(
+                            || "tundra-cli".to_string(),
+                            ExternalTerminalLaunch::title,
+                        ),
+                        reason = error.to_string()
+                    ),
                 };
             }
         }
@@ -134,19 +171,26 @@ impl CommandLineHost {
         self.scrollbar_drag_offset = None;
         let result = match &self.state {
             CommandLineHostState::Running(pty) => pty.resize(columns, rows),
-            _ => return,
+            _ => match &self.output {
+                Some(output) => output.resize(columns, rows),
+                None => return,
+            },
         };
         match result {
             Ok(()) => {
                 self.refresh_snapshot();
             }
             Err(error) => {
-                self.fail_running(format!("Could not resize CLI terminal: {error}"));
+                self.fail_running(i18n::tr!(
+                    "shell-terminal-resize-failed",
+                    reason = error.to_string()
+                ));
             }
         }
     }
 
     pub fn resize_to_area(&mut self, terminal_area: Rect) {
+        let terminal_area = self.view_model().output_area(terminal_area);
         let content_area = ui::command_line_content_area(terminal_area, self.ui_snapshot.as_ref());
         self.resize_terminal(content_area.width, content_area.height);
     }
@@ -156,7 +200,10 @@ impl CommandLineHost {
             CommandLineHostState::Running(pty) => match pty.try_wait() {
                 Ok(status) => status,
                 Err(error) => {
-                    self.fail_running(format!("Could not read CLI process status: {error}"));
+                    self.fail_running(i18n::tr!(
+                        "shell-terminal-status-failed",
+                        reason = error.to_string()
+                    ));
                     return CommandLineHostEvent::None;
                 }
             },
@@ -170,11 +217,22 @@ impl CommandLineHost {
 
         let previous = std::mem::replace(&mut self.state, CommandLineHostState::Inactive);
         if let CommandLineHostState::Running(pty) = previous {
-            let snapshot = pty.ui_snapshot_after_exit();
-            self.install_snapshot(snapshot, self.snapshot_revision);
+            match pty.into_output() {
+                Ok(output) => {
+                    self.install_snapshot(output.ui_snapshot(), self.snapshot_revision);
+                    self.output = Some(output);
+                }
+                Err(error) => {
+                    self.fail_running(i18n::tr!(
+                        "shell-terminal-output-failed",
+                        reason = error.to_string()
+                    ));
+                    return CommandLineHostEvent::None;
+                }
+            }
         }
 
-        if status.code == EMBEDDED_RESET_EXIT_CODE {
+        if self.launch.is_none() && status.code == EMBEDDED_RESET_EXIT_CODE {
             if let Some(history) = &self.history {
                 history.finish(
                     platform::task_history::TaskStatus::Succeeded,
@@ -183,7 +241,7 @@ impl CommandLineHost {
             }
             return CommandLineHostEvent::ResetRequested;
         }
-        if status.code == crate::COMMAND_LINE_PANIC_EXIT_CODE {
+        if self.launch.is_none() && status.code == crate::COMMAND_LINE_PANIC_EXIT_CODE {
             if let Some(history) = &self.history {
                 history.finish(
                     platform::task_history::TaskStatus::Failed,
@@ -200,6 +258,7 @@ impl CommandLineHost {
                 );
             }
             self.install_blank_snapshot();
+            self.output = None;
             return CommandLineHostEvent::ExitToCaller;
         }
 
@@ -220,14 +279,28 @@ impl CommandLineHost {
         input: &InputEvent,
         terminal_area: Option<Rect>,
     ) -> CommandLineHostEvent {
+        if let Some(terminal_area) = terminal_area
+            && let InputEvent::Mouse(mouse) = input
+        {
+            self.handle_mouse(*mouse, terminal_area);
+            return CommandLineHostEvent::None;
+        }
         match &self.state {
             CommandLineHostState::Exited { .. } | CommandLineHostState::Failed { .. } => {
                 if let InputEvent::Key(key) = input
                     && key.phase.is_press_like()
                 {
                     match key.key {
+                        InputKey::F(12)
+                            if self.launch.is_some()
+                                && key.phase == ui::InputPhase::Press
+                                && key.modifiers == ui::KeyModifiers::NONE =>
+                        {
+                            return CommandLineHostEvent::ExitToCaller;
+                        }
                         InputKey::Enter => {
                             self.install_blank_snapshot();
+                            self.output = None;
                             self.state = CommandLineHostState::Inactive;
                         }
                         _ => {}
@@ -238,14 +311,9 @@ impl CommandLineHost {
             CommandLineHostState::Inactive | CommandLineHostState::Running(_) => {}
         }
 
-        let Some(terminal_area) = terminal_area else {
+        let Some(_) = terminal_area else {
             return CommandLineHostEvent::None;
         };
-
-        if let InputEvent::Mouse(mouse) = input {
-            self.handle_mouse(*mouse, terminal_area);
-            return CommandLineHostEvent::None;
-        }
 
         let returns_to_live_output = match input {
             InputEvent::Key(key) => key.phase.is_press_like(),
@@ -257,16 +325,15 @@ impl CommandLineHost {
         }
 
         let write_result = match (&self.state, input) {
-            (CommandLineHostState::Running(pty), InputEvent::Key(key))
-                if key.phase.is_press_like() =>
-            {
-                pty.send_key(key)
-            }
+            (CommandLineHostState::Running(pty), InputEvent::Key(key)) => pty.send_key(key),
             (CommandLineHostState::Running(pty), InputEvent::Paste(text)) => pty.send_paste(text),
             _ => Ok(()),
         };
         if let Err(error) = write_result {
-            self.fail_running(format!("Could not write to CLI process: {error}"));
+            self.fail_running(i18n::tr!(
+                "shell-terminal-input-failed",
+                reason = error.to_string()
+            ));
         }
 
         CommandLineHostEvent::None
@@ -285,6 +352,7 @@ impl CommandLineHost {
             },
         };
         ui::CommandLineViewModel {
+            title: self.launch.as_ref().map(ExternalTerminalLaunch::title),
             terminal: Arc::clone(&self.ui_snapshot),
             process_state,
             message: None,
@@ -308,6 +376,8 @@ impl CommandLineHost {
         }
         let previous = std::mem::replace(&mut self.state, CommandLineHostState::Inactive);
         drop(previous);
+        self.output = None;
+        self.child_mouse_buttons.clear();
         self.install_blank_snapshot();
         Ok(())
     }
@@ -317,11 +387,14 @@ impl CommandLineHost {
     }
 
     fn handle_mouse(&mut self, mouse: ui::MouseEvent, terminal_area: Rect) {
-        if matches!(mouse.kind, ui::MouseEventKind::Up(ui::MouseButton::Left)) {
+        if matches!(mouse.kind, ui::MouseEventKind::Up(ui::MouseButton::Left))
+            && self.scrollbar_drag_offset.is_some()
+        {
             self.scrollbar_drag_offset = None;
             return;
         }
 
+        let terminal_area = self.view_model().output_area(terminal_area);
         let scrollbar = ui::command_line_scrollbar_layout(terminal_area, self.ui_snapshot.as_ref());
         if let (
             Some(grab_offset),
@@ -339,8 +412,50 @@ impl CommandLineHost {
             return;
         }
 
-        if !rect_contains(terminal_area, mouse.column(), mouse.row()) {
+        let content = ui::command_line_content_area(terminal_area, self.ui_snapshot.as_ref());
+        let captured = match mouse.kind {
+            ui::MouseEventKind::Drag(button) | ui::MouseEventKind::Up(button) => {
+                self.child_mouse_buttons.contains(&button)
+            }
+            _ => false,
+        };
+        if !captured && !rect_contains(terminal_area, mouse.column(), mouse.row()) {
             return;
+        }
+
+        if let CommandLineHostState::Running(pty) = &self.state {
+            let mut forwarded = mouse;
+            if captured && !content.is_empty() {
+                forwarded.position = ui::Point::new(
+                    mouse.column().clamp(content.x, content.right() - 1),
+                    mouse.row().clamp(content.y, content.bottom() - 1),
+                );
+            }
+            match pty.send_mouse(&forwarded, content) {
+                Ok(consumed) => {
+                    match mouse.kind {
+                        ui::MouseEventKind::Down(button)
+                            if consumed && !self.child_mouse_buttons.contains(&button) =>
+                        {
+                            self.child_mouse_buttons.push(button);
+                        }
+                        ui::MouseEventKind::Up(button) => {
+                            self.child_mouse_buttons.retain(|held| *held != button);
+                        }
+                        _ => {}
+                    }
+                    if consumed {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    self.fail_running(i18n::tr!(
+                        "shell-terminal-input-failed",
+                        reason = error.to_string()
+                    ));
+                    return;
+                }
+            }
         }
 
         match (mouse.kind, scrollbar) {
@@ -370,21 +485,38 @@ impl CommandLineHost {
     fn set_scrollback(&mut self, offset: usize) {
         let result = match &self.state {
             CommandLineHostState::Running(pty) => pty.set_scrollback(offset),
-            _ => return,
+            _ => match &self.output {
+                Some(output) => output.set_scrollback(offset),
+                None => return,
+            },
         };
         match result {
             Ok(true) => self.refresh_snapshot(),
             Ok(false) => {}
             Err(error) => {
-                self.fail_running(format!("Could not scroll CLI terminal: {error}"));
+                self.fail_running(i18n::tr!(
+                    "shell-terminal-scroll-failed",
+                    reason = error.to_string()
+                ));
             }
         }
     }
 
     fn fail_running(&mut self, message: String) {
+        self.child_mouse_buttons.clear();
         let previous = std::mem::replace(&mut self.state, CommandLineHostState::Failed { message });
         if let CommandLineHostState::Running(pty) = previous {
-            let _ = pty.force_terminate();
+            if let Ok(output) = pty.into_output() {
+                self.install_snapshot(output.ui_snapshot(), self.snapshot_revision);
+                self.output = Some(output);
+            }
+        }
+        if let Some(history) = &self.history {
+            let message = match &self.state {
+                CommandLineHostState::Failed { message } => message.clone(),
+                _ => unreachable!(),
+            };
+            history.finish(platform::task_history::TaskStatus::Failed, message);
         }
     }
 
@@ -393,7 +525,10 @@ impl CommandLineHost {
             CommandLineHostState::Running(pty) => {
                 pty.ui_snapshot_if_changed(self.snapshot_revision)
             }
-            _ => None,
+            _ => self
+                .output
+                .as_ref()
+                .map(|output| (output.ui_snapshot(), self.snapshot_revision)),
         };
         if let Some((snapshot, revision)) = update {
             self.install_snapshot(snapshot, revision);
@@ -411,6 +546,25 @@ impl CommandLineHost {
     fn install_blank_snapshot(&mut self) {
         self.install_snapshot(blank_terminal_snapshot(), 0);
     }
+
+    fn set_focused(&mut self, focused: bool) {
+        if !focused {
+            self.child_mouse_buttons.clear();
+            self.scrollbar_drag_offset = None;
+        }
+        if self.focused == focused {
+            return;
+        }
+        self.focused = focused;
+        if let CommandLineHostState::Running(pty) = &self.state
+            && let Err(error) = pty.send_focus(focused)
+        {
+            self.fail_running(i18n::tr!(
+                "shell-terminal-input-failed",
+                reason = error.to_string()
+            ));
+        }
+    }
 }
 
 impl Drop for CommandLineHost {
@@ -427,6 +581,8 @@ pub(super) struct CommandLineHosts {
     tasks: HashMap<PageInstanceId, CommandLineTask>,
     empty: CommandLineHost,
     watchdog: AppWatchdog,
+    window_focused: bool,
+    cell_size: (u16, u16),
 }
 
 struct CommandLineTask {
@@ -448,6 +604,8 @@ impl CommandLineHosts {
             tasks: HashMap::new(),
             empty: CommandLineHost::new(watchdog.clone()),
             watchdog,
+            window_focused: true,
+            cell_size: (8, 16),
         }
     }
 
@@ -459,6 +617,19 @@ impl CommandLineHosts {
 
     pub(super) fn has_running_processes(&self) -> bool {
         self.hosts.values().any(CommandLineHost::is_running)
+    }
+
+    pub(super) fn set_cell_size(&mut self, width: u16, height: u16) {
+        self.cell_size = (width.max(1), height.max(1));
+    }
+
+    pub(super) fn observe_window_focus(&mut self, focused: bool) {
+        self.window_focused = focused;
+        if !focused {
+            for host in self.hosts.values_mut() {
+                host.set_focused(false);
+            }
+        }
     }
 
     pub(super) fn terminate_all(&mut self) -> io::Result<()> {
@@ -551,14 +722,26 @@ impl CommandLineHosts {
 
         if state.content_screen() == crate::ShellScreen::CommandLine {
             let id = state.content_page_id();
+            let external = state
+                .pages
+                .command_line
+                .get(id)
+                .and_then(|page| page.command_line_external.clone());
             let history = if self
                 .hosts
                 .get(&id)
                 .is_none_or(|host| matches!(host.state, CommandLineHostState::Inactive))
             {
                 state.tasks.new_recorder(
-                    "command-line",
-                    i18n::tr!("task-source-command-line"),
+                    if external.is_some() {
+                        "terminal"
+                    } else {
+                        "command-line"
+                    },
+                    external.as_ref().map_or_else(
+                        || i18n::tr!("task-source-command-line"),
+                        |launch| i18n::tr!("shell-terminal-task-title", program = launch.title()),
+                    ),
                     "command-line",
                 )
             } else {
@@ -568,13 +751,30 @@ impl CommandLineHosts {
                 .hosts
                 .entry(id)
                 .or_insert_with(|| CommandLineHost::new(self.watchdog.clone()));
+            if matches!(host.state, CommandLineHostState::Inactive)
+                && let Some(area) = state.command_line_input_area()
+            {
+                host.install_snapshot(
+                    ui::CommandLineTerminalSnapshot::blank(area.width, area.height),
+                    0,
+                );
+            }
             host.ensure_started_recorded(
                 platform,
                 state.current_home_username().unwrap_or("tundra"),
                 accent,
                 state.command_line_start_directory_for(id),
+                external.as_ref(),
                 history,
             );
+            if let CommandLineHostState::Running(pty) = &host.state
+                && let Err(error) = pty.set_cell_size(self.cell_size.0, self.cell_size.1)
+            {
+                host.fail_running(i18n::tr!(
+                    "shell-terminal-resize-failed",
+                    reason = error.to_string()
+                ));
+            }
         }
 
         let mut completed = Vec::new();
@@ -597,6 +797,15 @@ impl CommandLineHosts {
         for id in completed {
             self.hosts.remove(&id);
             state.close_page_instance(id);
+        }
+
+        let focused_id = (self.window_focused
+            && !state.screen_saver_active()
+            && state.active_screen() == crate::ShellScreen::CommandLine
+            && state.interactive_overlays().is_empty())
+        .then(|| state.active_page_id());
+        for (id, host) in &mut self.hosts {
+            host.set_focused(focused_id == Some(*id));
         }
 
         self.process_close_request(state);

@@ -1,6 +1,8 @@
 # vim-runtime
 
-按键、粘贴与鼠标转发共用 `terminal-runtime::pty::PtyProcess`，按发送时的子终端模式编码；Vim 专用的缓冲和保存交互仍由本 crate 管理。
+按键、粘贴、鼠标与焦点转发共用 `terminal-runtime::pty::PtyProcess`，按发送时的子终端模式编码；Vim 专用的缓冲和保存交互仍由本 crate 管理。
+
+宿主通过 `set_cell_size` 提供实际字符格的像素尺寸，图片定位及终端尺寸查询与共享渲染器使用同一几何。
 
 缓冲使用 Vim 原生 `listener_add()` 收集逐次行变化，随正文快照输出给宿主，用于脚本断点定位。宿主导入不产生编辑通知；一次轮询收到多次快照时合并通知，下一轮不重复交付。原有文本、光标及撤销仍由 Vim 管理。
 

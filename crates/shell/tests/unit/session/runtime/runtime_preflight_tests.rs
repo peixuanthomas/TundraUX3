@@ -588,10 +588,18 @@ fn command_line_runtime_leaves_shell_chrome_mouse_input_for_the_shell() {
         .area;
     let clock_input = InputEvent::mouse_down(ui::MouseButton::Left, (clock_area.x, clock_area.y));
     assert!(!command_line_captures_input(&state, &clock_input));
-    assert!(command_line_captures_input(
-        &state,
-        &InputEvent::mouse_up(ui::MouseButton::Left, (clock_area.x, clock_area.y))
-    ));
+    for button in [
+        ui::MouseButton::Left,
+        ui::MouseButton::Middle,
+        ui::MouseButton::Right,
+    ] {
+        for input in [
+            InputEvent::mouse_drag(button, (clock_area.x, clock_area.y)),
+            InputEvent::mouse_up(button, (clock_area.x, clock_area.y)),
+        ] {
+            assert!(command_line_captures_input(&state, &input));
+        }
+    }
 
     let terminal_area = ui::command_line_terminal_area(Rect::new(0, 0, 120, 40)).unwrap();
     let terminal_input = InputEvent::mouse_moved((terminal_area.x, terminal_area.y));

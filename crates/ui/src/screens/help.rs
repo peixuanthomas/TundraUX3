@@ -158,6 +158,7 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                 actions(vec![
                     row("Enter", i18n::tr!("ui-help-launcher-open")),
                     row("V", i18n::tr!("ui-help-launcher-view")),
+                    row("F4", i18n::tr!("ui-help-launcher-run-settings")),
                     row("Del", i18n::tr!("ui-help-launcher-remove")),
                 ]),
                 advanced(vec![

@@ -857,6 +857,7 @@ impl LauncherConfig {
                 fingerprint: None,
                 added_by_user_id: "legacy".to_string(),
                 added_at_epoch_ms: 0,
+                terminal: None,
             });
         }
         self.pinned_apps.clear();
@@ -878,6 +879,15 @@ pub struct LauncherEntryRecord {
     pub fingerprint: Option<LauncherFingerprint>,
     pub added_by_user_id: String,
     pub added_at_epoch_ms: i64,
+    /// Present when this entry runs in an embedded terminal instead of the system launcher.
+    pub terminal: Option<LauncherTerminalSettings>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LauncherTerminalSettings {
+    pub arguments: Vec<String>,
+    pub working_directory: Option<String>,
 }
 
 /// The executable classification persisted with a Launcher approval.

@@ -41,6 +41,8 @@ Linux 还提供“防火墙与端口”“SSH 服务管理”“配置备份与�
 
 Command Line 的 PTY、输入和环境状态见 [CLI 说明](../../cli/docs/commands.md)与 [terminal-runtime](../../terminal-runtime/README.md)。更新源码后需同时构建 Shell 和 CLI。
 
+外部可执行项目的“运行设置 F4”保存系统启动或嵌入终端，以及后者的参数和工作目录。参数按引号规则解析为数组，不展开变量；留空工作目录沿用 Command Line 默认目录。旧配置继续系统启动。嵌入启动保留执行批准与脚本确认，并检查命令行权限。外部程序成功后返回原 Launcher，失败输出留在终端页面，可回滚、重试或返回。
+
 ## 纯文本编辑器
 
 编辑器以 `Rope` 保存文本，并按 grapheme（用户看到的一个完整字符）移动光标，因此 CJK、emoji 和组合字符不会被截断。它只有纯文本编辑界面，没有 Source/Rich 切换、Markdown 格式按钮或预览。`.md`、`.markdown` 等文件与 `.txt` 一样直接读取和写回原文，Markdown 标记不会被解析成标题、列表或其他富文本内容。

@@ -21,7 +21,7 @@ members = [
     "crates/weathr",
 ]
 resolver = "3"
-exclude = ["third_party/crossterm", "third_party/lsh"]
+exclude = ["third_party/crossterm", "third_party/lsh", "third_party/wezterm-term"]
 
 [workspace.package]
 version = "1.4.1"
@@ -48,3 +48,4 @@ panic = "unwind"
 [patch.crates-io]
 crossterm = { path = "third_party/crossterm" }
 vt100 = { path = "third_party/vt100" }
+tattoy-wezterm-term = { path = "third_party/wezterm-term" }

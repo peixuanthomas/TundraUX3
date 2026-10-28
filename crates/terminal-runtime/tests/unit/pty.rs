@@ -17,29 +17,53 @@ impl Write for CollectingWriter {
 
 #[test]
 fn parsed_pty_output_marks_the_terminal_frame_dirty() {
-    let parser = Arc::new(Mutex::new(vt100::Parser::new(2, 8, 0)));
     let output_revision = Arc::new(AtomicU64::new(0));
     let captured = Arc::new(Mutex::new(Vec::new()));
     let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(
         CollectingWriter(Arc::clone(&captured)),
     )));
-
-    read_pty_output(
+    let parser = Arc::new(Mutex::new(Emulator::new(2, 8, 0, writer.clone())));
+    read_terminal_output_recorded(
         Box::new(io::Cursor::new(b"hello".to_vec())),
         Arc::clone(&parser),
         Arc::clone(&output_revision),
-        writer,
+        None,
     );
-
     assert_eq!(output_revision.load(Ordering::Acquire), 1);
+    let snapshot = parser.lock().unwrap().snapshot();
     assert_eq!(
-        lock_io(&parser)
-            .expect("terminal parser")
-            .screen()
-            .contents(),
+        snapshot
+            .cells
+            .iter()
+            .flatten()
+            .map(|cell| cell.text.as_str())
+            .collect::<String>()
+            .trim(),
         "hello"
     );
     assert!(lock_io(&captured).expect("terminal response").is_empty());
+}
+
+#[test]
+fn reader_eof_publishes_the_final_synchronized_frame_before_retaining_output() {
+    let (parser, _writer, _) = memory_terminal(2, 20, 0);
+    let parser = Arc::new(Mutex::new(parser));
+    let revision = Arc::new(AtomicU64::new(0));
+    read_terminal_output_recorded(
+        Box::new(io::Cursor::new(b"before\x1b[?2026h\r\x1b[2Kfinal".to_vec())),
+        parser.clone(),
+        revision.clone(),
+        None,
+    );
+    assert_eq!(revision.load(Ordering::Acquire), 2);
+    let output = TerminalOutput { parser };
+    assert!(
+        output.snapshot().cells[0]
+            .iter()
+            .map(|cell| cell.text.as_str())
+            .collect::<String>()
+            .starts_with("final")
+    );
 }
 
 #[test]
@@ -53,15 +77,14 @@ fn recorded_output_survives_beyond_the_terminal_scrollback_without_osc_controls(
     let recorder = TaskRecorder::new(store.clone(), summary).unwrap();
     let mut text = "中文输出\r\n".repeat(3000).into_bytes();
     text.extend_from_slice(b"\x1b]52;c;blocked\x07END");
-    let parser = Arc::new(Mutex::new(vt100::Parser::new(2, 12, 0)));
     let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(
         CollectingWriter(Arc::new(Mutex::new(Vec::new()))),
     )));
-    read_pty_output_recorded(
+    let parser = Arc::new(Mutex::new(Emulator::new(2, 12, 0, writer.clone())));
+    read_terminal_output_recorded(
         Box::new(io::Cursor::new(text)),
         parser,
         Arc::new(AtomicU64::new(0)),
-        writer,
         Some(&recorder),
     );
     let (bytes, _) = store.output(recorder.id(), 0, 256 * 1024).unwrap();
@@ -74,29 +97,35 @@ fn recorded_output_survives_beyond_the_terminal_scrollback_without_osc_controls(
 
 #[test]
 fn clearing_a_resized_row_does_not_leave_half_a_wide_character_or_stop_the_reader() {
-    // The reported crash erased column 173 in a 174-column terminal: resizing
-    // had removed the second cell of a wide character at the right edge.
     for columns in [1, 8, 174] {
         for erase in ["\x1b[K", "\x1b[1K", "\x1b[J", "\x1b[1J", "\x1b[X", "Z"] {
-            let mut parser = vt100::Parser::new(3, columns + 1, 0);
+            let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(
+                CollectingWriter(Arc::new(Mutex::new(Vec::new()))),
+            )));
+            let mut parser = Emulator::new(3, columns + 1, 0, writer.clone());
             parser.process(format!("\x1b[1;{columns}H\x1b[44m中").as_bytes());
-            parser.set_size(2, columns);
+            parser.resize(columns, 2);
             let parser = Arc::new(Mutex::new(parser));
             let revision = Arc::new(AtomicU64::new(0));
-            let captured = Arc::new(Mutex::new(Vec::new()));
-            let writer: Arc<Mutex<Box<dyn Write + Send>>> =
-                Arc::new(Mutex::new(Box::new(CollectingWriter(captured))));
-            read_pty_output(
+            read_terminal_output_recorded(
                 Box::new(io::Cursor::new(format!("{erase}\r\nALIVE").into_bytes())),
                 Arc::clone(&parser),
                 Arc::clone(&revision),
-                writer,
+                None,
             );
             assert_eq!(revision.load(Ordering::Acquire), 1);
-            let parser = lock_io(&parser).expect("terminal reader must not poison the parser");
-            assert!(!parser.screen().cell(0, columns - 1).unwrap().is_wide());
+            let snapshot = parser.lock().unwrap().snapshot();
+            assert!(!snapshot.cells[0][usize::from(columns - 1)].wide);
             if columns > 1 {
-                assert!(parser.screen().contents().contains("ALIVE"));
+                assert!(
+                    snapshot
+                        .cells
+                        .iter()
+                        .flatten()
+                        .map(|cell| cell.text.as_str())
+                        .collect::<String>()
+                        .contains("ALIVE")
+                );
             }
         }
     }
@@ -585,64 +614,71 @@ fn assert_snapshot_contains(
     }
 }
 
+fn memory_terminal(
+    rows: u16,
+    columns: u16,
+    scrollback: usize,
+) -> (
+    Emulator,
+    Arc<Mutex<Box<dyn Write + Send>>>,
+    Arc<Mutex<Vec<u8>>>,
+) {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let writer: Arc<Mutex<Box<dyn Write + Send>>> =
+        Arc::new(Mutex::new(Box::new(CollectingWriter(captured.clone()))));
+    (
+        Emulator::new(rows, columns, scrollback, writer.clone()),
+        writer,
+        captured,
+    )
+}
+
 #[test]
 fn strips_osc_52_even_when_sequence_is_split() {
-    let mut filter = OscFilter::default();
-    assert_eq!(filter.filter(b"safe\x1b]52;c;"), b"safe");
-    assert_eq!(filter.filter(b"c2VjcmV0\x07after"), b"after");
+    let (mut parser, _writer, _) = memory_terminal(2, 20, 0);
+    assert_eq!(parser.process(b"safe\x1b]52;c;"), b"safe");
+    assert_eq!(parser.process(b"c2VjcmV0\x07after"), b"after");
 }
 
 #[test]
 fn strips_c1_osc_and_c1_string_terminator() {
-    let mut filter = OscFilter::default();
+    let (mut parser, _writer, _) = memory_terminal(2, 20, 0);
     assert_eq!(
-        filter.filter(b"safe\x9d52;c;payload\x9cafter"),
+        parser.process(b"safe\x9d52;c;payload\x9cafter"),
         b"safeafter"
     );
 }
 
 #[test]
 fn preserves_utf8_bytes_that_match_c1_osc_controls() {
-    let mut filter = OscFilter::default();
+    let (mut parser, _writer, _) = memory_terminal(2, 40, 0);
     let text = "系统保留所有权利。\u{4fdc}";
     let mut filtered = Vec::new();
-
     for chunk in text.as_bytes().chunks(2) {
-        filtered.extend(filter.filter(chunk));
+        filtered.extend(parser.process(chunk));
     }
-
     assert_eq!(filtered, text.as_bytes());
 }
 
 #[test]
 fn preserves_csi_but_discards_osc_st_terminated() {
-    let mut filter = OscFilter::default();
+    let (mut parser, _writer, _) = memory_terminal(2, 20, 0);
+    let history = parser.process(b"\x1b[31mred\x1b]0;bad\x1b\\ok");
+    assert!(String::from_utf8(history).unwrap().ends_with("redok"));
     assert_eq!(
-        filter.filter(b"\x1b[31mred\x1b]0;bad\x1b\\ok"),
-        b"\x1b[31mredok"
+        parser.snapshot().cells[0][0].foreground,
+        TerminalColor::Indexed(1)
     );
 }
 
 #[test]
 fn cursor_position_request_is_replied_to_across_reads_without_matching_other_csi() {
-    let captured = Arc::new(Mutex::new(Vec::new()));
-    let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(
-        CollectingWriter(Arc::clone(&captured)),
-    )));
-    let mut responder = TerminalResponder::default();
-    responder
-        .respond(b"\x1b[6n", (0, 0), &writer)
-        .expect("complete request is answered");
-    responder
-        .respond(b"\x1b[", (2, 4), &writer)
-        .expect("partial request is accepted");
-    responder
-        .respond(b"6n", (2, 4), &writer)
-        .expect("cursor-position response is written");
-    responder
-        .respond(b"\x1b[31m", (9, 9), &writer)
-        .expect("ordinary CSI is ignored by responder");
-    let output = lock_io(&captured).expect("response writer");
+    let (mut parser, _writer, captured) = memory_terminal(12, 20, 0);
+    parser.process(b"\x1b[6n");
+    parser.process(b"\x1b[3;5H\x1b[");
+    parser.process(b"6n");
+    parser.process(b"\x1b[31m");
+    let output = lock_io(&captured).unwrap();
     assert_eq!(output.as_slice(), b"\x1b[1;1R\x1b[3;5R");
 }
 
@@ -894,13 +930,12 @@ fn paste_follows_the_child_terminal_mode() {
 #[test]
 fn command_status_follows_wrapped_prompts_into_history_and_survives_redraws() {
     use ui::components::CommandStatus;
-    let mut parser = vt100::Parser::new(3, 12, 20);
-    let mut filter = OscFilter::default();
+    let (mut parser, _writer, _) = memory_terminal(3, 12, 20);
     // Split every byte, including the UTF-8 marker and private CSI sequence.
     for byte in "○\x1b[777;0z user >>".as_bytes() {
-        parser.process(&filter.filter(&[*byte]));
+        parser.process(&[*byte]);
     }
-    let snapshot = to_ui_snapshot(&TerminalSnapshot::from_parser(&mut parser));
+    let snapshot = to_ui_snapshot(&parser.snapshot());
     assert_eq!(
         snapshot.cell(0, 0).unwrap().command_status,
         Some(CommandStatus::Pending)
@@ -911,13 +946,13 @@ fn command_status_follows_wrapped_prompts_into_history_and_survives_redraws() {
     parser.process(b"\x1b[?1049hchild screen\x1b[?1049l\x1b[777;1;0z");
     parser.process("○\x1b[777;0z user >> bad\r\n\x1b[777;1;1z".as_bytes());
     parser.process("○\x1b[777;0z user >> ".as_bytes());
-    parser.set_size(4, 12);
+    parser.resize(12, 4);
 
     let mut statuses = Vec::new();
-    let total = TerminalSnapshot::from_parser(&mut parser).scrollback_rows;
+    let total = parser.snapshot().scrollback_rows;
     for offset in (0..=total).rev() {
         parser.set_scrollback(offset);
-        let snapshot = to_ui_snapshot(&TerminalSnapshot::from_parser(&mut parser));
+        let snapshot = to_ui_snapshot(&parser.snapshot());
         // Each top row is visited once; include the remaining live rows last.
         let rows = if offset == 0 { snapshot.rows } else { 1 };
         for row in 0..rows {
@@ -939,7 +974,7 @@ fn command_status_follows_wrapped_prompts_into_history_and_survives_redraws() {
 
     parser.set_scrollback(0);
     parser.process(b"\x1b[3J\x1b[2J\x1b[H\x1b[777;1;1z");
-    let cleared = TerminalSnapshot::from_parser(&mut parser);
+    let cleared = parser.snapshot();
     assert_eq!(cleared.scrollback_rows, 0);
     assert!(
         cleared
@@ -952,10 +987,11 @@ fn command_status_follows_wrapped_prompts_into_history_and_survives_redraws() {
 
 #[test]
 fn command_status_rejects_unmarked_output_and_is_removed_on_overwrite() {
-    let mut parser = vt100::Parser::new(2, 20, 10);
+    let (mut parser, _writer, _) = memory_terminal(2, 20, 10);
     parser.process(b"ordinary\x1b[777;0z\x1b[777;1;0z");
     assert!(
-        TerminalSnapshot::from_parser(&mut parser)
+        parser
+            .snapshot()
             .cells
             .iter()
             .flatten()
@@ -963,10 +999,7 @@ fn command_status_rejects_unmarked_output_and_is_removed_on_overwrite() {
     );
     parser.process("\r○\x1b[777;0z".as_bytes());
     parser.process(b"\x1b[777;1;2z");
-    assert_eq!(
-        parser.screen().cell(0, 0).unwrap().command_status(),
-        Some(None)
-    );
+    assert_eq!(parser.snapshot().cells[0][0].command_status, Some(None));
     parser.process(b"\rX\x1b[777;1;0z");
-    assert_eq!(parser.screen().cell(0, 0).unwrap().command_status(), None);
+    assert_eq!(parser.snapshot().cells[0][0].command_status, None);
 }

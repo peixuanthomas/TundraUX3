@@ -1868,6 +1868,7 @@ impl ShellSession {
                                 FieldControl::Permissions => ui::ManagementFormControl::Permissions,
                             },
                             selected_cell: Some(self.pages.management.management_state.permission_cell),
+                            input: None,
                         })
                         .collect(),
                 }),

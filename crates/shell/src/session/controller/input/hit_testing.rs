@@ -441,9 +441,11 @@ pub(in crate::session) fn build_shell_hit_map(
                     .map(|layout| layout.area)
             }),
             ShellScreen::Launcher => launcher_model.and_then(|model| {
-                ui::launcher_layout(main, model)
-                    .confirmation
-                    .map(|layout| layout.area)
+                let layout = ui::launcher_layout(main, model);
+                layout
+                    .run_settings
+                    .map(|dialog| dialog.area)
+                    .or_else(|| layout.confirmation.map(|dialog| dialog.area))
             }),
             ShellScreen::Editor => editor_model.and_then(|model| {
                 if model.vim_install.is_some() {

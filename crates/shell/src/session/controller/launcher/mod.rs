@@ -1,4 +1,5 @@
 mod input;
+mod settings;
 pub(in crate::session) mod tasks;
 use crate::session::*;
 impl ShellSession {
@@ -310,6 +311,13 @@ impl ShellSession {
     ) {
         match effect {
             LauncherEffect::None => {}
+            LauncherEffect::OpenTerminalRequested {
+                path,
+                args,
+                directory,
+            } => {
+                self.open_external_terminal(path, args, directory);
+            }
             LauncherEffect::OpenRequested { path, kind } => {
                 let mut started = runtime_log::RuntimeLogEvent::new(
                     self.operation_log_context("ux.launcher", "launch_application"),
@@ -615,11 +623,19 @@ impl ShellSession {
                 ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
                 ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
                 ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
+                ui::LauncherToolbarAction::RunSettings => self.open_launcher_run_settings(),
             },
             Some(ui::LauncherHitTarget::EmptyOpenExplorer) => self.open_explorer(platform),
             Some(ui::LauncherHitTarget::Confirm) => self.confirm_launcher_action(platform),
             Some(ui::LauncherHitTarget::Cancel) => {
                 self.pages.launcher.launcher_pending_confirmation = None
+            }
+            Some(ui::LauncherHitTarget::SettingsField(index)) => {
+                self.activate_launcher_run_setting(index, platform)
+            }
+            Some(ui::LauncherHitTarget::SettingsSave) => self.save_launcher_run_settings(platform),
+            Some(ui::LauncherHitTarget::SettingsCancel) => {
+                self.pages.launcher.launcher_run_settings = None
             }
             _ => {}
         }
@@ -857,6 +873,11 @@ impl ShellSession {
                         );
                         model.selected = external_index.saturating_add(built_in_count)
                             == self.pages.launcher.launcher_selected_index;
+                        model.capabilities.configurable = matches!(
+                            item.record.executable_kind,
+                            Some(LauncherExecutableKind::NativeBinary)
+                        ) || cfg!(unix)
+                            && item.record.executable_kind == Some(LauncherExecutableKind::Script);
                         model
                     })
                     .collect::<Vec<_>>(),
@@ -886,6 +907,7 @@ impl ShellSession {
             self.ascii_assets.clone(),
         );
         model.sort = sort;
+        model.run_settings = self.launcher_run_settings_form();
         model.viewport_offset = self.pages.launcher.launcher_viewport_offset;
         model.drop_target = self
             .pages

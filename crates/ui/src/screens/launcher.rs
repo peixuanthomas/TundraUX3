@@ -35,17 +35,20 @@ pub enum LauncherItemSource {
 pub struct LauncherItemCapabilities {
     pub removable: bool,
     pub reorderable: bool,
+    pub configurable: bool,
 }
 
 impl LauncherItemCapabilities {
     pub const EXTERNAL: Self = Self {
         removable: true,
         reorderable: true,
+        configurable: false,
     };
 
     pub const BUILT_IN: Self = Self {
         removable: false,
         reorderable: false,
+        configurable: false,
     };
 }
 
@@ -110,6 +113,7 @@ pub enum LauncherToolbarAction {
     Remove,
     Refresh,
     ToggleView,
+    RunSettings,
 }
 
 impl LauncherToolbarAction {
@@ -119,6 +123,7 @@ impl LauncherToolbarAction {
             Self::Remove => i18n::tr!("ui-launcher-remove"),
             Self::Refresh => i18n::tr!("ui-launcher-refresh"),
             Self::ToggleView => i18n::tr!("ui-launcher-view"),
+            Self::RunSettings => i18n::tr!("ui-launcher-run-settings"),
         }
     }
 
@@ -128,6 +133,7 @@ impl LauncherToolbarAction {
             Self::Remove => "Del",
             Self::Refresh => "R/F5",
             Self::ToggleView => "V",
+            Self::RunSettings => "F4",
         }
     }
 
@@ -137,6 +143,7 @@ impl LauncherToolbarAction {
             Self::Remove => i18n::tr!("ui-launcher-remove-description"),
             Self::Refresh => i18n::tr!("ui-launcher-refresh-description"),
             Self::ToggleView => i18n::tr!("ui-launcher-view-description"),
+            Self::RunSettings => i18n::tr!("ui-launcher-run-settings-description"),
         }
     }
 }
@@ -208,6 +215,7 @@ pub struct LauncherViewModel {
     pub message: Option<String>,
     pub error: Option<String>,
     pub confirmation: Option<LauncherConfirmationViewModel>,
+    pub run_settings: Option<crate::ManagementForm>,
     pub drop_target: Option<LauncherDropTarget>,
     ascii_assets: RuntimeAsciiAssets,
 }
@@ -277,6 +285,10 @@ impl LauncherViewModel {
             LauncherToolbarAction::ToggleView,
             true,
         ));
+        toolbar.push(LauncherToolbarButtonViewModel::new(
+            LauncherToolbarAction::RunSettings,
+            can_manage && selected_item.is_some_and(|item| item.capabilities.configurable),
+        ));
 
         Self {
             items,
@@ -288,6 +300,7 @@ impl LauncherViewModel {
             message: None,
             error: None,
             confirmation: None,
+            run_settings: None,
             drop_target: None,
             ascii_assets,
         }
@@ -345,6 +358,9 @@ pub enum LauncherHitTarget {
     OverlaySurface,
     EmptyContent,
     EmptyOpenExplorer,
+    SettingsField(usize),
+    SettingsSave,
+    SettingsCancel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -369,6 +385,14 @@ pub struct LauncherConfirmationLayout {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LauncherRunSettingsLayout {
+    pub area: Rect,
+    pub fields: Vec<(usize, Rect)>,
+    pub submit: Rect,
+    pub cancel: Rect,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherLayout {
     pub panel: Rect,
     pub toolbar: Rect,
@@ -384,10 +408,27 @@ pub struct LauncherLayout {
     pub scrollbar: Option<Rect>,
     pub drop_indicator: Option<Rect>,
     pub confirmation: Option<LauncherConfirmationLayout>,
+    pub run_settings: Option<LauncherRunSettingsLayout>,
 }
 
 impl LauncherLayout {
     pub fn hit_test(&self, x: u16, y: u16) -> Option<LauncherHitTarget> {
+        if let Some(settings) = &self.run_settings {
+            if contains(settings.submit, x, y) {
+                return Some(LauncherHitTarget::SettingsSave);
+            }
+            if contains(settings.cancel, x, y) {
+                return Some(LauncherHitTarget::SettingsCancel);
+            }
+            if let Some((index, _)) = settings
+                .fields
+                .iter()
+                .find(|(_, area)| contains(*area, x, y))
+            {
+                return Some(LauncherHitTarget::SettingsField(*index));
+            }
+            return contains(settings.area, x, y).then_some(LauncherHitTarget::OverlaySurface);
+        }
         if let Some(confirmation) = self.confirmation {
             if contains(confirmation.confirm, x, y) {
                 return Some(LauncherHitTarget::Confirm);
@@ -536,6 +577,21 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         .confirmation
         .as_ref()
         .map(|_| launcher_confirmation_layout(main));
+    let run_settings = model.run_settings.as_ref().map(|form| {
+        let layout = crate::management_layout(
+            main,
+            &crate::ManagementViewModel {
+                form: Some(form.clone()),
+                ..Default::default()
+            },
+        );
+        LauncherRunSettingsLayout {
+            area: layout.form,
+            fields: layout.fields,
+            submit: layout.submit,
+            cancel: layout.cancel,
+        }
+    });
     let drop_indicator = if model.view_mode == LauncherViewMode::LargeIcons {
         model.drop_target.and_then(|target| {
             items
@@ -572,6 +628,7 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         scrollbar,
         drop_indicator,
         confirmation,
+        run_settings,
     }
 }
 
@@ -589,6 +646,7 @@ fn launcher_action_bar(model: &LauncherViewModel) -> PageActionBar {
     for action in [
         LauncherToolbarAction::Open,
         LauncherToolbarAction::ToggleView,
+        LauncherToolbarAction::RunSettings,
         LauncherToolbarAction::Remove,
     ] {
         if let Some(button) = model.toolbar.iter().find(|button| button.action == action) {
@@ -1243,6 +1301,18 @@ pub fn render_launcher_overlay(
     model: &LauncherViewModel,
     context: &RenderContext,
 ) {
+    if let Some(form) = &model.run_settings {
+        crate::render_management_overlay(
+            frame,
+            main,
+            &crate::ManagementViewModel {
+                form: Some(form.clone()),
+                ..Default::default()
+            },
+            context,
+        );
+        return;
+    }
     let layout = launcher_layout(main, model);
     if let (Some(dialog), Some(dialog_layout)) = (&model.confirmation, layout.confirmation) {
         render_launcher_confirmation(frame, dialog_layout, dialog, context);
@@ -1253,7 +1323,10 @@ pub fn launcher_sort_headers(
     layout: &LauncherLayout,
     model: &LauncherViewModel,
 ) -> Vec<(usize, Rect)> {
-    if model.view_mode != LauncherViewMode::Details || model.confirmation.is_some() {
+    if model.view_mode != LauncherViewMode::Details
+        || model.confirmation.is_some()
+        || model.run_settings.is_some()
+    {
         return vec![];
     }
     let width = layout

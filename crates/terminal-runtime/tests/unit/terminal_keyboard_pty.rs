@@ -11,6 +11,217 @@ const CHILD: &str = "TUNDRA_TEST_KEY_REPORT_CHILD";
 const TEST: &str = "session::terminal_keyboard_pty_tests::windows_terminal_reports_round_trip";
 
 #[test]
+fn kitty_reports_round_trip_with_all_phases_and_extended_keys() {
+    use crossterm::event::{KeyEventState, MediaKeyCode, ModifierKeyCode};
+    use ui::{Key as UiKey, KeyEvent as UiKeyEvent, KeyModifiers as UiModifiers};
+    const KITTY_CHILD: &str = "TUNDRA_TEST_KITTY_REPORT_CHILD";
+    const KITTY_TEST: &str = "session::terminal_keyboard_pty_tests::kitty_reports_round_trip_with_all_phases_and_extended_keys";
+    let all_modifiers = UiModifiers {
+        shift: true,
+        alt: true,
+        super_key: true,
+        hyper: true,
+        meta: true,
+        ..UiModifiers::CTRL
+    };
+    let cases = [
+        (
+            UiKeyEvent::with_modifiers(UiKey::Enter, UiModifiers::CTRL),
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        ),
+        (
+            UiKeyEvent::with_modifiers(UiKey::Enter, UiModifiers::CTRL).released(),
+            KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::CONTROL, KeyEventKind::Release),
+        ),
+        (
+            UiKeyEvent::with_modifiers(UiKey::Char('7'), all_modifiers)
+                .repeated()
+                .with_state(ui::KeyEventState {
+                    keypad: true,
+                    caps_lock: true,
+                    num_lock: true,
+                }),
+            KeyEvent::new_with_kind_and_state(
+                KeyCode::Char('7'),
+                KeyModifiers::SHIFT
+                    | KeyModifiers::ALT
+                    | KeyModifiers::CONTROL
+                    | KeyModifiers::SUPER
+                    | KeyModifiers::HYPER
+                    | KeyModifiers::META,
+                KeyEventKind::Repeat,
+                KeyEventState::KEYPAD | KeyEventState::CAPS_LOCK | KeyEventState::NUM_LOCK,
+            ),
+        ),
+        (
+            UiKeyEvent::new(UiKey::Media(ui::MediaKey::Play)),
+            KeyEvent::new(KeyCode::Media(MediaKeyCode::Play), KeyModifiers::NONE),
+        ),
+        (
+            UiKeyEvent::with_modifiers(
+                UiKey::Modifier(ui::ModifierKey::RightMeta),
+                UiModifiers {
+                    meta: true,
+                    ..UiModifiers::NONE
+                },
+            )
+            .released(),
+            KeyEvent::new_with_kind(
+                KeyCode::Modifier(ModifierKeyCode::RightMeta),
+                KeyModifiers::META,
+                KeyEventKind::Release,
+            ),
+        ),
+        (
+            UiKeyEvent::new(UiKey::KeypadBegin),
+            KeyEvent::new_with_kind_and_state(
+                KeyCode::KeypadBegin,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+                KeyEventState::KEYPAD,
+            ),
+        ),
+    ];
+    if std::env::var_os(KITTY_CHILD).is_some() {
+        let mut guard = TerminalGuard::enter(std::io::stdout()).unwrap();
+        assert!(guard.enable_keyboard_reporting().unwrap());
+        println!("KITTY_REPORT_READY");
+        std::io::stdout().flush().unwrap();
+        for (_, expected) in cases {
+            assert!(crossterm::event::poll(Duration::from_secs(5)).unwrap());
+            assert_eq!(crossterm::event::read().unwrap(), Event::Key(expected));
+        }
+        guard.restore().unwrap();
+        guard.resume().unwrap();
+        println!("KITTY_REPORT_RESUMED");
+        std::io::stdout().flush().unwrap();
+        assert!(crossterm::event::poll(Duration::from_secs(5)).unwrap());
+        assert_eq!(
+            crossterm::event::read().unwrap(),
+            Event::Key(KeyCode::Enter.into())
+        );
+        guard.restore().unwrap();
+        assert!(!is_raw_mode_enabled().unwrap());
+        println!("KITTY_REPORT_RESTORED");
+        std::io::stdout().flush().unwrap();
+        return;
+    }
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows: 24,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
+    command.args(["--exact", KITTY_TEST, "--nocapture", "--test-threads=1"]);
+    command.env(KITTY_CHILD, "1");
+    command.env("TERM", "xterm-256color");
+    for name in ["WT_SESSION", "TERM_PROGRAM", "TMUX", "STY"] {
+        command.env_remove(name);
+    }
+    let mut child = KillOnDrop(pair.slave.spawn_command(command).unwrap());
+    drop(pair.slave);
+    let mut writer = pair.master.take_writer().unwrap();
+    let mut reader = pair.master.try_clone_reader().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let reading = std::thread::spawn(move || {
+        let mut bytes = [0; 8192];
+        while let Ok(n) = reader.read(&mut bytes) {
+            if n == 0 || tx.send(bytes[..n].to_vec()).is_err() {
+                break;
+            }
+        }
+    });
+    let mut output = Vec::new();
+    receive_kitty_until(&rx, &mut output, &mut writer, b"KITTY_REPORT_READY");
+    for (key, _) in cases {
+        writer
+            .write_all(&crate::input::kitty_key_event_bytes(&key, 11).unwrap())
+            .unwrap();
+    }
+    writer.flush().unwrap();
+    receive_kitty_until(&rx, &mut output, &mut writer, b"KITTY_REPORT_RESUMED");
+    writer
+        .write_all(
+            &crate::input::kitty_key_event_bytes(&UiKeyEvent::new(UiKey::Enter), 11).unwrap(),
+        )
+        .unwrap();
+    writer.flush().unwrap();
+    receive_kitty_until(&rx, &mut output, &mut writer, b"KITTY_REPORT_RESTORED");
+    assert!(
+        child.0.wait().unwrap().success(),
+        "{}",
+        String::from_utf8_lossy(&output)
+    );
+    drop(pair.master);
+    drop(writer);
+    reading.join().unwrap();
+    assert!(
+        output
+            .windows(6)
+            .filter(|bytes| *bytes == b"\x1b[>11u")
+            .count()
+            >= 2
+    );
+    assert!(
+        output
+            .windows(5)
+            .filter(|bytes| *bytes == b"\x1b[<1u")
+            .count()
+            >= 2
+    );
+}
+
+fn receive_kitty_until(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    output: &mut Vec<u8>,
+    writer: &mut impl Write,
+    marker: &[u8],
+) {
+    let mut answered = output
+        .windows(4)
+        .filter(|bytes| *bytes == b"\x1b[?u")
+        .count();
+    let mut cursor_answered = output
+        .windows(4)
+        .filter(|bytes| *bytes == b"\x1b[6n")
+        .count();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !output.windows(marker.len()).any(|window| window == marker) {
+        output.extend(
+            rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Kitty PTY missing {}: {error}; {}",
+                        String::from_utf8_lossy(marker),
+                        String::from_utf8_lossy(output)
+                    )
+                }),
+        );
+        let queries = output
+            .windows(4)
+            .filter(|bytes| *bytes == b"\x1b[?u")
+            .count();
+        for _ in answered..queries {
+            writer.write_all(b"\x1b[?11u\x1b[?1;2c").unwrap();
+            writer.flush().unwrap();
+        }
+        answered = queries;
+        let cursor_queries = output
+            .windows(4)
+            .filter(|bytes| *bytes == b"\x1b[6n")
+            .count();
+        for _ in cursor_answered..cursor_queries {
+            writer.write_all(b"\x1b[1;1R").unwrap();
+            writer.flush().unwrap();
+        }
+        cursor_answered = cursor_queries;
+    }
+}
+
+#[test]
 fn windows_terminal_reports_round_trip() {
     if std::env::var_os(CHILD).is_some() {
         let mut guard = TerminalGuard::enter(std::io::stdout()).unwrap();

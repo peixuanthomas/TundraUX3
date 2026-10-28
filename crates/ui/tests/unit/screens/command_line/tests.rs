@@ -23,6 +23,7 @@ fn snapshot_handles_partial_cell_vectors_without_panicking() {
             symbol: "A".to_string(),
             ..CommandLineCell::default()
         }],
+        images: Vec::new(),
     };
     assert_eq!(snapshot.cell(0, 0).unwrap().symbol, "A");
     assert!(snapshot.cell(1, 0).is_none());

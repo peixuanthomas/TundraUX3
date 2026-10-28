@@ -14,11 +14,7 @@ impl ShellSession {
         if self.active_screen() == ShellScreen::CommandLine {
             return (
                 RoutedTarget::Component(ShellComponent::CommandLine),
-                if key.phase.is_press_like() {
-                    ShellCommand::CommandLineKey(key.clone())
-                } else {
-                    ShellCommand::Noop
-                },
+                ShellCommand::CommandLineKey(key.clone()),
             );
         }
 

@@ -4,10 +4,11 @@ use crate::{
 };
 use crossterm::event::{
     Event, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind,
-    KeyModifiers as CrosstermKeyModifiers, MouseButton as CrosstermMouseButton,
-    MouseEvent as CrosstermMouseEvent, MouseEventKind as CrosstermMouseEventKind,
+    KeyEventState as CrosstermKeyState, KeyModifiers as CrosstermKeyModifiers, MediaKeyCode,
+    ModifierKeyCode, MouseButton as CrosstermMouseButton, MouseEvent as CrosstermMouseEvent,
+    MouseEventKind as CrosstermMouseEventKind,
 };
-use ui::{MouseEventKind, Point};
+use ui::{KeyEventState, MediaKey, ModifierKey, MouseEventKind, Point};
 
 pub fn crossterm_event_to_input(event: Event) -> InputEvent {
     match event {
@@ -39,13 +40,56 @@ fn key_event_to_input(key_event: CrosstermKeyEvent) -> KeyInput {
         CrosstermKeyCode::PageUp => InputKey::PageUp,
         CrosstermKeyCode::PageDown => InputKey::PageDown,
         CrosstermKeyCode::F(number) => InputKey::F(number),
-        other => InputKey::Other(format!("{other:?}")),
+        CrosstermKeyCode::Null => InputKey::Null,
+        CrosstermKeyCode::CapsLock => InputKey::CapsLock,
+        CrosstermKeyCode::ScrollLock => InputKey::ScrollLock,
+        CrosstermKeyCode::NumLock => InputKey::NumLock,
+        CrosstermKeyCode::PrintScreen => InputKey::PrintScreen,
+        CrosstermKeyCode::Pause => InputKey::Pause,
+        CrosstermKeyCode::Menu => InputKey::Menu,
+        CrosstermKeyCode::KeypadBegin => InputKey::KeypadBegin,
+        CrosstermKeyCode::Media(key) => InputKey::Media(match key {
+            MediaKeyCode::Play => MediaKey::Play,
+            MediaKeyCode::Pause => MediaKey::Pause,
+            MediaKeyCode::PlayPause => MediaKey::PlayPause,
+            MediaKeyCode::Reverse => MediaKey::Reverse,
+            MediaKeyCode::Stop => MediaKey::Stop,
+            MediaKeyCode::FastForward => MediaKey::FastForward,
+            MediaKeyCode::Rewind => MediaKey::Rewind,
+            MediaKeyCode::TrackNext => MediaKey::TrackNext,
+            MediaKeyCode::TrackPrevious => MediaKey::TrackPrevious,
+            MediaKeyCode::Record => MediaKey::Record,
+            MediaKeyCode::LowerVolume => MediaKey::LowerVolume,
+            MediaKeyCode::RaiseVolume => MediaKey::RaiseVolume,
+            MediaKeyCode::MuteVolume => MediaKey::MuteVolume,
+        }),
+        CrosstermKeyCode::Modifier(key) => InputKey::Modifier(match key {
+            ModifierKeyCode::LeftShift => ModifierKey::LeftShift,
+            ModifierKeyCode::LeftControl => ModifierKey::LeftControl,
+            ModifierKeyCode::LeftAlt => ModifierKey::LeftAlt,
+            ModifierKeyCode::LeftSuper => ModifierKey::LeftSuper,
+            ModifierKeyCode::LeftHyper => ModifierKey::LeftHyper,
+            ModifierKeyCode::LeftMeta => ModifierKey::LeftMeta,
+            ModifierKeyCode::RightShift => ModifierKey::RightShift,
+            ModifierKeyCode::RightControl => ModifierKey::RightControl,
+            ModifierKeyCode::RightAlt => ModifierKey::RightAlt,
+            ModifierKeyCode::RightSuper => ModifierKey::RightSuper,
+            ModifierKeyCode::RightHyper => ModifierKey::RightHyper,
+            ModifierKeyCode::RightMeta => ModifierKey::RightMeta,
+            ModifierKeyCode::IsoLevel3Shift => ModifierKey::IsoLevel3Shift,
+            ModifierKeyCode::IsoLevel5Shift => ModifierKey::IsoLevel5Shift,
+        }),
     };
     KeyInput::with_phase(
         key,
         modifiers_from_crossterm(key_event.modifiers),
         phase_from_crossterm(key_event.kind),
     )
+    .with_state(KeyEventState {
+        keypad: key_event.state.contains(CrosstermKeyState::KEYPAD),
+        caps_lock: key_event.state.contains(CrosstermKeyState::CAPS_LOCK),
+        num_lock: key_event.state.contains(CrosstermKeyState::NUM_LOCK),
+    })
 }
 
 fn modifiers_from_crossterm(modifiers: CrosstermKeyModifiers) -> InputModifiers {
@@ -98,3 +142,7 @@ const fn button_from_crossterm(button: CrosstermMouseButton) -> PointerButton {
         CrosstermMouseButton::Middle => PointerButton::Middle,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/input/terminal_events.rs"]
+mod tests;

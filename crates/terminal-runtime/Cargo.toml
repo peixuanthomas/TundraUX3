@@ -10,6 +10,11 @@ crossterm.workspace = true
 ratatui.workspace = true
 portable-pty = "0.9"
 vt100 = "0.15.2"
+wezterm-term = { package = "tattoy-wezterm-term", version = "=0.1.0-fork.5" }
+wezterm-escape-parser = { package = "tattoy-wezterm-escape-parser", version = "=0.1.0-1", features = ["std", "use_image"] }
+wezterm-cell = { package = "tattoy-wezterm-cell", version = "0.1.0-1", features = ["std", "use_image"] }
+wezterm-surface = { package = "tattoy-wezterm-surface", version = "=0.1.0-fork.2", features = ["std", "appdata", "use_image"] }
+termwiz = { package = "tattoy-termwiz", version = "=0.24.0-fork.2", features = ["use_image"] }
 runtime-log = { path = "../runtime-log" }
 platform = { path = "../platform" }
 ui = { path = "../ui" }

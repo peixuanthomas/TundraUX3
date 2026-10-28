@@ -67,6 +67,7 @@ fn managed_refresh_publishes_presence_results() {
         fingerprint: None,
         added_by_user_id: "admin".to_string(),
         added_at_epoch_ms: 0,
+        terminal: None,
     };
     let watchdog = default_editor_watchdog().expect("test watchdog");
     let runtime = ShellLauncherTaskRuntime::new_managed(std::sync::Arc::new(platform), watchdog);

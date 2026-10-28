@@ -211,6 +211,19 @@ impl Default for SystemStatusPageState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LauncherRunSettingsState {
+    pub(super) id: String,
+    pub(super) embedded: bool,
+    pub(super) arguments: ui::components::TextInput,
+    pub(super) directory: ui::components::TextInput,
+    pub(super) selected: usize,
+    pub(super) error: Option<i18n::LocalizedText>,
+    pub(super) field_scroll: Option<usize>,
+    pub(super) message_scroll: u16,
+    pub(super) scrollbar_drag: Option<(ui::ManagementScrollTarget, u16)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherPageState {
     pub(super) launcher_selected_index: usize,
     pub(super) launcher_view_mode: app::launcher::LauncherViewMode,
@@ -219,6 +232,7 @@ pub(super) struct LauncherPageState {
     pub(super) launcher_pending_confirmation: Option<LauncherPendingConfirmation>,
     pub(super) launcher_drag: Option<LauncherDragState>,
     pub(super) launcher_refresh_request: Option<u64>,
+    pub(super) launcher_run_settings: Option<LauncherRunSettingsState>,
 }
 impl Default for LauncherPageState {
     fn default() -> Self {
@@ -230,6 +244,7 @@ impl Default for LauncherPageState {
             launcher_pending_confirmation: None,
             launcher_drag: None,
             launcher_refresh_request: None,
+            launcher_run_settings: None,
         }
     }
 }
@@ -237,11 +252,13 @@ impl Default for LauncherPageState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CommandLinePageState {
     pub(super) command_line_start_directory: Option<PathBuf>,
+    pub(super) command_line_external: Option<ExternalTerminalLaunch>,
 }
 impl Default for CommandLinePageState {
     fn default() -> Self {
         Self {
             command_line_start_directory: None,
+            command_line_external: None,
         }
     }
 }

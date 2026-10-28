@@ -120,12 +120,31 @@ pub(crate) struct ScreenCompositor {
     toast: Option<ui::components::Toast>,
     appearance: Option<(ui::ThemeTokens, u64)>,
     keyboard_open: bool,
+    terminal_image_picker: Option<ui::EditorImagePicker>,
+    terminal_images: std::collections::HashMap<(PageInstanceId, u8), ui::TerminalImageCache>,
+    terminal_image_cleanup: Vec<u8>,
     pub(super) capture_enabled: bool,
     pub(super) snapshot: Option<shell_control::Snapshot>,
     sensitive_frame: bool,
 }
 
 impl ScreenCompositor {
+    pub(super) fn set_terminal_image_picker(&mut self, picker: Option<ui::EditorImagePicker>) {
+        for cache in self.terminal_images.values_mut() {
+            cache.clear();
+            self.terminal_image_cleanup.extend(cache.take_cleanup());
+        }
+        self.terminal_images.clear();
+        self.terminal_image_picker = picker;
+    }
+
+    pub(super) fn take_terminal_image_cleanup(&mut self) -> Vec<u8> {
+        for cache in self.terminal_images.values_mut() {
+            self.terminal_image_cleanup.extend(cache.take_cleanup());
+        }
+        std::mem::take(&mut self.terminal_image_cleanup)
+    }
+
     pub(super) fn render_screen_saver(
         &mut self,
         frame: &mut Frame<'_>,
@@ -218,6 +237,10 @@ impl ScreenCompositor {
         error: crate::startup::terminal_size::ShellTerminalSizeError,
         theme: &ui::TundraTheme,
     ) {
+        for cache in self.terminal_images.values_mut() {
+            cache.clear();
+            self.terminal_image_cleanup.extend(cache.take_cleanup());
+        }
         let capture = self
             .capture_enabled
             .then(|| ui::automation::FrameCapture::begin(frame.area(), "terminal_size"));
@@ -233,6 +256,16 @@ impl ScreenCompositor {
         prepared: &PreparedFrame,
         icons: Option<&LauncherIconRuntime>,
     ) -> bool {
+        let live = state.live_page_ids();
+        self.terminal_images.retain(|(id, _), cache| {
+            if live.contains(id) {
+                true
+            } else {
+                cache.clear();
+                self.terminal_image_cleanup.extend(cache.take_cleanup());
+                false
+            }
+        });
         let bounds = frame.area();
         let mut capture = self.capture_enabled.then(|| {
             ui::automation::FrameCapture::begin(bounds, format!("{:?}", state.content_screen()))
@@ -316,13 +349,60 @@ impl ScreenCompositor {
         let visible_content = !layout.is_compact() || content.renders_in_compact();
         let icons = icons.filter(|_| state.graphical_icons_enabled());
         if visible_content {
-            content.render_content(
-                frame,
-                &layout,
-                context,
-                icons.map(|v| v as &dyn ui::HomeIconRenderer),
-                icons.map(|v| v as &dyn ui::LauncherIconRenderer),
-            );
+            // Raster cells compose safely while modal surfaces or layouts move.
+            let picker = (overlays.is_empty() && !self.motion.is_running() && !keyboard_animating)
+                .then_some(self.terminal_image_picker.as_ref())
+                .flatten();
+            let page = state.content_page_id();
+            match content {
+                ui::ScreenContent::CommandLine(model) => {
+                    ui::render_command_line_content_with_images(
+                        frame,
+                        layout.main,
+                        ui::command_line_terminal_area_in(&layout),
+                        model,
+                        context,
+                        self.terminal_images.entry((page, 0)).or_default(),
+                        picker,
+                    )
+                }
+                ui::ScreenContent::Editor(model) => {
+                    ui::render_editor_contextual_with_terminal_images(
+                        frame,
+                        layout.main,
+                        model,
+                        context,
+                        self.terminal_images.entry((page, 1)).or_default(),
+                        picker,
+                    );
+                }
+                ui::ScreenContent::Script(model) => {
+                    self.terminal_images.entry((page, 1)).or_default();
+                    self.terminal_images.entry((page, 2)).or_default();
+                    let [Some(editor), Some(output)] = self
+                        .terminal_images
+                        .get_disjoint_mut([&(page, 1), &(page, 2)])
+                    else {
+                        unreachable!()
+                    };
+                    ui::render_script_contextual_with_terminal_images(
+                        frame,
+                        layout.main,
+                        model,
+                        context,
+                        editor,
+                        output,
+                        picker,
+                    );
+                }
+                _ => content.render_content(
+                    frame,
+                    &layout,
+                    context,
+                    icons.map(|v| v as &dyn ui::HomeIconRenderer),
+                    icons.map(|v| v as &dyn ui::LauncherIconRenderer),
+                ),
+            }
         } else {
             ui::render_compact_home(frame, layout.main, &chrome, &context.compatibility_theme());
         }
@@ -426,6 +506,27 @@ impl ScreenCompositor {
                 &auto_admin,
                 context,
             );
+            if !auto_admin.confirming && auto_admin.stop != ui::AutoAdminStopState::Warning {
+                let terminal_area =
+                    ui::auto_admin_layout_in(state.auto_admin_available_area(), &auto_admin)
+                        .terminal;
+                self.terminal_images
+                    .entry((state.content_page_id(), 3))
+                    .or_default()
+                    .render(
+                        frame,
+                        terminal_area,
+                        &auto_admin.terminal,
+                        (!self.motion.is_running() && !keyboard_animating)
+                            .then_some(self.terminal_image_picker.as_ref())
+                            .flatten(),
+                    );
+            } else if let Some(images) = self.terminal_images.get_mut(&(state.content_page_id(), 3))
+            {
+                images.clear();
+            }
+        } else if let Some(images) = self.terminal_images.get_mut(&(state.content_page_id(), 3)) {
+            images.clear();
         }
         self.motion.capture_overlay(frame.buffer_mut(), state);
         self.motion

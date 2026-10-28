@@ -989,8 +989,14 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         shell_watchdog.clone(),
     ));
     let mut command_line_hosts = CommandLineHosts::new(shell_watchdog.clone());
+    let terminal_cell_size = terminal_graphics_probe
+        .picker()
+        .map_or((8, 16), ui::EditorImagePicker::cell_size);
+    command_line_hosts.set_cell_size(terminal_cell_size.0, terminal_cell_size.1);
     let mut script_hosts = super::script_host::ScriptHosts::new(shell_watchdog.clone());
+    script_hosts.set_cell_size(terminal_cell_size.0, terminal_cell_size.1);
     let mut editor_vim = super::vim_host::EditorVimHost::new(shell_watchdog.clone());
+    editor_vim.set_cell_size(terminal_cell_size.0, terminal_cell_size.1);
     let mut vim_cursor_style = ui::CommandLineCursorStyle::Default;
     let mut reset_requested = false;
     if let Some(cached) = cached_time_sync.as_ref() {
@@ -1004,6 +1010,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         reduced_motion_enabled(&state),
     );
     let mut compositor = ScreenCompositor::default();
+    compositor.set_terminal_image_picker(terminal_graphics_probe.picker().cloned());
     let mut screen_saver_display = None;
     let mut next_weather_frame = runtime_origin;
     control.invalidate();
@@ -1062,12 +1069,26 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                             state.apply_routed_event(routed, platform.as_ref(), Instant::now());
                             redraw.request_redraw();
                         }
+                        command_line_hosts.observe_window_focus(false);
+                        editor_vim.observe_window_focus(&state, false);
+                        script_hosts.observe_window_focus(&state, false);
+                        compositor.set_terminal_image_picker(None);
+                        write_terminal_image_cleanup(
+                            &mut compositor,
+                            guard.terminal_mut().backend_mut(),
+                        )?;
                         guard.restore()?;
                         terminal_suspended = true;
                     }
                     PlatformLifecycleEvent::Resumed => {
                         if terminal_suspended {
                             guard.resume()?;
+                            compositor.set_terminal_image_picker(
+                                terminal_graphics_probe.picker().cloned(),
+                            );
+                            command_line_hosts.observe_window_focus(true);
+                            editor_vim.observe_window_focus(&state, true);
+                            script_hosts.observe_window_focus(&state, true);
                             terminal_suspended = false;
                         }
                         refresh_session_after_resume(
@@ -1248,18 +1269,30 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                 if let Some(error) = weather_error {
                     return Err(error);
                 }
+                write_terminal_image_cleanup(&mut compositor, guard.terminal_mut().backend_mut())?;
                 next_weather_frame = frame_now + Duration::from_millis(33);
-                let cursor_style = state
-                    .editor_vim_terminal
-                    .as_ref()
-                    .filter(|_| {
-                        state.active_screen() == ShellScreen::Editor
-                            && state.interactive_overlays().is_empty()
-                            && !state.screen_saver_active()
-                    })
-                    .map_or(ui::CommandLineCursorStyle::Default, |terminal| {
-                        terminal.cursor_style
-                    });
+                let cursor_style = if state.active_screen() == ShellScreen::CommandLine
+                    && state.interactive_overlays().is_empty()
+                    && !state.screen_saver_active()
+                {
+                    command_line_hosts
+                        .visible_host(&state)
+                        .view_model()
+                        .terminal
+                        .cursor_style
+                } else {
+                    state
+                        .editor_vim_terminal
+                        .as_ref()
+                        .filter(|_| {
+                            state.active_screen() == ShellScreen::Editor
+                                && state.interactive_overlays().is_empty()
+                                && !state.screen_saver_active()
+                        })
+                        .map_or(ui::CommandLineCursorStyle::Default, |terminal| {
+                            terminal.cursor_style
+                        })
+                };
                 if cursor_style != vim_cursor_style {
                     crossterm::execute!(
                         guard.terminal_mut().backend_mut(),
@@ -1399,6 +1432,12 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
                         state.screen_keyboard.physical.observe(*key, received_at);
                     }
                     let input = crossterm_event_to_input(terminal_event);
+                    if matches!(input, InputEvent::FocusGained | InputEvent::FocusLost) {
+                        let focused = matches!(input, InputEvent::FocusGained);
+                        command_line_hosts.observe_window_focus(focused);
+                        editor_vim.observe_window_focus(&state, focused);
+                        script_hosts.observe_window_focus(&state, focused);
+                    }
                     let Some(input) =
                         compositor.prepare_input(&mut state, input, platform.as_ref(), received_at)
                     else {
@@ -1524,14 +1563,19 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         shell_watchdog,
         preserve_prepared_update,
     );
+    compositor.set_terminal_image_picker(None);
+    let image_cleanup =
+        write_terminal_image_cleanup(&mut compositor, guard.terminal_mut().backend_mut());
     let cursor_restore = crossterm::execute!(
         guard.terminal_mut().backend_mut(),
         crossterm::cursor::SetCursorStyle::DefaultUserShape
     );
     let restore = guard.restore();
     drop(guard);
-    let panic_message =
-        finish_session_execution(execution, cleanup.and(cursor_restore).and(restore))?;
+    let panic_message = finish_session_execution(
+        execution,
+        cleanup.and(image_cleanup).and(cursor_restore).and(restore),
+    )?;
 
     if let Some(message) = panic_message {
         return Ok((
@@ -1840,14 +1884,25 @@ fn command_line_captures_input(state: &ShellSession, input: &InputEvent) -> bool
         InputEvent::Mouse(mouse) => {
             let continues_terminal_drag = matches!(
                 mouse.kind,
-                ui::MouseEventKind::Drag(ui::MouseButton::Left)
-                    | ui::MouseEventKind::Up(ui::MouseButton::Left)
+                ui::MouseEventKind::Drag(_) | ui::MouseEventKind::Up(_)
             );
             continues_terminal_drag
                 || state.hit_map().layer_at(mouse.coordinates()) != Some(ShellHitLayer::ShellChrome)
         }
         _ => false,
     }
+}
+
+fn write_terminal_image_cleanup(
+    compositor: &mut ScreenCompositor,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    let cleanup = compositor.take_terminal_image_cleanup();
+    if !cleanup.is_empty() {
+        output.write_all(&cleanup)?;
+        output.flush()?;
+    }
+    Ok(())
 }
 
 fn vim_terminal_cursor_style(

@@ -1,6 +1,6 @@
 use super::*;
 use crate::components::{Button, ButtonEmphasis, Scrollbar, Surface};
-use crate::{RenderContext, render_editor_contextual, render_editor_overlay};
+use crate::{RenderContext, render_editor_overlay};
 use ratatui::{
     Frame,
     style::{Modifier, Style},
@@ -14,14 +14,36 @@ pub fn render_script_contextual(
     model: &ScriptViewModel,
     context: &RenderContext,
 ) -> ScriptLayout {
+    render_script_contextual_with_terminal_images(
+        frame,
+        area,
+        model,
+        context,
+        &mut crate::TerminalImageCache::default(),
+        &mut crate::TerminalImageCache::default(),
+        None,
+    )
+}
+
+pub fn render_script_contextual_with_terminal_images(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &ScriptViewModel,
+    context: &RenderContext,
+    editor_images: &mut crate::TerminalImageCache,
+    output_images: &mut crate::TerminalImageCache,
+    picker: Option<&crate::EditorImagePicker>,
+) -> ScriptLayout {
     let layout = script_layout(area, model);
     let theme = context.compatibility_theme();
     frame.render_widget(Clear, area);
-    render_editor_contextual(
+    crate::render_editor_contextual_with_terminal_images(
         frame,
         layout.editor_area,
         &model.decorated_editor(),
         context,
+        editor_images,
+        picker,
     );
     for (pane, rect) in &layout.panes {
         Surface::new()
@@ -32,19 +54,24 @@ pub fn render_script_contextual(
     }
     if !layout.output_area.is_empty() {
         if let Some(output) = &model.output {
-            crate::screens::command_line::render_native_terminal_snapshot_with_focus(
+            crate::screens::command_line::render_native_terminal_snapshot_with_images(
                 frame,
                 layout.output_area,
                 output,
                 &theme,
                 model.focus == ScriptPane::Output,
+                output_images,
+                picker,
             );
         } else {
+            output_images.clear();
             frame.render_widget(
                 Paragraph::new(i18n::tr!("script-no-output")).style(theme.muted_style()),
                 layout.output_area,
             );
         }
+    } else {
+        output_images.clear();
     }
     let variables = model.variable_rows();
     for (pane, index, rect) in &layout.rows {

@@ -132,6 +132,9 @@ impl ShellSession {
         self.pages.diagnostics.diagnostics_detail_drag = None;
         self.scrollbar_drag = None;
         self.pages.launcher.launcher_drag = None;
+        if let Some(settings) = &mut self.pages.launcher.launcher_run_settings {
+            settings.scrollbar_drag = None;
+        }
         self.drag_tracker = None;
         self.pages.editor.editor_table_resize = None;
         self.pages.editor.script.pointer = None;

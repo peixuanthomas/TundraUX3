@@ -168,6 +168,65 @@ fn scrollbar_drag_maps_both_track_ends_to_history_ends() {
 }
 
 #[test]
+fn failed_terminal_keeps_the_bottom_scrollbar_thumb_visible_and_draggable() {
+    let fixture = PtyFixture::new("failed-scrollbar");
+    let mut host = CommandLineHost::new(fixture.app.clone());
+    let main = Rect::new(0, 0, 32, 12);
+    let terminal_area = Rect::new(1, 1, 30, 10);
+    let context = ui::RenderContext::from_theme(
+        &ui::TundraTheme::default_dark(),
+        Default::default(),
+        Default::default(),
+    );
+    for state in [
+        CommandLineHostState::Exited { code: 17 },
+        CommandLineHostState::Failed {
+            message: "test failure".into(),
+        },
+    ] {
+        host.state = state;
+        let mut snapshot = ui::CommandLineTerminalSnapshot::blank(29, 9);
+        snapshot.scrollback_rows = 2_000;
+        host.install_snapshot(snapshot, 0);
+        let model = host.view_model();
+        let output_area = model.output_area(terminal_area);
+        let scrollbar =
+            ui::command_line_scrollbar_layout(output_area, model.terminal.as_ref()).unwrap();
+        assert_eq!(scrollbar.thumb.height, 1);
+        assert_eq!(scrollbar.thumb.bottom(), terminal_area.bottom() - 1);
+
+        let mut screen =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(main.width, main.height))
+                .unwrap();
+        screen
+            .draw(|frame| {
+                ui::render_command_line_content(frame, main, Some(terminal_area), &model, &context);
+            })
+            .unwrap();
+        let point = (scrollbar.thumb.x, scrollbar.thumb.y);
+        assert_eq!(screen.backend().buffer()[point].symbol(), "█");
+        host.handle_input(
+            &InputEvent::mouse_down(ui::MouseButton::Left, point),
+            Some(terminal_area),
+        );
+        assert_eq!(host.scrollbar_drag_offset, Some(0));
+        host.handle_input(
+            &InputEvent::mouse_up(ui::MouseButton::Left, point),
+            Some(terminal_area),
+        );
+        assert_eq!(host.scrollbar_drag_offset, None);
+        host.handle_input(
+            &InputEvent::mouse_down(
+                ui::MouseButton::Left,
+                (scrollbar.track.x, terminal_area.bottom() - 1),
+            ),
+            Some(terminal_area),
+        );
+        assert_eq!(host.scrollbar_drag_offset, None);
+    }
+}
+
+#[test]
 fn failed_and_exited_terminals_ignore_escape_and_old_emergency_shortcut() {
     let fixture = PtyFixture::new("failed-input");
     let mut host = CommandLineHost::new(fixture.app.clone());
@@ -250,9 +309,13 @@ fn windows_conpty_receives_initial_and_typed_output() {
     let ui_snapshot = Arc::new(snapshot);
     let mut host = CommandLineHost {
         state: CommandLineHostState::Running(pty),
+        launch: None,
+        output: None,
+        focused: false,
         snapshot_revision,
         ui_snapshot,
         scrollbar_drag_offset: None,
+        child_mouse_buttons: Vec::new(),
         history: None,
         reader_tasks,
     };
@@ -906,3 +969,6 @@ fn wait_until_stopped(pid: u32) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[path = "external_tui.rs"]
+mod external_tui;

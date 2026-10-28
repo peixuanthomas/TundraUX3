@@ -32,6 +32,7 @@ pub struct ManagementFormField {
     pub choices: Vec<String>,
     pub control: ManagementFormControl,
     pub selected_cell: Option<usize>,
+    pub input: Option<TextInput>,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagementChoices {
@@ -384,6 +385,10 @@ fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
     } else {
         management_wrapped_lines(&field.label, width)
     };
+    if field.input.is_some() {
+        lines.push(String::new());
+        return lines;
+    }
     let value = if field.control == ManagementFormControl::Checkbox {
         if field.value == "true" {
             "[x]".into()
@@ -1947,6 +1952,33 @@ pub fn render_management_overlay(
         let skip = layout
             .field_start
             .saturating_sub(layout.field_ranges[*index].0);
+        if let Some(input) = &field.input {
+            let label_rows = lines.len().saturating_sub(1);
+            frame.render_widget(
+                Paragraph::new(
+                    lines
+                        .into_iter()
+                        .take(label_rows)
+                        .skip(skip)
+                        .map(Line::from)
+                        .collect::<Vec<_>>(),
+                )
+                .style(theme.body_style()),
+                *area,
+            );
+            if skip <= label_rows && label_rows - skip < usize::from(area.height) {
+                let input_area =
+                    Rect::new(area.x, area.y + (label_rows - skip) as u16, area.width, 1);
+                let mut input = input
+                    .clone()
+                    .with_capture_name(&field.label)
+                    .with_sensitive(field.secret);
+                input.id = management_field_id(form, *index).into();
+                input.set_focused(form.selected == *index);
+                input.render_borderless_frame(frame, input_area, &theme);
+            }
+            continue;
+        }
         if field.control == ManagementFormControl::Permissions {
             frame.render_widget(
                 Paragraph::new(

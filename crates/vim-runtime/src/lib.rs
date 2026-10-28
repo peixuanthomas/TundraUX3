@@ -208,6 +208,14 @@ impl VimHost {
         self.running()?.send_key(key)
     }
 
+    pub fn send_focus(&self, focused: bool) -> io::Result<()> {
+        self.running()?.send_focus(focused)
+    }
+
+    pub fn set_cell_size(&self, width: u16, height: u16) -> io::Result<()> {
+        self.running()?.set_cell_size(width, height)
+    }
+
     pub fn paste(&self, text: &str) -> io::Result<()> {
         self.running()?.send_paste(text)
     }

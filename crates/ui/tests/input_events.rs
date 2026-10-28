@@ -1,4 +1,4 @@
-use ui::{InputEvent, InputPhase, Key, KeyEvent, KeyModifiers, KeyStroke};
+use ui::{InputEvent, InputPhase, Key, KeyEvent, KeyEventState, KeyModifiers, KeyStroke};
 
 #[test]
 fn key_events_preserve_all_phases() {
@@ -68,4 +68,17 @@ fn modifiers_include_control_and_platform_modifier_keys() {
         KeyStroke::new(Key::Char('k'), modifiers).label(),
         "Ctrl+Alt+Super+Hyper+Meta+Shift+k"
     );
+}
+
+#[test]
+fn key_phase_changes_preserve_keypad_and_lock_state() {
+    let state = KeyEventState {
+        keypad: true,
+        caps_lock: true,
+        num_lock: true,
+    };
+    let key = KeyEvent::new(Key::Char('1')).with_state(state);
+    assert_eq!(key.clone().repeated().state, state);
+    assert_eq!(key.released().state, state);
+    assert_eq!(KeyEvent::new(Key::Enter).state, KeyEventState::default());
 }

@@ -14,8 +14,8 @@ pub use focus::{
 };
 pub use hit_test::{HitKind, HitLayer, HitMap, HitTarget, HitTargetKind};
 pub use input::{
-    InputEvent, InputPhase, Key, KeyCode, KeyEvent, KeyInput, KeyModifiers, KeyStroke, MouseAction,
-    MouseButton, MouseEvent, MouseEventKind, MouseInput, MouseKind, Point, RouteTarget,
-    RoutedEvent, RoutedTarget, ScrollDirection, UiId,
+    InputEvent, InputPhase, Key, KeyCode, KeyEvent, KeyEventState, KeyInput, KeyModifiers,
+    KeyStroke, MediaKey, ModifierKey, MouseAction, MouseButton, MouseEvent, MouseEventKind,
+    MouseInput, MouseKind, Point, RouteTarget, RoutedEvent, RoutedTarget, ScrollDirection, UiId,
 };
 pub use intent::{FocusIntent, UiIntent};

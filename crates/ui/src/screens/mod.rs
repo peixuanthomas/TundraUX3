@@ -50,9 +50,9 @@ pub use launcher::{
     LauncherConfirmationKind, LauncherConfirmationLayout, LauncherConfirmationViewModel,
     LauncherDropSide, LauncherDropTarget, LauncherHitTarget, LauncherIconRenderer,
     LauncherItemCapabilities, LauncherItemLayout, LauncherItemSource, LauncherItemStatus,
-    LauncherItemViewModel, LauncherLayout, LauncherToolbarAction, LauncherToolbarButtonLayout,
-    LauncherToolbarButtonViewModel, LauncherViewMode, LauncherViewModel, launcher_layout,
-    render_launcher_content, render_launcher_overlay,
+    LauncherItemViewModel, LauncherLayout, LauncherRunSettingsLayout, LauncherToolbarAction,
+    LauncherToolbarButtonLayout, LauncherToolbarButtonViewModel, LauncherViewMode,
+    LauncherViewModel, launcher_layout, render_launcher_content, render_launcher_overlay,
 };
 pub use settings::{
     SettingsAnimationEditorViewModel, SettingsAnimationLayout, SettingsAppearancePreview,

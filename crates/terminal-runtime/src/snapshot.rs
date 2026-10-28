@@ -47,6 +47,7 @@ pub struct TerminalSnapshot {
     pub mouse_protocol_mode: vt100::MouseProtocolMode,
     pub mouse_protocol_encoding: vt100::MouseProtocolEncoding,
     pub title: String,
+    pub images: Vec<ui::TerminalImageFragment>,
 }
 
 impl TerminalSnapshot {
@@ -109,6 +110,7 @@ impl TerminalSnapshot {
             // OSC is filtered, so this will remain empty unless a future
             // parser API supplies a title from another safe source.
             title: screen.title().to_owned(),
+            images: Vec::new(),
         }
     }
 }
@@ -150,6 +152,7 @@ pub fn to_ui_snapshot(snapshot: &TerminalSnapshot) -> ui::CommandLineTerminalSna
         scrollback_rows: snapshot.scrollback_rows,
         scrollback_offset: snapshot.scrollback_offset,
         cells,
+        images: snapshot.images.clone(),
     }
 }
 
@@ -195,10 +198,11 @@ pub fn ui_snapshot_from_parser(parser: &mut vt100::Parser) -> ui::CommandLineTer
         scrollback_rows,
         scrollback_offset,
         cells,
+        images: Vec::new(),
     }
 }
 
-fn to_ui_cursor_style(style: TerminalCursorStyle) -> ui::CommandLineCursorStyle {
+pub(crate) fn to_ui_cursor_style(style: TerminalCursorStyle) -> ui::CommandLineCursorStyle {
     match style {
         TerminalCursorStyle::Default => ui::CommandLineCursorStyle::Default,
         TerminalCursorStyle::BlinkingBlock => ui::CommandLineCursorStyle::BlinkingBlock,
@@ -210,7 +214,9 @@ fn to_ui_cursor_style(style: TerminalCursorStyle) -> ui::CommandLineCursorStyle 
     }
 }
 
-fn to_ui_command_status(status: Option<Option<bool>>) -> Option<ui::components::CommandStatus> {
+pub(crate) fn to_ui_command_status(
+    status: Option<Option<bool>>,
+) -> Option<ui::components::CommandStatus> {
     status.map(|status| match status {
         None => ui::components::CommandStatus::Pending,
         Some(true) => ui::components::CommandStatus::Succeeded,
@@ -218,7 +224,7 @@ fn to_ui_command_status(status: Option<Option<bool>>) -> Option<ui::components::
     })
 }
 
-fn to_ui_color(color: &TerminalColor) -> ui::CommandLineColor {
+pub(crate) fn to_ui_color(color: &TerminalColor) -> ui::CommandLineColor {
     match *color {
         TerminalColor::Default => ui::CommandLineColor::Default,
         TerminalColor::Indexed(index) => ui::CommandLineColor::Indexed(index),

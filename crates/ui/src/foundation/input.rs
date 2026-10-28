@@ -71,10 +71,55 @@ pub enum Key {
     PageDown,
     Space,
     F(u8),
+    Null,
+    CapsLock,
+    ScrollLock,
+    NumLock,
+    PrintScreen,
+    Pause,
+    Menu,
+    KeypadBegin,
+    Media(MediaKey),
+    Modifier(ModifierKey),
     Other(String),
 }
 
 pub type KeyCode = Key;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MediaKey {
+    Play,
+    Pause,
+    PlayPause,
+    Reverse,
+    Stop,
+    FastForward,
+    Rewind,
+    TrackNext,
+    TrackPrevious,
+    Record,
+    LowerVolume,
+    RaiseVolume,
+    MuteVolume,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ModifierKey {
+    LeftShift,
+    LeftControl,
+    LeftAlt,
+    LeftSuper,
+    LeftHyper,
+    LeftMeta,
+    RightShift,
+    RightControl,
+    RightAlt,
+    RightSuper,
+    RightHyper,
+    RightMeta,
+    IsoLevel3Shift,
+    IsoLevel5Shift,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct KeyModifiers {
@@ -243,6 +288,14 @@ pub struct KeyEvent {
     pub key: Key,
     pub modifiers: KeyModifiers,
     pub phase: InputPhase,
+    pub state: KeyEventState,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct KeyEventState {
+    pub keypad: bool,
+    pub caps_lock: bool,
+    pub num_lock: bool,
 }
 
 impl KeyEvent {
@@ -259,7 +312,13 @@ impl KeyEvent {
             key,
             modifiers,
             phase,
+            state: KeyEventState::default(),
         }
+    }
+
+    pub fn with_state(mut self, state: KeyEventState) -> Self {
+        self.state = state;
+        self
     }
 
     pub fn repeated(mut self) -> Self {
@@ -691,6 +750,16 @@ fn key_label(key: &Key) -> String {
         Key::PageDown => "PageDown".to_string(),
         Key::Space => "Space".to_string(),
         Key::F(index) => format!("F{index}"),
+        Key::Media(key) => format!("Media{key:?}"),
+        Key::Modifier(key) => format!("{key:?}"),
+        Key::Null
+        | Key::CapsLock
+        | Key::ScrollLock
+        | Key::NumLock
+        | Key::PrintScreen
+        | Key::Pause
+        | Key::Menu
+        | Key::KeypadBegin => format!("{key:?}"),
         Key::Other(label) => label.clone(),
     }
 }

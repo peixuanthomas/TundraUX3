@@ -15,7 +15,7 @@ use ratatui_image::protocol::sixel::Sixel;
 pub const EDITOR_IMAGE_MAX_PIXELS: u64 = 20_000_000;
 static NEXT_KITTY_IMAGE_ID: AtomicU32 = AtomicU32::new(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EditorGraphicsProtocol {
     Kitty,
     Sixel,
@@ -150,6 +150,14 @@ impl EditorImagePicker {
         self.protocol
     }
 
+    pub fn cell_size(&self) -> (u16, u16) {
+        (self.font_size.width, self.font_size.height)
+    }
+
+    pub(crate) fn is_tmux(&self) -> bool {
+        self.is_tmux
+    }
+
     pub fn prepare_bytes(
         &self,
         bytes: &[u8],
@@ -210,7 +218,7 @@ impl EditorImagePicker {
     }
 }
 
-fn next_kitty_image_id() -> u32 {
+pub(crate) fn next_kitty_image_id() -> u32 {
     NEXT_KITTY_IMAGE_ID
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
             Some(id.saturating_add(1))

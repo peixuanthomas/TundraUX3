@@ -23,6 +23,24 @@ pub fn render_editor_contextual(
     model: &EditorViewModel,
     context: &RenderContext,
 ) -> EditorLayout {
+    render_editor_contextual_with_terminal_images(
+        frame,
+        area,
+        model,
+        context,
+        &mut crate::TerminalImageCache::default(),
+        None,
+    )
+}
+
+pub fn render_editor_contextual_with_terminal_images(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    model: &EditorViewModel,
+    context: &RenderContext,
+    images: &mut crate::TerminalImageCache,
+    picker: Option<&crate::EditorImagePicker>,
+) -> EditorLayout {
     let theme = &context.compatibility_theme();
     let layout = editor_layout(area, model);
     frame.render_widget(Clear, area);
@@ -35,14 +53,18 @@ pub fn render_editor_contextual(
             .with_rainbow_label(context.motion.now);
         vim_toggle.state.selected = true;
         vim_toggle.render_borderless_frame(frame, layout.vim_toggle, theme);
-        crate::screens::command_line::render_native_terminal_snapshot(
+        crate::screens::command_line::render_native_terminal_snapshot_with_images(
             frame,
             layout.canvas,
             terminal,
             theme,
+            true,
+            images,
+            picker,
         );
         return layout;
     }
+    images.clear();
     render_menu_bar(frame, &layout, model, theme, context);
     render_toolbar(frame, &layout, model, theme, context);
     render_search_bar(frame, &layout, model, theme);

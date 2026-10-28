@@ -133,6 +133,14 @@ impl ShellSession {
         if self.management_overlay_contains(point) {
             return self.management_button_at(point);
         }
+        if self.active_screen() == ShellScreen::Launcher
+            && self.pages.launcher.launcher_run_settings.is_some()
+            && let ui::ShellLayout::Full { main, .. } =
+                self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))
+            && rect_contains(main, point)
+        {
+            return self.launcher_run_settings_button_at(point);
+        }
         if self.pages.user_management.user_management_more_open
             && self.active_screen() == ShellScreen::UserManagement
         {

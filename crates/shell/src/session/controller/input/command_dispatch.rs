@@ -887,6 +887,22 @@ impl ShellSession {
                 self.refresh_launcher(platform);
                 ShellAction::Redraw
             }
+            ShellCommand::LauncherRunSettings => {
+                self.open_launcher_run_settings();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherRunSettingsKey(key) => {
+                self.handle_launcher_run_settings_key(&key, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherRunSettingsPaste(value) => {
+                self.paste_launcher_run_settings(&value);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherRunSettingsPointer(mouse) => {
+                self.handle_launcher_run_settings_pointer(mouse, platform);
+                ShellAction::Redraw
+            }
             ShellCommand::LauncherToggleConfirmationAction => {
                 self.pages.launcher.launcher_confirm_selected =
                     !self.pages.launcher.launcher_confirm_selected;

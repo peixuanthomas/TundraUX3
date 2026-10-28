@@ -104,6 +104,11 @@ impl ShellSession {
             .filter(|_| self.overlay_interaction_ready)
         {
             Some(ShellComponent::Management) => ShellCommand::ManagementPaste(value.to_owned()),
+            Some(ShellComponent::Launcher)
+                if self.pages.launcher.launcher_run_settings.is_some() =>
+            {
+                ShellCommand::LauncherRunSettingsPaste(value.to_owned())
+            }
             Some(ShellComponent::Explorer)
                 if matches!(
                     self.resolved_explorer_overlay(),

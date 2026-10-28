@@ -2,6 +2,44 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn editable_form_fields_use_the_shared_text_cursor_and_keep_actions_visible() {
+    let mut input = ui::components::TextInput::new("arguments").with_horizontal_scroll(true);
+    input.set_value("abcd");
+    input.set_cursor(2);
+    let model = ManagementViewModel {
+        form: Some(ManagementForm {
+            identity: "terminal-run".into(),
+            title: "Run settings".into(),
+            fields: vec![ManagementFormField {
+                label: "Arguments".into(),
+                input: Some(input),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let theme = TundraTheme::default_dark();
+    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    for bounds in [Rect::new(0, 0, 80, 24), Rect::new(0, 0, 32, 14)] {
+        let layout = management_layout(bounds, &model);
+        let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+        terminal
+            .draw(|frame| render_management_overlay(frame, bounds, &model, &context))
+            .unwrap();
+        let row = layout.fields[0].1.y + 1;
+        let text = (layout.fields[0].1.x..layout.fields[0].1.right())
+            .map(|x| terminal.backend().buffer()[(x, row)].symbol())
+            .collect::<String>();
+        assert!(text.contains("ab|cd"), "visible cursor: {text:?}");
+        assert!(!layout.submit.is_empty() && !layout.cancel.is_empty());
+        assert!(
+            layout.submit.bottom() <= bounds.bottom() && layout.cancel.bottom() <= bounds.bottom()
+        );
+    }
+}
+
+#[test]
 fn multiple_selected_rows_and_the_current_keyboard_row_are_distinct() {
     use ratatui::style::Modifier;
     let theme = TundraTheme::default_dark();

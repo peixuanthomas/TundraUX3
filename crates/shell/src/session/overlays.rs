@@ -247,6 +247,15 @@ impl ShellSession {
 impl ShellSession {
     fn page_overlay_descriptor(&self) -> Option<ShellOverlayDescriptor> {
         let dialog = ShellOverlayDescriptor::dialog;
+        if self.content_screen() == ShellScreen::Launcher
+            && let Some(settings) = &self.pages.launcher.launcher_run_settings
+        {
+            return Some(dialog(
+                format!("launcher-run:{}", settings.id),
+                ShellOverlayCategory::PageDialog,
+                ShellComponent::Launcher,
+            ));
+        }
         if let Some(overlay) = self.resolved_explorer_overlay() {
             return Some(overlay.descriptor());
         }

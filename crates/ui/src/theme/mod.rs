@@ -1027,7 +1027,7 @@ fn relative_luminance(color: Color) -> Option<f64> {
     Some(0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue))
 }
 
-fn color_rgb(color: Color) -> Option<(u8, u8, u8)> {
+pub(crate) fn color_rgb(color: Color) -> Option<(u8, u8, u8)> {
     const ANSI: [(u8, u8, u8); 16] = [
         (0, 0, 0),
         (128, 0, 0),

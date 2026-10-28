@@ -6,6 +6,23 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_command_line_at(&mut self, directory: Option<PathBuf>) {
+        self.open_terminal_page(directory, None);
+    }
+
+    pub(in crate::session) fn open_external_terminal(
+        &mut self,
+        program: PathBuf,
+        args: Vec<String>,
+        directory: Option<PathBuf>,
+    ) {
+        self.open_terminal_page(directory, Some(ExternalTerminalLaunch { program, args }));
+    }
+
+    fn open_terminal_page(
+        &mut self,
+        directory: Option<PathBuf>,
+        external: Option<ExternalTerminalLaunch>,
+    ) {
         let authorization = PermissionService::new(self.debug_policy).authorize(
             self.app.auth_session(),
             PermissionAction::ExecuteCommandLine,
@@ -41,14 +58,24 @@ impl ShellSession {
             return;
         }
 
-        if self.active_screen() != ShellScreen::CommandLine {
-            self.enter_screen(ShellScreen::CommandLine);
+        if external.is_some() || self.active_screen() != ShellScreen::CommandLine {
+            self.enter_new_page(ShellScreen::CommandLine);
             self.pages.command_line.command_line_start_directory = directory;
+            self.pages.command_line.command_line_external = external;
         }
         self.pages.common.focused_component = ShellComponent::CommandLine;
         self.pages.launcher.launcher_pending_confirmation = None;
         self.pages.launcher.launcher_drag = None;
-        self.notify_status(i18n::LocalizedText::from(i18n::msg!("shell-command-line")));
+        let title = self
+            .pages
+            .command_line
+            .command_line_external
+            .as_ref()
+            .map_or_else(
+                || i18n::LocalizedText::from(i18n::msg!("shell-command-line")),
+                |launch| i18n::LocalizedText::from(launch.title()),
+            );
+        self.notify_status(title);
         self.refresh_hit_map();
     }
 
@@ -71,9 +98,28 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn show_command_line_close_confirmation(&mut self, id: PageInstanceId) {
+        let external = self
+            .pages
+            .command_line
+            .get(id)
+            .and_then(|page| page.command_line_external.as_ref());
+        let (title, message) = external.map_or_else(
+            || {
+                (
+                    i18n::msg!("shell-command-line-close-title"),
+                    i18n::msg!("shell-command-line-close-message"),
+                )
+            },
+            |launch| {
+                (
+                    i18n::msg!("shell-terminal-close-title"),
+                    i18n::msg!("shell-terminal-close-message", program = launch.title()),
+                )
+            },
+        );
         self.notify_modal(
-            i18n::msg!("shell-command-line-close-title"),
-            i18n::msg!("shell-command-line-close-message"),
+            title,
+            message,
             ui::NotificationTone::Warning,
             vec![
                 ShellNotificationAction::new(

@@ -12,7 +12,7 @@ use platform::{
     ExecutableKind, FileAttributes, FileOpenPolicy, Platform, PlatformKind, UserDirs,
     build_windows_app_paths, cleanup_temp_path,
 };
-use storage::StorageManager;
+use storage::{LauncherTerminalSettings, StorageManager};
 
 #[test]
 fn admin_batch_adds_only_approved_launcher_targets_and_saves_once() {
@@ -428,6 +428,272 @@ fn launcher_keeps_addition_order_and_manual_reorder_persists_in_both_directions(
     );
 }
 
+#[test]
+fn terminal_launch_preserves_argument_boundaries_and_working_directory() {
+    let fixture = Fixture::new("terminal-launch");
+    let executable = fixture.file("terminal app.exe", b"program");
+    fixture.approve(&executable, ExecutableKind::NativeBinary);
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![executable.clone()]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let id = state.items[0].record.id.clone();
+    let settings = LauncherTerminalSettings {
+        arguments: vec!["two words".into(), "$(not-a-command)".into(), "".into()],
+        working_directory: Some(fixture.documents.to_string_lossy().into_owned()),
+    };
+    controller.apply(
+        &mut state,
+        LauncherCommand::SetTerminalSettings {
+            id: id.clone(),
+            settings: Some(settings.clone()),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(state.items[0].record.terminal, Some(settings.clone()));
+    assert_eq!(
+        controller.load(&storage).unwrap().items[0].record.terminal,
+        Some(settings.clone())
+    );
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::RequestLaunch(id.clone()),
+            Some(&admin()),
+            &fixture.platform,
+            &storage,
+        ),
+        LauncherEffect::OpenTerminalRequested {
+            path: executable.clone(),
+            args: settings.arguments,
+            directory: Some(fixture.documents.clone()),
+        }
+    );
+    controller.apply(
+        &mut state,
+        LauncherCommand::SetTerminalSettings {
+            id: id.clone(),
+            settings: None,
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::RequestLaunch(id),
+            Some(&user()),
+            &fixture.platform,
+            &storage,
+        ),
+        LauncherEffect::OpenRequested {
+            path: executable,
+            kind: ExecutableKind::NativeBinary,
+        }
+    );
+}
+
+#[test]
+fn terminal_settings_require_management_permission_and_launch_requires_command_line_permission() {
+    let fixture = Fixture::new("terminal-permissions");
+    let executable = fixture.file("terminal.exe", b"program");
+    fixture.approve(&executable, ExecutableKind::NativeBinary);
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![executable]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let id = state.items[0].record.id.clone();
+    controller.apply(
+        &mut state,
+        LauncherCommand::SetTerminalSettings {
+            id: id.clone(),
+            settings: Some(LauncherTerminalSettings::default()),
+        },
+        Some(&user()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_some());
+    assert!(
+        storage.load_config().unwrap().launcher.entries[0]
+            .terminal
+            .is_none()
+    );
+    controller.apply(
+        &mut state,
+        LauncherCommand::SetTerminalSettings {
+            id: id.clone(),
+            settings: Some(LauncherTerminalSettings::default()),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_none());
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::RequestLaunch(id),
+            Some(&user()),
+            &fixture.platform,
+            &storage,
+        ),
+        LauncherEffect::None
+    );
+    assert!(state.error.is_some());
+}
+
+#[test]
+fn terminal_settings_reject_unsupported_targets_and_invalid_directories() {
+    let fixture = Fixture::new("terminal-settings-validation");
+    let installer = fixture.file("setup.exe", b"installer");
+    let executable = fixture.file("terminal.exe", b"program");
+    fixture.approve(&installer, ExecutableKind::Installer);
+    fixture.approve(&executable, ExecutableKind::NativeBinary);
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![installer, executable.clone()]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let installer_id = state.items[0].record.id.clone();
+    let executable_id = state.items[1].record.id.clone();
+    controller.apply(
+        &mut state,
+        LauncherCommand::SetTerminalSettings {
+            id: installer_id,
+            settings: Some(LauncherTerminalSettings::default()),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_some());
+    for directory in [
+        "relative/folder".to_string(),
+        executable.to_string_lossy().into_owned(),
+        fixture.root.join("missing").to_string_lossy().into_owned(),
+    ] {
+        controller.apply(
+            &mut state,
+            LauncherCommand::SetTerminalSettings {
+                id: executable_id.clone(),
+                settings: Some(LauncherTerminalSettings {
+                    arguments: Vec::new(),
+                    working_directory: Some(directory),
+                }),
+            },
+            Some(&admin()),
+            &fixture.platform,
+            &storage,
+        );
+        assert!(state.error.is_some());
+    }
+    assert!(
+        storage
+            .load_config()
+            .unwrap()
+            .launcher
+            .entries
+            .iter()
+            .all(|entry| entry.terminal.is_none())
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn embedded_scripts_still_require_confirmation_and_recheck_directory_at_launch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::for_platform("terminal-script", PlatformKind::Linux);
+    let script = fixture.file("script.sh", b"#!/bin/sh\nprintf hello\n");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    fixture.approve(&script, ExecutableKind::Script);
+    let directory = fixture.root.join("work directory");
+    fs::create_dir(&directory).unwrap();
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![script.clone()]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let id = state.items[0].record.id.clone();
+    controller.apply(
+        &mut state,
+        LauncherCommand::SetTerminalSettings {
+            id: id.clone(),
+            settings: Some(LauncherTerminalSettings {
+                arguments: Vec::new(),
+                working_directory: Some(directory.to_string_lossy().into_owned()),
+            }),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert!(matches!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::RequestLaunch(id.clone()),
+            Some(&admin()),
+            &fixture.platform,
+            &storage,
+        ),
+        LauncherEffect::ConfirmationRequired { .. }
+    ));
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::ConfirmLaunch(id.clone()),
+            Some(&admin()),
+            &fixture.platform,
+            &storage,
+        ),
+        LauncherEffect::OpenTerminalRequested {
+            path: script,
+            args: Vec::new(),
+            directory: Some(directory.clone()),
+        }
+    );
+    fs::remove_dir(directory).unwrap();
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::ConfirmLaunch(id),
+            Some(&admin()),
+            &fixture.platform,
+            &storage,
+        ),
+        LauncherEffect::None
+    );
+    assert!(state.error.is_some());
+}
+
 fn item_names(state: &LauncherState) -> Vec<&str> {
     state
         .items
@@ -449,6 +715,10 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
+        Self::for_platform(name, PlatformKind::Windows)
+    }
+
+    fn for_platform(name: &str, kind: PlatformKind) -> Self {
         let root = std::env::temp_dir().join(format!(
             "tundra-launcher-{name}-{}-{}",
             unix_millis(),
@@ -472,7 +742,7 @@ impl Fixture {
         Self {
             root,
             documents,
-            platform: MockPlatform::new(user_dirs, app_paths).with_kind(PlatformKind::Windows),
+            platform: MockPlatform::new(user_dirs, app_paths).with_kind(kind),
         }
     }
 
