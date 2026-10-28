@@ -205,6 +205,7 @@ def main():
             shell.send(b"\r")
             shell.send(b"\r")
             shell.wait("Editor")
+            shell.wait(path.read_text().splitlines()[0])
             shell.wait(VIM_READY)
 
         try:
@@ -223,6 +224,7 @@ def main():
             shell.wait("00-start.txt")
             shell.send(b"\r")
             shell.wait("Editor")
+            shell.wait(BASE.splitlines()[0])
             shell.send(F8)
             shell.wait(VIM_READY)
             shell.ex("set showmode showcmd ruler laststatus=2 noswapfile")

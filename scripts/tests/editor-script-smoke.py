@@ -158,16 +158,19 @@ def main():
             return match.group(1)
 
         def vim_processes():
+            children_by_parent = {}
+            for status in Path("/proc").glob("[0-9]*/status"):
+                try:
+                    parent = re.search(r"(?m)^PPid:\s*(\d+)\s*$", status.read_text())
+                except FileNotFoundError:
+                    continue
+                if parent:
+                    children_by_parent.setdefault(int(parent[1]), []).append(int(status.parent.name))
             pending = [shell.child.pid]
             found = set()
             while pending:
                 parent = pending.pop()
-                try:
-                    children = Path(f"/proc/{parent}/task/{parent}/children").read_text().split()
-                except FileNotFoundError:
-                    continue
-                for child in children:
-                    pid = int(child)
+                for pid in children_by_parent.get(parent, []):
                     pending.append(pid)
                     try:
                         executable = Path(os.readlink(f"/proc/{pid}/exe"))

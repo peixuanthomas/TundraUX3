@@ -141,6 +141,22 @@ Linux 使用真实 PTY 验证；Windows/macOS 的构建和 runtime 回归已加�
 
 ## 页面实例与任务关闭
 
+任意 TUI 的协议夹具覆盖 Kitty 增强键盘、焦点、同步刷新、三种图片输入、像素边距与视口裁切；测试不依赖外部终端提供原生图片。外部程序退出码 75、76、失败后的回滚/重试/F12 返回，以及越界拖动释放另有真实 PTY 回归。
+
+构建 Shell 和 CLI 后，可在隔离配置中运行实际 Neovim/Yazi smoke：
+
+```console
+python3 scripts/tests/embedded-tui-smoke.py target/debug/tundra-shell --nvim /absolute/path/to/nvim --yazi /absolute/path/to/yazi
+```
+
+该脚本检查命令行和 Launcher 启动、输入、粘贴、鼠标、缩放、退出及终端恢复。云 Linux PTY、WSL、原生图片终端与物理触屏分别记录结果；协议夹具或字符色块通过不代表真实设备图片显示已验收。当前渲染库的原生 API 会清除整格，透明、带像素边距或重叠图片使用彩色半格合成，须分别验收内容保留与原生图片精细度。
+
+2026-10-28 云 Linux 验收使用 Rust 1.95.0、Neovim 0.12.6、Yazi 26.9.1 和随包 Vim 9.2.1225。真实 PTY smoke 验证了 Neovim 编辑/保存与实际行列数、Yazi 导航/筛选/图片字符回退及预览清除、Launcher 参数和含空格中文目录、外部程序退出码 75/76 留屏，以及退出后的终端恢复。真实 Vim 的两项 ignored runtime 回归、25 项编辑流程，以及脚本工作区的 11 项 bashdb/Vim 往返流程均通过。当前环境不是 WSL，未验收 Windows/macOS、物理触屏或宿主原生图片显示。
+
+最终修复后，终端库 65 项、UI 库 77 项（图片 19 项）、Shell 命令行相关 31 项、UI 命令行集成 7 项及 Shell 多文档 Vim 的 ignored 回归 1 项均通过；`cargo check --workspace --all-targets --all-features --locked` 通过。改动的 Rust 文件及本地 WezTerm 补丁通过格式检查，中英文 4,093 对消息通过本地化校验。全项目格式检查仍会报告未修改的 `third_party/lsh` 既有格式差异。
+
+本次全工作区运行记录为 2,520 项通过、9 项失败。失败已定位到现有模块的运行条件或检查误报：3 项依赖此容器缺少的 `/proc/<pid>/task/<tid>/children`，3 项 ACL 夹具受 `/tmp` 文件系统或 UID 映射限制，1 项旧 APT 故障复现预期在当前工具版本下不成立，1 项 watchdog 扫描器将任务历史的 `output(...)` 误当作创建进程，1 项彩色 PTY 测试继承了 `NO_COLOR`。彩色测试仅移除该环境变量后已单独通过；这些失败没有通过忽略测试或修改生产行为规避。
+
 Linux 脚本工作区先运行 `cargo test --locked -p app --test script`、`cargo test --locked -p script-runtime`、`cargo test --locked -p ui --test script` 和 `cargo test --locked -p shell --lib controller::script::tests`。它们覆盖解释器选择、断点移动、过期结果、真实 bashdb、页面与输入。构建 Shell/CLI 后，在 WSL 执行 `python3 scripts/tests/editor-script-smoke.py target/debug/tundra-shell`，使用隔离目录和真实 PTY 验证六区、保存、运行输入、断点、步进、表达式、缩放和停止；真实触屏仍需独立设备验收。
 
 多文档 Vim 切换另用 `TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p shell --lib vim_host::script_tests -- --ignored` 验证导出归属、原进程、只读恢复和撤销历史。
