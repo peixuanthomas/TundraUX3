@@ -33,6 +33,8 @@ executable_kind = "native_binary"
     )
     .unwrap();
     assert_eq!(entry.terminal, None);
+    assert_eq!(entry.name, None);
+    assert_eq!(entry.icon, None);
 }
 
 #[test]
@@ -41,6 +43,8 @@ fn terminal_arguments_and_directory_roundtrip_without_command_interpretation() {
     config.launcher.entries.push(LauncherEntryRecord {
         id: "terminal-editor".into(),
         path: "/usr/bin/editor".into(),
+        name: Some("中文 tool".into()),
+        icon: Some("中文x\n★".into()),
         executable_kind: Some(LauncherExecutableKind::NativeBinary),
         terminal: Some(LauncherTerminalSettings {
             arguments: vec!["two words".into(), "$(not-a-command)".into(), "".into()],

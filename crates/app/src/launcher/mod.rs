@@ -137,6 +137,10 @@ pub enum LauncherCommand {
     Refresh,
     AddPaths(Vec<PathBuf>),
     AddCustom(storage::LauncherCustomCommand),
+    EditEntry {
+        id: String,
+        edit: LauncherEntryEdit,
+    },
     SetOrder(Vec<String>),
     Reorder {
         id: String,
@@ -229,6 +233,38 @@ impl From<StorageError> for LauncherError {
     }
 }
 
+pub const LAUNCHER_ICON_WIDTH: usize = 5;
+pub const LAUNCHER_ICON_HEIGHT: usize = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LauncherEntryEdit {
+    Name(String),
+    Command(String),
+    Icon(String),
+}
+
+pub fn validate_launcher_icon(icon: &str) -> bool {
+    use unicode_width::UnicodeWidthStr;
+    icon.split('\n').count() <= LAUNCHER_ICON_HEIGHT
+        && icon
+            .split('\n')
+            .all(|line| !line.chars().any(char::is_control) && line.width() <= LAUNCHER_ICON_WIDTH)
+}
+
+pub fn launcher_entry_name(entry: &LauncherEntryRecord) -> &str {
+    entry.name.as_deref().unwrap_or_else(|| {
+        entry.custom.as_ref().map_or_else(
+            || {
+                Path::new(&entry.path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&entry.path)
+            },
+            |custom| custom.name.as_str(),
+        )
+    })
+}
+
 /// Owns Launcher authorization and persistence. Configuration mutations are
 /// saved exactly once after a batch is completely evaluated.
 #[derive(Debug, Clone, Default)]
@@ -257,6 +293,9 @@ impl LauncherController {
         let result = match command {
             LauncherCommand::Refresh => self.refresh(state, platform),
             LauncherCommand::AddCustom(custom) => self.add_custom(state, custom, session, storage),
+            LauncherCommand::EditEntry { id, edit } => {
+                self.edit_entry(state, &id, edit, session, storage)
+            }
             LauncherCommand::SetOrder(order) => self.set_order(order, session, storage),
             LauncherCommand::AddPaths(paths) => self.add(state, paths, session, platform, storage),
             LauncherCommand::Reorder {
@@ -298,6 +337,12 @@ impl LauncherController {
                 msg!("app-launcher-custom-required"),
             )));
         }
+        if !validate_launcher_icon(&custom.icon) {
+            return Err(LauncherError::Localized(LocalizedError::new(
+                "LAUNCHER_INVALID_ICON",
+                msg!("app-launcher-icon-bounds"),
+            )));
+        }
         let mut config = storage.load_config()?;
         let id = new_id(Path::new(&custom.command), &config.launcher);
         config.launcher.entries.push(LauncherEntryRecord {
@@ -309,6 +354,83 @@ impl LauncherController {
         });
         storage.save_config(&config)?;
         state.reset(&config.launcher);
+        Ok(LauncherEffect::None)
+    }
+
+    fn edit_entry(
+        &self,
+        state: &mut LauncherState,
+        id: &str,
+        edit: LauncherEntryEdit,
+        session: Option<&AuthSession>,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        let mut config = storage.load_config()?;
+        let entry = config
+            .launcher
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| LauncherError::MissingEntry(id.to_owned()))?;
+        match edit {
+            LauncherEntryEdit::Name(name) => {
+                if name.trim().is_empty() || name.chars().any(char::is_control) {
+                    return Err(LauncherError::Localized(LocalizedError::new(
+                        "LAUNCHER_INVALID_NAME",
+                        msg!("app-launcher-custom-required"),
+                    )));
+                }
+                if let Some(custom) = &mut entry.custom {
+                    custom.name = name;
+                    entry.name = None;
+                } else {
+                    entry.name = Some(name);
+                }
+            }
+            LauncherEntryEdit::Command(command) => {
+                self.authorize(session, PermissionAction::ExecuteCommandLine)?;
+                if command.trim().is_empty() || command.contains('\0') {
+                    return Err(LauncherError::Localized(LocalizedError::new(
+                        "LAUNCHER_INVALID_COMMAND",
+                        msg!("app-launcher-custom-required"),
+                    )));
+                }
+                if entry.custom.is_none() {
+                    entry.custom = Some(storage::LauncherCustomCommand {
+                        name: launcher_entry_name(entry).to_owned(),
+                        icon: entry.icon.take().unwrap_or_default(),
+                        ..Default::default()
+                    });
+                    entry.name = None;
+                }
+                entry.custom.as_mut().unwrap().command = command;
+                entry.executable_kind = None;
+            }
+            LauncherEntryEdit::Icon(icon) => {
+                if !validate_launcher_icon(&icon) {
+                    return Err(LauncherError::Localized(LocalizedError::new(
+                        "LAUNCHER_INVALID_ICON",
+                        msg!("app-launcher-icon-bounds"),
+                    )));
+                }
+                if let Some(custom) = &mut entry.custom {
+                    custom.icon = icon;
+                    entry.icon = None;
+                } else {
+                    entry.icon = Some(icon);
+                }
+            }
+        }
+        let saved = entry.clone();
+        storage.save_config(&config)?;
+        if let Some(item) = state.items.iter_mut().find(|item| item.record.id == id) {
+            item.record = saved;
+            if item.record.custom.is_some() {
+                item.status = LauncherItemStatus::Ready;
+            }
+        }
+        state.message = Some(msg!("app-launcher-entry-saved").into());
         Ok(LauncherEffect::None)
     }
 
@@ -518,7 +640,10 @@ impl LauncherController {
             return Ok(LauncherEffect::OpenTerminalRequested {
                 path,
                 args,
-                directory: None,
+                directory: entry
+                    .terminal
+                    .as_ref()
+                    .and_then(|settings| settings.working_directory.as_deref().map(PathBuf::from)),
                 wait_for_enter: Some(custom.wait_for_enter),
             });
         }
@@ -614,6 +739,8 @@ pub fn prepare_launcher_entry(
         added_at_epoch_ms: epoch_millis(),
         terminal: None,
         custom: None,
+        name: None,
+        icon: None,
     }))
 }
 

@@ -1,6 +1,64 @@
 use super::*;
 
 #[test]
+fn a_refresh_for_the_old_target_cannot_replace_an_edited_command_status() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Launcher]);
+    let original = storage::LauncherEntryRecord {
+        id: "edited".into(),
+        path: "/missing/original".into(),
+        executable_kind: Some(storage::LauncherExecutableKind::NativeBinary),
+        ..Default::default()
+    };
+    let mut edited = original.clone();
+    edited.executable_kind = None;
+    edited.custom = Some(storage::LauncherCustomCommand {
+        name: "edited".into(),
+        command: "printf edited".into(),
+        ..Default::default()
+    });
+    state.app.dispatch_at(
+        app::AppCommand::SetLauncherState(Some(LauncherState {
+            items: vec![app::launcher::LauncherItem {
+                record: edited.clone(),
+                status: LauncherItemStatus::Ready,
+            }],
+            ..Default::default()
+        })),
+        Instant::now(),
+    );
+    state.pages.launcher.launcher_refresh_request = Some(1);
+    for result in [
+        Ok(LauncherItemStatus::Missing),
+        Err("old file error".into()),
+    ] {
+        state.apply_launcher_refresh_event(LauncherRefreshEvent::ItemChecked {
+            request_id: 1,
+            entry: original.clone(),
+            result,
+        });
+        assert_eq!(
+            state.app.launcher_state().unwrap().items[0].status,
+            LauncherItemStatus::Ready
+        );
+        assert!(state.app.launcher_state().unwrap().error.is_none());
+    }
+    state.apply_launcher_refresh_event(LauncherRefreshEvent::ItemChecked {
+        request_id: 1,
+        entry: edited,
+        result: Ok(LauncherItemStatus::Ready),
+    });
+    assert_eq!(
+        state.app.launcher_state().unwrap().items[0].status,
+        LauncherItemStatus::Ready
+    );
+}
+
+#[test]
 fn managed_refresh_publishes_presence_results() {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -69,6 +127,8 @@ fn managed_refresh_publishes_presence_results() {
         added_at_epoch_ms: 0,
         terminal: None,
         custom: None,
+        name: None,
+        icon: None,
     };
     let watchdog = default_editor_watchdog().expect("test watchdog");
     let runtime = ShellLauncherTaskRuntime::new_managed(std::sync::Arc::new(platform), watchdog);
@@ -82,11 +142,11 @@ fn managed_refresh_publishes_presence_results() {
             match event {
                 LauncherRefreshEvent::ItemChecked {
                     request_id: event_request_id,
-                    id,
+                    entry,
                     result,
                 } => {
                     assert_eq!(event_request_id, request_id);
-                    assert_eq!(id, "program");
+                    assert_eq!(entry.id, "program");
                     status = Some(result.expect("presence result"));
                 }
                 LauncherRefreshEvent::Finished {

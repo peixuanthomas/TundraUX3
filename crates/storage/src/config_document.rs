@@ -860,6 +860,8 @@ impl LauncherConfig {
                 added_at_epoch_ms: 0,
                 terminal: None,
                 custom: None,
+                name: None,
+                icon: None,
             });
         }
         self.pinned_apps.clear();
@@ -872,6 +874,8 @@ impl LauncherConfig {
 #[serde(default)]
 pub struct LauncherEntryRecord {
     pub custom: Option<LauncherCustomCommand>,
+    pub name: Option<String>,
+    pub icon: Option<String>,
     pub id: String,
     /// A canonical, absolute path recorded by the admin approval workflow.
     pub path: String,

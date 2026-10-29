@@ -6962,6 +6962,8 @@ fn launcher_arrow_keys_follow_grid_rows_and_columns() {
                                     path: format!("/navigation/app-{index}"),
                                     terminal: None,
                                     custom: None,
+                                    name: None,
+                                    icon: None,
                                     executable_kind: None,
                                     fingerprint: None,
                                     added_by_user_id: "admin".into(),

@@ -230,6 +230,8 @@ fn launcher_scrollbars_reach_tail_in_both_views_without_launch_or_reorder() {
                             added_at_epoch_ms: 0,
                             terminal: None,
                             custom: None,
+                            name: None,
+                            icon: None,
                         },
                         status: LauncherItemStatus::Ready,
                     })
