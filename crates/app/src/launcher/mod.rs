@@ -241,6 +241,7 @@ pub enum LauncherEntryEdit {
     Name(String),
     Command(String),
     Icon(String),
+    WaitForEnter(bool),
 }
 
 pub fn validate_launcher_icon(icon: &str) -> bool {
@@ -400,6 +401,11 @@ impl LauncherController {
                     entry.custom = Some(storage::LauncherCustomCommand {
                         name: launcher_entry_name(entry).to_owned(),
                         icon: entry.icon.take().unwrap_or_default(),
+                        wait_for_enter: entry
+                            .terminal
+                            .as_ref()
+                            .and_then(|settings| settings.wait_for_enter)
+                            .unwrap_or(false),
                         ..Default::default()
                     });
                     entry.name = None;
@@ -419,6 +425,18 @@ impl LauncherController {
                     entry.icon = None;
                 } else {
                     entry.icon = Some(icon);
+                }
+            }
+            LauncherEntryEdit::WaitForEnter(wait) => {
+                if let Some(custom) = &mut entry.custom {
+                    custom.wait_for_enter = wait;
+                } else if let Some(settings) = &mut entry.terminal {
+                    settings.wait_for_enter = Some(wait);
+                } else {
+                    return Err(LauncherError::Localized(LocalizedError::new(
+                        "LAUNCHER_TERMINAL_UNSUPPORTED",
+                        msg!("app-launcher-terminal-unsupported"),
+                    )));
                 }
             }
         }
@@ -676,7 +694,7 @@ impl LauncherController {
                     .as_deref()
                     .filter(|directory| !directory.is_empty())
                     .map(PathBuf::from),
-                wait_for_enter: None,
+                wait_for_enter: settings.wait_for_enter,
             });
         }
         Ok(LauncherEffect::OpenRequested {

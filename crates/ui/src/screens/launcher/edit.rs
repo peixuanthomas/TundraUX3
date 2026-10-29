@@ -6,17 +6,25 @@ pub enum LauncherEntryAction {
     Name,
     Command,
     Icon,
+    WaitForEnter,
     Remove,
 }
 
 impl LauncherEntryAction {
-    pub const ALL: [Self; 4] = [Self::Name, Self::Command, Self::Icon, Self::Remove];
+    pub const ALL: [Self; 5] = [
+        Self::Name,
+        Self::Command,
+        Self::Icon,
+        Self::WaitForEnter,
+        Self::Remove,
+    ];
 
     pub fn label(self) -> String {
         match self {
             Self::Name => i18n::tr!("ui-launcher-change-name"),
             Self::Command => i18n::tr!("ui-launcher-change-command"),
             Self::Icon => i18n::tr!("ui-launcher-change-icon"),
+            Self::WaitForEnter => i18n::tr!("ui-launcher-keep-screen"),
             Self::Remove => i18n::tr!("ui-launcher-delete-icon"),
         }
     }
@@ -27,6 +35,44 @@ pub struct LauncherContextMenu {
     pub anchor: (u16, u16),
     pub selected: usize,
     pub command_enabled: bool,
+    pub wait_for_enter: Option<bool>,
+}
+
+impl LauncherContextMenu {
+    pub fn actions(&self) -> impl Iterator<Item = LauncherEntryAction> + '_ {
+        LauncherEntryAction::ALL.into_iter().filter(|action| {
+            *action != LauncherEntryAction::WaitForEnter || self.wait_for_enter.is_some()
+        })
+    }
+
+    fn button(&self, index: usize, action: LauncherEntryAction) -> Button {
+        let label = action.label();
+        let mut button = Button::new(format!("launcher.menu.{index}"), label.clone());
+        if action == LauncherEntryAction::WaitForEnter {
+            let checked = self.wait_for_enter.unwrap_or(false);
+            button = Button::new(
+                format!("launcher.menu.{index}"),
+                format!(
+                    "{label} [{}]",
+                    i18n::tr!(if checked {
+                        "settings-on"
+                    } else {
+                        "settings-off"
+                    })
+                ),
+            )
+            .with_bracketed_label(false)
+            .with_capture_name(label)
+            .with_capture_role("checkbox")
+            .with_capture_selected(checked);
+        }
+        button.set_focused(self.selected == index);
+        button.set_disabled(action == LauncherEntryAction::Command && !self.command_enabled);
+        if action == LauncherEntryAction::Remove {
+            button = button.with_emphasis(ButtonEmphasis::Danger);
+        }
+        button
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,14 +124,15 @@ pub struct LauncherEntryEditorLayout {
 }
 
 pub fn launcher_context_menu_layout(main: Rect, menu: &LauncherContextMenu) -> (Rect, Vec<Rect>) {
-    let width = LauncherEntryAction::ALL
-        .iter()
-        .map(|action| Button::new("", action.label()).rendered_label_width())
+    let width = menu
+        .actions()
+        .enumerate()
+        .map(|(index, action)| menu.button(index, action).rendered_label_width())
         .max()
         .unwrap_or(0)
         .saturating_add(6)
         .min(usize::from(main.width)) as u16;
-    let height = 8.min(main.height);
+    let height = (menu.actions().count() as u16 + 4).min(main.height);
     let area = Rect::new(
         menu.anchor
             .0
@@ -98,7 +145,7 @@ pub fn launcher_context_menu_layout(main: Rect, menu: &LauncherContextMenu) -> (
         width,
         height,
     );
-    let rows = (0..4)
+    let rows = (0..menu.actions().count() as u16)
         .map(|index| {
             Rect::new(
                 area.x.saturating_add(3),
@@ -254,14 +301,9 @@ pub(super) fn render_entry_overlay(
             .bordered(true)
             .raised(true)
             .render_frame(frame, area, context);
-        for (index, (action, row)) in LauncherEntryAction::ALL.iter().zip(rows).enumerate() {
-            let mut button = Button::new(format!("launcher.menu.{index}"), action.label());
-            button.set_focused(menu.selected == index);
-            button.set_disabled(*action == LauncherEntryAction::Command && !menu.command_enabled);
-            if *action == LauncherEntryAction::Remove {
-                button = button.with_emphasis(ButtonEmphasis::Danger);
-            }
-            button.render_borderless_frame(frame, row, &theme);
+        for (index, (action, row)) in menu.actions().zip(rows).enumerate() {
+            menu.button(index, action)
+                .render_borderless_frame(frame, row, &theme);
         }
         return true;
     }

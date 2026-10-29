@@ -895,6 +895,8 @@ pub struct LauncherEntryRecord {
 pub struct LauncherTerminalSettings {
     pub arguments: Vec<String>,
     pub working_directory: Option<String>,
+    /// None keeps the previous success/failure exit handling for older entries.
+    pub wait_for_enter: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

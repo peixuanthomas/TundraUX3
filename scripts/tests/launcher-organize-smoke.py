@@ -142,11 +142,17 @@ def main():
             ui("text", "discarded launcher")
             key("Escape")
             toolbar("Add launcher")
+            switch = node_by(snapshot(), lambda node: node["role"] == "checkbox"
+                and node["name"] == "Keep screen after exit")
+            assert not switch["selected"]
             ui("text", "Custom PTY tool")
             key("Tab")
             ui("text", "printf 'CUSTOM_LAUNCHER_PTY_OK\\n'; exit 75")
             key("Tab")
-            key("Right")
+            key("Space")
+            switch = node_by(snapshot(), lambda node: node["role"] == "checkbox"
+                and node["name"] == "Keep screen after exit")
+            assert switch["selected"]
             key("F10")
             toolbar("Done organizing")
             key("End")
@@ -172,7 +178,19 @@ def main():
                 button = node_by(current, lambda node: node["role"] == "button" and node["name"] == label)
                 click(button["id"])
 
-            open_context()
+            current = open_context()
+            switch = node_by(current, lambda node: node["role"] == "checkbox"
+                and node["name"] == "Keep screen after exit")
+            assert switch["selected"]
+            for checked in [False, True]:
+                click(switch["id"])
+                current = snapshot()
+                switch = node_by(current, lambda node: node["id"] == switch["id"])
+                assert switch["selected"] == checked
+                saved = next(entry for entry in tomllib.loads(config_file.read_text())["launcher"]["entries"]
+                    if entry["id"] == custom_id)
+                assert saved["custom"]["wait_for_enter"] == checked
+            print("PASS: add form and context menu expose a saved on/off switch")
             ui("click", "--x", 1, "--y", 4)
             current = until(lambda current: not current["animation_running"]
                 and not any("launcher.menu." in node["id"] for node in current["nodes"]))

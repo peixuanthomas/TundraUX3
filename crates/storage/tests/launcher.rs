@@ -4,6 +4,18 @@ use storage::{
 };
 
 #[test]
+fn terminal_exit_choice_preserves_legacy_default_and_roundtrips_explicit_values() {
+    let mut settings: LauncherTerminalSettings = toml::from_str("arguments = []").unwrap();
+    assert_eq!(settings.wait_for_enter, None);
+    for wait in [None, Some(false), Some(true)] {
+        settings.wait_for_enter = wait;
+        let encoded = toml::to_string(&settings).unwrap();
+        let decoded: LauncherTerminalSettings = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, settings);
+    }
+}
+
+#[test]
 fn custom_exit_choice_defaults_to_immediate_and_roundtrips_both_values() {
     let mut custom: LauncherCustomCommand = toml::from_str(
         r#"
@@ -49,6 +61,7 @@ fn terminal_arguments_and_directory_roundtrip_without_command_interpretation() {
         terminal: Some(LauncherTerminalSettings {
             arguments: vec!["two words".into(), "$(not-a-command)".into(), "".into()],
             working_directory: Some("/home/user/中文 project".into()),
+            wait_for_enter: Some(true),
         }),
         ..LauncherEntryRecord::default()
     });

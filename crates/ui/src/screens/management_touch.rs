@@ -20,6 +20,7 @@ pub enum ManagementFormControl {
     #[default]
     Text,
     Checkbox,
+    Toggle,
     Permissions,
 }
 
@@ -371,6 +372,23 @@ fn form_cancel_text(form: &ManagementForm) -> String {
     }
 }
 fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
+    if field.control == ManagementFormControl::Toggle {
+        let value = format!(
+            "[{}]",
+            i18n::tr!(if field.value == "true" {
+                "settings-on"
+            } else {
+                "settings-off"
+            })
+        );
+        let gap = usize::from(width)
+            .saturating_sub(field.label.width() + value.width())
+            .max(1);
+        return management_wrapped_lines(
+            &format!("{}{}{value}", field.label, " ".repeat(gap)),
+            width,
+        );
+    }
     if field.control == ManagementFormControl::Permissions {
         return vec![
             field.label.clone(),
@@ -495,12 +513,19 @@ fn content_form(main: Rect, form: &ManagementForm) -> Rect {
     let longest = form
         .message
         .lines()
-        .chain(
-            form.fields
-                .iter()
-                .flat_map(|f| [f.label.as_str(), f.value.as_str()]),
-        )
         .map(UnicodeWidthStr::width)
+        .chain(form.fields.iter().map(|field| {
+            if field.control == ManagementFormControl::Toggle {
+                // Keep the switch beside its label, including the scrollbar cell.
+                field.label.width()
+                    + i18n::tr!("settings-on")
+                        .width()
+                        .max(i18n::tr!("settings-off").width())
+                    + 4
+            } else {
+                field.label.width().max(field.value.width())
+            }
+        }))
         .max()
         .unwrap_or(0);
     let actions = if form.dismiss_only {
@@ -2040,11 +2065,14 @@ pub fn render_management_overlay(
         .with_capture_name(&field.label)
         .with_sensitive(field.secret)
         .with_capture_role(match field.control {
-            ManagementFormControl::Checkbox => "checkbox",
+            ManagementFormControl::Checkbox | ManagementFormControl::Toggle => "checkbox",
             _ if !field.choices.is_empty() => "combobox",
             _ => "textbox",
         });
-        if field.control == ManagementFormControl::Checkbox {
+        if matches!(
+            field.control,
+            ManagementFormControl::Checkbox | ManagementFormControl::Toggle
+        ) {
             button = button.with_capture_selected(field.value == "true");
         }
         button.bracketed_label = false;

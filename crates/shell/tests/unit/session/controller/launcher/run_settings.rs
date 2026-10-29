@@ -134,7 +134,7 @@ impl Fixture {
         main
     }
 
-    fn choose_context_action(&mut self, index: usize, hover: bool) {
+    fn open_context_menu(&mut self) -> ui::LauncherContextMenu {
         let layout = self.draw();
         let selected = self.state.to_launcher_view_model().selected_index.unwrap();
         let area = layout
@@ -151,18 +151,117 @@ impl Fixture {
             PointerButton::Right,
             (area.x + 1, area.y),
         ));
-        let menu = self
-            .state
+        self.state
             .pages
             .launcher
             .context_menu
             .as_ref()
             .unwrap()
             .menu
-            .clone();
+            .clone()
+    }
+
+    fn choose_context_action(&mut self, index: usize, hover: bool) {
+        let menu = self.open_context_menu();
         let (_, rows) = ui::launcher_context_menu_layout(self.main_area(), &menu);
         self.draw();
         self.click(rows[index], hover);
+    }
+}
+
+#[test]
+fn context_exit_switch_persists_for_custom_and_embedded_programs_and_is_hidden_for_system_launch() {
+    for custom in [false, true] {
+        for hover in [false, true] {
+            let mut fixture = Fixture::new();
+            let menu = fixture.open_context_menu();
+            assert_eq!(menu.wait_for_enter, None);
+            assert_eq!(menu.actions().count(), 4);
+            fixture.input(InputEvent::from_key_label("Esc"));
+            let storage = fixture.state.storage_manager.clone().unwrap();
+            let mut config = storage.load_config().unwrap();
+            let record = &mut config.launcher.entries[0];
+            if custom {
+                record.custom = Some(storage::LauncherCustomCommand {
+                    name: "custom tool".into(),
+                    command: "printf done".into(),
+                    ..Default::default()
+                });
+            } else {
+                record.terminal = Some(storage::LauncherTerminalSettings::default());
+            }
+            storage.save_config(&config).unwrap();
+            fixture.state.app.dispatch_at(
+                app::AppCommand::SetLauncherState(Some(LauncherState::from_config(
+                    &config.launcher,
+                ))),
+                Instant::now(),
+            );
+            fixture.choose_context_action(3, hover);
+            let menu = &fixture
+                .state
+                .pages
+                .launcher
+                .context_menu
+                .as_ref()
+                .unwrap()
+                .menu;
+            assert_eq!(menu.wait_for_enter, Some(true));
+            assert_eq!(menu.actions().count(), 5);
+            fixture.input(InputEvent::from_key_label("Esc"));
+            assert_eq!(fixture.open_context_menu().wait_for_enter, Some(true));
+            fixture.input(InputEvent::from_key_label("Up"));
+            assert_eq!(
+                fixture
+                    .state
+                    .pages
+                    .launcher
+                    .context_menu
+                    .as_ref()
+                    .unwrap()
+                    .menu
+                    .selected,
+                4
+            );
+            fixture.input(InputEvent::from_key_label("Up"));
+            fixture.input(InputEvent::key(InputKey::Space));
+            assert_eq!(
+                fixture
+                    .state
+                    .pages
+                    .launcher
+                    .context_menu
+                    .as_ref()
+                    .unwrap()
+                    .menu
+                    .wait_for_enter,
+                Some(false)
+            );
+            fixture.input(InputEvent::from_key_label("Enter"));
+            fixture.input(InputEvent::from_key_label("Esc"));
+            if !custom {
+                fixture.input(InputEvent::from_key_label("F4"));
+                fixture.input(InputEvent::from_key_label("F10"));
+            }
+            let record = storage.load_config().unwrap().launcher.entries.remove(0);
+            let wait = record
+                .custom
+                .as_ref()
+                .map(|custom| custom.wait_for_enter)
+                .or_else(|| {
+                    record
+                        .terminal
+                        .as_ref()
+                        .and_then(|settings| settings.wait_for_enter)
+                });
+            assert_eq!(wait, Some(true));
+            if !custom {
+                fixture.input(InputEvent::from_key_label("F4"));
+                fixture.input(InputEvent::from_key_label("Enter"));
+                fixture.input(InputEvent::from_key_label("F10"));
+                assert_eq!(fixture.open_context_menu().wait_for_enter, None);
+            }
+        }
     }
 }
 
@@ -265,7 +364,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
             Some("中文x\n★ e\u{301}")
         );
         assert!(!fixture.state.pages.launcher.organizing);
-        fixture.choose_context_action(3, hover);
+        fixture.choose_context_action(4, hover);
         assert!(
             fixture
                 .state
@@ -276,7 +375,7 @@ fn context_menu_edits_and_deletes_user_entries_in_both_views() {
         );
         fixture.input(InputEvent::from_key_label("Esc"));
         assert_eq!(storage.load_config().unwrap().launcher.entries.len(), 1);
-        fixture.choose_context_action(3, hover);
+        fixture.choose_context_action(4, hover);
         fixture.input(InputEvent::from_key_label("Enter"));
         assert!(storage.load_config().unwrap().launcher.entries.is_empty());
         assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
@@ -361,14 +460,23 @@ fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_meth
         let form = fixture.state.launcher_run_settings_form().unwrap();
         assert_eq!(form.fields.len(), 3);
         assert_eq!(form.fields[2].id, "exit");
-        assert_eq!(form.fields[2].value, form.fields[2].choices[0]);
+        assert_eq!(form.fields[2].control, ui::ManagementFormControl::Toggle);
+        assert_eq!(form.fields[2].value, "false");
+        assert!(form.fields[2].choices.is_empty());
         for _ in 0..2 {
             fixture.input(InputEvent::from_key_label("Tab"));
         }
         assert!(fixture.state.page_keyboard_identity().is_none());
-        fixture.input(InputEvent::from_key_label("Right"));
+        for key in ["Left", "Right"] {
+            fixture.input(InputEvent::from_key_label(key));
+            assert_eq!(
+                fixture.state.launcher_run_settings_form().unwrap().fields[2].value,
+                "false"
+            );
+        }
+        fixture.input(InputEvent::key(InputKey::Char(' ')));
         let form = fixture.state.launcher_run_settings_form().unwrap();
-        assert_eq!(form.fields[2].value, form.fields[2].choices[1]);
+        assert_eq!(form.fields[2].value, "true");
         let layout = fixture.draw();
         let choice = layout
             .run_settings
@@ -381,7 +489,7 @@ fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_meth
             .1;
         fixture.click(choice, hover);
         let form = fixture.state.launcher_run_settings_form().unwrap();
-        assert_eq!(form.fields[2].value, form.fields[2].choices[0]);
+        assert_eq!(form.fields[2].value, "false");
         assert_eq!(form.selected, 2);
         for _ in 0..2 {
             fixture.input(InputEvent::from_key_label("Shift+Tab"));

@@ -35,22 +35,68 @@ impl ShellSession {
                 anchor: point,
                 selected: 0,
                 command_enabled: self.can_execute_command_line(),
+                wait_for_enter: self
+                    .app
+                    .launcher_state()
+                    .and_then(|state| {
+                        state
+                            .items
+                            .iter()
+                            .find(|record| record.record.id == item.id)
+                    })
+                    .and_then(|item| {
+                        item.record
+                            .custom
+                            .as_ref()
+                            .map(|custom| custom.wait_for_enter)
+                            .or_else(|| {
+                                item.record
+                                    .terminal
+                                    .as_ref()
+                                    .map(|settings| settings.wait_for_enter.unwrap_or(false))
+                            })
+                    }),
             },
         });
         self.last_click = None;
     }
 
-    fn activate_launcher_context_action(&mut self, index: usize) {
+    fn activate_launcher_context_action(&mut self, index: usize, platform: &dyn Platform) {
         let Some(state) = self.pages.launcher.context_menu.as_ref() else {
             return;
         };
-        let Some(action) = LauncherEntryAction::ALL.get(index).copied() else {
+        let Some(action) = state.menu.actions().nth(index) else {
             return;
         };
         if action == LauncherEntryAction::Command && !state.menu.command_enabled {
             return;
         }
         let id = state.id.clone();
+        if action == LauncherEntryAction::WaitForEnter {
+            let wait = !state.menu.wait_for_enter.unwrap_or(false);
+            self.apply_launcher_command(
+                LauncherCommand::EditEntry {
+                    id,
+                    edit: app::launcher::LauncherEntryEdit::WaitForEnter(wait),
+                },
+                platform,
+            );
+            if self.storage_manager.is_some()
+                && self
+                    .app
+                    .launcher_state()
+                    .is_some_and(|state| state.error.is_none())
+            {
+                self.pages
+                    .launcher
+                    .context_menu
+                    .as_mut()
+                    .unwrap()
+                    .menu
+                    .wait_for_enter = Some(wait);
+            }
+            return;
+        }
         self.pages.launcher.context_menu = None;
         if action == LauncherEntryAction::Remove {
             self.confirm_launcher_remove();
@@ -106,7 +152,7 @@ impl ShellSession {
                     })
                     .collect()
             }
-            LauncherEntryAction::Remove => unreachable!(),
+            LauncherEntryAction::WaitForEnter | LauncherEntryAction::Remove => unreachable!(),
         };
         let inputs = values
             .into_iter()
@@ -141,7 +187,8 @@ impl ShellSession {
                 .map(|(index, area)| ButtonRegion {
                     id: format!("launcher.menu.{index}").into(),
                     area,
-                    disabled: index == 1 && !state.menu.command_enabled,
+                    disabled: state.menu.actions().nth(index) == Some(LauncherEntryAction::Command)
+                        && !state.menu.command_enabled,
                 });
         }
         let editor = self.pages.launcher.entry_editor.as_ref()?;
@@ -180,6 +227,7 @@ impl ShellSession {
         };
         if let Some(state) = &mut self.pages.launcher.context_menu {
             let (area, rows) = ui::launcher_context_menu_layout(main, &state.menu);
+            let count = state.menu.actions().count();
             let action = match input {
                 InputEvent::Key(key)
                     if key.phase.is_press_like() && !key.has_non_shift_modifier() =>
@@ -190,11 +238,11 @@ impl ShellSession {
                             None
                         }
                         InputKey::Up | InputKey::BackTab => {
-                            state.menu.selected = (state.menu.selected + 3) % 4;
+                            state.menu.selected = (state.menu.selected + count - 1) % count;
                             None
                         }
                         InputKey::Down | InputKey::Tab => {
-                            state.menu.selected = (state.menu.selected + 1) % 4;
+                            state.menu.selected = (state.menu.selected + 1) % count;
                             None
                         }
                         InputKey::Enter | InputKey::Space | InputKey::Char(' ')
@@ -218,7 +266,7 @@ impl ShellSession {
                 _ => None,
             };
             if let Some(index) = action {
-                self.activate_launcher_context_action(index);
+                self.activate_launcher_context_action(index, platform);
             }
             return;
         }
@@ -352,7 +400,7 @@ impl ShellSession {
                     icon
                 })
             }
-            LauncherEntryAction::Remove => unreachable!(),
+            LauncherEntryAction::WaitForEnter | LauncherEntryAction::Remove => unreachable!(),
         };
         self.apply_launcher_command(
             LauncherCommand::EditEntry {

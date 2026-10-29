@@ -45,6 +45,7 @@ ui-launcher-organizing-count = 正在整理 { $count } 个启动项
 ui-launcher-change-name = 更改名称
 ui-launcher-change-command = 更改启动命令
 ui-launcher-change-icon = 更改图标
+ui-launcher-keep-screen = 退出后保留界面
 ui-launcher-delete-icon = 删除此图标
 ui-launcher-command-help = 此启动命令将在内嵌终端中运行。修改外部程序入口后，它将作为自定义命令启动。
 ui-launcher-icon-help = 在固定边框内编辑两行图案，每行最多 5 格。中文通常占 2 格；留空使用默认图标。

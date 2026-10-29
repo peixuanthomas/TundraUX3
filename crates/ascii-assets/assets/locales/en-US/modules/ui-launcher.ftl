@@ -48,6 +48,7 @@ ui-launcher-organizing-count = Organizing { $count } launchers
 ui-launcher-change-name = Change name
 ui-launcher-change-command = Change launch command
 ui-launcher-change-icon = Change icon
+ui-launcher-keep-screen = Keep screen after exit
 ui-launcher-delete-icon = Delete this icon
 ui-launcher-command-help = This shell command runs in the embedded terminal. Editing an external program entry converts it to a custom command.
 ui-launcher-icon-help = Edit two rows inside the fixed frame, up to 5 cells per row. Wide characters use 2 cells; leave blank for the default icon.

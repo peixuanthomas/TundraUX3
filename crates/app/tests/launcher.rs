@@ -8,6 +8,99 @@ use app::launcher::{
 };
 
 #[test]
+fn launcher_exit_switch_is_saved_and_applied_only_to_embedded_launches() {
+    let fixture = Fixture::new("exit-switch");
+    let executable = fixture.file("terminal.exe", b"program");
+    fixture.approve(&executable, ExecutableKind::NativeBinary);
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![executable]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let native_id = state.items[0].record.id.clone();
+    controller.apply(
+        &mut state,
+        LauncherCommand::EditEntry {
+            id: native_id.clone(),
+            edit: LauncherEntryEdit::WaitForEnter(true),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_some());
+    assert!(
+        storage.load_config().unwrap().launcher.entries[0]
+            .terminal
+            .is_none()
+    );
+    controller.apply(
+        &mut state,
+        LauncherCommand::SetTerminalSettings {
+            id: native_id.clone(),
+            settings: Some(LauncherTerminalSettings::default()),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddCustom(storage::LauncherCustomCommand {
+            name: "custom tool".into(),
+            command: "printf done".into(),
+            ..Default::default()
+        }),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let custom_id = state.items.last().unwrap().record.id.clone();
+    for id in [native_id, custom_id] {
+        for wait in [true, false] {
+            controller.apply(
+                &mut state,
+                LauncherCommand::EditEntry {
+                    id: id.clone(),
+                    edit: LauncherEntryEdit::WaitForEnter(wait),
+                },
+                Some(&admin()),
+                &fixture.platform,
+                &storage,
+            );
+            assert!(state.error.is_none(), "{:?}", state.error);
+            let saved = controller.load(&storage).unwrap();
+            let record = &saved
+                .items
+                .iter()
+                .find(|item| item.record.id == id)
+                .unwrap()
+                .record;
+            let actual = record
+                .custom
+                .as_ref()
+                .map(|custom| custom.wait_for_enter)
+                .or_else(|| {
+                    record
+                        .terminal
+                        .as_ref()
+                        .and_then(|settings| settings.wait_for_enter)
+                });
+            assert_eq!(actual, Some(wait));
+            assert!(matches!(
+                controller.apply(&mut state, LauncherCommand::RequestLaunch(id.clone()), Some(&admin()), &fixture.platform, &storage),
+                LauncherEffect::OpenTerminalRequested { wait_for_enter: Some(actual), .. } if actual == wait
+            ));
+        }
+    }
+}
+
+#[test]
 fn launcher_edits_persist_metadata_and_replace_the_command_without_changing_identity() {
     let fixture = Fixture::new("edit-entry");
     let executable = fixture.file("original.exe", b"program");
@@ -604,6 +697,7 @@ fn terminal_launch_preserves_argument_boundaries_and_working_directory() {
     let settings = LauncherTerminalSettings {
         arguments: vec!["two words".into(), "$(not-a-command)".into(), "".into()],
         working_directory: Some(fixture.documents.to_string_lossy().into_owned()),
+        ..Default::default()
     };
     controller.apply(
         &mut state,
@@ -759,6 +853,7 @@ fn terminal_settings_reject_unsupported_targets_and_invalid_directories() {
                 settings: Some(LauncherTerminalSettings {
                     arguments: Vec::new(),
                     working_directory: Some(directory),
+                    ..Default::default()
                 }),
             },
             Some(&admin()),
@@ -807,6 +902,7 @@ fn embedded_scripts_still_require_confirmation_and_recheck_directory_at_launch()
             settings: Some(LauncherTerminalSettings {
                 arguments: Vec::new(),
                 working_directory: Some(directory.to_string_lossy().into_owned()),
+                ..Default::default()
             }),
         },
         Some(&admin()),

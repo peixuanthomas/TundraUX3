@@ -4,7 +4,6 @@ use composition as ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use unicode_width::UnicodeWidthStr;
 use ui::{
     HomeDisplayMode, LauncherConfirmationKind, LauncherConfirmationViewModel, LauncherDropSide,
     LauncherDropTarget, LauncherHitTarget, LauncherItemStatus, LauncherItemViewModel,
@@ -12,6 +11,7 @@ use ui::{
     ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
     launcher_layout, render_launcher,
 };
+use unicode_width::UnicodeWidthStr;
 
 #[test]
 fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
@@ -19,13 +19,18 @@ fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
     for language in ["en-US", "zh-CN"] {
         let load = i18n::LanguageSnapshot::load(&assets, language, 1).unwrap();
         let _language = i18n::enter_snapshot(std::sync::Arc::new(load.snapshot));
-        for main in [Rect::new(2, 3, 108, 14), Rect::new(2, 3, 42, 9)] {
+        for (main, wait_for_enter) in [Rect::new(2, 3, 108, 14), Rect::new(2, 3, 42, 9)]
+            .into_iter()
+            .flat_map(|main| [None, Some(false), Some(true)].map(|wait| (main, wait)))
+        {
             let menu = ui::LauncherContextMenu {
                 anchor: (main.right(), main.bottom()),
                 selected: 0,
                 command_enabled: true,
+                wait_for_enter,
             };
-            let mut model = LauncherViewModel::new(vec![], None, LauncherViewMode::LargeIcons, true);
+            let mut model =
+                LauncherViewModel::new(vec![], None, LauncherViewMode::LargeIcons, true);
             model.context_menu = Some(menu.clone());
             let (area, rows) = ui::launcher_context_menu_layout(main, &menu);
             let mut terminal =
@@ -39,8 +44,22 @@ fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
                 .draw(|frame| ui::render_launcher_overlay(frame, main, &model, &context))
                 .unwrap();
             assert_eq!(area.intersection(main), area);
-            for (action, row) in ui::LauncherEntryAction::ALL.iter().zip(rows) {
-                let label = format!("[{}]", action.label());
+            assert_eq!(rows.len(), 4 + usize::from(wait_for_enter.is_some()));
+            for (action, row) in menu.actions().zip(rows) {
+                assert_eq!(row.intersection(area), row);
+                let label = if action == ui::LauncherEntryAction::WaitForEnter {
+                    format!(
+                        "{} [{}]",
+                        action.label(),
+                        i18n::tr!(if wait_for_enter == Some(true) {
+                            "settings-on"
+                        } else {
+                            "settings-off"
+                        })
+                    )
+                } else {
+                    format!("[{}]", action.label())
+                };
                 let mut rendered = String::new();
                 let mut x = row.x;
                 while x < row.right() {
@@ -61,6 +80,7 @@ fn launcher_entry_overlays_keep_wide_characters_inside_fixed_frames() {
             anchor: (main.right(), main.bottom()),
             selected: 0,
             command_enabled: true,
+            wait_for_enter: None,
         };
         let (area, rows) = ui::launcher_context_menu_layout(main, &menu);
         assert_eq!(area.intersection(main), area);

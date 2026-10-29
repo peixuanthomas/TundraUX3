@@ -2,6 +2,45 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn form_toggle_keeps_its_label_left_and_on_off_value_right() {
+    let theme = TundraTheme::default_dark();
+    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    for checked in [false, true] {
+        let model = ManagementViewModel {
+            form: Some(ManagementForm {
+                identity: "toggle".into(),
+                fields: vec![ManagementFormField {
+                    label: "Keep screen after exit".into(),
+                    value: checked.to_string(),
+                    control: ManagementFormControl::Toggle,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let bounds = Rect::new(0, 0, 80, 24);
+        let layout = management_layout(bounds, &model);
+        let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+        terminal
+            .draw(|frame| render_management_overlay(frame, bounds, &model, &context))
+            .unwrap();
+        let area = layout.fields[0].1;
+        assert_eq!(area.height, 1);
+        let line: String = (area.x..area.right())
+            .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
+            .collect();
+        assert!(line.starts_with("Keep screen after exit"));
+        assert!(line.ends_with(if checked { "[On]" } else { "[Off]" }));
+        assert!(
+            management_button_regions(bounds, &model)
+                .iter()
+                .any(|region| region.area == area)
+        );
+    }
+}
+
+#[test]
 fn clicked_form_field_keeps_accent_and_blinking_cursor_in_mouse_mode() {
     use ratatui::style::Modifier;
     let theme = TundraTheme::default_dark();

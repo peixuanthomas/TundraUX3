@@ -126,16 +126,9 @@ impl ShellSession {
             .collect();
             fields.push(ui::ManagementFormField {
                 id: "exit".into(),
-                label: i18n::tr!("shell-launcher-custom-exit"),
-                value: if state.wait_for_enter {
-                    i18n::tr!("shell-launcher-custom-exit-wait")
-                } else {
-                    i18n::tr!("shell-launcher-custom-exit-immediate")
-                },
-                choices: vec![
-                    i18n::tr!("shell-launcher-custom-exit-immediate"),
-                    i18n::tr!("shell-launcher-custom-exit-wait"),
-                ],
+                label: i18n::tr!("ui-launcher-keep-screen"),
+                value: state.wait_for_enter.to_string(),
+                control: ui::ManagementFormControl::Toggle,
                 ..Default::default()
             });
         }
@@ -206,7 +199,7 @@ impl ShellSession {
                     self.activate_launcher_run_setting(index, platform);
                 }
             }
-            InputKey::Space | InputKey::Char(' ') | InputKey::Left | InputKey::Right
+            InputKey::Space | InputKey::Char(' ')
                 if (state.custom && state.selected == 2
                     || !state.custom && state.selected == 0)
                     && key.phase == InputPhase::Press =>
@@ -216,6 +209,13 @@ impl ShellSession {
                 } else {
                     state.embedded = !state.embedded;
                 }
+                state.error = None;
+                state.message_scroll = 0;
+            }
+            InputKey::Left | InputKey::Right
+                if !state.custom && state.selected == 0 && key.phase == InputPhase::Press =>
+            {
+                state.embedded = !state.embedded;
                 state.error = None;
                 state.message_scroll = 0;
             }
@@ -339,6 +339,17 @@ impl ShellSession {
                 arguments,
                 working_directory: (!state.directory.value().is_empty())
                     .then(|| state.directory.value().to_owned()),
+                wait_for_enter: self
+                    .app
+                    .launcher_state()
+                    .and_then(|launcher| {
+                        launcher
+                            .items
+                            .iter()
+                            .find(|item| item.record.id == state.id)
+                    })
+                    .and_then(|item| item.record.terminal.as_ref())
+                    .and_then(|settings| settings.wait_for_enter),
             })
         } else {
             None
