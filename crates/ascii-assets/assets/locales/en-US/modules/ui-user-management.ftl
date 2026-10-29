@@ -49,3 +49,6 @@ ui-user-management-current-status = { $status } · You
 
 ui-user-management-more = More
 ui-user-management-more-close = Esc Close
+
+ui-user-management-role-user = User
+ui-user-management-role-admin = Administrator

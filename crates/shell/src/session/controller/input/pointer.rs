@@ -5,6 +5,39 @@ use crate::session::*;
 const BUTTON_MAX_PRESS: Duration = Duration::from_millis(500);
 
 impl ShellSession {
+    fn active_form_dialog(&self) -> Option<ui::components::FormDialog> {
+        match self.content_screen() {
+            ShellScreen::Settings => self.to_settings_view_model()?.form_dialog(),
+            ShellScreen::UserManagement => {
+                Some(self.to_user_management_view_model().form?.dialog())
+            }
+            ShellScreen::Management => self.to_management_view_model().form,
+            ShellScreen::Logs => self.to_logs_view_model().filter_form,
+            ShellScreen::Launcher => self.launcher_run_settings_form().or_else(|| {
+                self.pages
+                    .launcher
+                    .entry_editor
+                    .as_ref()
+                    .filter(|editor| editor.action != ui::LauncherEntryAction::Icon)
+                    .map(ui::LauncherEntryEditor::form)
+            }),
+            ShellScreen::Explorer => match self.to_explorer_view_model().overlay? {
+                ui::ExplorerOverlayViewModel::Name(dialog) => {
+                    Some(dialog.form(self.pages.explorer.explorer_overlay_selection))
+                }
+                _ => None,
+            },
+            ShellScreen::Editor if self.config_editor_form_visible() => {
+                self.to_management_view_model().form
+            }
+            ShellScreen::Editor => Some(self.editor_settings_view_model()?.dialog()),
+            ShellScreen::Clock if !self.is_strict_guest() => {
+                Some(self.to_clock_view_model().create_dialog?.dialog())
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::session) fn button_at(
         &self,
         point: CellPosition,
@@ -76,37 +109,13 @@ impl ShellSession {
                     disabled: false,
                 });
         }
-        if self.content_screen() == ShellScreen::Settings
-            && self
-                .pages
-                .settings
-                .settings_state
-                .as_ref()
-                .is_some_and(|state| state.number_editor.is_some())
-            && let Some(layout) = self.current_settings_layout()
-            && rect_contains(layout.main, point)
+        if let Some(form) = self.active_form_dialog()
+            && rect_contains(self.touch_main(), point)
         {
-            let number = layout.number_editor.as_ref().unwrap();
-            let (id, area) = match ui::settings_hit_test(&layout, point) {
-                Some(ui::SettingsHitTarget::AdjustField(_, -1)) => {
-                    ("settings.number.decrease", number.decrease)
-                }
-                Some(ui::SettingsHitTarget::AdjustField(_, 1)) => {
-                    ("settings.number.increase", number.increase)
-                }
-                Some(ui::SettingsHitTarget::OverlayApply) => {
-                    ("settings.overlay.apply", layout.overlay_apply.unwrap())
-                }
-                Some(ui::SettingsHitTarget::OverlayCancel) => {
-                    ("settings.overlay.cancel", layout.overlay_cancel.unwrap())
-                }
-                _ => return None,
-            };
-            return Some(ui::components::ButtonRegion {
-                id: id.into(),
-                area,
-                disabled: false,
-            });
+            return form
+                .button_regions(self.touch_main())
+                .into_iter()
+                .find(|button| rect_contains(button.area, point));
         }
         if self.resolved_overlay_owner() == Some(ShellComponent::Explorer)
             && matches!(
@@ -290,8 +299,18 @@ impl ShellSession {
                     }
                     // Notifications already validate releases; launcher cards
                     // need the original stream to support drag and drop.
-                    let native_release = region.id.as_str().starts_with("notification.")
-                        && region.id.as_str() != "notification.page-help.action.close"
+                    let text_field = self.active_form_dialog().is_some_and(|form| {
+                        form.choice.is_none()
+                            && form.fields.iter().enumerate().any(|(index, field)| {
+                                field.is_text()
+                                    && !field.read_only
+                                    && !field.disabled
+                                    && ui::management_field_id(&form, index) == region.id.as_str()
+                            })
+                    });
+                    let native_release = text_field
+                        || region.id.as_str().starts_with("notification.")
+                            && region.id.as_str() != "notification.page-help.action.close"
                         || region.id.as_str().starts_with("launcher.item.")
                         || region.id.as_str().starts_with("script.");
                     self.interaction.button_capture = Some(ButtonPointerCapture {

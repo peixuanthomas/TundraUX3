@@ -7,7 +7,6 @@ use super::model::{
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const USER_MANAGEMENT_DETAILED_MIN_WIDTH: u16 = 72;
-const USER_MANAGEMENT_DIALOG_WIDTH: u16 = 60;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserManagementColumnMode {
     Detailed,
@@ -35,6 +34,7 @@ pub struct UserManagementFieldLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserManagementFormLayout {
+    pub main: Rect,
     pub dialog: Rect,
     pub compact: bool,
     pub prompt: Rect,
@@ -383,104 +383,32 @@ fn user_management_form_layout(
     area: Rect,
     form: &UserManagementFormViewModel,
 ) -> UserManagementFormLayout {
-    let desired_height =
-        (form.field_order().len() as u16).saturating_add(3 + u16::from(form.error.is_some()));
-    let compact = area.height < desired_height;
-    let dialog = if compact {
-        area
-    } else {
-        centered_rect(
-            area,
-            area.width.min(USER_MANAGEMENT_DIALOG_WIDTH),
-            desired_height,
-        )
-    };
-    let inner = if compact {
-        dialog
-    } else {
-        inset_rect(dialog, 1)
-    };
-    let prompt = line_in_rect(inner, inner.y);
-    let buttons_y = inner.y.saturating_add(inner.height.saturating_sub(1));
-    let input_fields = form
-        .field_order()
-        .iter()
-        .copied()
-        .filter(|field| {
-            !matches!(
-                field,
-                UserManagementField::Submit | UserManagementField::Cancel
-            )
-        })
-        .collect::<Vec<_>>();
-    let field_count = input_fields.len();
-    let field_capacity = usize::from(buttons_y.saturating_sub(inner.y + 1));
-    let focused_index = input_fields
-        .iter()
-        .position(|field| *field == form.focused_field)
-        .unwrap_or(0);
-    let field_window_start = focused_index
-        .saturating_add(1)
-        .saturating_sub(field_capacity.max(1))
-        .min(field_count.saturating_sub(field_capacity));
-    let scrollbar = (field_count > field_capacity && field_capacity > 0 && inner.width > 1)
-        .then(|| Rect::new(inner.right() - 1, inner.y + 1, 1, field_capacity as u16));
-    let fields = input_fields
-        .into_iter()
-        .skip(field_window_start)
-        .enumerate()
-        .filter_map(|(index, field)| {
-            let y = inner
-                .y
-                .saturating_add(1)
-                .saturating_add(usize_to_u16(index));
-            (y < buttons_y).then_some(UserManagementFieldLayout {
-                field,
-                area: Rect::new(
-                    inner.x,
-                    y,
-                    inner.width.saturating_sub(u16::from(scrollbar.is_some())),
-                    1,
-                ),
-            })
-        })
-        .collect::<Vec<_>>();
-    let first_unused_y = fields.last().map_or(inner.y.saturating_add(1), |field| {
-        field.area.y.saturating_add(field.area.height)
-    });
-    let error = if form.error.is_some() && first_unused_y < buttons_y {
-        line_in_rect(inner, buttons_y.saturating_sub(1).max(first_unused_y))
-    } else if form.error.is_some() && compact {
-        prompt
-    } else {
-        Rect::new(inner.x, buttons_y, 0, 0)
-    };
-    let gap = u16::from(inner.width >= 3);
-    let button_width = inner.width.saturating_sub(gap) / 2;
-    let submit = Rect::new(
-        inner.x,
-        buttons_y,
-        button_width,
-        u16::from(inner.height > 0),
-    );
-    let cancel = Rect::new(
-        inner.x.saturating_add(button_width).saturating_add(gap),
-        buttons_y,
-        inner.width.saturating_sub(button_width).saturating_sub(gap),
-        u16::from(inner.height > 0),
-    );
-
+    let dialog = form.dialog();
+    let layout = dialog.layout(area);
+    let order = form.field_order();
     UserManagementFormLayout {
-        dialog,
-        compact,
-        prompt,
-        fields,
-        error,
-        submit,
-        cancel,
-        scrollbar,
-        field_window_start,
-        field_capacity,
-        field_count,
+        main: area,
+        dialog: layout.form,
+        compact: layout.form.height <= 5,
+        prompt: layout.message,
+        fields: layout
+            .fields
+            .iter()
+            .map(|(index, area)| UserManagementFieldLayout {
+                field: order[*index],
+                area: *area,
+            })
+            .collect(),
+        error: layout.message,
+        submit: layout.submit,
+        cancel: layout.cancel,
+        scrollbar: layout
+            .scrollbars
+            .iter()
+            .find(|bar| bar.target == crate::ManagementScrollTarget::FormFields)
+            .map(|bar| bar.track),
+        field_window_start: layout.field_start,
+        field_capacity: usize::from(layout.fields_area.height),
+        field_count: dialog.fields.len(),
     }
 }

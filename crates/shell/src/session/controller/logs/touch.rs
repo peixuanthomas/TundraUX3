@@ -17,12 +17,22 @@ impl ShellSession {
         self.pages.logs.logs_state.scrollbar_grab = None;
         self.pages.logs.logs_state.detail_scrollbar_grab = None;
         self.pages.logs.logs_state.more_scrollbar_grab = None;
+        if let Some(form) = &mut self.pages.logs.logs_state.filter_form {
+            form.interaction.cancel_pointer();
+        }
     }
     pub(in crate::session) fn logs_pointer_drag_active(&self) -> bool {
         self.active_screen() == ShellScreen::Logs
             && (self.pages.logs.logs_state.scrollbar_grab.is_some()
                 || self.pages.logs.logs_state.detail_scrollbar_grab.is_some()
-                || self.pages.logs.logs_state.more_scrollbar_grab.is_some())
+                || self.pages.logs.logs_state.more_scrollbar_grab.is_some()
+                || self
+                    .pages
+                    .logs
+                    .logs_state
+                    .filter_form
+                    .as_ref()
+                    .is_some_and(|form| form.interaction.is_dragging()))
     }
     pub(in crate::session) fn logs_button_at(
         &self,
@@ -123,16 +133,7 @@ impl ShellSession {
             ui::LogsHitTarget::FormField(index) => {
                 if let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() {
                     form.selected = index;
-                    if let Some(field) = form.fields.get_mut(index)
-                        && !field.choices.is_empty()
-                    {
-                        let index = field
-                            .choices
-                            .iter()
-                            .position(|value| value == &field.value)
-                            .unwrap_or(0);
-                        field.value = field.choices[(index + 1) % field.choices.len()].clone();
-                    }
+                    form.activate_field(index);
                 }
             }
             ui::LogsHitTarget::ClearFilters => {
@@ -169,6 +170,11 @@ impl ShellSession {
         let Some(main) = self.logs_main_area() else {
             return;
         };
+        if let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() {
+            let event = form.handle_confirmed_pointer(mouse, main);
+            self.logs_filter_event(event);
+            return;
+        }
         let model = self.to_logs_view_model();
         let layout = ui::logs_layout(main, &model);
         let point = mouse.coordinates();

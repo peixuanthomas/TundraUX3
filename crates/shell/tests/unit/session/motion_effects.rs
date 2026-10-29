@@ -49,11 +49,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
         focused_area(&state, ShellComponent::ClockCreateInput),
         Some(layout.input)
     );
-    for (area, expected) in [
-        (layout.create_alarm, ShellCommand::ClockCreateAlarm),
-        (layout.create_countdown, ShellCommand::ClockCreateCountdown),
-        (layout.cancel, ShellCommand::ClockCloseCreate),
-    ] {
+    for area in [layout.create_alarm, layout.create_countdown, layout.cancel] {
         let center = (
             area.x.saturating_add(area.width / 2),
             area.y.saturating_add(area.height / 2),
@@ -65,7 +61,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
                     Instant::now(),
                 )
                 .command,
-            expected
+            ShellCommand::ClockCreateFormInput(InputEvent::mouse_down(PointerButton::Left, center))
         );
     }
 }
@@ -390,6 +386,8 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        form_selected: 0,
+        form_interaction: Default::default(),
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: None,
@@ -1072,6 +1070,8 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        form_selected: 0,
+        form_interaction: Default::default(),
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: None,

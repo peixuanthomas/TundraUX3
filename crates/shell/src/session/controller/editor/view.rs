@@ -438,6 +438,32 @@ impl ShellSession {
             .editor_settings_dialog
             .as_ref()
             .map(|dialog| ui::EditorSettingsViewModel {
+                interaction: dialog.interaction.clone(),
+                numeric_limits: [
+                    (
+                        EDITOR_CURSOR_MIN_TIME_MS,
+                        EDITOR_CURSOR_MAX_TIME_MS,
+                        EDITOR_CURSOR_TIME_STEP_MS,
+                    ),
+                    (
+                        EDITOR_CURSOR_MIN_TIME_MS,
+                        EDITOR_CURSOR_MAX_TIME_MS,
+                        EDITOR_CURSOR_TIME_STEP_MS,
+                    ),
+                    (
+                        u32::from(EDITOR_CURSOR_MIN_HORIZONTAL_STEP),
+                        u32::from(EDITOR_CURSOR_MAX_HORIZONTAL_STEP),
+                        1,
+                    ),
+                    (
+                        u32::from(EDITOR_CURSOR_MIN_VERTICAL_STEP),
+                        u32::from(
+                            EDITOR_CURSOR_MAX_VERTICAL_STEP
+                                .min(dialog.draft.cursor_horizontal_max_step - 1),
+                        ),
+                        1,
+                    ),
+                ],
                 editable: self.can_change_editor_settings(),
                 enabled: dialog.draft.cursor_acceleration_enabled,
                 activation_delay_ms: dialog.draft.cursor_acceleration_delay_ms,

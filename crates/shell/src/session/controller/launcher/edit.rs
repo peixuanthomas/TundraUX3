@@ -273,6 +273,29 @@ impl ShellSession {
         let Some(editor) = self.pages.launcher.entry_editor.as_mut() else {
             return;
         };
+        if editor.action != LauncherEntryAction::Icon {
+            let mut form = editor.form();
+            let result = match input {
+                InputEvent::Mouse(mouse) => form.handle_confirmed_pointer(mouse, main),
+                input => form.handle_event(input, main),
+            };
+            editor.selected = form.selected;
+            editor.inputs = form
+                .fields
+                .into_iter()
+                .map(|field| field.input.unwrap())
+                .collect();
+            match result {
+                ui::components::FormEvent::Action(ui::components::FormAction::Submit) => {
+                    self.save_launcher_entry_edit(platform)
+                }
+                ui::components::FormEvent::Action(ui::components::FormAction::Cancel) => {
+                    self.pages.launcher.entry_editor = None
+                }
+                _ => {}
+            }
+            return;
+        }
         let layout = ui::launcher_entry_editor_layout(main, editor);
         let fields = editor.inputs.len();
         let mut save = false;

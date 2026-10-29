@@ -145,7 +145,11 @@ pub fn render_editor_overlay(
     }
     render_menu_popup(frame, &layout, model, theme, context);
     render_quick_menu(frame, &layout, theme, context);
-    render_settings(frame, layout, model, theme, context);
+    if let (Some(settings_layout), Some(settings)) = (&layout.settings, &model.settings) {
+        settings
+            .dialog()
+            .render_frame(frame, settings_layout.main, context);
+    }
     if let Some(form) = &model.config_form {
         crate::render_management_overlay(frame, layout.area, form, context);
     }
@@ -317,175 +321,6 @@ fn render_quick_menu(
         button.state.selected = matches!(item.action, EditorQuickAction::Heading(_));
         button.set_disabled(!item.enabled);
         button.render_borderless_frame(frame, item.area, &item_theme);
-    }
-}
-
-fn render_settings(
-    frame: &mut Frame<'_>,
-    layout: &EditorLayout,
-    model: &EditorViewModel,
-    theme: &TundraTheme,
-    context: &RenderContext,
-) {
-    let (Some(settings_layout), Some(settings)) = (&layout.settings, model.settings.as_ref())
-    else {
-        return;
-    };
-    frame.render_widget(Clear, settings_layout.dialog);
-    Surface::new()
-        .titled(i18n::tr!("ui-editor-editor-settings-padded"))
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, settings_layout.dialog, context);
-    let description = Rect::new(
-        settings_layout.dialog.x.saturating_add(2),
-        settings_layout.dialog.y.saturating_add(1),
-        settings_layout.dialog.width.saturating_sub(4),
-        1,
-    );
-    let description_text = if settings.editable {
-        i18n::tr!("ui-editor-hold-one-direction-to-accelerate-with-a-quadratic-curve")
-    } else {
-        i18n::tr!(
-            "ui-editor-read-only-administrator-permission-is-required-to-change-these-settings"
-        )
-    };
-    frame.render_widget(
-        Paragraph::new(description_text)
-            .alignment(HorizontalAlignment::Left)
-            .style(theme.muted_style()),
-        description,
-    );
-
-    for field in &settings_layout.fields {
-        let selected = field.field == settings.selected;
-        let locked = !settings.editable && field.field != EditorSettingsField::Cancel;
-        let label = match field.field {
-            EditorSettingsField::Enabled => i18n::tr!("ui-editor-cursor-acceleration-padded"),
-            EditorSettingsField::ActivationDelay => i18n::tr!("ui-editor-start-delay-padded"),
-            EditorSettingsField::RampDuration => i18n::tr!("ui-editor-ramp-to-maximum-padded"),
-            EditorSettingsField::HorizontalMaxStep => {
-                i18n::tr!("ui-editor-horizontal-maximum-padded")
-            }
-            EditorSettingsField::VerticalMaxStep => i18n::tr!("ui-editor-vertical-maximum-padded"),
-            EditorSettingsField::RestoreDefaults
-            | EditorSettingsField::Save
-            | EditorSettingsField::Cancel => String::new(),
-        };
-        let padding = usize::from(field.area.width).saturating_sub(terminal_width(&label));
-        let label = format!("{label}{}", " ".repeat(padding));
-        render_editor_button(
-            frame,
-            field.area,
-            format!("editor.settings.field.{:?}", field.field),
-            label,
-            selected,
-            locked,
-            theme,
-        );
-    }
-
-    for control in &settings_layout.controls {
-        let field = settings_control_field(control.control);
-        let selected = field.is_some_and(|field| field == settings.selected);
-        let locked =
-            !settings.editable && !matches!(control.control, EditorSettingsControl::Cancel);
-        let label = match control.control {
-            EditorSettingsControl::ToggleEnabled => {
-                if settings.enabled {
-                    i18n::tr!("ui-editor-on-button")
-                } else {
-                    i18n::tr!("ui-editor-off-button")
-                }
-            }
-            EditorSettingsControl::Decrease(_) => "[-]".to_owned(),
-            EditorSettingsControl::Increase(_) => "[+]".to_owned(),
-            EditorSettingsControl::RestoreDefaults => {
-                i18n::tr!("ui-editor-restore-defaults-button")
-            }
-            EditorSettingsControl::Save => i18n::tr!("ui-editor-save-button"),
-            EditorSettingsControl::Cancel => i18n::tr!("ui-editor-cancel-button"),
-        };
-        render_editor_button(
-            frame,
-            control.area,
-            format!("editor.settings.control.{:?}", control.control),
-            label,
-            selected,
-            locked,
-            theme,
-        );
-    }
-
-    for (field, value) in [
-        (
-            EditorSettingsField::ActivationDelay,
-            i18n::tr!(
-                "ui-editor-milliseconds",
-                count = settings.activation_delay_ms
-            ),
-        ),
-        (
-            EditorSettingsField::RampDuration,
-            i18n::tr!("ui-editor-milliseconds", count = settings.ramp_duration_ms),
-        ),
-        (
-            EditorSettingsField::HorizontalMaxStep,
-            i18n::tr!("ui-editor-cells", count = settings.horizontal_max_step),
-        ),
-        (
-            EditorSettingsField::VerticalMaxStep,
-            i18n::tr!("ui-editor-lines", count = settings.vertical_max_step),
-        ),
-    ] {
-        let Some(decrease) = settings_layout
-            .controls
-            .iter()
-            .find(|control| control.control == EditorSettingsControl::Decrease(field))
-        else {
-            continue;
-        };
-        let Some(increase) = settings_layout
-            .controls
-            .iter()
-            .find(|control| control.control == EditorSettingsControl::Increase(field))
-        else {
-            continue;
-        };
-        let value_area = Rect::new(
-            decrease.area.right(),
-            decrease.area.y,
-            increase.area.x.saturating_sub(decrease.area.right()),
-            1,
-        );
-        let style = if !settings.editable {
-            theme.muted_style()
-        } else if settings.selected == field {
-            theme
-                .tokens()
-                .filled_style(theme.accent_color)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            theme.body_style()
-        };
-        frame.render_widget(
-            Paragraph::new(value)
-                .alignment(HorizontalAlignment::Center)
-                .style(style),
-            value_area,
-        );
-    }
-}
-
-fn settings_control_field(control: EditorSettingsControl) -> Option<EditorSettingsField> {
-    match control {
-        EditorSettingsControl::ToggleEnabled => Some(EditorSettingsField::Enabled),
-        EditorSettingsControl::Decrease(field) | EditorSettingsControl::Increase(field) => {
-            Some(field)
-        }
-        EditorSettingsControl::RestoreDefaults => Some(EditorSettingsField::RestoreDefaults),
-        EditorSettingsControl::Save => Some(EditorSettingsField::Save),
-        EditorSettingsControl::Cancel => Some(EditorSettingsField::Cancel),
     }
 }
 

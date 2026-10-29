@@ -2,12 +2,12 @@ use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::Line;
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::layout::{ClockEntryKind, ClockPageLayout, clock_page_layout};
-use super::model::{ClockCreateDialogFocus, ClockEntryViewModel, ClockViewModel};
+use super::model::{ClockEntryViewModel, ClockViewModel};
 use crate::components::{Button, List, ListItem, Scrollbar, Surface};
-use crate::{ClockFontAsset, RenderContext, TundraTheme};
+use crate::{ClockFontAsset, RenderContext};
 
 const LARGE_CLOCK_NUMERAL_MIN_WIDTH: usize = 64;
 const LARGE_CLOCK_NUMERAL_MIN_HEIGHT: usize = 21;
@@ -205,156 +205,7 @@ fn render_clock_create_dialog(
     model: &crate::ClockCreateDialogViewModel,
     context: &RenderContext,
 ) {
-    if layout.dialog.width == 0 || layout.dialog.height == 0 {
-        return;
-    }
-    frame.render_widget(Clear, layout.dialog);
-    let theme = &context.compatibility_theme();
-    let title = if layout.error.is_empty() {
-        model
-            .error
-            .clone()
-            .unwrap_or_else(|| i18n::tr!("ui-clock-new-alarm-or-countdown"))
-    } else {
-        i18n::tr!("ui-clock-new-alarm-or-countdown")
-    };
-    Surface::new()
-        .titled(title)
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, layout.dialog, context);
-
-    render_clock_create_input(frame, layout, model, theme);
-    if let Some(error) = &model.error {
-        render_clock_line(
-            frame,
-            layout.error,
-            error.clone(),
-            theme.error_style(),
-            HorizontalAlignment::Left,
-        );
-    }
-    render_clock_button(
-        frame,
-        layout.create_alarm,
-        "clock.create-alarm",
-        &i18n::tr!("ui-clock-touch-alarm"),
-        model.focus == ClockCreateDialogFocus::CreateAlarm,
-        theme,
-    );
-    render_clock_button(
-        frame,
-        layout.create_countdown,
-        "clock.create-countdown",
-        &i18n::tr!("ui-clock-touch-timer"),
-        model.focus == ClockCreateDialogFocus::CreateCountdown,
-        theme,
-    );
-    render_clock_button(
-        frame,
-        layout.cancel,
-        "clock.create-cancel",
-        &i18n::tr!("ui-clock-touch-cancel"),
-        model.focus == ClockCreateDialogFocus::Cancel,
-        theme,
-    );
-}
-
-fn render_clock_create_input(
-    frame: &mut Frame<'_>,
-    layout: crate::ClockCreateDialogLayout,
-    model: &crate::ClockCreateDialogViewModel,
-    theme: &TundraTheme,
-) {
-    let labels = [
-        i18n::tr!("ui-clock-hours"),
-        i18n::tr!("ui-clock-minutes"),
-        i18n::tr!("ui-clock-seconds"),
-    ];
-    for (index, label) in labels.into_iter().enumerate() {
-        let focused = model.focus == ClockCreateDialogFocus::Input && model.active_field == index;
-        for (part, role, area, actions) in [
-            (
-                "value",
-                "spinbutton",
-                layout.values[index],
-                &["click", "text", "key"][..],
-            ),
-            (
-                "increase",
-                "button",
-                layout.increments[index],
-                &["click"][..],
-            ),
-            (
-                "decrease",
-                "button",
-                layout.decrements[index],
-                &["click"][..],
-            ),
-        ] {
-            crate::automation::control(
-                &format!("clock.create.{index}.{part}"),
-                role,
-                &label,
-                area,
-                crate::components::ComponentState {
-                    focused: focused && part == "value",
-                    ..Default::default()
-                },
-                actions,
-            );
-        }
-        let style = if focused {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        };
-        let value = if layout.labels[index].is_empty() {
-            format!("[ {:02} ] {}", model.values[index], label)
-        } else {
-            format!("[ {:02} ]", model.values[index])
-        };
-        for (area, text) in [
-            (layout.labels[index], label),
-            (layout.increments[index], "▲".to_string()),
-            (layout.values[index], value.clone()),
-            (layout.decrements[index], "▼".to_string()),
-        ] {
-            render_clock_line(frame, area, text, style, HorizontalAlignment::Center);
-        }
-        if focused {
-            let area = layout.values[index];
-            let width =
-                crate::components::terminal_width(&value).min(usize::from(area.width)) as u16;
-            let input_area =
-                Rect::new(area.x + (area.width - width) / 2 + 2, area.y, 3, 1).intersection(area);
-            let mut input =
-                crate::components::TextInput::new(format!("clock.create.{index}.input"));
-            input.set_value(format!("{:02}", model.values[index]));
-            input.set_cursor(model.cursor);
-            input.set_focused(true);
-            input.render_borderless_frame(frame, input_area, theme);
-        }
-    }
-}
-
-fn render_clock_button(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    id: &'static str,
-    label: &str,
-    focused: bool,
-    theme: &TundraTheme,
-) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let mut button = Button::new(id, label);
-    button.set_focused(focused);
-    button.state.selected = focused;
-    button.render_borderless_frame(frame, area, theme);
+    model.dialog().render_frame(frame, layout.main, context);
 }
 
 pub(crate) fn render_clock_line(

@@ -158,6 +158,8 @@ impl ShellSession {
             }
         });
         Some(ui::SettingsViewModel {
+            form_selected: state.form_selected,
+            form_interaction: state.form_interaction.clone(),
             selected_application: state.application,
             selected_category: state.category,
             selected_field: state.selected_field,

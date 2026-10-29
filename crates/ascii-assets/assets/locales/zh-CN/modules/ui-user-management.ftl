@@ -46,3 +46,6 @@ ui-user-management-current-status = { $status } · 当前用户
 
 ui-user-management-more = 更多
 ui-user-management-more-close = Esc 关闭
+
+ui-user-management-role-user = 普通用户
+ui-user-management-role-admin = 管理员

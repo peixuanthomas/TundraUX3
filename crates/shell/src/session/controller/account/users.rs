@@ -130,6 +130,7 @@ impl ShellSession {
         }
         self.pages.user_management.user_management_mode =
             UserManagementMode::Create(UserManagementCreateForm {
+                interaction: Default::default(),
                 editing: Default::default(),
                 username: String::new(),
                 display_name: String::new(),
@@ -150,6 +151,7 @@ impl ShellSession {
         {
             self.pages.user_management.user_management_mode =
                 UserManagementMode::EditInfo(UserManagementInfoForm {
+                    interaction: Default::default(),
                     editing: Default::default(),
                     username: user.username,
                     display_name: user.display_name,
@@ -225,50 +227,77 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn edit_user_management_text(&mut self, key: &KeyInput) {
-        let (value, editing) = match &mut self.pages.user_management.user_management_mode {
-            UserManagementMode::Create(form) => match form.focused_field {
-                UserManagementFormField::Username => (&mut form.username, &mut form.editing[0]),
-                UserManagementFormField::DisplayName => {
-                    (&mut form.display_name, &mut form.editing[1])
-                }
-                UserManagementFormField::Password => (&mut form.password, &mut form.editing[2]),
-                _ => return,
-            },
-            UserManagementMode::EditInfo(form)
-                if form.focused_field == UserManagementFormField::DisplayName =>
-            {
-                (&mut form.display_name, &mut form.editing[1])
-            }
-            _ => return,
+        self.handle_user_management_form_input(InputEvent::Key(key.clone()));
+    }
+
+    pub(in crate::session) fn handle_user_management_form_input(&mut self, event: InputEvent) {
+        use ui::components::{FormAction, FormEvent, TextEditState};
+        let Some(model) = self.to_user_management_view_model().form else {
+            return;
         };
-        editing.handle_event(value, InputEvent::Key(key.clone()), Rect::default());
+        let mut dialog = model.dialog();
+        if let UserManagementMode::Create(form) = &self.pages.user_management.user_management_mode {
+            let field = dialog
+                .fields
+                .iter_mut()
+                .find(|field| field.id == "password")
+                .unwrap();
+            field.value = form.password.clone();
+            field.input = Some(form.editing[2].input("password", &form.password));
+        }
+        let result = match event {
+            InputEvent::Mouse(mouse) => dialog.handle_confirmed_pointer(mouse, self.touch_main()),
+            event => dialog.handle_event(event, self.touch_main()),
+        };
+        let interaction = dialog.interaction_state();
+        match &mut self.pages.user_management.user_management_mode {
+            UserManagementMode::Create(form) => form.interaction = interaction,
+            UserManagementMode::EditInfo(form) => form.interaction = interaction,
+            UserManagementMode::Browse => {}
+        }
+        let focus = model.field_order()[dialog.selected];
+        self.set_user_management_form_focus(focus);
+        for field in dialog.fields {
+            let target = match &mut self.pages.user_management.user_management_mode {
+                UserManagementMode::Create(form) => match field.id.as_str() {
+                    "username" => Some((&mut form.username, &mut form.editing[0])),
+                    "display-name" => Some((&mut form.display_name, &mut form.editing[1])),
+                    "password" => Some((&mut form.password, &mut form.editing[2])),
+                    "role" => {
+                        form.role = if field.value == i18n::tr!("ui-user-management-role-admin") {
+                            UserRole::Admin
+                        } else {
+                            UserRole::User
+                        };
+                        None
+                    }
+                    _ => None,
+                },
+                UserManagementMode::EditInfo(form) => {
+                    Some((&mut form.display_name, &mut form.editing[1]))
+                }
+                _ => None,
+            };
+            if let Some((value, editing)) = target {
+                *value = field.value;
+                if let Some(input) = field.input {
+                    *editing = TextEditState::from_input(&input);
+                }
+            }
+        }
+        match result {
+            FormEvent::Action(FormAction::Submit) => self.submit_user_management_form(),
+            FormEvent::Action(FormAction::Cancel) => self.cancel_user_management_form(),
+            _ => {}
+        }
     }
 
     pub(in crate::session) fn move_user_management_form_focus(&mut self, direction: i8) {
-        let fields: &[UserManagementFormField] =
-            match self.pages.user_management.user_management_mode {
-                UserManagementMode::Create(_) => &[
-                    UserManagementFormField::Username,
-                    UserManagementFormField::DisplayName,
-                    UserManagementFormField::Role,
-                    UserManagementFormField::Password,
-                    UserManagementFormField::Submit,
-                    UserManagementFormField::Cancel,
-                ],
-                UserManagementMode::EditInfo(_) => &[
-                    UserManagementFormField::DisplayName,
-                    UserManagementFormField::Submit,
-                    UserManagementFormField::Cancel,
-                ],
-                UserManagementMode::Browse => return,
-            };
-        let current = self.user_management_form_field();
-        let index = fields
-            .iter()
-            .position(|field| Some(*field) == current)
-            .unwrap_or(0);
-        let next = (index as isize + direction as isize).rem_euclid(fields.len() as isize) as usize;
-        self.set_user_management_form_field(fields[next]);
+        self.handle_user_management_form_input(InputEvent::key(if direction < 0 {
+            InputKey::BackTab
+        } else {
+            InputKey::Tab
+        }));
     }
 
     pub(in crate::session) fn cancel_user_management_form(&mut self) {
@@ -279,14 +308,6 @@ impl ShellSession {
             self.pages.user_management.user_management_feedback_tone =
                 UserManagementFeedbackTone::Info;
             self.ensure_user_management_selection_visible();
-        }
-    }
-
-    pub(in crate::session) fn user_management_form_field(&self) -> Option<UserManagementFormField> {
-        match &self.pages.user_management.user_management_mode {
-            UserManagementMode::Browse => None,
-            UserManagementMode::Create(form) => Some(form.focused_field),
-            UserManagementMode::EditInfo(form) => Some(form.focused_field),
         }
     }
 

@@ -454,7 +454,7 @@ fn color_editor_captures_clicks_above_settings_content() {
         })
         .expect("render color editor");
     let output = terminal_output(&terminal);
-    assert!(output.contains("> #00FFFF_"));
+    assert!(output.contains("#00FFFF_"));
     assert!(output.contains("Accent must differ from border color."));
 }
 
@@ -491,7 +491,7 @@ fn file_extensions_editor_captures_clicks_and_shows_examples() {
         .expect("render file extensions editor");
     let output = terminal_output(&terminal);
     assert!(output.contains("Explorer files opened in Editor"));
-    assert!(output.contains("> .md, .rs, .d.ts_"));
+    assert!(output.contains(".md, .rs, .d.ts_"));
 }
 
 #[test]
@@ -528,7 +528,7 @@ fn time_sync_server_editor_shows_validation_state_and_captures_clicks() {
         .expect("render time sync server editor");
     let output = terminal_output(&terminal);
     assert!(output.contains("Time synchronization server"));
-    assert!(output.contains("> https://time.example.test/_"));
+    assert!(output.contains("https://time.example.test/"));
     assert!(output.contains("Synchronizing with this server"));
 }
 
@@ -606,6 +606,8 @@ fn picker_truncates_wide_labels_by_terminal_columns() {
 
 fn sample_model() -> SettingsViewModel {
     SettingsViewModel {
+        form_selected: 0,
+        form_interaction: Default::default(),
         selected_application: Default::default(),
         selected_category: SettingsCategory::Appearance,
         selected_field: SettingsField::BorderColor,
@@ -1129,8 +1131,14 @@ fn number_dialog_renders_shared_controls_and_blocks_the_underlying_dialog() {
             assert!(output.contains("125"));
             let regions = buttons.regions();
             for (id, rect) in [
-                ("settings.number.decrease", number.decrease),
-                ("settings.number.increase", number.increase),
+                (
+                    "management.field.settings.number.number.decrease",
+                    number.decrease,
+                ),
+                (
+                    "management.field.settings.number.number.increase",
+                    number.increase,
+                ),
             ] {
                 assert_eq!(
                     regions

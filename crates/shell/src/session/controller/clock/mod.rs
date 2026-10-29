@@ -330,6 +330,48 @@ impl ShellSession {
         self.refresh_hit_map();
     }
 
+    pub(in crate::session) fn handle_clock_create_form_input(&mut self, event: InputEvent) {
+        use ui::components::{FormAction, FormEvent};
+        let Some(model) = self.to_clock_view_model().create_dialog else {
+            return;
+        };
+        let mut form = model.dialog();
+        let previous = form.selected;
+        let result = match event {
+            InputEvent::Mouse(mouse) => form.handle_confirmed_pointer(mouse, self.touch_main()),
+            event => form.handle_event(event, self.touch_main()),
+        };
+        if form.selected != previous {
+            if form.selected < 3 {
+                self.select_clock_create_field(form.selected);
+            } else {
+                self.set_clock_create_focus(
+                    [
+                        ui::ClockCreateDialogFocus::CreateAlarm,
+                        ui::ClockCreateDialogFocus::CreateCountdown,
+                        ui::ClockCreateDialogFocus::Cancel,
+                    ][form.selected - 3],
+                );
+            }
+        }
+        if let Some(state) = &mut self.pages.clock.clock_create_state {
+            state.interaction = form.interaction_state();
+            for (index, field) in form.fields.iter().enumerate() {
+                state.values[index] = field.value.parse().unwrap();
+            }
+        }
+        match result {
+            FormEvent::Action(FormAction::Submit) => {
+                self.create_clock_entry(ScheduledClockEntryKind::DailyAlarm)
+            }
+            FormEvent::Action(FormAction::Custom(_)) => {
+                self.create_clock_entry(ScheduledClockEntryKind::Countdown)
+            }
+            FormEvent::Action(FormAction::Cancel) => self.close_clock_create_dialog(),
+            _ => {}
+        }
+    }
+
     pub(in crate::session) fn move_clock_create_focus(&mut self, direction: i8) {
         let Some(state) = self.pages.clock.clock_create_state.as_mut() else {
             return;

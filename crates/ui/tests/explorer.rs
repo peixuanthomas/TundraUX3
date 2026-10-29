@@ -464,14 +464,11 @@ fn explorer_name_dialog_renders_clickable_input_and_actions() {
     let output = terminal_output(&terminal);
     assert!(output.contains("Rename"));
     assert!(output.contains("Enter a new name"));
-    assert!(output.contains("> README-new_.md"));
+    assert!(output.contains("README-new_.md"));
     assert!(output.contains("Save"));
     let input = overlay_control_area(&model, &ExplorerOverlayControl::NameInput);
     let buffer = terminal.backend().buffer();
-    let start = (input.x..input.right())
-        .find(|&x| buffer[(x, input.y)].symbol() == ">")
-        .expect("name input prefix")
-        + 2;
+    let start = input.x;
     let theme = TundraTheme::default_dark();
     assert_eq!(buffer[(start + 10, input.y)].symbol(), "_");
     assert_ne!(buffer[(start + 10, input.y)].bg, theme.tokens().focus);

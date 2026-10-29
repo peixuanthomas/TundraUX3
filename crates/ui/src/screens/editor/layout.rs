@@ -30,6 +30,7 @@ pub struct EditorSettingsControlLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorSettingsLayout {
+    pub main: Rect,
     pub dialog: Rect,
     pub fields: Vec<EditorSettingsFieldLayout>,
     pub controls: Vec<EditorSettingsControlLayout>,
@@ -1156,122 +1157,56 @@ pub(super) fn menu_popup_layout(
 
 pub(super) fn settings_layout(
     area: Rect,
-    _settings: &EditorSettingsViewModel,
+    settings: &EditorSettingsViewModel,
 ) -> Option<EditorSettingsLayout> {
-    let width = area.width.min(64);
-    let height = area.height.min(15);
-    if width < 52 || height < 15 {
-        return None;
-    }
-    let dialog = Rect::new(
-        area.x.saturating_add(area.width.saturating_sub(width) / 2),
-        area.y
-            .saturating_add(area.height.saturating_sub(height) / 2),
-        width,
-        height,
-    );
-    let row_x = dialog.x.saturating_add(2);
-    let row_width = dialog.width.saturating_sub(4);
-    let setting_fields = [
-        EditorSettingsField::Enabled,
-        EditorSettingsField::ActivationDelay,
-        EditorSettingsField::RampDuration,
-        EditorSettingsField::HorizontalMaxStep,
-        EditorSettingsField::VerticalMaxStep,
-    ];
-    let mut fields = setting_fields
-        .into_iter()
-        .enumerate()
-        .map(|(index, field)| EditorSettingsFieldLayout {
-            field,
-            area: Rect::new(
-                row_x,
-                dialog.y.saturating_add(3).saturating_add(to_u16(index)),
-                row_width,
-                1,
-            ),
+    let form = settings.dialog();
+    let layout = form.layout(area);
+    let mut fields = layout
+        .fields
+        .iter()
+        .map(|(index, area)| EditorSettingsFieldLayout {
+            field: EditorSettingsField::ALL[*index],
+            area: *area,
         })
         .collect::<Vec<_>>();
-    let button_y = dialog.bottom().saturating_sub(2);
-    let restore_width = to_u16(terminal_width(&i18n::tr!(
-        "ui-editor-restore-defaults-button"
-    )));
-    let cancel_width = to_u16(terminal_width(&i18n::tr!("ui-editor-cancel-button")));
-    let save_width = to_u16(terminal_width(&i18n::tr!("ui-editor-save-button"))).saturating_add(1);
-    let restore = Rect::new(row_x, button_y, restore_width, 1);
-    let cancel = Rect::new(
-        dialog.right().saturating_sub(cancel_width + 1),
-        button_y,
-        cancel_width,
-        1,
-    );
-    let save = Rect::new(
-        cancel.x.saturating_sub(save_width + 1),
-        button_y,
-        save_width,
-        1,
-    );
-    fields.extend([
-        EditorSettingsFieldLayout {
-            field: EditorSettingsField::RestoreDefaults,
-            area: restore,
-        },
-        EditorSettingsFieldLayout {
-            field: EditorSettingsField::Save,
-            area: save,
-        },
-        EditorSettingsFieldLayout {
-            field: EditorSettingsField::Cancel,
-            area: cancel,
-        },
-    ]);
-
-    let mut controls = vec![EditorSettingsControlLayout {
-        control: EditorSettingsControl::ToggleEnabled,
-        area: Rect::new(
-            dialog.right().saturating_sub(10),
-            dialog.y.saturating_add(3),
-            7,
-            1,
-        ),
-    }];
-    for (index, field) in [
-        EditorSettingsField::ActivationDelay,
-        EditorSettingsField::RampDuration,
-        EditorSettingsField::HorizontalMaxStep,
-        EditorSettingsField::VerticalMaxStep,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let y = dialog.y.saturating_add(4).saturating_add(to_u16(index));
-        controls.extend([
-            EditorSettingsControlLayout {
-                control: EditorSettingsControl::Decrease(field),
-                area: Rect::new(dialog.right().saturating_sub(22), y, 3, 1),
-            },
-            EditorSettingsControlLayout {
-                control: EditorSettingsControl::Increase(field),
-                area: Rect::new(dialog.right().saturating_sub(6), y, 3, 1),
-            },
-        ]);
+    let mut controls = Vec::new();
+    if let Some((_, area)) = layout.fields.iter().find(|(index, _)| *index == 0) {
+        controls.push(EditorSettingsControlLayout {
+            control: EditorSettingsControl::ToggleEnabled,
+            area: *area,
+        });
     }
-    controls.extend([
-        EditorSettingsControlLayout {
-            control: EditorSettingsControl::RestoreDefaults,
-            area: restore,
-        },
-        EditorSettingsControlLayout {
-            control: EditorSettingsControl::Save,
-            area: save,
-        },
-        EditorSettingsControlLayout {
-            control: EditorSettingsControl::Cancel,
-            area: cancel,
-        },
-    ]);
+    for (index, _) in layout.fields.iter().filter(|(index, _)| *index > 0) {
+        for (control, area) in [
+            EditorSettingsControl::Decrease(EditorSettingsField::ALL[*index]),
+            EditorSettingsControl::Increase(EditorSettingsField::ALL[*index]),
+        ]
+        .into_iter()
+        .zip(crate::management_number_buttons(
+            &layout,
+            *index,
+            &form.fields[*index],
+        )) {
+            controls.push(EditorSettingsControlLayout { control, area });
+        }
+    }
+    for (index, area) in &layout.form_buttons {
+        fields.push(EditorSettingsFieldLayout {
+            field: EditorSettingsField::ALL[5 + index],
+            area: *area,
+        });
+        controls.push(EditorSettingsControlLayout {
+            control: [
+                EditorSettingsControl::RestoreDefaults,
+                EditorSettingsControl::Save,
+                EditorSettingsControl::Cancel,
+            ][*index],
+            area: *area,
+        });
+    }
     Some(EditorSettingsLayout {
-        dialog,
+        main: area,
+        dialog: layout.form,
         fields,
         controls,
     })

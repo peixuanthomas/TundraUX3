@@ -58,17 +58,12 @@ fn wide_layout_exposes_analog_panel_rows_and_dialog_hit_areas() {
     assert_eq!(layout.entry_rows[2].kind, ClockEntryKind::Countdown);
 
     let dialog = layout.create_dialog.expect("dialog layout");
-    for control in [
-        dialog.input,
-        dialog.error,
-        dialog.create_alarm,
-        dialog.create_countdown,
-    ] {
+    for control in [dialog.input, dialog.create_alarm, dialog.create_countdown] {
         assert!(rect_contains(dialog.dialog, control));
         assert!(control.width > 0);
         assert!(control.height > 0);
     }
-    assert!(dialog.create_alarm.right() <= dialog.create_countdown.x);
+    assert!(!dialog.create_alarm.intersects(dialog.create_countdown));
 }
 
 #[test]
@@ -101,6 +96,7 @@ fn entry_window_slices_alarms_then_countdowns_and_preserves_ids() {
 fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
+        interaction: Default::default(),
         cursor: 2,
         values: [0; 3],
         active_field: 0,
@@ -116,7 +112,9 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
 
     assert!(output.contains("New Alarm or Countdown"));
     assert!(!output.contains("↑↓/click: adjust"));
-    assert_eq!(output.matches("[ 00 ]").count(), 3);
+    for area in dialog.values {
+        assert!(region_text(&terminal, area).contains("00"));
+    }
     assert!(output.contains("Use hh mm ss"));
     assert!(output.contains("[F3 Alarm]"));
     assert!(output.contains("[F4 Timer]"));
@@ -148,6 +146,7 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
 fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
+        interaction: Default::default(),
         cursor: 2,
         values: [1, 2, 3],
         active_field: 0,
@@ -164,13 +163,13 @@ fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
     assert!(layout.new_button.height > 0);
     assert_eq!(layout.entry_capacity, 1);
     assert_eq!(layout.entry_rows.first().map(|row| row.id), Some(10));
-    assert!(dialog.input.bottom() <= dialog.error.y);
-    assert!(dialog.error.bottom() <= dialog.create_alarm.y);
+    assert!(dialog.error.bottom() <= dialog.input.y);
+    assert!(dialog.input.bottom() <= dialog.create_alarm.y);
     assert_eq!(dialog.create_alarm.y, dialog.create_countdown.y);
     assert!(terminal_output(&terminal).contains("Example error"));
     for index in 0..3 {
-        assert!(region_text(&terminal, dialog.increments[index]).contains('▲'));
-        assert!(region_text(&terminal, dialog.decrements[index]).contains('▼'));
+        assert!(region_text(&terminal, dialog.increments[index]).contains('+'));
+        assert!(region_text(&terminal, dialog.decrements[index]).contains('−'));
         assert!(region_text(&terminal, dialog.values[index]).contains(&format!("0{}", index + 1)));
         assert!(dialog.decrements[index].bottom() <= dialog.create_alarm.y);
     }

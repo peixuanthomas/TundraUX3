@@ -37,17 +37,23 @@ fn physical_space_reaches_permissions_and_recursive_checkboxes() {
             title: "Permissions".into(),
             message: String::new(),
             message_scroll: 0,
-            fields: vec![ManagementField {
-                id: if control == FieldControl::Checkbox {
-                    "recursive"
-                } else {
-                    "files"
-                }
-                .into(),
-                value: initial.into(),
-                control,
-                ..Default::default()
-            }],
+            fields: vec![
+                ManagementField {
+                    id: if control == FieldControl::Checkbox {
+                        "recursive"
+                    } else {
+                        "files"
+                    }
+                    .into(),
+                    value: initial.into(),
+                    control,
+                    ..Default::default()
+                },
+                ManagementField {
+                    id: "next".into(),
+                    ..Default::default()
+                },
+            ],
             selected: 0,
             purpose: FormPurpose::Action(ManagementAction::default(), None),
         });
@@ -109,9 +115,9 @@ fn physical_space_reaches_permissions_and_recursive_checkboxes() {
             initial
         );
         for (kind, expected) in [
-            (KeyEventKind::Press, changed),
-            (KeyEventKind::Repeat, changed),
-            (KeyEventKind::Release, changed),
+            (KeyEventKind::Press, initial),
+            (KeyEventKind::Repeat, initial),
+            (KeyEventKind::Release, initial),
         ] {
             session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent {
                 kind,
@@ -125,7 +131,7 @@ fn physical_space_reaches_permissions_and_recursive_checkboxes() {
                 .as_ref()
                 .unwrap();
             assert_eq!(form.fields[0].value, expected);
-            assert_eq!(form.selected, 0, "Enter toggles the box without submitting");
+            assert_eq!(form.selected, 1, "Enter advances without changing the box");
         }
     }
 }
@@ -158,6 +164,10 @@ fn physical_space_preserves_checkbox_modifiers_and_text_input() {
             ManagementField {
                 id: "label".into(),
                 value: "ab".into(),
+                ..Default::default()
+            },
+            ManagementField {
+                id: "next".into(),
                 ..Default::default()
             },
         ],

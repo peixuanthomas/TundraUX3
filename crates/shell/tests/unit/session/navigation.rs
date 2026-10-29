@@ -32,6 +32,8 @@ fn prepare_page(state: &mut ShellSession, screen: ShellScreen) {
     }
     if screen == ShellScreen::Settings {
         state.pages.settings.settings_state = Some(SettingsState {
+            form_selected: 0,
+            form_interaction: Default::default(),
             application: Default::default(),
             system_time: Default::default(),
             animation_editor: None,
@@ -145,6 +147,7 @@ fn notification_and_form_close_before_leaving_the_page() {
         prepare_page(&mut state, ShellScreen::UserManagement);
         state.pages.user_management.user_management_mode =
             UserManagementMode::Create(UserManagementCreateForm {
+                interaction: Default::default(),
                 editing: Default::default(),
                 username: "draft".into(),
                 display_name: String::new(),

@@ -19,3 +19,6 @@ ui-clock-touch-cancel = Esc Cancel
 ui-clock-touch-new = N New
 ui-clock-touch-alarm = F3 Alarm
 ui-clock-touch-timer = F4 Timer
+
+ui-clock-alarm-action = Alarm
+ui-clock-countdown-action = Timer

@@ -511,6 +511,12 @@ pub fn render_explorer_overlay(
     else {
         return;
     };
+    if let ExplorerOverlayViewModel::Name(dialog) = overlay {
+        dialog
+            .form(model.overlay_selection)
+            .render_frame(frame, area, context);
+        return;
+    }
     let title = match overlay {
         ExplorerOverlayViewModel::ContextMenu(menu) => menu.title.clone(),
         ExplorerOverlayViewModel::Name(dialog) => dialog.title.clone(),
@@ -576,16 +582,7 @@ pub fn render_explorer_overlay(
                 );
             }
         }
-        ExplorerOverlayViewModel::Name(dialog) => {
-            render_explorer_name_dialog(
-                frame,
-                overlay_layout,
-                dialog,
-                model.overlay_selection,
-                context,
-                theme,
-            );
-        }
+        ExplorerOverlayViewModel::Name(_) => unreachable!(),
         ExplorerOverlayViewModel::Options(options) => {
             for control in &overlay_layout.controls {
                 match control.control {
@@ -676,84 +673,6 @@ pub fn render_explorer_overlay(
                 );
             }
         }
-    }
-}
-
-fn render_explorer_name_dialog(
-    frame: &mut Frame<'_>,
-    layout: &ExplorerOverlayLayout,
-    dialog: &crate::ExplorerNameDialogViewModel,
-    selection: usize,
-    context: &crate::RenderContext,
-    theme: &TundraTheme,
-) {
-    frame.render_widget(
-        Paragraph::new(dialog.prompt.clone()).alignment(HorizontalAlignment::Left),
-        Rect::new(layout.content.x, layout.content.y, layout.content.width, 1),
-    );
-    for control in &layout.controls {
-        match control.control {
-            ExplorerOverlayControl::NameInput => {
-                let input_area = Rect::new(
-                    control.area.x,
-                    control.area.y.saturating_sub(1),
-                    control.area.width,
-                    3.min(layout.content.height),
-                );
-                Surface::new()
-                    .bordered(true)
-                    .render_frame(frame, input_area, context);
-                let input_content = Rect::new(
-                    input_area.x.saturating_add(1),
-                    input_area.y.saturating_add(1),
-                    input_area.width.saturating_sub(2),
-                    input_area.height.saturating_sub(2),
-                );
-
-                let mut input = TextInput::new("explorer.name.input")
-                    .with_cursor_symbol("_")
-                    .with_horizontal_scroll(true);
-                input.set_value(&dialog.value);
-                input.set_cursor(dialog.cursor);
-                input.set_selection_anchor(dialog.selection_anchor);
-                input.set_focused(selection == 0);
-                input.state.hovered = selection == 0;
-                input.render_borderless_frame_with_prefix(frame, input_content, theme, "> ");
-            }
-            ExplorerOverlayControl::Confirm => render_explorer_button(
-                frame,
-                control.area,
-                "explorer.name.confirm",
-                format!("[Enter {}]", dialog.confirm_label),
-                selection == 1,
-                control.enabled,
-                theme,
-            ),
-            ExplorerOverlayControl::Cancel => render_explorer_button(
-                frame,
-                control.area,
-                "explorer.name.cancel",
-                format!("[Esc {}]", dialog.cancel_label),
-                selection == 2,
-                control.enabled,
-                theme,
-            ),
-            _ => {}
-        }
-    }
-    if let Some(error) = &dialog.error {
-        let error_area = Rect::new(
-            layout.content.x,
-            layout.content.y.saturating_add(4),
-            layout.content.width,
-            u16::from(layout.content.height > 4),
-        );
-        frame.render_widget(
-            Paragraph::new(error.clone())
-                .alignment(HorizontalAlignment::Left)
-                .style(theme.error_style()),
-            error_area,
-        );
     }
 }
 

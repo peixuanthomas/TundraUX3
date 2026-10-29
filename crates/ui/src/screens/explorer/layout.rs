@@ -750,37 +750,26 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
                 controls,
             })
         }
-        Some(ExplorerOverlayViewModel::Name(_)) => {
-            let dialog = centered_rect(area, area.width.min(60), area.height.min(9));
-            let content = inset_rect(dialog, 1);
-            let button_y = content.y.saturating_add(content.height.saturating_sub(1));
-            let gap = u16::from(content.width > 2);
-            let button_width = content.width.saturating_sub(gap) / 2;
+        Some(ExplorerOverlayViewModel::Name(dialog)) => {
+            let form = dialog.form(model.overlay_selection);
+            let layout = form.layout(area);
             Some(ExplorerOverlayLayout {
-                area: dialog,
-                content,
+                area: layout.form,
+                content: layout.fields_area,
                 controls: vec![
                     ExplorerOverlayControlLayout {
                         control: ExplorerOverlayControl::NameInput,
-                        area: line_in_rect(content, content.y.saturating_add(2)),
+                        area: crate::management_field_input_area(&layout, 0, &form.fields[0]),
                         enabled: true,
                     },
                     ExplorerOverlayControlLayout {
                         control: ExplorerOverlayControl::Confirm,
-                        area: Rect::new(content.x, button_y, button_width, 1),
+                        area: layout.submit,
                         enabled: true,
                     },
                     ExplorerOverlayControlLayout {
                         control: ExplorerOverlayControl::Cancel,
-                        area: Rect::new(
-                            content.x.saturating_add(button_width).saturating_add(gap),
-                            button_y,
-                            content
-                                .width
-                                .saturating_sub(button_width)
-                                .saturating_sub(gap),
-                            1,
-                        ),
+                        area: layout.cancel,
                         enabled: true,
                     },
                 ],

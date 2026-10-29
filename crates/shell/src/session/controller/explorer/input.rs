@@ -14,12 +14,16 @@ impl ShellSession {
             return (target, ShellCommand::CaptureOverlayInput);
         }
 
+        if matches!(
+            self.resolved_explorer_overlay(),
+            Some(ResolvedExplorerOverlay::Input(_))
+        ) {
+            return (
+                target,
+                ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone())),
+            );
+        }
         if self.resolved_explorer_overlay().is_some()
-            && !(matches!(
-                self.resolved_explorer_overlay(),
-                Some(ResolvedExplorerOverlay::Input(_))
-            ) && self.pages.explorer.explorer_overlay_selection == 0
-                && matches!(key.key, InputKey::Left | InputKey::Right))
             && let Some(command) = explorer_overlay_navigation_command(key)
         {
             return (target, command);
@@ -62,37 +66,7 @@ impl ShellSession {
                     _ => (target, ShellCommand::CaptureOverlayInput),
                 };
             }
-            Some(ResolvedExplorerOverlay::Input(_)) => {
-                return match &key.key {
-                    InputKey::Escape => (target, ShellCommand::CancelExplorerInput),
-                    InputKey::Enter if self.pages.explorer.explorer_overlay_selection == 0 => {
-                        (target, ShellCommand::SubmitExplorerInput)
-                    }
-                    InputKey::Enter | InputKey::Char(' ')
-                        if self.pages.explorer.explorer_overlay_selection != 0
-                            && key.phase == InputPhase::Press
-                            && key.is_unmodified_action_key() =>
-                    {
-                        (target, ShellCommand::ExplorerOverlayActivate)
-                    }
-                    InputKey::Backspace
-                    | InputKey::Delete
-                    | InputKey::Left
-                    | InputKey::Right
-                    | InputKey::Home
-                    | InputKey::End
-                    | InputKey::Char(_)
-                    | InputKey::Space
-                        if self.pages.explorer.explorer_overlay_selection == 0 =>
-                    {
-                        (
-                            target,
-                            ShellCommand::ExplorerEditInput(InputEvent::Key(key.clone())),
-                        )
-                    }
-                    _ => (target, ShellCommand::RecordInput),
-                };
-            }
+            Some(ResolvedExplorerOverlay::Input(_)) => unreachable!(),
             Some(ResolvedExplorerOverlay::Semantic(_)) => {
                 return self.route_explorer_overlay_key(key);
             }
@@ -416,6 +390,15 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let coordinates = mouse.coordinates();
         let target = RoutedTarget::Component(ShellComponent::Explorer);
+        if matches!(
+            self.resolved_explorer_overlay(),
+            Some(ResolvedExplorerOverlay::Input(_))
+        ) {
+            return (
+                target,
+                ShellCommand::ExplorerEditInput(InputEvent::Mouse(mouse)),
+            );
+        }
 
         if matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
             && matches!(

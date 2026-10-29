@@ -2,6 +2,7 @@ mod animation;
 mod applications;
 mod background;
 pub(in crate::session) mod devices;
+mod form_dialog;
 mod forms;
 mod number;
 mod system_time;
@@ -121,6 +122,8 @@ impl ShellSession {
         );
         self.enter_new_page(ShellScreen::Settings);
         self.pages.settings.settings_state = Some(SettingsState {
+            form_selected: 0,
+            form_interaction: Default::default(),
             application: Default::default(),
             system_time: SystemTimeSettings::default(),
             animation_editor: None,
@@ -224,57 +227,7 @@ impl ShellSession {
             self.refresh_hit_map();
             return;
         }
-        if self.handle_settings_text_edit_key(key) {
-            return;
-        }
-        if self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .is_some_and(|state| state.number_editor.is_some())
-        {
-            self.handle_settings_number_key(key);
-            return;
-        }
-        if self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .is_some_and(|state| state.time_sync_server_editor.is_some())
-        {
-            self.handle_settings_time_sync_server_key(key);
-            return;
-        }
-        if self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .is_some_and(|state| state.file_extensions_editor.is_some())
-        {
-            self.handle_settings_file_extensions_key(key);
-            return;
-        }
-        if self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .is_some_and(|state| state.weather_location_editor.is_some())
-        {
-            self.handle_settings_weather_location_key(key);
-            return;
-        }
-        if self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .is_some_and(|state| state.color_editor.is_some())
-        {
-            self.handle_settings_color_key(key);
+        if self.handle_settings_form_event(InputEvent::Key(key.clone()), false) {
             return;
         }
         if self
@@ -375,6 +328,10 @@ impl ShellSession {
         input: MouseInput,
         platform: &dyn Platform,
     ) {
+        if self.handle_settings_form_event(InputEvent::Mouse(input), true) {
+            self.refresh_hit_map();
+            return;
+        }
         if self.pages.settings.settings_state.is_none() {
             return;
         }
@@ -461,34 +418,6 @@ impl ShellSession {
             ui::ShellLayout::Full { main, .. } => main,
         };
         let layout = ui::settings_layout(app_area, &model);
-        if model.number_editor.is_some() {
-            match ui::settings_hit_test(&layout, coordinates) {
-                Some(ui::SettingsHitTarget::OverlayApply) => self.apply_settings_number(),
-                Some(ui::SettingsHitTarget::OverlayCancel) => self.close_settings_number(),
-                Some(ui::SettingsHitTarget::AdjustField(_, delta)) => {
-                    self.adjust_settings_number(delta)
-                }
-                Some(ui::SettingsHitTarget::NumberEditor) => {
-                    let editor = self
-                        .pages
-                        .settings
-                        .settings_state
-                        .as_mut()
-                        .unwrap()
-                        .number_editor
-                        .as_mut()
-                        .unwrap();
-                    editor.selected_index = 0;
-                    editor.input.handle_event_borderless(
-                        InputEvent::Mouse(input),
-                        layout.number_editor.unwrap().input,
-                    );
-                }
-                _ => {}
-            }
-            self.refresh_hit_map();
-            return;
-        }
         if model.animation_editor.is_some() {
             match ui::settings_hit_test(&layout, coordinates) {
                 Some(ui::SettingsHitTarget::OverlayCancel) => self.close_settings_animation(),
@@ -548,25 +477,14 @@ impl ShellSession {
                     self.apply_settings_picker_selection();
                 }
             }
-            Some(ui::SettingsHitTarget::ColorEditor)
-            | Some(ui::SettingsHitTarget::WeatherLocationEditor)
-            | Some(ui::SettingsHitTarget::FileExtensionsEditor)
-            | Some(ui::SettingsHitTarget::TimeSyncServerEditor) => {
-                if let Some(dialog) = layout
-                    .color_editor
-                    .or(layout.weather_location_editor)
-                    .or(layout.file_extensions_editor)
-                    .or(layout.time_sync_server_editor)
-                {
-                    let mut area = ui::settings_text_input_area(dialog);
-                    area.x += 2;
-                    area.width = area.width.saturating_sub(2);
-                    if rect_contains(area, coordinates) {
-                        self.edit_settings_text(InputEvent::Mouse(input), area);
-                    }
-                }
-            }
-            Some(ui::SettingsHitTarget::NumberEditor) | None => {}
+            Some(
+                ui::SettingsHitTarget::NumberEditor
+                | ui::SettingsHitTarget::ColorEditor
+                | ui::SettingsHitTarget::WeatherLocationEditor
+                | ui::SettingsHitTarget::FileExtensionsEditor
+                | ui::SettingsHitTarget::TimeSyncServerEditor,
+            )
+            | None => {}
         }
         self.refresh_hit_map();
     }

@@ -7,48 +7,52 @@ impl ShellSession {
         key: &KeyInput,
         repeated: bool,
     ) {
-        let Some(selected) = self
-            .pages
-            .editor
-            .editor_settings_dialog
-            .as_ref()
-            .map(|dialog| dialog.selected)
-        else {
+        if self.pages.editor.editor_settings_dialog.is_none() {
+            return;
+        }
+        if !repeated
+            && key.modifiers.is_control_only()
+            && matches!(key.key, InputKey::Char('s' | 'S'))
+        {
+            self.save_editor_settings();
+            return;
+        }
+        if !key.has_non_shift_modifier() && !repeated {
+            match key.key {
+                InputKey::Char('t' | 'T') => {
+                    self.activate_editor_settings_control(ui::EditorSettingsControl::ToggleEnabled);
+                    return;
+                }
+                InputKey::Char('r' | 'R') => {
+                    self.activate_editor_settings_control(
+                        ui::EditorSettingsControl::RestoreDefaults,
+                    );
+                    return;
+                }
+                _ => {}
+            }
+        }
+        self.handle_editor_settings_form(InputEvent::Key(key.clone()));
+    }
+
+    pub(in crate::session) fn handle_editor_settings_form(&mut self, event: InputEvent) {
+        use ui::components::{FormAction, FormEvent};
+        let Some(model) = self.editor_settings_view_model() else {
             return;
         };
-        if key.modifiers.is_control()
-            && !key.modifiers.alt
-            && !key.modifiers.super_key
-            && !key.modifiers.hyper
-            && !key.modifiers.meta
-            && !key.modifiers.shift
-            && matches!(key.key, InputKey::Char('s' | 'S'))
-            && !repeated
-        {
-            self.activate_editor_settings_control(ui::EditorSettingsControl::Save);
-            return;
-        }
-        if key.has_non_shift_modifier() {
-            return;
-        }
-        match key.key {
-            InputKey::Escape if !repeated => self.pages.editor.editor_settings_dialog = None,
-            InputKey::Tab | InputKey::Down => {
-                self.select_editor_setting(selected.next());
+        let mut form = model.dialog();
+        let result = match event {
+            InputEvent::Mouse(mouse) => form.handle_confirmed_pointer(mouse, self.touch_main()),
+            event => form.handle_event(event, self.touch_main()),
+        };
+        self.update_editor_settings_form(form);
+        match result {
+            FormEvent::Action(FormAction::Submit) => self.save_editor_settings(),
+            FormEvent::Action(FormAction::Cancel) => {
+                self.pages.editor.editor_settings_dialog = None
             }
-            InputKey::BackTab | InputKey::Up => {
-                self.select_editor_setting(selected.previous());
-            }
-            InputKey::Left | InputKey::Char('-') => self.adjust_editor_setting(selected, -1),
-            InputKey::Right | InputKey::Char('+' | '=') => self.adjust_editor_setting(selected, 1),
-            InputKey::Char('t' | 'T') if !repeated => {
-                self.activate_editor_settings_control(ui::EditorSettingsControl::ToggleEnabled)
-            }
-            InputKey::Char('r' | 'R') if !repeated => {
+            FormEvent::Action(FormAction::Custom(_)) => {
                 self.activate_editor_settings_control(ui::EditorSettingsControl::RestoreDefaults)
-            }
-            InputKey::Enter | InputKey::Char(' ') if !repeated => {
-                self.activate_editor_setting(selected)
             }
             _ => {}
         }
@@ -60,6 +64,7 @@ impl ShellSession {
         self.pages.editor.editor_quick_menu_anchor = None;
         self.pages.editor.editor_cursor_acceleration = None;
         self.pages.editor.editor_settings_dialog = Some(EditorSettingsDialogState {
+            interaction: Default::default(),
             draft: self.current_editor_config(),
             selected: ui::EditorSettingsField::Enabled,
         });
@@ -115,9 +120,11 @@ impl ShellSession {
         }
         match field {
             Field::Enabled => {
-                if let Some(dialog) = self.pages.editor.editor_settings_dialog.as_mut() {
-                    dialog.draft.cursor_acceleration_enabled =
-                        !dialog.draft.cursor_acceleration_enabled;
+                if let Some(model) = self.editor_settings_view_model() {
+                    let mut form = model.dialog();
+                    form.selected = 0;
+                    form.activate_field(0);
+                    self.update_editor_settings_form(form);
                 }
             }
             Field::ActivationDelay
@@ -149,39 +156,35 @@ impl ShellSession {
             self.reject_editor_settings_change();
             return;
         }
-        let Some(dialog) = self.pages.editor.editor_settings_dialog.as_mut() else {
+        let Some(model) = self.editor_settings_view_model() else {
             return;
         };
-        let increase = direction >= 0;
-        match field {
-            ui::EditorSettingsField::ActivationDelay => {
-                dialog.draft.cursor_acceleration_delay_ms = adjust_u32_setting(
-                    dialog.draft.cursor_acceleration_delay_ms,
-                    EDITOR_CURSOR_TIME_STEP_MS,
-                    increase,
-                );
-            }
-            ui::EditorSettingsField::RampDuration => {
-                dialog.draft.cursor_acceleration_ramp_ms = adjust_u32_setting(
-                    dialog.draft.cursor_acceleration_ramp_ms,
-                    EDITOR_CURSOR_TIME_STEP_MS,
-                    increase,
-                );
-            }
-            ui::EditorSettingsField::HorizontalMaxStep => {
-                dialog.draft.cursor_horizontal_max_step =
-                    adjust_u8_setting(dialog.draft.cursor_horizontal_max_step, increase);
-            }
-            ui::EditorSettingsField::VerticalMaxStep => {
-                dialog.draft.cursor_vertical_max_step =
-                    adjust_u8_setting(dialog.draft.cursor_vertical_max_step, increase);
-            }
-            ui::EditorSettingsField::Enabled
-            | ui::EditorSettingsField::RestoreDefaults
-            | ui::EditorSettingsField::Save
-            | ui::EditorSettingsField::Cancel => return,
+        let mut form = model.dialog();
+        let index = ui::EditorSettingsField::ALL
+            .iter()
+            .position(|candidate| *candidate == field)
+            .unwrap();
+        if index == 0 || index >= form.fields.len() {
+            return;
         }
-        dialog.draft = normalized_editor_config(dialog.draft.clone());
+        form.selected = index;
+        form.adjust_number(index, direction);
+        self.update_editor_settings_form(form);
+    }
+
+    fn update_editor_settings_form(&mut self, form: ui::components::FormDialog) {
+        let editable = self.can_change_editor_settings();
+        let dialog = self.pages.editor.editor_settings_dialog.as_mut().unwrap();
+        dialog.interaction = form.interaction_state();
+        dialog.selected = ui::EditorSettingsField::ALL[form.selected];
+        if editable {
+            dialog.draft.cursor_acceleration_enabled = form.fields[0].value == "true";
+            dialog.draft.cursor_acceleration_delay_ms = form.fields[1].value.parse().unwrap();
+            dialog.draft.cursor_acceleration_ramp_ms = form.fields[2].value.parse().unwrap();
+            dialog.draft.cursor_horizontal_max_step = form.fields[3].value.parse().unwrap();
+            dialog.draft.cursor_vertical_max_step = form.fields[4].value.parse().unwrap();
+            dialog.draft = normalized_editor_config(dialog.draft.clone());
+        }
     }
 
     pub(in crate::session) fn save_editor_settings(&mut self) {

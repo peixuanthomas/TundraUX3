@@ -1915,7 +1915,6 @@ fn complete_first_run_setup(
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
     type_text(state, platform, hint);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
     for _ in 0..5 {
         state.apply_input_with_platform(InputEvent::from_key_label("Tab"), platform);
     }

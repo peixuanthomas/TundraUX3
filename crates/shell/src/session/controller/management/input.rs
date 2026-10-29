@@ -13,13 +13,10 @@ impl ShellSession {
             self.search_management_choices(value, false);
             return;
         }
-        if let Some(form) = &mut self.pages.management.management_state.form {
-            form.edit_field(
-                form.selected,
-                InputEvent::Paste(value.to_owned()),
-                Rect::default(),
-            );
-        } else if self.pages.management.management_state.filtering {
+        if self.handle_management_form_event(InputEvent::Paste(value.to_owned())) {
+            return;
+        }
+        if self.pages.management.management_state.filtering {
             if self.pages.management.management_state.filter_input.len() + value.len() <= 16 * 1024
             {
                 self.pages
@@ -125,137 +122,7 @@ impl ShellSession {
             }
             return;
         }
-        if self.pages.management.management_state.form.is_some()
-            && ((management_control_modifier(key) && key.key == InputKey::Enter)
-                || (key.key == InputKey::F(10) && key.is_unmodified_action_key()))
-        {
-            if key.phase == InputPhase::Press {
-                self.submit_management_form();
-            }
-            return;
-        }
-        let check_control = self
-            .pages
-            .management
-            .management_state
-            .form
-            .as_ref()
-            .and_then(|form| form.fields.get(form.selected))
-            .is_some_and(|field| {
-                matches!(
-                    field.control,
-                    FieldControl::Checkbox | FieldControl::Permissions
-                )
-            });
-        if check_control
-            && matches!(
-                key.key,
-                InputKey::Left
-                    | InputKey::Right
-                    | InputKey::Space
-                    | InputKey::Enter
-                    | InputKey::Char(_)
-                    | InputKey::Backspace
-            )
-        {
-            let mut cell = self.pages.management.management_state.permission_cell;
-            if key.key == InputKey::Left {
-                cell = (cell + 8) % 9;
-            }
-            if key.key == InputKey::Right {
-                cell = (cell + 1) % 9;
-            }
-            self.pages.management.management_state.permission_cell = cell;
-            if matches!(
-                key.key,
-                InputKey::Char(' ') | InputKey::Space | InputKey::Enter
-            ) && key.phase == InputPhase::Press
-                && !key.has_non_shift_modifier()
-            {
-                if let Some(form) = &mut self.pages.management.management_state.form {
-                    toggle_management_check(form, form.selected, cell);
-                }
-            }
-            return;
-        }
-        if let Some(form) = &mut self.pages.management.management_state.form {
-            if management_control_modifier(key) && matches!(key.key, InputKey::Char('u' | 'U')) {
-                if let Some(field) = form.fields.get_mut(form.selected) {
-                    if field.choices.is_empty() {
-                        use zeroize::Zeroize;
-                        field.value.zeroize();
-                        form.input_states.remove(&form.selected);
-                    }
-                }
-                return;
-            }
-            if matches!(
-                key.key,
-                InputKey::Left
-                    | InputKey::Right
-                    | InputKey::Home
-                    | InputKey::End
-                    | InputKey::Backspace
-                    | InputKey::Delete
-                    | InputKey::Space
-                    | InputKey::Char(_)
-            ) && form.fields.get(form.selected).is_some_and(|field| {
-                field.control == FieldControl::Text && field.choices.is_empty()
-            }) {
-                form.edit_field(form.selected, InputEvent::Key(key.clone()), Rect::default());
-                return;
-            }
-            if key.has_non_shift_modifier() {
-                return;
-            }
-            match key.key {
-                InputKey::Escape => self.cancel_management_form(),
-                InputKey::PageUp => form.message_scroll = form.message_scroll.saturating_sub(5),
-                InputKey::PageDown => {
-                    form.message_scroll = form
-                        .message_scroll
-                        .saturating_add(5)
-                        .min(form.message.chars().count().min(u16::MAX as usize) as u16)
-                }
-                InputKey::Tab | InputKey::Down => {
-                    form.selected = (form.selected + 1) % (form.fields.len() + 1)
-                }
-                InputKey::BackTab | InputKey::Up => {
-                    form.selected = if form.selected == 0 {
-                        form.fields.len()
-                    } else {
-                        form.selected - 1
-                    }
-                }
-                InputKey::Enter => {
-                    if form.selected >= form.fields.len() {
-                        self.submit_management_form();
-                    } else if !form.fields[form.selected].choices.is_empty() {
-                        let selected = form.selected;
-                        self.open_management_choice_field(selected);
-                    } else {
-                        form.selected += 1;
-                    }
-                }
-                InputKey::Left | InputKey::Right => {
-                    if let Some(field) = form.fields.get_mut(form.selected) {
-                        if !field.choices.is_empty() {
-                            let current = field
-                                .choices
-                                .iter()
-                                .position(|v| v == &field.value)
-                                .unwrap_or(0);
-                            let next = if key.key == InputKey::Right {
-                                (current + 1) % field.choices.len()
-                            } else {
-                                (current + field.choices.len() - 1) % field.choices.len()
-                            };
-                            field.value = field.choices[next].clone();
-                        }
-                    }
-                }
-                _ => {}
-            }
+        if self.handle_management_form_key(key) {
             return;
         }
         if self.handle_management_selection_key(key) || self.handle_package_workspace_key(key) {

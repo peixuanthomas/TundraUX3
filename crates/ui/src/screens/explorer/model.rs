@@ -442,6 +442,28 @@ pub struct ExplorerNameDialogViewModel {
     pub cancel_label: String,
 }
 
+impl ExplorerNameDialogViewModel {
+    pub fn form(&self, selected: usize) -> crate::components::FormDialog {
+        use crate::components::{FormDialog, FormField, TextInput};
+        let mut field = FormField::text("name", &self.prompt, &self.value);
+        let mut input = TextInput::new("explorer.name.input").with_horizontal_scroll(true);
+        input.set_value(&self.value);
+        input.set_cursor(self.cursor);
+        input.set_selection_anchor(self.selection_anchor);
+        field.input = Some(input);
+        let mut form = FormDialog::new(
+            format!("explorer.name.{:?}", self.kind),
+            &self.title,
+            vec![field],
+        );
+        form.selected = selected;
+        form.message = self.error.clone().unwrap_or_default();
+        form.submit_label = Some(self.confirm_label.clone());
+        form.cancel_label = Some(self.cancel_label.clone());
+        form
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerOptionViewModel {
     pub id: String,

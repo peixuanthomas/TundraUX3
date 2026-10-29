@@ -226,8 +226,10 @@ pub enum EditorSettingsControl {
     Cancel,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorSettingsViewModel {
+    pub interaction: crate::components::FormInteraction,
+    pub numeric_limits: [(u32, u32, u32); 4],
     pub editable: bool,
     pub enabled: bool,
     pub activation_delay_ms: u32,
@@ -235,6 +237,105 @@ pub struct EditorSettingsViewModel {
     pub horizontal_max_step: u8,
     pub vertical_max_step: u8,
     pub selected: EditorSettingsField,
+}
+
+impl EditorSettingsViewModel {
+    pub fn dialog(&self) -> crate::components::FormDialog {
+        use crate::components::{FormAction, FormButton, FormControl, FormDialog, FormField};
+        let mut fields = vec![FormField::toggle(
+            "enabled",
+            format!(
+                "{} {}",
+                crate::components::Key::Char('T').label(),
+                i18n::tr!("ui-editor-cursor-acceleration-padded").trim()
+            ),
+            self.enabled,
+        )];
+        for ((id, label, value), (minimum, maximum, step)) in [
+            (
+                "delay",
+                i18n::tr!("ui-editor-start-delay-padded"),
+                self.activation_delay_ms,
+            ),
+            (
+                "ramp",
+                i18n::tr!("ui-editor-ramp-to-maximum-padded"),
+                self.ramp_duration_ms,
+            ),
+            (
+                "horizontal",
+                i18n::tr!("ui-editor-horizontal-maximum-padded"),
+                u32::from(self.horizontal_max_step),
+            ),
+            (
+                "vertical",
+                i18n::tr!("ui-editor-vertical-maximum-padded"),
+                u32::from(self.vertical_max_step),
+            ),
+        ]
+        .into_iter()
+        .zip(self.numeric_limits)
+        {
+            let mut field = FormField::text(id, label.trim(), value.to_string());
+            field.control = FormControl::Number {
+                minimum,
+                maximum,
+                step,
+            };
+            field.read_only = true;
+            let mut input = crate::components::TextInput::new(id);
+            input.set_value(match id {
+                "delay" | "ramp" => i18n::tr!("ui-editor-milliseconds", count = value),
+                "horizontal" => i18n::tr!("ui-editor-cells", count = value),
+                _ => i18n::tr!("ui-editor-lines", count = value),
+            });
+            field.input = Some(input);
+            fields.push(field);
+        }
+        for field in &mut fields {
+            field.disabled = !self.editable;
+        }
+        let mut form = FormDialog::new(
+            "editor.settings",
+            i18n::tr!("ui-editor-editor-settings-padded").trim(),
+            fields,
+        );
+        form.message = i18n::tr!(if self.editable {
+            "ui-editor-hold-one-direction-to-accelerate-with-a-quadratic-curve"
+        } else {
+            "ui-editor-read-only-administrator-permission-is-required-to-change-these-settings"
+        });
+        form.selected = EditorSettingsField::ALL
+            .iter()
+            .position(|field| *field == self.selected)
+            .unwrap_or(0);
+        form.buttons = vec![
+            FormButton::new(
+                "restore",
+                i18n::tr!("ui-editor-restore-defaults-button")
+                    .trim_matches(['[', ']'])
+                    .to_owned(),
+                FormAction::Custom("restore".into()),
+            ),
+            FormButton::new(
+                "save",
+                i18n::tr!("ui-editor-save-button")
+                    .trim_matches(['[', ']'])
+                    .to_owned(),
+                FormAction::Submit,
+            ),
+            FormButton::new(
+                "cancel",
+                i18n::tr!("ui-editor-cancel-button")
+                    .trim_matches(['[', ']'])
+                    .to_owned(),
+                FormAction::Cancel,
+            ),
+        ];
+        form.buttons[0].disabled = !self.editable;
+        form.buttons[1].disabled = !self.editable;
+        form.with_interaction(self.interaction.clone())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,15 +1,11 @@
 use ratatui::Frame;
 use ratatui::layout::{HorizontalAlignment, Rect};
-use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use super::layout::{
-    UserManagementColumnMode, UserManagementFormLayout, UserManagementLayout,
-    user_management_layout,
-};
+use super::layout::{UserManagementColumnMode, UserManagementLayout, user_management_layout};
 use super::model::{
-    UserManagementFeedbackTone, UserManagementField, UserManagementFocus,
-    UserManagementFormViewModel, UserManagementUserViewModel, UserManagementViewModel,
+    UserManagementFeedbackTone, UserManagementFocus, UserManagementUserViewModel,
+    UserManagementViewModel,
 };
 use crate::components::{Button, ComponentTone, DataTable, Scrollbar, Surface};
 use crate::screens::clock::render_clock_line;
@@ -206,181 +202,6 @@ fn render_user_management_feedback(
     );
 }
 
-fn render_user_management_form(
-    frame: &mut Frame<'_>,
-    layout: &UserManagementFormLayout,
-    form: &UserManagementFormViewModel,
-    theme: &TundraTheme,
-    context: &RenderContext,
-) {
-    frame.render_widget(Clear, layout.dialog);
-    if !layout.compact {
-        Surface::new()
-            .titled(form.title.clone())
-            .bordered(true)
-            .raised(true)
-            .render_frame(frame, layout.dialog, context);
-    }
-    if let Some(track) = layout.scrollbar {
-        Scrollbar::new(
-            layout.field_count,
-            layout.field_capacity,
-            layout.field_window_start,
-        )
-        .render_frame(frame, track, context);
-    }
-
-    for field in &layout.fields {
-        let input = match field.field {
-            UserManagementField::Username => Some((
-                "user-management.form.username",
-                i18n::tr!("ui-user-management-username"),
-                form.username.clone(),
-            )),
-            UserManagementField::DisplayName => Some((
-                "user-management.form.display-name",
-                i18n::tr!("ui-user-management-display-name"),
-                form.display_name.clone(),
-            )),
-            UserManagementField::Password => Some((
-                "user-management.form.password",
-                i18n::tr!("ui-user-management-password"),
-                "*".repeat(form.password_len),
-            )),
-            UserManagementField::Role => None,
-            UserManagementField::Submit | UserManagementField::Cancel => continue,
-        };
-        if let Some((id, label, value)) = input {
-            render_user_management_input(
-                frame,
-                field.area,
-                id,
-                &label,
-                value,
-                form.focused_field == field.field,
-                &form.editing[match field.field {
-                    UserManagementField::Username => 0,
-                    UserManagementField::DisplayName => 1,
-                    _ => 2,
-                }],
-                theme,
-            );
-        } else {
-            render_user_management_button(
-                frame,
-                field.area,
-                "user-management.form.role",
-                fit_cell(
-                    &i18n::tr!("ui-user-management-role-picker", role = form.role.clone()),
-                    usize::from(field.area.width),
-                ),
-                form.focused_field == field.field,
-                theme,
-            );
-        }
-    }
-    if let Some(error) = &form.error {
-        render_clock_line(
-            frame,
-            layout.error,
-            error.clone(),
-            theme.error_style(),
-            HorizontalAlignment::Left,
-        );
-    }
-    render_user_management_button(
-        frame,
-        layout.submit,
-        "user-management.form.submit",
-        format!("[ Ctrl+Enter {} ]", form.submit_label()),
-        form.focused_field == UserManagementField::Submit,
-        theme,
-    );
-    render_user_management_button(
-        frame,
-        layout.cancel,
-        "user-management.form.cancel",
-        i18n::tr!("ui-user-management-cancel-button"),
-        form.focused_field == UserManagementField::Cancel,
-        theme,
-    );
-}
-
-fn render_user_management_input(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    id: &'static str,
-    label: &str,
-    value: String,
-    focused: bool,
-    editing: &crate::components::TextEditState,
-    theme: &TundraTheme,
-) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let prefix = format!("[ {label}: ");
-    let mut input = editing
-        .input(id, &value)
-        .with_capture_name(label)
-        .with_sensitive(id == "user-management.form.password")
-        .with_cursor_symbol("_");
-    input.set_focused(focused);
-    input.state.hovered = focused;
-    let mut input_theme = theme.clone();
-    input_theme.muted = theme.foreground;
-
-    if area.width <= 2 {
-        input.render_borderless_frame_with_prefix(frame, area, &input_theme, &prefix);
-        return;
-    }
-    let input_area = Rect::new(area.x, area.y, area.width.saturating_sub(2), area.height);
-    input.render_borderless_frame_with_prefix(frame, input_area, &input_theme, &prefix);
-
-    let prefix_width = Line::from(prefix.as_str()).width();
-    let input_capacity = usize::from(input_area.width).saturating_sub(prefix_width);
-    let visible_value_width = Line::from(value.as_str())
-        .width()
-        .saturating_add(usize::from(focused))
-        .min(input_capacity);
-    let suffix_x = area
-        .x
-        .saturating_add(u16::try_from(prefix_width).unwrap_or(u16::MAX))
-        .saturating_add(u16::try_from(visible_value_width).unwrap_or(u16::MAX))
-        .min(area.right().saturating_sub(2));
-    render_clock_line(
-        frame,
-        Rect::new(
-            suffix_x,
-            area.y,
-            area.right().saturating_sub(suffix_x),
-            area.height,
-        ),
-        " ]".to_string(),
-        if focused {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        },
-        HorizontalAlignment::Left,
-    );
-}
-
-fn render_user_management_button(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    id: &'static str,
-    label: impl Into<String>,
-    focused: bool,
-    theme: &TundraTheme,
-) {
-    let mut button = Button::new(id, label);
-    button.set_focused(focused);
-    button.state.selected = focused;
-    button.render_inline_frame(frame, area, theme);
-}
-
 fn user_management_status(user: &UserManagementUserViewModel) -> String {
     let mut status = if !user.enabled {
         i18n::tr!("ui-user-management-disabled")
@@ -515,10 +336,9 @@ pub fn render_user_management_overlay(
         }
         return;
     }
-    let theme = &context.compatibility_theme();
     let layout = user_management_layout(main, model);
     if let (Some(form_layout), Some(form)) = (layout.form.as_ref(), model.form.as_ref()) {
-        render_user_management_form(frame, form_layout, form, theme, context);
+        form.dialog().render_frame(frame, form_layout.main, context);
     }
 }
 

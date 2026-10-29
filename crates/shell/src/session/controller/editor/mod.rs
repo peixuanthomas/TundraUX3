@@ -56,22 +56,6 @@ pub(in crate::session) fn normalized_editor_config(
     config
 }
 
-pub(in crate::session) fn adjust_u32_setting(value: u32, step: u32, increase: bool) -> u32 {
-    if increase {
-        value.saturating_add(step)
-    } else {
-        value.saturating_sub(step)
-    }
-}
-
-pub(in crate::session) fn adjust_u8_setting(value: u8, increase: bool) -> u8 {
-    if increase {
-        value.saturating_add(1)
-    } else {
-        value.saturating_sub(1)
-    }
-}
-
 impl ShellSession {
     pub(in crate::session) fn current_editor_config(&self) -> storage::EditorConfig {
         normalized_editor_config(self.app.storage_config().editor.clone())

@@ -120,6 +120,8 @@ impl ShellSession {
         input.set_focused(true);
         input.set_selection_anchor(Some(0));
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
+            state.form_interaction = Default::default();
+            state.form_selected = 0;
             state.number_editor = Some(SettingsNumberEditorState {
                 field,
                 title,
@@ -132,80 +134,6 @@ impl ShellSession {
             });
         }
         true
-    }
-
-    pub(super) fn handle_settings_number_key(&mut self, key: &KeyInput) {
-        if key.has_non_shift_modifier() && !matches!(key.key, InputKey::Char('a' | 'A')) {
-            return;
-        }
-        let editor = self
-            .pages
-            .settings
-            .settings_state
-            .as_mut()
-            .unwrap()
-            .number_editor
-            .as_mut()
-            .unwrap();
-        match key.key {
-            InputKey::Escape => self.close_settings_number(),
-            InputKey::Enter => {
-                if editor.selected_index == 2 {
-                    self.close_settings_number();
-                } else {
-                    self.apply_settings_number();
-                }
-            }
-            InputKey::Up | InputKey::Down | InputKey::Tab | InputKey::BackTab => {
-                let backwards =
-                    matches!(key.key, InputKey::Up | InputKey::BackTab) || key.modifiers.shift;
-                editor.selected_index = (editor.selected_index + if backwards { 2 } else { 1 }) % 3;
-                editor.input.set_focused(editor.selected_index == 0);
-            }
-            InputKey::Char(character)
-                if !character.is_ascii_digit() && !key.has_non_shift_modifier() => {}
-            _ => {
-                editor
-                    .input
-                    .handle_event_borderless(InputEvent::Key(key.clone()), Rect::default());
-                editor.error = None;
-            }
-        }
-        self.refresh_hit_map();
-    }
-
-    pub(super) fn adjust_settings_number(&mut self, direction: i8) {
-        let editor = self
-            .pages
-            .settings
-            .settings_state
-            .as_mut()
-            .unwrap()
-            .number_editor
-            .as_mut()
-            .unwrap();
-        let value = editor
-            .input
-            .value()
-            .parse::<u32>()
-            .unwrap_or(editor.minimum);
-        let value = if direction < 0 {
-            value.saturating_sub(editor.step)
-        } else {
-            value.saturating_add(editor.step)
-        };
-        editor
-            .input
-            .set_value(value.clamp(editor.minimum, editor.maximum).to_string());
-        editor.selected_index = 0;
-        editor.input.set_focused(true);
-        editor.error = None;
-    }
-
-    pub(super) fn close_settings_number(&mut self) {
-        if let Some(state) = self.pages.settings.settings_state.as_mut() {
-            state.number_editor = None;
-        }
     }
 
     pub(super) fn apply_settings_number(&mut self) {
@@ -292,7 +220,12 @@ impl ShellSession {
             self.save_settings_global_config(config, editor.field)
         };
         if saved {
-            self.close_settings_number();
+            self.pages
+                .settings
+                .settings_state
+                .as_mut()
+                .unwrap()
+                .number_editor = None;
         }
     }
 }

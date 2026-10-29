@@ -27,6 +27,7 @@ pub enum UserManagementFormKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserManagementFormViewModel {
+    pub interaction: crate::components::FormInteraction,
     pub editing: [crate::components::TextEditState; 3],
     pub kind: UserManagementFormKind,
     pub title: String,
@@ -39,6 +40,68 @@ pub struct UserManagementFormViewModel {
 }
 
 impl UserManagementFormViewModel {
+    pub fn dialog(&self) -> crate::components::FormDialog {
+        use crate::components::{FormControl, FormDialog, FormField};
+        let fields = self
+            .field_order()
+            .iter()
+            .filter_map(|field| {
+                let (id, label, value, editing) = match field {
+                    UserManagementField::Username => (
+                        "username",
+                        i18n::tr!("ui-user-management-username"),
+                        self.username.clone(),
+                        Some(0),
+                    ),
+                    UserManagementField::DisplayName => (
+                        "display-name",
+                        i18n::tr!("ui-user-management-display-name"),
+                        self.display_name.clone(),
+                        Some(1),
+                    ),
+                    UserManagementField::Password => (
+                        "password",
+                        i18n::tr!("ui-user-management-password"),
+                        "•".repeat(self.password_len),
+                        Some(2),
+                    ),
+                    UserManagementField::Role => (
+                        "role",
+                        i18n::tr!("ui-user-management-role"),
+                        i18n::tr!(if self.role.eq_ignore_ascii_case("admin") {
+                            "ui-user-management-role-admin"
+                        } else {
+                            "ui-user-management-role-user"
+                        }),
+                        None,
+                    ),
+                    _ => return None,
+                };
+                let mut input = FormField::text(id, label, value);
+                if let Some(index) = editing {
+                    input.input = Some(self.editing[index].input(id, &input.value));
+                    input.secret = *field == UserManagementField::Password;
+                } else {
+                    input.control = FormControl::Cycle;
+                    input.choices = vec![
+                        i18n::tr!("ui-user-management-role-user"),
+                        i18n::tr!("ui-user-management-role-admin"),
+                    ];
+                }
+                Some(input)
+            })
+            .collect();
+        let mut dialog = FormDialog::new("user-management.form", &self.title, fields);
+        dialog.selected = self
+            .field_order()
+            .iter()
+            .position(|field| *field == self.focused_field)
+            .unwrap_or(0);
+        dialog.message = self.error.clone().unwrap_or_default();
+        dialog.submit_label = Some(self.submit_label());
+        dialog.with_interaction(self.interaction.clone())
+    }
+
     pub fn field_order(&self) -> &'static [UserManagementField] {
         match self.kind {
             UserManagementFormKind::Create => &[

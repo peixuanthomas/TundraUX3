@@ -432,6 +432,8 @@ fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
         vec![EditorRenderBlock::paragraph("canvas content")],
     );
     model.settings = Some(EditorSettingsViewModel {
+        interaction: Default::default(),
+        numeric_limits: [(250, 10000, 250), (250, 10000, 250), (2, 16, 1), (1, 8, 1)],
         editable: true,
         enabled: true,
         activation_delay_ms: 2_000,
@@ -473,7 +475,7 @@ fn settings_button_opens_a_modal_acceleration_panel_with_clickable_controls() {
     assert!(output.contains("Horizontal maximum"));
     for width in [52, 64, 100] {
         let output = terminal_output(&render(&model, width, 24));
-        for hint in ["[T On]", "[R Reset]", "[Ctrl+S Save]", "[Esc Cancel]"] {
+        for hint in ["[On]", "[R Reset]", "[Ctrl+S Save]", "[Esc Cancel]"] {
             assert!(output.contains(hint), "{hint} must fit at width {width}");
         }
     }

@@ -799,71 +799,25 @@ impl ShellSession {
         self.request_logs_job(None);
     }
     fn logs_handle_filter_key(&mut self, key: &KeyInput) {
-        if key.phase != InputPhase::Press
-            && !matches!(key.key, InputKey::Char(_) | InputKey::Backspace)
-        {
-            return;
-        }
-        if key.key == InputKey::Escape {
-            self.pages.logs.logs_state.filter_form = None;
-            return;
-        }
-        if key.modifiers.is_control() && key.key == InputKey::Enter {
-            self.logs_apply_filter_form();
-            return;
-        }
-        if key.has_non_shift_modifier() {
-            return;
-        }
+        self.handle_logs_form_input(InputEvent::Key(key.clone()));
+    }
+
+    pub(in crate::session) fn handle_logs_form_input(&mut self, event: InputEvent) {
+        let main = self.touch_main();
         let Some(form) = self.pages.logs.logs_state.filter_form.as_mut() else {
             return;
         };
-        let count = form.fields.len();
-        match key.key {
-            InputKey::Tab if key.modifiers.shift => {
-                form.selected = if form.selected == 0 {
-                    count
-                } else {
-                    form.selected - 1
-                }
+        let event = form.handle_event(event, main);
+        self.logs_filter_event(event);
+    }
+
+    fn logs_filter_event(&mut self, event: ui::components::FormEvent) {
+        match event {
+            ui::components::FormEvent::Action(ui::components::FormAction::Submit) => {
+                self.logs_apply_filter_form()
             }
-            InputKey::Tab | InputKey::Down => form.selected = (form.selected + 1) % (count + 1),
-            InputKey::BackTab | InputKey::Up => {
-                form.selected = if form.selected == 0 {
-                    count
-                } else {
-                    form.selected - 1
-                }
-            }
-            InputKey::Enter if form.selected == count => self.logs_apply_filter_form(),
-            InputKey::Enter | InputKey::Left | InputKey::Right => {
-                if let Some(field) = form.fields.get_mut(form.selected)
-                    && !field.choices.is_empty()
-                {
-                    let index = field
-                        .choices
-                        .iter()
-                        .position(|choice| choice == &field.value)
-                        .unwrap_or(0);
-                    field.value = field.choices[(index + 1) % field.choices.len()].clone();
-                }
-            }
-            InputKey::Backspace => {
-                if let Some(field) = form.fields.get_mut(form.selected) {
-                    field.value.pop();
-                }
-            }
-            InputKey::Space => {
-                if let Some(field) = form.fields.get_mut(form.selected) {
-                    field.value.push(' ');
-                }
-            }
-            InputKey::Char(c) if !c.is_control() => {
-                if let Some(field) = form.fields.get_mut(form.selected)
-                    && field.choices.is_empty()
-                {
-                    field.value.push(c);
-                }
+            ui::components::FormEvent::Action(ui::components::FormAction::Cancel) => {
+                self.pages.logs.logs_state.filter_form = None
             }
             _ => {}
         }

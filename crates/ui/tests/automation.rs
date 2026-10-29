@@ -463,6 +463,8 @@ fn settings_checkbox_reports_the_saved_value_separately_from_focus() {
     let bounds = Rect::new(0, 0, 120, 40);
     for (label, checked) in [("已开启", true), ("Disabled", false)] {
         let model = ui::SettingsViewModel {
+            form_selected: 0,
+            form_interaction: Default::default(),
             selected_application: Default::default(),
             selected_category: ui::SettingsCategory::System,
             selected_field: ui::SettingsField::AutomationEnabled,

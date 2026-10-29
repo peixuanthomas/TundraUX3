@@ -129,7 +129,7 @@ impl ShellSession {
         self.pages.common.page_touch.drag = None;
     }
 
-    fn touch_main(&self) -> Rect {
+    pub(in crate::session) fn touch_main(&self) -> Rect {
         let terminal = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         match self.shell_layout_for(terminal) {
             ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
@@ -420,23 +420,9 @@ impl ShellSession {
                 &self.to_user_management_view_model(),
             );
             if layout.form.is_some() {
-                return Some(
-                    layout
-                        .form_control_at(point.0, point.1)
-                        .map(|field| {
-                            if matches!(
-                                field,
-                                ui::UserManagementField::Role
-                                    | ui::UserManagementField::Submit
-                                    | ui::UserManagementField::Cancel
-                            ) {
-                                ShellCommand::UserManagementActivateFormControl(field)
-                            } else {
-                                ShellCommand::UserManagementSetFormFocus(field)
-                            }
-                        })
-                        .unwrap_or(ShellCommand::CaptureOverlayInput),
-                );
+                return Some(ShellCommand::UserManagementFormInput(InputEvent::Mouse(
+                    mouse,
+                )));
             }
             if let Some(index) = layout.row_index_at(point.0, point.1) {
                 return Some(ShellCommand::UserManagementSelectRow(index));

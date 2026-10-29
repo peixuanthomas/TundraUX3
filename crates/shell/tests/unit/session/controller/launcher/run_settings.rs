@@ -257,7 +257,7 @@ fn context_exit_switch_persists_for_custom_and_embedded_programs_and_is_hidden_f
             assert_eq!(wait, Some(true));
             if !custom {
                 fixture.input(InputEvent::from_key_label("F4"));
-                fixture.input(InputEvent::from_key_label("Enter"));
+                fixture.input(InputEvent::key(InputKey::Space));
                 fixture.input(InputEvent::from_key_label("F10"));
                 assert_eq!(fixture.open_context_menu().wait_for_enter, None);
             }
@@ -451,6 +451,64 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn enter_advances_launcher_fields_and_submits_the_last_field() {
+    for custom in [false, true] {
+        let mut fixture = Fixture::new();
+        if custom {
+            fixture.input(InputEvent::from_key_label("F2"));
+            fixture.input(InputEvent::from_key_label("Insert"));
+            fixture.input(InputEvent::Paste("Enter workflow".into()));
+        } else {
+            fixture.input(InputEvent::from_key_label("F4"));
+            fixture.input(InputEvent::key(InputKey::Space));
+        }
+        fixture.input(InputEvent::key(InputKey::Enter));
+        assert_eq!(
+            fixture.state.launcher_run_settings_form().unwrap().selected,
+            1
+        );
+        fixture.input(InputEvent::key_with_phase(
+            InputKey::Enter,
+            InputModifiers::NONE,
+            InputPhase::Repeat,
+        ));
+        assert_eq!(
+            fixture.state.launcher_run_settings_form().unwrap().selected,
+            1
+        );
+        fixture.input(InputEvent::Paste(
+            if custom { "printf done" } else { "--preview" }.into(),
+        ));
+        fixture.input(InputEvent::key(InputKey::Enter));
+        assert_eq!(
+            fixture.state.launcher_run_settings_form().unwrap().selected,
+            2
+        );
+        if custom {
+            fixture.input(InputEvent::key(InputKey::Space));
+        }
+        fixture.input(InputEvent::key(InputKey::Enter));
+        assert!(fixture.state.launcher_run_settings_form().is_none());
+        let record = fixture
+            .state
+            .storage_manager
+            .as_ref()
+            .unwrap()
+            .load_config()
+            .unwrap()
+            .launcher
+            .entries
+            .pop()
+            .unwrap();
+        if custom {
+            assert!(record.custom.unwrap().wait_for_enter);
+        } else {
+            assert_eq!(record.terminal.unwrap().arguments, ["--preview"]);
+        }
+    }
+}
+
+#[test]
 fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_method() {
     for (hover, height) in [(true, 40), (false, 24)] {
         let mut fixture = Fixture::new();
@@ -498,9 +556,9 @@ fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_meth
             fixture.input(InputEvent::Paste(text.into()));
             fixture.input(InputEvent::from_key_label("Tab"));
         }
+        fixture.input(InputEvent::key(InputKey::Space));
         fixture.input(InputEvent::from_key_label("Enter"));
-        assert!(fixture.state.launcher_run_settings_form().is_some());
-        fixture.input(InputEvent::from_key_label("F10"));
+        assert!(fixture.state.launcher_run_settings_form().is_none());
         let config = fixture
             .state
             .storage_manager
@@ -526,7 +584,7 @@ fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_meth
 fn keyboard_saves_arguments_as_data_and_keeps_invalid_drafts_open() {
     let mut fixture = Fixture::new();
     fixture.input(InputEvent::from_key_label("F4"));
-    fixture.input(InputEvent::from_key_label("Enter"));
+    fixture.input(InputEvent::key(InputKey::Space));
     fixture.input(InputEvent::from_key_label("Tab"));
     assert!(fixture.state.page_keyboard_identity().is_some());
     fixture.input(InputEvent::Paste("\"unterminated".into()));

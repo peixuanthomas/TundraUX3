@@ -2,40 +2,6 @@ use super::*;
 use crate::session::*;
 
 impl ShellSession {
-    pub(super) fn handle_settings_text_edit_key(&mut self, key: &KeyInput) -> bool {
-        if !matches!(
-            key.key,
-            InputKey::Left | InputKey::Right | InputKey::Home | InputKey::End | InputKey::Delete
-        ) && !(key.modifiers.control && matches!(key.key, InputKey::Char('a' | 'A')))
-        {
-            return false;
-        }
-        self.edit_settings_text(InputEvent::Key(key.clone()), Rect::default())
-    }
-
-    pub(super) fn edit_settings_text(&mut self, event: InputEvent, area: Rect) -> bool {
-        let Some(state) = self.pages.settings.settings_state.as_mut() else {
-            return false;
-        };
-        let (value, editing, error) = if let Some(editor) = &mut state.color_editor {
-            (&mut editor.value, &mut editor.editing, &mut editor.error)
-        } else if let Some(editor) = &mut state.weather_location_editor {
-            (&mut editor.value, &mut editor.editing, &mut editor.error)
-        } else if let Some(editor) = &mut state.file_extensions_editor {
-            (&mut editor.value, &mut editor.editing, &mut editor.error)
-        } else if let Some(editor) = &mut state.time_sync_server_editor {
-            if editor.validating {
-                return true;
-            }
-            (&mut editor.value, &mut editor.editing, &mut editor.error)
-        } else {
-            return false;
-        };
-        editing.handle_event(value, event, area);
-        *error = None;
-        true
-    }
-
     pub(in crate::session) fn open_settings_picker(&mut self, kind: ui::SettingsPickerKind) {
         if !matches!(
             kind,
@@ -394,6 +360,8 @@ impl ShellSession {
                 if option.detail == "#RRGGBB" {
                     if let Some(state) = self.pages.settings.settings_state.as_mut() {
                         state.picker = None;
+                        state.form_selected = 0;
+                        state.form_interaction = Default::default();
                         state.color_editor = Some(SettingsColorEditorState {
                             editing: Default::default(),
                             kind: picker.kind,
@@ -519,6 +487,8 @@ impl ShellSession {
             .clone()
             .unwrap_or_default();
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
+            state.form_selected = 0;
+            state.form_interaction = Default::default();
             state.weather_location_editor = Some(SettingsWeatherLocationEditorState {
                 editing: Default::default(),
                 value,
@@ -542,6 +512,8 @@ impl ShellSession {
             &self.app.storage_config().editor.explorer_open_extensions,
         );
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
+            state.form_selected = 0;
+            state.form_interaction = Default::default();
             state.file_extensions_editor = Some(SettingsFileExtensionsEditorState {
                 editing: Default::default(),
                 value,
@@ -577,6 +549,8 @@ impl ShellSession {
             .clone()
             .unwrap_or_default();
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
+            state.form_selected = 0;
+            state.form_interaction = Default::default();
             state.time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
                 editing: Default::default(),
                 value,
@@ -589,74 +563,6 @@ impl ShellSession {
             state.weather_location_editor = None;
             state.file_extensions_editor = None;
             state.status = i18n::msg!("settings-enter-time-server").into();
-        }
-    }
-
-    pub(in crate::session) fn handle_settings_time_sync_server_key(&mut self, key: &KeyInput) {
-        if key.has_non_shift_modifier() {
-            return;
-        }
-        let validating = self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .and_then(|state| state.time_sync_server_editor.as_ref())
-            .is_some_and(|editor| editor.validating);
-        match &key.key {
-            InputKey::Escape => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut() {
-                    state.time_sync_server_editor = None;
-                    state.time_sync_validation_request_id = None;
-                    state.system_time.server_field = None;
-                    state.status = i18n::msg!("settings-ready").into();
-                }
-            }
-            _ if validating => {}
-            InputKey::Backspace => {
-                if let Some(editor) = self
-                    .pages
-                    .settings
-                    .settings_state
-                    .as_mut()
-                    .and_then(|state| state.time_sync_server_editor.as_mut())
-                {
-                    editor.editing.handle_event(
-                        &mut editor.value,
-                        InputEvent::Key(key.clone()),
-                        Rect::default(),
-                    );
-                    editor.error = None;
-                }
-            }
-            InputKey::Char(character) if !character.is_control() => {
-                if let Some(editor) = self
-                    .pages
-                    .settings
-                    .settings_state
-                    .as_mut()
-                    .and_then(|state| state.time_sync_server_editor.as_mut())
-                {
-                    if editor.value.len() >= time::MAX_TIME_SERVER_URL_LEN {
-                        editor.error = Some(
-                            i18n::msg!(
-                                "settings-server-limit",
-                                limit = time::MAX_TIME_SERVER_URL_LEN
-                            )
-                            .into(),
-                        );
-                    } else {
-                        editor.editing.handle_event(
-                            &mut editor.value,
-                            InputEvent::Key(key.clone()),
-                            Rect::default(),
-                        );
-                        editor.error = None;
-                    }
-                }
-            }
-            InputKey::Enter => self.validate_settings_time_sync_server(),
-            _ => {}
         }
     }
 
@@ -698,67 +604,6 @@ impl ShellSession {
             source: storage::TimeSyncSource::NetworkServer,
             server_url: Some(server_url),
         });
-    }
-
-    pub(in crate::session) fn handle_settings_file_extensions_key(&mut self, key: &KeyInput) {
-        if key.has_non_shift_modifier() {
-            return;
-        }
-        match &key.key {
-            InputKey::Escape => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut() {
-                    state.file_extensions_editor = None;
-                    state.status = i18n::msg!("settings-ready").into();
-                }
-            }
-            InputKey::Backspace => {
-                if let Some(editor) = self
-                    .pages
-                    .settings
-                    .settings_state
-                    .as_mut()
-                    .and_then(|state| state.file_extensions_editor.as_mut())
-                {
-                    editor.editing.handle_event(
-                        &mut editor.value,
-                        InputEvent::Key(key.clone()),
-                        Rect::default(),
-                    );
-                    editor.error = None;
-                }
-            }
-            InputKey::Char(character) => {
-                let Some(editor) = self
-                    .pages
-                    .settings
-                    .settings_state
-                    .as_mut()
-                    .and_then(|state| state.file_extensions_editor.as_mut())
-                else {
-                    return;
-                };
-                if !is_editor_extension_input_character(*character) {
-                    editor.error = Some(i18n::msg!("settings-suffix-characters").into());
-                } else if editor.value.len() >= EDITOR_EXTENSIONS_INPUT_MAX_LEN {
-                    editor.error = Some(
-                        i18n::msg!(
-                            "settings-suffix-limit",
-                            limit = EDITOR_EXTENSIONS_INPUT_MAX_LEN
-                        )
-                        .into(),
-                    );
-                } else {
-                    editor.editing.handle_event(
-                        &mut editor.value,
-                        InputEvent::Key(key.clone()),
-                        Rect::default(),
-                    );
-                    editor.error = None;
-                }
-            }
-            InputKey::Enter => self.save_settings_file_extensions(),
-            _ => {}
-        }
     }
 
     pub(in crate::session) fn save_settings_file_extensions(&mut self) {
@@ -819,60 +664,6 @@ impl ShellSession {
             state.status = i18n::msg!("settings-saved-suffixes").into();
         }
         self.notify_status(i18n::msg!("settings-saved-suffixes"));
-    }
-
-    pub(in crate::session) fn handle_settings_weather_location_key(&mut self, key: &KeyInput) {
-        if key.has_non_shift_modifier() {
-            return;
-        }
-        match &key.key {
-            InputKey::Escape => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut() {
-                    state.weather_location_editor = None;
-                    state.status = i18n::msg!("settings-ready").into();
-                }
-            }
-            InputKey::Backspace => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut()
-                    && let Some(editor) = state.weather_location_editor.as_mut()
-                {
-                    editor.editing.handle_event(
-                        &mut editor.value,
-                        InputEvent::Key(key.clone()),
-                        Rect::default(),
-                    );
-                    editor.error = None;
-                }
-            }
-            InputKey::Char(character) => {
-                let Some(editor) = self
-                    .pages
-                    .settings
-                    .settings_state
-                    .as_mut()
-                    .and_then(|state| state.weather_location_editor.as_mut())
-                else {
-                    return;
-                };
-                if !is_weather_location_character(*character) {
-                    editor.error = Some(i18n::msg!("settings-weather-characters").into());
-                } else if editor.value.len() >= WEATHER_LOCATION_MAX_LEN {
-                    editor.error = Some(
-                        i18n::msg!("settings-weather-limit", limit = WEATHER_LOCATION_MAX_LEN)
-                            .into(),
-                    );
-                } else {
-                    editor.editing.handle_event(
-                        &mut editor.value,
-                        InputEvent::Key(key.clone()),
-                        Rect::default(),
-                    );
-                    editor.error = None;
-                }
-            }
-            InputKey::Enter => self.request_settings_weather_location_confirmation(),
-            _ => {}
-        }
     }
 
     pub(in crate::session) fn request_settings_weather_location_confirmation(&mut self) {
@@ -953,55 +744,6 @@ impl ShellSession {
             state.status = i18n::msg!("settings-saved-weather").into();
         }
         self.notify_status(i18n::msg!("settings-saved-weather"));
-    }
-
-    pub(in crate::session) fn handle_settings_color_key(&mut self, key: &KeyInput) {
-        if key.has_non_shift_modifier() {
-            return;
-        }
-        match &key.key {
-            InputKey::Escape => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut() {
-                    state.color_editor = None;
-                    state.status = i18n::msg!("settings-ready").into();
-                }
-            }
-            InputKey::Backspace => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut()
-                    && let Some(editor) = state.color_editor.as_mut()
-                {
-                    editor.editing.handle_event(
-                        &mut editor.value,
-                        InputEvent::Key(key.clone()),
-                        Rect::default(),
-                    );
-                    editor.error = None;
-                }
-            }
-            InputKey::Char(character)
-                if (*character == '#' || character.is_ascii_hexdigit())
-                    && self
-                        .pages
-                        .settings
-                        .settings_state
-                        .as_ref()
-                        .and_then(|state| state.color_editor.as_ref())
-                        .is_some_and(|editor| editor.value.len() < 7) =>
-            {
-                if let Some(state) = self.pages.settings.settings_state.as_mut()
-                    && let Some(editor) = state.color_editor.as_mut()
-                {
-                    editor.editing.handle_event(
-                        &mut editor.value,
-                        InputEvent::Key(key.clone()),
-                        Rect::default(),
-                    );
-                    editor.error = None;
-                }
-            }
-            InputKey::Enter => self.apply_settings_custom_color(),
-            _ => {}
-        }
     }
 
     pub(in crate::session) fn apply_settings_custom_color(&mut self) {

@@ -477,6 +477,8 @@ impl ShellSession {
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
             state.system_time.server_field = Some(field.id);
             state.picker = None;
+            state.form_selected = 0;
+            state.form_interaction = Default::default();
             state.time_sync_server_editor = Some(SettingsTimeSyncServerEditorState {
                 editing: Default::default(),
                 value: field.value,

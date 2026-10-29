@@ -1470,6 +1470,7 @@ impl ShellSession {
         model.entry_window_start = self.pages.clock.clock_entry_window_start;
         model.create_dialog = self.pages.clock.clock_create_state.as_ref().map(|state| {
             ui::ClockCreateDialogViewModel {
+                interaction: state.interaction.clone(),
                 cursor: state.cursor,
                 values: state.values,
                 active_field: state.active_field,
@@ -2207,6 +2208,7 @@ impl ShellSession {
         match &self.pages.user_management.user_management_mode {
             UserManagementMode::Browse => None,
             UserManagementMode::Create(form) => Some(ui::UserManagementFormViewModel {
+                interaction: form.interaction.clone(),
                 editing: form.editing.clone(),
                 kind: ui::UserManagementFormKind::Create,
                 title: i18n::tr!("shell-create-user"),
@@ -2218,6 +2220,7 @@ impl ShellSession {
                 error: self.user_management_form_error(),
             }),
             UserManagementMode::EditInfo(form) => Some(ui::UserManagementFormViewModel {
+                interaction: form.interaction.clone(),
                 editing: form.editing.clone(),
                 kind: ui::UserManagementFormKind::EditInfo,
                 title: i18n::tr!("shell-edit-user-info"),

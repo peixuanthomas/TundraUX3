@@ -138,12 +138,12 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
     let form = layout.form.expect("form geometry");
 
     assert!(output.contains("Create user"));
-    assert!(output.contains("Username: alice"));
-    assert!(output.contains("Display name: Alice Chen"));
-    assert!(output.contains("Role: User"));
-    assert!(output.contains("Password: ************"));
-    assert!(output.contains("[ Ctrl+Enter Create ]"));
-    assert!(output.contains("[ Esc Cancel ]"));
+    assert!(output.contains("Username") && output.contains("alice"));
+    assert!(output.contains("Display name") && output.contains("Alice Chen"));
+    assert!(output.contains("ROLE") && output.contains("User"));
+    assert!(output.contains("Password") && output.contains("••••••••••••"));
+    assert!(output.contains("[F10 Create]"));
+    assert!(output.contains("[Esc Cancel]"));
     assert!(!output.contains("Ctrl+Enter: Create"));
     assert!(region_has_fg(
         &terminal,
@@ -157,52 +157,45 @@ fn form_text_inputs_are_controlled_and_keep_mask_cursor_and_inline_frame() {
     let mut model = model_with_users(1);
     model.form = Some(create_form(UserManagementField::Username));
     let (terminal, _) = render(100, 24, &model);
-    assert!(terminal_output(&terminal).contains("[ Username: alice_ ]"));
+    assert!(terminal_output(&terminal).contains("alice_"));
 
     model.form = Some(create_form(UserManagementField::Password));
     let (terminal, _) = render(100, 24, &model);
     let output = terminal_output(&terminal);
-    assert!(output.contains("[ Password: ************_ ]"));
+    assert!(output.contains("••••••••••••_"));
     assert!(!output.contains("alice_"));
 }
 
 #[test]
-fn minimum_full_create_form_keeps_every_control_visible_and_hittable() {
+fn minimum_full_create_form_keeps_the_focused_field_and_actions_visible() {
     let mut model = model_with_users(1);
-    model.form = Some(create_form(UserManagementField::Password));
-    let layout = user_management_layout(Rect::new(0, 3, 50, 6), &model);
-    let form = layout.form.expect("compact form geometry");
-
-    assert!(form.compact);
-    for field in [
+    for focused in [
         UserManagementField::Username,
         UserManagementField::DisplayName,
         UserManagementField::Role,
         UserManagementField::Password,
     ] {
-        let area = form
+        model.form = Some(create_form(focused));
+        let area = Rect::new(0, 3, 50, 6);
+        let form = user_management_layout(area, &model).form.unwrap();
+        let field = form
             .fields
             .iter()
-            .find(|candidate| candidate.field == field)
-            .map(|candidate| candidate.area)
-            .expect("every create field has geometry");
-        assert!(area.width > 0 && area.height > 0);
+            .find(|field| field.field == focused)
+            .unwrap();
+        assert!(!field.area.is_empty());
+        assert!(!form.submit.is_empty() && !form.cancel.is_empty());
+        assert!(form.scrollbar.is_some());
+        let (terminal, _) = render(50, 12, &model);
+        assert!(!terminal_output(&terminal).contains("************"));
     }
-    assert!(form.submit.width > 0 && form.submit.height > 0);
-    assert!(form.cancel.width > 0 && form.cancel.height > 0);
-
-    let (terminal, _) = render(50, 12, &model);
-    let output = terminal_output(&terminal);
-    assert!(output.contains("Username: alice"));
-    assert!(output.contains("Display name: Alice Chen"));
-    assert!(output.contains("Role: User"));
-    assert!(output.contains("Password: ************"));
 }
 
 #[test]
 fn edit_and_password_forms_only_render_relevant_inputs() {
     let mut model = model_with_users(1);
     model.form = Some(UserManagementFormViewModel {
+        interaction: Default::default(),
         editing: Default::default(),
         kind: UserManagementFormKind::EditInfo,
         title: "Edit user info".to_string(),
@@ -213,13 +206,14 @@ fn edit_and_password_forms_only_render_relevant_inputs() {
         focused_field: UserManagementField::DisplayName,
         error: None,
     });
-    let (terminal, _) = render(90, 22, &model);
-    let edit = terminal_output(&terminal);
-    assert!(edit.contains("Display name: Renamed"));
-    assert!(!edit.contains("Role:"));
-    assert!(!edit.contains("Password:"));
+    let (terminal, main) = render(90, 22, &model);
+    let edit = form_output(&terminal, main, &model);
+    assert!(edit.contains("Display name") && edit.contains("Renamed"));
+    assert!(!edit.contains("ROLE"));
+    assert!(!edit.contains("Password"));
 
     model.form = Some(UserManagementFormViewModel {
+        interaction: Default::default(),
         editing: Default::default(),
         kind: UserManagementFormKind::Password,
         title: "Set password".to_string(),
@@ -230,9 +224,9 @@ fn edit_and_password_forms_only_render_relevant_inputs() {
         focused_field: UserManagementField::Cancel,
         error: Some("Password is too weak".to_string()),
     });
-    let (terminal, _) = render(90, 22, &model);
-    let password = terminal_output(&terminal);
-    assert!(password.contains("Password: *********"));
+    let (terminal, main) = render(90, 22, &model);
+    let password = form_output(&terminal, main, &model);
+    assert!(password.contains("Password") && password.contains("•••••••••"));
     assert!(password.contains("Password is too weak"));
 }
 
@@ -272,6 +266,7 @@ fn user(
 
 fn create_form(focused_field: UserManagementField) -> UserManagementFormViewModel {
     UserManagementFormViewModel {
+        interaction: Default::default(),
         editing: Default::default(),
         kind: UserManagementFormKind::Create,
         title: "Create user".to_string(),
@@ -379,4 +374,20 @@ fn page_actions_and_more_menu_share_visible_targets() {
             Some(action.action)
         );
     }
+}
+
+fn form_output(
+    terminal: &Terminal<TestBackend>,
+    main: Rect,
+    model: &UserManagementViewModel,
+) -> String {
+    let area = user_management_layout(main, model).form.unwrap().dialog;
+    (area.y..area.bottom())
+        .map(|y| {
+            (area.x..area.right())
+                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

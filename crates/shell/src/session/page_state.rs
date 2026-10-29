@@ -225,7 +225,7 @@ pub(super) struct LauncherRunSettingsState {
     pub(super) error: Option<i18n::LocalizedText>,
     pub(super) field_scroll: Option<usize>,
     pub(super) message_scroll: u16,
-    pub(super) scrollbar_drag: Option<(ui::ManagementScrollTarget, u16)>,
+    pub(super) interaction: ui::components::FormInteraction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

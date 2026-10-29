@@ -94,6 +94,7 @@ pub(super) struct EditorCursorAccelerationState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct EditorSettingsDialogState {
+    pub(super) interaction: ui::components::FormInteraction,
     pub(super) draft: storage::EditorConfig,
     pub(super) selected: ui::EditorSettingsField,
 }
@@ -159,6 +160,8 @@ pub(super) struct SettingsNumberEditorState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
+    pub(super) form_selected: usize,
+    pub(super) form_interaction: ui::components::FormInteraction,
     pub(super) application: ui::SettingsApplication,
     pub(super) system_time: crate::session::controller::SystemTimeSettings,
     pub(super) animation_editor: Option<SettingsAnimationEditorState>,
@@ -437,6 +440,7 @@ pub(super) enum UserManagementFormField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct UserManagementCreateForm {
+    pub(super) interaction: ui::components::FormInteraction,
     pub(super) editing: [ui::components::TextEditState; 3],
     pub(super) username: String,
     pub(super) display_name: String,
@@ -447,6 +451,7 @@ pub(super) struct UserManagementCreateForm {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct UserManagementInfoForm {
+    pub(super) interaction: ui::components::FormInteraction,
     pub(super) editing: [ui::components::TextEditState; 3],
     pub(super) username: String,
     pub(super) display_name: String,
@@ -524,6 +529,7 @@ pub(super) struct LauncherDragState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ClockCreateState {
+    pub(super) interaction: ui::components::FormInteraction,
     pub(super) values: [u8; 3],
     pub(super) active_field: usize,
     pub(super) pending_digit: bool,
@@ -535,6 +541,7 @@ pub(super) struct ClockCreateState {
 impl Default for ClockCreateState {
     fn default() -> Self {
         Self {
+            interaction: Default::default(),
             values: [0; 3],
             active_field: 0,
             pending_digit: false,

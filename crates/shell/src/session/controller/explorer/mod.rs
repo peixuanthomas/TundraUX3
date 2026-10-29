@@ -790,6 +790,29 @@ impl ShellSession {
                 _ => {}
             }
         }
+        if let Some(ui::ExplorerOverlayViewModel::Name(dialog)) =
+            self.to_explorer_view_model().overlay
+        {
+            use ui::components::{FormAction, FormEvent};
+            let mut form = dialog.form(self.pages.explorer.explorer_overlay_selection);
+            form.fields[0].input = Some(input);
+            let result = match event {
+                InputEvent::Mouse(mouse) => form.handle_confirmed_pointer(mouse, self.touch_main()),
+                event => form.handle_event(event, self.touch_main()),
+            };
+            let input = form.fields.remove(0).input.unwrap();
+            self.pages.explorer.explorer_input = input.value().to_string();
+            self.pages.explorer.explorer_input_replace_all = false;
+            self.pages.explorer.explorer_address_cursor = input.cursor();
+            self.pages.explorer.explorer_address_selection_anchor = input.selection_anchor();
+            self.pages.explorer.explorer_overlay_selection = form.selected;
+            match result {
+                FormEvent::Action(FormAction::Submit) => self.submit_explorer_input(platform),
+                FormEvent::Action(FormAction::Cancel) => self.cancel_explorer_input(),
+                _ => {}
+            }
+            return;
+        }
         input.handle_event_borderless(event, Rect::default());
         self.pages.explorer.explorer_input = input.value().to_string();
         self.pages.explorer.explorer_input_replace_all = false;

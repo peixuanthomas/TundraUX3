@@ -579,7 +579,6 @@ fn admin_setup_rejects_mismatched_reentered_password() {
     type_text(&mut state, "DifferentPass123");
     state.apply_input(InputEvent::from_key_label("Enter"));
     state.apply_input(InputEvent::from_key_label("Enter"));
-    state.apply_input(InputEvent::from_key_label("Enter"));
 
     let model = state.to_setup_view_model();
     assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
@@ -1450,6 +1449,75 @@ fn compact_user_management_supports_touch_forms_and_the_shared_escape() {
 }
 
 #[test]
+fn compact_user_form_scrollbar_reaches_password_without_hover() {
+    let fixture = FixtureRoot::new("user-form-scrollbar");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let startup = prepare_shell_startup(&platform).unwrap();
+    let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
+    login(&mut state, "AdminUser", "StrongPass123");
+    open_users_from_launcher(&mut state);
+    state.apply_input(InputEvent::Resize {
+        width: 49,
+        height: 12,
+    });
+    state.apply_input(InputEvent::from_key_label("n"));
+    let main = user_management_layout_for(&state).form.unwrap().main;
+    let form = state.to_user_management_view_model().form.unwrap().dialog();
+    let bar = form
+        .layout(main)
+        .scrollbars
+        .into_iter()
+        .find(|bar| bar.target == ui::ManagementScrollTarget::FormFields)
+        .unwrap();
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        (bar.track.x, bar.track.y),
+    ));
+    state.apply_input(InputEvent::mouse_drag(
+        PointerButton::Left,
+        (bar.track.x, bar.track.bottom() - 1),
+    ));
+    state.apply_input(InputEvent::mouse_up(
+        PointerButton::Left,
+        (bar.track.x, bar.track.bottom() - 1),
+    ));
+    let form = user_management_layout_for(&state).form.unwrap();
+    assert!(
+        state
+            .to_user_management_view_model()
+            .form
+            .unwrap()
+            .dialog()
+            .layout(main)
+            .field_start
+            > 0
+    );
+    let password = form
+        .fields
+        .iter()
+        .find(|field| field.field == ui::UserManagementField::Password)
+        .unwrap()
+        .area;
+    state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(password),
+    ));
+    state.apply_input(InputEvent::mouse_up(
+        PointerButton::Left,
+        rect_center(password),
+    ));
+    assert_eq!(
+        state
+            .to_user_management_view_model()
+            .form
+            .unwrap()
+            .focused_field,
+        ui::UserManagementField::Password
+    );
+}
+
+#[test]
 fn user_management_create_role_and_action_focus_use_one_keyboard_flow() {
     let fixture = FixtureRoot::new("user-management-role-focus");
     let platform = mock_platform(fixture.path());
@@ -1638,6 +1706,11 @@ fn user_management_mouse_uses_shared_rows_actions_forms_and_scroll_geometry() {
         .expect("create form layout")
         .cancel;
     state.apply_input(InputEvent::mouse_down(
+        PointerButton::Left,
+        rect_center(cancel),
+    ));
+    assert!(state.to_user_management_view_model().form.is_some());
+    state.apply_input(InputEvent::mouse_up(
         PointerButton::Left,
         rect_center(cancel),
     ));
@@ -2284,8 +2357,6 @@ fn complete_first_run_admin(
     type_text(state, password);
     state.apply_input(InputEvent::from_key_label("Enter"));
     type_text(state, hint);
-    state.apply_input(InputEvent::from_key_label("Enter"));
-    assert_eq!(state.focused_component(), ShellComponent::SetupSubmit);
     state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Appearance);
     assert_eq!(

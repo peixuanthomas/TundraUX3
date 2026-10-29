@@ -146,14 +146,14 @@ def main():
                 and node["name"] == "Keep screen after exit")
             assert not switch["selected"]
             ui("text", "Custom PTY tool")
-            key("Tab")
+            key("Enter")
             ui("text", "printf 'CUSTOM_LAUNCHER_PTY_OK\\n'; exit 75")
-            key("Tab")
+            key("Enter")
             key("Space")
             switch = node_by(snapshot(), lambda node: node["role"] == "checkbox"
                 and node["name"] == "Keep screen after exit")
             assert switch["selected"]
-            key("F10")
+            key("Enter")
             toolbar("Done organizing")
             key("End")
             current = snapshot()

@@ -76,6 +76,7 @@ fn account_and_clock_dialogs_focus_text_when_opening_the_keyboard() {
     state.enter_screen(ShellScreen::UserManagement);
     state.pages.user_management.user_management_mode =
         UserManagementMode::Create(UserManagementCreateForm {
+            interaction: Default::default(),
             editing: Default::default(),
             username: String::new(),
             display_name: String::new(),

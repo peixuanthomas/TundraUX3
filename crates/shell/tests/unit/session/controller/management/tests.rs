@@ -1439,19 +1439,17 @@ fn services_expose_restart_and_logs_but_keep_startup_changes_in_more() {
 
 fn click_management_point(session: &mut ShellSession, point: (u16, u16)) {
     let now = Instant::now();
-    assert!(
-        session
-            .prepare_button_input(InputEvent::mouse_down(PointerButton::Left, point), now)
-            .is_none()
-    );
-    let released = session.prepare_button_input(
-        InputEvent::mouse_up(PointerButton::Left, point),
-        now + Duration::from_millis(30),
-    );
-    let Some(InputEvent::Mouse(mouse)) = released else {
-        panic!("button must capture matching release")
-    };
-    session.handle_management_pointer(mouse);
+    for (event, at) in [
+        (InputEvent::mouse_down(PointerButton::Left, point), now),
+        (
+            InputEvent::mouse_up(PointerButton::Left, point),
+            now + Duration::from_millis(30),
+        ),
+    ] {
+        if let Some(InputEvent::Mouse(mouse)) = session.prepare_button_input(event, at) {
+            session.handle_management_pointer(mouse);
+        }
+    }
 }
 
 #[test]
@@ -2119,7 +2117,7 @@ fn management_choice_enter_and_form_control_enter_preserve_input_and_required_ch
             ..Default::default()
         }],
     });
-    session.handle_management_key(&KeyInput::new(InputKey::Enter));
+    session.handle_management_key(&KeyInput::new(InputKey::Space));
     assert_eq!(
         session.pages.management.management_state.choice_field,
         Some(0)

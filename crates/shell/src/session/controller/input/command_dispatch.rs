@@ -996,6 +996,11 @@ impl ShellSession {
                 self.close_settings();
                 ShellAction::Redraw
             }
+            ShellCommand::SettingsFormInput(event) => {
+                self.handle_settings_form_event(event, false);
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
             ShellCommand::SettingsKey(key) => {
                 self.handle_settings_key(&key, platform);
                 ShellAction::Redraw
@@ -1526,6 +1531,11 @@ impl ShellSession {
                 self.handle_management_paste(&value);
                 ShellAction::Redraw
             }
+            ShellCommand::LogsFormInput(event) => {
+                self.handle_logs_form_input(event);
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
             ShellCommand::LogsKey(key) => {
                 self.handle_logs_key(&key);
                 ShellAction::Redraw
@@ -1905,6 +1915,11 @@ impl ShellSession {
                 self.close_clock_create_dialog();
                 ShellAction::Redraw
             }
+            ShellCommand::ClockCreateFormInput(event) => {
+                self.handle_clock_create_form_input(event);
+                self.refresh_hit_map();
+                ShellAction::Redraw
+            }
             ShellCommand::ClockCreateFocusNext => {
                 self.move_clock_create_focus(1);
                 ShellAction::Redraw
@@ -2120,6 +2135,11 @@ impl ShellSession {
             }
             ShellCommand::UserManagementBackspace => {
                 self.user_management_backspace();
+                ShellAction::Redraw
+            }
+            ShellCommand::UserManagementFormInput(event) => {
+                self.handle_user_management_form_input(event);
+                self.refresh_hit_map();
                 ShellAction::Redraw
             }
             ShellCommand::EditUserManagementText(key) => {

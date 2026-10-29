@@ -9,6 +9,15 @@ impl ShellSession {
         if key.phase == InputPhase::Release {
             return (target, ShellCommand::Noop);
         }
+        if self.pages.clock.clock_create_state.is_some()
+            && key.key == InputKey::Enter
+            && key.modifiers.is_control_only()
+        {
+            return (
+                target,
+                ShellCommand::ClockCreateFormInput(InputEvent::Key(key.clone())),
+            );
+        }
         if key.has_non_shift_modifier()
             || (key.phase != InputPhase::Press
                 && (matches!(
@@ -35,60 +44,30 @@ impl ShellSession {
 
         if let Some(create) = &self.pages.clock.clock_create_state {
             let target = RoutedTarget::Modal(ShellComponent::ClockCreateDialog);
-            return match &key.key {
-                InputKey::F(3) => (target, ShellCommand::ClockCreateAlarm),
-                InputKey::F(4) => (target, ShellCommand::ClockCreateCountdown),
-                InputKey::Escape => (target, ShellCommand::ClockCloseCreate),
-                InputKey::BackTab => (target, ShellCommand::ClockCreateFocusPrevious),
-                InputKey::Tab if key.modifiers.shift => {
-                    (target, ShellCommand::ClockCreateFocusPrevious)
-                }
-                InputKey::Tab => (target, ShellCommand::ClockCreateFocusNext),
-                InputKey::Left | InputKey::Right
-                    if create.focus == ui::ClockCreateDialogFocus::Input =>
-                {
-                    (
-                        target,
+            return (
+                target,
+                match key.key {
+                    InputKey::Char(character)
+                        if character.is_ascii_digit()
+                            && create.focus == ui::ClockCreateDialogFocus::Input =>
+                    {
+                        ShellCommand::ClockCreateAppend(character)
+                    }
+                    InputKey::Backspace if create.focus == ui::ClockCreateDialogFocus::Input => {
+                        ShellCommand::ClockCreateBackspace
+                    }
+                    InputKey::Left | InputKey::Right
+                        if create.focus == ui::ClockCreateDialogFocus::Input =>
+                    {
                         ShellCommand::ClockCreateMoveCursor(if key.key == InputKey::Left {
                             -1
                         } else {
                             1
-                        }),
-                    )
-                }
-                InputKey::Up => (target, ShellCommand::ClockCreateFocusPrevious),
-                InputKey::Down => (target, ShellCommand::ClockCreateFocusNext),
-                InputKey::Enter => match create.focus {
-                    ui::ClockCreateDialogFocus::Input => {
-                        (target, ShellCommand::ClockCreateFocusNext)
+                        })
                     }
-                    ui::ClockCreateDialogFocus::CreateAlarm => {
-                        (target, ShellCommand::ClockCreateAlarm)
-                    }
-                    ui::ClockCreateDialogFocus::CreateCountdown => {
-                        (target, ShellCommand::ClockCreateCountdown)
-                    }
-                    ui::ClockCreateDialogFocus::Cancel => (target, ShellCommand::ClockCloseCreate),
+                    _ => ShellCommand::ClockCreateFormInput(InputEvent::Key(key.clone())),
                 },
-                InputKey::Char(' ') if create.focus == ui::ClockCreateDialogFocus::CreateAlarm => {
-                    (target, ShellCommand::ClockCreateAlarm)
-                }
-                InputKey::Char(' ')
-                    if create.focus == ui::ClockCreateDialogFocus::CreateCountdown =>
-                {
-                    (target, ShellCommand::ClockCreateCountdown)
-                }
-                InputKey::Char(' ') if create.focus == ui::ClockCreateDialogFocus::Cancel => {
-                    (target, ShellCommand::ClockCloseCreate)
-                }
-                InputKey::Backspace if create.focus == ui::ClockCreateDialogFocus::Input => {
-                    (target, ShellCommand::ClockCreateBackspace)
-                }
-                InputKey::Char(character) if create.focus == ui::ClockCreateDialogFocus::Input => {
-                    (target, ShellCommand::ClockCreateAppend(*character))
-                }
-                _ => (target, ShellCommand::CaptureOverlayInput),
-            };
+            );
         }
 
         let target = RoutedTarget::Component(self.pages.common.focused_component);
@@ -173,27 +152,18 @@ impl ShellSession {
         let modal_target = RoutedTarget::Modal(ShellComponent::ClockCreateDialog);
 
         if self.pages.clock.clock_create_state.is_some() {
-            return match mouse.kind {
-                ui::MouseEventKind::Moved => (modal_target, ShellCommand::Hover(hit_target)),
-                ui::MouseEventKind::Down(PointerButton::Left) => match hit_target {
-                    Some(ShellComponent::ClockCreateInput) => (
-                        modal_target,
-                        self.clock_create_control_at(coordinates)
-                            .unwrap_or(ShellCommand::CaptureOverlayInput),
-                    ),
-                    Some(ShellComponent::ClockCreateAlarmButton) => {
-                        (modal_target, ShellCommand::ClockCreateAlarm)
-                    }
-                    Some(ShellComponent::ClockCreateCountdownButton) => {
-                        (modal_target, ShellCommand::ClockCreateCountdown)
-                    }
-                    Some(ShellComponent::ClockCreateCancelButton) => {
-                        (modal_target, ShellCommand::ClockCloseCreate)
-                    }
-                    _ => (modal_target, ShellCommand::CaptureOverlayInput),
-                },
-                _ => (modal_target, ShellCommand::CaptureOverlayInput),
-            };
+            if mouse.kind == ui::MouseEventKind::Down(PointerButton::Left)
+                && let Some(
+                    command @ (ShellCommand::ClockCreateAdjust(_, _)
+                    | ShellCommand::ClockCreateSelectField(_)),
+                ) = self.clock_create_control_at(coordinates)
+            {
+                return (modal_target, command);
+            }
+            return (
+                modal_target,
+                ShellCommand::ClockCreateFormInput(InputEvent::Mouse(mouse)),
+            );
         }
 
         let target = target_route(hit_target);

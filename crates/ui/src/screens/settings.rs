@@ -2,6 +2,7 @@ mod animation;
 pub use animation::{SettingsAnimationEditorViewModel, SettingsAnimationLayout};
 mod applications;
 pub use applications::{SettingsApplication, SettingsApplicationsLayout};
+mod forms;
 mod number;
 pub use number::{SettingsNumberEditorViewModel, SettingsNumberLayout};
 mod slider;
@@ -359,6 +360,8 @@ pub struct SettingsTimeSyncServerEditorViewModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsViewModel {
+    pub form_selected: usize,
+    pub form_interaction: crate::components::FormInteraction,
     pub selected_application: SettingsApplication,
     pub selected_category: SettingsCategory,
     pub selected_field: SettingsField,
@@ -686,36 +689,15 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         })
         .unwrap_or_default();
 
-    let active_editor = model
-        .number_editor
+    let form_layout = model.form_dialog().map(|form| form.layout(area));
+    let active_editor = form_layout
         .as_ref()
-        .map(|editor| SettingsNumberLayout::new(area, editor.field).dialog)
-        .or_else(|| {
-            model
-                .time_sync_server_editor
-                .as_ref()
-                .map(|_| centered(area, area.width.min(76), area.height.min(11)))
-        })
-        .or_else(|| {
-            model
-                .file_extensions_editor
-                .as_ref()
-                .map(|_| centered(area, area.width.min(72), area.height.min(11)))
-        })
-        .or_else(|| {
-            model
-                .weather_location_editor
-                .as_ref()
-                .map(|_| centered(area, area.width.min(68), area.height.min(11)))
-        })
-        .or_else(|| {
-            model
-                .color_editor
-                .as_ref()
-                .map(|_| centered(area, area.width.min(56), area.height.min(9)))
-        })
+        .map(|layout| layout.form)
         .or(picker_dialog);
-    let overlay_buttons = active_editor.map(settings_overlay_buttons);
+    let overlay_buttons = form_layout
+        .as_ref()
+        .map(|layout| [layout.submit, layout.cancel])
+        .or_else(|| active_editor.map(settings_overlay_buttons));
     SettingsLayout {
         applications,
         animation_editor: model
@@ -725,7 +707,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         number_editor: model
             .number_editor
             .as_ref()
-            .map(|editor| SettingsNumberLayout::new(area, editor.field)),
+            .map(|editor| SettingsNumberLayout::new(area, editor)),
         workspace,
         category: category_area,
         operating_system,
@@ -751,19 +733,19 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         color_editor: model
             .color_editor
             .as_ref()
-            .map(|_| centered(area, area.width.min(56), area.height.min(9))),
+            .and(form_layout.as_ref().map(|layout| layout.form)),
         weather_location_editor: model
             .weather_location_editor
             .as_ref()
-            .map(|_| centered(area, area.width.min(68), area.height.min(11))),
+            .and(form_layout.as_ref().map(|layout| layout.form)),
         file_extensions_editor: model
             .file_extensions_editor
             .as_ref()
-            .map(|_| centered(area, area.width.min(72), area.height.min(11))),
+            .and(form_layout.as_ref().map(|layout| layout.form)),
         time_sync_server_editor: model
             .time_sync_server_editor
             .as_ref()
-            .map(|_| centered(area, area.width.min(76), area.height.min(11))),
+            .and(form_layout.as_ref().map(|layout| layout.form)),
         update_confirmation,
         update_confirm_button,
         update_cancel_button,
@@ -1035,20 +1017,8 @@ pub(crate) fn render_settings_overlay_top(
     if let Some(picker) = &model.picker {
         render_picker(frame, layout.main, picker, context);
     }
-    if let Some(editor) = &model.color_editor {
-        render_color_editor(frame, layout.main, editor, context);
-    }
-    if let Some(editor) = &model.weather_location_editor {
-        render_weather_location_editor(frame, layout.main, editor, context);
-    }
-    if let Some(editor) = &model.file_extensions_editor {
-        render_file_extensions_editor(frame, layout.main, editor, context);
-    }
-    if let Some(editor) = &model.time_sync_server_editor {
-        render_time_sync_server_editor(frame, layout.main, editor, context);
-    }
-    if let (Some(editor), Some(editor_layout)) = (&model.number_editor, &layout.number_editor) {
-        number::render(frame, editor_layout, editor, context);
+    if let Some(form) = model.form_dialog() {
+        form.render_frame(frame, layout.main, context);
     }
     if let Some(confirmation) = model
         .update
@@ -1057,7 +1027,9 @@ pub(crate) fn render_settings_overlay_top(
     {
         render_update_confirmation(frame, layout, confirmation, context);
     }
-    if let (Some(apply), Some(cancel)) = (layout.overlay_apply, layout.overlay_cancel) {
+    if let (Some(apply), Some(cancel)) = (layout.overlay_apply, layout.overlay_cancel)
+        && model.form_dialog().is_none()
+    {
         let theme = &context.compatibility_theme();
         let mut apply_button = Button::new(
             "settings.overlay.apply",
@@ -1519,240 +1491,6 @@ fn render_picker(
             frame.render_widget(widget, map);
         }
     }
-}
-
-fn render_color_editor(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    editor: &SettingsColorEditorViewModel,
-    context: &RenderContext,
-) {
-    let theme = &context.compatibility_theme();
-    let dialog = centered(area, area.width.min(56), area.height.min(9));
-    frame.render_widget(Clear, dialog);
-    let lines = vec![
-        Line::from(i18n::tr!("ui-settings-enter-a-color-as-rrggbb")),
-        Line::from(""),
-        Line::styled(
-            editor.error.clone().unwrap_or_default(),
-            theme.error_style(),
-        ),
-        Line::styled(
-            i18n::tr!("ui-settings-enter-apply-esc-cancel"),
-            theme.muted_style(),
-        ),
-    ];
-    let surface = Surface::new()
-        .titled(format!(" {} ", editor.title))
-        .bordered(true)
-        .raised(true);
-    let inner = surface.inner(dialog);
-    surface.render_frame(frame, dialog, context);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(HorizontalAlignment::Left)
-            .wrap(Wrap { trim: true }),
-        inner,
-    );
-    render_editor_text_input(
-        frame,
-        dialog,
-        "settings.color-editor",
-        &editor.value,
-        &editor.editing,
-        theme,
-    );
-}
-
-fn render_weather_location_editor(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    editor: &SettingsWeatherLocationEditorViewModel,
-    context: &RenderContext,
-) {
-    let theme = &context.compatibility_theme();
-    let dialog = centered(area, area.width.min(68), area.height.min(11));
-    frame.render_widget(Clear, dialog);
-    let lines = vec![
-        Line::from(i18n::tr!(
-            "ui-settings-enter-a-detailed-city-or-address-using-english-characters"
-        )),
-        Line::from(""),
-        Line::styled(
-            editor.error.clone().unwrap_or_default(),
-            theme.error_style(),
-        ),
-        Line::styled(
-            i18n::tr!("ui-settings-leave-empty-to-use-the-timezone-location"),
-            theme.muted_style(),
-        ),
-        Line::styled(
-            i18n::tr!("ui-settings-enter-continue-esc-cancel"),
-            theme.muted_style(),
-        ),
-    ];
-    let surface = Surface::new()
-        .titled(i18n::tr!("ui-settings-weather-location-padded"))
-        .bordered(true)
-        .raised(true);
-    let inner = surface.inner(dialog);
-    surface.render_frame(frame, dialog, context);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(HorizontalAlignment::Left)
-            .wrap(Wrap { trim: true }),
-        inner,
-    );
-    render_editor_text_input(
-        frame,
-        dialog,
-        "settings.weather-location-editor",
-        &editor.value,
-        &editor.editing,
-        theme,
-    );
-}
-
-fn render_file_extensions_editor(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    editor: &SettingsFileExtensionsEditorViewModel,
-    context: &RenderContext,
-) {
-    let theme = &context.compatibility_theme();
-    let dialog = centered(area, area.width.min(72), area.height.min(11));
-    frame.render_widget(Clear, dialog);
-    let lines = vec![
-        Line::from(i18n::tr!(
-            "ui-settings-enter-comma-separated-filename-suffixes-explorer-should-open-here"
-        )),
-        Line::from(""),
-        Line::styled(
-            editor.error.clone().unwrap_or_default(),
-            theme.error_style(),
-        ),
-        Line::styled(
-            i18n::tr!("ui-settings-examples-md-txt-rs-d-ts-matching-is-case-insensitive"),
-            theme.muted_style(),
-        ),
-        Line::styled(
-            i18n::tr!(
-                "ui-settings-leave-empty-to-always-use-the-system-default-enter-save-esc-cancel"
-            ),
-            theme.muted_style(),
-        ),
-    ];
-    let surface = Surface::new()
-        .titled(i18n::tr!(
-            "ui-settings-explorer-files-opened-in-editor-padded"
-        ))
-        .bordered(true)
-        .raised(true);
-    let inner = surface.inner(dialog);
-    surface.render_frame(frame, dialog, context);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(HorizontalAlignment::Left)
-            .wrap(Wrap { trim: true }),
-        inner,
-    );
-    render_editor_text_input(
-        frame,
-        dialog,
-        "settings.file-extensions-editor",
-        &editor.value,
-        &editor.editing,
-        theme,
-    );
-}
-
-fn render_time_sync_server_editor(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    editor: &SettingsTimeSyncServerEditorViewModel,
-    context: &RenderContext,
-) {
-    let theme = &context.compatibility_theme();
-    let dialog = centered(area, area.width.min(76), area.height.min(11));
-    frame.render_widget(Clear, dialog);
-    let status = if editor.validating {
-        i18n::tr!(if editor.system_server_label.is_some() {
-            "management-working"
-        } else {
-            "ui-settings-synchronizing-with-this-server"
-        })
-    } else {
-        editor.error.clone().unwrap_or_default()
-    };
-    let status_style = if editor.validating {
-        theme.muted_style()
-    } else {
-        theme.error_style()
-    };
-    let lines = vec![
-        Line::from(i18n::tr!(if editor.system_server_label.is_some() {
-            "ui-settings-system-time-server-help"
-        } else {
-            "ui-settings-enter-an-http-s-endpoint-that-returns-a-valid-date-response-header"
-        })),
-        Line::from(""),
-        Line::styled(status, status_style),
-        Line::styled(
-            i18n::tr!(if editor.system_server_label.is_some() {
-                "ui-settings-system-time-server-save-help"
-            } else {
-                "ui-settings-the-address-is-saved-only-after-a-successful-synchronization-test"
-            }),
-            theme.muted_style(),
-        ),
-        Line::styled(
-            i18n::tr!(if editor.system_server_label.is_some() {
-                "ui-settings-enter-save-esc-cancel"
-            } else {
-                "ui-settings-enter-test-and-save-esc-cancel"
-            }),
-            theme.muted_style(),
-        ),
-    ];
-    let surface = Surface::new()
-        .titled(
-            editor
-                .system_server_label
-                .clone()
-                .unwrap_or_else(|| i18n::tr!("ui-settings-time-synchronization-server-padded")),
-        )
-        .bordered(true)
-        .raised(true);
-    let inner = surface.inner(dialog);
-    surface.render_frame(frame, dialog, context);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(HorizontalAlignment::Left)
-            .wrap(Wrap { trim: true }),
-        inner,
-    );
-    render_editor_text_input(
-        frame,
-        dialog,
-        "settings.time-sync-server-editor",
-        &editor.value,
-        &editor.editing,
-        theme,
-    );
-}
-
-fn render_editor_text_input(
-    frame: &mut Frame<'_>,
-    dialog: Rect,
-    id: &'static str,
-    value: &str,
-    editing: &crate::components::TextEditState,
-    theme: &TundraTheme,
-) {
-    editing
-        .input(id, value)
-        .with_cursor_symbol("_")
-        .render_borderless_frame_with_prefix(frame, settings_text_input_area(dialog), theme, "> ");
 }
 
 pub fn settings_text_input_area(dialog: Rect) -> Rect {

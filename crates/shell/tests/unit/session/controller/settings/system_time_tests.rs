@@ -54,6 +54,8 @@ fn unavailable_and_running_system_time_actions_cannot_submit() {
 
 fn settings_state(time: SystemTimeSettings) -> SettingsState {
     SettingsState {
+        form_selected: 0,
+        form_interaction: Default::default(),
         application: Default::default(),
         system_time: time,
         animation_editor: None,

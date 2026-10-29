@@ -1,5 +1,7 @@
 # ascii-assets
 
+用户角色和时钟表单按钮使用 `modules/ui-user-management.ftl`、`modules/ui-clock.ftl` 的中英文标签。权限帮助说明统一为“空格切换、Enter 下一栏／最后一栏确认”。
+
 中英文 modules/ui-launcher.ftl 包含整理模式、新增启动命令、右键菜单、固定尺寸字符图标编辑与越界提示，以及退出选项、翻页和排序帮助。新增表单使用默认图标。modules/terminal-launcher.ftl 同步提供程序退出后按回车返回的提示。
 
 `ui-launcher-keep-screen` 用于新增表单及右键菜单的“退出后保留界面”开关，“开／关”复用设置页中英文文案。

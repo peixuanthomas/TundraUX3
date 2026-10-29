@@ -7,8 +7,6 @@ const CLOCK_ANALOG_MIN_HEIGHT: u16 = 18;
 const CLOCK_PANEL_MIN_WIDTH: u16 = 28;
 const CLOCK_PANEL_MAX_WIDTH: u16 = 34;
 const CLOCK_COLUMN_GAP: u16 = 1;
-const CLOCK_CREATE_DIALOG_WIDTH: u16 = 58;
-const CLOCK_CREATE_DIALOG_HEIGHT: u16 = 11;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClockPageMode {
     Analog,
@@ -30,6 +28,7 @@ pub struct ClockEntryRowLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClockCreateDialogLayout {
+    pub main: Rect,
     pub dialog: Rect,
     pub prompt: Rect,
     pub input: Rect,
@@ -256,7 +255,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
         create_dialog: (!model.is_read_only())
             .then_some(model.create_dialog.as_ref())
             .flatten()
-            .map(|_| clock_create_dialog_layout(main)),
+            .map(|model| clock_create_dialog_layout(main, model)),
     }
 }
 
@@ -274,82 +273,45 @@ fn flattened_clock_entries(model: &ClockViewModel) -> Vec<(ClockEntryKind, &Cloc
         .collect()
 }
 
-fn clock_create_dialog_layout(area: Rect) -> ClockCreateDialogLayout {
-    let dialog = centered_rect(
-        area,
-        area.width.min(CLOCK_CREATE_DIALOG_WIDTH),
-        area.height.min(CLOCK_CREATE_DIALOG_HEIGHT),
-    );
-    let inner = inset_rect(dialog, 1);
-    let prompt_height = 0;
-    let prompt = Rect::new(inner.x, inner.y, inner.width, prompt_height);
-    let input_y = inner.y.saturating_add(prompt_height);
-    let stacked_buttons = inner.width < 36 && inner.height >= 6;
-    let button_rows = if stacked_buttons { 3 } else { 1 };
-    let button_y = inner.bottom().saturating_sub(button_rows);
-    let separate_labels = button_y.saturating_sub(input_y) >= 4;
-    let input_height = (if separate_labels { 4 } else { 3 }).min(button_y.saturating_sub(input_y));
-    let input = Rect::new(inner.x, input_y, inner.width, input_height);
-    let field_row = |row: u16| {
-        std::array::from_fn(|index| {
-            let start = inner.width * index as u16 / 3;
-            let end = inner.width * (index as u16 + 1) / 3;
-            let column = Rect::new(inner.x + start, input.y, end - start, input.height);
-            line_in_rect(column, input.y.saturating_add(row))
-        })
-    };
-    let labels = if separate_labels {
-        field_row(0)
-    } else {
-        [Rect::default(); 3]
-    };
-    let offset = u16::from(separate_labels);
-    let increments = field_row(offset);
-    let values = field_row(offset + 1);
-    let decrements = field_row(offset + 2);
-    let error = if input.bottom() < button_y {
-        line_in_rect(inner, input.bottom())
-    } else {
-        Rect::new(inner.x, button_y, 0, 0)
-    };
-    let buttons_width = inner.width;
-    let (create_alarm, create_countdown, cancel) = if stacked_buttons {
-        (
-            Rect::new(inner.x, button_y, inner.width, 1),
-            Rect::new(inner.x, button_y + 1, inner.width, 1),
-            Rect::new(inner.x, button_y + 2, inner.width, 1),
-        )
-    } else {
-        let alarm_width = buttons_width / 3;
-        let countdown_width = alarm_width;
-        let create_alarm = Rect::new(inner.x, button_y, alarm_width, u16::from(inner.height > 0));
-        let create_countdown = Rect::new(
-            inner.x.saturating_add(alarm_width),
-            button_y,
-            countdown_width,
-            u16::from(inner.height > 0),
-        );
-        let cancel = Rect::new(
-            create_countdown.right(),
-            button_y,
-            buttons_width.saturating_sub(alarm_width + countdown_width),
-            create_alarm.height,
-        );
-        (create_alarm, create_countdown, cancel)
-    };
-
+fn clock_create_dialog_layout(
+    area: Rect,
+    model: &super::model::ClockCreateDialogViewModel,
+) -> ClockCreateDialogLayout {
+    let form = model.dialog();
+    let layout = form.layout(area);
+    let values = std::array::from_fn(|index| {
+        crate::management_field_input_area(&layout, index, &form.fields[index])
+    });
+    let labels = std::array::from_fn(|index| {
+        layout
+            .fields
+            .iter()
+            .find(|(field, _)| *field == index)
+            .map_or(Rect::default(), |(_, area)| *area)
+    });
+    let increments = std::array::from_fn(|index| {
+        crate::management_number_buttons(&layout, index, &form.fields[index])[1]
+    });
+    let decrements = std::array::from_fn(|index| {
+        crate::management_number_buttons(&layout, index, &form.fields[index])[0]
+    });
     ClockCreateDialogLayout {
-        dialog,
-        prompt,
-        input,
+        main: area,
+        dialog: layout.form,
+        prompt: layout.message,
+        input: layout.fields_area,
         labels,
         increments,
         values,
         decrements,
-        error,
-        create_alarm,
-        create_countdown,
-        cancel,
+        error: layout.message,
+        create_alarm: layout.submit,
+        create_countdown: layout
+            .form_buttons
+            .iter()
+            .find(|(index, _)| *index == 1)
+            .map_or(Rect::default(), |(_, area)| *area),
+        cancel: layout.cancel,
     }
 }
 
@@ -373,16 +335,6 @@ fn line_in_rect(area: Rect, y: u16) -> Rect {
 
 fn usize_to_u16(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
-}
-
-fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
-    Rect::new(
-        area.x.saturating_add(area.width.saturating_sub(width) / 2),
-        area.y
-            .saturating_add(area.height.saturating_sub(height) / 2),
-        width,
-        height,
-    )
 }
 
 pub(super) fn clock_action_bar(model: &ClockViewModel) -> crate::components::PageActionBar {

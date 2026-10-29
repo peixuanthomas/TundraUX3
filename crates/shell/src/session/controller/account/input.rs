@@ -264,7 +264,10 @@ impl ShellSession {
                     (target, ShellCommand::SetupAdminBackspace)
                 }
                 InputKey::Enter
-                    if self.pages.setup.setup_focused_field == ui::SetupField::Submit =>
+                    if matches!(
+                        self.pages.setup.setup_focused_field,
+                        ui::SetupField::PasswordHint | ui::SetupField::Submit
+                    ) =>
                 {
                     (target, ShellCommand::SetupPrimaryAction)
                 }
@@ -343,103 +346,20 @@ impl ShellSession {
             return (target, command);
         }
 
-        if key.has_non_shift_modifier() {
+        if self.pages.user_management.user_management_mode != UserManagementMode::Browse {
             return (
                 target,
-                if key.modifiers.is_control()
-                    && !key.modifiers.alt
-                    && !key.modifiers.super_key
-                    && !key.modifiers.hyper
-                    && !key.modifiers.meta
-                    && key.key == InputKey::Enter
-                    && key.phase == InputPhase::Press
-                    && self.pages.user_management.user_management_mode != UserManagementMode::Browse
-                {
-                    ShellCommand::SubmitUserManagementForm
-                } else {
-                    ShellCommand::RecordInput
-                },
+                ShellCommand::UserManagementFormInput(InputEvent::Key(key.clone())),
             );
         }
-        let editing_text = self.pages.user_management.user_management_mode
-            != UserManagementMode::Browse
-            && matches!(
-                self.user_management_form_field(),
-                Some(
-                    UserManagementFormField::Username
-                        | UserManagementFormField::DisplayName
-                        | UserManagementFormField::Password
+        if key.has_non_shift_modifier()
+            || key.phase != InputPhase::Press
+                && matches!(
+                    key.key,
+                    InputKey::Enter | InputKey::Escape | InputKey::Char(_)
                 )
-            );
-        if key.phase != InputPhase::Press
-            && (matches!(key.key, InputKey::Enter | InputKey::Escape)
-                || (matches!(key.key, InputKey::Char(_)) && !editing_text))
         {
             return (target, ShellCommand::RecordInput);
-        }
-
-        if self.pages.user_management.user_management_mode != UserManagementMode::Browse {
-            let field = self.user_management_form_field();
-            return match &key.key {
-                InputKey::Escape => (target, ShellCommand::CancelUserManagementForm),
-                InputKey::BackTab => (target, ShellCommand::UserManagementFocusPrevious),
-                InputKey::Tab if key.modifiers.shift => {
-                    (target, ShellCommand::UserManagementFocusPrevious)
-                }
-                InputKey::Tab | InputKey::Down => (target, ShellCommand::UserManagementFocusNext),
-                InputKey::Up => (target, ShellCommand::UserManagementFocusPrevious),
-                InputKey::Left
-                | InputKey::Right
-                | InputKey::Home
-                | InputKey::End
-                | InputKey::Delete
-                    if editing_text =>
-                {
-                    (target, ShellCommand::EditUserManagementText(key.clone()))
-                }
-                InputKey::Left | InputKey::Right
-                    if field == Some(UserManagementFormField::Role) =>
-                {
-                    (target, ShellCommand::UserManagementToggleFormRole)
-                }
-                InputKey::Enter | InputKey::Char(' ')
-                    if field == Some(UserManagementFormField::Role) =>
-                {
-                    (target, ShellCommand::UserManagementToggleFormRole)
-                }
-                InputKey::Enter | InputKey::Char(' ')
-                    if field == Some(UserManagementFormField::Cancel) =>
-                {
-                    (target, ShellCommand::CancelUserManagementForm)
-                }
-                InputKey::Enter
-                    if field == Some(UserManagementFormField::Submit)
-                        || matches!(
-                            field,
-                            Some(
-                                UserManagementFormField::Username
-                                    | UserManagementFormField::DisplayName
-                                    | UserManagementFormField::Password
-                            )
-                        ) =>
-                {
-                    (target, ShellCommand::SubmitUserManagementForm)
-                }
-                InputKey::Char(' ') if field == Some(UserManagementFormField::Submit) => {
-                    (target, ShellCommand::SubmitUserManagementForm)
-                }
-                InputKey::Backspace => (target, ShellCommand::UserManagementBackspace),
-                InputKey::Char(character)
-                    if matches!(character, 'c' | 'C')
-                        && field == Some(UserManagementFormField::Role) =>
-                {
-                    (target, ShellCommand::UserManagementToggleFormRole)
-                }
-                InputKey::Char(character) => {
-                    (target, ShellCommand::AppendUserManagementChar(*character))
-                }
-                _ => (target, ShellCommand::RecordInput),
-            };
         }
 
         self.route_user_management_shortcut(key)
@@ -553,24 +473,10 @@ impl ShellSession {
             );
         }
         if self.pages.user_management.user_management_mode != UserManagementMode::Browse {
-            return match mouse.kind {
-                ui::MouseEventKind::Moved => (target, ShellCommand::Hover(hit_target)),
-                ui::MouseEventKind::Down(PointerButton::Left) => layout
-                    .form_control_at(coordinates.0, coordinates.1)
-                    .map(|field| {
-                        let command = match field {
-                            ui::UserManagementField::Role
-                            | ui::UserManagementField::Submit
-                            | ui::UserManagementField::Cancel => {
-                                ShellCommand::UserManagementActivateFormControl(field)
-                            }
-                            _ => ShellCommand::UserManagementSetFormFocus(field),
-                        };
-                        (target, command)
-                    })
-                    .unwrap_or((target, ShellCommand::CaptureOverlayInput)),
-                _ => (target, ShellCommand::CaptureOverlayInput),
-            };
+            return (
+                target,
+                ShellCommand::UserManagementFormInput(InputEvent::Mouse(mouse)),
+            );
         }
 
         match mouse.kind {

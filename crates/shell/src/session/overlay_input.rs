@@ -104,6 +104,15 @@ impl ShellSession {
             .filter(|_| self.overlay_interaction_ready)
         {
             Some(ShellComponent::Management) => ShellCommand::ManagementPaste(value.to_owned()),
+            Some(ShellComponent::Settings) => {
+                ShellCommand::SettingsFormInput(InputEvent::Paste(value.to_owned()))
+            }
+            Some(ShellComponent::UserManagement) => {
+                ShellCommand::UserManagementFormInput(InputEvent::Paste(value.to_owned()))
+            }
+            Some(ShellComponent::Logs) => {
+                ShellCommand::LogsFormInput(InputEvent::Paste(value.to_owned()))
+            }
             Some(ShellComponent::Launcher) if self.pages.launcher.entry_editor.is_some() => {
                 ShellCommand::LauncherEntryInput(InputEvent::Paste(value.to_owned()))
             }

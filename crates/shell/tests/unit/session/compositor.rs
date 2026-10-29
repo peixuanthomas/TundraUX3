@@ -192,6 +192,8 @@ fn animation_settings_session() -> ShellSession {
     );
     state.enter_screen(ShellScreen::Settings);
     state.pages.settings.settings_state = Some(SettingsState {
+        form_selected: 0,
+        form_interaction: Default::default(),
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: Some(SettingsAnimationEditorState {
@@ -496,6 +498,8 @@ fn aa_keyboard_keeps_background_layout_and_places_one_global_launcher_on_every_p
             );
             if screen == ShellScreen::Settings {
                 state.pages.settings.settings_state = Some(SettingsState {
+                    form_selected: 0,
+                    form_interaction: Default::default(),
                     application: Default::default(),
                     system_time: Default::default(),
                     animation_editor: None,
@@ -1475,7 +1479,7 @@ fn clock_create_cancel_closes_on_release_with_or_without_hover() {
         let cancel = state
             .button_regions
             .iter()
-            .find(|region| region.id.as_str() == "clock.create-cancel")
+            .find(|region| region.id.as_str() == "management.cancel.clock.create")
             .unwrap()
             .area;
         let point = (cancel.x + cancel.width / 2, cancel.y);

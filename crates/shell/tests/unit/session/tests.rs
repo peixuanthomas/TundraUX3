@@ -3087,7 +3087,7 @@ fn overlay_resolver_categories_share_readiness_input_focus_and_hit_regions() {
     );
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Esc")).1,
-        ShellCommand::ClockCloseCreate
+        ShellCommand::ClockCreateFormInput(InputEvent::from_key_label("Esc"))
     );
     assert!(
         !state
@@ -3188,7 +3188,7 @@ fn setup_clock_and_diagnostics_publish_exact_overlay_surfaces_while_gated() {
     );
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Tab")).1,
-        ShellCommand::ClockCreateFocusNext
+        ShellCommand::ClockCreateFormInput(InputEvent::from_key_label("Tab"))
     );
     state.refresh_hit_map_with_motion(gated);
     assert_eq!(
@@ -3370,6 +3370,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     users.set_navigation_path(vec![ShellScreen::UserManagement]);
     users.pages.user_management.user_management_mode =
         UserManagementMode::Create(UserManagementCreateForm {
+            interaction: Default::default(),
             editing: Default::default(),
             username: "first".into(),
             display_name: "First".into(),
@@ -3388,6 +3389,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     );
     users.pages.user_management.user_management_mode =
         UserManagementMode::EditInfo(UserManagementInfoForm {
+            interaction: Default::default(),
             editing: Default::default(),
             username: "user".into(),
             display_name: "Display".into(),
@@ -3396,6 +3398,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
     let edit = users.active_overlay_descriptor().expect("edit user");
     users.pages.user_management.user_management_mode =
         UserManagementMode::EditInfo(UserManagementInfoForm {
+            interaction: Default::default(),
             editing: Default::default(),
             username: "other-user".into(),
             display_name: "Typed name".into(),
@@ -3447,6 +3450,7 @@ fn newly_tracked_overlay_groups_share_keyboard_mouse_focus_and_readiness_gating(
     users.set_navigation_path(vec![ShellScreen::UserManagement]);
     users.pages.user_management.user_management_mode =
         UserManagementMode::EditInfo(UserManagementInfoForm {
+            interaction: Default::default(),
             editing: Default::default(),
             username: "user".into(),
             display_name: String::new(),
@@ -3631,11 +3635,11 @@ fn explorer_dialog_and_transient_overlay_identities_are_semantic_and_stable() {
     ));
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Enter")).1,
-        ShellCommand::SubmitExplorerInput
+        ShellCommand::ExplorerEditInput(InputEvent::from_key_label("Enter"))
     );
     assert_eq!(
         state.route_key_input(&KeyInput::from_label("Esc")).1,
-        ShellCommand::CancelExplorerInput
+        ShellCommand::ExplorerEditInput(InputEvent::from_key_label("Esc"))
     );
 
     state.pages.explorer.explorer_input_mode = ExplorerInputMode::Browse;
@@ -3896,6 +3900,8 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     );
     state.enter_screen(ShellScreen::Settings);
     state.pages.settings.settings_state = Some(SettingsState {
+        form_selected: 0,
+        form_interaction: Default::default(),
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: None,
@@ -4067,11 +4073,11 @@ fn explorer_dialogs_share_central_keyboard_mouse_focus_and_hit_map_gating() {
         );
         assert_eq!(
             state.route_key_input(&KeyInput::from_label("Enter")).1,
-            ShellCommand::SubmitExplorerInput
+            ShellCommand::ExplorerEditInput(InputEvent::from_key_label("Enter"))
         );
         assert_eq!(
             state.route_key_input(&KeyInput::from_label("Esc")).1,
-            ShellCommand::CancelExplorerInput
+            ShellCommand::ExplorerEditInput(InputEvent::from_key_label("Esc"))
         );
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(entering),
@@ -4947,7 +4953,7 @@ fn compact_clock_keeps_visible_controls_and_keyboard_access() {
     state.pages.clock.clock_create_state = Some(ClockCreateState::default());
     assert_eq!(
         state.route_clock_key(&KeyInput::from_label("Esc")).1,
-        ShellCommand::ClockCloseCreate
+        ShellCommand::ClockCreateFormInput(InputEvent::from_key_label("Esc"))
     );
 }
 
@@ -5297,6 +5303,7 @@ fn clock_button_routes_before_explorer_popup_and_app_forms() {
     user_management.set_navigation_path(vec![ShellScreen::UserManagement]);
     user_management.pages.user_management.user_management_mode =
         UserManagementMode::Create(UserManagementCreateForm {
+            interaction: Default::default(),
             editing: Default::default(),
             username: String::new(),
             display_name: String::new(),
@@ -6677,7 +6684,7 @@ fn explorer_dialog_navigation_wraps_and_preserves_input_focus() {
         state.apply_input(InputEvent::from_key_label("Tab"));
         assert_eq!(
             state.route_key_input(&KeyInput::from_label("Enter")).1,
-            ShellCommand::ExplorerOverlayActivate
+            ShellCommand::ExplorerEditInput(InputEvent::from_key_label("Enter"))
         );
         state.apply_input(InputEvent::from_key_label("Shift+Tab"));
         assert_eq!(state.pages.explorer.explorer_overlay_selection, 0);
@@ -6692,7 +6699,7 @@ fn explorer_dialog_navigation_wraps_and_preserves_input_focus() {
         state.refresh_hit_map();
         assert_eq!(
             state.route_key_input(&KeyInput::from_label("Enter")).1,
-            ShellCommand::SubmitExplorerInput
+            ShellCommand::ExplorerEditInput(InputEvent::from_key_label("Enter"))
         );
         state.apply_input(InputEvent::from_key_label("Esc"));
         assert!(state.to_explorer_view_model().overlay.is_none());

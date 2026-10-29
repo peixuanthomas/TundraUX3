@@ -242,6 +242,8 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
     let command_line = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(120, 40));
     let mut editor = EditorViewModel::source("sample.txt", "editor content marker");
     let mut settings = SettingsViewModel {
+        form_selected: 0,
+        form_interaction: Default::default(),
         selected_application: Default::default(),
         selected_category: SettingsCategory::Appearance,
         selected_field: SettingsField::BorderColor,
@@ -318,6 +320,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
     setup.custom_color_target = Some(SetupCustomColorTarget::Theme);
     assert_page_leaves_shell_chrome_untouched(ScreenContent::Setup(&setup));
     users.form = Some(UserManagementFormViewModel {
+        interaction: Default::default(),
         editing: Default::default(),
         kind: UserManagementFormKind::Create,
         title: "Create user".into(),

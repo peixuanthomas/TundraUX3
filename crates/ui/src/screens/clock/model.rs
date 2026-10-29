@@ -28,6 +28,7 @@ impl ClockEntryViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockCreateDialogViewModel {
+    pub interaction: crate::components::FormInteraction,
     pub cursor: usize,
     pub values: [u8; 3],
     pub active_field: usize,
@@ -36,8 +37,75 @@ pub struct ClockCreateDialogViewModel {
 }
 
 impl ClockCreateDialogViewModel {
+    pub fn dialog(&self) -> crate::components::FormDialog {
+        use crate::components::{
+            FormAction, FormButton, FormControl, FormDialog, FormField, Key, TextInput,
+        };
+        let fields = [
+            i18n::tr!("ui-clock-hours"),
+            i18n::tr!("ui-clock-minutes"),
+            i18n::tr!("ui-clock-seconds"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let mut field = FormField::text(
+                index.to_string(),
+                label,
+                format!("{:02}", self.values[index]),
+            );
+            field.control = FormControl::Number {
+                minimum: 0,
+                maximum: if index == 0 { 23 } else { 59 },
+                step: 1,
+            };
+            field.read_only = true;
+            let mut input = TextInput::new(index.to_string());
+            input.set_value(field.value.clone());
+            input.set_cursor(self.cursor);
+            field.input = Some(input);
+            field
+        })
+        .collect();
+        let mut form = FormDialog::new(
+            "clock.create",
+            i18n::tr!("ui-clock-new-alarm-or-countdown"),
+            fields,
+        );
+        form.columns = 3;
+        form.message = self.error.clone().unwrap_or_default();
+        form.selected = match self.focus {
+            ClockCreateDialogFocus::Input => self.active_field,
+            ClockCreateDialogFocus::CreateAlarm => 3,
+            ClockCreateDialogFocus::CreateCountdown => 4,
+            ClockCreateDialogFocus::Cancel => 5,
+        };
+        form.buttons = vec![
+            FormButton::new(
+                "alarm",
+                i18n::tr!("ui-clock-alarm-action"),
+                FormAction::Submit,
+            ),
+            FormButton::new(
+                "countdown",
+                i18n::tr!("ui-clock-countdown-action"),
+                FormAction::Custom("countdown".into()),
+            ),
+            FormButton::new(
+                "cancel",
+                i18n::tr!("management-form-cancel"),
+                FormAction::Cancel,
+            ),
+        ];
+        form.buttons[0].shortcut = Some(Key::F(3));
+        form.buttons[1].shortcut = Some(Key::F(4));
+        form.buttons[2].shortcut = Some(Key::Escape);
+        form.with_interaction(self.interaction.clone())
+    }
+
     pub fn new(values: [u8; 3]) -> Self {
         Self {
+            interaction: Default::default(),
             values,
             active_field: 0,
             cursor: 2,

@@ -489,75 +489,10 @@ impl ShellSession {
             self.pages.editor.editor_cursor_acceleration = None;
         }
         if self.pages.editor.editor_settings_dialog.is_some() {
-            match mouse {
-                MouseInput {
-                    kind: ui::MouseEventKind::Moved,
-                    ..
-                } => {
-                    self.hovered_component = Some(ShellComponent::Editor);
-                }
-                MouseInput {
-                    kind: ui::MouseEventKind::Down(PointerButton::Left),
-                    ..
-                } => match hit {
-                    Some(ui::EditorHitTarget::SettingsControl(control)) => {
-                        self.activate_editor_settings_control(control);
-                    }
-                    Some(ui::EditorHitTarget::SettingsField(field)) => {
-                        self.select_editor_setting(field);
-                    }
-                    _ => {}
-                },
-                MouseInput {
-                    kind: ui::MouseEventKind::Scroll(direction),
-                    ..
-                } => match direction {
-                    ScrollDirection::Up | ScrollDirection::Left => {
-                        if let Some(selected) = self
-                            .pages
-                            .editor
-                            .editor_settings_dialog
-                            .as_ref()
-                            .map(|dialog| dialog.selected)
-                        {
-                            self.adjust_editor_setting(selected, -1);
-                        }
-                    }
-                    ScrollDirection::Down | ScrollDirection::Right => {
-                        if let Some(selected) = self
-                            .pages
-                            .editor
-                            .editor_settings_dialog
-                            .as_ref()
-                            .map(|dialog| dialog.selected)
-                        {
-                            self.adjust_editor_setting(selected, 1);
-                        }
-                    }
-                },
-                MouseInput {
-                    kind: ui::MouseEventKind::Down(_),
-                    ..
-                }
-                | MouseInput {
-                    kind: ui::MouseEventKind::Up(_),
-                    ..
-                }
-                | MouseInput {
-                    kind: ui::MouseEventKind::Drag(_),
-                    ..
-                }
-                | MouseInput {
-                    kind: ui::MouseEventKind::Click(_),
-                    ..
-                }
-                | MouseInput {
-                    kind: ui::MouseEventKind::DoubleClick(_),
-                    ..
-                } => {}
-            }
+            self.handle_editor_settings_form(InputEvent::Mouse(mouse));
             return;
         }
+
         match mouse {
             MouseInput {
                 kind: ui::MouseEventKind::Moved,

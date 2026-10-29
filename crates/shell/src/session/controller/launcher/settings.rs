@@ -1,5 +1,5 @@
 use crate::session::*;
-use ui::components::TextInput;
+use ui::components::{FormAction, FormEvent, TextInput};
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/session/controller/launcher/run_settings.rs"]
@@ -22,7 +22,7 @@ impl ShellSession {
             error: None,
             field_scroll: None,
             message_scroll: 0,
-            scrollbar_drag: None,
+            interaction: Default::default(),
         });
         self.pages.launcher.launcher_drag = None;
     }
@@ -66,7 +66,7 @@ impl ShellSession {
             error: None,
             field_scroll: None,
             message_scroll: 0,
-            scrollbar_drag: None,
+            interaction: Default::default(),
         });
         self.pages.launcher.launcher_pending_confirmation = None;
         self.pages.launcher.launcher_drag = None;
@@ -76,16 +76,9 @@ impl ShellSession {
         let state = self.pages.launcher.launcher_run_settings.as_ref()?;
         let mut fields = vec![ui::ManagementFormField {
             id: "mode".into(),
-            label: i18n::tr!("shell-launcher-run-mode"),
-            value: if state.embedded {
-                i18n::tr!("shell-launcher-run-terminal")
-            } else {
-                i18n::tr!("shell-launcher-run-system")
-            },
-            choices: vec![
-                i18n::tr!("shell-launcher-run-system"),
-                i18n::tr!("shell-launcher-run-terminal"),
-            ],
+            label: i18n::tr!("shell-launcher-run-terminal"),
+            value: state.embedded.to_string(),
+            control: ui::ManagementFormControl::Toggle,
             ..Default::default()
         }];
         if state.embedded {
@@ -154,10 +147,71 @@ impl ShellSession {
             selected: state.selected,
             field_scroll: state.field_scroll,
             message_scroll: state.message_scroll,
+            interaction: state.interaction.clone(),
             submit_label: Some(i18n::tr!("shell-save")),
             cancel_label: Some(i18n::tr!("shell-cancel")),
             ..Default::default()
         })
+    }
+
+    fn edit_launcher_form(
+        &mut self,
+        edit: impl FnOnce(&mut ui::components::FormDialog, Rect) -> FormEvent,
+    ) -> FormEvent {
+        let Some(mut form) = self.launcher_run_settings_form() else {
+            return FormEvent::None;
+        };
+        let ui::ShellLayout::Full { main, .. } =
+            self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))
+        else {
+            return FormEvent::None;
+        };
+        let event = edit(&mut form, main);
+        let state = self.pages.launcher.launcher_run_settings.as_mut().unwrap();
+        state.selected = form.selected;
+        state.field_scroll = form.field_scroll;
+        state.message_scroll = form.message_scroll;
+        state.interaction = form.interaction;
+        let mut changed = false;
+        for field in form.fields {
+            let input = match field.id.as_str() {
+                "name" => Some(&mut state.name),
+                "command" | "arguments" => Some(&mut state.arguments),
+                "directory" => Some(&mut state.directory),
+                "exit" => {
+                    let wait = field.value == "true";
+                    changed |= state.wait_for_enter != wait;
+                    state.wait_for_enter = wait;
+                    None
+                }
+                "mode" => {
+                    let embedded = field.value == "true";
+                    changed |= state.embedded != embedded;
+                    state.embedded = embedded;
+                    None
+                }
+                _ => None,
+            };
+            if let (Some(target), Some(input)) = (input, field.input) {
+                changed |= target.value() != input.value();
+                *target = input;
+            }
+        }
+        if changed {
+            state.error = None;
+            state.message_scroll = 0;
+        }
+        event
+    }
+
+    fn apply_launcher_form_event(&mut self, event: FormEvent, platform: &dyn Platform) {
+        match event {
+            FormEvent::Action(FormAction::Submit) => self.save_launcher_run_settings(platform),
+            FormEvent::Action(FormAction::Cancel) => {
+                self.pages.launcher.launcher_run_settings = None
+            }
+            _ => {}
+        }
     }
 
     pub(in crate::session) fn handle_launcher_run_settings_key(
@@ -165,75 +219,9 @@ impl ShellSession {
         key: &KeyInput,
         platform: &dyn Platform,
     ) {
-        if !key.phase.is_press_like() {
-            return;
-        }
-        let Some(state) = self.pages.launcher.launcher_run_settings.as_mut() else {
-            return;
-        };
-        state.field_scroll = None;
-        state.scrollbar_drag = None;
-        let fields = if state.custom {
-            3
-        } else if state.embedded {
-            3
-        } else {
-            1
-        };
-        match key.key {
-            InputKey::Escape => self.pages.launcher.launcher_run_settings = None,
-            InputKey::F(10) if key.phase == InputPhase::Press => {
-                self.save_launcher_run_settings(platform)
-            }
-            InputKey::PageUp => state.message_scroll = state.message_scroll.saturating_sub(3),
-            InputKey::PageDown => state.message_scroll = state.message_scroll.saturating_add(3),
-            InputKey::Tab | InputKey::Down => state.selected = (state.selected + 1) % (fields + 2),
-            InputKey::BackTab | InputKey::Up => {
-                state.selected = (state.selected + fields + 1) % (fields + 2)
-            }
-            InputKey::Enter if key.phase == InputPhase::Press => {
-                let index = state.selected;
-                if index > 0 && index < fields && (!state.custom || index < 2) {
-                    self.save_launcher_run_settings(platform);
-                } else {
-                    self.activate_launcher_run_setting(index, platform);
-                }
-            }
-            InputKey::Space | InputKey::Char(' ')
-                if (state.custom && state.selected == 2
-                    || !state.custom && state.selected == 0)
-                    && key.phase == InputPhase::Press =>
-            {
-                if state.custom {
-                    state.wait_for_enter = !state.wait_for_enter;
-                } else {
-                    state.embedded = !state.embedded;
-                }
-                state.error = None;
-                state.message_scroll = 0;
-            }
-            InputKey::Left | InputKey::Right
-                if !state.custom && state.selected == 0 && key.phase == InputPhase::Press =>
-            {
-                state.embedded = !state.embedded;
-                state.error = None;
-                state.message_scroll = 0;
-            }
-            _ => {
-                let input = match state.selected {
-                    0 if state.custom => Some(&mut state.name),
-                    1 if state.embedded => Some(&mut state.arguments),
-                    2 if state.embedded && !state.custom => Some(&mut state.directory),
-                    _ => None,
-                };
-                if let Some(input) = input {
-                    input.set_focused(true);
-                    input.handle_event_borderless(InputEvent::Key(key.clone()), Rect::default());
-                    state.error = None;
-                    state.message_scroll = 0;
-                }
-            }
-        }
+        let event = self
+            .edit_launcher_form(|form, main| form.handle_event(InputEvent::Key(key.clone()), main));
+        self.apply_launcher_form_event(event, platform);
     }
 
     pub(in crate::session) fn activate_launcher_run_setting(
@@ -241,51 +229,22 @@ impl ShellSession {
         index: usize,
         platform: &dyn Platform,
     ) {
-        let Some(state) = self.pages.launcher.launcher_run_settings.as_mut() else {
-            return;
-        };
-        let fields = if state.custom {
-            3
-        } else if state.embedded {
-            3
-        } else {
-            1
-        };
-        state.selected = index;
-        state.field_scroll = None;
-        state.scrollbar_drag = None;
-        if state.custom && index == 2 {
-            state.wait_for_enter = !state.wait_for_enter;
-            state.error = None;
-            state.message_scroll = 0;
-        } else if index == 0 && !state.custom {
-            state.embedded = !state.embedded;
-            state.error = None;
-            state.message_scroll = 0;
-        } else if index == fields {
-            self.save_launcher_run_settings(platform);
-        } else if index == fields + 1 {
-            self.pages.launcher.launcher_run_settings = None;
-        }
+        let event = self.edit_launcher_form(|form, _| {
+            form.selected = index;
+            form.field_scroll = None;
+            if index < form.fields.len() {
+                form.activate_field(index)
+            } else {
+                form.activate_button(index - form.fields.len())
+            }
+        });
+        self.apply_launcher_form_event(event, platform);
     }
 
     pub(in crate::session) fn paste_launcher_run_settings(&mut self, value: &str) {
-        let Some(state) = self.pages.launcher.launcher_run_settings.as_mut() else {
-            return;
-        };
-        if !state.embedded {
-            return;
-        }
-        let input = match state.selected {
-            0 if state.custom => &mut state.name,
-            1 => &mut state.arguments,
-            2 if !state.custom => &mut state.directory,
-            _ => return,
-        };
-        input.set_focused(true);
-        input.handle_event_borderless(InputEvent::Paste(value.to_owned()), Rect::default());
-        state.error = None;
-        state.message_scroll = 0;
+        self.edit_launcher_form(|form, main| {
+            form.handle_event(InputEvent::Paste(value.to_owned()), main)
+        });
     }
 
     pub(in crate::session) fn save_launcher_run_settings(&mut self, platform: &dyn Platform) {
@@ -398,104 +357,8 @@ impl ShellSession {
         mouse: MouseInput,
         platform: &dyn Platform,
     ) {
-        let Some(form) = self.launcher_run_settings_form() else {
-            return;
-        };
-        let ui::ShellLayout::Full { main, .. } =
-            self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))
-        else {
-            return;
-        };
-        let layout = ui::management_layout(
-            main,
-            &ui::ManagementViewModel {
-                form: Some(form),
-                ..Default::default()
-            },
-        );
-        let state = self.pages.launcher.launcher_run_settings.as_mut().unwrap();
-        let point = mouse.coordinates();
-        if let Some((target, grab)) = state.scrollbar_drag {
-            if matches!(
-                mouse.kind,
-                ui::MouseEventKind::Drag(PointerButton::Left)
-                    | ui::MouseEventKind::Up(PointerButton::Left)
-            ) {
-                if let Some(bar) = layout.scrollbars.iter().find(|bar| bar.target == target) {
-                    let offset = bar.offset_at(point, grab);
-                    if target == ui::ManagementScrollTarget::FormMessage {
-                        state.message_scroll = offset.min(usize::from(u16::MAX)) as u16;
-                    } else {
-                        state.field_scroll = Some(offset);
-                    }
-                }
-                if matches!(mouse.kind, ui::MouseEventKind::Up(_)) {
-                    state.scrollbar_drag = None;
-                }
-                return;
-            }
-        }
-        match mouse.kind {
-            ui::MouseEventKind::Scroll(direction) => {
-                if rect_contains(layout.message, point) {
-                    state.message_scroll = match direction {
-                        ScrollDirection::Up => state.message_scroll.saturating_sub(3),
-                        ScrollDirection::Down => state.message_scroll.saturating_add(3),
-                        _ => state.message_scroll,
-                    };
-                    return;
-                }
-                let offset = layout.field_start;
-                state.field_scroll = Some(match direction {
-                    ScrollDirection::Up => offset.saturating_sub(3),
-                    ScrollDirection::Down => offset.saturating_add(3),
-                    _ => offset,
-                });
-            }
-            ui::MouseEventKind::Down(PointerButton::Left) => {
-                if let Some((index, _)) = layout
-                    .fields
-                    .iter()
-                    .find(|(_, area)| rect_contains(*area, point))
-                    && (*index > 0 || state.custom)
-                    && *index < if state.custom { 2 } else { 3 }
-                    && state.embedded
-                {
-                    state.selected = *index;
-                    let field = &self.launcher_run_settings_form().unwrap().fields[*index];
-                    let area = ui::management_field_input_area(&layout, *index, field);
-                    let state = self.pages.launcher.launcher_run_settings.as_mut().unwrap();
-                    let input = if *index == 0 {
-                        &mut state.name
-                    } else if *index == 1 {
-                        &mut state.arguments
-                    } else {
-                        &mut state.directory
-                    };
-                    input.set_focused(true);
-                    input.handle_event_borderless(InputEvent::Mouse(mouse), area);
-                    return;
-                }
-                if let Some(bar) = layout.scrollbars.iter().find(|bar| {
-                    matches!(
-                        bar.target,
-                        ui::ManagementScrollTarget::FormFields
-                            | ui::ManagementScrollTarget::FormMessage
-                    ) && rect_contains(bar.track, point)
-                }) {
-                    let grab = bar.grab_at(point);
-                    state.scrollbar_drag = Some((bar.target, grab));
-                    let offset = bar.offset_at(point, grab);
-                    if bar.target == ui::ManagementScrollTarget::FormMessage {
-                        state.message_scroll = offset.min(usize::from(u16::MAX)) as u16;
-                    } else {
-                        state.field_scroll = Some(offset);
-                    }
-                    return;
-                }
-                self.activate_launcher_at(point, platform);
-            }
-            _ => {}
-        }
+        let event =
+            self.edit_launcher_form(|form, main| form.handle_confirmed_pointer(mouse, main));
+        self.apply_launcher_form_event(event, platform);
     }
 }
