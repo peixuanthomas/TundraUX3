@@ -134,6 +134,12 @@ impl ShellSession {
             return self.management_button_at(point);
         }
         if self.active_screen() == ShellScreen::Launcher
+            && (self.pages.launcher.context_menu.is_some()
+                || self.pages.launcher.entry_editor.is_some())
+        {
+            return self.launcher_entry_button_at(point);
+        }
+        if self.active_screen() == ShellScreen::Launcher
             && self.pages.launcher.launcher_run_settings.is_some()
             && let ui::ShellLayout::Full { main, .. } =
                 self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))

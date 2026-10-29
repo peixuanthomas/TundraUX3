@@ -32,7 +32,7 @@ impl ShellSession {
         if let InputEvent::Paste(value) = &input
             && !matches!(
                 self.active_screen(),
-                ShellScreen::Editor | ShellScreen::Explorer
+                ShellScreen::Editor | ShellScreen::Explorer | ShellScreen::Launcher
             )
             && self.page_keyboard_identity().is_some()
         {
@@ -905,6 +905,14 @@ impl ShellSession {
             }
             ShellCommand::LauncherRunSettings => {
                 self.open_launcher_run_settings();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherContextMenu(point) => {
+                self.open_launcher_context_menu(point);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherEntryInput(input) => {
+                self.handle_launcher_entry_input(input, platform);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherRunSettingsKey(key) => {

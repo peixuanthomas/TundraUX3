@@ -229,7 +229,15 @@ pub(super) struct LauncherRunSettingsState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LauncherContextMenuState {
+    pub(super) id: String,
+    pub(super) menu: ui::LauncherContextMenu,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherPageState {
+    pub(super) context_menu: Option<LauncherContextMenuState>,
+    pub(super) entry_editor: Option<ui::LauncherEntryEditor>,
     pub(super) organizing: bool,
     pub(super) order: Vec<String>,
     pub(super) launcher_selected_index: usize,
@@ -244,6 +252,8 @@ pub(super) struct LauncherPageState {
 impl Default for LauncherPageState {
     fn default() -> Self {
         Self {
+            context_menu: None,
+            entry_editor: None,
             organizing: false,
             order: Vec::new(),
             launcher_selected_index: 0,

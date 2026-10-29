@@ -121,6 +121,228 @@ impl Fixture {
         self.input(InputEvent::mouse_down(PointerButton::Left, point));
         self.input(InputEvent::mouse_up(PointerButton::Left, point));
     }
+
+    fn main_area(&self) -> Rect {
+        let ui::ShellLayout::Full { main, .. } = self.state.shell_layout_for(Rect::new(
+            0,
+            0,
+            self.state.terminal_size.0,
+            self.state.terminal_size.1,
+        )) else {
+            panic!("full layout");
+        };
+        main
+    }
+
+    fn choose_context_action(&mut self, index: usize, hover: bool) {
+        let layout = self.draw();
+        let selected = self.state.to_launcher_view_model().selected_index.unwrap();
+        let area = layout
+            .items
+            .iter()
+            .find(|item| item.index == selected)
+            .unwrap()
+            .area;
+        self.input(InputEvent::mouse_down(
+            PointerButton::Right,
+            (area.x + 1, area.y),
+        ));
+        self.input(InputEvent::mouse_up(
+            PointerButton::Right,
+            (area.x + 1, area.y),
+        ));
+        let menu = self
+            .state
+            .pages
+            .launcher
+            .context_menu
+            .as_ref()
+            .unwrap()
+            .menu
+            .clone();
+        let (_, rows) = ui::launcher_context_menu_layout(self.main_area(), &menu);
+        self.draw();
+        self.click(rows[index], hover);
+    }
+}
+
+#[test]
+fn context_menu_edits_and_deletes_user_entries_in_both_views() {
+    for (mode, hover) in [
+        (app::launcher::LauncherViewMode::LargeIcons, true),
+        (app::launcher::LauncherViewMode::Details, false),
+    ] {
+        let mut fixture = Fixture::new();
+        fixture.state.pages.launcher.launcher_view_mode = mode;
+        let storage = fixture.state.storage_manager.clone().unwrap();
+        let original_id = storage.load_config().unwrap().launcher.entries[0]
+            .id
+            .clone();
+        fixture.choose_context_action(0, hover);
+        fixture.input(InputEvent::key_with_modifiers(
+            InputKey::Char('a'),
+            InputModifiers::CTRL,
+        ));
+        fixture.input(InputEvent::Paste("中文 renamed".into()));
+        fixture.input(InputEvent::from_key_label("Enter"));
+        assert_eq!(
+            storage.load_config().unwrap().launcher.entries[0]
+                .name
+                .as_deref(),
+            Some("中文 renamed")
+        );
+        assert_eq!(
+            fixture
+                .state
+                .to_launcher_view_model()
+                .items
+                .last()
+                .unwrap()
+                .name,
+            "中文 renamed"
+        );
+        fixture.choose_context_action(0, hover);
+        fixture.input(InputEvent::Paste("discarded".into()));
+        fixture.input(InputEvent::from_key_label("Esc"));
+        assert_eq!(
+            storage.load_config().unwrap().launcher.entries[0]
+                .name
+                .as_deref(),
+            Some("中文 renamed")
+        );
+        fixture.choose_context_action(1, hover);
+        fixture.input(InputEvent::key_with_modifiers(
+            InputKey::Char('a'),
+            InputModifiers::CTRL,
+        ));
+        fixture.input(InputEvent::from_key_label("Backspace"));
+        fixture.input(InputEvent::from_key_label("F10"));
+        assert!(
+            fixture
+                .state
+                .pages
+                .launcher
+                .entry_editor
+                .as_ref()
+                .unwrap()
+                .error
+                .is_some()
+        );
+        fixture.input(InputEvent::Paste("printf 'changed command'".into()));
+        fixture.input(InputEvent::from_key_label("F10"));
+        assert!(fixture.state.pages.launcher.entry_editor.is_none());
+        let record = storage.load_config().unwrap().launcher.entries.remove(0);
+        assert_eq!(record.id, original_id);
+        assert_eq!(record.custom.unwrap().command, "printf 'changed command'");
+        fixture.choose_context_action(2, hover);
+        assert!(fixture.state.page_keyboard_identity().is_some());
+        fixture.input(InputEvent::Paste("中文x\n★ e\u{301}".into()));
+        let draft = fixture.state.pages.launcher.entry_editor.clone().unwrap();
+        assert_eq!(draft.inputs[0].value(), "中文x");
+        assert_eq!(draft.inputs[1].value(), "★ e\u{301}");
+        for input in [
+            InputEvent::from_key_label("z"),
+            InputEvent::Paste("a\nb\nc".into()),
+            InputEvent::Paste("\u{1b}[31m".into()),
+        ] {
+            fixture.input(input);
+            let editor = fixture.state.pages.launcher.entry_editor.as_ref().unwrap();
+            assert_eq!(editor.inputs, draft.inputs);
+            assert!(editor.error.is_some());
+        }
+        fixture.input(InputEvent::from_key_label("F10"));
+        let record = storage.load_config().unwrap().launcher.entries.remove(0);
+        assert_eq!(record.custom.unwrap().icon, "中文x\n★ e\u{301}");
+        assert_eq!(
+            fixture
+                .state
+                .to_launcher_view_model()
+                .items
+                .last()
+                .unwrap()
+                .custom_icon
+                .as_deref(),
+            Some("中文x\n★ e\u{301}")
+        );
+        assert!(!fixture.state.pages.launcher.organizing);
+        fixture.choose_context_action(3, hover);
+        assert!(
+            fixture
+                .state
+                .pages
+                .launcher
+                .launcher_pending_confirmation
+                .is_some()
+        );
+        fixture.input(InputEvent::from_key_label("Esc"));
+        assert_eq!(storage.load_config().unwrap().launcher.entries.len(), 1);
+        fixture.choose_context_action(3, hover);
+        fixture.input(InputEvent::from_key_label("Enter"));
+        assert!(storage.load_config().unwrap().launcher.entries.is_empty());
+        assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
+    }
+}
+
+#[test]
+fn context_menu_outside_clicks_and_canceled_presses_do_not_activate_the_page() {
+    for hover in [false, true] {
+        let mut fixture = Fixture::new();
+        let layout = fixture.draw();
+        let area = layout
+            .items
+            .iter()
+            .find(|item| item.index == fixture.state.built_in_launcher_count())
+            .unwrap()
+            .area;
+        let point = (area.x + 1, area.y);
+        fixture.input(InputEvent::mouse_down(PointerButton::Right, point));
+        let menu = fixture
+            .state
+            .pages
+            .launcher
+            .context_menu
+            .as_ref()
+            .unwrap()
+            .menu
+            .clone();
+        let (menu_area, rows) = ui::launcher_context_menu_layout(fixture.main_area(), &menu);
+        let outside = layout
+            .toolbar_buttons
+            .iter()
+            .find(|button| !rect_contains(menu_area, (button.area.x, button.area.y)))
+            .unwrap()
+            .area;
+        // Keep the old page registry to verify immediate modal ownership.
+        fixture.click(outside, hover);
+        assert!(fixture.state.pages.launcher.context_menu.is_none());
+        assert!(!fixture.state.pages.launcher.organizing);
+        assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
+        fixture.input(InputEvent::mouse_down(PointerButton::Right, point));
+        fixture.draw();
+        fixture.input(InputEvent::mouse_down(
+            PointerButton::Left,
+            (rows[0].x, rows[0].y),
+        ));
+        fixture.input(InputEvent::mouse_moved((outside.x, outside.y)));
+        fixture.input(InputEvent::mouse_up(
+            PointerButton::Left,
+            (outside.x, outside.y),
+        ));
+        assert!(fixture.state.pages.launcher.context_menu.is_some());
+        assert!(fixture.state.pages.launcher.entry_editor.is_none());
+        fixture.input(InputEvent::from_key_label("Esc"));
+        assert!(fixture.state.pages.launcher.context_menu.is_none());
+        assert_eq!(fixture.state.focused_component(), ShellComponent::Launcher);
+        fixture.state.select_launcher_index(0);
+        let layout = fixture.draw();
+        let builtin = layout.items[0].area;
+        fixture.input(InputEvent::mouse_down(
+            PointerButton::Right,
+            (builtin.x, builtin.y),
+        ));
+        assert!(fixture.state.pages.launcher.context_menu.is_none());
+        assert!(fixture.state.pages.launcher.entry_editor.is_none());
+    }
 }
 
 impl Drop for Fixture {
@@ -137,16 +359,16 @@ fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_meth
         fixture.input(InputEvent::from_key_label("F2"));
         fixture.input(InputEvent::from_key_label("Insert"));
         let form = fixture.state.launcher_run_settings_form().unwrap();
-        assert_eq!(form.fields.len(), 4);
-        assert_eq!(form.fields[3].id, "exit");
-        assert_eq!(form.fields[3].value, form.fields[3].choices[0]);
-        for _ in 0..3 {
+        assert_eq!(form.fields.len(), 3);
+        assert_eq!(form.fields[2].id, "exit");
+        assert_eq!(form.fields[2].value, form.fields[2].choices[0]);
+        for _ in 0..2 {
             fixture.input(InputEvent::from_key_label("Tab"));
         }
         assert!(fixture.state.page_keyboard_identity().is_none());
         fixture.input(InputEvent::from_key_label("Right"));
         let form = fixture.state.launcher_run_settings_form().unwrap();
-        assert_eq!(form.fields[3].value, form.fields[3].choices[1]);
+        assert_eq!(form.fields[2].value, form.fields[2].choices[1]);
         let layout = fixture.draw();
         let choice = layout
             .run_settings
@@ -154,17 +376,17 @@ fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_meth
             .unwrap()
             .fields
             .iter()
-            .find(|(index, _)| *index == 3)
+            .find(|(index, _)| *index == 2)
             .unwrap()
             .1;
         fixture.click(choice, hover);
         let form = fixture.state.launcher_run_settings_form().unwrap();
-        assert_eq!(form.fields[3].value, form.fields[3].choices[0]);
-        assert_eq!(form.selected, 3);
-        for _ in 0..3 {
+        assert_eq!(form.fields[2].value, form.fields[2].choices[0]);
+        assert_eq!(form.selected, 2);
+        for _ in 0..2 {
             fixture.input(InputEvent::from_key_label("Shift+Tab"));
         }
-        for text in ["exit choice", "printf done", "[T]"] {
+        for text in ["exit choice", "printf done"] {
             fixture.input(InputEvent::Paste(text.into()));
             fixture.input(InputEvent::from_key_label("Tab"));
         }
@@ -392,10 +614,7 @@ fn organizing_add_cancel_persist_and_delete_only_user_entries() {
             .error
             .is_some()
     );
-    for (index, text) in ["中文 tool", "printf 'hello world'", "[★]"]
-        .iter()
-        .enumerate()
-    {
+    for (index, text) in ["中文 tool", "printf 'hello world'"].iter().enumerate() {
         if index > 0 {
             fixture.input(InputEvent::from_key_label("Tab"));
         }
@@ -415,7 +634,7 @@ fn organizing_add_cancel_persist_and_delete_only_user_entries() {
         .unwrap();
     assert_eq!(custom.name, "中文 tool");
     assert_eq!(custom.command, "printf 'hello world'");
-    assert_eq!(custom.icon, "[★]");
+    assert!(custom.icon.is_empty());
     assert!(!custom.wait_for_enter);
     fixture.input(InputEvent::from_key_label("End"));
     fixture.input(InputEvent::from_key_label("Enter"));

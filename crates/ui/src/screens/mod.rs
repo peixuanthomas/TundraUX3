@@ -48,11 +48,13 @@ pub use user_management::*;
 
 pub use launcher::{
     LauncherConfirmationKind, LauncherConfirmationLayout, LauncherConfirmationViewModel,
-    LauncherDropSide, LauncherDropTarget, LauncherHitTarget, LauncherIconRenderer,
+    LauncherContextMenu, LauncherDropSide, LauncherDropTarget, LauncherEntryAction,
+    LauncherEntryEditor, LauncherEntryEditorLayout, LauncherHitTarget, LauncherIconRenderer,
     LauncherItemCapabilities, LauncherItemLayout, LauncherItemSource, LauncherItemStatus,
     LauncherItemViewModel, LauncherLayout, LauncherRunSettingsLayout, LauncherToolbarAction,
     LauncherToolbarButtonLayout, LauncherToolbarButtonViewModel, LauncherViewMode,
-    LauncherViewModel, launcher_layout, render_launcher_content, render_launcher_overlay,
+    LauncherViewModel, launcher_context_menu_layout, launcher_entry_editor_layout,
+    launcher_entry_overlay_area, launcher_layout, render_launcher_content, render_launcher_overlay,
 };
 pub use settings::{
     SettingsAnimationEditorViewModel, SettingsAnimationLayout, SettingsAppearancePreview,

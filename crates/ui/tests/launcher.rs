@@ -13,6 +13,62 @@ use ui::{
 };
 
 #[test]
+fn launcher_entry_overlays_keep_wide_characters_inside_fixed_frames() {
+    for main in [Rect::new(2, 3, 108, 14), Rect::new(2, 3, 42, 9)] {
+        let menu = ui::LauncherContextMenu {
+            anchor: (main.right(), main.bottom()),
+            selected: 0,
+            command_enabled: true,
+        };
+        let (area, rows) = ui::launcher_context_menu_layout(main, &menu);
+        assert_eq!(area.intersection(main), area);
+        assert!(rows.iter().all(|row| row.intersection(area) == *row));
+        let mut inputs = vec![
+            ui::components::TextInput::new("first"),
+            ui::components::TextInput::new("second"),
+        ];
+        inputs[1].set_value("中文x");
+        let editor = ui::LauncherEntryEditor {
+            id: "test".into(),
+            action: ui::LauncherEntryAction::Icon,
+            inputs,
+            selected: 0,
+            error: None,
+        };
+        let layout = ui::launcher_entry_editor_layout(main, &editor);
+        assert_eq!(layout.area.intersection(main), layout.area);
+        assert_eq!(layout.canvas.unwrap().width, 7);
+        assert_eq!(layout.canvas.unwrap().height, 4);
+        assert!(layout.inputs.iter().all(|row| row.width == 5
+            && row.height == 1
+            && row.intersection(layout.canvas.unwrap()) == *row));
+        let mut model = LauncherViewModel::new(
+            vec![item(0, LauncherItemStatus::Ready)],
+            Some(0),
+            LauncherViewMode::LargeIcons,
+            true,
+        );
+        model.entry_editor = Some(editor);
+        let mut terminal =
+            Terminal::new(TestBackend::new(main.right() + 1, main.bottom() + 1)).unwrap();
+        let context = ui::RenderContext::from_theme(
+            &TundraTheme::default_dark(),
+            Default::default(),
+            Default::default(),
+        );
+        terminal
+            .draw(|frame| ui::render_launcher_overlay(frame, main, &model, &context))
+            .unwrap();
+        let row = layout.inputs[1];
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(row.x, row.y)].symbol(), "中");
+        assert_eq!(buffer[(row.x + 2, row.y)].symbol(), "文");
+        assert_eq!(buffer[(row.x + 4, row.y)].symbol(), "x");
+        assert_ne!(buffer[(row.right(), row.y)].symbol(), "x");
+    }
+}
+
+#[test]
 fn launcher_touch_controls_wrap_in_narrow_layout_and_explain_actions() {
     let model = LauncherViewModel::new(
         (0..30)

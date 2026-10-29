@@ -17,7 +17,7 @@ impl ShellSession {
             embedded: true,
             name: TextInput::new("launcher.custom.name").with_horizontal_scroll(true),
             arguments: TextInput::new("launcher.custom.command").with_horizontal_scroll(true),
-            directory: TextInput::new("launcher.custom.icon").with_horizontal_scroll(true),
+            directory: TextInput::new("launcher.run.directory").with_horizontal_scroll(true),
             selected: 0,
             error: None,
             field_scroll: None,
@@ -114,11 +114,6 @@ impl ShellSession {
                     i18n::tr!("shell-launcher-custom-command"),
                     &state.arguments,
                 ),
-                (
-                    "icon",
-                    i18n::tr!("shell-launcher-custom-icon"),
-                    &state.directory,
-                ),
             ]
             .into_iter()
             .map(|(id, label, input)| ui::ManagementFormField {
@@ -186,7 +181,7 @@ impl ShellSession {
         state.field_scroll = None;
         state.scrollbar_drag = None;
         let fields = if state.custom {
-            4
+            3
         } else if state.embedded {
             3
         } else {
@@ -205,14 +200,14 @@ impl ShellSession {
             }
             InputKey::Enter if key.phase == InputPhase::Press => {
                 let index = state.selected;
-                if index > 0 && index < fields && (!state.custom || index < 3) {
+                if index > 0 && index < fields && (!state.custom || index < 2) {
                     self.save_launcher_run_settings(platform);
                 } else {
                     self.activate_launcher_run_setting(index, platform);
                 }
             }
             InputKey::Space | InputKey::Char(' ') | InputKey::Left | InputKey::Right
-                if (state.custom && state.selected == 3
+                if (state.custom && state.selected == 2
                     || !state.custom && state.selected == 0)
                     && key.phase == InputPhase::Press =>
             {
@@ -228,7 +223,7 @@ impl ShellSession {
                 let input = match state.selected {
                     0 if state.custom => Some(&mut state.name),
                     1 if state.embedded => Some(&mut state.arguments),
-                    2 if state.embedded => Some(&mut state.directory),
+                    2 if state.embedded && !state.custom => Some(&mut state.directory),
                     _ => None,
                 };
                 if let Some(input) = input {
@@ -250,7 +245,7 @@ impl ShellSession {
             return;
         };
         let fields = if state.custom {
-            4
+            3
         } else if state.embedded {
             3
         } else {
@@ -259,7 +254,7 @@ impl ShellSession {
         state.selected = index;
         state.field_scroll = None;
         state.scrollbar_drag = None;
-        if state.custom && index == 3 {
+        if state.custom && index == 2 {
             state.wait_for_enter = !state.wait_for_enter;
             state.error = None;
             state.message_scroll = 0;
@@ -284,7 +279,7 @@ impl ShellSession {
         let input = match state.selected {
             0 if state.custom => &mut state.name,
             1 => &mut state.arguments,
-            2 => &mut state.directory,
+            2 if !state.custom => &mut state.directory,
             _ => return,
         };
         input.set_focused(true);
@@ -307,7 +302,7 @@ impl ShellSession {
             let custom = storage::LauncherCustomCommand {
                 name: state.name.value().to_owned(),
                 command: state.arguments.value().to_owned(),
-                icon: state.directory.value().to_owned(),
+                icon: String::new(),
                 wait_for_enter: state.wait_for_enter,
             };
             self.apply_launcher_command(LauncherCommand::AddCustom(custom), platform);
@@ -452,7 +447,7 @@ impl ShellSession {
                     .iter()
                     .find(|(_, area)| rect_contains(*area, point))
                     && (*index > 0 || state.custom)
-                    && *index < 3
+                    && *index < if state.custom { 2 } else { 3 }
                     && state.embedded
                 {
                     state.selected = *index;

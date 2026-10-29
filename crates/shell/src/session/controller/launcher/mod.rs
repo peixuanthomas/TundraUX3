@@ -1,3 +1,4 @@
+mod edit;
 mod input;
 mod settings;
 pub(in crate::session) mod tasks;
@@ -497,7 +498,9 @@ impl ShellSession {
                             "shell-checking-launcher-items"
                         )));
                         for item in &mut state.items {
-                            item.status = if item.record.executable_kind.is_some() {
+                            item.status = if item.record.custom.is_some() {
+                                LauncherItemStatus::Ready
+                            } else if item.record.executable_kind.is_some() {
                                 LauncherItemStatus::Checking
                             } else {
                                 LauncherItemStatus::NeedsApproval
@@ -565,6 +568,10 @@ impl ShellSession {
         if !self.pages.launcher.organizing {
             return;
         }
+        self.confirm_launcher_remove();
+    }
+
+    fn confirm_launcher_remove(&mut self) {
         if !self.can_manage_launcher() {
             self.update_launcher_state(|state| {
                 state.error = Some(i18n::LocalizedText::from(i18n::msg!(
@@ -586,11 +593,7 @@ impl ShellSession {
         self.pages.launcher.launcher_pending_confirmation =
             Some(LauncherPendingConfirmation::Remove {
                 ids: vec![item.record.id.clone()],
-                label: item
-                    .record
-                    .custom
-                    .as_ref()
-                    .map_or_else(|| item.record.path.clone(), |custom| custom.name.clone()),
+                label: app::launcher::launcher_entry_name(&item.record).to_owned(),
             });
         self.pages.launcher.launcher_confirm_selected = true;
     }
@@ -934,11 +937,7 @@ impl ShellSession {
                     .iter()
                     .enumerate()
                     .map(|(external_index, item)| {
-                        let path = std::path::Path::new(&item.record.path);
-                        let name = path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or(&item.record.path);
+                        let name = app::launcher::launcher_entry_name(&item.record);
                         let type_label = match item.record.executable_kind {
                             Some(LauncherExecutableKind::NativeBinary) => {
                                 i18n::tr!("shell-application")
@@ -959,10 +958,15 @@ impl ShellSession {
                             item.status,
                         );
                         if let Some(custom) = &item.record.custom {
-                            model.name = custom.name.clone();
                             model.path = custom.command.clone();
-                            model.custom_icon = Some(custom.icon.clone());
                         }
+                        model.custom_icon = item
+                            .record
+                            .icon
+                            .as_ref()
+                            .or_else(|| item.record.custom.as_ref().map(|custom| &custom.icon))
+                            .filter(|icon| !icon.is_empty())
+                            .cloned();
                         model.selected = external_index.saturating_add(built_in_count)
                             == self.pages.launcher.launcher_selected_index;
                         model.capabilities.configurable = matches!(
@@ -1012,6 +1016,13 @@ impl ShellSession {
         model.set_organizing(self.pages.launcher.organizing, self.can_manage_launcher());
         model.sort = sort;
         model.run_settings = self.launcher_run_settings_form();
+        model.context_menu = self
+            .pages
+            .launcher
+            .context_menu
+            .as_ref()
+            .map(|state| state.menu.clone());
+        model.entry_editor = self.pages.launcher.entry_editor.clone();
         model.viewport_offset = self.pages.launcher.launcher_viewport_offset;
         model.drop_target = self
             .pages

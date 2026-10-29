@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify launcher paging, organize mode and custom commands in a real Linux PTY."""
+"""Verify launcher menus, bounded icons and custom commands in a real Linux PTY."""
 import fcntl
 import json
 import os
@@ -146,25 +146,62 @@ def main():
             key("Tab")
             ui("text", "printf 'CUSTOM_LAUNCHER_PTY_OK\\n'; exit 75")
             key("Tab")
-            ui("text", "[★]")
-            key("Tab")
             key("Right")
             key("F10")
             toolbar("Done organizing")
             key("End")
             current = snapshot()
             assert "Custom PTY tool" in "\n".join(current["lines"])
-            assert "[★]" in "\n".join(current["lines"])
             import tomllib
             config_file = next(Path(env["XDG_CONFIG_HOME"]).rglob("config.toml"))
             config = tomllib.loads(config_file.read_text())
             custom = next(entry for entry in config["launcher"]["entries"] if entry.get("custom", {}).get("name") == "Custom PTY tool")
-            assert custom["custom"]["icon"] == "[★]"
+            assert custom["custom"]["icon"] == ""
             assert custom["custom"]["wait_for_enter"]
             assert config["launcher"]["order"]
+            custom_id = custom["id"]
+
+            def open_context():
+                card = next(node for node in items() if f"launcher.item.{custom_id}" in node["id"])
+                ui("click", "--id", card["id"], "--button", "right")
+                return until(lambda current: not current["animation_running"]
+                    and any("launcher.menu.0" in node["id"] for node in current["nodes"]))
+
+            def context_action(label):
+                current = open_context()
+                button = node_by(current, lambda node: node["role"] == "button" and node["name"] == label)
+                click(button["id"])
+
+            open_context()
+            ui("click", "--x", 1, "--y", 4)
+            current = until(lambda current: not current["animation_running"]
+                and not any("launcher.menu." in node["id"] for node in current["nodes"]))
+            assert current["page"] == "Launcher"
+            assert not any("launcher.menu." in node["id"] for node in current["nodes"])
+            context_action("Change name")
+            key("a", "--modifiers", "ctrl")
+            ui("text", "Renamed PTY tool")
+            key("F10")
+            context_action("Change launch command")
+            key("a", "--modifiers", "ctrl")
+            ui("text", "printf 'EDITED_LAUNCHER_PTY_OK\\n'; exit 75")
+            key("F10")
+            context_action("Change icon")
+            ui("text", "中文x\n★")
+            ui("text", "!")
+            assert "Icons allow two rows" in "\n".join(snapshot()["lines"])
+            key("F10")
+            current = snapshot()
+            assert "中文x" in "\n".join(current["lines"])
+            config = tomllib.loads(config_file.read_text())
+            custom = next(entry for entry in config["launcher"]["entries"] if entry["id"] == custom_id)
+            assert custom["custom"]["name"] == "Renamed PTY tool"
+            assert custom["custom"]["icon"] == "中文x\n★"
+            assert custom["custom"]["wait_for_enter"]
+            print("PASS: context menu closes outside; name, command and bounded Unicode icon persist")
             key("Enter")
             current = until(lambda current: current["page"] == "CommandLine"
-                and "CUSTOM_LAUNCHER_PTY_OK" in "\n".join(current["lines"])
+                and "EDITED_LAUNCHER_PTY_OK" in "\n".join(current["lines"])
                 and "Press Enter to return." in "\n".join(current["lines"]))
             assert any(node["role"] == "terminal" for node in current["nodes"])
             key("Enter")
@@ -184,6 +221,16 @@ def main():
                 current = until(lambda current: current["page"] == "Launcher" and marker.exists())
                 assert marker.read_text() == "done"
             print("PASS: the default returns immediately after successful and failed custom commands")
+            context_action("Delete this icon")
+            key("Escape")
+            assert any(entry["id"] == custom_id for entry in tomllib.loads(config_file.read_text())["launcher"]["entries"])
+            context_action("Delete this icon")
+            key("Enter")
+            assert not any(entry["id"] == custom_id for entry in tomllib.loads(config_file.read_text())["launcher"]["entries"])
+            key("Home")
+            ui("click", "--id", items()[0]["id"], "--button", "right")
+            assert not any("launcher.menu." in node["id"] for node in snapshot()["nodes"])
+            print("PASS: deletion confirms or cancels; built-in entries retain their restrictions")
         except Exception:
             print("Last snapshot:", json.dumps(locals().get("current"), ensure_ascii=False), file=sys.stderr)
             visible = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output[-16000:]))
