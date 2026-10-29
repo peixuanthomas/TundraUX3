@@ -1,5 +1,7 @@
 # ascii-assets
 
+中英文 modules/ui-launcher.ftl 包含整理模式、新增启动命令与文字图案的表单说明，以及翻页和排序帮助。
+
 中英文 `modules/terminal-launcher.ftl` 提供 Launcher 运行设置、参数和目录检查，以及嵌入终端的启动、输入和关闭提示。
 
 中英文 `modules/selection.ftl` 提供可点击多选入口、已选数量和整页操作限制，沿用现有语言包自动加载。

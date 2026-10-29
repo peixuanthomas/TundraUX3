@@ -214,6 +214,8 @@ impl Default for SystemStatusPageState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherRunSettingsState {
+    pub(super) custom: bool,
+    pub(super) name: ui::components::TextInput,
     pub(super) id: String,
     pub(super) embedded: bool,
     pub(super) arguments: ui::components::TextInput,
@@ -227,6 +229,8 @@ pub(super) struct LauncherRunSettingsState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherPageState {
+    pub(super) organizing: bool,
+    pub(super) order: Vec<String>,
     pub(super) launcher_selected_index: usize,
     pub(super) launcher_view_mode: app::launcher::LauncherViewMode,
     pub(super) launcher_viewport_offset: usize,
@@ -239,6 +243,8 @@ pub(super) struct LauncherPageState {
 impl Default for LauncherPageState {
     fn default() -> Self {
         Self {
+            organizing: false,
+            order: Vec::new(),
             launcher_selected_index: 0,
             launcher_view_mode: app::launcher::LauncherViewMode::LargeIcons,
             launcher_viewport_offset: 0,

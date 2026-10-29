@@ -42,7 +42,22 @@ impl ShellSession {
             return (target, ShellCommand::RecordInput);
         }
         match key.key {
+            InputKey::F(2) if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherOrganize)
+            }
+            InputKey::Insert if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherAdd)
+            }
+            InputKey::Escape if self.pages.launcher.organizing => {
+                (target, ShellCommand::LauncherOrganize)
+            }
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseLauncher),
+            InputKey::Left if self.pages.launcher.organizing && key.modifiers.shift => {
+                (target, ShellCommand::LauncherMove(-1))
+            }
+            InputKey::Right if self.pages.launcher.organizing && key.modifiers.shift => {
+                (target, ShellCommand::LauncherMove(1))
+            }
             InputKey::Left => (target, ShellCommand::LauncherPrevious),
             InputKey::Right => (target, ShellCommand::LauncherNext),
             InputKey::Up => (target, ShellCommand::LauncherUp),

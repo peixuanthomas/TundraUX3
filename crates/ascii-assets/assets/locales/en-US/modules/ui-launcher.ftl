@@ -30,3 +30,15 @@ ui-launcher-item-count = { $count ->
 
 ui-launcher-empty = No launcher shortcuts yet
 ui-launcher-empty-open-explorer = Enter Open File Explorer
+
+ui-launcher-organize = Organize
+ui-launcher-organize-done = Done organizing
+ui-launcher-add = Add launcher
+shell-launcher-custom-name = Name
+shell-launcher-custom-command = Launch command
+shell-launcher-custom-icon = Icon pattern (text)
+shell-launcher-custom-help = Enter a name, shell command and text icon. The command runs in the embedded terminal.
+app-launcher-custom-required = Name and launch command are required.
+ui-launcher-reorder-help = Reorder in organize mode (or drag icons)
+ui-launcher-page-help = Change page; mouse wheel also changes pages
+ui-launcher-organizing-count = Organizing { $count } launchers

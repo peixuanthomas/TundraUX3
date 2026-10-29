@@ -71,7 +71,9 @@ impl LauncherState {
                 .iter()
                 .cloned()
                 .map(|record| LauncherItem {
-                    status: if record.executable_kind.is_some() {
+                    status: if record.custom.is_some() {
+                        LauncherItemStatus::Ready
+                    } else if record.executable_kind.is_some() {
                         LauncherItemStatus::Checking
                     } else {
                         LauncherItemStatus::NeedsApproval
@@ -132,6 +134,8 @@ pub enum LauncherEffect {
 pub enum LauncherCommand {
     Refresh,
     AddPaths(Vec<PathBuf>),
+    AddCustom(storage::LauncherCustomCommand),
+    SetOrder(Vec<String>),
     Reorder {
         id: String,
         insertion_index: usize,
@@ -250,6 +254,8 @@ impl LauncherController {
         state.error = None;
         let result = match command {
             LauncherCommand::Refresh => self.refresh(state, platform),
+            LauncherCommand::AddCustom(custom) => self.add_custom(state, custom, session, storage),
+            LauncherCommand::SetOrder(order) => self.set_order(order, session, storage),
             LauncherCommand::AddPaths(paths) => self.add(state, paths, session, platform, storage),
             LauncherCommand::Reorder {
                 id,
@@ -273,6 +279,48 @@ impl LauncherController {
                 LauncherEffect::None
             }
         }
+    }
+
+    fn add_custom(
+        &self,
+        state: &mut LauncherState,
+        custom: storage::LauncherCustomCommand,
+        session: Option<&AuthSession>,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        self.authorize(session, PermissionAction::ExecuteCommandLine)?;
+        if custom.name.trim().is_empty() || custom.command.trim().is_empty() {
+            return Err(LauncherError::Localized(LocalizedError::new(
+                "UX_LAUNCH_INVALID_COMMAND",
+                msg!("app-launcher-custom-required"),
+            )));
+        }
+        let mut config = storage.load_config()?;
+        let id = new_id(Path::new(&custom.command), &config.launcher);
+        config.launcher.entries.push(LauncherEntryRecord {
+            id,
+            custom: Some(custom),
+            added_by_user_id: session.unwrap().user_id.clone(),
+            added_at_epoch_ms: epoch_millis(),
+            ..Default::default()
+        });
+        storage.save_config(&config)?;
+        state.reset(&config.launcher);
+        Ok(LauncherEffect::None)
+    }
+
+    fn set_order(
+        &self,
+        order: Vec<String>,
+        session: Option<&AuthSession>,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        let mut config = storage.load_config()?;
+        config.launcher.order = order;
+        storage.save_config(&config)?;
+        Ok(LauncherEffect::None)
     }
 
     fn refresh(
@@ -452,6 +500,25 @@ impl LauncherController {
             .iter()
             .find(|entry| entry.id == id)
             .ok_or_else(|| LauncherError::MissingEntry(id.to_string()))?;
+        if let Some(custom) = &entry.custom {
+            self.authorize(session, PermissionAction::ExecuteCommandLine)?;
+            let (path, args) = if cfg!(windows) {
+                (
+                    PathBuf::from("cmd.exe"),
+                    vec!["/C".into(), custom.command.clone()],
+                )
+            } else {
+                (
+                    PathBuf::from("/bin/sh"),
+                    vec!["-c".into(), custom.command.clone()],
+                )
+            };
+            return Ok(LauncherEffect::OpenTerminalRequested {
+                path,
+                args,
+                directory: None,
+            });
+        }
         let status = verify(entry, platform)?;
         state.set_item_status(id, status);
         if status != LauncherItemStatus::Ready {
@@ -542,6 +609,7 @@ pub fn prepare_launcher_entry(
         added_by_user_id: added_by_user_id.to_string(),
         added_at_epoch_ms: epoch_millis(),
         terminal: None,
+        custom: None,
     }))
 }
 
@@ -665,6 +733,9 @@ fn verify(
     entry: &LauncherEntryRecord,
     _platform: &dyn Platform,
 ) -> Result<LauncherItemStatus, LauncherError> {
+    if entry.custom.is_some() {
+        return Ok(LauncherItemStatus::Ready);
+    }
     if entry.executable_kind.is_none() {
         return Ok(LauncherItemStatus::NeedsApproval);
     }

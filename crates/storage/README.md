@@ -1,5 +1,7 @@
 # storage
 
+Launcher 的 order 保存内置与用户条目的统一 ID 顺序；条目的可选 custom 保存 name、icon、command，缺省字段兼容旧配置。
+
 `storage` 读取和保存应用文档，检查格式版本，并保留损坏原件供排查。平台路径和文件操作由 `platform` 提供。
 
 Launcher 条目的可选 `terminal` 设置保存参数数组和工作目录，用于嵌入终端启动。旧条目缺少此字段时继续使用系统启动方式，参数中的空格、中文和特殊字符原样保存。

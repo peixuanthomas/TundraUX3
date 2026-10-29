@@ -1072,13 +1072,15 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
             .collect::<Vec<_>>(),
         vec![
             ui::LauncherToolbarAction::Open,
-            ui::LauncherToolbarAction::Remove,
             ui::LauncherToolbarAction::Refresh,
             ui::LauncherToolbarAction::ToggleView,
             ui::LauncherToolbarAction::RunSettings,
+            ui::LauncherToolbarAction::Organize,
         ]
     );
 
+    state.apply_input_with_platform(InputEvent::from_key_label("F2"), &platform);
+    let launcher = state.to_launcher_view_model();
     let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
         panic!("Launcher drag test requires the full shell layout");
@@ -1181,6 +1183,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     );
 
     let layout = ui::launcher_layout(main, &launcher);
+    state.apply_input_with_platform(InputEvent::from_key_label("F2"), &platform);
     let executable_area = area_for_id(&layout, &launcher, &executable_id);
     let executable_point = (executable_area.x + 1, executable_area.y + 1);
     state.apply_input_with_platform(

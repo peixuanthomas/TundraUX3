@@ -195,10 +195,10 @@ fn toolbar_management_actions_are_admin_only() {
             .collect::<Vec<_>>(),
         vec![
             LauncherToolbarAction::Open,
-            LauncherToolbarAction::Remove,
             LauncherToolbarAction::Refresh,
             LauncherToolbarAction::ToggleView,
             LauncherToolbarAction::RunSettings,
+            LauncherToolbarAction::Organize,
         ]
     );
     assert!(admin.toolbar[0].enabled);

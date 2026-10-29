@@ -644,6 +644,7 @@ pub enum ExplorerSortDirection {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct LauncherConfig {
+    pub order: Vec<String>,
     pub entries: Vec<LauncherEntryRecord>,
     /// Legacy input retained only so schema-1 configurations can be read. Values are moved into
     /// `entries` during normalization and are never emitted again.
@@ -858,6 +859,7 @@ impl LauncherConfig {
                 added_by_user_id: "legacy".to_string(),
                 added_at_epoch_ms: 0,
                 terminal: None,
+                custom: None,
             });
         }
         self.pinned_apps.clear();
@@ -869,6 +871,7 @@ impl LauncherConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct LauncherEntryRecord {
+    pub custom: Option<LauncherCustomCommand>,
     pub id: String,
     /// A canonical, absolute path recorded by the admin approval workflow.
     pub path: String,
@@ -888,6 +891,14 @@ pub struct LauncherEntryRecord {
 pub struct LauncherTerminalSettings {
     pub arguments: Vec<String>,
     pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LauncherCustomCommand {
+    pub name: String,
+    pub icon: String,
+    pub command: String,
 }
 
 /// The executable classification persisted with a Launcher approval.

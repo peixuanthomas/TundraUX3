@@ -159,7 +159,11 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                     row("Enter", i18n::tr!("ui-help-launcher-open")),
                     row("V", i18n::tr!("ui-help-launcher-view")),
                     row("F4", i18n::tr!("ui-help-launcher-run-settings")),
+                    row("F2", i18n::tr!("ui-launcher-organize")),
+                    row("Ins", i18n::tr!("ui-launcher-add")),
                     row("Del", i18n::tr!("ui-help-launcher-remove")),
+                    row("Shift+←/→", i18n::tr!("ui-launcher-reorder-help")),
+                    row("PgUp/PgDn", i18n::tr!("ui-launcher-page-help")),
                 ]),
                 advanced(vec![
                     row("R/F5", i18n::tr!("ui-help-launcher-refresh")),

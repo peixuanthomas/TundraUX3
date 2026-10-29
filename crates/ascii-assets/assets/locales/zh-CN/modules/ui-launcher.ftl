@@ -27,3 +27,15 @@ ui-launcher-item-count = { $count } 项 · Enter 启动 · Esc 返回
 
 ui-launcher-empty = 还没有启动器快捷方式
 ui-launcher-empty-open-explorer = Enter 打开文件浏览器
+
+ui-launcher-organize = 整理模式
+ui-launcher-organize-done = 完成整理
+ui-launcher-add = 新增启动项
+shell-launcher-custom-name = 名称
+shell-launcher-custom-command = 启动命令
+shell-launcher-custom-icon = 图标图案（文字）
+shell-launcher-custom-help = 输入名称、Shell 启动命令和文字图案。命令将在通用内嵌终端中运行。
+app-launcher-custom-required = 名称和启动命令不能为空。
+ui-launcher-reorder-help = 整理模式中排序（也可拖动图标）
+ui-launcher-page-help = 翻页；鼠标滚轮也用于翻页
+ui-launcher-organizing-count = 正在整理 { $count } 个启动项

@@ -1,5 +1,7 @@
 # app
 
+Launcher 的 AddCustom 检查管理与命令行权限，保存名称、文字图案和 Shell 命令。RequestLaunch 使用现有 OpenTerminalRequested，在 Unix 交给 /bin/sh -c，在 Windows 交给 cmd.exe /C。SetOrder 保存包含内置入口的图标顺序，不把内置入口写成可删除条目。
+
 内置应用目录提供“任务”入口；它与标题栏打开同一任务页，名称和说明使用当前语言。
 
 Launcher 可为已批准的原生程序和可直接执行的 Unix 脚本保存嵌入终端运行设置，参数以数组传递，目录在保存和启动时检查。修改沿用 Launcher 管理权限，嵌入启动同时要求命令行权限，脚本仍需二次确认；启动 effect 由 Shell 创建独立终端页面。

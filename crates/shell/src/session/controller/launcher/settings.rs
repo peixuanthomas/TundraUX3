@@ -6,6 +6,26 @@ use ui::components::TextInput;
 mod tests;
 
 impl ShellSession {
+    pub(in crate::session) fn open_launcher_add(&mut self) {
+        if !self.pages.launcher.organizing || !self.can_manage_launcher() {
+            return;
+        }
+        self.pages.launcher.launcher_run_settings = Some(page_state::LauncherRunSettingsState {
+            custom: true,
+            id: String::new(),
+            embedded: true,
+            name: TextInput::new("launcher.custom.name").with_horizontal_scroll(true),
+            arguments: TextInput::new("launcher.custom.command").with_horizontal_scroll(true),
+            directory: TextInput::new("launcher.custom.icon").with_horizontal_scroll(true),
+            selected: 0,
+            error: None,
+            field_scroll: None,
+            message_scroll: 0,
+            scrollbar_drag: None,
+        });
+        self.pages.launcher.launcher_drag = None;
+    }
+
     pub(in crate::session) fn open_launcher_run_settings(&mut self) {
         if !self.can_manage_launcher() {
             return;
@@ -34,6 +54,8 @@ impl ShellSession {
             directory.set_value(settings.working_directory.as_deref().unwrap_or_default());
         }
         self.pages.launcher.launcher_run_settings = Some(page_state::LauncherRunSettingsState {
+            custom: false,
+            name: TextInput::new("launcher.custom.name"),
             id: item.record.id.clone(),
             embedded: item.record.terminal.is_some(),
             arguments,
@@ -82,14 +104,48 @@ impl ShellSession {
                 },
             ]);
         }
+        if state.custom {
+            fields = [
+                ("name", i18n::tr!("shell-launcher-custom-name"), &state.name),
+                (
+                    "command",
+                    i18n::tr!("shell-launcher-custom-command"),
+                    &state.arguments,
+                ),
+                (
+                    "icon",
+                    i18n::tr!("shell-launcher-custom-icon"),
+                    &state.directory,
+                ),
+            ]
+            .into_iter()
+            .map(|(id, label, input)| ui::ManagementFormField {
+                id: id.into(),
+                label,
+                value: input.value().to_owned(),
+                input: Some(input.clone()),
+                ..Default::default()
+            })
+            .collect();
+        }
         Some(ui::ManagementForm {
             identity: format!("launcher-run:{}", state.id),
-            title: i18n::tr!("shell-launcher-run-settings-title"),
+            title: if state.custom {
+                i18n::tr!("ui-launcher-add")
+            } else {
+                i18n::tr!("shell-launcher-run-settings-title")
+            },
             message: state
                 .error
                 .as_ref()
                 .map(i18n::LocalizedText::render_current)
-                .unwrap_or_else(|| i18n::tr!("shell-launcher-run-help")),
+                .unwrap_or_else(|| {
+                    if state.custom {
+                        i18n::tr!("shell-launcher-custom-help")
+                    } else {
+                        i18n::tr!("shell-launcher-run-help")
+                    }
+                }),
             fields,
             selected: state.selected,
             field_scroll: state.field_scroll,
@@ -134,7 +190,7 @@ impl ShellSession {
                 }
             }
             InputKey::Space | InputKey::Char(' ') | InputKey::Left | InputKey::Right
-                if state.selected == 0 && key.phase == InputPhase::Press =>
+                if !state.custom && state.selected == 0 && key.phase == InputPhase::Press =>
             {
                 state.embedded = !state.embedded;
                 state.error = None;
@@ -142,6 +198,7 @@ impl ShellSession {
             }
             _ => {
                 let input = match state.selected {
+                    0 if state.custom => Some(&mut state.name),
                     1 if state.embedded => Some(&mut state.arguments),
                     2 if state.embedded => Some(&mut state.directory),
                     _ => None,
@@ -168,7 +225,7 @@ impl ShellSession {
         state.selected = index;
         state.field_scroll = None;
         state.scrollbar_drag = None;
-        if index == 0 {
+        if index == 0 && !state.custom {
             state.embedded = !state.embedded;
             state.error = None;
             state.message_scroll = 0;
@@ -187,6 +244,7 @@ impl ShellSession {
             return;
         }
         let input = match state.selected {
+            0 if state.custom => &mut state.name,
             1 => &mut state.arguments,
             2 => &mut state.directory,
             _ => return,
@@ -207,6 +265,29 @@ impl ShellSession {
         let Some(state) = self.pages.launcher.launcher_run_settings.as_ref() else {
             return;
         };
+        if state.custom {
+            let custom = storage::LauncherCustomCommand {
+                name: state.name.value().to_owned(),
+                command: state.arguments.value().to_owned(),
+                icon: state.directory.value().to_owned(),
+            };
+            self.apply_launcher_command(LauncherCommand::AddCustom(custom), platform);
+            if let Some(error) = self
+                .app
+                .launcher_state()
+                .and_then(|state| state.error.clone())
+            {
+                self.pages
+                    .launcher
+                    .launcher_run_settings
+                    .as_mut()
+                    .unwrap()
+                    .error = Some(error);
+            } else {
+                self.pages.launcher.launcher_run_settings = None;
+            }
+            return;
+        }
         let settings = if state.embedded {
             let arguments = match shell_words::split(state.arguments.value()) {
                 Ok(arguments) => arguments,
@@ -331,14 +412,16 @@ impl ShellSession {
                     .fields
                     .iter()
                     .find(|(_, area)| rect_contains(*area, point))
-                    && *index > 0
+                    && (*index > 0 || state.custom)
                     && state.embedded
                 {
                     state.selected = *index;
                     let field = &self.launcher_run_settings_form().unwrap().fields[*index];
                     let area = ui::management_field_input_area(&layout, *index, field);
                     let state = self.pages.launcher.launcher_run_settings.as_mut().unwrap();
-                    let input = if *index == 1 {
+                    let input = if *index == 0 {
+                        &mut state.name
+                    } else if *index == 1 {
                         &mut state.arguments
                     } else {
                         &mut state.directory

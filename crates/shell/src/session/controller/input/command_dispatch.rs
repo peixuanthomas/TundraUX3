@@ -858,6 +858,18 @@ impl ShellSession {
                 self.select_launcher_row(-1);
                 ShellAction::Redraw
             }
+            ShellCommand::LauncherMove(delta) => {
+                self.move_launcher_item(delta, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherOrganize => {
+                self.toggle_launcher_organize();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherAdd => {
+                self.open_launcher_add();
+                ShellAction::Redraw
+            }
             ShellCommand::LauncherPageUp => {
                 self.page_launcher(-1);
                 ShellAction::Redraw

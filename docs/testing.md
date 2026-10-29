@@ -170,3 +170,11 @@ Shell 的 `page_lifecycle`、`auto_admin` 和 `update_cancellation_tests` 覆盖
 ## 编辑器大文件回归与基准
 
 运行方法、测量口径和 1/10/100 MiB 原始结果见 [Source 编辑器的大文件计算](editor-scalability.md)。
+
+## 启动器整理模式
+
+`cargo test --locked -p shell --lib controller::launcher::settings::tests` 覆盖图标和列表的整页滚动、首页末页边界、整理模式切换、新增草稿取消与必填检查、保存恢复、内置项不可删除、用户项删除确认、鼠标/无悬停拖动、Esc 取消拖动和键盘排序。应用层 `cargo test --locked -p app --test launcher` 验证自定义命令保存、权限与通用终端启动 effect；UI 和 storage 的 launcher 测试保留布局和旧配置兼容检查。
+
+构建 Shell 与 CLI 后运行 `python3 scripts/tests/launcher-organize-smoke.py target/debug/tundra-shell`。脚本使用隔离配置及真实 Linux PTY，通过外部 CLI 完成首次设置、滚轮翻页、拖动内置图标、新增取消、自定义名称/文字图案/命令保存，并检查通用内嵌终端中的实际命令输出与退出后的终端模式恢复。
+
+2026-10-29 云 Linux 验证中，上述定向回归、PTY 脚本、全工作区 all-targets/all-features 编译及 4,104 对中英文消息校验通过。环境不是 WSL，Windows/macOS、宿主原生图片显示与物理触屏未实机验证。完整 workspace 测试在 CLI 的 `embedded_children_linux` 两项守护子进程退出用例发生清理超时；该容器缺少 `/proc/<pid>/task/<tid>/children` 接口，不能把定向通过描述为全工作区测试全部通过。

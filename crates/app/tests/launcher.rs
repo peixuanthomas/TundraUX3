@@ -813,3 +813,72 @@ fn unix_millis() -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[test]
+fn custom_command_persists_and_uses_terminal_with_command_permission() {
+    let fixture = Fixture::new("custom-command");
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    let custom = storage::LauncherCustomCommand {
+        name: "my tool".into(),
+        icon: "[★]".into(),
+        command: "printf 'hello world'".into(),
+    };
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddCustom(custom.clone()),
+        None,
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_some());
+    assert!(storage.load_config().unwrap().launcher.entries.is_empty());
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddCustom(custom.clone()),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_none(), "{:?}", state.error);
+    let mut loaded = controller.load(&storage).unwrap();
+    assert_eq!(loaded.items[0].record.custom.as_ref(), Some(&custom));
+    assert_eq!(
+        verify_launcher_entry(&loaded.items[0].record, &fixture.platform).unwrap(),
+        LauncherItemStatus::Ready
+    );
+    let id = loaded.items[0].record.id.clone();
+    let effect = controller.apply(
+        &mut loaded,
+        LauncherCommand::RequestLaunch(id.clone()),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let LauncherEffect::OpenTerminalRequested {
+        path,
+        args,
+        directory,
+    } = effect
+    else {
+        panic!("terminal required: {effect:?}");
+    };
+    assert_eq!(
+        path,
+        PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" })
+    );
+    assert_eq!(args.last(), Some(&custom.command));
+    assert_eq!(directory, None);
+    assert_eq!(
+        controller.apply(
+            &mut loaded,
+            LauncherCommand::RequestLaunch(id),
+            None,
+            &fixture.platform,
+            &storage
+        ),
+        LauncherEffect::None
+    );
+    assert!(loaded.error.is_some());
+}

@@ -11,7 +11,11 @@ impl ShellSession {
                     .launcher
                     .launcher_run_settings
                     .as_ref()
-                    .is_some_and(|state| state.embedded && matches!(state.selected, 1 | 2)),
+                    .is_some_and(|state| {
+                        state.embedded
+                            && (matches!(state.selected, 1 | 2)
+                                || state.custom && state.selected == 0)
+                    }),
                 Some(ShellComponent::Explorer) => matches!(
                     self.resolved_explorer_overlay(),
                     Some(overlays::ResolvedExplorerOverlay::Input(_))
@@ -105,6 +109,7 @@ impl ShellSession {
                 if let Some(state) = &mut self.pages.launcher.launcher_run_settings
                     && state.embedded
                     && !matches!(state.selected, 1 | 2)
+                    && !(state.custom && state.selected == 0)
                 {
                     state.selected = 1;
                 }

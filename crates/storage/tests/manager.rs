@@ -220,6 +220,7 @@ fn toml_and_json_documents_round_trip() {
                 added_by_user_id: "admin".to_string(),
                 added_at_epoch_ms: 99,
                 terminal: None,
+                custom: None,
             }],
             ..LauncherConfig::default()
         },

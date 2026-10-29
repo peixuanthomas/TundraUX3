@@ -284,3 +284,162 @@ fn launcher_wheel_pages_to_boundaries_in_both_views() {
         assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
     }
 }
+
+#[test]
+fn organizing_add_cancel_persist_and_delete_only_user_entries() {
+    let mut fixture = Fixture::new();
+    fixture.input(InputEvent::from_key_label("Insert"));
+    fixture.input(InputEvent::from_key_label("Delete"));
+    assert!(fixture.state.pages.launcher.launcher_run_settings.is_none());
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_none()
+    );
+    fixture.input(InputEvent::from_key_label("F2"));
+    assert!(fixture.state.pages.launcher.organizing);
+    fixture.input(InputEvent::from_key_label("Home"));
+    fixture.input(InputEvent::from_key_label("Delete"));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_none()
+    );
+    fixture.input(InputEvent::from_key_label("Insert"));
+    assert!(fixture.state.page_keyboard_identity().is_some());
+    fixture.input(InputEvent::Paste("discard".into()));
+    fixture.input(InputEvent::from_key_label("Esc"));
+    assert_eq!(fixture.state.app.launcher_state().unwrap().items.len(), 1);
+    fixture.input(InputEvent::from_key_label("Insert"));
+    fixture.input(InputEvent::from_key_label("F10"));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_run_settings
+            .as_ref()
+            .unwrap()
+            .error
+            .is_some()
+    );
+    for (index, text) in ["中文 tool", "printf 'hello world'", "[★]"]
+        .iter()
+        .enumerate()
+    {
+        if index > 0 {
+            fixture.input(InputEvent::from_key_label("Tab"));
+        }
+        fixture.input(InputEvent::Paste((*text).into()));
+    }
+    fixture.input(InputEvent::from_key_label("F10"));
+    assert!(fixture.state.pages.launcher.launcher_run_settings.is_none());
+    let storage = fixture.state.storage_manager.clone().unwrap();
+    let config = storage.load_config().unwrap();
+    let custom = config
+        .launcher
+        .entries
+        .last()
+        .unwrap()
+        .custom
+        .as_ref()
+        .unwrap();
+    assert_eq!(custom.name, "中文 tool");
+    assert_eq!(custom.command, "printf 'hello world'");
+    assert_eq!(custom.icon, "[★]");
+    fixture.input(InputEvent::from_key_label("End"));
+    fixture.input(InputEvent::from_key_label("Enter"));
+    assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
+    fixture.input(InputEvent::from_key_label("Delete"));
+    assert!(
+        fixture
+            .state
+            .to_launcher_view_model()
+            .confirmation
+            .unwrap()
+            .message
+            .contains("中文 tool")
+    );
+    fixture.input(InputEvent::from_key_label("Esc"));
+    assert_eq!(storage.load_config().unwrap().launcher.entries.len(), 2);
+    fixture.input(InputEvent::from_key_label("Delete"));
+    fixture.input(InputEvent::from_key_label("Enter"));
+    assert_eq!(storage.load_config().unwrap().launcher.entries.len(), 1);
+    fixture.input(InputEvent::from_key_label("Esc"));
+    assert!(!fixture.state.pages.launcher.organizing);
+    assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
+}
+
+#[test]
+fn organize_pointer_and_keyboard_reorder_builtin_icons_and_reopen() {
+    for hover in [false, true] {
+        let mut fixture = Fixture::new();
+        fixture.state.select_launcher_index(0);
+        let layout = fixture.draw();
+        let button = layout
+            .toolbar_buttons
+            .iter()
+            .find(|b| b.action == ui::LauncherToolbarAction::Organize)
+            .unwrap()
+            .area;
+        fixture.click(button, hover);
+        assert!(fixture.state.pages.launcher.organizing);
+        let layout = fixture.draw();
+        let before = fixture
+            .state
+            .to_launcher_view_model()
+            .items
+            .iter()
+            .map(|i| i.id.clone())
+            .collect::<Vec<_>>();
+        let source = layout.items[0].area;
+        let target = layout.items[1].area;
+        let start = (source.x + 1, source.y + 1);
+        let end = (target.right() - 1, target.y + 1);
+        fixture.input(InputEvent::mouse_down(PointerButton::Left, start));
+        fixture.input(InputEvent::mouse_drag(PointerButton::Left, end));
+        fixture.input(InputEvent::from_key_label("Esc"));
+        fixture.input(InputEvent::mouse_up(PointerButton::Left, end));
+        assert!(fixture.state.pages.launcher.organizing);
+        assert_eq!(
+            fixture.state.to_launcher_view_model().items[0].id,
+            before[0]
+        );
+        fixture.input(InputEvent::mouse_down(PointerButton::Left, start));
+        fixture.input(InputEvent::mouse_drag(PointerButton::Left, end));
+        fixture.input(InputEvent::mouse_up(PointerButton::Left, end));
+        let after = fixture
+            .state
+            .to_launcher_view_model()
+            .items
+            .iter()
+            .map(|i| i.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(after[0], before[1]);
+        assert_eq!(after[1], before[0]);
+        assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
+        let storage = fixture.state.storage_manager.clone().unwrap();
+        assert_eq!(storage.load_config().unwrap().launcher.order, after);
+        fixture.input(InputEvent::key_with_modifiers(
+            InputKey::Left,
+            InputModifiers::SHIFT,
+        ));
+        assert_eq!(
+            fixture.state.to_launcher_view_model().items[0].id,
+            before[0]
+        );
+        fixture.state.close_launcher();
+        fixture.state.open_launcher(&fixture.platform);
+        assert!(!fixture.state.pages.launcher.organizing);
+        assert_eq!(
+            fixture.state.to_launcher_view_model().items[0].id,
+            before[0]
+        );
+    }
+}
