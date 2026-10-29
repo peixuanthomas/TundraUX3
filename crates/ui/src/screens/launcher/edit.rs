@@ -80,7 +80,7 @@ pub struct LauncherEntryEditorLayout {
 pub fn launcher_context_menu_layout(main: Rect, menu: &LauncherContextMenu) -> (Rect, Vec<Rect>) {
     let width = LauncherEntryAction::ALL
         .iter()
-        .map(|action| terminal_width(&action.label()))
+        .map(|action| Button::new("", action.label()).rendered_label_width())
         .max()
         .unwrap_or(0)
         .saturating_add(6)

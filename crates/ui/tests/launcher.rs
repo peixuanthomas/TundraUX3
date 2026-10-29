@@ -4,6 +4,7 @@ use composition as ui;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use unicode_width::UnicodeWidthStr;
 use ui::{
     HomeDisplayMode, LauncherConfirmationKind, LauncherConfirmationViewModel, LauncherDropSide,
     LauncherDropTarget, LauncherHitTarget, LauncherItemStatus, LauncherItemViewModel,
@@ -11,6 +12,47 @@ use ui::{
     ShellChromeViewModel, ShellLayout, StatusViewModel, TundraTheme, compute_shell_layout,
     launcher_layout, render_launcher,
 };
+
+#[test]
+fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let load = i18n::LanguageSnapshot::load(&assets, language, 1).unwrap();
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(load.snapshot));
+        for main in [Rect::new(2, 3, 108, 14), Rect::new(2, 3, 42, 9)] {
+            let menu = ui::LauncherContextMenu {
+                anchor: (main.right(), main.bottom()),
+                selected: 0,
+                command_enabled: true,
+            };
+            let mut model = LauncherViewModel::new(vec![], None, LauncherViewMode::LargeIcons, true);
+            model.context_menu = Some(menu.clone());
+            let (area, rows) = ui::launcher_context_menu_layout(main, &menu);
+            let mut terminal =
+                Terminal::new(TestBackend::new(main.right(), main.bottom())).unwrap();
+            let context = ui::RenderContext::from_theme(
+                &TundraTheme::default_dark(),
+                Default::default(),
+                Default::default(),
+            );
+            terminal
+                .draw(|frame| ui::render_launcher_overlay(frame, main, &model, &context))
+                .unwrap();
+            assert_eq!(area.intersection(main), area);
+            for (action, row) in ui::LauncherEntryAction::ALL.iter().zip(rows) {
+                let label = format!("[{}]", action.label());
+                let mut rendered = String::new();
+                let mut x = row.x;
+                while x < row.right() {
+                    let symbol = terminal.backend().buffer()[(x, row.y)].symbol();
+                    rendered.push_str(symbol);
+                    x += symbol.width().max(1) as u16;
+                }
+                assert!(rendered.contains(&label), "{language}: {rendered}");
+            }
+        }
+    }
+}
 
 #[test]
 fn launcher_entry_overlays_keep_wide_characters_inside_fixed_frames() {
