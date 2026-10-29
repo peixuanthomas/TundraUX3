@@ -23,6 +23,13 @@ pub struct TextEditState {
 }
 
 impl TextEditState {
+    pub fn from_input(input: &TextInput) -> Self {
+        Self {
+            cursor: Some(input.cursor()),
+            selection_anchor: input.selection_anchor(),
+        }
+    }
+
     pub fn input(&self, id: impl Into<ComponentId>, value: &str) -> TextInput {
         let mut input = TextInput::new(id).with_horizontal_scroll(true);
         input.set_value(value);

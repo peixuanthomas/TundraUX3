@@ -1,5 +1,24 @@
 # ui
 
+`components::FormDialog` 统一填写弹窗的绘制、布局、输入、选项、开关、数字增减、滚动和按钮。调用方提供标题、说明、`Vec<FormField>` 和 `Vec<FormButton>`；字段数量由列表决定，可指定并排的列数，组件返回确认、取消或自定义动作，具体检查与保存由调用方负责。`ManagementForm` 保留为兼容名称。
+
+调用示例（文字从语言包读取）：
+
+```rust
+let mut form = FormDialog::new("create", title, vec![
+    FormField::text("name", name_label, ""),
+    FormField::toggle("keep", keep_label, false),
+]);
+form.buttons = vec![
+    FormButton::new("save", save_label, FormAction::Submit),
+    FormButton::new("cancel", cancel_label, FormAction::Cancel),
+];
+let event = form.handle_event(input, area);
+form.render_frame(frame, area, context);
+```
+
+Enter 移到下一栏，最后一栏 Enter 确认；开关由空格或点按切换。Tab/Shift+Tab 与上下键仍可切换字段和按钮，Ctrl+Enter 可直接确认。默认按钮提供 F10 确认；自定义按钮可通过 `shortcut` 指定快捷键。调用方每次重建表单时，用 `interaction_state()` 保存并通过 `with_interaction()` 恢复滚动和拖动位置。
+
 启动器提供整理模式、新增、删除和用户条目右键菜单；整理时点击只选择，内置项保持原限制。`screens/launcher/edit.rs` 共用菜单与编辑器的绘制、按钮和输入布局；名称、命令复用 ManagementForm，字符图标使用程序绘制的 7×4 边框和 5×2 输入区，显示和裁切均按终端字符宽度处理。新增弹窗不再填写图标。
 
 右键菜单按共享按钮实际显示的完整宽度计算大小，包含方括号，避免中英文操作文字被裁切。自定义命令与嵌入终端程序提供“退出后保留界面”开关；系统启动条目不显示。新增表单复用共享 `ManagementFormControl::Toggle`，标签靠左、“开／关”靠右，沿用设置页的文字与按钮样式。

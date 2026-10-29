@@ -213,6 +213,15 @@ impl KeyModifiers {
         self.control || self.ctrl
     }
 
+    pub fn is_control_only(self) -> bool {
+        self.is_control()
+            && !self.shift
+            && !self.alt
+            && !self.super_key
+            && !self.hyper
+            && !self.meta
+    }
+
     pub fn has_non_shift_modifier(self) -> bool {
         self.is_control() || self.alt || self.super_key || self.hyper || self.meta
     }

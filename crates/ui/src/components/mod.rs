@@ -14,6 +14,7 @@ mod context_menu;
 mod data_table;
 mod dialog;
 mod empty_state;
+mod form_dialog;
 mod foundation;
 mod list;
 mod metric_card;
@@ -38,6 +39,10 @@ pub use context_menu::{ContextMenu, ContextMenuItem};
 pub use data_table::DataTable;
 pub use dialog::{Dialog, DialogAction};
 pub use empty_state::EmptyState;
+pub use form_dialog::{
+    FormAction, FormButton, FormChoices, FormControl, FormDialog, FormEvent, FormField,
+    FormInteraction,
+};
 pub use foundation::{
     ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, KeyInput,
     KeyModifiers, MouseButton, MouseInput, MouseKind, contains_point,

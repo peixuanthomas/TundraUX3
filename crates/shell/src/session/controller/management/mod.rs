@@ -1906,8 +1906,10 @@ impl ShellSession {
                                 f.input_states.get(&index).cloned().unwrap_or_default()
                                     .input(v.id.as_str(), &value)
                             }),
+                            ..Default::default()
                         })
                         .collect(),
+                    ..Default::default()
                 }),
         }
     }

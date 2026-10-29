@@ -15,53 +15,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 mod workspace;
 pub use workspace::ManagementWorkspace;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ManagementFormControl {
-    #[default]
-    Text,
-    Checkbox,
-    Toggle,
-    Permissions,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ManagementFormField {
-    pub id: String,
-    pub label: String,
-    pub value: String,
-    pub secret: bool,
-    pub choices: Vec<String>,
-    pub control: ManagementFormControl,
-    pub selected_cell: Option<usize>,
-    pub input: Option<TextInput>,
-}
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ManagementChoices {
-    pub search: String,
-    pub field: usize,
-    pub values: Vec<String>,
-    pub selected: usize,
-    pub scroll: usize,
-    pub columns: usize,
-    pub disabled: Vec<bool>,
-}
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ManagementForm {
-    pub cancel_label: Option<String>,
-    pub identity: String,
-    pub title: String,
-    pub message: String,
-    pub message_scroll: u16,
-    pub fields: Vec<ManagementFormField>,
-    pub selected: usize,
-    pub field_scroll: Option<usize>,
-    pub choice: Option<ManagementChoices>,
-    pub cancel_disabled: bool,
-    pub submit_label: Option<String>,
-    pub submit_disabled: bool,
-    /// Informational dialogs have a single close action.
-    pub dismiss_only: bool,
-}
+pub use crate::components::{
+    FormChoices as ManagementChoices, FormControl as ManagementFormControl,
+    FormDialog as ManagementForm, FormField as ManagementFormField,
+};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ManagementViewModel {
     pub workspace: Option<ManagementWorkspace>,
@@ -347,6 +304,9 @@ fn form_submit_text(form: &ManagementForm) -> String {
     )
 }
 fn content_form_inner(form: Rect, spacious: bool) -> Rect {
+    if form.height <= 5 {
+        return form;
+    }
     let content = inner(form).intersection(form);
     let horizontal = if content.width >= 38 {
         2
@@ -403,9 +363,7 @@ fn field_lines(field: &ManagementFormField, width: u16) -> Vec<String> {
     } else {
         management_wrapped_lines(&field.label, width)
     };
-    if field.input.is_some()
-        || (field.control == ManagementFormControl::Text && field.choices.is_empty())
-    {
+    if field.input.is_some() || field.is_text() {
         lines.push(String::new());
         return lines;
     }
@@ -485,6 +443,9 @@ pub fn management_permission_id(form: &ManagementForm, index: usize, cell: usize
     format!("{}.cell.{cell}", management_field_id(form, index))
 }
 fn form_action_sizes(form: &ManagementForm, width: u16) -> (u16, u16, u16, u16, u16) {
+    if !form.buttons.is_empty() {
+        return (0, 0, 0, 0, form.action_bar().height(width));
+    }
     let submit = if form.dismiss_only {
         0
     } else {
@@ -508,6 +469,12 @@ fn form_action_sizes(form: &ManagementForm, width: u16) -> (u16, u16, u16, u16, 
     };
     (submit, cancel, submit_height, cancel_height, rows)
 }
+fn form_columns(form: &ManagementForm) -> usize {
+    form.columns.max(1).min(form.fields.len().max(1))
+}
+fn form_field_width(width: u16, columns: usize) -> u16 {
+    width.saturating_sub(columns as u16) / columns as u16
+}
 fn content_form(main: Rect, form: &ManagementForm) -> Rect {
     let max_width = main.width.saturating_sub(u16::from(main.width > 40) * 2);
     let longest = form
@@ -528,7 +495,14 @@ fn content_form(main: Rect, form: &ManagementForm) -> Rect {
         }))
         .max()
         .unwrap_or(0);
-    let actions = if form.dismiss_only {
+    let columns = form_columns(form);
+    let longest = longest.saturating_mul(columns).saturating_add(columns - 1);
+    let actions = if !form.buttons.is_empty() {
+        form.actions()
+            .iter()
+            .map(|button| button.label().width() + 3)
+            .sum()
+    } else if form.dismiss_only {
         form_cancel_text(form).width() + 2
     } else {
         form_submit_text(form).width() + form_cancel_text(form).width() + 5
@@ -536,7 +510,7 @@ fn content_form(main: Rect, form: &ManagementForm) -> Rect {
     let width = longest
         .max(form.title.width())
         .max(actions)
-        .saturating_add(6)
+        .saturating_add(7)
         .clamp(32, 88)
         .min(usize::from(max_width)) as u16;
     let content_width = content_form_inner(Rect::new(0, 0, width, 12), true).width;
@@ -545,12 +519,18 @@ fn content_form(main: Rect, form: &ManagementForm) -> Rect {
     } else {
         management_wrapped_lines(&form.message, content_width.saturating_sub(1)).len()
     };
-    let fields: usize = form
+    let field_width = form_field_width(content_width, columns);
+    let fields = form
         .fields
-        .iter()
-        .map(|field| field_lines(field, content_width.saturating_sub(1)).len())
+        .chunks(columns)
+        .map(|row| {
+            row.iter()
+                .map(|field| field_lines(field, field_width).len())
+                .max()
+                .unwrap_or(0)
+        })
         .sum::<usize>()
-        + form.fields.len().saturating_sub(1);
+        + form.fields.len().div_ceil(columns).saturating_sub(1);
     let (_, _, _, _, footer) = form_action_sizes(form, content_width);
     let height = (message
         + fields
@@ -631,6 +611,7 @@ pub struct ManagementLayout {
     pub field_ranges: Vec<(usize, usize)>,
     pub submit: Rect,
     pub cancel: Rect,
+    pub form_buttons: Vec<(usize, Rect)>,
     pub choice_panel: Option<Rect>,
     pub choice_rows: Vec<(usize, Rect)>,
     pub choice_cancel: Rect,
@@ -1109,9 +1090,12 @@ fn management_content_layout(
                 .get(f.selected.min(f.fields.len().saturating_sub(1)))
         })
         .map_or(0, |field| {
-            field_lines(field, form_inner.width.saturating_sub(1))
-                .len()
-                .min(3) as u16
+            field_lines(
+                field,
+                form_field_width(form_inner.width, form_model.map_or(1, form_columns)),
+            )
+            .len()
+            .min(3) as u16
         });
     let message_height = if has_fields && message_len > 0 {
         (message_len.min(usize::from(
@@ -1134,15 +1118,23 @@ fn management_content_layout(
         form_inner.width,
         available.saturating_sub(message_height + message_gap),
     );
+    let columns = form_model.map_or(1, form_columns);
+    let field_width = form_field_width(fields_area.width, columns);
     let mut field_ranges = Vec::new();
     let mut field_length = 0;
-    if let Some(form_model) = form_model {
-        for (index, field) in form_model.fields.iter().enumerate() {
-            let height = field_lines(field, fields_area.width.saturating_sub(1)).len()
-                + usize::from(index + 1 < form_model.fields.len());
-            field_ranges.push((field_length, height));
-            field_length += height;
+    if let Some(form) = form_model {
+        for row in form.fields.chunks(columns) {
+            let heights = row
+                .iter()
+                .map(|field| field_lines(field, field_width).len())
+                .collect::<Vec<_>>();
+            let row_height = heights.iter().copied().max().unwrap_or(0);
+            for height in heights {
+                field_ranges.push((field_length, height));
+            }
+            field_length += row_height + 1;
         }
+        field_length = field_length.saturating_sub(1);
     }
     let mut selected_range = form_model
         .and_then(|form| field_ranges.get(form.selected))
@@ -1175,16 +1167,16 @@ fn management_content_layout(
                 (
                     index,
                     Rect::new(
-                        fields_area.x,
+                        fields_area.x + (field_width + 1) * (index % columns) as u16,
                         fields_area.y + (start_y - field_start) as u16,
-                        fields_area.width.saturating_sub(1),
+                        field_width,
                         (end - start_y) as u16,
                     ),
                 )
             })
         })
         .collect();
-    let submit = Rect::new(
+    let mut submit = Rect::new(
         if submit_width.saturating_add(cancel_width).saturating_add(1) > form_inner.width {
             form_inner.right().saturating_sub(submit_width)
         } else {
@@ -1197,7 +1189,7 @@ fn management_content_layout(
         submit_width,
         submit_height.min(footer_height),
     );
-    let cancel = Rect::new(
+    let mut cancel = Rect::new(
         form_inner.right().saturating_sub(cancel_width),
         form_inner
             .bottom()
@@ -1206,6 +1198,29 @@ fn management_content_layout(
         cancel_width,
         cancel_height.min(footer_height),
     );
+    let form_buttons = form_model.map_or_else(Vec::new, |form| {
+        if !form.buttons.is_empty() {
+            let buttons = form
+                .action_bar()
+                .layout(form_inner)
+                .actions
+                .into_iter()
+                .map(|button| (button.index, button.area))
+                .collect::<Vec<_>>();
+            for (index, area) in &buttons {
+                match form.buttons[*index].action {
+                    crate::components::FormAction::Submit => submit = *area,
+                    crate::components::FormAction::Cancel => cancel = *area,
+                    _ => {}
+                }
+            }
+            buttons
+        } else if form.dismiss_only {
+            vec![(0, cancel)]
+        } else {
+            vec![(0, submit), (1, cancel)]
+        }
+    });
     if let Some(form_model) = form_model {
         add_text_bar(
             &mut scrollbars,
@@ -1332,6 +1347,7 @@ fn management_content_layout(
         field_ranges,
         submit,
         cancel,
+        form_buttons,
         choice_panel,
         choice_rows,
         choice_cancel,
@@ -1416,18 +1432,29 @@ pub fn management_button_regions(
                 );
             }
         } else {
-            push(
-                management_form_control_id(form, "confirm"),
-                layout.submit,
-                form.submit_disabled,
-            );
-            push(
-                management_form_control_id(form, "cancel"),
-                layout.cancel,
-                form.cancel_disabled,
-            );
+            let actions = form.actions();
+            for (index, area) in &layout.form_buttons {
+                let button = &actions[*index];
+                push(
+                    management_form_control_id(form, &button.id),
+                    *area,
+                    button.disabled,
+                );
+            }
             for (index, area) in &layout.fields {
                 let field = &form.fields[*index];
+                if matches!(field.control, ManagementFormControl::Number { .. }) {
+                    for (suffix, area) in ["decrease", "increase"]
+                        .into_iter()
+                        .zip(management_number_buttons(&layout, *index, field))
+                    {
+                        push(
+                            format!("{}.{}", management_field_id(form, *index), suffix),
+                            area,
+                            field.disabled,
+                        );
+                    }
+                }
                 if field.control == ManagementFormControl::Permissions {
                     let skip = layout
                         .field_start
@@ -1436,7 +1463,7 @@ pub fn management_button_regions(
                         push(management_permission_id(form, *index, cell), area, false);
                     }
                 } else {
-                    push(management_field_id(form, *index), *area, false);
+                    push(management_field_id(form, *index), *area, field.disabled);
                 }
             }
         }
@@ -1902,7 +1929,7 @@ pub fn render_management_overlay(
     );
     frame.render_widget(Clear, layout.form);
     Surface::new()
-        .bordered(true)
+        .bordered(form.choice.is_some() || layout.form.height > 5)
         .raised(true)
         .titled(
             if form
@@ -1979,14 +2006,12 @@ pub fn render_management_overlay(
         let skip = layout
             .field_start
             .saturating_sub(layout.field_ranges[*index].0);
-        if field.input.is_some()
-            || (field.control == ManagementFormControl::Text && field.choices.is_empty())
-        {
+        if field.input.is_some() || field.is_text() {
             if let Some(buttons) = &theme.buttons {
                 buttons.register_region(crate::components::ButtonRegion {
                     id: management_field_id(form, *index).into(),
                     area: *area,
-                    disabled: false,
+                    disabled: field.disabled,
                 });
             }
             let label_rows = lines.len().saturating_sub(1);
@@ -2024,8 +2049,30 @@ pub fn render_management_overlay(
                     .with_capture_name(&field.label)
                     .with_sensitive(field.secret);
                 input.id = management_field_id(form, *index).into();
-                input.set_focused(form.selected == *index);
+                if field.secret {
+                    let cursor = input.cursor();
+                    let anchor = input.selection_anchor();
+                    input.set_value("•".repeat(field.value.chars().count()));
+                    input.set_cursor(cursor);
+                    input.set_selection_anchor(anchor);
+                }
+                input.state.disabled = field.disabled;
+                input.set_focused(form.selected == *index && !field.disabled);
                 input.render_borderless_frame(frame, input_area, &theme);
+                if matches!(field.control, ManagementFormControl::Number { .. }) {
+                    for ((suffix, label), area) in [("decrease", "−"), ("increase", "+")]
+                        .into_iter()
+                        .zip(management_number_buttons(&layout, *index, field))
+                    {
+                        let mut button = Button::new(
+                            format!("{}.{}", management_field_id(form, *index), suffix),
+                            label,
+                        )
+                        .with_bracketed_label(area.width >= 3);
+                        button.set_disabled(field.disabled);
+                        button.render_borderless_frame(frame, area, &theme);
+                    }
+                }
             }
             continue;
         }
@@ -2076,34 +2123,23 @@ pub fn render_management_overlay(
             button = button.with_capture_selected(field.value == "true");
         }
         button.bracketed_label = false;
+        button.state.disabled = field.disabled;
         button.state.selected = form.selected == *index;
         button.state.focused = form.selected == *index;
         button.render_borderless_frame(frame, *area, &theme);
     }
-    let mut submit = Button::new(
-        management_form_control_id(form, "confirm"),
-        management_wrapped_lines(
-            &format!("[{}]", form_submit_text(form)),
-            layout.submit.width,
+    let actions = form.actions();
+    for (index, area) in &layout.form_buttons {
+        let action = &actions[*index];
+        let mut button = Button::new(
+            management_form_control_id(form, &action.id),
+            management_wrapped_lines(&format!("[{}]", action.label()), area.width).join("\n"),
         )
-        .join("\n"),
-    );
-    submit.bracketed_label = false;
-    submit.set_disabled(form.submit_disabled);
-    submit.state.selected = form.selected >= form.fields.len() && form.choice.is_none();
-    submit.render_borderless_frame(frame, layout.submit, &theme);
-    let mut cancel = Button::new(
-        management_form_control_id(form, "cancel"),
-        management_wrapped_lines(
-            &format!("[{}]", form_cancel_text(form)),
-            layout.cancel.width,
-        )
-        .join("\n"),
-    );
-    cancel.bracketed_label = false;
-    cancel.state.selected = form.dismiss_only;
-    cancel.set_disabled(form.cancel_disabled);
-    cancel.render_borderless_frame(frame, layout.cancel, &theme);
+        .with_bracketed_label(false);
+        button.set_disabled(action.disabled);
+        button.set_focused(form.selected == form.fields.len() + index);
+        button.render_borderless_frame(frame, *area, &theme);
+    }
     for bar in &layout.scrollbars {
         if matches!(
             bar.target,
@@ -2127,10 +2163,49 @@ pub fn management_field_input_area(
         .field_start
         .saturating_sub(layout.field_ranges[index].0);
     if skip <= label_rows && label_rows - skip < usize::from(area.height) {
-        Rect::new(area.x, area.y + (label_rows - skip) as u16, area.width, 1)
+        let input = Rect::new(area.x, area.y + (label_rows - skip) as u16, area.width, 1);
+        if matches!(field.control, ManagementFormControl::Number { .. }) {
+            Rect::new(
+                input
+                    .x
+                    .saturating_add(if input.width < 10 { 2 } else { 4 })
+                    .min(input.right()),
+                input.y,
+                input
+                    .width
+                    .saturating_sub(if input.width < 10 { 4 } else { 8 }),
+                1,
+            )
+        } else {
+            input
+        }
     } else {
         Rect::default()
     }
+}
+
+pub fn management_number_buttons(
+    layout: &ManagementLayout,
+    index: usize,
+    field: &ManagementFormField,
+) -> [Rect; 2] {
+    let Some((_, area)) = layout.fields.iter().find(|(field, _)| *field == index) else {
+        return [Rect::default(); 2];
+    };
+    let input = management_field_input_area(layout, index, field);
+    if input.is_empty() {
+        return [Rect::default(); 2];
+    }
+    let width = if area.width < 10 { 1 } else { 3 };
+    [
+        Rect::new(area.x, input.y, width.min(area.width), 1),
+        Rect::new(
+            area.right().saturating_sub(width).max(area.x),
+            input.y,
+            width.min(area.width),
+            1,
+        ),
+    ]
 }
 
 pub fn management_search_prefix(width: u16) -> String {
