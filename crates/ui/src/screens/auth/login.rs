@@ -279,22 +279,11 @@ fn render_login_password_field(
     let mut input = TextInput::new("login.password")
         .with_capture_name(i18n::tr!("ui-auth-password"))
         .with_sensitive(true)
-        .with_capture_focused(focused)
         .with_placeholder(placeholder)
-        .with_cursor_symbol("");
+        .with_horizontal_scroll(true);
     input.set_value(password);
-    // The controller owns the password and the outer block owns focus. Keeping
-    // the borderless content renderer unfocused preserves the prior placeholder
-    // styling and deliberately avoids introducing a visible component cursor.
-    let mut input_theme = theme.clone();
-    if focused {
-        input_theme.foreground = theme.accent_color;
-    }
-    input.render_borderless_frame(
-        frame,
-        Rect::new(inner.x, inner.y, inner.width, 1),
-        &input_theme,
-    );
+    input.set_focused(focused);
+    input.render_borderless_frame(frame, Rect::new(inner.x, inner.y, inner.width, 1), theme);
 }
 
 fn render_login_button(

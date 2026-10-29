@@ -247,6 +247,24 @@ impl ShellSession {
 impl ShellSession {
     fn page_overlay_descriptor(&self) -> Option<ShellOverlayDescriptor> {
         let dialog = ShellOverlayDescriptor::dialog;
+        if self.content_screen() == ShellScreen::Launcher {
+            if let Some(editor) = &self.pages.launcher.entry_editor {
+                return Some(dialog(
+                    format!("launcher-edit:{}:{:?}", editor.id, editor.action),
+                    ShellOverlayCategory::PageDialog,
+                    ShellComponent::Launcher,
+                ));
+            }
+            if let Some(state) = &self.pages.launcher.context_menu {
+                return Some(ShellOverlayDescriptor {
+                    kind: ui::MotionOverlayKind::Popover,
+                    id: format!("launcher-menu:{}", state.id),
+                    category: ShellOverlayCategory::PagePopover,
+                    target: Some(RoutedTarget::Component(ShellComponent::Launcher)),
+                    immediate: false,
+                });
+            }
+        }
         if self.content_screen() == ShellScreen::Launcher
             && let Some(settings) = &self.pages.launcher.launcher_run_settings
         {

@@ -153,6 +153,8 @@ python3 scripts/tests/embedded-tui-smoke.py target/debug/tundra-shell --nvim /ab
 
 2026-10-28 云 Linux 验收使用 Rust 1.95.0、Neovim 0.12.6、Yazi 26.9.1 和随包 Vim 9.2.1225。真实 PTY smoke 验证了 Neovim 编辑/保存与实际行列数、Yazi 导航/筛选/图片字符回退及预览清除、Launcher 参数和含空格中文目录、外部程序退出码 75/76 留屏，以及退出后的终端恢复。真实 Vim 的两项 ignored runtime 回归、25 项编辑流程，以及脚本工作区的 11 项 bashdb/Vim 往返流程均通过。当前环境不是 WSL，未验收 Windows/macOS、物理触屏或宿主原生图片显示。
 
+2026-10-29 启动器右键菜单的专项回归通过：app 启动器 13 项、storage 启动器 3 项、Shell 启动器 12 项和 UI 启动器 9 项。覆盖两种视图中的改名、改命令、固定字符图标、取消与删除、菜单外点按不穿透，以及修改后的旧后台结果拦截。`python3 scripts/tests/launcher-organize-smoke.py target/debug/tundra-shell` 在云 Linux 真实 PTY 中通过新增、右键编辑、中文多行与越界粘贴、实际命令启动、删除确认和内置项限制；需要允许本地控制 socket。当前环境不是 WSL，物理触屏仍需设备验收。
+
 最终修复后，终端库 65 项、UI 库 77 项（图片 19 项）、Shell 命令行相关 31 项、UI 命令行集成 7 项及 Shell 多文档 Vim 的 ignored 回归 1 项均通过；`cargo check --workspace --all-targets --all-features --locked` 通过。改动的 Rust 文件及本地 WezTerm 补丁通过格式检查，中英文 4,093 对消息通过本地化校验。全项目格式检查仍会报告未修改的 `third_party/lsh` 既有格式差异。
 
 本次全工作区运行记录为 2,520 项通过、9 项失败。失败已定位到现有模块的运行条件或检查误报：3 项依赖此容器缺少的 `/proc/<pid>/task/<tid>/children`，3 项 ACL 夹具受 `/tmp` 文件系统或 UID 映射限制，1 项旧 APT 故障复现预期在当前工具版本下不成立，1 项 watchdog 扫描器将任务历史的 `output(...)` 误当作创建进程，1 项彩色 PTY 测试继承了 `NO_COLOR`。彩色测试仅移除该环境变量后已单独通过；这些失败没有通过忽略测试或修改生产行为规避。
@@ -170,3 +172,11 @@ Shell 的 `page_lifecycle`、`auto_admin` 和 `update_cancellation_tests` 覆盖
 ## 编辑器大文件回归与基准
 
 运行方法、测量口径和 1/10/100 MiB 原始结果见 [Source 编辑器的大文件计算](editor-scalability.md)。
+
+## 启动器整理模式
+
+`cargo test --locked -p shell --lib controller::launcher::settings::tests` 覆盖图标和列表的整页滚动、首页末页边界、整理模式切换、新增草稿取消与必填检查、保存恢复、内置项不可删除、用户项删除确认、鼠标/无悬停拖动、Esc 取消拖动和键盘排序。应用层 `cargo test --locked -p app --test launcher` 验证自定义命令保存、权限与通用终端启动 effect；UI 和 storage 的 launcher 测试保留布局和旧配置兼容检查。
+
+构建 Shell 与 CLI 后运行 `python3 scripts/tests/launcher-organize-smoke.py target/debug/tundra-shell`。脚本使用隔离配置及真实 Linux PTY，通过外部 CLI 完成首次设置、滚轮翻页、拖动内置图标、新增取消、自定义名称/文字图案/命令保存，并检查通用内嵌终端中的实际命令输出、保留输出后按回车返回、成功及失败退出后默认立即返回，以及退出后的终端模式恢复。
+
+2026-10-29 云 Linux 验证中，上述定向回归、PTY 脚本、全工作区 all-targets/all-features 编译及 4,104 对中英文消息校验通过。环境不是 WSL，Windows/macOS、宿主原生图片显示与物理触屏未实机验证。完整 workspace 测试在 CLI 的 `embedded_children_linux` 两项守护子进程退出用例发生清理超时；该容器缺少 `/proc/<pid>/task/<tid>/children` 接口，不能把定向通过描述为全工作区测试全部通过。

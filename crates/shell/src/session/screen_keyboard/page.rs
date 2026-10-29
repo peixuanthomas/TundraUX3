@@ -6,12 +6,26 @@ impl ShellSession {
         let overlay = overlays.last();
         if let Some(overlay) = overlay {
             let accepts_text = match overlay.component() {
-                Some(ShellComponent::Launcher) => self
-                    .pages
-                    .launcher
-                    .launcher_run_settings
-                    .as_ref()
-                    .is_some_and(|state| state.embedded && matches!(state.selected, 1 | 2)),
+                Some(ShellComponent::Launcher) => {
+                    self.pages
+                        .launcher
+                        .entry_editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.selected < editor.inputs.len())
+                        || self
+                            .pages
+                            .launcher
+                            .launcher_run_settings
+                            .as_ref()
+                            .is_some_and(|state| {
+                                state.embedded
+                                    && if state.custom {
+                                        state.selected < 2
+                                    } else {
+                                        matches!(state.selected, 1 | 2)
+                                    }
+                            })
+                }
                 Some(ShellComponent::Explorer) => matches!(
                     self.resolved_explorer_overlay(),
                     Some(overlays::ResolvedExplorerOverlay::Input(_))
@@ -66,6 +80,9 @@ impl ShellSession {
         }
         match self.active_screen() {
             ShellScreen::Launcher => {
+                if let Some(editor) = &self.pages.launcher.entry_editor {
+                    target.push_str(&format!(":edit:{}:{}", editor.id, editor.selected));
+                }
                 if let Some(state) = &self.pages.launcher.launcher_run_settings {
                     target.push_str(&format!(":{}:{}", state.id, state.selected));
                 }
@@ -102,9 +119,16 @@ impl ShellSession {
         match self.active_screen() {
             ShellScreen::Launcher => {
                 self.pages.common.focused_component = ShellComponent::Launcher;
+                if let Some(editor) = &mut self.pages.launcher.entry_editor {
+                    editor.selected = editor.selected.min(editor.inputs.len().saturating_sub(1));
+                }
                 if let Some(state) = &mut self.pages.launcher.launcher_run_settings
                     && state.embedded
-                    && !matches!(state.selected, 1 | 2)
+                    && !(if state.custom {
+                        state.selected < 2
+                    } else {
+                        matches!(state.selected, 1 | 2)
+                    })
                 {
                     state.selected = 1;
                 }

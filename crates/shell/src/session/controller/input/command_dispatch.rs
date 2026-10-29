@@ -32,7 +32,7 @@ impl ShellSession {
         if let InputEvent::Paste(value) = &input
             && !matches!(
                 self.active_screen(),
-                ShellScreen::Editor | ShellScreen::Explorer
+                ShellScreen::Editor | ShellScreen::Explorer | ShellScreen::Launcher
             )
             && self.page_keyboard_identity().is_some()
         {
@@ -858,12 +858,24 @@ impl ShellSession {
                 self.select_launcher_row(-1);
                 ShellAction::Redraw
             }
+            ShellCommand::LauncherMove(delta) => {
+                self.move_launcher_item(delta, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherOrganize => {
+                self.toggle_launcher_organize();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherAdd => {
+                self.open_launcher_add();
+                ShellAction::Redraw
+            }
             ShellCommand::LauncherPageUp => {
-                self.select_launcher_delta(-6);
+                self.page_launcher(-1);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherPageDown => {
-                self.select_launcher_delta(6);
+                self.page_launcher(1);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherFirst => {
@@ -893,6 +905,14 @@ impl ShellSession {
             }
             ShellCommand::LauncherRunSettings => {
                 self.open_launcher_run_settings();
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherContextMenu(point) => {
+                self.open_launcher_context_menu(point);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherEntryInput(input) => {
+                self.handle_launcher_entry_input(input, platform);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherRunSettingsKey(key) => {
@@ -937,7 +957,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherScroll(delta) => {
-                self.select_launcher_delta(delta as isize);
+                self.page_launcher(delta as isize);
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerAddToLauncher => {

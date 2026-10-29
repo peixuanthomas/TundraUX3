@@ -6,6 +6,27 @@ use ui::components::TextInput;
 mod tests;
 
 impl ShellSession {
+    pub(in crate::session) fn open_launcher_add(&mut self) {
+        if !self.pages.launcher.organizing || !self.can_manage_launcher() {
+            return;
+        }
+        self.pages.launcher.launcher_run_settings = Some(page_state::LauncherRunSettingsState {
+            custom: true,
+            wait_for_enter: false,
+            id: String::new(),
+            embedded: true,
+            name: TextInput::new("launcher.custom.name").with_horizontal_scroll(true),
+            arguments: TextInput::new("launcher.custom.command").with_horizontal_scroll(true),
+            directory: TextInput::new("launcher.run.directory").with_horizontal_scroll(true),
+            selected: 0,
+            error: None,
+            field_scroll: None,
+            message_scroll: 0,
+            scrollbar_drag: None,
+        });
+        self.pages.launcher.launcher_drag = None;
+    }
+
     pub(in crate::session) fn open_launcher_run_settings(&mut self) {
         if !self.can_manage_launcher() {
             return;
@@ -34,6 +55,9 @@ impl ShellSession {
             directory.set_value(settings.working_directory.as_deref().unwrap_or_default());
         }
         self.pages.launcher.launcher_run_settings = Some(page_state::LauncherRunSettingsState {
+            custom: false,
+            wait_for_enter: false,
+            name: TextInput::new("launcher.custom.name"),
             id: item.record.id.clone(),
             embedded: item.record.terminal.is_some(),
             arguments,
@@ -82,14 +106,57 @@ impl ShellSession {
                 },
             ]);
         }
+        if state.custom {
+            fields = [
+                ("name", i18n::tr!("shell-launcher-custom-name"), &state.name),
+                (
+                    "command",
+                    i18n::tr!("shell-launcher-custom-command"),
+                    &state.arguments,
+                ),
+            ]
+            .into_iter()
+            .map(|(id, label, input)| ui::ManagementFormField {
+                id: id.into(),
+                label,
+                value: input.value().to_owned(),
+                input: Some(input.clone()),
+                ..Default::default()
+            })
+            .collect();
+            fields.push(ui::ManagementFormField {
+                id: "exit".into(),
+                label: i18n::tr!("shell-launcher-custom-exit"),
+                value: if state.wait_for_enter {
+                    i18n::tr!("shell-launcher-custom-exit-wait")
+                } else {
+                    i18n::tr!("shell-launcher-custom-exit-immediate")
+                },
+                choices: vec![
+                    i18n::tr!("shell-launcher-custom-exit-immediate"),
+                    i18n::tr!("shell-launcher-custom-exit-wait"),
+                ],
+                ..Default::default()
+            });
+        }
         Some(ui::ManagementForm {
             identity: format!("launcher-run:{}", state.id),
-            title: i18n::tr!("shell-launcher-run-settings-title"),
+            title: if state.custom {
+                i18n::tr!("ui-launcher-add")
+            } else {
+                i18n::tr!("shell-launcher-run-settings-title")
+            },
             message: state
                 .error
                 .as_ref()
                 .map(i18n::LocalizedText::render_current)
-                .unwrap_or_else(|| i18n::tr!("shell-launcher-run-help")),
+                .unwrap_or_else(|| {
+                    if state.custom {
+                        i18n::tr!("shell-launcher-custom-help")
+                    } else {
+                        i18n::tr!("shell-launcher-run-help")
+                    }
+                }),
             fields,
             selected: state.selected,
             field_scroll: state.field_scroll,
@@ -113,7 +180,13 @@ impl ShellSession {
         };
         state.field_scroll = None;
         state.scrollbar_drag = None;
-        let fields = if state.embedded { 3 } else { 1 };
+        let fields = if state.custom {
+            3
+        } else if state.embedded {
+            3
+        } else {
+            1
+        };
         match key.key {
             InputKey::Escape => self.pages.launcher.launcher_run_settings = None,
             InputKey::F(10) if key.phase == InputPhase::Press => {
@@ -127,23 +200,30 @@ impl ShellSession {
             }
             InputKey::Enter if key.phase == InputPhase::Press => {
                 let index = state.selected;
-                if index > 0 && index < fields {
+                if index > 0 && index < fields && (!state.custom || index < 2) {
                     self.save_launcher_run_settings(platform);
                 } else {
                     self.activate_launcher_run_setting(index, platform);
                 }
             }
             InputKey::Space | InputKey::Char(' ') | InputKey::Left | InputKey::Right
-                if state.selected == 0 && key.phase == InputPhase::Press =>
+                if (state.custom && state.selected == 2
+                    || !state.custom && state.selected == 0)
+                    && key.phase == InputPhase::Press =>
             {
-                state.embedded = !state.embedded;
+                if state.custom {
+                    state.wait_for_enter = !state.wait_for_enter;
+                } else {
+                    state.embedded = !state.embedded;
+                }
                 state.error = None;
                 state.message_scroll = 0;
             }
             _ => {
                 let input = match state.selected {
+                    0 if state.custom => Some(&mut state.name),
                     1 if state.embedded => Some(&mut state.arguments),
-                    2 if state.embedded => Some(&mut state.directory),
+                    2 if state.embedded && !state.custom => Some(&mut state.directory),
                     _ => None,
                 };
                 if let Some(input) = input {
@@ -164,11 +244,21 @@ impl ShellSession {
         let Some(state) = self.pages.launcher.launcher_run_settings.as_mut() else {
             return;
         };
-        let fields = if state.embedded { 3 } else { 1 };
+        let fields = if state.custom {
+            3
+        } else if state.embedded {
+            3
+        } else {
+            1
+        };
         state.selected = index;
         state.field_scroll = None;
         state.scrollbar_drag = None;
-        if index == 0 {
+        if state.custom && index == 2 {
+            state.wait_for_enter = !state.wait_for_enter;
+            state.error = None;
+            state.message_scroll = 0;
+        } else if index == 0 && !state.custom {
             state.embedded = !state.embedded;
             state.error = None;
             state.message_scroll = 0;
@@ -187,8 +277,9 @@ impl ShellSession {
             return;
         }
         let input = match state.selected {
+            0 if state.custom => &mut state.name,
             1 => &mut state.arguments,
-            2 => &mut state.directory,
+            2 if !state.custom => &mut state.directory,
             _ => return,
         };
         input.set_focused(true);
@@ -207,6 +298,30 @@ impl ShellSession {
         let Some(state) = self.pages.launcher.launcher_run_settings.as_ref() else {
             return;
         };
+        if state.custom {
+            let custom = storage::LauncherCustomCommand {
+                name: state.name.value().to_owned(),
+                command: state.arguments.value().to_owned(),
+                icon: String::new(),
+                wait_for_enter: state.wait_for_enter,
+            };
+            self.apply_launcher_command(LauncherCommand::AddCustom(custom), platform);
+            if let Some(error) = self
+                .app
+                .launcher_state()
+                .and_then(|state| state.error.clone())
+            {
+                self.pages
+                    .launcher
+                    .launcher_run_settings
+                    .as_mut()
+                    .unwrap()
+                    .error = Some(error);
+            } else {
+                self.pages.launcher.launcher_run_settings = None;
+            }
+            return;
+        }
         let settings = if state.embedded {
             let arguments = match shell_words::split(state.arguments.value()) {
                 Ok(arguments) => arguments,
@@ -331,14 +446,17 @@ impl ShellSession {
                     .fields
                     .iter()
                     .find(|(_, area)| rect_contains(*area, point))
-                    && *index > 0
+                    && (*index > 0 || state.custom)
+                    && *index < if state.custom { 2 } else { 3 }
                     && state.embedded
                 {
                     state.selected = *index;
                     let field = &self.launcher_run_settings_form().unwrap().fields[*index];
                     let area = ui::management_field_input_area(&layout, *index, field);
                     let state = self.pages.launcher.launcher_run_settings.as_mut().unwrap();
-                    let input = if *index == 1 {
+                    let input = if *index == 0 {
+                        &mut state.name
+                    } else if *index == 1 {
                         &mut state.arguments
                     } else {
                         &mut state.directory

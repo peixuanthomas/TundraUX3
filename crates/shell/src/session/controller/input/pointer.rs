@@ -134,6 +134,12 @@ impl ShellSession {
             return self.management_button_at(point);
         }
         if self.active_screen() == ShellScreen::Launcher
+            && (self.pages.launcher.context_menu.is_some()
+                || self.pages.launcher.entry_editor.is_some())
+        {
+            return self.launcher_entry_button_at(point);
+        }
+        if self.active_screen() == ShellScreen::Launcher
             && self.pages.launcher.launcher_run_settings.is_some()
             && let ui::ShellLayout::Full { main, .. } =
                 self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1))
@@ -192,7 +198,7 @@ impl ShellSession {
                 Some(ui::components::ButtonRegion {
                     id: format!("launcher.item.{}", item.id).into(),
                     area: layout.items.iter().find(|item| item.index == index)?.area,
-                    disabled: item.status != ui::LauncherItemStatus::Ready,
+                    disabled: !model.organizing && item.status != ui::LauncherItemStatus::Ready,
                 })
             })
     }
@@ -212,6 +218,9 @@ impl ShellSession {
         }
         self.update_button_input_mode(&input);
         let InputEvent::Mouse(mouse) = input else {
+            let cancel_launcher_drag = self.active_screen() == ShellScreen::Launcher
+                && self.pages.launcher.launcher_drag.is_some()
+                && matches!(&input, InputEvent::Key(key) if key.key == InputKey::Escape && key.phase.is_press_like());
             if matches!(
                 input,
                 InputEvent::FocusLost
@@ -221,6 +230,9 @@ impl ShellSession {
             ) {
                 self.cancel_pointer_gestures_for_modal();
                 self.last_click = None;
+            }
+            if cancel_launcher_drag {
+                return None;
             }
             if matches!(input, InputEvent::FocusLost) {
                 self.interaction.pointer_position = None;

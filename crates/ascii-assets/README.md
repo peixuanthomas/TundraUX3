@@ -1,5 +1,7 @@
 # ascii-assets
 
+中英文 modules/ui-launcher.ftl 包含整理模式、新增启动命令、右键菜单、固定尺寸字符图标编辑与越界提示，以及退出选项、翻页和排序帮助。新增表单使用默认图标。modules/terminal-launcher.ftl 同步提供程序退出后按回车返回的提示。
+
 中英文 `modules/terminal-launcher.ftl` 提供 Launcher 运行设置、参数和目录检查，以及嵌入终端的启动、输入和关闭提示。
 
 中英文 `modules/selection.ftl` 提供可点击多选入口、已选数量和整页操作限制，沿用现有语言包自动加载。

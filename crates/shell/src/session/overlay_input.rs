@@ -104,6 +104,9 @@ impl ShellSession {
             .filter(|_| self.overlay_interaction_ready)
         {
             Some(ShellComponent::Management) => ShellCommand::ManagementPaste(value.to_owned()),
+            Some(ShellComponent::Launcher) if self.pages.launcher.entry_editor.is_some() => {
+                ShellCommand::LauncherEntryInput(InputEvent::Paste(value.to_owned()))
+            }
             Some(ShellComponent::Launcher)
                 if self.pages.launcher.launcher_run_settings.is_some() =>
             {

@@ -443,6 +443,59 @@ fn login_renderer_masks_password_length() {
 }
 
 #[test]
+fn login_password_blinks_an_underscore_for_empty_masked_and_revealed_text() {
+    use ratatui::style::Modifier;
+
+    let chrome = chrome_for("Login");
+    let theme = TundraTheme::default_dark();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    let long_password = "中文🙂".repeat(30);
+    for password in ["", "secret", long_password.as_str()] {
+        for revealed in [false, true] {
+            let mut model = LoginViewModel::new(
+                Vec::new(),
+                0,
+                0,
+                password.chars().count(),
+                LoginField::Password,
+                None,
+            );
+            if revealed {
+                model = model.with_visible_password(password);
+            }
+            for focused in [true, false] {
+                model.focused_field = if focused {
+                    LoginField::Password
+                } else {
+                    LoginField::PasswordVisibility
+                };
+                terminal
+                    .draw(|frame| {
+                        render_login(frame, frame.area(), &chrome, &model, &theme);
+                    })
+                    .expect("render login");
+
+                let blinking = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .filter(|cell| cell.modifier.contains(Modifier::SLOW_BLINK))
+                    .collect::<Vec<_>>();
+                assert_eq!(blinking.len(), usize::from(focused));
+                if focused {
+                    assert_eq!(blinking[0].symbol(), "_");
+                    assert_eq!(blinking[0].fg, theme.accent_color);
+                }
+                if !revealed && !password.is_empty() {
+                    assert!(!terminal_output(&terminal).contains(password));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn login_renderer_reveals_only_explicit_plaintext_and_focuses_visibility_control() {
     let chrome = chrome_for("Login");
     let visible = "密碼🙂";

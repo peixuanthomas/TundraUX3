@@ -441,6 +441,9 @@ pub(in crate::session) fn build_shell_hit_map(
                     .map(|layout| layout.area)
             }),
             ShellScreen::Launcher => launcher_model.and_then(|model| {
+                if let Some(area) = ui::launcher_entry_overlay_area(main, model) {
+                    return Some(area);
+                }
                 let layout = ui::launcher_layout(main, model);
                 layout
                     .run_settings

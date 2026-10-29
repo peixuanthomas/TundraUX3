@@ -1,3 +1,4 @@
+mod edit;
 mod input;
 mod settings;
 pub(in crate::session) mod tasks;
@@ -106,6 +107,11 @@ impl ShellSession {
                 return;
             }
         }
+        self.pages.launcher.organizing = false;
+        self.pages.launcher.order = storage
+            .load_config()
+            .map(|c| c.launcher.order)
+            .unwrap_or_default();
         self.load_launcher_view_preference();
         self.refresh_launcher(platform);
         self.pages.launcher.launcher_selected_index = self
@@ -145,7 +151,56 @@ impl ShellSession {
         }
     }
 
+    pub(in crate::session) fn move_launcher_item(&mut self, delta: isize, platform: &dyn Platform) {
+        if !self.pages.launcher.organizing {
+            return;
+        }
+        let model = self.to_launcher_view_model();
+        let Some(source) = model.selected_index else {
+            return;
+        };
+        let destination = source
+            .saturating_add_signed(delta)
+            .min(model.items.len().saturating_sub(1));
+        let mut order = model
+            .items
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
+        let id = order.remove(source);
+        order.insert(destination, id);
+        self.save_launcher_order(order, platform);
+    }
+
+    fn save_launcher_order(&mut self, order: Vec<String>, platform: &dyn Platform) {
+        self.apply_launcher_command(LauncherCommand::SetOrder(order.clone()), platform);
+        if self
+            .app
+            .launcher_state()
+            .is_some_and(|state| state.error.is_none())
+        {
+            self.pages.launcher.order = order;
+            self.sync_launcher_viewport();
+        }
+    }
+
+    pub(in crate::session) fn toggle_launcher_organize(&mut self) {
+        if !self.can_manage_launcher() {
+            return;
+        }
+        self.pages.launcher.organizing = !self.pages.launcher.organizing;
+        self.pages.launcher.launcher_drag = None;
+        self.interaction.button_capture = None;
+        self.pages.common.table_sorts.remove("launcher");
+        if self.pages.launcher.organizing {
+            self.pages.launcher.launcher_view_mode = app::launcher::LauncherViewMode::LargeIcons;
+        }
+    }
+
     pub(in crate::session) fn toggle_launcher_view(&mut self) {
+        if self.pages.launcher.organizing {
+            return;
+        }
         self.pages.launcher.launcher_drag = None;
         if matches!(
             self.scrollbar_drag,
@@ -315,8 +370,9 @@ impl ShellSession {
                 path,
                 args,
                 directory,
+                wait_for_enter,
             } => {
-                self.open_external_terminal(path, args, directory);
+                self.open_external_terminal(path, args, directory, wait_for_enter);
             }
             LauncherEffect::OpenRequested { path, kind } => {
                 let mut started = runtime_log::RuntimeLogEvent::new(
@@ -442,7 +498,9 @@ impl ShellSession {
                             "shell-checking-launcher-items"
                         )));
                         for item in &mut state.items {
-                            item.status = if item.record.executable_kind.is_some() {
+                            item.status = if item.record.custom.is_some() {
+                                LauncherItemStatus::Ready
+                            } else if item.record.executable_kind.is_some() {
                                 LauncherItemStatus::Checking
                             } else {
                                 LauncherItemStatus::NeedsApproval
@@ -458,6 +516,9 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn request_launcher_launch(&mut self, platform: &dyn Platform) {
+        if self.pages.launcher.organizing {
+            return;
+        }
         if let Some(application) = self.selected_built_in_launcher_application() {
             match application.id {
                 id if id == app::COMMAND_LINE_APPLICATION.id => self.open_command_line(),
@@ -504,6 +565,13 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn request_launcher_remove(&mut self) {
+        if !self.pages.launcher.organizing {
+            return;
+        }
+        self.confirm_launcher_remove();
+    }
+
+    fn confirm_launcher_remove(&mut self) {
         if !self.can_manage_launcher() {
             self.update_launcher_state(|state| {
                 state.error = Some(i18n::LocalizedText::from(i18n::msg!(
@@ -525,7 +593,7 @@ impl ShellSession {
         self.pages.launcher.launcher_pending_confirmation =
             Some(LauncherPendingConfirmation::Remove {
                 ids: vec![item.record.id.clone()],
-                label: item.record.path.clone(),
+                label: app::launcher::launcher_entry_name(&item.record).to_owned(),
             });
         self.pages.launcher.launcher_confirm_selected = true;
     }
@@ -603,14 +671,16 @@ impl ShellSession {
         match ui::launcher_layout(main, &model).hit_test(coordinates.0, coordinates.1) {
             Some(ui::LauncherHitTarget::Item(index)) => {
                 self.select_launcher_index(index);
+                let organizing = self.pages.launcher.organizing;
                 if let Some(capture) = &mut self.interaction.button_capture {
-                    capture.activate_on_release = true;
+                    capture.activate_on_release = !organizing;
                 }
                 if self.pages.launcher.launcher_view_mode
                     == app::launcher::LauncherViewMode::LargeIcons
+                    && self.pages.launcher.organizing
                     && self.can_manage_launcher()
                     && !self.pages.common.table_sorts.contains_key("launcher")
-                    && let Some(item_id) = self.selected_launcher_id()
+                    && let Some(item_id) = model.items.get(index).map(|item| item.id.clone())
                 {
                     self.pages.launcher.launcher_drag = Some(LauncherDragState {
                         item_id,
@@ -619,6 +689,8 @@ impl ShellSession {
                 }
             }
             Some(ui::LauncherHitTarget::Toolbar(action)) => match action {
+                ui::LauncherToolbarAction::Organize => self.toggle_launcher_organize(),
+                ui::LauncherToolbarAction::Add => self.open_launcher_add(),
                 ui::LauncherToolbarAction::Open => self.request_launcher_launch(platform),
                 ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
                 ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
@@ -647,6 +719,24 @@ impl ShellSession {
             return None;
         };
         Some(ui::launcher_layout(main, &self.to_launcher_view_model()))
+    }
+
+    pub(in crate::session) fn page_launcher(&mut self, delta: isize) {
+        let Some(layout) = self.launcher_content_layout() else {
+            return;
+        };
+        if delta == 0 || layout.visible_capacity == 0 {
+            return;
+        }
+        let max_start = layout
+            .scroll_content_len
+            .saturating_sub(layout.visible_capacity);
+        let start = layout
+            .visible_start
+            .saturating_add_signed(delta * layout.visible_capacity as isize)
+            .min(max_start);
+        self.pages.launcher.launcher_viewport_offset = start;
+        self.select_launcher_index(start.min(self.launcher_item_count().saturating_sub(1)));
     }
 
     fn sync_launcher_viewport(&mut self) {
@@ -758,7 +848,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn update_launcher_drag(&mut self, coordinates: CellPosition) {
-        if self.pages.common.table_sorts.contains_key("launcher")
+        if !self.pages.launcher.organizing
+            || self.pages.common.table_sorts.contains_key("launcher")
             || self.pages.launcher.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
         {
             self.pages.launcher.launcher_drag = None;
@@ -788,7 +879,8 @@ impl ShellSession {
         if drag.target.is_none() {
             return;
         }
-        if self.pages.common.table_sorts.contains_key("launcher")
+        if !self.pages.launcher.organizing
+            || self.pages.common.table_sorts.contains_key("launcher")
             || self.pages.launcher.launcher_view_mode != app::launcher::LauncherViewMode::LargeIcons
         {
             return;
@@ -803,25 +895,23 @@ impl ShellSession {
         else {
             return;
         };
-        let insertion_index = target
-            .insertion_index()
-            .saturating_sub(self.built_in_launcher_count());
-        self.apply_launcher_command(
-            LauncherCommand::Reorder {
-                id: drag.item_id.clone(),
-                insertion_index,
-            },
-            platform,
-        );
-        if let Some(index) = self.app.launcher_state().and_then(|state| {
-            state
-                .items
-                .iter()
-                .position(|item| item.record.id == drag.item_id)
-        }) {
-            self.pages.launcher.launcher_selected_index =
-                index.saturating_add(self.built_in_launcher_count());
-        }
+        let mut order = model
+            .items
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
+        let Some(source) = order.iter().position(|id| id == &drag.item_id) else {
+            return;
+        };
+        let boundary = target.insertion_index().min(order.len());
+        let destination = if source < boundary {
+            boundary.saturating_sub(1)
+        } else {
+            boundary
+        };
+        let id = order.remove(source);
+        order.insert(destination.min(order.len()), id);
+        self.save_launcher_order(order, platform);
     }
 
     pub fn to_launcher_view_model(&self) -> ui::LauncherViewModel {
@@ -847,11 +937,7 @@ impl ShellSession {
                     .iter()
                     .enumerate()
                     .map(|(external_index, item)| {
-                        let path = std::path::Path::new(&item.record.path);
-                        let name = path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or(&item.record.path);
+                        let name = app::launcher::launcher_entry_name(&item.record);
                         let type_label = match item.record.executable_kind {
                             Some(LauncherExecutableKind::NativeBinary) => {
                                 i18n::tr!("shell-application")
@@ -871,6 +957,16 @@ impl ShellSession {
                             type_label,
                             item.status,
                         );
+                        if let Some(custom) = &item.record.custom {
+                            model.path = custom.command.clone();
+                        }
+                        model.custom_icon = item
+                            .record
+                            .icon
+                            .as_ref()
+                            .or_else(|| item.record.custom.as_ref().map(|custom| &custom.icon))
+                            .filter(|icon| !icon.is_empty())
+                            .cloned();
                         model.selected = external_index.saturating_add(built_in_count)
                             == self.pages.launcher.launcher_selected_index;
                         model.capabilities.configurable = matches!(
@@ -882,6 +978,17 @@ impl ShellSession {
                     })
                     .collect::<Vec<_>>(),
             );
+        }
+        items.sort_by_key(|item| {
+            self.pages
+                .launcher
+                .order
+                .iter()
+                .position(|id| id == &item.id)
+                .unwrap_or(usize::MAX)
+        });
+        for item in &mut items {
+            item.capabilities.reorderable = self.pages.launcher.organizing;
         }
         let sort = self.pages.common.table_sorts.get("launcher").copied();
         if let Some(sort) = sort {
@@ -906,8 +1013,16 @@ impl ShellSession {
             self.can_manage_launcher(),
             self.ascii_assets.clone(),
         );
+        model.set_organizing(self.pages.launcher.organizing, self.can_manage_launcher());
         model.sort = sort;
         model.run_settings = self.launcher_run_settings_form();
+        model.context_menu = self
+            .pages
+            .launcher
+            .context_menu
+            .as_ref()
+            .map(|state| state.menu.clone());
+        model.entry_editor = self.pages.launcher.entry_editor.clone();
         model.viewport_offset = self.pages.launcher.launcher_viewport_offset;
         model.drop_target = self
             .pages

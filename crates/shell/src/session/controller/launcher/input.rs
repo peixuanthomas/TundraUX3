@@ -6,6 +6,13 @@ impl ShellSession {
         key: &KeyInput,
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Launcher);
+        if self.pages.launcher.context_menu.is_some() || self.pages.launcher.entry_editor.is_some()
+        {
+            return (
+                target,
+                ShellCommand::LauncherEntryInput(InputEvent::Key(key.clone())),
+            );
+        }
         if self.pages.launcher.launcher_run_settings.is_some() {
             return (target, ShellCommand::LauncherRunSettingsKey(key.clone()));
         }
@@ -42,7 +49,22 @@ impl ShellSession {
             return (target, ShellCommand::RecordInput);
         }
         match key.key {
+            InputKey::F(2) if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherOrganize)
+            }
+            InputKey::Insert if key.phase == InputPhase::Press => {
+                (target, ShellCommand::LauncherAdd)
+            }
+            InputKey::Escape if self.pages.launcher.organizing => {
+                (target, ShellCommand::LauncherOrganize)
+            }
             InputKey::Escape => (RoutedTarget::Global, ShellCommand::CloseLauncher),
+            InputKey::Left if self.pages.launcher.organizing && key.modifiers.shift => {
+                (target, ShellCommand::LauncherMove(-1))
+            }
+            InputKey::Right if self.pages.launcher.organizing && key.modifiers.shift => {
+                (target, ShellCommand::LauncherMove(1))
+            }
             InputKey::Left => (target, ShellCommand::LauncherPrevious),
             InputKey::Right => (target, ShellCommand::LauncherNext),
             InputKey::Up => (target, ShellCommand::LauncherUp),
@@ -82,10 +104,20 @@ impl ShellSession {
     ) -> (RoutedTarget, ShellCommand) {
         let target = RoutedTarget::Component(ShellComponent::Launcher);
         let coordinates = mouse.coordinates();
+        if self.pages.launcher.context_menu.is_some() || self.pages.launcher.entry_editor.is_some()
+        {
+            return (
+                target,
+                ShellCommand::LauncherEntryInput(InputEvent::Mouse(mouse)),
+            );
+        }
         if self.pages.launcher.launcher_run_settings.is_some() {
             return (target, ShellCommand::LauncherRunSettingsPointer(mouse));
         }
         match mouse.kind {
+            ui::MouseEventKind::Down(PointerButton::Right) => {
+                (target, ShellCommand::LauncherContextMenu(coordinates))
+            }
             ui::MouseEventKind::Scroll(direction) => {
                 let delta = match direction {
                     ScrollDirection::Up => -1,

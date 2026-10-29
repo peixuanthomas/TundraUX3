@@ -71,7 +71,9 @@ impl LauncherState {
                 .iter()
                 .cloned()
                 .map(|record| LauncherItem {
-                    status: if record.executable_kind.is_some() {
+                    status: if record.custom.is_some() {
+                        LauncherItemStatus::Ready
+                    } else if record.executable_kind.is_some() {
                         LauncherItemStatus::Checking
                     } else {
                         LauncherItemStatus::NeedsApproval
@@ -120,6 +122,8 @@ pub enum LauncherEffect {
         path: PathBuf,
         args: Vec<String>,
         directory: Option<PathBuf>,
+        /// None preserves the existing exit handling for approved executables.
+        wait_for_enter: Option<bool>,
     },
     ConfirmationRequired {
         id: String,
@@ -132,6 +136,12 @@ pub enum LauncherEffect {
 pub enum LauncherCommand {
     Refresh,
     AddPaths(Vec<PathBuf>),
+    AddCustom(storage::LauncherCustomCommand),
+    EditEntry {
+        id: String,
+        edit: LauncherEntryEdit,
+    },
+    SetOrder(Vec<String>),
     Reorder {
         id: String,
         insertion_index: usize,
@@ -223,6 +233,38 @@ impl From<StorageError> for LauncherError {
     }
 }
 
+pub const LAUNCHER_ICON_WIDTH: usize = 5;
+pub const LAUNCHER_ICON_HEIGHT: usize = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LauncherEntryEdit {
+    Name(String),
+    Command(String),
+    Icon(String),
+}
+
+pub fn validate_launcher_icon(icon: &str) -> bool {
+    use unicode_width::UnicodeWidthStr;
+    icon.split('\n').count() <= LAUNCHER_ICON_HEIGHT
+        && icon
+            .split('\n')
+            .all(|line| !line.chars().any(char::is_control) && line.width() <= LAUNCHER_ICON_WIDTH)
+}
+
+pub fn launcher_entry_name(entry: &LauncherEntryRecord) -> &str {
+    entry.name.as_deref().unwrap_or_else(|| {
+        entry.custom.as_ref().map_or_else(
+            || {
+                Path::new(&entry.path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&entry.path)
+            },
+            |custom| custom.name.as_str(),
+        )
+    })
+}
+
 /// Owns Launcher authorization and persistence. Configuration mutations are
 /// saved exactly once after a batch is completely evaluated.
 #[derive(Debug, Clone, Default)]
@@ -250,6 +292,11 @@ impl LauncherController {
         state.error = None;
         let result = match command {
             LauncherCommand::Refresh => self.refresh(state, platform),
+            LauncherCommand::AddCustom(custom) => self.add_custom(state, custom, session, storage),
+            LauncherCommand::EditEntry { id, edit } => {
+                self.edit_entry(state, &id, edit, session, storage)
+            }
+            LauncherCommand::SetOrder(order) => self.set_order(order, session, storage),
             LauncherCommand::AddPaths(paths) => self.add(state, paths, session, platform, storage),
             LauncherCommand::Reorder {
                 id,
@@ -273,6 +320,131 @@ impl LauncherController {
                 LauncherEffect::None
             }
         }
+    }
+
+    fn add_custom(
+        &self,
+        state: &mut LauncherState,
+        custom: storage::LauncherCustomCommand,
+        session: Option<&AuthSession>,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        self.authorize(session, PermissionAction::ExecuteCommandLine)?;
+        if custom.name.trim().is_empty() || custom.command.trim().is_empty() {
+            return Err(LauncherError::Localized(LocalizedError::new(
+                "UX_LAUNCH_INVALID_COMMAND",
+                msg!("app-launcher-custom-required"),
+            )));
+        }
+        if !validate_launcher_icon(&custom.icon) {
+            return Err(LauncherError::Localized(LocalizedError::new(
+                "LAUNCHER_INVALID_ICON",
+                msg!("app-launcher-icon-bounds"),
+            )));
+        }
+        let mut config = storage.load_config()?;
+        let id = new_id(Path::new(&custom.command), &config.launcher);
+        config.launcher.entries.push(LauncherEntryRecord {
+            id,
+            custom: Some(custom),
+            added_by_user_id: session.unwrap().user_id.clone(),
+            added_at_epoch_ms: epoch_millis(),
+            ..Default::default()
+        });
+        storage.save_config(&config)?;
+        state.reset(&config.launcher);
+        Ok(LauncherEffect::None)
+    }
+
+    fn edit_entry(
+        &self,
+        state: &mut LauncherState,
+        id: &str,
+        edit: LauncherEntryEdit,
+        session: Option<&AuthSession>,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        let mut config = storage.load_config()?;
+        let entry = config
+            .launcher
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| LauncherError::MissingEntry(id.to_owned()))?;
+        match edit {
+            LauncherEntryEdit::Name(name) => {
+                if name.trim().is_empty() || name.chars().any(char::is_control) {
+                    return Err(LauncherError::Localized(LocalizedError::new(
+                        "LAUNCHER_INVALID_NAME",
+                        msg!("app-launcher-custom-required"),
+                    )));
+                }
+                if let Some(custom) = &mut entry.custom {
+                    custom.name = name;
+                    entry.name = None;
+                } else {
+                    entry.name = Some(name);
+                }
+            }
+            LauncherEntryEdit::Command(command) => {
+                self.authorize(session, PermissionAction::ExecuteCommandLine)?;
+                if command.trim().is_empty() || command.contains('\0') {
+                    return Err(LauncherError::Localized(LocalizedError::new(
+                        "LAUNCHER_INVALID_COMMAND",
+                        msg!("app-launcher-custom-required"),
+                    )));
+                }
+                if entry.custom.is_none() {
+                    entry.custom = Some(storage::LauncherCustomCommand {
+                        name: launcher_entry_name(entry).to_owned(),
+                        icon: entry.icon.take().unwrap_or_default(),
+                        ..Default::default()
+                    });
+                    entry.name = None;
+                }
+                entry.custom.as_mut().unwrap().command = command;
+                entry.executable_kind = None;
+            }
+            LauncherEntryEdit::Icon(icon) => {
+                if !validate_launcher_icon(&icon) {
+                    return Err(LauncherError::Localized(LocalizedError::new(
+                        "LAUNCHER_INVALID_ICON",
+                        msg!("app-launcher-icon-bounds"),
+                    )));
+                }
+                if let Some(custom) = &mut entry.custom {
+                    custom.icon = icon;
+                    entry.icon = None;
+                } else {
+                    entry.icon = Some(icon);
+                }
+            }
+        }
+        let saved = entry.clone();
+        storage.save_config(&config)?;
+        if let Some(item) = state.items.iter_mut().find(|item| item.record.id == id) {
+            item.record = saved;
+            if item.record.custom.is_some() {
+                item.status = LauncherItemStatus::Ready;
+            }
+        }
+        state.message = Some(msg!("app-launcher-entry-saved").into());
+        Ok(LauncherEffect::None)
+    }
+
+    fn set_order(
+        &self,
+        order: Vec<String>,
+        session: Option<&AuthSession>,
+        storage: &StorageManager,
+    ) -> Result<LauncherEffect, LauncherError> {
+        self.authorize(session, PermissionAction::ManageLauncher)?;
+        let mut config = storage.load_config()?;
+        config.launcher.order = order;
+        storage.save_config(&config)?;
+        Ok(LauncherEffect::None)
     }
 
     fn refresh(
@@ -452,6 +624,29 @@ impl LauncherController {
             .iter()
             .find(|entry| entry.id == id)
             .ok_or_else(|| LauncherError::MissingEntry(id.to_string()))?;
+        if let Some(custom) = &entry.custom {
+            self.authorize(session, PermissionAction::ExecuteCommandLine)?;
+            let (path, args) = if cfg!(windows) {
+                (
+                    PathBuf::from("cmd.exe"),
+                    vec!["/C".into(), custom.command.clone()],
+                )
+            } else {
+                (
+                    PathBuf::from("/bin/sh"),
+                    vec!["-c".into(), custom.command.clone()],
+                )
+            };
+            return Ok(LauncherEffect::OpenTerminalRequested {
+                path,
+                args,
+                directory: entry
+                    .terminal
+                    .as_ref()
+                    .and_then(|settings| settings.working_directory.as_deref().map(PathBuf::from)),
+                wait_for_enter: Some(custom.wait_for_enter),
+            });
+        }
         let status = verify(entry, platform)?;
         state.set_item_status(id, status);
         if status != LauncherItemStatus::Ready {
@@ -481,6 +676,7 @@ impl LauncherController {
                     .as_deref()
                     .filter(|directory| !directory.is_empty())
                     .map(PathBuf::from),
+                wait_for_enter: None,
             });
         }
         Ok(LauncherEffect::OpenRequested {
@@ -542,6 +738,9 @@ pub fn prepare_launcher_entry(
         added_by_user_id: added_by_user_id.to_string(),
         added_at_epoch_ms: epoch_millis(),
         terminal: None,
+        custom: None,
+        name: None,
+        icon: None,
     }))
 }
 
@@ -665,6 +864,9 @@ fn verify(
     entry: &LauncherEntryRecord,
     _platform: &dyn Platform,
 ) -> Result<LauncherItemStatus, LauncherError> {
+    if entry.custom.is_some() {
+        return Ok(LauncherItemStatus::Ready);
+    }
     if entry.executable_kind.is_none() {
         return Ok(LauncherItemStatus::NeedsApproval);
     }

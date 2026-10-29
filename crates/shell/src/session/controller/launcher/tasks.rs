@@ -3,7 +3,7 @@ use crate::session::*;
 pub(in crate::session) enum LauncherRefreshEvent {
     ItemChecked {
         request_id: u64,
-        id: String,
+        entry: storage::LauncherEntryRecord,
         result: Result<LauncherItemStatus, i18n::LocalizedText>,
     },
     Finished {
@@ -122,7 +122,7 @@ impl ShellLauncherTaskRuntime {
                         if events
                             .send(LauncherRefreshEvent::ItemChecked {
                                 request_id,
-                                id: entry.id.clone(),
+                                entry: entry.clone(),
                                 result,
                             })
                             .is_err()
@@ -222,14 +222,29 @@ impl ShellSession {
         match event {
             LauncherRefreshEvent::ItemChecked {
                 request_id,
-                id,
+                entry,
                 result,
             } if self.pages.launcher.launcher_refresh_request == Some(request_id) => {
-                self.update_launcher_state(|state| match result {
-                    Ok(status) => state.set_item_status(&id, status),
-                    Err(error) => {
-                        state.set_item_status(&id, LauncherItemStatus::Unsupported);
-                        state.error = Some(error);
+                self.update_launcher_state(|state| {
+                    let unchanged = state
+                        .items
+                        .iter()
+                        .find(|item| item.record.id == entry.id)
+                        .is_some_and(|item| {
+                            item.record.path == entry.path
+                                && item.record.executable_kind == entry.executable_kind
+                                && item.record.custom.as_ref().map(|custom| &custom.command)
+                                    == entry.custom.as_ref().map(|custom| &custom.command)
+                        });
+                    if !unchanged {
+                        return;
+                    }
+                    match result {
+                        Ok(status) => state.set_item_status(&entry.id, status),
+                        Err(error) => {
+                            state.set_item_status(&entry.id, LauncherItemStatus::Unsupported);
+                            state.error = Some(error);
+                        }
                     }
                 });
             }

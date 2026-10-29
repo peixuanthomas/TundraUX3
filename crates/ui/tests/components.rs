@@ -259,6 +259,7 @@ fn focused_text_input_keeps_accent_and_blinks_only_the_cursor() {
     input.render(area, &mut buffer, &theme);
     assert_eq!(buffer[(1, 1)].fg, theme.accent_color);
     assert_eq!(buffer[(0, 0)].fg, theme.accent_color);
+    assert_eq!(buffer[(5, 1)].symbol(), "_");
     assert!(buffer[(5, 1)].modifier.contains(Modifier::SLOW_BLINK));
     assert!(!buffer[(1, 1)].modifier.contains(Modifier::SLOW_BLINK));
     input.set_focused(false);
@@ -328,7 +329,7 @@ fn text_input_mouse_cursor_uses_terminal_columns_for_wide_characters() {
             .cell((3, 1))
             .expect("cursor after wide glyph")
             .symbol(),
-        "|"
+        "_"
     );
 }
 

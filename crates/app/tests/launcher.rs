@@ -3,9 +3,166 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use app::launcher::{
-    LauncherAddOutcome, LauncherCommand, LauncherController, LauncherEffect, LauncherItemStatus,
-    LauncherState, verify_launcher_entry,
+    LauncherAddOutcome, LauncherCommand, LauncherController, LauncherEffect, LauncherEntryEdit,
+    LauncherItemStatus, LauncherState, verify_launcher_entry,
 };
+
+#[test]
+fn launcher_edits_persist_metadata_and_replace_the_command_without_changing_identity() {
+    let fixture = Fixture::new("edit-entry");
+    let executable = fixture.file("original.exe", b"program");
+    fixture.approve(&executable, ExecutableKind::NativeBinary);
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddPaths(vec![executable.clone()]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let id = state.items[0].record.id.clone();
+    for edit in [
+        LauncherEntryEdit::Name("中文 tool".into()),
+        LauncherEntryEdit::Icon("中文x\ne\u{301} ★".into()),
+    ] {
+        controller.apply(
+            &mut state,
+            LauncherCommand::EditEntry {
+                id: id.clone(),
+                edit,
+            },
+            Some(&admin()),
+            &fixture.platform,
+            &storage,
+        );
+        assert!(state.error.is_none(), "{:?}", state.error);
+    }
+    assert_eq!(
+        app::launcher::launcher_entry_name(&controller.load(&storage).unwrap().items[0].record),
+        "中文 tool"
+    );
+    assert!(
+        matches!(controller.apply(&mut state, LauncherCommand::RequestLaunch(id.clone()), Some(&admin()), &fixture.platform, &storage), LauncherEffect::OpenRequested { path, .. } if path == executable)
+    );
+    controller.apply(
+        &mut state,
+        LauncherCommand::EditEntry {
+            id: id.clone(),
+            edit: LauncherEntryEdit::Command("printf 'changed command'".into()),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let saved = controller.load(&storage).unwrap().items.remove(0).record;
+    assert_eq!(saved.id, id);
+    assert_eq!(saved.custom.as_ref().unwrap().name, "中文 tool");
+    assert_eq!(saved.custom.as_ref().unwrap().icon, "中文x\ne\u{301} ★");
+    assert!(
+        matches!(controller.apply(&mut state, LauncherCommand::RequestLaunch(id.clone()), Some(&admin()), &fixture.platform, &storage), LauncherEffect::OpenTerminalRequested { args, .. } if args.last().unwrap() == "printf 'changed command'")
+    );
+    controller.apply(
+        &mut state,
+        LauncherCommand::EditEntry {
+            id: id.clone(),
+            edit: LauncherEntryEdit::Name("renamed again".into()),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert_eq!(
+        app::launcher::launcher_entry_name(&controller.load(&storage).unwrap().items[0].record),
+        "renamed again"
+    );
+    controller.apply(
+        &mut state,
+        LauncherCommand::Remove(vec![id]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(executable.exists());
+    assert!(storage.load_config().unwrap().launcher.entries.is_empty());
+}
+
+#[test]
+fn invalid_or_unauthorized_launcher_edits_leave_the_saved_entry_unchanged() {
+    let fixture = Fixture::new("invalid-edit");
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddCustom(storage::LauncherCustomCommand {
+            name: "tool".into(),
+            command: "printf done".into(),
+            wait_for_enter: true,
+            ..Default::default()
+        }),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let id = state.items[0].record.id.clone();
+    let before = storage.load_config().unwrap().launcher;
+    for edit in [
+        LauncherEntryEdit::Name(" ".into()),
+        LauncherEntryEdit::Command(String::new()),
+        LauncherEntryEdit::Icon("中文中文".into()),
+        LauncherEntryEdit::Icon("123456".into()),
+        LauncherEntryEdit::Icon("a\nb\nc".into()),
+        LauncherEntryEdit::Icon("a\u{1b}[31m".into()),
+        LauncherEntryEdit::Icon("a\tb".into()),
+    ] {
+        controller.apply(
+            &mut state,
+            LauncherCommand::EditEntry {
+                id: id.clone(),
+                edit,
+            },
+            Some(&admin()),
+            &fixture.platform,
+            &storage,
+        );
+        assert!(state.error.is_some());
+        assert_eq!(storage.load_config().unwrap().launcher, before);
+    }
+    for actor in [None, Some(user())] {
+        for edit in [
+            LauncherEntryEdit::Name("denied".into()),
+            LauncherEntryEdit::Command("denied".into()),
+            LauncherEntryEdit::Icon("x".into()),
+        ] {
+            controller.apply(
+                &mut state,
+                LauncherCommand::EditEntry {
+                    id: id.clone(),
+                    edit,
+                },
+                actor.as_ref(),
+                &fixture.platform,
+                &storage,
+            );
+            assert!(state.error.is_some());
+            assert_eq!(storage.load_config().unwrap().launcher, before);
+        }
+    }
+    controller.apply(
+        &mut state,
+        LauncherCommand::EditEntry {
+            id: "builtin.command-line".into(),
+            edit: LauncherEntryEdit::Name("denied".into()),
+        },
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_some());
+    assert_eq!(storage.load_config().unwrap().launcher, before);
+}
 use identity::{AuthSession, UserRole};
 use platform::mock::MockPlatform;
 use platform::{
@@ -476,6 +633,7 @@ fn terminal_launch_preserves_argument_boundaries_and_working_directory() {
             path: executable.clone(),
             args: settings.arguments,
             directory: Some(fixture.documents.clone()),
+            wait_for_enter: None,
         }
     );
     controller.apply(
@@ -678,6 +836,7 @@ fn embedded_scripts_still_require_confirmation_and_recheck_directory_at_launch()
             path: script,
             args: Vec::new(),
             directory: Some(directory.clone()),
+            wait_for_enter: None,
         }
     );
     fs::remove_dir(directory).unwrap();
@@ -812,4 +971,76 @@ fn unix_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[test]
+fn custom_command_persists_and_uses_terminal_with_command_permission() {
+    let fixture = Fixture::new("custom-command");
+    let storage = fixture.storage();
+    let controller = LauncherController::default();
+    let mut state = LauncherState::default();
+    let custom = storage::LauncherCustomCommand {
+        name: "my tool".into(),
+        icon: "[★]".into(),
+        command: "printf 'hello world'".into(),
+        wait_for_enter: true,
+    };
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddCustom(custom.clone()),
+        None,
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_some());
+    assert!(storage.load_config().unwrap().launcher.entries.is_empty());
+    controller.apply(
+        &mut state,
+        LauncherCommand::AddCustom(custom.clone()),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_none(), "{:?}", state.error);
+    let mut loaded = controller.load(&storage).unwrap();
+    assert_eq!(loaded.items[0].record.custom.as_ref(), Some(&custom));
+    assert_eq!(
+        verify_launcher_entry(&loaded.items[0].record, &fixture.platform).unwrap(),
+        LauncherItemStatus::Ready
+    );
+    let id = loaded.items[0].record.id.clone();
+    let effect = controller.apply(
+        &mut loaded,
+        LauncherCommand::RequestLaunch(id.clone()),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    let LauncherEffect::OpenTerminalRequested {
+        path,
+        args,
+        directory,
+        wait_for_enter,
+    } = effect
+    else {
+        panic!("terminal required: {effect:?}");
+    };
+    assert_eq!(
+        path,
+        PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" })
+    );
+    assert_eq!(args.last(), Some(&custom.command));
+    assert_eq!(directory, None);
+    assert_eq!(wait_for_enter, Some(true));
+    assert_eq!(
+        controller.apply(
+            &mut loaded,
+            LauncherCommand::RequestLaunch(id),
+            None,
+            &fixture.platform,
+            &storage
+        ),
+        LauncherEffect::None
+    );
+    assert!(loaded.error.is_some());
 }

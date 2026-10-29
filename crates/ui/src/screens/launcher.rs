@@ -9,6 +9,9 @@ use crate::components::{
 };
 use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
 
+mod edit;
+pub use edit::*;
+
 const GRID_TILE_MIN_WIDTH: u16 = 20;
 const GRID_TILE_HEIGHT: u16 = 9;
 fn empty_message() -> String {
@@ -54,6 +57,7 @@ impl LauncherItemCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherItemViewModel {
+    pub custom_icon: Option<String>,
     pub id: String,
     pub name: String,
     pub path: String,
@@ -78,6 +82,7 @@ impl LauncherItemViewModel {
             path: path.into(),
             type_label: type_label.into(),
             status,
+            custom_icon: None,
             source: LauncherItemSource::External,
             capabilities: LauncherItemCapabilities::EXTERNAL,
             selected: false,
@@ -92,6 +97,7 @@ impl LauncherItemViewModel {
             path: descriptor.localized_description().render_current(),
             type_label: descriptor.localized_type_label().render_current(),
             status: LauncherItemStatus::Ready,
+            custom_icon: None,
             source: LauncherItemSource::BuiltIn,
             capabilities: LauncherItemCapabilities::BUILT_IN,
             selected: false,
@@ -109,6 +115,8 @@ impl LauncherItemViewModel {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherToolbarAction {
+    Organize,
+    Add,
     Open,
     Remove,
     Refresh,
@@ -119,6 +127,8 @@ pub enum LauncherToolbarAction {
 impl LauncherToolbarAction {
     pub fn label(self) -> String {
         match self {
+            Self::Organize => i18n::tr!("ui-launcher-organize"),
+            Self::Add => i18n::tr!("ui-launcher-add"),
             Self::Open => i18n::tr!("ui-launcher-open"),
             Self::Remove => i18n::tr!("ui-launcher-remove"),
             Self::Refresh => i18n::tr!("ui-launcher-refresh"),
@@ -129,6 +139,8 @@ impl LauncherToolbarAction {
 
     pub const fn shortcut(self) -> &'static str {
         match self {
+            Self::Organize => "F2",
+            Self::Add => "Ins",
             Self::Open => "Enter",
             Self::Remove => "Del",
             Self::Refresh => "R/F5",
@@ -139,6 +151,8 @@ impl LauncherToolbarAction {
 
     pub fn description(self) -> String {
         match self {
+            Self::Organize => i18n::tr!("ui-launcher-organize"),
+            Self::Add => i18n::tr!("ui-launcher-add"),
             Self::Open => i18n::tr!("ui-launcher-open-description"),
             Self::Remove => i18n::tr!("ui-launcher-remove-description"),
             Self::Refresh => i18n::tr!("ui-launcher-refresh-description"),
@@ -206,6 +220,7 @@ impl LauncherDropTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherViewModel {
+    pub organizing: bool,
     pub items: Vec<LauncherItemViewModel>,
     pub sort: Option<crate::TableSort>,
     pub selected_index: Option<usize>,
@@ -216,6 +231,8 @@ pub struct LauncherViewModel {
     pub error: Option<String>,
     pub confirmation: Option<LauncherConfirmationViewModel>,
     pub run_settings: Option<crate::ManagementForm>,
+    pub context_menu: Option<LauncherContextMenu>,
+    pub entry_editor: Option<LauncherEntryEditor>,
     pub drop_target: Option<LauncherDropTarget>,
     ascii_assets: RuntimeAsciiAssets,
 }
@@ -258,7 +275,6 @@ impl LauncherViewModel {
             .filter(|index| *index < items.len())
             .or_else(|| (!items.is_empty()).then_some(0));
         let selected_item = selected_index.and_then(|index| items.get(index));
-        let can_remove = selected_item.is_some_and(|item| item.capabilities.removable);
         let can_open = selected_item.is_some_and(|item| {
             matches!(
                 item.status,
@@ -271,12 +287,6 @@ impl LauncherViewModel {
             LauncherToolbarAction::Open,
             can_open,
         )];
-        if can_manage && can_remove {
-            toolbar.push(LauncherToolbarButtonViewModel::new(
-                LauncherToolbarAction::Remove,
-                true,
-            ));
-        }
         toolbar.push(LauncherToolbarButtonViewModel::new(
             LauncherToolbarAction::Refresh,
             true,
@@ -290,19 +300,61 @@ impl LauncherViewModel {
             can_manage && selected_item.is_some_and(|item| item.capabilities.configurable),
         ));
 
+        if can_manage {
+            toolbar.push(LauncherToolbarButtonViewModel::new(
+                LauncherToolbarAction::Organize,
+                true,
+            ));
+        }
         Self {
             items,
             selected_index,
             view_mode,
             viewport_offset: 0,
+            organizing: false,
             sort: None,
             toolbar,
             message: None,
             error: None,
             confirmation: None,
             run_settings: None,
+            context_menu: None,
+            entry_editor: None,
             drop_target: None,
             ascii_assets,
+        }
+    }
+
+    pub fn set_organizing(&mut self, organizing: bool, can_manage: bool) {
+        self.organizing = organizing;
+        self.toolbar.retain(|button| {
+            !matches!(
+                button.action,
+                LauncherToolbarAction::Remove | LauncherToolbarAction::Organize
+            )
+        });
+        if organizing {
+            self.toolbar
+                .retain(|button| button.action == LauncherToolbarAction::Refresh);
+            self.toolbar.push(LauncherToolbarButtonViewModel::new(
+                LauncherToolbarAction::Add,
+                can_manage,
+            ));
+            self.toolbar.push(LauncherToolbarButtonViewModel::new(
+                LauncherToolbarAction::Remove,
+                can_manage
+                    && self
+                        .selected_item()
+                        .is_some_and(|item| item.capabilities.removable),
+            ));
+        }
+        if can_manage {
+            let mut button =
+                LauncherToolbarButtonViewModel::new(LauncherToolbarAction::Organize, true);
+            if organizing {
+                button.label = i18n::tr!("ui-launcher-organize-done");
+            }
+            self.toolbar.push(button);
         }
     }
 
@@ -648,6 +700,8 @@ fn launcher_action_bar(model: &LauncherViewModel) -> PageActionBar {
         LauncherToolbarAction::ToggleView,
         LauncherToolbarAction::RunSettings,
         LauncherToolbarAction::Remove,
+        LauncherToolbarAction::Add,
+        LauncherToolbarAction::Organize,
     ] {
         if let Some(button) = model.toolbar.iter().find(|button| button.action == action) {
             let page = PageAction::new(
@@ -668,7 +722,11 @@ fn launcher_action_bar(model: &LauncherViewModel) -> PageActionBar {
         (message.clone(), ComponentTone::Default)
     } else {
         (
-            i18n::tr!("ui-launcher-item-count", count = model.items.len()),
+            if model.organizing {
+                i18n::tr!("ui-launcher-organizing-count", count = model.items.len())
+            } else {
+                i18n::tr!("ui-launcher-item-count", count = model.items.len())
+            },
             ComponentTone::Muted,
         )
     };
@@ -896,13 +954,17 @@ pub fn render_launcher_content(
     Surface::new()
         .titled(i18n::tr!(
             "ui-launcher-title",
-            mode = launcher_view_mode_label(model.view_mode)
+            mode = if model.organizing {
+                i18n::tr!("ui-launcher-organize")
+            } else {
+                launcher_view_mode_label(model.view_mode)
+            }
         ))
         .bordered(true)
         .render_frame(frame, layout.panel, context);
     render_launcher_toolbar(frame, &layout, model, context);
     match model.view_mode {
-        LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, theme, icons),
+        LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, context, icons),
         LauncherViewMode::Details => {
             render_launcher_details(frame, &layout, model, context);
             if let Some(icons) = icons {
@@ -978,9 +1040,10 @@ fn render_launcher_grid(
     frame: &mut Frame<'_>,
     layout: &LauncherLayout,
     model: &LauncherViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
     icons: Option<&dyn LauncherIconRenderer>,
 ) {
+    let theme = &context.compatibility_theme();
     if model.items.is_empty() {
         frame.render_widget(
             Paragraph::new(empty_message())
@@ -999,23 +1062,24 @@ fn render_launcher_grid(
         let style = item_style(item.status, selected, theme).bg(theme.tokens().raised);
         let mut surface = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
             .with_current(selected);
-        surface.set_disabled(item.status != LauncherItemStatus::Ready);
+        surface.set_disabled(!model.organizing && item.status != LauncherItemStatus::Ready);
         surface.set_focused(model.selected_index == Some(item_layout.index));
         if item_layout.area.height < 3 {
             let mut compact = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
                 .with_current(selected);
-            compact.set_disabled(item.status != LauncherItemStatus::Ready);
+            compact.set_disabled(!model.organizing && item.status != LauncherItemStatus::Ready);
             compact.set_focused(model.selected_index == Some(item_layout.index));
             compact.render_borderless_frame(frame, item_layout.area, theme);
             continue;
         }
         surface.render_surface_frame(frame, item_layout.area, theme);
-        let rendered_native = !surface.state.disabled
+        let rendered_native = item.custom_icon.is_none()
+            && !surface.state.disabled
             && item_layout.icon_area.width > 0
             && item_layout.icon_area.height > 0
             && icons.is_some_and(|icons| icons.render_icon(&item.id, frame, item_layout.icon_area));
         if !rendered_native {
-            render_default_ascii_icon(frame, item_layout.icon_area, model, item, style);
+            render_default_ascii_icon(frame, item_layout.icon_area, model, item, context, style);
         }
         let inner = inset(item_layout.area, 1);
         let name_y = item_layout
@@ -1056,8 +1120,13 @@ fn render_default_ascii_icon(
     area: Rect,
     model: &LauncherViewModel,
     item: &LauncherItemViewModel,
+    context: &RenderContext,
     style: Style,
 ) {
+    if let Some(icon) = item.custom_icon.as_ref().filter(|icon| !icon.is_empty()) {
+        edit::render_custom_icon(frame, area, icon, context, style);
+        return;
+    }
     let Some(icon) = model.item_icon(item) else {
         return;
     };
@@ -1301,6 +1370,9 @@ pub fn render_launcher_overlay(
     model: &LauncherViewModel,
     context: &RenderContext,
 ) {
+    if edit::render_entry_overlay(frame, main, model, context) {
+        return;
+    }
     if let Some(form) = &model.run_settings {
         crate::render_management_overlay(
             frame,
@@ -1326,6 +1398,8 @@ pub fn launcher_sort_headers(
     if model.view_mode != LauncherViewMode::Details
         || model.confirmation.is_some()
         || model.run_settings.is_some()
+        || model.context_menu.is_some()
+        || model.entry_editor.is_some()
     {
         return vec![];
     }
