@@ -1,6 +1,6 @@
 # storage
 
-Launcher 的 order 保存内置与用户条目的统一 ID 顺序；条目的可选 custom 保存 name、icon、command，缺省字段兼容旧配置。
+Launcher 的 order 保存内置与用户条目的统一 ID 顺序；条目的可选 custom 保存 name、icon、command 和 wait_for_enter。wait_for_enter 缺省为 false，程序退出后立即返回；true 保留输出直到按回车返回。缺省字段兼容旧配置。
 
 `storage` 读取和保存应用文档，检查格式版本，并保留损坏原件供排查。平台路径和文件操作由 `platform` 提供。
 

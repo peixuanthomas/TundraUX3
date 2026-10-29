@@ -369,8 +369,9 @@ impl ShellSession {
                 path,
                 args,
                 directory,
+                wait_for_enter,
             } => {
-                self.open_external_terminal(path, args, directory);
+                self.open_external_terminal(path, args, directory, wait_for_enter);
             }
             LauncherEffect::OpenRequested { path, kind } => {
                 let mut started = runtime_log::RuntimeLogEvent::new(

@@ -7,6 +7,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shlex
 import signal
 import struct
 import subprocess
@@ -146,6 +147,8 @@ def main():
             ui("text", "printf 'CUSTOM_LAUNCHER_PTY_OK\\n'; exit 75")
             key("Tab")
             ui("text", "[★]")
+            key("Tab")
+            key("Right")
             key("F10")
             toolbar("Done organizing")
             key("End")
@@ -157,11 +160,30 @@ def main():
             config = tomllib.loads(config_file.read_text())
             custom = next(entry for entry in config["launcher"]["entries"] if entry.get("custom", {}).get("name") == "Custom PTY tool")
             assert custom["custom"]["icon"] == "[★]"
+            assert custom["custom"]["wait_for_enter"]
             assert config["launcher"]["order"]
             key("Enter")
-            current = until(lambda current: current["page"] == "CommandLine" and "CUSTOM_LAUNCHER_PTY_OK" in "\n".join(current["lines"]))
+            current = until(lambda current: current["page"] == "CommandLine"
+                and "CUSTOM_LAUNCHER_PTY_OK" in "\n".join(current["lines"])
+                and "Press Enter to return." in "\n".join(current["lines"]))
             assert any(node["role"] == "terminal" for node in current["nodes"])
-            print("PASS: custom name, pattern and command persist; command runs in the shared real PTY terminal")
+            key("Enter")
+            current = until(lambda current: current["page"] == "Launcher")
+            print("PASS: custom settings persist; output stays in the real PTY until Enter returns")
+            for code in [0, 9]:
+                toolbar("Organize")
+                toolbar("Add launcher")
+                ui("text", f"Immediate exit {code}")
+                key("Tab")
+                marker = root / f"immediate-{code}.txt"
+                ui("text", f"printf done > {shlex.quote(str(marker))}; exit {code}")
+                key("F10")
+                toolbar("Done organizing")
+                key("End")
+                key("Enter")
+                current = until(lambda current: current["page"] == "Launcher" and marker.exists())
+                assert marker.read_text() == "done"
+            print("PASS: the default returns immediately after successful and failed custom commands")
         except Exception:
             print("Last snapshot:", json.dumps(locals().get("current"), ensure_ascii=False), file=sys.stderr)
             visible = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", bytes(output[-16000:]))

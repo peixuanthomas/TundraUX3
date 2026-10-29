@@ -14,8 +14,16 @@ impl ShellSession {
         program: PathBuf,
         args: Vec<String>,
         directory: Option<PathBuf>,
+        wait_for_enter: Option<bool>,
     ) {
-        self.open_terminal_page(directory, Some(ExternalTerminalLaunch { program, args }));
+        self.open_terminal_page(
+            directory,
+            Some(ExternalTerminalLaunch {
+                program,
+                args,
+                wait_for_enter,
+            }),
+        );
     }
 
     fn open_terminal_page(

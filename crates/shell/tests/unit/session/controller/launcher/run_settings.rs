@@ -130,6 +130,69 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn custom_launcher_exit_choice_defaults_to_immediate_and_accepts_each_input_method() {
+    for (hover, height) in [(true, 40), (false, 24)] {
+        let mut fixture = Fixture::new();
+        fixture.input(InputEvent::Resize { width: 120, height });
+        fixture.input(InputEvent::from_key_label("F2"));
+        fixture.input(InputEvent::from_key_label("Insert"));
+        let form = fixture.state.launcher_run_settings_form().unwrap();
+        assert_eq!(form.fields.len(), 4);
+        assert_eq!(form.fields[3].id, "exit");
+        assert_eq!(form.fields[3].value, form.fields[3].choices[0]);
+        for _ in 0..3 {
+            fixture.input(InputEvent::from_key_label("Tab"));
+        }
+        assert!(fixture.state.page_keyboard_identity().is_none());
+        fixture.input(InputEvent::from_key_label("Right"));
+        let form = fixture.state.launcher_run_settings_form().unwrap();
+        assert_eq!(form.fields[3].value, form.fields[3].choices[1]);
+        let layout = fixture.draw();
+        let choice = layout
+            .run_settings
+            .as_ref()
+            .unwrap()
+            .fields
+            .iter()
+            .find(|(index, _)| *index == 3)
+            .unwrap()
+            .1;
+        fixture.click(choice, hover);
+        let form = fixture.state.launcher_run_settings_form().unwrap();
+        assert_eq!(form.fields[3].value, form.fields[3].choices[0]);
+        assert_eq!(form.selected, 3);
+        for _ in 0..3 {
+            fixture.input(InputEvent::from_key_label("Shift+Tab"));
+        }
+        for text in ["exit choice", "printf done", "[T]"] {
+            fixture.input(InputEvent::Paste(text.into()));
+            fixture.input(InputEvent::from_key_label("Tab"));
+        }
+        fixture.input(InputEvent::from_key_label("Enter"));
+        assert!(fixture.state.launcher_run_settings_form().is_some());
+        fixture.input(InputEvent::from_key_label("F10"));
+        let config = fixture
+            .state
+            .storage_manager
+            .as_ref()
+            .unwrap()
+            .load_config()
+            .unwrap();
+        assert!(
+            config
+                .launcher
+                .entries
+                .last()
+                .unwrap()
+                .custom
+                .as_ref()
+                .unwrap()
+                .wait_for_enter
+        );
+    }
+}
+
+#[test]
 fn keyboard_saves_arguments_as_data_and_keeps_invalid_drafts_open() {
     let mut fixture = Fixture::new();
     fixture.input(InputEvent::from_key_label("F4"));
@@ -353,6 +416,7 @@ fn organizing_add_cancel_persist_and_delete_only_user_entries() {
     assert_eq!(custom.name, "中文 tool");
     assert_eq!(custom.command, "printf 'hello world'");
     assert_eq!(custom.icon, "[★]");
+    assert!(!custom.wait_for_enter);
     fixture.input(InputEvent::from_key_label("End"));
     fixture.input(InputEvent::from_key_label("Enter"));
     assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);

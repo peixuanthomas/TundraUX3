@@ -215,6 +215,7 @@ impl Default for SystemStatusPageState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherRunSettingsState {
     pub(super) custom: bool,
+    pub(super) wait_for_enter: bool,
     pub(super) name: ui::components::TextInput,
     pub(super) id: String,
     pub(super) embedded: bool,

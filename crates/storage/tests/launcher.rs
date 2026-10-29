@@ -1,6 +1,26 @@
 use storage::{
-    LauncherEntryRecord, LauncherExecutableKind, LauncherTerminalSettings, StorageConfig,
+    LauncherCustomCommand, LauncherEntryRecord, LauncherExecutableKind, LauncherTerminalSettings,
+    StorageConfig,
 };
+
+#[test]
+fn custom_exit_choice_defaults_to_immediate_and_roundtrips_both_values() {
+    let mut custom: LauncherCustomCommand = toml::from_str(
+        r#"
+name = "tool"
+icon = "[T]"
+command = "printf done"
+"#,
+    )
+    .unwrap();
+    assert!(!custom.wait_for_enter);
+    for wait_for_enter in [false, true] {
+        custom.wait_for_enter = wait_for_enter;
+        let encoded = toml::to_string(&custom).unwrap();
+        let decoded: LauncherCustomCommand = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, custom);
+    }
+}
 
 #[test]
 fn existing_launcher_entries_keep_system_launch_without_terminal_settings() {

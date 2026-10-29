@@ -899,6 +899,7 @@ pub struct LauncherCustomCommand {
     pub name: String,
     pub icon: String,
     pub command: String,
+    pub wait_for_enter: bool,
 }
 
 /// The executable classification persisted with a Launcher approval.

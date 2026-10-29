@@ -476,6 +476,7 @@ fn terminal_launch_preserves_argument_boundaries_and_working_directory() {
             path: executable.clone(),
             args: settings.arguments,
             directory: Some(fixture.documents.clone()),
+            wait_for_enter: None,
         }
     );
     controller.apply(
@@ -678,6 +679,7 @@ fn embedded_scripts_still_require_confirmation_and_recheck_directory_at_launch()
             path: script,
             args: Vec::new(),
             directory: Some(directory.clone()),
+            wait_for_enter: None,
         }
     );
     fs::remove_dir(directory).unwrap();
@@ -824,6 +826,7 @@ fn custom_command_persists_and_uses_terminal_with_command_permission() {
         name: "my tool".into(),
         icon: "[★]".into(),
         command: "printf 'hello world'".into(),
+        wait_for_enter: true,
     };
     controller.apply(
         &mut state,
@@ -860,6 +863,7 @@ fn custom_command_persists_and_uses_terminal_with_command_permission() {
         path,
         args,
         directory,
+        wait_for_enter,
     } = effect
     else {
         panic!("terminal required: {effect:?}");
@@ -870,6 +874,7 @@ fn custom_command_persists_and_uses_terminal_with_command_permission() {
     );
     assert_eq!(args.last(), Some(&custom.command));
     assert_eq!(directory, None);
+    assert_eq!(wait_for_enter, Some(true));
     assert_eq!(
         controller.apply(
             &mut loaded,

@@ -16,6 +16,7 @@ const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
 pub(super) struct ExternalTerminalLaunch {
     pub program: PathBuf,
     pub args: Vec<String>,
+    pub wait_for_enter: Option<bool>,
 }
 
 impl ExternalTerminalLaunch {
@@ -250,13 +251,21 @@ impl CommandLineHost {
             }
             return CommandLineHostEvent::PanicRequested;
         }
-        if status.success {
-            if let Some(history) = &self.history {
-                history.finish(
-                    platform::task_history::TaskStatus::Succeeded,
-                    i18n::tr!("task-exit-code", code = status.code),
-                );
-            }
+        if let Some(history) = &self.history {
+            history.finish(
+                if status.success {
+                    platform::task_history::TaskStatus::Succeeded
+                } else {
+                    platform::task_history::TaskStatus::Failed
+                },
+                i18n::tr!("task-exit-code", code = status.code),
+            );
+        }
+        let wait_for_enter = self
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.wait_for_enter);
+        if wait_for_enter == Some(false) || status.success && wait_for_enter != Some(true) {
             self.install_blank_snapshot();
             self.output = None;
             return CommandLineHostEvent::ExitToCaller;
@@ -265,12 +274,6 @@ impl CommandLineHost {
         self.state = CommandLineHostState::Exited {
             code: i32::try_from(status.code).unwrap_or(i32::MAX),
         };
-        if let Some(history) = &self.history {
-            history.finish(
-                platform::task_history::TaskStatus::Failed,
-                i18n::tr!("task-exit-code", code = status.code),
-            );
-        }
         CommandLineHostEvent::None
     }
 
@@ -297,6 +300,18 @@ impl CommandLineHost {
                                 && key.modifiers == ui::KeyModifiers::NONE =>
                         {
                             return CommandLineHostEvent::ExitToCaller;
+                        }
+                        InputKey::Enter
+                            if matches!(self.state, CommandLineHostState::Exited { .. })
+                                && self
+                                    .launch
+                                    .as_ref()
+                                    .and_then(|launch| launch.wait_for_enter)
+                                    == Some(true) =>
+                        {
+                            if key.phase == ui::InputPhase::Press {
+                                return CommandLineHostEvent::ExitToCaller;
+                            }
                         }
                         InputKey::Enter => {
                             self.install_blank_snapshot();
@@ -355,7 +370,17 @@ impl CommandLineHost {
             title: self.launch.as_ref().map(ExternalTerminalLaunch::title),
             terminal: Arc::clone(&self.ui_snapshot),
             process_state,
-            message: None,
+            message: match (
+                &self.state,
+                self.launch
+                    .as_ref()
+                    .and_then(|launch| launch.wait_for_enter),
+            ) {
+                (CommandLineHostState::Exited { code }, Some(true)) => {
+                    Some(i18n::tr!("shell-terminal-wait-for-enter", code = *code))
+                }
+                _ => None,
+            },
         }
     }
 

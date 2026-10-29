@@ -20,6 +20,7 @@ shell-terminal-output-failed = Could not finish reading terminal output: { $reas
 shell-terminal-close-title = Close terminal application?
 shell-terminal-close-message = Terminate { $program } and its child processes, then return?
 shell-terminal-task-title = Terminal: { $program }
+shell-terminal-wait-for-enter = Process exited with code { $code }. Press Enter to return.
 ui-help-launcher-run-settings = Configure terminal launch, arguments and working directory
 ui-terminal-application-exited = Process exited with code { $code }. Enter: retry · F12: return
 ui-terminal-application-failed = Enter: retry · F12: return · { $message }

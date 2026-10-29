@@ -20,6 +20,7 @@ shell-terminal-output-failed = 无法完成终端输出读取：{ $reason }
 shell-terminal-close-title = 关闭终端应用？
 shell-terminal-close-message = 终止 { $program } 及其子进程并返回？
 shell-terminal-task-title = 终端：{ $program }
+shell-terminal-wait-for-enter = 程序已退出，退出码 { $code }。按回车返回。
 ui-help-launcher-run-settings = 设置终端启动方式、参数与工作目录
 ui-terminal-application-exited = 程序已退出，退出码 { $code }。Enter：重试 · F12：返回
 ui-terminal-application-failed = Enter：重试 · F12：返回 · { $message }

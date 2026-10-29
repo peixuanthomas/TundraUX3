@@ -10,6 +10,7 @@ fn external_shell(script: &str, args: &[&str]) -> ExternalTerminalLaunch {
             .chain(args.iter().copied())
             .map(str::to_string)
             .collect(),
+        wait_for_enter: None,
     }
 }
 
@@ -52,6 +53,55 @@ fn wait_for_exit(host: &mut CommandLineHost) -> CommandLineHostEvent {
 }
 
 #[test]
+fn custom_terminal_immediate_exit_returns_for_success_and_failure() {
+    let fixture = PtyFixture::new("custom-immediate-exit");
+    for code in ["0", "9", "75", "76"] {
+        let mut launch = external_shell("printf 'CUSTOM-FINAL'; exit \"$1\"", &[code]);
+        launch.wait_for_enter = Some(false);
+        let mut host = start_external(&fixture, &launch, &fixture.root);
+        assert_eq!(wait_for_exit(&mut host), CommandLineHostEvent::ExitToCaller);
+        assert!(!host.is_running());
+        assert!(host.output.is_none());
+    }
+}
+
+#[test]
+fn custom_terminal_retains_success_and_failure_output_until_a_new_enter_press() {
+    let fixture = PtyFixture::new("custom-wait-for-enter");
+    for code in ["0", "9", "75", "76"] {
+        let mut launch = external_shell("printf 'CUSTOM-FINAL'; exit \"$1\"", &[code]);
+        launch.wait_for_enter = Some(true);
+        let mut host = start_external(&fixture, &launch, &fixture.root);
+        assert_eq!(wait_for_exit(&mut host), CommandLineHostEvent::None);
+        assert!(host.output.is_some());
+        assert!(snapshot_text(&host.ui_snapshot).contains("CUSTOM-FINAL"));
+        assert!(host.view_model().message.is_some());
+        for phase in [ui::InputPhase::Release, ui::InputPhase::Repeat] {
+            assert_eq!(
+                host.handle_input(
+                    &InputEvent::key_with_phase(InputKey::Enter, ui::KeyModifiers::NONE, phase),
+                    None,
+                ),
+                CommandLineHostEvent::None
+            );
+        }
+        assert_eq!(
+            host.handle_input(&InputEvent::key(InputKey::Char('x')), None),
+            CommandLineHostEvent::None
+        );
+        assert_eq!(host.poll(), CommandLineHostEvent::None);
+        assert_eq!(
+            host.handle_input(&InputEvent::key(InputKey::Enter), None),
+            CommandLineHostEvent::ExitToCaller
+        );
+        assert!(matches!(
+            host.state,
+            CommandLineHostState::Exited { code: actual } if actual.to_string() == code
+        ));
+    }
+}
+
+#[test]
 fn external_exit_codes_75_and_76_keep_output_without_shell_control_effects() {
     let fixture = PtyFixture::new("external-exit-codes");
     for code in ["75", "76"] {
@@ -88,6 +138,7 @@ fn external_spawn_failure_can_return_with_the_keyboard() {
     let launch = ExternalTerminalLaunch {
         program: fixture.root.join("missing-terminal-program"),
         args: Vec::new(),
+        wait_for_enter: None,
     };
     let mut host = CommandLineHost::new(fixture.app.clone());
     host.ensure_started_recorded(

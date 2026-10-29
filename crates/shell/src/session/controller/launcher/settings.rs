@@ -12,6 +12,7 @@ impl ShellSession {
         }
         self.pages.launcher.launcher_run_settings = Some(page_state::LauncherRunSettingsState {
             custom: true,
+            wait_for_enter: false,
             id: String::new(),
             embedded: true,
             name: TextInput::new("launcher.custom.name").with_horizontal_scroll(true),
@@ -55,6 +56,7 @@ impl ShellSession {
         }
         self.pages.launcher.launcher_run_settings = Some(page_state::LauncherRunSettingsState {
             custom: false,
+            wait_for_enter: false,
             name: TextInput::new("launcher.custom.name"),
             id: item.record.id.clone(),
             embedded: item.record.terminal.is_some(),
@@ -127,6 +129,20 @@ impl ShellSession {
                 ..Default::default()
             })
             .collect();
+            fields.push(ui::ManagementFormField {
+                id: "exit".into(),
+                label: i18n::tr!("shell-launcher-custom-exit"),
+                value: if state.wait_for_enter {
+                    i18n::tr!("shell-launcher-custom-exit-wait")
+                } else {
+                    i18n::tr!("shell-launcher-custom-exit-immediate")
+                },
+                choices: vec![
+                    i18n::tr!("shell-launcher-custom-exit-immediate"),
+                    i18n::tr!("shell-launcher-custom-exit-wait"),
+                ],
+                ..Default::default()
+            });
         }
         Some(ui::ManagementForm {
             identity: format!("launcher-run:{}", state.id),
@@ -169,7 +185,13 @@ impl ShellSession {
         };
         state.field_scroll = None;
         state.scrollbar_drag = None;
-        let fields = if state.embedded { 3 } else { 1 };
+        let fields = if state.custom {
+            4
+        } else if state.embedded {
+            3
+        } else {
+            1
+        };
         match key.key {
             InputKey::Escape => self.pages.launcher.launcher_run_settings = None,
             InputKey::F(10) if key.phase == InputPhase::Press => {
@@ -183,16 +205,22 @@ impl ShellSession {
             }
             InputKey::Enter if key.phase == InputPhase::Press => {
                 let index = state.selected;
-                if index > 0 && index < fields {
+                if index > 0 && index < fields && (!state.custom || index < 3) {
                     self.save_launcher_run_settings(platform);
                 } else {
                     self.activate_launcher_run_setting(index, platform);
                 }
             }
             InputKey::Space | InputKey::Char(' ') | InputKey::Left | InputKey::Right
-                if !state.custom && state.selected == 0 && key.phase == InputPhase::Press =>
+                if (state.custom && state.selected == 3
+                    || !state.custom && state.selected == 0)
+                    && key.phase == InputPhase::Press =>
             {
-                state.embedded = !state.embedded;
+                if state.custom {
+                    state.wait_for_enter = !state.wait_for_enter;
+                } else {
+                    state.embedded = !state.embedded;
+                }
                 state.error = None;
                 state.message_scroll = 0;
             }
@@ -221,11 +249,21 @@ impl ShellSession {
         let Some(state) = self.pages.launcher.launcher_run_settings.as_mut() else {
             return;
         };
-        let fields = if state.embedded { 3 } else { 1 };
+        let fields = if state.custom {
+            4
+        } else if state.embedded {
+            3
+        } else {
+            1
+        };
         state.selected = index;
         state.field_scroll = None;
         state.scrollbar_drag = None;
-        if index == 0 && !state.custom {
+        if state.custom && index == 3 {
+            state.wait_for_enter = !state.wait_for_enter;
+            state.error = None;
+            state.message_scroll = 0;
+        } else if index == 0 && !state.custom {
             state.embedded = !state.embedded;
             state.error = None;
             state.message_scroll = 0;
@@ -270,6 +308,7 @@ impl ShellSession {
                 name: state.name.value().to_owned(),
                 command: state.arguments.value().to_owned(),
                 icon: state.directory.value().to_owned(),
+                wait_for_enter: state.wait_for_enter,
             };
             self.apply_launcher_command(LauncherCommand::AddCustom(custom), platform);
             if let Some(error) = self
@@ -413,6 +452,7 @@ impl ShellSession {
                     .iter()
                     .find(|(_, area)| rect_contains(*area, point))
                     && (*index > 0 || state.custom)
+                    && *index < 3
                     && state.embedded
                 {
                     state.selected = *index;

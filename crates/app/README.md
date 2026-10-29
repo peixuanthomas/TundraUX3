@@ -1,6 +1,6 @@
 # app
 
-Launcher 的 AddCustom 检查管理与命令行权限，保存名称、文字图案和 Shell 命令。RequestLaunch 使用现有 OpenTerminalRequested，在 Unix 交给 /bin/sh -c，在 Windows 交给 cmd.exe /C。SetOrder 保存包含内置入口的图标顺序，不把内置入口写成可删除条目。
+Launcher 的 AddCustom 检查管理与命令行权限，保存名称、文字图案、Shell 命令和退出后是否等待回车。RequestLaunch 使用现有 OpenTerminalRequested 传递退出选项，在 Unix 交给 /bin/sh -c，在 Windows 交给 cmd.exe /C。SetOrder 保存包含内置入口的图标顺序，不把内置入口写成可删除条目。
 
 内置应用目录提供“任务”入口；它与标题栏打开同一任务页，名称和说明使用当前语言。
 

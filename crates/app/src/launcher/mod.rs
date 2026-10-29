@@ -122,6 +122,8 @@ pub enum LauncherEffect {
         path: PathBuf,
         args: Vec<String>,
         directory: Option<PathBuf>,
+        /// None preserves the existing exit handling for approved executables.
+        wait_for_enter: Option<bool>,
     },
     ConfirmationRequired {
         id: String,
@@ -517,6 +519,7 @@ impl LauncherController {
                 path,
                 args,
                 directory: None,
+                wait_for_enter: Some(custom.wait_for_enter),
             });
         }
         let status = verify(entry, platform)?;
@@ -548,6 +551,7 @@ impl LauncherController {
                     .as_deref()
                     .filter(|directory| !directory.is_empty())
                     .map(PathBuf::from),
+                wait_for_enter: None,
             });
         }
         Ok(LauncherEffect::OpenRequested {
