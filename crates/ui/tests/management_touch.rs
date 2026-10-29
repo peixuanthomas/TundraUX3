@@ -39,7 +39,7 @@ fn clicked_form_field_keeps_accent_and_blinking_cursor_in_mouse_mode() {
         let area = management_field_input_area(&layout, selected, field);
         let cursor = (area.x + if selected == 0 { 0 } else { 6 }, area.y);
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[cursor].symbol(), "|");
+        assert_eq!(buffer[cursor].symbol(), "_");
         assert_eq!(buffer[cursor].fg, context.theme.accent);
         assert!(buffer[cursor].modifier.contains(Modifier::SLOW_BLINK));
         assert_eq!(buffer[(area.x, area.y - 1)].fg, context.theme.accent);
@@ -90,7 +90,7 @@ fn editable_form_fields_use_the_shared_text_cursor_and_keep_actions_visible() {
         let text = (layout.fields[0].1.x..layout.fields[0].1.right())
             .map(|x| terminal.backend().buffer()[(x, row)].symbol())
             .collect::<String>();
-        assert!(text.contains("ab|cd"), "visible cursor: {text:?}");
+        assert!(text.contains("ab_cd"), "visible cursor: {text:?}");
         assert!(!layout.submit.is_empty() && !layout.cancel.is_empty());
         assert!(
             layout.submit.bottom() <= bounds.bottom() && layout.cancel.bottom() <= bounds.bottom()

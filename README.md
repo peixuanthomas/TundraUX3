@@ -64,7 +64,7 @@ Independent use of all three input methods is a core design requirement:
 
 Mouse and touch need a terminal that forwards pointer events. Packages, services, processes, scheduled tasks and files have a visible **Select multiple** button, checkboxes and a selection count. The shared screen keyboard covers built-in text fields, including setup, login, accounts, settings, the ordinary editor, search/replace and file names and paths. Opening it leaves the current form and its submit/cancel buttons above the keys. AA and embedded Command Line use the same keyboard. Real-device coverage is recorded in the [operations acceptance notes](docs/operations-usability-validation.md); see [keyboard input](crates/shell/docs/session.md#aa-与命令行的屏幕键盘) for details.
 
-Input dialogs keep the active field in the accent color with a blinking cursor. Up/Down switches fields; Left/Right moves within the text. Number dialogs retain their −/+ buttons.
+Built-in text fields use a blinking underscore cursor, including the login password field. Input dialogs keep the active field in the accent color. Up/Down switches fields; Left/Right moves within the text. Number dialogs retain their −/+ buttons.
 
 The QWERTY screen keyboard shows navigation keys beside the main keys when space permits. Smaller windows use **Fn / ABC** to switch between letters and function/navigation keys. Paste sends clipboard text as a paste event.
 

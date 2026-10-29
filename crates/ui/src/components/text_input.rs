@@ -84,7 +84,7 @@ impl TextInput {
             cursor: 0,
             selection_anchor: None,
             horizontal_scroll: false,
-            cursor_symbol: "|".to_string(),
+            cursor_symbol: "_".to_string(),
             placeholder_when_focused: false,
             sensitive: false,
             capture_focused: None,
