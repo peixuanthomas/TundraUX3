@@ -859,11 +859,11 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherPageUp => {
-                self.select_launcher_delta(-6);
+                self.page_launcher(-1);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherPageDown => {
-                self.select_launcher_delta(6);
+                self.page_launcher(1);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherFirst => {
@@ -937,7 +937,7 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::LauncherScroll(delta) => {
-                self.select_launcher_delta(delta as isize);
+                self.page_launcher(delta as isize);
                 ShellAction::Redraw
             }
             ShellCommand::ExplorerAddToLauncher => {

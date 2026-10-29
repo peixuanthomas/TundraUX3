@@ -649,6 +649,24 @@ impl ShellSession {
         Some(ui::launcher_layout(main, &self.to_launcher_view_model()))
     }
 
+    pub(in crate::session) fn page_launcher(&mut self, delta: isize) {
+        let Some(layout) = self.launcher_content_layout() else {
+            return;
+        };
+        if delta == 0 || layout.visible_capacity == 0 {
+            return;
+        }
+        let max_start = layout
+            .scroll_content_len
+            .saturating_sub(layout.visible_capacity);
+        let start = layout
+            .visible_start
+            .saturating_add_signed(delta * layout.visible_capacity as isize)
+            .min(max_start);
+        self.pages.launcher.launcher_viewport_offset = start;
+        self.select_launcher_index(start.min(self.launcher_item_count().saturating_sub(1)));
+    }
+
     fn sync_launcher_viewport(&mut self) {
         if let Some(layout) = self.launcher_content_layout() {
             self.pages.launcher.launcher_viewport_offset = layout.visible_start;

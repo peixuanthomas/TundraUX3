@@ -239,3 +239,48 @@ fn builtins_and_unprivileged_users_cannot_open_run_settings() {
     fixture.input(InputEvent::from_key_label("F4"));
     assert!(fixture.state.pages.launcher.launcher_run_settings.is_none());
 }
+
+#[test]
+fn launcher_wheel_pages_to_boundaries_in_both_views() {
+    for mode in [
+        app::launcher::LauncherViewMode::LargeIcons,
+        app::launcher::LauncherViewMode::Details,
+    ] {
+        let mut fixture = Fixture::new();
+        fixture.state.update_launcher_state(|state| {
+            for n in 0..80 {
+                state.items.push(app::launcher::LauncherItem {
+                    record: storage::LauncherEntryRecord {
+                        id: format!("extra-{n}"),
+                        ..Default::default()
+                    },
+                    status: LauncherItemStatus::Ready,
+                });
+            }
+        });
+        fixture.state.pages.launcher.launcher_view_mode = mode;
+        fixture.state.select_launcher_index(0);
+        let layout = fixture.draw();
+        let point = (layout.content.x + 1, layout.content.y + 1);
+        fixture.input(InputEvent::mouse_scroll(ScrollDirection::Up, point));
+        assert_eq!(fixture.draw().visible_start, 0);
+        fixture.input(InputEvent::mouse_scroll(ScrollDirection::Down, point));
+        assert_eq!(fixture.draw().visible_start, layout.visible_capacity);
+        for _ in 0..100 {
+            fixture.input(InputEvent::mouse_scroll(ScrollDirection::Down, point));
+        }
+        let tail = fixture.draw();
+        assert_eq!(
+            tail.visible_start,
+            tail.scroll_content_len
+                .saturating_sub(tail.visible_capacity)
+        );
+        fixture.input(InputEvent::mouse_scroll(ScrollDirection::Down, point));
+        assert_eq!(fixture.draw().visible_start, tail.visible_start);
+        for _ in 0..100 {
+            fixture.input(InputEvent::mouse_scroll(ScrollDirection::Up, point));
+        }
+        assert_eq!(fixture.draw().visible_start, 0);
+        assert_eq!(fixture.state.active_screen(), ShellScreen::Launcher);
+    }
+}
