@@ -21,7 +21,7 @@ pub(crate) mod physical;
 use physical::PhysicalKeyboard;
 
 const BUTTON_MAX_PRESS: Duration = Duration::from_millis(500);
-const ANIMATION_FRAME: Duration = Duration::from_millis(16);
+const ANIMATION_FRAME: Duration = ui::ANIMATION_FRAME_INTERVAL;
 
 fn keyboard_motion_frame(appearance: &storage::AppearanceConfig, now: Duration) -> MotionFrame {
     MotionFrame {

@@ -7,6 +7,9 @@ use std::time::Duration;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, BorderType};
 
+/// Animated frames target 30 FPS; input-driven redraws keep their own deadlines.
+pub const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(33_333_334);
+
 /// Spacing for the selected Spring card composition. Small terminals retain
 /// compact geometry rather than spending their content area on decoration.
 pub struct SpringStyle;
@@ -267,7 +270,7 @@ impl MotionTimings {
 
 /// A small transition tracker for hosts that request redraws. It reports an
 /// active transition only until its deadline; callers therefore schedule at
-/// most 60 FPS while active and do not keep an idle timer alive.
+/// most 30 FPS while active and do not keep an idle timer alive.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrostMotion {
     started_at: Option<Duration>,
@@ -490,7 +493,7 @@ pub fn schedule_motion_range(
         next_redraw_in: if active {
             duration
                 .saturating_sub(elapsed)
-                .min(Duration::from_nanos(16_666_667))
+                .min(ANIMATION_FRAME_INTERVAL)
         } else {
             Duration::ZERO
         },

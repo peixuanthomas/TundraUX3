@@ -87,6 +87,8 @@ UX 日志合并为单一列表，不再提供事件、文件和故障事件子�
 
 `MotionPhases` 接收三段时长并计算对应速度曲线，连接处速度连续。动画时钟和面板支持自定义阶段，默认曲线也使用相同计算。设置的动画百分比下方提供高级弹窗，内含九项毫秒设置，点按数值后通过数值弹窗确认。
 
+`ANIMATION_FRAME_INTERVAL` 统一主界面与预览的 30 FPS 动画调度；帧间隔不改变动画总时长、速度百分比或减少动态效果的行为。
+
 共享库通过 `ui::animate` 导出 [animate 0.8.0](https://docs.rs/animate/0.8.0)，启用 `macros` 和 `ratatui`，可直接使用 `Tween`、`Spring`、`Clock` 与 `#[animate]`，支持 `Rect`、`Color`、`Style` 等 Ratatui 类型。使用宏时先 `use ui::animate`，再写 `#[animate::animate]`，也可以用 `#[ui::animate::animate(crate = ui::animate)]` 指定路径；可运行示例见 [src/lib.rs](src/lib.rs) 的导出文档。
 
 `components::RainbowText::new(text, elapsed)` 是可直接绘制的 Ratatui 控件，复用 tachyonfx 的颜色转换，让彩虹颜色每三秒循环。按终端字符宽度着色，保留中文、组合字符、背景和字体样式。调用方传入实际经过时间，如 `MotionFrame::now`；彩虹持续播放，不受减少动态效果、动画速度或动画暂停影响。独立演示入口为 `tundra-cli debug test-rainbow-text`。

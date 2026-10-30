@@ -1,6 +1,6 @@
 use super::*;
 
-const FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
+const FRAME_INTERVAL: Duration = ui::ANIMATION_FRAME_INTERVAL;
 const STATE_CLOCK_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -83,9 +83,9 @@ fn independent_widget_animation_can_request_the_next_frame() {
     scheduler.request_animation_frame(origin);
     assert_eq!(
         scheduler.poll_timeout(origin, Duration::MAX),
-        FRAME_INTERVAL
+        Duration::from_nanos(33_333_334)
     );
-    assert!(!scheduler.is_due(origin + Duration::from_millis(10)));
+    assert!(!scheduler.is_due(origin + Duration::from_millis(33)));
     assert!(scheduler.is_due(origin + FRAME_INTERVAL));
 }
 
@@ -105,8 +105,11 @@ fn continuous_color_frames_keep_their_clock_when_motion_is_reduced() {
         let now = origin + FRAME_INTERVAL * frame_number;
         scheduler.request_continuous_frame(now);
         scheduler.observe(now, identity.clone(), true);
-        assert_eq!(scheduler.poll_timeout(now, Duration::MAX), FRAME_INTERVAL);
-        assert!(!scheduler.is_due(now + Duration::from_millis(10)));
+        assert_eq!(
+            scheduler.poll_timeout(now, Duration::MAX),
+            Duration::from_nanos(33_333_334)
+        );
+        assert!(!scheduler.is_due(now + Duration::from_millis(33)));
         let next = now + FRAME_INTERVAL;
         assert!(scheduler.is_due(next));
         for speed in [0, 25, 100, 200] {

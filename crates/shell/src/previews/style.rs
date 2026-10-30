@@ -18,7 +18,7 @@ use ui::{
 
 use crate::{ShellAppConfig, TerminalGuard, crossterm_event_to_input};
 
-const FRAME: Duration = Duration::from_millis(16);
+const FRAME: Duration = ui::ANIMATION_FRAME_INTERVAL;
 const STAGE: Duration = Duration::from_millis(1200);
 
 /// Runs until Escape/Ctrl-C. TerminalGuard restores modes on normal exit,

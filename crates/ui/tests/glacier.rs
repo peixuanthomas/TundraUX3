@@ -39,7 +39,7 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
             && start.focus_transition
             && start.overlay_transition
     );
-    assert!(start.next_redraw_in <= Duration::from_nanos(16_666_667));
+    assert_eq!(start.next_redraw_in, Duration::from_nanos(33_333_334));
     let dialog_start = start.transitions.overlay.expect("dialog transition");
     assert_eq!(dialog_start.kind, MotionTransitionKind::Dialog);
     assert_eq!(dialog_start.direction, MotionDirection::Entering);
