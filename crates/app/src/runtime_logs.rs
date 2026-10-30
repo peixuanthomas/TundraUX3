@@ -135,11 +135,9 @@ pub fn query_snapshot(
             .files
             .sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
     }
-    snapshot.incidents =
-        incidents::catalog(logs_root, &query, access, cancelled, &mut snapshot.result)
-            .into_iter()
-            .map(|(_, summary)| summary)
-            .collect();
+    let reports = incidents::catalog(logs_root, &query, access, cancelled, &mut snapshot.result);
+    incidents::merge_events(&reports, &query, &mut snapshot.result);
+    snapshot.incidents = reports.into_iter().map(|(_, summary)| summary).collect();
     if cancelled.load(Ordering::Relaxed) {
         snapshot.result.state = LogSourceState::Cancelled;
     }

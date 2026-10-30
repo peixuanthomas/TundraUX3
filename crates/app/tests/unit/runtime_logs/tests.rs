@@ -54,6 +54,67 @@ fn report(root: &Path, id: &str, owner: Option<&str>) {
 }
 
 #[test]
+fn runtime_logs_incidents_join_events_at_critical_without_duplicates() {
+    let root = Temp::new();
+    report(&root.0, "recorded", Some("alice"));
+    report(&root.0, "report-only", Some("alice"));
+    let mut incident = event("alice");
+    incident.phase = LogPhase::Incident;
+    incident.incident_id = Some("recorded".into());
+    let mut recovered = event("alice");
+    recovered.phase = LogPhase::Recovered;
+    recovered.level = LogLevel::Info;
+    recovered.incident_id = Some("recorded".into());
+    write_events(&root.0, &[event("alice"), incident.clone(), recovered]);
+    let query = |min_level, limit| {
+        query_snapshot(
+            &root.0,
+            &LogQuery {
+                min_level,
+                limit,
+                ..Default::default()
+            },
+            &LogAccess::User("alice".into()),
+            &UnsupportedPlatform,
+            &AtomicBool::new(false),
+        )
+    };
+    let all = query(None, 200);
+    assert_eq!(all.result.events.len(), 4);
+    let warnings = query(Some(LogLevel::Warning), 200);
+    assert_eq!(warnings.result.events.len(), 3);
+    assert!(
+        warnings
+            .result
+            .events
+            .iter()
+            .all(|event| event.level >= LogLevel::Warning)
+    );
+    let critical = query(Some(LogLevel::Critical), 200);
+    assert_eq!(critical.result.events.len(), 2);
+    assert!(
+        critical
+            .result
+            .events
+            .iter()
+            .all(|event| event.level == LogLevel::Critical)
+    );
+    assert_eq!(critical.result.events[0].event_id, incident.event_id);
+    assert_eq!(
+        critical.result.events[1].incident_id.as_deref(),
+        Some("report-only")
+    );
+    assert!(critical.result.events[1].source_path.is_none());
+    assert_eq!(
+        critical.result.events,
+        query(Some(LogLevel::Critical), 200).result.events
+    );
+    let limited = query(None, 1);
+    assert_eq!(limited.result.events.len(), 1);
+    assert!(limited.result.truncated);
+}
+
+#[test]
 fn runtime_logs_user_filter_cannot_be_overridden() {
     let root = Temp::new();
     write_events(&root.0, &[event("alice"), event("bob")]);
@@ -181,6 +242,11 @@ fn runtime_logs_user_linux_and_full_reports_require_admin() {
     );
     assert_eq!(snapshot.incidents.len(), 1);
     assert_eq!(snapshot.incidents[0].incident_id, "alice-report");
+    assert_eq!(snapshot.result.events.len(), 1);
+    assert_eq!(
+        snapshot.result.events[0].incident_id.as_deref(),
+        Some("alice-report")
+    );
     assert!(
         snapshot.incidents[0]
             .json_report_path

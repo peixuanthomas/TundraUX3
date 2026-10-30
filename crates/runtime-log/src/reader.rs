@@ -176,6 +176,11 @@ pub fn query_logs_cancellable(
             } else {
                 match serde_json::from_slice::<RuntimeLogEvent>(&line) {
                     Ok(mut event) if event.schema_version == 1 => {
+                        if event.source == crate::LogSource::Ux
+                            && event.phase == crate::LogPhase::Incident
+                        {
+                            event.level = crate::LogLevel::Critical;
+                        }
                         if matches(&event, query) {
                             sanitize_event(&mut event);
                             result.events.push(event);

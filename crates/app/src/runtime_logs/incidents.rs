@@ -1,7 +1,7 @@
 use super::*;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
-use watchdog::{IncidentReportSummary, IncidentSeverity};
+use watchdog::IncidentReportSummary;
 
 pub(super) fn catalog(
     root: &Path,
@@ -99,15 +99,9 @@ pub(super) fn catalog(
 }
 
 fn matches_query(record: &Value, summary: &IncidentReportSummary, query: &LogQuery) -> bool {
-    let level = match summary.severity {
-        IncidentSeverity::Warning => runtime_log::LogLevel::Warning,
-        IncidentSeverity::Error => runtime_log::LogLevel::Error,
-        IncidentSeverity::Critical => runtime_log::LogLevel::Critical,
-    };
     query.source == LogSource::Ux
         && query.since.is_none_or(|time| summary.occurred_at >= time)
         && query.until.is_none_or(|time| summary.occurred_at <= time)
-        && query.min_level.is_none_or(|min| level >= min)
         && query
             .incident_id
             .as_deref()
@@ -129,6 +123,68 @@ fn matches_query(record: &Value, summary: &IncidentReportSummary, query: &LogQue
                 .as_deref()
                 .is_none_or(|id| record.get(*key).and_then(Value::as_str) == Some(id))
         })
+}
+
+pub(super) fn merge_events(
+    reports: &[(Value, IncidentReportSummary)],
+    query: &LogQuery,
+    result: &mut LogQueryResult,
+) {
+    use runtime_log::{LogContext, LogLevel, LogPhase, RuntimeLogEvent};
+    let mut seen: std::collections::HashSet<_> = result
+        .events
+        .iter()
+        .filter(|event| event.phase == LogPhase::Incident)
+        .filter_map(|event| event.incident_id.clone())
+        .collect();
+    for (record, summary) in reports {
+        if !seen.insert(summary.incident_id.clone()) {
+            continue;
+        }
+        let field = |key| record.get(key).and_then(Value::as_str).map(str::to_string);
+        let mut event = RuntimeLogEvent::new(
+            LogContext {
+                run_id: field("run_id"),
+                app: summary
+                    .app
+                    .as_ref()
+                    .map(|app| app.id.to_string())
+                    .unwrap_or_default(),
+                module: field("module")
+                    .or_else(|| summary.component.clone())
+                    .unwrap_or_else(|| "ux.watchdog".into()),
+                operation: summary.boundary.clone(),
+                operation_id: field("operation_id"),
+                task_id: field("task_id"),
+                owner_id: field("owner_id"),
+            },
+            LogLevel::Critical,
+            LogPhase::Incident,
+            summary.summary.clone(),
+        );
+        event.event_id =
+            field("log_event_id").unwrap_or_else(|| format!("incident:{}", summary.incident_id));
+        event.timestamp = summary.occurred_at;
+        event.process_id = record
+            .get("process_id")
+            .and_then(Value::as_u64)
+            .and_then(|id| u32::try_from(id).ok())
+            .unwrap_or(0);
+        event.incident_id = Some(summary.incident_id.clone());
+        event.source_path = (!summary.json_report_path.as_os_str().is_empty())
+            .then(|| summary.json_report_path.clone());
+        result.events.push(event);
+    }
+    result.events.sort_by(|a, b| {
+        b.timestamp
+            .cmp(&a.timestamp)
+            .then_with(|| b.event_id.cmp(&a.event_id))
+    });
+    let limit = query.limit.min(10_000);
+    if result.events.len() > limit {
+        result.events.truncate(limit);
+        result.truncated = true;
+    }
 }
 fn summary(record: &Value, path: &Path) -> Option<IncidentReportSummary> {
     let timestamp = DateTime::parse_from_rfc3339(record.get("occurred_at")?.as_str()?)

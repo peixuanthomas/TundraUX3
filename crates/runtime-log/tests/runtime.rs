@@ -33,6 +33,28 @@ fn setup() -> (tempfile::TempDir, RuntimeLogRuntime) {
     (dir, runtime)
 }
 #[test]
+fn incident_records_use_critical_level_before_filtering() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut incident = event("alice", LogPhase::Incident, "task stopped");
+    incident.level = LogLevel::Error;
+    incident.incident_id = Some("incident-one".into());
+    let original = format!("{}\n", serde_json::to_string(&incident).unwrap());
+    let path = dir.path().join("runtime-history.jsonl");
+    fs::write(&path, &original).unwrap();
+    let result = query_logs(
+        dir.path(),
+        &LogQuery {
+            min_level: Some(LogLevel::Critical),
+            ..Default::default()
+        },
+    );
+    assert_eq!(result.events.len(), 1);
+    assert_eq!(result.events[0].level, LogLevel::Critical);
+    assert_eq!(result.events[0].event_id, incident.event_id);
+    assert_eq!(fs::read_to_string(path).unwrap(), original);
+}
+
+#[test]
 fn shutdown_flushes_and_query_filters_owner_and_source() {
     let (dir, runtime) = setup();
     let h = runtime.handle();
