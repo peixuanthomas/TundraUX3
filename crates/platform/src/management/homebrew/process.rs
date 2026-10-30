@@ -154,7 +154,8 @@ pub(super) fn execute(
         command.env(key, value);
     }
     command.env("TERM", "xterm-256color");
-    command.env("HOMEBREW_ASK", "1");
+    // Homebrew now enables native confirmation by default and rejects HOMEBREW_ASK.
+    command.env_remove("HOMEBREW_ASK");
     command.env_remove("HOMEBREW_NO_ASK");
     let mut child = ManagedChild::spawn_pty(pair.slave.as_ref(), command).map_err(io_error)?;
     drop(pair.slave);

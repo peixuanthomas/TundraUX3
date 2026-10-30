@@ -32,7 +32,7 @@
 
 APT、DNF 和 pacman 一次处理全部已选包，pacman 安装和更新继续包含完整系统升级。Homebrew 按 Formula/Cask 分组，WinGet 按准确编号和版本依次处理；Homebrew 的命令和 PTY 夹具需在 macOS 运行。
 
-macOS 软件包后端位于 `management/homebrew/`，与 Linux 后端共用查询、操作、AA 事件和子进程监督接口。通过 brew JSON v2 读取 Formula/Cask，类型与完整名称共同组成目标标识；提交前重新核对选中版本。写操作以当前用户运行，Cask 密码等原生提示通过 PTY 交互，关闭页面可继续后台运行，显式停止和强制结束沿用 AA。查询和普通操作不自动刷新、不清理其他包；刷新按钮显式执行 `brew update`。
+macOS 软件包后端位于 `management/homebrew/`，与 Linux 后端共用查询、操作、AA 事件和子进程监督接口。通过 brew JSON v2 读取 Formula/Cask，类型与完整名称共同组成目标标识；提交前重新核对选中版本。写操作以当前用户运行并使用 Homebrew 默认确认，Cask 密码等原生提示通过 PTY 交互，关闭页面可继续后台运行，显式停止和强制结束沿用 AA。查询和普通操作不自动刷新、不清理其他包；刷新按钮显式执行 `brew update`。
 
 Windows 的 Packages 使用独立 WinGet 后端，复用管理页的数据和动作接口；其他 Linux 管理后端不在 Windows 启用。只调用现有的 `winget.exe` 和 `winget` 软件源，不自动安装 WinGet，也不接入 `msstore`。安装器所需的系统权限由 Windows/UAC 处理，软件包修改期间应保持 Tundra 运行。
 

@@ -286,6 +286,41 @@ fn empty_search_is_not_a_failure_but_tool_errors_are_preserved() {
 }
 
 #[test]
+fn upgrades_use_default_native_confirmation_without_disabled_ask_variable() {
+    for target in [Some("formula:demo"), Some("cask:demo"), None] {
+        let fixture = Fixture::new(
+            r#"
+            if test -n "${HOMEBREW_ASK+x}"; then
+                printf 'Error: Calling HOMEBREW_ASK is disabled! Use the default behaviour instead.\n' >&2
+                exit 1
+            fi
+            test -z "${HOMEBREW_NO_ASK+x}" || exit 22
+            printf 'Apply changes? [Y/n] '; read answer; test "$answer" = y || exit 23
+            printf '\nCOMPLETED\n'
+        "#,
+        );
+        let mut interaction = Interaction {
+            answers: VecDeque::from([("[Y/n]", b"y\r".as_slice())]),
+            ..Default::default()
+        };
+        let action = if target.is_some() {
+            "upgrade"
+        } else {
+            "upgrade_all"
+        };
+        execute_with_program(
+            &fixture.program(),
+            &command(action, target),
+            &mut interaction,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(String::from_utf8_lossy(&interaction.output).contains("COMPLETED"));
+        assert!(interaction.answers.is_empty());
+    }
+}
+
+#[test]
 fn native_confirmation_and_secret_input_run_in_a_managed_pty() {
     let fixture = Fixture::new(
         r#"
