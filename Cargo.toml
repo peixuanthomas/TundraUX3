@@ -44,6 +44,8 @@ tachyonfx = { version = "=0.25.1", default-features = false, features = ["std-du
 
 [profile.release]
 panic = "unwind"
+lto = "thin"
+codegen-units = 1
 
 [patch.crates-io]
 crossterm = { path = "third_party/crossterm" }

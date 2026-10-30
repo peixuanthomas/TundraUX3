@@ -880,9 +880,9 @@ fn checked_exit(exit: ProcessExit, name: &str) -> Result<ProcessExit, UpdateErro
 }
 
 fn required_rust_version(manifest: &Path) -> Result<Option<Version>, UpdateError> {
-    let value: toml::Value = fs::read_to_string(manifest)
-        .map_err(|e| UpdateError::new(format!("could not read workspace Cargo.toml: {e}")))?
-        .parse()
+    let text = fs::read_to_string(manifest)
+        .map_err(|e| UpdateError::new(format!("could not read workspace Cargo.toml: {e}")))?;
+    let value: toml::Value = toml::from_str(&text)
         .map_err(|e| UpdateError::new(format!("invalid workspace Cargo.toml: {e}")))?;
     value
         .get("workspace")
