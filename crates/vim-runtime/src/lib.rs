@@ -40,7 +40,7 @@ impl VimConfig {
 }
 
 pub struct VimPoll {
-    pub terminal: TerminalSnapshot,
+    pub terminal: Arc<TerminalSnapshot>,
     pub state: Arc<VimState>,
     pub save_requests: Vec<SaveRequest>,
     pub exit: Option<PtyExitStatus>,
@@ -63,7 +63,8 @@ pub struct VimHost {
     outgoing: VecDeque<Vec<u8>>,
     written: usize,
     exit: Option<PtyExitStatus>,
-    final_terminal: Option<TerminalSnapshot>,
+    terminal: Arc<TerminalSnapshot>,
+    terminal_revision: u64,
     size: Cell<(u16, u16)>,
 }
 
@@ -118,6 +119,7 @@ impl VimHost {
             },
             tasks,
         )?;
+        let (terminal, terminal_revision) = pty.snapshot_with_revision();
         let mut host = Self {
             pty: Some(pty),
             _directory: directory,
@@ -134,7 +136,8 @@ impl VimHost {
             outgoing: VecDeque::new(),
             written: 0,
             exit: None,
-            final_terminal: None,
+            terminal: Arc::new(terminal),
+            terminal_revision,
             size: Cell::new((config.columns.max(1), config.rows.max(1))),
         };
         for buffer in config.initial_buffers {
@@ -252,10 +255,7 @@ impl VimHost {
     pub fn terminal_snapshot(&self) -> TerminalSnapshot {
         match &self.pty {
             Some(pty) => pty.snapshot(),
-            None => self
-                .final_terminal
-                .clone()
-                .expect("a stopped Vim retains its last terminal snapshot"),
+            None => (*self.terminal).clone(),
         }
     }
 
@@ -275,8 +275,14 @@ impl VimHost {
             && let Some(exit) = pty.try_wait()?
         {
             self.exit = Some(exit);
-            self.final_terminal = self.pty.take().map(PtyProcess::snapshot_after_exit);
+            self.terminal = Arc::new(self.pty.take().unwrap().snapshot_after_exit());
             let _ = self.read_messages()?;
+        }
+        if let Some(pty) = &self.pty
+            && let Some((terminal, revision)) = pty.snapshot_if_changed(self.terminal_revision)
+        {
+            self.terminal = Arc::new(terminal);
+            self.terminal_revision = revision;
         }
         if self.authenticated && self.stream.is_none() && self.exit.is_none() && !self.state.exiting
         {
@@ -286,7 +292,7 @@ impl VimHost {
             ));
         }
         Ok(VimPoll {
-            terminal: self.terminal_snapshot(),
+            terminal: self.terminal.clone(),
             state: self.state.clone(),
             save_requests: saves,
             exit: self.exit,
@@ -321,7 +327,7 @@ impl VimHost {
         if let Some(pty) = self.pty.take() {
             pty.force_terminate()?;
             self.exit = Some(pty.wait()?);
-            self.final_terminal = Some(pty.snapshot_after_exit());
+            self.terminal = Arc::new(pty.snapshot_after_exit());
         }
         let _ = self.read_messages()?;
         Ok(())
