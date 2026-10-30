@@ -9,7 +9,7 @@ use crate::RenderContext;
 
 use super::{
     ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, MouseButton,
-    MouseKind, contains_point, tone_color,
+    MouseKind, contains_point,
 };
 
 /// A lightweight, component-owned table suitable for selectable data rows.
@@ -164,6 +164,8 @@ impl DataTable {
             return;
         }
 
+        let row_tokens = context.compatibility_theme().tokens();
+        let capture = crate::automation::enabled();
         let header_height = u16::from(self.show_header);
         if self.show_header {
             self.capture_cells(
@@ -203,10 +205,13 @@ impl DataTable {
                 inner.width,
                 1,
             );
-            let row_id = self
-                .row_ids
-                .get(index)
-                .map_or_else(|| format!("row.{index}"), |id| format!("row.{id}"));
+            let row_id = if capture {
+                self.row_ids
+                    .get(index)
+                    .map_or_else(|| format!("row.{index}"), |id| format!("row.{id}"))
+            } else {
+                String::new()
+            };
             let _row = crate::automation::scope(&row_id, "row", "", row_area);
             let mut state = self.state;
             state.selected = selected;
@@ -229,10 +234,12 @@ impl DataTable {
                 Style::default().fg(tokens.accent).bg(tokens.accent_soft)
             } else {
                 Style::default()
-                    .fg(tone_color(
-                        self.row_tones.get(index).copied().unwrap_or_default(),
-                        &context.compatibility_theme(),
-                    ))
+                    .fg(self
+                        .row_tones
+                        .get(index)
+                        .copied()
+                        .unwrap_or_default()
+                        .color(&row_tokens))
                     .bg(tokens.surface)
             };
             Paragraph::new(join_row(row, inner.width, self.column_widths.as_deref()))
@@ -319,33 +326,39 @@ fn join_row(cells: &[String], width: u16, explicit_widths: Option<&[u16]>) -> St
     if cells.is_empty() {
         return String::new();
     }
-    let separator = if explicit_widths.is_some() { "" } else { " " };
-    cells
+    let mut row = String::with_capacity(usize::from(width));
+    for (index, (cell, cell_width)) in cells
         .iter()
         .zip(column_widths(cells.len(), width, explicit_widths))
-        .map(|(cell, cell_width)| {
-            let cell_width = usize::from(cell_width);
-            let cell = super::truncate_to_terminal_width(cell, cell_width);
-            let padding = cell_width.saturating_sub(usize::from(cell.cell_width()));
-            format!("{cell}{}", " ".repeat(padding))
-        })
-        .collect::<Vec<_>>()
-        .join(separator)
+        .enumerate()
+    {
+        if index > 0 && explicit_widths.is_none() {
+            row.push(' ');
+        }
+        let cell_width = usize::from(cell_width);
+        let cell = super::truncate_to_terminal_width(cell, cell_width);
+        let padding = cell_width.saturating_sub(usize::from(cell.cell_width()));
+        row.push_str(&cell);
+        row.extend(std::iter::repeat_n(' ', padding));
+    }
+    row
 }
 
-fn column_widths(count: usize, width: u16, explicit_widths: Option<&[u16]>) -> Vec<u16> {
+fn column_widths(
+    count: usize,
+    width: u16,
+    explicit_widths: Option<&[u16]>,
+) -> impl Iterator<Item = u16> + '_ {
     let separators = if explicit_widths.is_some() {
         0
     } else {
         count.saturating_sub(1)
     };
     let fallback = usize::from(width).saturating_sub(separators) / count.max(1);
-    (0..count)
-        .map(|index| {
-            explicit_widths
-                .and_then(|widths| widths.get(index))
-                .copied()
-                .unwrap_or(fallback as u16)
-        })
-        .collect()
+    (0..count).map(move |index| {
+        explicit_widths
+            .and_then(|widths| widths.get(index))
+            .copied()
+            .unwrap_or(fallback as u16)
+    })
 }

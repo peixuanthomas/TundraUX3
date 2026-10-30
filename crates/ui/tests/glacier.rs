@@ -407,6 +407,32 @@ fn data_table_padding_uses_terminal_cell_width_for_cjk_and_emoji() {
 }
 
 #[test]
+fn data_table_clips_and_pads_graphemes_with_explicit_and_fallback_widths() {
+    for (width, widths, expected) in [
+        (12, None, "A中 e\u{301}🙂 end "),
+        (9, Some(vec![3, 4, 2]), "A中e\u{301}🙂zen"),
+        (8, Some(vec![0, 2]), "e\u{301} en    "),
+        (1, None, " "),
+    ] {
+        let area = Rect::new(0, 0, width, 1);
+        let mut table = DataTable::new("table", ["A", "B", "C"], [["A中B", "e\u{301}🙂z", "end"]])
+            .bordered(false)
+            .show_header(false);
+        table.column_widths = widths;
+        let mut actual = Buffer::empty(area);
+        table.render(area, &mut actual, &RenderContext::default());
+        let expected = Buffer::with_lines([expected]);
+        for x in 0..width {
+            assert_eq!(
+                actual[(x, 0)].symbol(),
+                expected[(x, 0)].symbol(),
+                "column {x}"
+            );
+        }
+    }
+}
+
+#[test]
 fn frost_motion_only_requests_redraw_while_active_and_respects_reduced_motion() {
     let start = MotionFrame {
         now: Duration::ZERO,

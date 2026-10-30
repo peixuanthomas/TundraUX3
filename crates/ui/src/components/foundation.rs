@@ -60,14 +60,19 @@ pub enum ComponentTone {
 }
 
 pub(crate) fn tone_color(tone: ComponentTone, theme: &TundraTheme) -> ratatui::style::Color {
-    let tokens = theme.tokens();
-    match tone {
-        ComponentTone::Default => tokens.text,
-        ComponentTone::Muted => tokens.muted,
-        ComponentTone::Accent => tokens.accent,
-        ComponentTone::Success => tokens.success,
-        ComponentTone::Warning => tokens.warning,
-        ComponentTone::Danger => tokens.danger,
+    tone.color(&theme.tokens())
+}
+
+impl ComponentTone {
+    pub(crate) fn color(self, tokens: &crate::ThemeTokens) -> ratatui::style::Color {
+        match self {
+            Self::Default => tokens.text,
+            Self::Muted => tokens.muted,
+            Self::Accent => tokens.accent,
+            Self::Success => tokens.success,
+            Self::Warning => tokens.warning,
+            Self::Danger => tokens.danger,
+        }
     }
 }
 
