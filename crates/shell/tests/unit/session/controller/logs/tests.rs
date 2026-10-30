@@ -286,7 +286,7 @@ fn more_dialog_navigation_skips_disabled_actions_and_space_closes() {
     state.pages.logs.logs_state.more_selected = Some(4);
     key(&mut state, "Enter");
     assert_eq!(state.pages.logs.logs_state.more_selected, Some(4));
-    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.category, ui::LogsCategory::Ux);
     key(&mut state, "End");
     state.handle_logs_key(&KeyInput::new(InputKey::Space));
     assert!(state.pages.logs.logs_state.more_selected.is_none());
@@ -366,7 +366,7 @@ fn more_dialog_waits_for_release_and_cancels_press_on_drag_resize_or_focus_loss(
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(
         state.pages.logs.logs_state.query.min_level,
-        Some(LogLevel::Warning)
+        Some(LogLevel::Trace)
     );
     assert!(state.pages.logs.logs_state.more_selected.is_none());
 }
@@ -486,6 +486,8 @@ fn press_log_control(state: &mut ShellSession, target: ui::LogsHitTarget) {
             | ui::LogsHitTarget::Follow
             | ui::LogsHitTarget::Filters
             | ui::LogsHitTarget::More
+            | ui::LogsHitTarget::FilterLevel
+            | ui::LogsHitTarget::OpenFolder
     ) {
         state.pages.logs.logs_state.more_selected = Some(0);
     }
@@ -533,7 +535,7 @@ fn disabled_log_controls_cannot_be_activated_by_shortcuts() {
         "an empty list cannot be opened"
     );
     state.handle_logs_key(&KeyInput::from_label("I"));
-    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.category, ui::LogsCategory::Ux);
 
     state.pages.logs.logs_state.query.min_level = Some(LogLevel::Warning);
     state.pages.logs.logs_state.job = Some(LogsJob(Arc::new(LogsJobShared {
@@ -619,21 +621,21 @@ fn logs_navigation_restores_covered_filters_and_new_pages_start_clean() {
     state.open_logs();
     key(&mut state, "L");
     key(&mut state, "Tab");
-    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Files);
+    assert_eq!(state.pages.logs.logs_state.category, ui::LogsCategory::Ux);
     assert_eq!(
         state.pages.logs.logs_state.query.min_level,
-        Some(LogLevel::Warning)
+        Some(LogLevel::Trace)
     );
     let first = state.active_page_id();
     state.open_logs();
-    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.category, ui::LogsCategory::Ux);
     assert_eq!(state.pages.logs.logs_state.query.min_level, None);
     key(&mut state, "Esc");
     assert_eq!(state.active_page_id(), first);
-    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Files);
+    assert_eq!(state.pages.logs.logs_state.category, ui::LogsCategory::Ux);
     assert_eq!(
         state.pages.logs.logs_state.query.min_level,
-        Some(LogLevel::Warning)
+        Some(LogLevel::Trace)
     );
     key(&mut state, "Right");
     assert_eq!(
@@ -648,8 +650,232 @@ fn logs_navigation_restores_covered_filters_and_new_pages_start_clean() {
     key(&mut state, "Esc");
     assert_eq!(state.active_screen(), ShellScreen::Home);
     state.open_logs();
-    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
+    assert_eq!(state.pages.logs.logs_state.category, ui::LogsCategory::Ux);
     assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+}
+
+#[test]
+fn level_filter_is_visible_defaults_to_all_and_tab_does_not_switch_views() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+    assert_eq!(
+        state.to_logs_view_model().level_filter,
+        i18n::tr!("shell-all")
+    );
+    for level in [
+        LogLevel::Trace,
+        LogLevel::Debug,
+        LogLevel::Info,
+        LogLevel::Warning,
+        LogLevel::Error,
+        LogLevel::Critical,
+    ] {
+        state.pages.logs.logs_state.job = None;
+        let layout = ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+        let control = layout
+            .controls
+            .iter()
+            .find(|control| control.target == ui::LogsHitTarget::FilterLevel)
+            .unwrap();
+        let point = (control.area.x, control.area.y);
+        let before = state.pages.logs.logs_state.query.min_level;
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        assert_eq!(state.pages.logs.logs_state.query.min_level, before);
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        assert_eq!(state.pages.logs.logs_state.query.min_level, Some(level));
+        let model = state.to_logs_view_model();
+        assert!(model.level_filter.contains(&log_level_label(level)));
+        if level != LogLevel::Critical {
+            assert_eq!(
+                model.level_filter,
+                i18n::tr!("ui-logs-level-or-higher", level = log_level_label(level))
+            );
+        }
+        for key in ["Tab", "Shift+Tab"] {
+            state.handle_logs_key(&KeyInput::from_label(key));
+            assert_eq!(state.to_logs_view_model(), model);
+        }
+    }
+    key(&mut state, "L");
+    assert_eq!(state.pages.logs.logs_state.query.min_level, None);
+}
+
+#[test]
+fn open_folder_button_and_shortcut_use_the_ux_root_and_restore_the_log_page() {
+    let root = std::env::temp_dir().join(format!(
+        "tundra-logs-explorer-{}-{}",
+        std::process::id(),
+        PageInstanceId::new().get()
+    ));
+    let paths = platform::AppPaths::from_parts(
+        root.join("config.toml"),
+        root.join("state"),
+        root.join("cache"),
+        root.join("logs"),
+        root.join("temp"),
+    )
+    .unwrap();
+    let storage = StorageManager::open(paths).unwrap().manager;
+    let logs_path = storage.layout().logs_path.clone();
+    for name in ["runtime", "crashes"] {
+        std::fs::create_dir_all(logs_path.join(name)).unwrap();
+    }
+    let mut state = state(UserRole::Admin);
+    state.open_logs();
+    state.storage_manager = Some(storage);
+    state.pages.logs.logs_state.query.min_level = Some(LogLevel::Warning);
+    state.pages.logs.logs_state.snapshot.result.events = (0..3)
+        .map(|_| {
+            runtime_log::RuntimeLogEvent::new(
+                runtime_log::LogContext::default(),
+                LogLevel::Warning,
+                runtime_log::LogPhase::Observed,
+                "entry",
+            )
+        })
+        .collect();
+    state.pages.logs.logs_state.selected = 2;
+    let page = state.active_page_id();
+    for pointer in [true, false] {
+        if pointer {
+            let layout =
+                ui::logs_layout(state.logs_main_area().unwrap(), &state.to_logs_view_model());
+            let control = layout
+                .controls
+                .iter()
+                .find(|control| control.target == ui::LogsHitTarget::OpenFolder)
+                .unwrap();
+            let point = (control.area.x, control.area.y);
+            state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            assert_eq!(state.active_screen(), ShellScreen::Logs);
+            state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        } else {
+            key(&mut state, "G");
+        }
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        assert_eq!(
+            state.pages.explorer.explorer_purpose,
+            ExplorerPurpose::DiagnosticsLogs
+        );
+        let explorer = state.app.explorer_state().unwrap();
+        assert_eq!(explorer.current_path, logs_path);
+        for name in ["runtime", "crashes"] {
+            assert!(explorer.entries.iter().any(|entry| entry.name == name));
+        }
+        state.close_explorer();
+        assert_eq!(state.active_page_id(), page);
+        assert_eq!(state.active_screen(), ShellScreen::Logs);
+        assert_eq!(
+            state.pages.logs.logs_state.query.min_level,
+            Some(LogLevel::Warning)
+        );
+        assert_eq!(state.pages.logs.logs_state.selected, 2);
+    }
+    drop(state);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn user_log_access_does_not_grant_access_to_the_global_log_folder() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    let model = state.to_logs_view_model();
+    assert!(!ui::logs_control_enabled(
+        &model,
+        ui::LogsHitTarget::OpenFolder
+    ));
+    key(&mut state, "G");
+    assert_eq!(state.active_screen(), ShellScreen::Logs);
+    assert_eq!(state.to_logs_view_model(), model);
+}
+
+#[test]
+fn opening_an_incident_log_keeps_the_query_readable_without_its_report() {
+    let mut state = state(UserRole::Admin);
+    state.open_logs();
+    let mut event = runtime_log::RuntimeLogEvent::new(
+        runtime_log::LogContext::default(),
+        LogLevel::Critical,
+        runtime_log::LogPhase::Incident,
+        "incident retained in runtime log",
+    );
+    event.incident_id = Some("removed-report".into());
+    state
+        .pages
+        .logs
+        .logs_state
+        .snapshot
+        .result
+        .events
+        .push(event);
+    key(&mut state, "Enter");
+    assert_eq!(
+        state.pages.logs.logs_state.last_document,
+        Some(LogDocumentSelection::Events)
+    );
+}
+
+#[test]
+fn log_levels_sort_by_severity_and_keep_the_selected_record() {
+    let mut state = state(UserRole::User);
+    state.open_logs();
+    state.pages.logs.logs_state.snapshot.result.events = [
+        LogLevel::Warning,
+        LogLevel::Trace,
+        LogLevel::Critical,
+        LogLevel::Info,
+        LogLevel::Error,
+        LogLevel::Debug,
+    ]
+    .into_iter()
+    .map(|level| {
+        runtime_log::RuntimeLogEvent::new(
+            runtime_log::LogContext::default(),
+            level,
+            runtime_log::LogPhase::Observed,
+            "entry",
+        )
+    })
+    .collect();
+    let selected_id = state.logs_id_at(state.pages.logs.logs_state.selected);
+    let sort_key = state.logs_sort_key();
+    state.pages.common.table_sorts.insert(
+        sort_key,
+        ui::TableSort {
+            column: 1,
+            descending: true,
+        },
+    );
+    state.apply_logs_sort();
+    assert_eq!(
+        state
+            .pages
+            .logs
+            .logs_state
+            .snapshot
+            .result
+            .events
+            .iter()
+            .map(|event| event.level)
+            .collect::<Vec<_>>(),
+        [
+            LogLevel::Critical,
+            LogLevel::Error,
+            LogLevel::Warning,
+            LogLevel::Info,
+            LogLevel::Debug,
+            LogLevel::Trace,
+        ]
+    );
+    assert_eq!(
+        state.logs_id_at(state.pages.logs.logs_state.selected),
+        selected_id
+    );
+    let model = state.to_logs_view_model();
+    assert_eq!(model.events[0].level, log_level_label(LogLevel::Critical));
+    assert_eq!(model.events[0].status, ui::DiagnosticsStatus::Fail);
+    assert_eq!(model.events[2].status, ui::DiagnosticsStatus::Warning);
 }
 #[test]
 fn legacy_status_navigation_redirects_to_logs_app() {
@@ -658,8 +884,8 @@ fn legacy_status_navigation_redirects_to_logs_app() {
     state.set_system_status_tab(ui::SystemStatusTab::Incidents);
     assert_eq!(state.active_screen(), ShellScreen::Logs);
     assert_eq!(
-        state.pages.logs.logs_state.section,
-        ui::LogsSection::Incidents
+        state.pages.logs.logs_state.query.min_level,
+        Some(LogLevel::Critical)
     );
     key(&mut state, "Esc");
     assert_eq!(state.active_screen(), ShellScreen::SystemStatus);
@@ -716,7 +942,6 @@ fn service_logs_open_exact_linux_filter_and_return_to_the_previous_screen() {
         state.pages.logs.logs_state.category,
         ui::LogsCategory::Linux
     );
-    assert_eq!(state.pages.logs.logs_state.section, ui::LogsSection::Events);
     assert_eq!(state.pages.logs.logs_state.query.source, LogSource::Linux);
     assert_eq!(
         state.pages.logs.logs_state.query.systemd_unit.as_deref(),

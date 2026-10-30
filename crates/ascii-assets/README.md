@@ -67,6 +67,8 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 
 同一资源提供设置数值弹窗的范围校验、调整、输入、确认和取消提示；`modules/help.ftl` 同步说明 Tab/Shift+Tab 切换大类、方向键移动内容区焦点与弹窗内的数值操作。
 
+中英文 `modules/ui-logs.ftl` 提供六个日志等级、最低等级筛选和“打开文件夹”文字；`modules/help.ftl` 说明日志默认显示全部、故障最高，以及 L 筛选、G 打开 UX 日志根目录和不使用 Tab 切换日志视图。
+
 重建发布程序后，可运行 `python scripts/check-embedded-assets.py target/release/tundra-shell.exe target/release/tundra-cli.exe` 检查每张默认图片是否恰好嵌入一次；Linux/macOS 使用不带 `.exe` 的程序路径。脚本逐字节匹配源码中的完整 PNG，同时检查遗漏和重复。
 
 若某个平台的程序没有用到内置图片，编译器可以完全移除这些字节。此时添加 `--allow-missing`，只检查有无重复；脚本仍会打印实际图片数量和字节数。

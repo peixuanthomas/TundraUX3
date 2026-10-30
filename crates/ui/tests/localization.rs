@@ -191,6 +191,10 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
             let mut model = LogsViewModel {
                 can_view_system: true,
                 linux_available: true,
+                level_filter: i18n::tr!(
+                    "ui-logs-level-or-higher",
+                    level = i18n::tr!("ui-logs-level-warning")
+                ),
                 ..Default::default()
             };
             model.diagnostics.can_view_details = true;
@@ -200,6 +204,14 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
                 let layout = logs_layout(main, &model);
                 let controls = [
                     (ui::LogsHitTarget::Refresh, i18n::tr!("ui-logs-refresh")),
+                    (
+                        ui::LogsHitTarget::FilterLevel,
+                        i18n::tr!("ui-logs-level-filter", level = model.level_filter.as_str()),
+                    ),
+                    (
+                        ui::LogsHitTarget::OpenFolder,
+                        i18n::tr!("ui-logs-open-folder"),
+                    ),
                     (ui::LogsHitTarget::Open, i18n::tr!("ui-logs-open")),
                     (
                         ui::LogsHitTarget::Follow,

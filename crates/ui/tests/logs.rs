@@ -15,12 +15,14 @@ fn model() -> LogsViewModel {
     model.diagnostics.can_view_details = true;
     model.can_view_system = true;
     model.linux_available = true;
+    model.level_filter = "All".into();
     model.events = (0..30)
         .map(|index| LogsEventViewModel {
             id: format!("event-{index}"),
             timestamp: "2026-09-11T00:00:00Z".into(),
             time_label: "00:00:00".into(),
             level: "Error".into(),
+            status: ui::DiagnosticsStatus::Fail,
             module: "ux.explorer".into(),
             operation: "Copy".into(),
             summary: "Permission denied".into(),
@@ -178,10 +180,8 @@ fn event_list_uses_shared_scrolling_geometry_and_exposes_correlation() {
     for expected in [
         "UX log",
         "Linux log",
-        "Events",
-        "Files",
-        "Incidents",
-        "UX events",
+        "Open folder",
+        "L Level: All",
         "EACCES",
         "event-29",
         "incident-1",
@@ -192,7 +192,7 @@ fn event_list_uses_shared_scrolling_geometry_and_exposes_correlation() {
     }
 }
 #[test]
-fn category_section_and_control_geometry_match_rendered_components() {
+fn category_and_control_geometry_match_rendered_components() {
     let model = model();
     let main = main_area();
     let layout = logs_layout(main, &model);
@@ -202,16 +202,10 @@ fn category_section_and_control_geometry_match_rendered_components() {
             Some(LogsHitTarget::Category(tab.category))
         );
     }
-    for tab in &layout.section_tabs {
-        assert_eq!(
-            logs_hit_test(main, &model, (tab.area.x, tab.area.y)),
-            Some(LogsHitTarget::Section(tab.section))
-        );
-    }
     for control in &layout.controls {
         assert_eq!(
             logs_hit_test(main, &model, (control.area.x, control.area.y)),
-            (control.target != LogsHitTarget::RelatedEvents).then_some(control.target)
+            Some(control.target)
         );
     }
 }
@@ -221,7 +215,6 @@ fn restricted_and_unsupported_sources_hide_rows_and_disable_actions() {
     model.category = LogsCategory::Linux;
     model.linux_available = false;
     let layout = logs_layout(main_area(), &model);
-    assert!(layout.section_tabs.is_empty());
     assert!(layout.content.rows.is_empty());
     assert!(
         terminal_output(&render(120, 32, &model, &TundraTheme::default_dark()))

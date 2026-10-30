@@ -124,3 +124,7 @@ ui-help-back-button = 返回按钮
 ui-help-clock-input = 选择并调整时、分、秒
 ui-help-editor-reload = 重新加载只读文件
 ui-help-editor-settings = 调整编辑器设置
+
+ui-help-logs-level = 按最低等级筛选，默认全部；故障是最高等级
+ui-help-logs-folder = 在文件浏览器中打开 UX 日志根目录
+ui-help-logs-source = 切换 UX / Linux 日志；Tab 不切换日志视图

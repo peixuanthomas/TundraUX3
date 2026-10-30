@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-use super::{LogsCategory, LogsSection, LogsViewModel};
+use super::{LogsCategory, LogsViewModel};
 use crate::components::{
     ComponentTone, PageAction, PageActionBar, PageActionStatus, TabItem, Tabs,
 };
@@ -10,12 +10,10 @@ use crate::{DiagnosticsContentLayout, DiagnosticsHitTarget, diagnostics_content_
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogsHitTarget {
     Category(LogsCategory),
-    Section(LogsSection),
     Event(usize),
-    File(usize),
-    Incident(usize),
     Refresh,
     Open,
+    OpenFolder,
     FilterLevel,
     FilterModule,
     FilterTime,
@@ -39,11 +37,6 @@ pub struct LogsCategoryTabLayout {
     pub area: Rect,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LogsSectionTabLayout {
-    pub section: LogsSection,
-    pub area: Rect,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogsControlLayout {
     pub target: LogsHitTarget,
     pub area: Rect,
@@ -53,8 +46,6 @@ pub struct LogsLayout {
     pub panel: Rect,
     pub category_tabs_area: Rect,
     pub category_tabs: Vec<LogsCategoryTabLayout>,
-    pub section_tabs_area: Rect,
-    pub section_tabs: Vec<LogsSectionTabLayout>,
     pub controls: Vec<LogsControlLayout>,
     pub action_bar: crate::components::PageActionBarLayout,
     pub filter_summary: Rect,
@@ -78,19 +69,13 @@ pub(super) fn category_tabs() -> Tabs {
         ],
     )
 }
-pub(super) fn section_tabs() -> Tabs {
-    Tabs::new(
-        "logs.sections",
-        vec![
-            TabItem::new("logs.events", i18n::tr!("ui-logs-events")),
-            TabItem::new("logs.files", i18n::tr!("ui-logs-files")),
-            TabItem::new("logs.incidents", i18n::tr!("ui-logs-incidents")),
-        ],
-    )
-}
 pub(super) fn controls(model: &LogsViewModel) -> Vec<(LogsHitTarget, String)> {
-    vec![
+    let mut controls = vec![
         (LogsHitTarget::Refresh, i18n::tr!("ui-logs-refresh")),
+        (
+            LogsHitTarget::FilterLevel,
+            i18n::tr!("ui-logs-level-filter", level = model.level_filter.as_str()),
+        ),
         (LogsHitTarget::Open, i18n::tr!("ui-logs-open")),
         (
             LogsHitTarget::Follow,
@@ -102,7 +87,11 @@ pub(super) fn controls(model: &LogsViewModel) -> Vec<(LogsHitTarget, String)> {
         ),
         (LogsHitTarget::Filters, i18n::tr!("ui-logs-source-filters")),
         (LogsHitTarget::More, i18n::tr!("ui-logs-more")),
-    ]
+    ];
+    if model.category == LogsCategory::Ux {
+        controls.push((LogsHitTarget::OpenFolder, i18n::tr!("ui-logs-open-folder")));
+    }
+    controls
 }
 pub fn logs_more_controls() -> Vec<(LogsHitTarget, String)> {
     vec![
@@ -140,10 +129,18 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     let refresh_width =
         (crate::components::terminal_width(&refresh_label) as u16 + 2).min(inner.width);
     let refresh = Rect::new(inner.x, inner.y, refresh_width, u16::from(inner.height > 0));
-    let filter_summary = Rect::new(
-        refresh.right().min(inner.right()),
+    let level_label = i18n::tr!("ui-logs-level-filter", level = model.level_filter.as_str());
+    let level = Rect::new(
+        refresh.right(),
         inner.y,
-        inner.width.saturating_sub(refresh.width),
+        (crate::components::terminal_width(&level_label) as u16 + 2)
+            .min(inner.width.saturating_sub(refresh.width)),
+        refresh.height,
+    );
+    let filter_summary = Rect::new(
+        level.right().min(inner.right()),
+        inner.y,
+        inner.width.saturating_sub(refresh.width + level.width),
         refresh.height,
     );
     let content_area = Rect::new(
@@ -155,8 +152,7 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     let mut content =
         diagnostics_content_layout(content_area, &super::render::logs_content_model(model));
     let right = content.detail_panel;
-    let tabs_height = 1 + u16::from(model.category == LogsCategory::Ux);
-    let action_height = tabs_height.min(right.height);
+    let action_height = 1.min(right.height);
     let actions = Rect::new(
         right.x,
         right.bottom().saturating_sub(action_height),
@@ -165,35 +161,22 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
     );
     content.detail_panel.height = content.detail_panel.height.saturating_sub(action_height);
     let category_tabs_area = line_in_rect(actions, actions.y);
-    let section_tabs_area = if model.category == LogsCategory::Ux {
-        line_in_rect(actions, category_tabs_area.bottom())
-    } else {
-        Rect::new(actions.x, category_tabs_area.bottom(), actions.width, 0)
-    };
     let category_tabs = category_tabs()
         .borderless_item_areas(category_tabs_area)
         .into_iter()
         .zip([LogsCategory::Ux, LogsCategory::Linux])
         .map(|(area, category)| LogsCategoryTabLayout { area, category })
         .collect();
-    let section_tabs = if model.category == LogsCategory::Ux {
-        section_tabs()
-            .borderless_item_areas(section_tabs_area)
-            .into_iter()
-            .zip([
-                LogsSection::Events,
-                LogsSection::Files,
-                LogsSection::Incidents,
-            ])
-            .map(|(area, section)| LogsSectionTabLayout { area, section })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let mut controls = vec![LogsControlLayout {
-        target: LogsHitTarget::Refresh,
-        area: refresh,
-    }];
+    let mut controls = vec![
+        LogsControlLayout {
+            target: LogsHitTarget::Refresh,
+            area: refresh,
+        },
+        LogsControlLayout {
+            target: LogsHitTarget::FilterLevel,
+            area: level,
+        },
+    ];
     let action_bar = bar.layout(footer);
     controls.extend(action_bar.actions.iter().filter_map(|action| {
         crate::screens::logs::layout::controls(model)
@@ -308,8 +291,6 @@ pub fn logs_layout(main: Rect, model: &LogsViewModel) -> LogsLayout {
         panel: main,
         category_tabs_area,
         category_tabs,
-        section_tabs_area,
-        section_tabs,
         controls,
         action_bar,
         filter_summary,
@@ -373,13 +354,6 @@ pub fn logs_hit_test(
     {
         return Some(LogsHitTarget::Category(tab.category));
     }
-    if let Some(tab) = layout
-        .section_tabs
-        .iter()
-        .find(|tab| rect_contains(tab.area, x, y))
-    {
-        return Some(LogsHitTarget::Section(tab.section));
-    }
     if let Some(control) = layout
         .controls
         .iter()
@@ -404,8 +378,6 @@ pub fn logs_hit_test(
         .hit_test(x, y)
         .and_then(|target| match target {
             DiagnosticsHitTarget::Check(index) => Some(LogsHitTarget::Event(index)),
-            DiagnosticsHitTarget::Log(index) => Some(LogsHitTarget::File(index)),
-            DiagnosticsHitTarget::Incident(index) => Some(LogsHitTarget::Incident(index)),
             DiagnosticsHitTarget::Scrollbar => Some(LogsHitTarget::Scrollbar),
             _ => None,
         })
@@ -425,7 +397,9 @@ pub(super) fn logs_action_bar(model: &LogsViewModel) -> PageActionBar {
     };
     let mut labels = controls(model)
         .into_iter()
-        .filter(|(target, _)| *target != LogsHitTarget::Refresh)
+        .filter(|(target, _)| {
+            !matches!(target, LogsHitTarget::Refresh | LogsHitTarget::FilterLevel)
+        })
         .collect::<Vec<_>>();
     labels.sort_by_key(|(target, _)| *target != primary);
     let actions = labels

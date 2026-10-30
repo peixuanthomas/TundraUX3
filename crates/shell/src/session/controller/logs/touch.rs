@@ -86,15 +86,6 @@ impl ShellSession {
                 ));
             }
         }
-        for tab in &layout.section_tabs {
-            if rect_contains(tab.area, point) {
-                return Some(region(
-                    format!("logs.section.{:?}", tab.section),
-                    tab.area,
-                    false,
-                ));
-            }
-        }
         for control in &layout.controls {
             if rect_contains(control.area, point) {
                 return Some(region(
@@ -112,12 +103,9 @@ impl ShellSession {
                 self.pages.logs.logs_state.detail_scroll = 0;
                 self.logs_set_category(category);
             }
-            ui::LogsHitTarget::Section(section) => {
-                self.pages.logs.logs_state.detail_scroll = 0;
-                self.logs_set_section(section);
-            }
             ui::LogsHitTarget::Refresh => self.request_logs_job(None),
             ui::LogsHitTarget::Open => self.logs_open_selected(),
+            ui::LogsHitTarget::OpenFolder => self.logs_open_folder(),
             ui::LogsHitTarget::FilterLevel => self.logs_filter_level(),
             ui::LogsHitTarget::FilterModule => self.logs_filter_module(),
             ui::LogsHitTarget::FilterTime => self.logs_filter_time(),
@@ -267,9 +255,7 @@ impl ShellSession {
                     layout.detail_scrollbar.map(|bar| bar.grab_at(point));
                 self.drag_logs_scrollbar(point);
             }
-            ui::LogsHitTarget::Event(index)
-            | ui::LogsHitTarget::File(index)
-            | ui::LogsHitTarget::Incident(index) => {
+            ui::LogsHitTarget::Event(index) => {
                 let click = self.register_click(
                     Some(ShellComponent::Logs),
                     point,

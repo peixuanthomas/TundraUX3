@@ -7,8 +7,10 @@ next normal settings save. Other placements are preserved.
 
 ## Sources and access
 
-- **UX log** contains structured runtime events and its Events, Files, and
-  Incidents sections. It works on Linux, Windows, and macOS. Guest has no access.
+- **UX log** combines structured runtime events and incident reports in one list.
+  Incidents use Critical, the highest level, including historical incident records.
+  Reports without a corresponding runtime event also appear, without duplicating
+  incidents already present in the runtime log. It works on Linux, Windows, and macOS. Guest has no access.
   A regular TundraUX user sees only records owned by that user, captured when a
   task is submitted. Unknown-owner and legacy reports require administrator
   access. Full Incident reports remain administrator-only inside the TUI.
@@ -105,13 +107,19 @@ partial failure. A missing explicitly selected file is an error.
 
 ## TUI navigation
 
-Open **Logs** from Home. UX opens by default. Left/Right switches source; Tab
-cycles UX Events/Files/Incidents. Arrow keys, Page Up/Down, Home/End, mouse
+Open **Logs** from Launcher. UX opens with all levels shown by default.
+Left/Right switches UX/Linux source; Tab does not switch log views.
+Arrow keys, Page Up/Down, Home/End, mouse
 selection, wheel scrolling, and scrollbar dragging use existing UI components.
-`L` cycles minimum severity, `M` module, `T` time window, and `C` clears filters.
-`I` follows a selected event's Incident and `E` returns from an Incident to its
-events. `R` refreshes; Enter/`O` opens a sanitized query document in the existing
-read-only Editor. Escape returns with filters and selection retained. Refresh
+The visible level button and `L` cycle All, Trace, Debug, Info, Warning, Error,
+and Critical. A selected level includes more severe records; selecting Warning
+includes Warning, Error and Critical. `M` filters modules, `T` time windows,
+and `C` clears filters. `I` opens the selected event's full incident report when
+authorized, and `E` shows its related events. `R`/F5 refreshes; Enter/`O` opens
+a sanitized query document in the existing
+read-only Editor. `G` or **Open folder** opens the UX log root (containing
+`runtime` and `crashes`) in the built-in Explorer, using the existing log-folder
+access permissions. Escape returns with filters and selection retained. Refresh
 inside that Editor regenerates the authorized query snapshot before reloading.
 
 Files never bypass ownership checks: ordinary users do not see mixed-owner

@@ -124,3 +124,7 @@ ui-help-back-button = Back button
 ui-help-clock-input = Select and adjust hours, minutes and seconds
 ui-help-editor-reload = Reload a read-only file
 ui-help-editor-settings = Adjust editor settings
+
+ui-help-logs-level = Filter by minimum level; All by default, Critical is highest
+ui-help-logs-folder = Open the UX logs root in Explorer
+ui-help-logs-source = Switch UX / Linux logs; Tab does not switch log views

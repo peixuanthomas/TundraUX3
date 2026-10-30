@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::session) struct LogsUiState {
     pub(super) category: ui::LogsCategory,
-    pub(super) section: ui::LogsSection,
     query: LogQuery,
     pub(super) snapshot: LogsSnapshot,
     pub(super) selected: usize,
@@ -121,7 +120,6 @@ impl ShellSession {
         self.enter_new_page(ShellScreen::Logs);
         self.pages.logs.logs_state.query = query;
         self.pages.logs.logs_state.category = ui::LogsCategory::Linux;
-        self.pages.logs.logs_state.section = ui::LogsSection::Events;
         self.pages.logs.logs_state.time_filter = 0;
         self.pages.logs.logs_state.known_modules.clear();
         self.pages.logs.logs_state.selected = 0;
@@ -136,11 +134,8 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn logs_select_legacy_section(&mut self, incidents: bool) {
-        self.logs_set_section(if incidents {
-            ui::LogsSection::Incidents
-        } else {
-            ui::LogsSection::Events
-        });
+        self.pages.logs.logs_state.query.min_level = incidents.then_some(LogLevel::Critical);
+        self.request_logs_job(None);
     }
 
     fn logs_access(&self) -> Option<LogAccess> {
@@ -476,38 +471,17 @@ impl ShellSession {
     }
 
     fn logs_id_at(&self, index: usize) -> Option<String> {
-        let state = &self.pages.logs.logs_state;
-        if state.category == ui::LogsCategory::Linux || state.section == ui::LogsSection::Events {
-            state
-                .snapshot
-                .result
-                .events
-                .get(index)
-                .map(|e| e.event_id.clone())
-        } else if state.section == ui::LogsSection::Files {
-            state
-                .snapshot
-                .files
-                .get(index)
-                .map(|f| f.path.to_string_lossy().into_owned())
-        } else {
-            state
-                .snapshot
-                .incidents
-                .get(index)
-                .map(|i| i.incident_id.clone())
-        }
+        self.pages
+            .logs
+            .logs_state
+            .snapshot
+            .result
+            .events
+            .get(index)
+            .map(|event| event.event_id.clone())
     }
     fn logs_count(&self) -> usize {
-        if self.pages.logs.logs_state.category == ui::LogsCategory::Linux
-            || self.pages.logs.logs_state.section == ui::LogsSection::Events
-        {
-            self.pages.logs.logs_state.snapshot.result.events.len()
-        } else if self.pages.logs.logs_state.section == ui::LogsSection::Files {
-            self.pages.logs.logs_state.snapshot.files.len()
-        } else {
-            self.pages.logs.logs_state.snapshot.incidents.len()
-        }
+        self.pages.logs.logs_state.snapshot.result.events.len()
     }
     pub(super) fn logs_main_area(&self) -> Option<Rect> {
         match self.shell_layout_for(Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1)) {
@@ -526,31 +500,21 @@ impl ShellSession {
         self.pages.logs.logs_state.explicit_scroll = false;
     }
     fn logs_open_selected(&mut self) {
-        let selection = if self.pages.logs.logs_state.category == ui::LogsCategory::Linux
-            || self.pages.logs.logs_state.section == ui::LogsSection::Events
-        {
-            Some(LogDocumentSelection::Events)
-        } else if self.pages.logs.logs_state.section == ui::LogsSection::Files {
-            self.pages
-                .logs
-                .logs_state
-                .snapshot
-                .files
-                .get(self.pages.logs.logs_state.selected)
-                .map(|f| LogDocumentSelection::File(f.path.clone()))
-        } else {
-            self.pages
-                .logs
-                .logs_state
-                .snapshot
-                .incidents
-                .get(self.pages.logs.logs_state.selected)
-                .map(|i| LogDocumentSelection::Incident(i.incident_id.clone()))
-        };
-        if let Some(selection) = selection {
-            self.pages.logs.logs_state.last_document = Some(selection.clone());
-            self.request_logs_job(Some(selection));
+        if self.logs_count() == 0 {
+            return;
         }
+        let selection = LogDocumentSelection::Events;
+        self.pages.logs.logs_state.last_document = Some(selection.clone());
+        self.request_logs_job(Some(selection));
+    }
+    fn logs_open_folder(&mut self) {
+        let platform = self
+            .settings_task_runtime
+            .shared
+            .platform
+            .clone()
+            .unwrap_or_else(|| Arc::from(platform::native_platform()));
+        self.open_diagnostics_logs_in_explorer(platform.as_ref());
     }
     pub(in crate::session) fn refresh_logs_editor_snapshot(&mut self) -> bool {
         let matches = self
@@ -587,19 +551,16 @@ impl ShellSession {
         self.pages.logs.logs_state.new_events = 0;
         self.request_logs_job(None);
     }
-    fn logs_set_section(&mut self, section: ui::LogsSection) {
-        self.pages.logs.logs_state.section = section;
-        self.apply_logs_sort();
-        self.pages.logs.logs_state.selected = 0;
-        self.pages.logs.logs_state.scroll = 0;
-        self.pages.logs.logs_state.explicit_scroll = false;
-    }
     fn logs_filter_level(&mut self) {
         self.pages.logs.logs_state.query.min_level =
             match self.pages.logs.logs_state.query.min_level {
-                None => Some(LogLevel::Warning),
+                None => Some(LogLevel::Trace),
+                Some(LogLevel::Trace) => Some(LogLevel::Debug),
+                Some(LogLevel::Debug) => Some(LogLevel::Info),
+                Some(LogLevel::Info) => Some(LogLevel::Warning),
                 Some(LogLevel::Warning) => Some(LogLevel::Error),
-                _ => None,
+                Some(LogLevel::Error) => Some(LogLevel::Critical),
+                Some(LogLevel::Critical) => None,
             };
         self.pages.logs.logs_state.selected = 0;
         self.request_logs_job(None);
@@ -628,8 +589,6 @@ impl ShellSession {
         if self.active_screen() == ShellScreen::Logs
             && self.pages.logs.selected_id() == Some(self.active_page_id())
             && self.pages.logs.logs_state.job.is_none()
-            && (self.pages.logs.logs_state.category == ui::LogsCategory::Linux
-                || self.pages.logs.logs_state.section == ui::LogsSection::Events)
             && self
                 .pages
                 .logs
@@ -643,19 +602,15 @@ impl ShellSession {
         }
     }
     fn logs_restore_event_order(&mut self) {
-        if self.pages.logs.logs_state.category == ui::LogsCategory::Linux
-            || self.pages.logs.logs_state.section == ui::LogsSection::Events
-        {
-            let sort_key = self.logs_sort_key();
-            self.pages.common.table_sorts.remove(&sort_key);
-            self.pages
-                .logs
-                .logs_state
-                .snapshot
-                .result
-                .events
-                .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        }
+        let sort_key = self.logs_sort_key();
+        self.pages.common.table_sorts.remove(&sort_key);
+        self.pages
+            .logs
+            .logs_state
+            .snapshot
+            .result
+            .events
+            .sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     }
     fn logs_follow_control(&mut self) {
         self.pages.logs.logs_state.paused = !self.pages.logs.logs_state.paused;
@@ -788,7 +743,6 @@ impl ShellSession {
         }
         self.pages.logs.logs_state.query = query;
         self.pages.logs.logs_state.category = ui::LogsCategory::Linux;
-        self.pages.logs.logs_state.section = ui::LogsSection::Events;
         self.pages.logs.logs_state.time_filter = 0;
         self.pages.logs.logs_state.filter_form = None;
         self.pages.logs.logs_state.snapshot = LogsSnapshot::default();
@@ -887,6 +841,7 @@ impl ShellSession {
             InputKey::Char('p' | 'P') => Some(ui::LogsHitTarget::Follow),
             InputKey::F(10) => Some(ui::LogsHitTarget::More),
             InputKey::Char('f' | 'F') => Some(ui::LogsHitTarget::Filters),
+            InputKey::Char('g' | 'G') => Some(ui::LogsHitTarget::OpenFolder),
             _ => None,
         };
         if control.is_some_and(|control| {
@@ -895,7 +850,7 @@ impl ShellSession {
         }) {
             return;
         }
-        if key.phase != InputPhase::Press && matches!(key.key, InputKey::Escape | InputKey::Tab) {
+        if key.phase != InputPhase::Press && key.key == InputKey::Escape {
             return;
         }
         if key.key == InputKey::Escape {
@@ -934,11 +889,6 @@ impl ShellSession {
                     ui::LogsCategory::Ux
                 },
             ),
-            InputKey::Tab => self.logs_set_section(match self.pages.logs.logs_state.section {
-                ui::LogsSection::Events => ui::LogsSection::Files,
-                ui::LogsSection::Files => ui::LogsSection::Incidents,
-                ui::LogsSection::Incidents => ui::LogsSection::Events,
-            }),
             InputKey::Up => self.logs_move(-1),
             InputKey::Down => self.logs_move(1),
             InputKey::PageUp => self.logs_move(-10),
@@ -963,9 +913,24 @@ impl ShellSession {
             InputKey::Char('p' | 'P') => self.logs_follow_control(),
             InputKey::F(10) => self.pages.logs.logs_state.more_selected = Some(0),
             InputKey::Char('f' | 'F') => self.logs_open_filter_form(),
-            InputKey::Char('i' | 'I')
-                if self.pages.logs.logs_state.category == ui::LogsCategory::Ux =>
-            {
+            InputKey::Char('g' | 'G') => self.logs_open_folder(),
+            InputKey::Char('i' | 'I') => {
+                if let Some(id) = self
+                    .pages
+                    .logs
+                    .logs_state
+                    .snapshot
+                    .result
+                    .events
+                    .get(self.pages.logs.logs_state.selected)
+                    .and_then(|event| event.incident_id.clone())
+                {
+                    let selection = LogDocumentSelection::Incident(id);
+                    self.pages.logs.logs_state.last_document = Some(selection.clone());
+                    self.request_logs_job(Some(selection));
+                }
+            }
+            InputKey::Char('e' | 'E') => {
                 let id = self
                     .pages
                     .logs
@@ -974,33 +939,14 @@ impl ShellSession {
                     .result
                     .events
                     .get(self.pages.logs.logs_state.selected)
-                    .and_then(|e| e.incident_id.clone());
+                    .and_then(|event| event.incident_id.clone());
                 self.pages.logs.logs_state.query = LogQuery {
                     incident_id: id,
                     ..Default::default()
                 };
                 self.pages.logs.logs_state.time_filter = 0;
-                self.logs_set_section(ui::LogsSection::Incidents);
-                self.request_logs_job(None);
-            }
-            InputKey::Char('e' | 'E')
-                if self.pages.logs.logs_state.category == ui::LogsCategory::Ux
-                    && self.pages.logs.logs_state.section == ui::LogsSection::Incidents =>
-            {
-                let id = self
-                    .pages
-                    .logs
-                    .logs_state
-                    .snapshot
-                    .incidents
-                    .get(self.pages.logs.logs_state.selected)
-                    .map(|e| e.incident_id.clone());
-                self.pages.logs.logs_state.query = LogQuery {
-                    incident_id: id,
-                    ..Default::default()
-                };
-                self.pages.logs.logs_state.time_filter = 0;
-                self.logs_set_section(ui::LogsSection::Events);
+                self.pages.logs.logs_state.selected = 0;
+                self.pages.logs.logs_state.scroll = 0;
                 self.request_logs_job(None);
             }
             InputKey::Char('c' | 'C') => {
@@ -1024,48 +970,6 @@ impl ShellSession {
             Some(LogAccess::Admin | LogAccess::OsUser)
         );
         let diagnostics = ui::DiagnosticsViewModel {
-            tab: if state.section == ui::LogsSection::Incidents {
-                ui::DiagnosticsTab::Incidents
-            } else {
-                ui::DiagnosticsTab::Logs
-            },
-            logs: state
-                .snapshot
-                .files
-                .iter()
-                .map(|file| ui::DiagnosticsLogViewModel {
-                    relative_path: file.relative_path.display().to_string(),
-                    path: file.path.display().to_string(),
-                    modified_at: file.modified_at.to_rfc3339(),
-                    size_bytes: file.size_bytes,
-                })
-                .collect(),
-            incidents: state
-                .snapshot
-                .incidents
-                .iter()
-                .map(|incident| ui::DiagnosticsIncidentViewModel {
-                    id: incident.incident_id.clone(),
-                    occurred_at: incident.occurred_at.to_rfc3339(),
-                    app: incident
-                        .app
-                        .as_ref()
-                        .map(|app| app.display_name.clone())
-                        .unwrap_or_else(|| i18n::tr!("shell-process")),
-                    severity: diagnostics_incident_severity_to_ui(incident.severity),
-                    recovery: format!("{:?}", incident.recovery),
-                    summary: incident.summary.clone(),
-                    detail: format!(
-                        "{} / {}",
-                        incident.boundary,
-                        incident.component.as_deref().unwrap_or("process")
-                    ),
-                    report_path: String::new(),
-                    restricted: !system,
-                })
-                .collect(),
-            selected_log: state.selected,
-            selected_incident: state.selected,
             list_window_start: state.scroll,
             list_window_is_explicit: state.explicit_scroll,
             can_view_details: self.logs_access().is_some(),
@@ -1102,7 +1006,6 @@ impl ShellSession {
                 .table_sorts
                 .get(&self.logs_sort_key())
                 .copied(),
-            section: state.section,
             diagnostics,
             events: state
                 .snapshot
@@ -1127,7 +1030,12 @@ impl ShellSession {
                                 .format("%H:%M:%S")
                                 .to_string()
                         }),
-                    level: format!("{:?}", event.level),
+                    level: log_level_label(event.level),
+                    status: match event.level {
+                        LogLevel::Critical | LogLevel::Error => ui::DiagnosticsStatus::Fail,
+                        LogLevel::Warning => ui::DiagnosticsStatus::Warning,
+                        _ => ui::DiagnosticsStatus::Pass,
+                    },
                     module: event.context.module.clone(),
                     operation: event.context.operation.clone(),
                     summary: event.message.clone(),
@@ -1146,26 +1054,32 @@ impl ShellSession {
             more_selected: state.more_selected,
             filter_form: state.filter_form.clone(),
             selected_file: state.query.file_path.is_some(),
+            level_filter: state
+                .query
+                .min_level
+                .map(|level| {
+                    if level == LogLevel::Critical {
+                        log_level_label(level)
+                    } else {
+                        i18n::tr!("ui-logs-level-or-higher", level = log_level_label(level))
+                    }
+                })
+                .unwrap_or_else(|| i18n::tr!("shell-all")),
             filter_summary: i18n::tr!(
-                "shell-level-arg1-module-arg2-time-arg3-arg4",
-                arg1 = state
-                    .query
-                    .min_level
-                    .map(|level| format!("{level:?}+ "))
-                    .unwrap_or_else(|| i18n::tr!("shell-all")),
-                arg2 = state
+                "ui-logs-filter-summary",
+                module = state
                     .query
                     .module
                     .clone()
                     .unwrap_or_else(|| i18n::tr!("shell-all")),
-                arg3 = [
+                time = [
                     i18n::tr!("shell-all"),
                     i18n::tr!("shell-1-hour"),
                     i18n::tr!("shell-24-hours"),
                     i18n::tr!("shell-7-days")
                 ][usize::from(state.time_filter)]
                 .clone(),
-                arg4 = if let Some(file) = &state.query.file_path {
+                context = if let Some(file) = &state.query.file_path {
                     file.display().to_string()
                 } else if let Some(unit) = &state.query.systemd_unit {
                     format!(
@@ -1195,6 +1109,17 @@ impl ShellSession {
             feedback,
         }
     }
+}
+
+fn log_level_label(level: LogLevel) -> String {
+    i18n::tr!(match level {
+        LogLevel::Trace => "ui-logs-level-trace",
+        LogLevel::Debug => "ui-logs-level-debug",
+        LogLevel::Info => "ui-logs-level-info",
+        LogLevel::Warning => "ui-logs-level-warning",
+        LogLevel::Error => "ui-logs-level-error",
+        LogLevel::Critical => "ui-logs-level-critical",
+    })
 }
 
 fn log_state_label(state: runtime_log::LogSourceState) -> String {

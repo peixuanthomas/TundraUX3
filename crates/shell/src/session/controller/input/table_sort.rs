@@ -33,10 +33,7 @@ pub(super) fn reorder<T>(
 
 impl ShellSession {
     pub(in crate::session) fn logs_sort_key(&self) -> String {
-        format!(
-            "logs.{:?}.{:?}",
-            self.pages.logs.logs_state.category, self.pages.logs.logs_state.section
-        )
+        format!("logs.{:?}", self.pages.logs.logs_state.category)
     }
 
     fn active_table_sort(&self) -> Option<(String, usize)> {
@@ -400,27 +397,21 @@ impl ShellSession {
         else {
             return;
         };
-        let cells = ui::logs_content_model(&self.to_logs_view_model())
+        let mut cells = ui::logs_content_model(&self.to_logs_view_model())
             .table_data()
             .1;
         let state = &mut self.pages.logs.logs_state;
-        if state.category == ui::LogsCategory::Linux || state.section == ui::LogsSection::Events {
-            reorder(
-                &mut state.snapshot.result.events,
-                &cells,
-                sort,
-                &mut state.selected,
-            );
-        } else if state.section == ui::LogsSection::Files {
-            reorder(&mut state.snapshot.files, &cells, sort, &mut state.selected);
-        } else {
-            reorder(
-                &mut state.snapshot.incidents,
-                &cells,
-                sort,
-                &mut state.selected,
-            );
+        if sort.column == 1 {
+            for (row, event) in cells.iter_mut().zip(&state.snapshot.result.events) {
+                row[1] = (event.level as u8).to_string();
+            }
         }
+        reorder(
+            &mut state.snapshot.result.events,
+            &cells,
+            sort,
+            &mut state.selected,
+        );
         state.revision = state.revision.wrapping_add(1);
     }
 

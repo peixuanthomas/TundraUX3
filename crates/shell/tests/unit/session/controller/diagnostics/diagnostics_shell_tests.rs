@@ -1167,8 +1167,8 @@ fn diagnostics_navigation_and_repair_preview_are_modal() {
     );
     assert_eq!(state.active_screen(), ShellScreen::Logs);
     assert_eq!(
-        state.to_logs_view_model().section,
-        ui::LogsSection::Incidents
+        state.to_logs_view_model().level_filter,
+        i18n::tr!("ui-logs-level-critical")
     );
     state.handle_logs_key(&KeyInput::from_label("Esc"));
     state.close_diagnostics();

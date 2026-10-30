@@ -6,19 +6,13 @@ pub enum LogsCategory {
     Ux,
     Linux,
 }
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum LogsSection {
-    #[default]
-    Events,
-    Files,
-    Incidents,
-}
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LogsEventViewModel {
     pub id: String,
     pub timestamp: String,
     pub time_label: String,
     pub level: String,
+    pub status: crate::DiagnosticsStatus,
     pub module: String,
     pub operation: String,
     pub summary: String,
@@ -29,7 +23,6 @@ pub struct LogsEventViewModel {
 pub struct LogsViewModel {
     pub category: LogsCategory,
     pub sort: Option<crate::TableSort>,
-    pub section: LogsSection,
     pub diagnostics: DiagnosticsViewModel,
     pub events: Vec<LogsEventViewModel>,
     pub selected_event: usize,
@@ -39,6 +32,7 @@ pub struct LogsViewModel {
     pub can_view_system: bool,
     pub loading: bool,
     pub filter_summary: String,
+    pub level_filter: String,
     pub feedback: Option<String>,
     pub following: bool,
     pub new_events: usize,
