@@ -19,6 +19,46 @@ fn model() -> ScriptViewModel {
 }
 
 #[test]
+fn detail_motion_draws_borders_then_restores_source_and_details() {
+    let mut model = model();
+    model.detail = ScriptPane::Expression;
+    model.state.expression_log.push("count = 42".into());
+    let context = RenderContext::default();
+    let mut terminal = Terminal::new(TestBackend::new(140, 36)).unwrap();
+    for progress in [500, 999, 1_000, 500, 0] {
+        model.detail_expansion = Some(progress);
+        let layout = script_layout(Rect::new(0, 0, 140, 36), &model);
+        terminal
+            .draw(|frame| {
+                render_script_contextual(frame, frame.area(), &model, &context);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert_eq!(
+            buffer[(layout.editor_area.x, layout.editor_area.y)].symbol(),
+            "╭"
+        );
+        if progress > 0 && progress < 1_000 {
+            assert!(!text.contains("#!/usr/bin/env bash"));
+            assert!(!text.contains("count = 42"));
+            assert!(
+                layout
+                    .editor_area
+                    .inner(ratatui::layout::Margin::new(1, 1))
+                    .positions()
+                    .all(|position| buffer[position].symbol() == " ")
+            );
+        } else {
+            assert!(text.contains("#!/usr/bin/env bash"));
+            if progress == 1_000 {
+                assert!(text.contains("count = 42"));
+            }
+        }
+    }
+}
+
+#[test]
 fn script_launcher_reuses_editor_art_in_existing_themes() {
     let assets = ui::RuntimeAsciiAssets::load_default().unwrap();
     assert!(std::ptr::eq(

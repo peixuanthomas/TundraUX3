@@ -1547,6 +1547,17 @@ pub fn render_management_content(
     let context = &content_context;
     let theme = context.compatibility_theme();
     let layout = management_layout(main, model);
+    if model
+        .details_expansion
+        .is_some_and(|amount| amount > 0 && amount < 1_000)
+    {
+        for area in [layout.list, layout.details, layout.detail_actions_panel] {
+            Surface::new()
+                .bordered(true)
+                .render_frame(frame, area, context);
+        }
+        return;
+    }
     let selected = theme
         .title_style()
         .add_modifier(Modifier::BOLD | Modifier::REVERSED);

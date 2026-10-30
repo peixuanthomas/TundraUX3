@@ -2,6 +2,46 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use ui::*;
 
 #[test]
+fn detail_motion_draws_borders_then_restores_complete_text() {
+    let mut model = ManagementViewModel {
+        columns: vec!["Name".into()],
+        rows: vec![vec!["list content".into()]],
+        details: "details content 中文".into(),
+        ..Default::default()
+    };
+    let context = RenderContext::default();
+    for (width, height) in [(120, 40), (60, 24)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        for progress in [500, 999, 1_000, 500, 0] {
+            model.details_expansion = Some(progress);
+            let bounds = Rect::new(0, 0, width, height);
+            let layout = management_layout(bounds, &model);
+            terminal
+                .draw(|frame| render_management_content(frame, bounds, &model, &context))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+            assert_eq!(buffer[(layout.details.x, layout.details.y)].symbol(), "╭");
+            if progress > 0 && progress < 1_000 {
+                assert!(
+                    layout
+                        .details
+                        .inner(ratatui::layout::Margin::new(1, 1))
+                        .positions()
+                        .all(|position| buffer[position].symbol() == " ")
+                );
+                assert!(!text.contains("list content"));
+            } else {
+                assert!(text.contains("details content"));
+                if progress == 0 {
+                    assert!(text.contains("list content"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn form_toggle_keeps_its_label_left_and_on_off_value_right() {
     let theme = TundraTheme::default_dark();
     let context = RenderContext::from_theme(&theme, Default::default(), Default::default());

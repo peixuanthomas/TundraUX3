@@ -37,6 +37,22 @@ pub fn render_script_contextual_with_terminal_images(
     let layout = script_layout(area, model);
     let theme = context.compatibility_theme();
     frame.render_widget(Clear, area);
+    if model
+        .detail_expansion
+        .is_some_and(|amount| amount > 0 && amount < 1_000)
+    {
+        editor_images.clear();
+        output_images.clear();
+        Surface::new()
+            .bordered(true)
+            .render_frame(frame, layout.editor_area, context);
+        for (_, rect) in &layout.panes {
+            Surface::new()
+                .bordered(true)
+                .render_frame(frame, *rect, context);
+        }
+        return layout;
+    }
     crate::render_editor_contextual_with_terminal_images(
         frame,
         layout.editor_area,

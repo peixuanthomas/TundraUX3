@@ -163,7 +163,7 @@ fn button_border_moves_and_grows_to_the_surface_bounds() {
 }
 
 #[test]
-fn moving_surface_keeps_its_border_style_and_never_splits_chinese() {
+fn moving_surface_keeps_only_its_border_until_the_transition_finishes() {
     use ratatui::{buffer::Buffer, style::Color, widgets::Paragraph};
     use ui::components::Surface;
     let bounds = Rect::new(0, 0, 12, 5);
@@ -182,6 +182,13 @@ fn moving_surface_keeps_its_border_style_and_never_splits_chinese() {
     assert_eq!(result[(21, 10)].symbol(), "─");
     assert_eq!(result[(20, 12)].symbol(), "│");
     assert_eq!(result[(20, 12)].fg, Color::Red);
-    assert_eq!(result[(25, 12)].symbol(), " ");
-    assert_eq!(ui::morph_surface(&source, bounds), source);
+    for area in [moving, bounds] {
+        let result = ui::morph_surface(&source, area);
+        assert!(
+            area.inner(ratatui::layout::Margin::new(1, 1))
+                .positions()
+                .all(|position| result[position].symbol() == " ")
+        );
+    }
+    assert_eq!(source[(1, 2)].symbol(), "中");
 }

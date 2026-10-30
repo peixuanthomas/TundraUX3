@@ -269,6 +269,7 @@ pub struct ScreenKeyboardLayout {
     pub bordered_buttons: bool,
     pub usable: bool,
     pub collapsed: bool,
+    pub content_visible: bool,
     pub compact: bool,
     /// Nonempty only in the AA test. It is always above the keyboard panel.
     pub aa_dialog: Rect,
@@ -557,6 +558,7 @@ fn keyboard_layout(
         bordered_buttons,
         usable,
         collapsed,
+        content_visible: visibility == 0 || visibility >= 1_000,
         compact: true,
         aa_dialog: Rect::default(),
     };
@@ -806,6 +808,12 @@ fn render_screen_keyboard_keys(
     model: &ScreenKeyboardViewModel<'_>,
     context: &RenderContext,
 ) {
+    if !layout.content_visible {
+        Surface::new()
+            .bordered(true)
+            .render_frame(frame, layout.keyboard, context);
+        return;
+    }
     // Keycaps share Button hit regions and configured corner shapes. Their
     // neutral frames and border-colored legends are distinct from page buttons.
     let mut theme = context.compatibility_theme();

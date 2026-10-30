@@ -874,10 +874,17 @@ fn generic_and_explorer_menus_both_animate_and_gate_pointer_input() {
         MotionInputDisposition::Block
     );
     motion.test_frame(Duration::from_millis(16), &mut buffer, &state);
-    assert_eq!(buffer, natural);
+    assert_eq!(buffer[(20, 10)].symbol(), " ");
+    assert!(
+        full.positions()
+            .filter(|position| *position != Position::new(20, 10))
+            .all(|position| buffer[position] == natural[position])
+    );
     assert!(motion.manager.is_running());
     assert_eq!(motion.overlay_gate, Duration::from_millis(160));
+    buffer.clone_from(&natural);
     motion.test_frame(Duration::from_millis(160), &mut buffer, &state);
+    assert_eq!(buffer, natural);
     state.pages.common.active_popup = None;
     state.pages.common.focused_component = ShellComponent::Home;
     state.refresh_hit_map();
@@ -997,6 +1004,10 @@ fn exit_buffer(kind: ui::MotionOverlayKind, elapsed: Duration) -> Buffer {
     {
         old[position].set_symbol("Z");
     }
+    use ratatui::widgets::{Block, BorderType, Widget};
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .render(area, &mut old);
     let snapshot = snapshot_normal_cells(&old, area).unwrap();
     let mut underlay_buffer = Buffer::filled(full, Cell::new("N"));
     for position in full
@@ -1021,9 +1032,11 @@ fn dialog_and_popover_snapshot_exits_are_spatial_single_stage_and_end_natural() 
         ui::MotionOverlayKind::Popover,
     ] {
         let start = exit_buffer(kind, Duration::ZERO);
+        assert_eq!(start[(area.x, area.y)].symbol(), "╭");
         assert!(
-            area.positions()
-                .all(|position| start[position].symbol() == "O")
+            area.inner(ratatui::layout::Margin::new(1, 1))
+                .positions()
+                .all(|position| start[position].symbol() == " ")
         );
         assert!(
             full.positions()
@@ -1262,7 +1275,8 @@ fn snapshot_exit_protects_wide_glyphs_overlapping_image_cells() {
         &mut current,
         area,
     );
-    assert_eq!(current[(0, 0)].symbol(), "N");
+    assert_eq!(current[(0, 0)].symbol(), " ");
+    assert_eq!(current[(1, 0)].symbol(), "N");
     assert_eq!(current[(1, 0)].diff_option, CellDiffOption::Skip);
     old[(1, 0)].diff_option = CellDiffOption::Skip;
     let captured = snapshot_normal_cells(&old, area).unwrap();

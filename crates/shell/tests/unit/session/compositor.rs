@@ -854,7 +854,10 @@ fn live_keyboard_animation_keeps_aa_and_cli_content_above_visible_keys() {
             }
             for key in &keyboard.buttons {
                 assert_eq!(key.area.intersection(keyboard.keyboard), key.area);
-                assert!(state.button_regions.contains(&key.region()));
+                assert_eq!(
+                    state.button_regions.contains(&key.region()),
+                    keyboard.content_visible
+                );
             }
             if millis == 355 {
                 assert!(!state.input_keyboard_open());
@@ -1703,9 +1706,22 @@ fn home_entry_single_click_expands_from_its_border_and_returns_to_it() {
         prepared.page = ScreenViewModel::Launcher(Box::new(state.to_launcher_view_model()));
         assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
         assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), "╭");
+        assert!(
+            area.inner(ratatui::layout::Margin::new(1, 1))
+                .positions()
+                .all(|position| terminal.backend().buffer()[position].symbol() == " ")
+        );
         prepared.context.motion.delta = ui::MotionTimings::PAGE;
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
         let main = state.frame_layout.unwrap().main;
+        assert!(
+            main.inner(ratatui::layout::Margin::new(1, 1))
+                .positions()
+                .any(|position| terminal.backend().buffer()[position]
+                    .symbol()
+                    .chars()
+                    .any(char::is_alphanumeric))
+        );
         let back = state.frame_layout.unwrap().back_button.unwrap();
         let point = (back.x + 1, back.y + 1);
         state.apply_input_with_platform(
@@ -1723,6 +1739,12 @@ fn home_entry_single_click_expands_from_its_border_and_returns_to_it() {
         assert_eq!(
             terminal.backend().buffer()[(current.x, current.y)].symbol(),
             "╭"
+        );
+        assert!(
+            current
+                .inner(ratatui::layout::Margin::new(1, 1))
+                .positions()
+                .all(|position| terminal.backend().buffer()[position].symbol() == " ")
         );
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
         assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), "╭");

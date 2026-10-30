@@ -21,6 +21,39 @@ fn view(text: &str) -> ScreenKeyboardViewModel<'_> {
 }
 
 #[test]
+fn moving_keyboard_draws_its_border_and_shows_keys_only_when_settled() {
+    let bounds = Rect::new(0, 0, 120, 48);
+    let context = RenderContext::default();
+    let mut terminal = Terminal::new(TestBackend::new(bounds.width, bounds.height)).unwrap();
+    for visibility in [500, 999, 1_000, 500, 0] {
+        let layout =
+            screen_keyboard_layout_with_visibility(bounds, false, visibility, Default::default());
+        terminal
+            .draw(|frame| {
+                ui::render_screen_keyboard_panel(frame, &layout, &view(""), &context);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        if visibility > 0 && visibility < 1_000 {
+            assert_eq!(buffer[(layout.keyboard.x, layout.keyboard.y)].symbol(), "╭");
+            assert!(
+                layout
+                    .keyboard
+                    .inner(ratatui::layout::Margin::new(1, 1))
+                    .positions()
+                    .all(|position| buffer[position].symbol() == " ")
+            );
+        } else {
+            let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+            assert!(text.contains("Esc"));
+            if visibility == 1_000 {
+                assert!(text.contains('q'));
+            }
+        }
+    }
+}
+
+#[test]
 fn ordinary_key_legends_meet_contrast_without_losing_custom_colors_or_feedback() {
     use ScreenKeyboardAction::*;
     for (theme, capabilities, ordinary) in [
