@@ -23,6 +23,53 @@ fn assert_secret_absent(snapshot: &Snapshot, secret: &str) {
 }
 
 #[test]
+fn offset_capture_keeps_uncovered_text_and_clips_controls_without_duplicates() {
+    use ratatui::style::Style;
+    let bounds = Rect::new(4, 3, 24, 4);
+    let capture = FrameCapture::begin(bounds, "offset");
+    capture.set_group("page", "page", bounds, false);
+    let mut buffer = Buffer::empty(bounds);
+    buffer.set_string(5, 4, "left 中A right", Style::default());
+    buffer.set_string(5, 5, "secret", Style::default());
+    buffer.set_string(24, 6, "tail", Style::default());
+    ui::automation::record(ui::automation::node(
+        "cell",
+        "cell",
+        "value",
+        Rect::new(10, 4, 3, 1),
+    ));
+    let mut password =
+        ui::automation::node("password", "textbox", "Password", Rect::new(5, 5, 6, 1));
+    password.sensitive = true;
+    ui::automation::record(password);
+    ui::automation::record(ui::automation::node(
+        "clipped",
+        "button",
+        "Tail",
+        Rect::new(24, 6, 8, 1),
+    ));
+    let snapshot = capture.finish(&buffer);
+    assert_eq!(find(&snapshot, "/cell").text, "中A");
+    let labels = snapshot
+        .nodes
+        .iter()
+        .filter(|node| node.role == "text")
+        .map(|node| (node.parent.as_deref(), node.text.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        labels,
+        vec![(Some("page"), "left"), (Some("page"), "right")]
+    );
+    assert_eq!(find(&snapshot, "/clipped").text, "tail");
+    assert_eq!(find(&snapshot, "/clipped").rect.width, 4);
+    assert!(!find(&snapshot, "/clipped").actionable);
+    assert_secret_absent(&snapshot, "secret");
+    let full_text = snapshot.lines.join("\n");
+    assert_eq!(find(&snapshot, "screen").text, full_text);
+    assert_eq!(find(&snapshot, "page").text, full_text);
+}
+
+#[test]
 fn shared_controls_keep_ids_state_and_hierarchy_when_labels_change() {
     fn capture(label: &str) -> Snapshot {
         let bounds = Rect::new(0, 0, 80, 24);

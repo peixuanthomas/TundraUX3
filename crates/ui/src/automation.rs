@@ -80,11 +80,15 @@ impl FrameCapture {
             .filter(|node| node.sensitive)
             .map(|node| area(node.rect))
             .collect();
+        let lines = buffer_lines(buffer, capture.bounds, &sensitive);
+        let full_text = lines.join("\n");
         for node in &mut capture.nodes {
             node.text = if node.sensitive {
                 "••••".into()
             } else if node.role == "heading" {
                 node.name.clone()
+            } else if area(node.rect) == capture.bounds {
+                full_text.clone()
             } else {
                 buffer_lines(buffer, area(node.rect), &sensitive).join("\n")
             };
@@ -100,7 +104,7 @@ impl FrameCapture {
             animation_running: false,
             background_tasks_running: false,
             nodes: capture.nodes,
-            lines: buffer_lines(buffer, capture.bounds, &sensitive),
+            lines,
         }
     }
 }
@@ -325,7 +329,7 @@ fn buffer_lines(buffer: &Buffer, rect: Rect, sensitive: &[Rect]) -> Vec<String> 
     let rect = rect.intersection(buffer.area);
     (rect.y..rect.bottom())
         .map(|y| {
-            let mut line = String::new();
+            let mut line = String::with_capacity(usize::from(rect.width));
             let mut x = rect.x;
             while x < rect.right() {
                 let cell = &buffer[(x, y)];
@@ -341,23 +345,36 @@ fn buffer_lines(buffer: &Buffer, rect: Rect, sensitive: &[Rect]) -> Vec<String> 
                 // Ratatui reserves trailing cells of a wide glyph; they are not spaces.
                 x = x.saturating_add(width);
             }
-            line.trim_end().to_string()
+            line.truncate(line.trim_end().len());
+            line
         })
         .collect()
 }
 
 fn capture_visible_text(nodes: &mut Vec<Node>, buffer: &Buffer, bounds: Rect, sensitive: &[Rect]) {
     let original_len = nodes.len();
+    let row_width = usize::from(bounds.width);
+    let index = |x: u16, y: u16| usize::from(y - bounds.y) * row_width + usize::from(x - bounds.x);
+    let mut covered = vec![false; row_width * usize::from(bounds.height)];
+    // Mark control coverage once instead of searching every control for each cell.
+    for rect in nodes
+        .iter()
+        .filter(|node| !is_container(node))
+        .map(|node| area(node.rect).intersection(bounds))
+        .filter(|rect| !rect.is_empty())
+    {
+        for y in rect.y..rect.bottom() {
+            let start = index(rect.x, y);
+            covered[start..start + usize::from(rect.width)].fill(true);
+        }
+    }
     for y in bounds.y..bounds.bottom() {
         let mut x = bounds.x;
         while x < bounds.right() {
             let cell = &buffer[(x, y)];
             let symbol = cell.symbol();
             let width = cell.cell_width().max(1);
-            let covered = nodes[..original_len]
-                .iter()
-                .any(|node| !is_container(node) && node.rect.contains(x, y));
-            if covered || symbol.trim().is_empty() || symbol.contains('\u{1b}') {
+            if covered[index(x, y)] || symbol.trim().is_empty() || symbol.contains('\u{1b}') {
                 x = x.saturating_add(width);
                 continue;
             }
@@ -381,11 +398,7 @@ fn capture_visible_text(nodes: &mut Vec<Node>, buffer: &Buffer, bounds: Rect, se
                 .saturating_add(parent.rect.width)
                 .min(bounds.right());
             x = x.saturating_add(width);
-            while x < end
-                && !nodes[..original_len]
-                    .iter()
-                    .any(|node| !is_container(node) && node.rect.contains(x, y))
-            {
+            while x < end && !covered[index(x, y)] {
                 x = x.saturating_add(buffer[(x, y)].cell_width().max(1));
             }
             let rect = Rect::new(start, y, x.saturating_sub(start), 1);
