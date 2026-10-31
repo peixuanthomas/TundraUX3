@@ -587,7 +587,9 @@ impl LauncherController {
         let removed = before - config.launcher.entries.len();
         if removed > 0 {
             storage.save_config(&config)?;
-            state.reset(&config.launcher);
+            state
+                .items
+                .retain(|item| !ids.iter().any(|id| id == &item.record.id));
         }
         state.message = Some(msg!("app-launcher-removed", count = removed as i64).into());
         Ok(LauncherEffect::None)

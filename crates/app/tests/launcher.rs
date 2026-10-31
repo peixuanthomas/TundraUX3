@@ -581,6 +581,68 @@ fn application_bundles_need_only_the_target_directory_without_content_fingerprin
 }
 
 #[test]
+fn removing_a_launcher_entry_preserves_remaining_statuses_and_order() {
+    let fixture = Fixture::for_platform("remove-status", PlatformKind::Macos);
+    let storage = fixture.storage();
+    let mut config = storage.load_config().unwrap();
+    for name in ["First.app", "Next.app", "Missing.app"] {
+        let path = fixture.documents.join(name);
+        if name != "Missing.app" {
+            fs::create_dir(&path).unwrap();
+        }
+        config.launcher.entries.push(storage::LauncherEntryRecord {
+            id: name.into(),
+            path: path.to_string_lossy().into_owned(),
+            executable_kind: Some(storage::LauncherExecutableKind::ApplicationBundle),
+            ..Default::default()
+        });
+    }
+    storage.save_config(&config).unwrap();
+    let controller = LauncherController::default();
+    let mut state = controller.load(&storage).unwrap();
+    controller.apply(
+        &mut state,
+        LauncherCommand::Refresh,
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(state.items[1].status, LauncherItemStatus::Ready);
+    assert_eq!(state.items[2].status, LauncherItemStatus::Missing);
+    let remaining = state.items[1..].to_vec();
+
+    controller.apply(
+        &mut state,
+        LauncherCommand::Remove(vec!["First.app".into()]),
+        Some(&admin()),
+        &fixture.platform,
+        &storage,
+    );
+
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(state.items, remaining);
+    assert_eq!(
+        storage.load_config().unwrap().launcher.entries,
+        config.launcher.entries[1..]
+    );
+    assert!(fixture.documents.join("First.app").is_dir());
+    assert_eq!(
+        controller.apply(
+            &mut state,
+            LauncherCommand::RequestLaunch("Next.app".into()),
+            Some(&user()),
+            &fixture.platform,
+            &storage,
+        ),
+        LauncherEffect::OpenRequested {
+            path: fixture.documents.join("Next.app"),
+            kind: ExecutableKind::ApplicationBundle,
+        }
+    );
+}
+
+#[test]
 fn launcher_keeps_addition_order_and_manual_reorder_persists_in_both_directions() {
     let fixture = Fixture::new("manual-order");
     let charlie = fixture.file("charlie.exe", b"charlie");
