@@ -314,9 +314,16 @@ jobs:
       - name: Download verified build assets
         uses: actions/download-artifact@v8
         with:
-          pattern: release-*
+          name: release-windows-x64
           path: dist
-          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-macos-universal
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-linux-x64
+          path: dist
       - name: Verify staged checksums and exact asset set
         shell: bash
         run: |
