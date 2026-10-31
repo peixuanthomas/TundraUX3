@@ -96,3 +96,7 @@ management-selection-invalid = 选择无效，请重新选择项目。
 management-selection-unavailable = 并非所有已选项目都支持此操作，请调整选择。
 management-batch-running = 正在处理已选项目：{ $targets }
 management-batch-completed = 已完成 { $count } 项操作。
+
+management-package-cache-status = 来自本地软件源缓存
+management-detail-package-status = 软件包状态
+management-process-cpu-scale = CPU 100% = 一个核心满负荷

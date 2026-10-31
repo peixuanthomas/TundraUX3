@@ -253,7 +253,11 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
         ),
         PageHelpScreen::ScheduledTasks => (
             i18n::tr!("management-scheduled-tasks"),
-            management_selection_help(vec![row("", i18n::tr!("ui-help-scheduled-batch-actions"))]),
+            management_selection_help(vec![
+                row("", i18n::tr!("ui-help-scheduled-batch-actions")),
+                row("", i18n::tr!("scheduled-task-cron-results-notice")),
+                row("", i18n::tr!("scheduled-task-pause-notice")),
+            ]),
         ),
         PageHelpScreen::Management => (
             i18n::tr!("ui-help-management-title"),

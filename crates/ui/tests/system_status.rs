@@ -198,6 +198,23 @@ fn too_short_uses_empty_state_but_keeps_footer() {
 }
 
 #[test]
+fn clipped_metric_card_keeps_its_name_and_value_visible() {
+    for kind in [SystemStatusWidgetKind::Storage, SystemStatusWidgetKind::Network] {
+        let model = widget(kind, SystemStatusWidgetSize::Small, 0, 0);
+        let mut terminal = Terminal::new(TestBackend::new(24, 2)).unwrap();
+        let context = RenderContext::from_theme(
+            &TundraTheme::default_dark(), Default::default(), Default::default(),
+        );
+        terminal.draw(|frame| {
+            ui::components::MetricCard::new(&model).render_frame(frame, frame.area(), &context);
+        }).unwrap();
+        let output: String = terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect();
+        assert!(output.contains(&kind.label()), "{output}");
+        assert!(output.contains(&model.primary), "{output}");
+    }
+}
+
+#[test]
 fn size_picker_renders_exact_rows_and_captures_dashboard_hits() {
     let mut m = model();
     m.dashboard.editing = true;

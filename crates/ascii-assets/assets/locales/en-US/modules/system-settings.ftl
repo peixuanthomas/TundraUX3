@@ -1,9 +1,9 @@
 system-settings-title = Operating system settings
 system-settings-tundra-group = Tundra settings
 system-settings-group-button = OS settings [F8]
-system-settings-group-button-short = OS F8
+system-settings-group-button-short = OS settings F8
 system-settings-unavailable = Operating system settings are supported on Linux only
-system-settings-help = These settings affect Linux itself. Tundra follows the system clock and timezone. A running time service does not necessarily mean the clock is synchronized. Refresh to read the latest state.
+system-settings-help = Change the Linux hostname, timezone and time synchronization settings.
 system-settings-hostname = Host name
 system-settings-timezone = System timezone
 system-settings-current-time = System time at refresh
@@ -38,13 +38,13 @@ system-settings-hostname-invalid = Use a host name of 1–64 lowercase ASCII let
 system-settings-address-invalid = Enter a server host name or IP address, without a URL, port or configuration directive.
 system-settings-tool-failed = { $tool } is unavailable or failed: { $reason }
 system-settings-service-error = System settings service query failed: { $reason }
-system-settings-environment-error = Host name, system timezone and time synchronization settings cannot be read or changed. Use a Linux environment running systemd and the system D-Bus; extra permissions cannot provide missing services.
-    Cause: { $reason }
+system-settings-environment-error = Requires systemd and the system D-Bus.
+    { $reason }
 system-settings-tool-exit = { $tool } did not complete successfully: { $status }
     Standard error: { $errors }
     Standard output: { $output }
 system-settings-query-limited = { $setting } query is limited: { $reason }
-system-settings-ntp-limited = The time service could not be identified. Automatic synchronization and server changes are unavailable. Check the cause in details, resolve it, then refresh.
+system-settings-ntp-limited = Time service unavailable. See details.
 system-settings-verify-failed = Cannot verify the resulting system state. Refresh before retrying.
 system-settings-review = Review these operating system changes before applying:
 system-settings-completed = System settings applied and actual values refreshed
@@ -53,7 +53,7 @@ system-settings-config-cycle = Time configuration includes itself; inspect its i
 system-settings-config-external = Static time sources outside /etc cannot be safely replaced by this form
 system-settings-clock-disabled = This chrony instance does not control the system clock
 system-settings-provider-ambiguous = No unique supported time service was found. Installations with conflicting or unknown services are read only.
-system-settings-servers-help = Edit addresses or clear a field to remove a server. Existing chrony source types and options are preserved; new addresses use ordinary server entries. Network-provided sources stay unchanged. An enabled service is restarted after saving; a stopped service stays stopped. Configuration validity and successful synchronization are reported separately.
+system-settings-servers-help = Clear an address to remove the server. Saving restarts the time service if it is running.
 system-settings-before = Before:
 system-settings-after = After:
 system-settings-check-failed = Time configuration check did not pass: { $reason }

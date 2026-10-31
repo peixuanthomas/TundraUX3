@@ -90,3 +90,5 @@ task-state-attention = Needs attention
 task-state-finished = Finished
 task-exit-code = Exit code: { $code }
 task-explorer-result = { $succeeded } items completed; { $failed } failed
+
+tasks-empty = No tasks yet

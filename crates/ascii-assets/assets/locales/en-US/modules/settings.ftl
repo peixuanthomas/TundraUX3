@@ -109,7 +109,7 @@ settings-city-timezone = City / timezone
 settings-timezone-help = Search by city, region or timezone identifier.
 settings-weather-location = Weather location
 settings-same-timezone = Same as timezone
-settings-weather-help = Enter a detailed English city or address used only by Weathr.
+settings-weather-help = Enter a city or address in English.
 settings-time-sync = Time synchronization
 settings-time-source = Time source
 settings-time-source-help = Use a network time server or the operating system clock.
@@ -227,7 +227,7 @@ settings-default-sync-failed = Could not synchronize with the default time serve
 settings-restore-failed = Could not restore defaults: { $reason }
 settings-suffix-limit = The suffix list is limited to { $limit } characters
 settings-weather-limit = Weather location is limited to { $limit } characters
-settings-weather-confirmation = Save { $location }? Weather uses text search, so the match may be inaccurate or return no results.
+settings-weather-confirmation = Set the weather location to { $location }?
 settings-invalid-suffix = Invalid suffix { $suffix }; use values such as .md, .rs or .d.ts
 settings-category-status = Settings: { settings-category-name }
 settings-restored-category = Restored { settings-category-name } defaults
@@ -399,8 +399,8 @@ settings-check-mode-description = Refresh the selected update mode and its relea
 settings-release-available = A newer release is available
 settings-release-different = The installed build differs; you can replace it with this release
 
-settings-animation-advanced = Advanced options
-settings-animation-open = Open
+settings-animation-advanced = Animation timing
+settings-animation-open = Adjust timing
 settings-animation-close = Esc Close
 settings-animation-advanced-help = Fine-tune acceleration, cruise and deceleration times for pages, dialogs and menus.
 settings-animation-page = Page
@@ -412,7 +412,7 @@ settings-animation-deceleration = Deceleration
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
 settings-animation-phase-help = Open a value to adjust or type 1–2000 ms, then confirm. Times apply at 100% speed.
-settings-number-range = Enter a number from { $min } to { $max }.
+settings-number-range = Range: { $min }–{ $max }
 settings-number-help = Left/Right: move cursor · Type digits · −/+: adjust · Enter: confirm · Esc: cancel
 
 

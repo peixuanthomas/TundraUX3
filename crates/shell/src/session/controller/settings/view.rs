@@ -32,16 +32,6 @@ impl ShellSession {
                     .then_some(&state.system_time),
             )
         };
-        let appearance_preview = (state.category == ui::SettingsCategory::Appearance).then_some(
-            ui::SettingsAppearancePreview {
-                border_shape: match appearance.border_shape {
-                    storage::BorderShape::Rounded => ui::BorderShape::Rounded,
-                    storage::BorderShape::Square => ui::BorderShape::Square,
-                },
-                border_color: ui_theme_color(appearance.border_color),
-                accent_color: ui_theme_color(appearance.accent_color),
-            },
-        );
         let picker = state.picker.as_ref().map(|picker| {
             let options = settings_picker_options(picker, &self.language_options());
             ui::SettingsPickerViewModel {
@@ -164,7 +154,6 @@ impl ShellSession {
             selected_category: state.category,
             selected_field: state.selected_field,
             cards,
-            appearance_preview,
             status: if let Some(reason) = unavailable_reason.as_ref() {
                 reason.clone()
             } else if state.category == ui::SettingsCategory::Update {
@@ -457,7 +446,7 @@ pub(in crate::session) fn settings_cards(
         Item::new(
             Field::RestoreDefaults,
             i18n::tr!("settings-restore-defaults"),
-            i18n::tr!("settings-confirm"),
+            i18n::tr!("settings-restore-defaults"),
             i18n::tr!("settings-restore-help"),
             Kind::Action,
         )

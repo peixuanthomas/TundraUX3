@@ -34,8 +34,8 @@ fn narrow_clock_create_shows_both_direct_shortcuts_and_cancel() {
         })
         .unwrap();
     let output = terminal_output(&terminal);
-    assert!(output.contains("[F3 Alarm]"));
-    assert!(output.contains("[F4 Timer]"));
+    assert!(output.contains("[F3 Set alarm]"));
+    assert!(output.contains("[F4 Set timer]"));
     assert!(output.contains("[Esc Cancel]"));
 }
 
@@ -116,8 +116,8 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
         assert!(region_text(&terminal, area).contains("00"));
     }
     assert!(output.contains("Use hh mm ss"));
-    assert!(output.contains("[F3 Alarm]"));
-    assert!(output.contains("[F4 Timer]"));
+    assert!(output.contains("[F3 Set alarm]"));
+    assert!(output.contains("[F4 Set timer]"));
     assert!(output.contains("[Esc Cancel]"));
     assert!(region_has_fg(
         &terminal,

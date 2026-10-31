@@ -46,6 +46,8 @@ impl SettingsNumberEditorViewModel {
             step: 1,
         };
         let mut form = FormDialog::new("settings.number", &self.title, vec![field]);
+        form.submit_label = Some(i18n::tr!("settings-save"));
+        form.cancel_label = Some(i18n::tr!("settings-cancel"));
         form.message = self.error.clone().unwrap_or_else(|| {
             i18n::tr!(
                 "settings-number-range",
