@@ -687,7 +687,7 @@ impl ShellSession {
                 "settings-weather-confirmation",
                 location = format!("{value:?}")
             ),
-            ui::NotificationTone::Warning,
+            ui::NotificationTone::Info,
             vec![
                 ShellNotificationAction::new("save", i18n::msg!("settings-save"))
                     .with_shortcut(InputKey::Char('s'))

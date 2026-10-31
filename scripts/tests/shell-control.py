@@ -158,7 +158,9 @@ def main():
                 cell = node_by(current, lambda node: node["role"] == "cell" and node["id"].endswith("cell.1") and node["text"].strip() == str(process.pid))
                 return node_by(current, lambda node: node["role"] == "listitem" and node["rect"]["y"] == cell["rect"]["y"])
 
-            current = until(lambda current: len(owned_process_rows(current)) == 2)
+            current = until(lambda current: len(package_rows(current)) == 2
+                and len(owned_process_rows(current)) == 2
+                and all(row["actionable"] for row in owned_process_rows(current)))
             first = process_row(current, batch_children[0])
             click(first["id"])
             current = snapshot()

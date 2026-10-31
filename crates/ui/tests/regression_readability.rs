@@ -177,7 +177,6 @@ fn system_and_update_settings_keep_errors_in_footer_without_description_pane() {
             selected_category: category,
             selected_field: SettingsField::SystemLowPercentage,
             cards: Vec::new(),
-            appearance_preview: None,
             status: "Backend error: permission denied while reading configuration".into(),
             locked_message: None,
             scroll_offset: 0,

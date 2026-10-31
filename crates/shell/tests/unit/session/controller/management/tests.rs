@@ -423,7 +423,10 @@ fn empty_management_information_keeps_full_requirements_and_backup_guidance_reac
             ..Default::default()
         };
         let model = session.to_management_view_model();
-        assert_eq!(model.empty_message, "Short explanation");
+        assert_eq!(model.empty_message, if kind == ManagementKind::Backups {
+            i18n::tr!("management-backups-empty")
+        } else { "Short explanation".into() });
+        assert!(!model.details.contains("Short explanation"));
         assert!(model.details.contains("Full requirements"));
         let index = session
             .management_actions()
@@ -1299,19 +1302,18 @@ fn common_account_actions_are_visible_and_dangerous_changes_stay_in_more() {
         [
             "user_create",
             "set_view",
-            "more_actions",
             "user_info",
             "user_password",
-            "user_groups"
+            "more_actions"
         ]
     );
     assert_eq!(
         session.to_management_view_model().detail_action_start,
         Some(0)
     );
-    session.activate_management_action(2);
+    session.activate_management_action(4);
     assert!(
-        matches!(&session.pages.management.management_state.form.as_ref().unwrap().purpose, FormPurpose::Menu(items) if items.iter().any(|(action, _)| action.id == "user_delete"))
+        matches!(&session.pages.management.management_state.form.as_ref().unwrap().purpose, FormPurpose::Menu(items) if ["user_groups", "user_delete"].iter().all(|id| items.iter().any(|(action, _)| action.id == *id)))
     );
 }
 
@@ -1419,7 +1421,7 @@ fn services_expose_restart_and_logs_but_keep_startup_changes_in_more() {
     let layout = ui::management_layout(Rect::new(0, 0, 100, 24), &model);
     assert_eq!(layout.actions.len(), 5);
     assert!(layout.action_next.is_empty());
-    assert!(model.actions[2].0.starts_with("[T]"));
+    assert!(model.actions[2].0.starts_with("T "));
     assert!(
         session
             .management_actions()
@@ -1762,7 +1764,7 @@ fn management_action_shortcuts_match_clicks_and_preserve_fields_and_identity() {
                 assert_eq!(
                     model.actions[index].0,
                     format!(
-                        "[{shortcut}] {}",
+                        "{shortcut} {}",
                         if kind == ManagementKind::Packages
                             && matches!(id, "scope_search" | "scope_installed" | "scope_updates")
                         {
@@ -2194,11 +2196,11 @@ fn duplicate_action_mnemonics_use_first_target_and_menu_keeps_each_target() {
     assert_eq!(
         model.actions[0].0,
         format!(
-            "[A] {}",
+            "A {}",
             action_label(&session.pages.management.management_state.snapshot.rows[0].actions[0])
         )
     );
-    assert!(model.actions[0].0.starts_with("[A]"));
+    assert!(model.actions[0].0.starts_with("A "));
     session.handle_management_key(&KeyInput::new(InputKey::Char('a')));
     assert!(matches!(
         session

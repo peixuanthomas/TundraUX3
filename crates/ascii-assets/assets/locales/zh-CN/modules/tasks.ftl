@@ -90,3 +90,5 @@ task-state-attention = 需处理
 task-state-finished = 已结束
 task-exit-code = 退出码：{ $code }
 task-explorer-result = 已完成 { $succeeded } 项，失败 { $failed } 项
+
+tasks-empty = 暂无任务

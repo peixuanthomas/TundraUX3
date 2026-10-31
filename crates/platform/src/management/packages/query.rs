@@ -229,10 +229,7 @@ pub(super) fn query(
         vec!["Arch lists use the existing repository cache. Installing or upgrading refreshes repositories and upgrades the entire system; review pacman's actual plan. Standalone refresh and partial upgrades are not supported.".into(),
              "Foreign installed packages can be inspected and removed; building or updating AUR packages is not supported. Pacman may preserve configuration files as .pacnew or .pacsave.".into()]
     } else {
-        vec![
-            "Lists use the existing repository cache. Refresh sources to download new metadata."
-                .into(),
-        ]
+        vec![i18n::tr!("management-package-cache-status")]
     };
     if count > MAX_ROWS {
         notices.push(format!(

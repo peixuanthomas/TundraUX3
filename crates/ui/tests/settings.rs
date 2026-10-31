@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use support::terminal_output;
 use ui::{
-    BorderShape, HomeDisplayMode, NotificationTone, SettingsAppearancePreview,
+    BorderShape, HomeDisplayMode, NotificationTone,
     SettingsCardViewModel, SettingsCategory, SettingsColorEditorViewModel, SettingsControlKind,
     SettingsField, SettingsFileExtensionsEditorViewModel, SettingsHitTarget, SettingsItemViewModel,
     SettingsPickerKind, SettingsPickerOptionViewModel, SettingsPickerViewModel,
@@ -29,7 +29,6 @@ fn slider_options_keep_visible_labels_and_share_rendered_hit_areas() {
         for (width, height) in [(40, 12), (108, 20), (140, 40)] {
             for selected in 0..3 {
                 let mut model = sample_model();
-                model.appearance_preview = None;
                 model.selected_category = SettingsCategory::System;
                 model.selected_field = SettingsField::AutoAdmin;
                 model.cards = vec![SettingsCardViewModel::new(
@@ -229,7 +228,6 @@ fn unavailable_settings_retain_gray_buttons_and_register_disabled_hit_regions() 
     ] {
         for enabled in [false, true] {
             let mut model = sample_model();
-            model.appearance_preview = None;
             model.selected_field = SettingsField::CheckUpdates;
             model.cards = vec![SettingsCardViewModel::new(
                 "Actions",
@@ -642,11 +640,6 @@ fn sample_model() -> SettingsViewModel {
                 )],
             ),
         ],
-        appearance_preview: Some(SettingsAppearancePreview {
-            border_shape: BorderShape::Rounded,
-            border_color: Color::White,
-            accent_color: Color::Cyan,
-        }),
         status: "Saved".to_string(),
         locked_message: None,
         scroll_offset: 0,
@@ -665,7 +658,6 @@ fn sample_model() -> SettingsViewModel {
 fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
     let mut model = sample_model();
     model.selected_category = SettingsCategory::Update;
-    model.appearance_preview = None;
     model.cards.clear();
     model.update = Some(SettingsUpdateViewModel {
         summary_title: None,
@@ -834,7 +826,6 @@ fn update_activity_shows_both_meters_and_latest_output_with_page_scrolling() {
     use ui::components::{UpdateActivityViewModel, UpdateMeterViewModel};
     let mut model = sample_model();
     model.selected_category = SettingsCategory::Update;
-    model.appearance_preview = None;
     model.cards.clear();
     model.status = "Compiling release executables".into();
     model.update = Some(SettingsUpdateViewModel {

@@ -109,7 +109,7 @@ settings-city-timezone = 城市 / 时区
 settings-timezone-help = 按城市、地区或时区标识符搜索。
 settings-weather-location = 天气地点
 settings-same-timezone = 与时区一致
-settings-weather-help = 输入详细的英文城市或地址，仅供 Weathr 使用。
+settings-weather-help = 输入英文城市或地址。
 settings-time-sync = 时间同步
 settings-time-source = 时间来源
 settings-time-source-help = 使用网络时间服务器或操作系统时钟。
@@ -227,7 +227,7 @@ settings-default-sync-failed = 无法与默认时间服务器同步：{ $reason 
 settings-restore-failed = 无法恢复默认设置：{ $reason }
 settings-suffix-limit = 后缀列表最多允许 { $limit } 个字符
 settings-weather-limit = 天气地点最多允许 { $limit } 个字符
-settings-weather-confirmation = 保存 { $location } 吗？天气服务使用文本搜索，匹配结果可能不准确，也可能找不到结果。
+settings-weather-confirmation = 将天气地点设为 { $location }？
 settings-invalid-suffix = 无效后缀 { $suffix }；请使用 .md、.rs 或 .d.ts 等格式
 settings-category-status = 设置：{ settings-category-name }
 settings-restored-category = 已恢复{ settings-category-name }默认设置
@@ -399,8 +399,8 @@ settings-check-mode-description = 检查所选更新模式，显示发布说明�
 settings-release-available = 有更新的正式版可用
 settings-release-different = 当前构建与正式版不同，可选择替换为此正式版
 
-settings-animation-advanced = 高级选项
-settings-animation-open = 打开
+settings-animation-advanced = 动画时长
+settings-animation-open = 调整时长
 settings-animation-close = Esc 关闭
 settings-animation-advanced-help = 分别细调页面、弹窗、菜单的加速、匀速和减速时间。
 settings-animation-page = 页面
@@ -412,7 +412,7 @@ settings-animation-deceleration = 减速
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
 settings-animation-phase-help = 打开数值后调整或输入 1～2000ms，确认后保存；表示 100% 速度下的时长。
-settings-number-range = 请输入 { $min }～{ $max } 之间的数字。
+settings-number-range = 范围：{ $min }～{ $max }
 settings-number-help = 左右键移动光标 · 直接输入数字 · −/+ 调整数值 · 回车确认 · Esc 取消
 
 

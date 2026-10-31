@@ -1772,17 +1772,6 @@ pub fn render_management_content(
             }
             lines.push(Line::styled(table_line(row), style));
         }
-        if model.rows.is_empty() {
-            lines.push(Line::from(if model.loading {
-                i18n::tr!("management-loading")
-            } else {
-                if model.empty_message.is_empty() {
-                    i18n::tr!("management-empty")
-                } else {
-                    model.empty_message.clone()
-                }
-            }));
-        }
         let area = Rect::new(
             layout.list_rows.x,
             layout.list_rows.y.saturating_sub(1),
@@ -1793,6 +1782,16 @@ pub fn render_management_content(
             Paragraph::new(lines).scroll((0, model.table_scroll.min(u16::MAX as usize) as u16)),
             area.intersection(main),
         );
+        if model.rows.is_empty() {
+            let message = if model.loading {
+                i18n::tr!("management-loading")
+            } else if model.empty_message.is_empty() {
+                i18n::tr!("management-empty")
+            } else {
+                model.empty_message.clone()
+            };
+            render_text(frame, layout.list_rows, &message, 0, context);
+        }
         for (index, area) in &layout.headers {
             let label = model.sort.map_or_else(
                 || model.columns[*index].clone(),

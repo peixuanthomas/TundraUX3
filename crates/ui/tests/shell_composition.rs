@@ -257,7 +257,6 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
                 SettingsControlKind::Palette,
             )],
         )],
-        appearance_preview: None,
         status: "Ready".into(),
         locked_message: None,
         scroll_offset: 0,

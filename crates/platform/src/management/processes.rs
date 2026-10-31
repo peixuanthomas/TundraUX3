@@ -334,7 +334,7 @@ fn snapshot(
     } else {
         rows.extend(processes.iter().map(|p| row(p, boot_id, 0)));
     }
-    let mut notices = vec!["CPU usage is sampled over a short interval; 100% means one CPU core. Nice applies to the selected process's main thread.".into()];
+    let mut notices = vec![i18n::tr!("management-process-cpu-scale")];
     if denied > 0 {
         notices.push(format!(
             "{denied} visible processes could not be read with the current Linux permissions."

@@ -43,7 +43,7 @@ pub fn query(
             "Address / signal".into(),
             "Configuration / security".into(),
         ],
-        backend: "Linux network configuration owners".into(),
+        backend: i18n::tr!("management-network-backend"),
         ..Default::default()
     };
     if unsafe { libc::geteuid() } != 0 {
@@ -84,15 +84,15 @@ pub fn query(
                 name.into(),
                 entry["operstate"].as_str().unwrap_or("unknown").into(),
                 address_list,
-                owner.label().into(),
+                if owner.kind == config::OwnerKind::Unknown { i18n::tr!("management-network-owner-unknown") } else { owner.label().into() },
             ],
             detail: vec![
-                ("Configuration source".into(), owner.source_display()),
+                (i18n::tr!("management-network-config-source"), owner.source_display()),
                 (
-                    "Read-only reason".into(),
+                    i18n::tr!("management-network-read-only"),
                     owner.reason.clone().unwrap_or_default(),
                 ),
-            ],
+            ].into_iter().filter(|(_, value)| !value.is_empty()).collect(),
             identity: interface_identity(name)?,
             ..Default::default()
         };

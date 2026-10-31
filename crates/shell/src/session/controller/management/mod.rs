@@ -1725,7 +1725,7 @@ impl ShellSession {
             table_scroll: s.table_scroll,
             action_scroll: s.action_scroll,
             details: if let Some(problem) = &s.problem {
-                format!("{}\n\n{}", i18n::tr!(problem.summary_key.clone()), problem.detail)
+                problem.detail.clone()
             } else {
                 let mut details = s.snapshot.rows.get(s.selected)
                     .map(|row| row.detail.as_slice()).unwrap_or_default()
@@ -1740,13 +1740,17 @@ impl ShellSession {
                             )
                         })
                         .collect::<Vec<_>>();
-                if s.snapshot.rows.is_empty() {
+                if s.details_only {
                     details.extend(s.snapshot.notices.iter().cloned());
                 }
                 details.join("\n")
             },
             empty_message: s.problem.as_ref().map(|problem| i18n::tr!(problem.summary_key.clone()))
-                .or_else(|| (!s.snapshot.notices.is_empty()).then(|| s.snapshot.notices.join("\n")))
+                .or_else(|| match s.kind {
+                    Some(ManagementKind::Backups) if s.filter_input.is_empty() && !s.snapshot.needs_authorization => Some(i18n::tr!("management-backups-empty")),
+                    Some(ManagementKind::Tasks) if s.filter_input.is_empty() => Some(i18n::tr!("tasks-empty")),
+                    _ => (!s.snapshot.notices.is_empty()).then(|| s.snapshot.notices.join("\n")),
+                })
                 .unwrap_or_else(|| i18n::tr!("management-empty")),
             actions: actions
                 .iter()
@@ -1769,7 +1773,7 @@ impl ShellSession {
                         if s.kind == Some(ManagementKind::Packages) && index >= 10 { String::new() } else { ((index + 1) % 10).to_string() }
                     };
                     (
-                        if shortcut.is_empty() { label } else { format!("[{shortcut}] {label}") },
+                        if shortcut.is_empty() { label } else { format!("{shortcut} {label}") },
                         self.management_action_enabled(a),
                     )
                 })
@@ -1796,9 +1800,6 @@ impl ShellSession {
             filtering: s.filtering,
             status: if let Some(selection) = &s.selection {
                 format!("{} · {}", i18n::tr!("selection-count", count = selection.len()), s.status)
-            } else if matches!(s.kind,Some(ManagementKind::Backups|ManagementKind::Tasks)) {
-                std::iter::once(s.status.as_str()).chain(s.snapshot.notices.iter().map(String::as_str))
-                    .filter(|message| !message.is_empty()).collect::<Vec<_>>().join(" · ")
             } else { s.status.clone() },
             loading: s.query_job.is_some() || s.draft_job.is_some(),
             running: s.operation_job.is_some(),

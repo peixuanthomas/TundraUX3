@@ -528,7 +528,6 @@ fn settings_checkbox_reports_the_saved_value_separately_from_focus() {
                     .checked(checked),
                 ],
             )],
-            appearance_preview: None,
             status: String::new(),
             locked_message: None,
             scroll_offset: 0,
