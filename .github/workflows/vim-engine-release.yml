@@ -16,19 +16,21 @@ jobs:
         include:
           - os: windows-latest
             target: windows-x64
-            arguments: ''
           - os: ubuntu-24.04
             target: linux-x86_64
-            arguments: ''
           - os: macos-latest
-            target: macos-universal
-            arguments: --macos-universal
+            target: macos-arm64
+          - os: macos-15-intel
+            target: macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Install native macOS image libraries
+        if: startsWith(matrix.target, 'macos-')
+        run: brew install cairo pixman
       - name: Read pinned version
         id: pin
         shell: bash
@@ -43,17 +45,71 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential libncurses-dev
       - name: Check bundle verification
         run: python -B -m unittest discover -s scripts/tests -p test_build_vim.py
-      - name: Build and package Vim
+      - name: Build and package Windows or Linux Vim
+        if: startsWith(matrix.target, 'windows-') || startsWith(matrix.target, 'linux-')
         shell: bash
-        run: python scripts/build-vim.py --output target/vim --package dist/TundraUX3-vim-${{ steps.pin.outputs.version }}-${{ matrix.target }}.zip ${{ matrix.arguments }}
+        run: python scripts/build-vim.py --output target/vim --package dist/TundraUX3-vim-${{ steps.pin.outputs.version }}-${{ matrix.target }}.zip
+      - name: Build native macOS Vim
+        if: startsWith(matrix.target, 'macos-')
+        shell: bash
+        run: python scripts/build-vim.py --output target/vim
+      - uses: actions/upload-artifact@v7
+        if: startsWith(matrix.target, 'windows-') || startsWith(matrix.target, 'linux-')
+        with:
+          name: vim-package-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: startsWith(matrix.target, 'macos-')
+        with:
+          name: vim-build-${{ matrix.target }}
+          path: target/vim/**
+          if-no-files-found: error
+
+  macos-universal:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Read pinned version
+        id: pin
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          print('version=' + json.loads(Path('packaging/vim.json').read_text())['version'])
+          PY
+      - uses: actions/download-artifact@v8
+        with:
+          name: vim-build-macos-arm64
+          path: dist/macos-arm64
+      - uses: actions/download-artifact@v8
+        with:
+          name: vim-build-macos-x86_64
+          path: dist/macos-x86_64
+      - name: Merge native Vim builds and package Universal engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/vim
+          cp -R dist/macos-arm64/. target/vim/
+          lipo -create dist/macos-arm64/vim dist/macos-x86_64/vim -output target/vim-universal
+          mv target/vim-universal target/vim/vim
+          lipo -verify_arch arm64 x86_64 target/vim/vim
+          python scripts/build-vim.py --verify-only --output target/vim \
+            --package dist/TundraUX3-vim-${{ steps.pin.outputs.version }}-macos-universal.zip
       - uses: actions/upload-artifact@v7
         with:
-          name: vim-${{ matrix.target }}
+          name: vim-package-macos-universal
           path: dist/*
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [build, macos-universal]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -61,7 +117,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
-          pattern: vim-*
+          pattern: vim-package-*
           path: dist
           merge-multiple: true
       - name: Publish the three matching engine packages

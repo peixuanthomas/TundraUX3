@@ -38,10 +38,10 @@ python3 scripts/build-vim.py --output target/debug/vim
 | 平台 | 需要的工具 |
 | --- | --- |
 | Linux | C 编译器、make、ncurses 开发库；Debian/Ubuntu 为 `build-essential libncurses-dev`，Fedora 为 `gcc make ncurses-devel`，Arch 为 `base-devel ncurses` |
-| macOS | Xcode Command Line Tools；通用发布包还使用 `lipo` |
+| macOS | Xcode Command Line Tools、Homebrew 的 `cairo` 与 `pixman`；通用发布包在原生 ARM 与 Intel runner 分别构建，并使用 `lipo` 合并 |
 | Windows x64 | Visual Studio C++ Build Tools 与 Windows SDK；脚本通过开发者命令行或 `vswhere` 查找 MSVC/NMake，控制台版本静态链接 C runtime |
 
-Windows 可用 `python` 运行同一个脚本。macOS 发布包用 `--macos-universal` 同时构建 arm64 和 x86_64，并用 `lipo` 检查两个架构。常规本地构建只编译当前架构。
+Windows 可用 `python` 运行同一个脚本。macOS 通用发布包分别在原生 ARM 和 Intel runner 上构建 Vim，再用 `lipo` 合并两个可执行文件；这样能链接每台 runner 自带的 Cairo/Pixman 库，同时保留双架构与终端图像支持。常规本地构建只编译当前架构。
 
 Windows 启用动态 iconv，随包提供固定的 `libiconv-2.dll`，用于 UTF-16 等编码转换。DLL 来自 [Vim 官方构建采用的来源](https://github.com/vim/vim-win32-installer/blob/master/.github/workflows/build-vim.yml)，具体版本、下载地址和 SHA-256 保存在 `packaging/vim.json` 的 `windows_iconv` 中。只提取这个 DLL，同时保留 `licenses/libiconv/` 下的 LGPL 及构建包许可证，以及 `sources/libiconv.tar.gz` 中的对应源码。校验脚本实际执行一次 UTF-16LE 转换，避免只检查功能名称却漏掉运行时 DLL。
 

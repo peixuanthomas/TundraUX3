@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import shutil
 import subprocess
@@ -135,14 +134,9 @@ def package_bundle(directory, archive):
     print(f"Packaged Vim {PIN['version']}: {archive}")
 
 
-def build_unix(source, universal):
+def build_unix(source):
     env = os.environ.copy()
     env.setdefault("CFLAGS", "-O2")
-    if universal:
-        if platform.system() != "Darwin":
-            raise RuntimeError("--macos-universal requires a macOS build host")
-        for name in ("CFLAGS", "LDFLAGS"):
-            env[name] = env.get(name, "") + " -arch arm64 -arch x86_64"
     run([
         "./configure", "--with-features=huge", "--enable-channel", "--enable-terminal",
         "--enable-gui=no", "--without-x", "--disable-nls", "--disable-gpm",
@@ -160,7 +154,6 @@ def main():
     parser.add_argument("--source-archive", type=Path, help="Use an existing Vim source archive")
     parser.add_argument("--iconv-archive", type=Path, help="Use an existing Windows libiconv binary archive")
     parser.add_argument("--iconv-source-archive", type=Path, help="Use an existing libiconv source archive")
-    parser.add_argument("--macos-universal", action="store_true")
     parser.add_argument("--verify-only", action="store_true", help="Check an already built bundle")
     parser.add_argument("--package", type=Path, help="Also write a prebuilt engine ZIP archive")
     args = parser.parse_args()
@@ -185,11 +178,9 @@ def main():
             tar.extractall(work, filter="data")
         source = Path(work) / f"vim-{PIN['commit']}"
         if os.name == "nt":
-            if args.macos_universal:
-                parser.error("--macos-universal requires a macOS build host")
             build_windows(source)
         else:
-            build_unix(source, args.macos_universal)
+            build_unix(source)
         staged = Path(work) / "bundle"
         staged.mkdir()
         executable = "vim.exe" if os.name == "nt" else "vim"
@@ -200,8 +191,6 @@ def main():
             stage_windows_iconv(staged, cache, args.iconv_archive, args.iconv_source_archive)
         (staged / "UPSTREAM.json").write_text(json.dumps(PIN, indent=2) + "\n", encoding="utf-8")
         verify_bundle(staged)
-        if args.macos_universal:
-            run(["lipo", "-verify_arch", "arm64", "x86_64", str(staged / executable)], source)
         output.parent.mkdir(parents=True, exist_ok=True)
         if output.exists():
             shutil.rmtree(output)

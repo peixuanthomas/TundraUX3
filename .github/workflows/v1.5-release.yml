@@ -103,8 +103,78 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-  macos-universal:
+  vim-arm64:
     needs: validate
+    name: macOS Vim arm64
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.5 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install native image libraries
+        run: brew install cairo pixman
+
+      - name: Build native Vim
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/build-vim.py --output package/vim
+          mkdir -p dist
+          tar -C package/vim -czf dist/vim-engine.tar.gz .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-vim-arm64
+          path: dist/vim-engine.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  vim-x86_64:
+    needs: validate
+    name: macOS Vim x86_64
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - name: Check out the v1.5 source commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install native image libraries
+        run: brew install cairo pixman
+
+      - name: Build native Vim
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/build-vim.py --output package/vim
+          mkdir -p dist
+          tar -C package/vim -czf dist/vim-engine.tar.gz .
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-vim-x86_64
+          path: dist/vim-engine.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  macos-universal:
+    needs: [validate, vim-arm64, vim-x86_64]
     name: macOS Universal
     runs-on: macos-latest
     timeout-minutes: 60
@@ -122,6 +192,12 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Download native Vim builds
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-vim-*
+          path: dist/vim-engines
 
       - name: Build ARM64 and Intel release binaries
         shell: bash
@@ -150,7 +226,13 @@ jobs:
           done
           cp LICENSE package/
           cp crates/weathr/LICENSE.weathr package/
-          python3 scripts/build-vim.py --macos-universal --output package/vim
+          mkdir -p package/vim-arm64 package/vim-x86_64 package/vim
+          tar -xzf dist/vim-engines/release-vim-arm64/vim-engine.tar.gz -C package/vim-arm64
+          tar -xzf dist/vim-engines/release-vim-x86_64/vim-engine.tar.gz -C package/vim-x86_64
+          cp -R package/vim-arm64/. package/vim/
+          lipo -create package/vim-arm64/vim package/vim-x86_64/vim -output package/vim/vim
+          lipo -verify_arch arm64 x86_64 package/vim/vim
+          python3 scripts/build-vim.py --verify-only --output package/vim
           lipo -info package/tundra-shell
           lipo -info package/tundra-cli
           lipo -info package/vim/vim
