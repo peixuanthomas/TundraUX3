@@ -46,7 +46,11 @@ impl<'a> MetricCard<'a> {
             .titled(self.model.kind.label())
             .bordered(true)
             .raised(true);
-        let inner = surface.inner(area);
+        let inner = if area.height < 3 {
+            Rect::new(area.x + 1, area.y + 1, area.width.saturating_sub(2), area.height.saturating_sub(1))
+        } else {
+            surface.inner(area)
+        };
         let mut card_context = context.clone();
         // The state clock redraws once a second: a four-second cycle stays slow
         // without requesting continuous animation frames or dimming the data.

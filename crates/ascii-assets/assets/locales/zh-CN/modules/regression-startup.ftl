@@ -1,5 +1,5 @@
 startup-time-sync-fallback = { $reason }。正在使用上次校准的时间；尚未校准时使用系统时间。可在“设置 → 日期与时间”中重试。
-startup-update-error-explanation = 更新未能完成。请检查网络连接、安装目录写入权限，以及所选更新模式的运行要求。原始详情：{ $details }
+startup-update-error-explanation = { $details }
 startup-account-source = 账户来源
 startup-check-pass = 通过/PASS
 startup-check-warning = 警告/WARN

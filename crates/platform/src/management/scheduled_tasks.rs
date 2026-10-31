@@ -421,14 +421,6 @@ fn query_as_actor(
         confirm: true,
         ..Default::default()
     });
-    snapshot.details.push((
-        i18n::tr!("management-schedule-limitations"),
-        format!(
-            "{}\n{}",
-            i18n::tr!("scheduled-task-cron-results-notice"),
-            i18n::tr!("scheduled-task-pause-notice")
-        ),
-    ));
     Ok(snapshot)
 }
 

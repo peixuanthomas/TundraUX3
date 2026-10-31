@@ -325,7 +325,7 @@ impl ShellSession {
                 ));
             }
         }
-        if kind == Some(ManagementKind::Backups) && primary.len() > 5 {
+        if matches!(kind, Some(ManagementKind::Backups | ManagementKind::Users)) && primary.len() > 5 {
             primary.retain(|(action, _)| action.id != "more_actions");
             primary.truncate(4);
             primary.push((

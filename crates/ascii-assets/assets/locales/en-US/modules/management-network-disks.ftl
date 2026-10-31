@@ -71,3 +71,9 @@ management-detail-temperature-celsius = Temperature (°C)
 management-detail-bad-sectors = Bad sectors
 management-detail-health-sample-time = Health sample time
 management-detail-file-slots = File slots
+
+management-network-owner-unknown = Unknown
+management-network-config-source = Configuration source
+management-network-read-only = Read-only reason
+management-network-owner-missing = No network configuration was found for this interface. Configure it in the system first.
+management-network-backend = Network interfaces

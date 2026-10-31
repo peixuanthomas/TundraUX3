@@ -1,9 +1,9 @@
 system-settings-title = 操作系统设置
 system-settings-tundra-group = Tundra 设置
 system-settings-group-button = 操作系统设置 [F8]
-system-settings-group-button-short = 系统 F8
+system-settings-group-button-short = 操作系统 F8
 system-settings-unavailable = 操作系统设置仅支持 Linux
-system-settings-help = 这些设置会修改 Linux 本身。Tundra 跟随系统时间和时区。校时服务正在运行，不代表系统时间已经同步。刷新可读取最新状态。
+system-settings-help = 修改 Linux 主机名、时区和自动校时设置。
 system-settings-hostname = 主机名
 system-settings-timezone = 系统时区
 system-settings-current-time = 刷新时的系统时间
@@ -38,13 +38,13 @@ system-settings-hostname-invalid = 主机名须为 1–64 个小写英文字母�
 system-settings-address-invalid = 请填写服务器域名或 IP 地址，不要填写网址、端口或配置指令。
 system-settings-tool-failed = { $tool } 不可用或执行失败：{ $reason }
 system-settings-service-error = 系统设置服务查询失败：{ $reason }
-system-settings-environment-error = 无法读取或修改主机名、系统时区和校时设置。请使用运行 systemd 和系统 D-Bus 的 Linux 环境；授权无法解决环境缺失。
-    具体原因：{ $reason }
+system-settings-environment-error = 需要 systemd 和系统 D-Bus。
+    { $reason }
 system-settings-tool-exit = { $tool } 执行未成功：{ $status }
     错误输出：{ $errors }
     标准输出：{ $output }
 system-settings-query-limited = { $setting }查询受限：{ $reason }
-system-settings-ntp-limited = 无法确认校时服务，暂不能切换自动校时或修改服务器。请查看详情中的原因，修复后刷新。
+system-settings-ntp-limited = 校时服务不可用，请查看详情。
 system-settings-verify-failed = 无法确认修改后的系统状态，请刷新后再操作。
 system-settings-review = 执行前请检查以下操作系统修改：
 system-settings-completed = 系统设置已应用，并已重新读取实际值
@@ -53,7 +53,7 @@ system-settings-config-cycle = 校时配置存在循环引用，请检查引用�
 system-settings-config-external = 此表单无法安全替换 /etc 之外的静态校时来源
 system-settings-clock-disabled = 此 chrony 实例未控制系统时钟
 system-settings-provider-ambiguous = 无法确定唯一的受支持校时服务；存在冲突或未知服务时只读。
-system-settings-servers-help = 修改地址或清空字段以删除服务器。已有 chrony 来源的类型和其他参数保持不变，新地址使用普通服务器配置。网络下发的来源保持原样。保存后会重启原本正在运行的服务；已停止的服务继续保持停止。配置有效和时间同步成功分别报告。
+system-settings-servers-help = 留空可删除服务器。保存后重启正在运行的校时服务。
 system-settings-before = 修改前：
 system-settings-after = 修改后：
 system-settings-check-failed = 校时配置检查未通过：{ $reason }

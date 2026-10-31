@@ -96,3 +96,7 @@ management-selection-invalid = Invalid selection. Select the items again.
 management-selection-unavailable = This action is not available for every selected item. Adjust the selection.
 management-batch-running = Processing the selected items: { $targets }
 management-batch-completed = Completed { $count } operations.
+
+management-package-cache-status = Local repository cache
+management-detail-package-status = Package status
+management-process-cpu-scale = CPU 100% = one full core

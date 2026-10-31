@@ -436,7 +436,7 @@ pub(super) fn detect(name: &str) -> Owner {
         OwnerKind::Unknown,
         None,
         name.into(),
-        "No existing configuration owner can be established; Tundra will not enable a different network manager",
+        i18n::tr!("management-network-owner-missing"),
     )
 }
 

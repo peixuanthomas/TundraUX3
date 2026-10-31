@@ -71,3 +71,9 @@ management-detail-temperature-celsius = 温度（°C）
 management-detail-bad-sectors = 坏扇区
 management-detail-health-sample-time = 健康数据采集时间
 management-detail-file-slots = 文件数量额度
+
+management-network-owner-unknown = 未识别
+management-network-config-source = 配置来源
+management-network-read-only = 只读原因
+management-network-owner-missing = 未找到管理此接口的网络配置。请先在系统中配置网络。
+management-network-backend = 网络接口

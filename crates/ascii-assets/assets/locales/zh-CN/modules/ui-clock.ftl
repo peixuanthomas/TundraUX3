@@ -20,5 +20,5 @@ ui-clock-touch-new = N 新建
 ui-clock-touch-alarm = F3 闹钟
 ui-clock-touch-timer = F4 倒计时
 
-ui-clock-alarm-action = 闹钟
-ui-clock-countdown-action = 倒计时
+ui-clock-alarm-action = 创建闹钟
+ui-clock-countdown-action = 创建倒计时

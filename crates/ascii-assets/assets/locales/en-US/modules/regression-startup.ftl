@@ -1,5 +1,5 @@
 startup-time-sync-fallback = { $reason }. Using the last synchronized time, or the system clock if none is available. Retry in Settings → Date & Time.
-startup-update-error-explanation = The update could not finish. Check network access, the installation directory permissions, and the requirements for the selected update mode. Original details: { $details }
+startup-update-error-explanation = { $details }
 startup-account-source = Account source
 startup-check-pass = PASS
 startup-check-warning = WARN

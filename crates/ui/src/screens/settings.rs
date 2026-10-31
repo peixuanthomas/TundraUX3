@@ -10,8 +10,6 @@ pub use slider::SettingsSliderLayout;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, HorizontalAlignment, Layout, Rect};
-use ratatui::style::Color;
-use ratatui::text::Line;
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
@@ -19,7 +17,7 @@ use crate::components::{
     Scrollbar, SidebarWorkspaceLayout, Surface, TextInput, UpdateActivity, terminal_width,
     truncate_to_terminal_width, visible_scrolled_rect,
 };
-use crate::{BorderShape, RenderContext, TimezoneMapWidget, TundraTheme};
+use crate::{RenderContext, TimezoneMapWidget, TundraTheme};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum SettingsCategory {
@@ -256,13 +254,6 @@ impl SettingsCardViewModel {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SettingsAppearancePreview {
-    pub border_shape: BorderShape,
-    pub border_color: Color,
-    pub accent_color: Color,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsPickerKind {
     AutoAdmin,
     ScreenTimeout,
@@ -366,7 +357,6 @@ pub struct SettingsViewModel {
     pub selected_category: SettingsCategory,
     pub selected_field: SettingsField,
     pub cards: Vec<SettingsCardViewModel>,
-    pub appearance_preview: Option<SettingsAppearancePreview>,
     pub status: String,
     pub locked_message: Option<String>,
     pub scroll_offset: u16,
@@ -589,9 +579,6 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     let mut selected_field_row = None;
     let mut selected_field_height = 1;
     let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
-    if model.appearance_preview.is_some() {
-        y += 5;
-    }
     for card in &model.cards {
         let height = settings_card_height(card);
         let mut row_y = y + 1;
@@ -931,42 +918,6 @@ pub fn render_settings_content(
         applications.render(frame, model, context);
     }
     let detail_area = layout.detail;
-    if let Some(preview) = model.appearance_preview {
-        let preview_y = i32::from(detail_area.y) - i32::from(layout.scroll_offset);
-        if let Some((visible, _)) =
-            visible_scrolled_rect(detail_area.x, preview_y, detail_area.width, 4, detail_area)
-        {
-            let preview_theme = TundraTheme {
-                border_shape: preview.border_shape,
-                border_color: preview.border_color,
-                accent_color: preview.accent_color,
-                ..theme.clone()
-            };
-            let preview_context =
-                RenderContext::from_theme(&preview_theme, context.motion, context.capabilities);
-            let surface = Surface::new()
-                .titled(i18n::tr!("ui-settings-preview-padded"))
-                .bordered(true)
-                .border_shape(preview.border_shape);
-            let inner = surface.inner(visible);
-            surface.render_frame(frame, visible, &preview_context);
-            frame.render_widget(
-                Paragraph::new(vec![
-                    Line::styled(
-                        i18n::tr!("ui-settings-live-preview"),
-                        preview_theme.title_style(),
-                    ),
-                    Line::styled(
-                        i18n::tr!("ui-settings-selected-controls-use-the-accent-color"),
-                        preview_theme.body_style(),
-                    ),
-                ])
-                .alignment(HorizontalAlignment::Left),
-                inner,
-            );
-        }
-    }
-
     render_cards(frame, detail_area, layout.scroll_offset, model, context);
     if let Some(scrollbar) = layout.scrollbar {
         Scrollbar::new(
@@ -1071,9 +1022,6 @@ fn render_cards(
 ) {
     let theme = &context.compatibility_theme();
     let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
-    if model.appearance_preview.is_some() {
-        y += 5;
-    }
     for (card_index, card) in model.cards.iter().enumerate() {
         let height = settings_card_height(card);
         Surface::new()
@@ -1217,11 +1165,6 @@ fn render_cards(
 fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usize {
     let mut next_y = 0usize;
     let mut content_height = 0usize;
-
-    if model.appearance_preview.is_some() {
-        content_height = 4;
-        next_y = 5;
-    }
 
     for card in &model.cards {
         let height = settings_card_height(card);
