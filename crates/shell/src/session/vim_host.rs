@@ -23,6 +23,7 @@ pub(super) struct EditorVimHost {
     started_at: Instant,
     window_focused: bool,
     cell_size: (u16, u16),
+    terminal: Option<Arc<terminal_runtime::snapshot::TerminalSnapshot>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -63,6 +64,7 @@ impl EditorVimHost {
             started_at: Instant::now(),
             window_focused: true,
             cell_size: (8, 16),
+            terminal: None,
         }
     }
 
@@ -307,6 +309,7 @@ impl EditorVimHost {
                 state.request_page_close_after_editor_check(id, true);
             }
             self.host = None;
+            self.terminal = None;
             self.pages.clear();
             self.imported.clear();
             self.policies.clear();
@@ -375,10 +378,18 @@ impl EditorVimHost {
             return Ok(());
         }
         if visible && enabled && !self.suspended {
-            state.editor_vim_terminal = Some(Arc::new(terminal_runtime::snapshot::to_ui_snapshot(
-                &poll.terminal,
-            )));
-            state.refresh_hit_map();
+            if state.editor_vim_terminal.is_none()
+                || self
+                    .terminal
+                    .as_ref()
+                    .is_none_or(|previous| !Arc::ptr_eq(previous, &poll.terminal))
+            {
+                state.editor_vim_terminal = Some(Arc::new(
+                    terminal_runtime::snapshot::to_ui_snapshot(&poll.terminal),
+                ));
+                self.terminal = Some(poll.terminal);
+                state.refresh_hit_map();
+            }
         } else {
             state.editor_vim_terminal = None;
         }
@@ -675,6 +686,7 @@ impl EditorVimHost {
             }
         }
         self.host = None;
+        self.terminal = None;
         state.editor_vim_terminal = None;
         state.editor_vim_toggle_requested = false;
         state.editor_vim_script_export = None;
@@ -770,6 +782,7 @@ impl EditorVimHost {
         }
         let _ = state.persist_all_editor_recovery_now(Instant::now());
         self.host = None;
+        self.terminal = None;
         state.editor_vim_terminal = None;
     }
 }

@@ -17,6 +17,10 @@ cargo run --locked -p cli --bin tundra-cli -- doctor
 
 更新源码后仍需一起构建 Shell 和 CLI。`cargo run -p shell` 不会重建它使用的 CLI 可执行文件；发布模式为上述构建命令添加 `--release`。
 
+Release 使用 ThinLTO 和单个 codegen unit，合并跨 crate 的优化并减少重复代码，保留默认速度优化等级。保留 `panic = "unwind"` 和函数符号，以支持 watchdog 的异常隔离与故障回溯；不通过关闭现有功能或去掉恢复能力缩减体积。首次发布编译会更慢。
+
+选项参考 [Minimizing Rust Binary Size](https://github.com/johnthagen/min-sized-rust) 和 [Cargo profiles](https://doc.rust-lang.org/cargo/reference/profiles.html)。`opt-level = "z"`、移除符号或 `panic = "abort"` 各有速度或诊断取舍，不直接套用。更新模块与其他模块统一使用 TOML 0.9，避免同时链接两代解析器。
+
 编辑器 Vim 模式使用固定版本的完整 Vim。显式构建步骤将引擎和 runtime 放在 Shell 旁；普通 Cargo 构建不联网获取 Vim。依赖、离线构建和三平台发布方法见[随包 Vim](packaging/vim.md)。
 
 默认主题需要至少 **108 × 20** 个终端单元格；内建 Command Line 还需要额外垂直空间。实际下限由资源和布局共同计算，自定义大图案可能提高要求。鼠标和触摸输入取决于终端能否转发事件。
@@ -115,7 +119,7 @@ bash scripts/check-weathr-dependency-boundary.sh
 
 定向改动使用 `cargo test --locked -p <包名>`；跨包接口或影响范围不明确时运行完整 workspace 测试。Linux 检查在本机 WSL/Linux 执行。Windows 使用安装好的 MSVC 工具链，例如 `cargo +stable-x86_64-pc-windows-msvc test --workspace --locked`。
 
-资源紧张时限制编译并发，如 `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0`。固定测试不发起 HTTP 请求或启动 HTTP 模拟服务器；依赖已缓存时可加 `--offline`。串行测试可加 `-- --test-threads=1`，汇报时说明实际运行方式。
+资源紧张时限制编译并发，如 `CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0`。全工作区测试可加 `CARGO_PROFILE_TEST_DEBUG=0` 减少测试文件占用，仍保留测试断言。固定测试不发起 HTTP 请求或启动 HTTP 模拟服务器；依赖已缓存时可加 `--offline`。串行测试可加 `-- --test-threads=1`，汇报时说明实际运行方式。
 
 测试目录、PTY、root 启动和 CI 说明见[测试指南](testing.md)。单元测试、模拟后端和只读查询通过，不等于真实桌面、触屏、系统授权或设备写操作已经验收。
 

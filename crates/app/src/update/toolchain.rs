@@ -34,8 +34,7 @@ impl Toolchain {
         }
         for home in homes {
             let settings = std::fs::read_to_string(home.join("settings.toml")).unwrap_or_default();
-            let default = settings
-                .parse::<toml::Value>()
+            let default = toml::from_str::<toml::Value>(&settings)
                 .ok()
                 .and_then(|v| v.get("default_toolchain")?.as_str().map(str::to_owned));
             if let Some(default) = default

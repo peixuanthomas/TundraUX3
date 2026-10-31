@@ -4,6 +4,8 @@
 
 宿主通过 `set_cell_size` 提供实际字符格的像素尺寸，图片定位及终端尺寸查询与共享渲染器使用同一几何。
 
+`VimPoll::terminal` 按 PTY 输出版本共享 `Arc` 快照；没有新输出时不重新扫描整屏，输出、尺寸变化及同步刷新结束后更新。Shell 仅在快照变化或恢复显示时转换 UI 单元格，退出后仍保留收完输出的最后画面。
+
 缓冲使用 Vim 原生 `listener_add()` 收集逐次行变化，随正文快照输出给宿主，用于脚本断点定位。宿主导入不产生编辑通知；一次轮询收到多次快照时合并通知，下一轮不重复交付。原有文本、光标及撤销仍由 Vim 管理。
 
 启动时将内置 `bridge.vim` 的换行统一为 LF，避免 Windows 检出的 CRLF 在隔离运行的 Unix Vim 中被当成命令字符；此处理只作用于启动脚本，不改变用户文档。
@@ -27,3 +29,5 @@ TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime -
 ```
 
 测试需要真实 PTY 和本机回环网络；受限开发沙箱必须允许回环连接。覆盖初始缓冲不进入撤销、真实 Vim 编辑/跨缓冲撤销、受控保存失败和成功、`:wq` 等待、强制丢弃，以及只读保护。不能用 tiny Vim 或仅编译通过代替完整运行时验证。
+
+`cargo test --locked -p vim-runtime --test terminal_cache` 使用受控子进程与真实 PTY 验证静止画面复用、输出、缩放及退出刷新；它不替代完整 Vim 回归。
