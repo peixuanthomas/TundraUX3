@@ -231,7 +231,7 @@ jobs:
           tar -xzf dist/vim-engines/release-vim-x86_64/vim-engine.tar.gz -C package/vim-x86_64
           cp -R package/vim-arm64/. package/vim/
           lipo -create package/vim-arm64/vim package/vim-x86_64/vim -output package/vim/vim
-          lipo -verify_arch arm64 x86_64 package/vim/vim
+          lipo package/vim/vim -verify_arch arm64 x86_64
           python3 scripts/build-vim.py --verify-only --output package/vim
           lipo -info package/tundra-shell
           lipo -info package/tundra-cli

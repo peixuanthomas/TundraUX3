@@ -99,7 +99,7 @@ jobs:
           cp -R dist/macos-arm64/. target/vim/
           lipo -create dist/macos-arm64/vim dist/macos-x86_64/vim -output target/vim-universal
           mv target/vim-universal target/vim/vim
-          lipo -verify_arch arm64 x86_64 target/vim/vim
+          lipo target/vim/vim -verify_arch arm64 x86_64
           python scripts/build-vim.py --verify-only --output target/vim \
             --package dist/TundraUX3-vim-${{ steps.pin.outputs.version }}-macos-universal.zip
       - uses: actions/upload-artifact@v7
