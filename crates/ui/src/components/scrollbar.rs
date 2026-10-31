@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{HorizontalAlignment, Rect};
+use ratatui::layout::{HorizontalAlignment, Margin, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Widget};
 
@@ -11,6 +11,17 @@ pub enum ScrollbarOrientation {
     #[default]
     VerticalRight,
     HorizontalBottom,
+}
+
+impl ScrollbarOrientation {
+    /// Extends pointer hits by one cell on each side without extending the ends.
+    pub fn hit_test(self, area: Rect, point: (u16, u16)) -> bool {
+        let margin = match self {
+            Self::VerticalRight => Margin::new(1, 0),
+            Self::HorizontalBottom => Margin::new(0, 1),
+        };
+        !area.is_empty() && area.outer(margin).contains(point.into())
+    }
 }
 
 /// A token-aware scrollbar. The thumb geometry is entirely derived from the

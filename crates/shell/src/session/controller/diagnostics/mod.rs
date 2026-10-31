@@ -307,7 +307,8 @@ impl ShellSession {
                 return true;
             }
             ui::MouseEventKind::Down(PointerButton::Left)
-                if max > 0 && rect_contains(track, mouse.coordinates()) =>
+                if max > 0
+                    && ScrollbarOrientation::VerticalRight.hit_test(track, mouse.coordinates()) =>
             {
                 let pos = mouse.row().saturating_sub(track.y);
                 self.pages.diagnostics.diagnostics_detail_drag =
@@ -993,7 +994,7 @@ impl ShellSession {
         let Some(scrollbar) = layout.list_scrollbar else {
             return;
         };
-        if !rect_contains(scrollbar.thumb, coordinates) {
+        if !ScrollbarOrientation::VerticalRight.hit_test(scrollbar.thumb, coordinates) {
             return;
         }
         self.scrollbar_drag = Some(ScrollbarDragState::Diagnostics {

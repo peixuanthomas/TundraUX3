@@ -334,7 +334,7 @@ pub fn logs_hit_test(
     if model.more_selected.is_some() {
         if layout
             .menu_scrollbar
-            .is_some_and(|bar| rect_contains(bar.track, x, y))
+            .is_some_and(|bar| bar.hit_test((x, y)))
         {
             return Some(LogsHitTarget::MoreScrollbar);
         }
@@ -369,7 +369,7 @@ pub fn logs_hit_test(
     }
     if layout
         .detail_scrollbar
-        .is_some_and(|bar| rect_contains(bar.track, x, y))
+        .is_some_and(|bar| bar.hit_test((x, y)))
     {
         return Some(LogsHitTarget::DetailScrollbar);
     }

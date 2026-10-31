@@ -33,6 +33,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use time::TimeSyncResult;
+use ui::components::ScrollbarOrientation;
 use watchdog::{
     AppWatchdog, ManagedTaskGroup, ManagedThreadHandle, ProcessWatchdog, TaskId, TaskSpec,
 };

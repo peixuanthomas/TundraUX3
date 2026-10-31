@@ -5,7 +5,7 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::components::{
     Button, ComponentTone, DataTable, PageAction, PageActionBar, PageActionStatus, Scrollbar,
-    Surface, terminal_width, truncate_to_terminal_width,
+    ScrollbarOrientation, Surface, terminal_width, truncate_to_terminal_width,
 };
 use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
 
@@ -505,11 +505,14 @@ impl LauncherLayout {
         {
             return Some(LauncherHitTarget::Toolbar(button.action));
         }
+        if self
+            .scrollbar
+            .is_some_and(|area| ScrollbarOrientation::VerticalRight.hit_test(area, (x, y)))
+        {
+            return Some(LauncherHitTarget::Scrollbar);
+        }
         if let Some(item) = self.items.iter().find(|item| contains(item.area, x, y)) {
             return Some(LauncherHitTarget::Item(item.index));
-        }
-        if self.scrollbar.is_some_and(|area| contains(area, x, y)) {
-            return Some(LauncherHitTarget::Scrollbar);
         }
         contains(self.content, x, y).then_some(LauncherHitTarget::EmptyContent)
     }
@@ -517,7 +520,9 @@ impl LauncherLayout {
     pub fn large_icon_drop_target(&self, x: u16, y: u16) -> Option<LauncherDropTarget> {
         if !contains(self.content, x, y)
             || self.items.is_empty()
-            || self.scrollbar.is_some_and(|area| contains(area, x, y))
+            || self
+                .scrollbar
+                .is_some_and(|area| ScrollbarOrientation::VerticalRight.hit_test(area, (x, y)))
         {
             return None;
         }

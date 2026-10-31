@@ -69,6 +69,8 @@ AA 设置通过选择弹窗提供“一律禁止／手动批准（默认）／�
 
 页面只绘制 `ShellFrameLayout.main` 内的内容与页面弹层。Shell 最终绘制全局标题栏、状态栏、Toast 和模态弹窗。绘制和点击必须使用同一份布局。
 
+滚动条通过 `ScrollbarOrientation::hit_test` 将鼠标判定向两侧各扩一格：竖条左右各一列，横条上下各一行，两端不扩展；绘制区域和布局保持原样。共享表单、页面和 Shell 的滑块拖动使用同一规则。
+
 `ScreenContent` 将弹层绘制分为下层与栈顶，供 Shell 在两者之间保留动画底图；`render_overlay` 仍可一次绘制全部弹层。数值弹窗下的高级选项保留原画面。
 
 共享 `SidebarWorkspaceLayout` 提供大导航按钮、列表与详情分栏，`scrollable` 让分类较多的侧栏滚动并保持当前项可见；当前页通过 `Button::with_current` 持续强调并显示 `->`，不受鼠标或键盘焦点变化影响。列表选中条同样保留。窄内容区改为顶部导航和上下分栏。`WorkspaceFocus` 定义导航、搜索、列表、详情、操作和高级区域的焦点顺序，实际动作由 Shell 接入。

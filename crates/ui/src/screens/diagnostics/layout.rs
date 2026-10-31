@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 
 use super::model::{DiagnosticsRepairDialogViewModel, DiagnosticsTab, DiagnosticsViewModel};
-use crate::components::Scrollbar;
+use crate::components::{Scrollbar, ScrollbarOrientation};
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const DIAGNOSTICS_LIST_MIN_WIDTH: u16 = 28;
@@ -156,7 +156,9 @@ fn diagnostics_content_hit_test_parts(
     x: u16,
     y: u16,
 ) -> Option<DiagnosticsHitTarget> {
-    if list_scrollbar.is_some_and(|scrollbar| rect_contains(scrollbar.track, x, y)) {
+    if list_scrollbar.is_some_and(|scrollbar| {
+        ScrollbarOrientation::VerticalRight.hit_test(scrollbar.track, (x, y))
+    }) {
         return Some(DiagnosticsHitTarget::Scrollbar);
     }
     rows.iter()

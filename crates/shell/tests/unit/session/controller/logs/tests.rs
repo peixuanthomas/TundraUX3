@@ -416,7 +416,7 @@ fn compact_more_dialog_scrollbar_drags_within_the_dialog_and_cancels_on_focus_lo
     let bar = layout.menu_scrollbar.unwrap();
     state.apply_input(InputEvent::mouse_down(
         PointerButton::Left,
-        (bar.thumb.x, bar.thumb.y),
+        (bar.thumb.x - 1, bar.thumb.y),
     ));
     assert!(state.logs_pointer_drag_active());
     state.apply_input(InputEvent::mouse_drag(

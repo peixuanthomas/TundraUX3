@@ -54,7 +54,7 @@ impl ShellSession {
                 return true;
             }
             ui::MouseEventKind::Down(PointerButton::Left)
-                if rect_contains(track, mouse.coordinates()) =>
+                if ScrollbarOrientation::VerticalRight.hit_test(track, mouse.coordinates()) =>
             {
                 let relative = mouse.row().saturating_sub(track.y);
                 let grab_offset = if (start..start + thumb).contains(&relative) {
@@ -1536,7 +1536,7 @@ impl ShellSession {
         let Some(scrollbar) = layout.scrollbar else {
             return;
         };
-        if !rect_contains(scrollbar.thumb, coordinates) {
+        if !ScrollbarOrientation::VerticalRight.hit_test(scrollbar.thumb, coordinates) {
             return;
         }
         let _ = self.update_explorer_state(|state| {

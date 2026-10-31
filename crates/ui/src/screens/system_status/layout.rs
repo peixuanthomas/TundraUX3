@@ -1,5 +1,5 @@
 use super::model::*;
-use crate::components::{Dialog, DialogAction};
+use crate::components::{Dialog, DialogAction, ScrollbarOrientation};
 use crate::screens::shell::{inset_rect, line_in_rect, rect_contains, usize_to_u16};
 use crate::{
     DiagnosticsContentLayout, DiagnosticsHitTarget, DiagnosticsRepairDialogLayout,
@@ -582,7 +582,9 @@ pub fn system_status_hit_test(
             return Some(t);
         }
     }
-    if l.scrollbar.is_some_and(|a| rect_contains(a, x, y)) {
+    if l.scrollbar
+        .is_some_and(|a| ScrollbarOrientation::VerticalRight.hit_test(a, (x, y)))
+    {
         return Some(SystemStatusHitTarget::Scrollbar);
     }
     if let Some(w) = l

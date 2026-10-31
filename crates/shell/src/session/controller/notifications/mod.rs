@@ -43,7 +43,7 @@ impl ShellSession {
         let (start, thumb_len) = scrollbar.thumb_range(track);
         match mouse.kind {
             ui::MouseEventKind::Down(PointerButton::Left)
-                if rect_contains(track, mouse.coordinates()) =>
+                if ScrollbarOrientation::VerticalRight.hit_test(track, mouse.coordinates()) =>
             {
                 let relative = mouse.row().saturating_sub(track.y);
                 let grab = if (start..start.saturating_add(thumb_len)).contains(&relative) {

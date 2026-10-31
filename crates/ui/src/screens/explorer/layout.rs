@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 
 use super::model::*;
-use crate::components::{Scrollbar, SidebarWorkspaceLayout, terminal_width};
+use crate::components::{Scrollbar, ScrollbarOrientation, SidebarWorkspaceLayout, terminal_width};
 use crate::screens::shell::{centered_rect, inset_rect, line_in_rect, rect_contains, usize_to_u16};
 
 const EXPLORER_SIDEBAR_MIN_WIDTH: u16 = 96;
@@ -196,14 +196,13 @@ impl ExplorerLayout {
         {
             return Some(ExplorerHitTarget::Column(column.column));
         }
+        if self.scrollbar.is_some_and(|scrollbar| {
+            ScrollbarOrientation::VerticalRight.hit_test(scrollbar.track, (x, y))
+        }) {
+            return Some(ExplorerHitTarget::Scrollbar);
+        }
         if let Some(row) = self.rows.iter().find(|row| rect_contains(row.area, x, y)) {
             return Some(ExplorerHitTarget::Entry(row.index));
-        }
-        if self
-            .scrollbar
-            .is_some_and(|scrollbar| rect_contains(scrollbar.track, x, y))
-        {
-            return Some(ExplorerHitTarget::Scrollbar);
         }
         if self
             .cancel_operation

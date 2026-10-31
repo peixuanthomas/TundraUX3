@@ -449,10 +449,7 @@ impl FormDialog {
                 }
                 match mouse.kind {
                     crate::MouseEventKind::Down(super::MouseButton::Left) => {
-                        if let Some(bar) = layout
-                            .scrollbars
-                            .iter()
-                            .find(|bar| contains_point(bar.track, point.0, point.1))
+                        if let Some(bar) = layout.scrollbars.iter().find(|bar| bar.hit_test(point))
                         {
                             let grab = bar.grab_at(point);
                             self.scroll(bar.target, bar.offset_at(point, grab));
@@ -638,7 +635,7 @@ impl FormDialog {
                 .layout(main)
                 .scrollbars
                 .iter()
-                .any(|bar| contains_point(bar.track, mouse.column(), mouse.row()))
+                .any(|bar| bar.hit_test(mouse.coordinates()))
         {
             self.activate_pointer(main, mouse)
         } else {

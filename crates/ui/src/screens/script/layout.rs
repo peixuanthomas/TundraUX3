@@ -1,5 +1,7 @@
 use super::*;
-use crate::components::{PageAction, PageActionBar, Scrollbar, contains_point, terminal_width};
+use crate::components::{
+    PageAction, PageActionBar, Scrollbar, ScrollbarOrientation, contains_point, terminal_width,
+};
 use crate::{
     EditorHitTarget, EditorLayout, EditorScrollbarLayout, editor_layout, right_aligned_actions,
 };
@@ -63,7 +65,7 @@ impl ScriptLayout {
             return Some(ScriptHitTarget::ExpressionInput);
         }
         for (pane, scrollbar) in &self.scrollbars {
-            if contains_point(scrollbar.track, x, y) {
+            if ScrollbarOrientation::VerticalRight.hit_test(scrollbar.track, (x, y)) {
                 return Some(ScriptHitTarget::Scrollbar(*pane));
             }
         }

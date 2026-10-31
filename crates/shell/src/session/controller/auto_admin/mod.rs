@@ -701,10 +701,13 @@ impl ShellSession {
                 if let Some(bar) = layout.terminal_scrollbar {
                     match mouse.kind {
                         ui::MouseEventKind::Down(ui::MouseButton::Left)
-                            if rect_contains(bar.track, mouse.coordinates()) =>
+                            if ScrollbarOrientation::VerticalRight
+                                .hit_test(bar.track, mouse.coordinates()) =>
                         {
                             self.cancel_auto_admin_pointer();
-                            let grab = if rect_contains(bar.thumb, mouse.coordinates()) {
+                            let grab = if ScrollbarOrientation::VerticalRight
+                                .hit_test(bar.thumb, mouse.coordinates())
+                            {
                                 mouse.row().saturating_sub(bar.thumb.y)
                             } else {
                                 0

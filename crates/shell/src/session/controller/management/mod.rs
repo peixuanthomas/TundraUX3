@@ -1583,7 +1583,7 @@ impl ShellSession {
         }
     }
 
-    fn management_main(&self) -> Rect {
+    pub(in crate::session) fn management_main(&self) -> Rect {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         self.input_keyboard_content_layout(
             ui::ShellFrameLayout::new(

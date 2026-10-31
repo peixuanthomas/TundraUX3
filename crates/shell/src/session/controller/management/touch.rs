@@ -491,7 +491,7 @@ impl ShellSession {
             self.cancel_management_pointer_gesture();
         }
     }
-    fn visible_management_bars(
+    pub(in crate::session) fn visible_management_bars(
         &self,
         layout: &ui::ManagementLayout,
     ) -> Vec<ui::ManagementScrollbar> {
@@ -658,11 +658,7 @@ impl ShellSession {
         ) {
             return;
         }
-        if let Some(bar) = bars
-            .iter()
-            .find(|bar| bar.track.contains(position))
-            .copied()
-        {
+        if let Some(bar) = bars.iter().find(|bar| bar.hit_test(point)).copied() {
             self.pages.management.management_state.scrollbar_grab =
                 Some((bar.target, bar.grab_at(point)));
             self.drag_management_scrollbar(point);

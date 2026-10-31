@@ -4,7 +4,7 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    layout::{Position, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
@@ -104,6 +104,16 @@ pub struct ManagementScrollbar {
     pub horizontal: bool,
 }
 impl ManagementScrollbar {
+    fn orientation(&self) -> ScrollbarOrientation {
+        if self.horizontal {
+            ScrollbarOrientation::HorizontalBottom
+        } else {
+            ScrollbarOrientation::VerticalRight
+        }
+    }
+    pub fn hit_test(&self, point: (u16, u16)) -> bool {
+        self.orientation().hit_test(self.track, point)
+    }
     pub fn offset_at(&self, point: (u16, u16), grab: u16) -> usize {
         let (coordinate, start, length, thumb) = if self.horizontal {
             (point.0, self.track.x, self.track.width, self.thumb.width)
@@ -128,7 +138,7 @@ impl ManagementScrollbar {
         position.saturating_mul(self.content_len.saturating_sub(self.viewport_len)) / travel
     }
     pub fn grab_at(&self, point: (u16, u16)) -> u16 {
-        if !self.thumb.contains(Position::from(point)) {
+        if !self.orientation().hit_test(self.thumb, point) {
             return 0;
         }
         if self.horizontal {
@@ -139,11 +149,7 @@ impl ManagementScrollbar {
     }
     pub fn render(&self, frame: &mut Frame<'_>, context: &RenderContext) {
         Scrollbar::new(self.content_len, self.viewport_len, self.offset)
-            .orientation(if self.horizontal {
-                ScrollbarOrientation::HorizontalBottom
-            } else {
-                ScrollbarOrientation::VerticalRight
-            })
+            .orientation(self.orientation())
             .render_frame(frame, self.track, context);
     }
 }

@@ -323,7 +323,7 @@ impl ShellSession {
                 let Some(track) = layout.scrollbar else {
                     return false;
                 };
-                if !rect_contains(track, mouse.coordinates()) {
+                if !ScrollbarOrientation::VerticalRight.hit_test(track, mouse.coordinates()) {
                     return false;
                 }
                 let (start, height) = ui::components::Scrollbar::new(
@@ -333,11 +333,12 @@ impl ShellSession {
                 )
                 .thumb_range(track);
                 let thumb = Rect::new(track.x, track.y.saturating_add(start), track.width, height);
-                let grab_offset = if rect_contains(thumb, mouse.coordinates()) {
-                    mouse.coordinates().1.saturating_sub(thumb.y)
-                } else {
-                    height / 2
-                };
+                let grab_offset =
+                    if ScrollbarOrientation::VerticalRight.hit_test(thumb, mouse.coordinates()) {
+                        mouse.coordinates().1.saturating_sub(thumb.y)
+                    } else {
+                        height / 2
+                    };
                 self.scrollbar_drag = Some(ScrollbarDragState::Home { grab_offset });
                 self.interaction.button_capture = None;
                 self.drag_tracker = None;

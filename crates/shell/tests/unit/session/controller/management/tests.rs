@@ -2705,6 +2705,7 @@ fn management_scrollbar_drag_preserves_viewport_and_cancel_stops_capture() {
             ..Default::default()
         })
         .collect();
+    state.refresh_hit_map();
     let layout = ui::management_layout(state.management_main(), &state.to_management_view_model());
     let bar = *layout
         .scrollbars
@@ -2716,14 +2717,15 @@ fn management_scrollbar_drag_preserves_viewport_and_cancel_stops_capture() {
         kind,
         modifiers: ui::KeyModifiers::NONE,
     };
-    state.handle_management_pointer(pointer(
-        (bar.thumb.x, bar.thumb.y),
+    state.apply_input(InputEvent::Mouse(pointer(
+        (bar.thumb.x - 1, bar.thumb.y),
         ui::MouseEventKind::Down(PointerButton::Left),
-    ));
-    state.handle_management_pointer(pointer(
+    )));
+    assert!(state.management_pointer_drag_active());
+    state.apply_input(InputEvent::Mouse(pointer(
         (bar.track.x, bar.track.bottom()),
         ui::MouseEventKind::Drag(PointerButton::Left),
-    ));
+    )));
     assert_eq!(
         state.pages.management.management_state.scroll,
         100 - layout.list_capacity

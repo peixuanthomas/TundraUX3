@@ -205,16 +205,18 @@ fn failed_terminal_keeps_the_bottom_scrollbar_thumb_visible_and_draggable() {
             .unwrap();
         let point = (scrollbar.thumb.x, scrollbar.thumb.y);
         assert_eq!(screen.backend().buffer()[point].symbol(), "█");
-        host.handle_input(
-            &InputEvent::mouse_down(ui::MouseButton::Left, point),
-            Some(terminal_area),
-        );
-        assert_eq!(host.scrollbar_drag_offset, Some(0));
-        host.handle_input(
-            &InputEvent::mouse_up(ui::MouseButton::Left, point),
-            Some(terminal_area),
-        );
-        assert_eq!(host.scrollbar_drag_offset, None);
+        for column in [point.0 - 1, point.0, point.0 + 1] {
+            host.handle_input(
+                &InputEvent::mouse_down(ui::MouseButton::Left, (column, point.1)),
+                Some(terminal_area),
+            );
+            assert_eq!(host.scrollbar_drag_offset, Some(0));
+            host.handle_input(
+                &InputEvent::mouse_up(ui::MouseButton::Left, (column, point.1)),
+                Some(terminal_area),
+            );
+            assert_eq!(host.scrollbar_drag_offset, None);
+        }
         host.handle_input(
             &InputEvent::mouse_down(
                 ui::MouseButton::Left,

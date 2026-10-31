@@ -257,7 +257,7 @@ fn viewport_and_drag_state_survive_rebuilding_the_dialog() {
         .find(|bar| bar.target == ui::ManagementScrollTarget::FormFields)
         .unwrap();
     form.handle_event(
-        InputEvent::mouse_down(MouseButton::Left, (bar.track.x, bar.track.y)),
+        InputEvent::mouse_down(MouseButton::Left, (bar.track.x - 1, bar.track.y)),
         area,
     );
     let mut form =

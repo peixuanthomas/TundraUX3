@@ -678,6 +678,23 @@ fn wide_source_line_exposes_and_renders_a_proportional_horizontal_scrollbar() {
         layout.hit_test(scrollbar.track.x, scrollbar.track.y),
         Some(EditorHitTarget::HorizontalScrollbar)
     );
+    for y in [scrollbar.track.y - 1, scrollbar.track.bottom()] {
+        assert_eq!(
+            layout.hit_test(scrollbar.thumb.x, y),
+            Some(EditorHitTarget::HorizontalScrollbar)
+        );
+    }
+    for (x, y) in [
+        (scrollbar.thumb.x, scrollbar.track.y - 2),
+        (scrollbar.thumb.x, scrollbar.track.bottom() + 1),
+        (scrollbar.track.x - 1, scrollbar.track.y),
+        (scrollbar.track.right(), scrollbar.track.y),
+    ] {
+        assert_ne!(
+            layout.hit_test(x, y),
+            Some(EditorHitTarget::HorizontalScrollbar)
+        );
+    }
     assert_eq!(
         terminal.backend().buffer()[(layout.canvas.x, layout.canvas.y)].symbol(),
         "0"

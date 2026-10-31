@@ -1051,14 +1051,20 @@ impl ShellSession {
             self.editor_content_area(editor_area),
             &self.to_editor_view_model(),
         );
-        let scrollbar = match axis {
-            ScrollbarAxis::Vertical => layout.vertical_scrollbar,
-            ScrollbarAxis::Horizontal => layout.horizontal_scrollbar,
+        let (scrollbar, orientation) = match axis {
+            ScrollbarAxis::Vertical => (
+                layout.vertical_scrollbar,
+                ScrollbarOrientation::VerticalRight,
+            ),
+            ScrollbarAxis::Horizontal => (
+                layout.horizontal_scrollbar,
+                ScrollbarOrientation::HorizontalBottom,
+            ),
         };
         let Some(scrollbar) = scrollbar else {
             return;
         };
-        if !rect_contains(scrollbar.thumb, coordinates) {
+        if !orientation.hit_test(scrollbar.thumb, coordinates) {
             self.clear_editor_scrollbar_drag();
             return;
         }

@@ -244,7 +244,9 @@ impl ShellSession {
                     layout
                         .content
                         .list_scrollbar
-                        .filter(|bar| bar.thumb.contains(point.into()))
+                        .filter(|bar| {
+                            ScrollbarOrientation::VerticalRight.hit_test(bar.thumb, point)
+                        })
                         .map_or(0, |bar| point.1.saturating_sub(bar.thumb.y)),
                 );
                 self.drag_logs_scrollbar(point);

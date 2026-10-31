@@ -260,6 +260,20 @@ fn explorer_layout_keeps_focused_entry_visible_and_adds_scrollbar() {
         layout.hit_test(scrollbar.thumb.x, scrollbar.thumb.y),
         Some(ExplorerHitTarget::Scrollbar)
     );
+    for x in [scrollbar.track.x - 1, scrollbar.track.right()] {
+        assert_eq!(
+            layout.hit_test(x, scrollbar.thumb.y),
+            Some(ExplorerHitTarget::Scrollbar)
+        );
+    }
+    for (x, y) in [
+        (scrollbar.track.x - 2, scrollbar.thumb.y),
+        (scrollbar.track.right() + 1, scrollbar.thumb.y),
+        (scrollbar.track.x, scrollbar.track.y - 1),
+        (scrollbar.track.x, scrollbar.track.bottom()),
+    ] {
+        assert_ne!(layout.hit_test(x, y), Some(ExplorerHitTarget::Scrollbar));
+    }
     assert!(layout.visible_start > 0);
     assert!(layout.rows.iter().any(|row| row.index == 15));
 }

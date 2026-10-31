@@ -326,7 +326,10 @@ impl EditorLayout {
         if let Some(item) = self.menus.iter().find(|item| contains(item.area, x, y)) {
             return Some(EditorHitTarget::Menu(item.menu));
         }
-        if self.menu_scrollbar.is_some_and(|area| contains(area, x, y)) {
+        if self
+            .menu_scrollbar
+            .is_some_and(|area| ScrollbarOrientation::VerticalRight.hit_test(area, (x, y)))
+        {
             return Some(EditorHitTarget::MenuScroll);
         }
         if let Some(item) = self
@@ -346,6 +349,16 @@ impl EditorLayout {
         {
             return Some(EditorHitTarget::Search(*control));
         }
+        if self.vertical_scrollbar.is_some_and(|scrollbar| {
+            ScrollbarOrientation::VerticalRight.hit_test(scrollbar.track, (x, y))
+        }) {
+            return Some(EditorHitTarget::VerticalScrollbar);
+        }
+        if self.horizontal_scrollbar.is_some_and(|scrollbar| {
+            ScrollbarOrientation::HorizontalBottom.hit_test(scrollbar.track, (x, y))
+        }) {
+            return Some(EditorHitTarget::HorizontalScrollbar);
+        }
         if let Some(item) = self
             .status_items
             .iter()
@@ -359,18 +372,6 @@ impl EditorLayout {
             .find(|item| item.enabled && contains(item.area, x, y))
         {
             return Some(EditorHitTarget::Toolbar(item.action));
-        }
-        if self
-            .vertical_scrollbar
-            .is_some_and(|scrollbar| contains(scrollbar.track, x, y))
-        {
-            return Some(EditorHitTarget::VerticalScrollbar);
-        }
-        if self
-            .horizontal_scrollbar
-            .is_some_and(|scrollbar| contains(scrollbar.track, x, y))
-        {
-            return Some(EditorHitTarget::HorizontalScrollbar);
         }
         if let Some(handle) = self
             .table_edge_handles

@@ -494,7 +494,7 @@ fn source_caret_reveals_a_long_line_and_the_horizontal_scrollbar_moves_the_viewp
 
     let grab = (
         scrollbar.thumb.x.saturating_add(scrollbar.thumb.width / 2),
-        scrollbar.thumb.y,
+        scrollbar.thumb.y - 1,
     );
     let captured_track_end = (track_end.0, 0);
     state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
@@ -642,7 +642,7 @@ fn unicode_document_can_scroll_horizontally_past_short_lines() {
 
     state.apply_input_with_platform(InputEvent::from_key_label("Home"), &platform);
     let scrollbar = current_editor_layout(&state).horizontal_scrollbar.unwrap();
-    let grab = (scrollbar.thumb.x, scrollbar.thumb.y);
+    let grab = (scrollbar.thumb.x, scrollbar.thumb.bottom());
     let end = (scrollbar.track.right().saturating_sub(1), scrollbar.track.y);
     state.apply_input_with_platform(InputEvent::mouse_down(PointerButton::Left, grab), &platform);
     state.apply_input_with_platform(InputEvent::mouse_drag(PointerButton::Left, end), &platform);
@@ -692,7 +692,7 @@ fn editor_vertical_scrollbar_thumb_drags_to_both_ends() {
     assert_eq!(current_editor_layout(&state).visible_start, initial_start);
 
     let grab = (
-        scrollbar.thumb.x,
+        scrollbar.thumb.x - 1,
         scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
     );
     let captured_track_start = (0, track_start.1);
@@ -712,7 +712,7 @@ fn editor_vertical_scrollbar_thumb_drags_to_both_ends() {
         .vertical_scrollbar
         .expect("vertical scrollbar after dragging up");
     let grab = (
-        scrollbar.thumb.x,
+        scrollbar.thumb.right(),
         scrollbar.thumb.y.saturating_add(scrollbar.thumb.height / 2),
     );
     let track_end = (
@@ -2170,10 +2170,6 @@ fn assert_source_caret_rendered(state: &ShellSession) {
         layout.canvas.y + (cursor.line - layout.visible_start) as u16,
     );
     assert_eq!(terminal.get_cursor_position().unwrap(), screen_cursor);
-    assert_eq!(
-        layout.hit_test(screen_cursor.x, screen_cursor.y),
-        Some(EditorHitTarget::Canvas(cursor))
-    );
     let row = (layout.canvas.x..layout.canvas.x + 8)
         .map(|x| terminal.backend().buffer()[(x, screen_cursor.y)].symbol())
         .collect::<String>();

@@ -112,10 +112,57 @@ impl ShellSession {
         if let Some(form) = self.active_form_dialog()
             && rect_contains(self.touch_main(), point)
         {
+            if form
+                .layout(self.touch_main())
+                .scrollbars
+                .iter()
+                .any(|bar| bar.hit_test(point))
+            {
+                return None;
+            }
             return form
                 .button_regions(self.touch_main())
                 .into_iter()
                 .find(|button| rect_contains(button.area, point));
+        }
+        if self.touch_scrollbar_at(point) {
+            return None;
+        }
+        if self.active_screen() == ShellScreen::Management {
+            let layout =
+                ui::management_layout(self.management_main(), &self.to_management_view_model());
+            if self
+                .visible_management_bars(&layout)
+                .iter()
+                .any(|bar| bar.hit_test(point))
+            {
+                return None;
+            }
+        }
+        if self.active_screen() == ShellScreen::Logs
+            && let Some(main) = self.logs_main_area()
+            && matches!(
+                ui::logs_hit_test(main, &self.to_logs_view_model(), point),
+                Some(
+                    ui::LogsHitTarget::Scrollbar
+                        | ui::LogsHitTarget::DetailScrollbar
+                        | ui::LogsHitTarget::MoreScrollbar
+                )
+            )
+        {
+            return None;
+        }
+        if self.active_screen() == ShellScreen::Editor
+            && matches!(
+                self.editor_current_layout().hit_test(point.0, point.1),
+                Some(
+                    ui::EditorHitTarget::VerticalScrollbar
+                        | ui::EditorHitTarget::HorizontalScrollbar
+                        | ui::EditorHitTarget::MenuScroll
+                )
+            )
+        {
+            return None;
         }
         if self.resolved_overlay_owner() == Some(ShellComponent::Explorer)
             && matches!(

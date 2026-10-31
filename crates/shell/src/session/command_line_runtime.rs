@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 pub(super) use terminal_runtime::pty::*;
+use ui::components::ScrollbarOrientation;
 use watchdog::{AppWatchdog, ComponentId, ManagedTaskGroup};
 const SCROLL_LINES_PER_NOTCH: usize = 3;
 const EMBEDDED_RESET_EXIT_CODE: u32 = 75;
@@ -437,6 +438,14 @@ impl CommandLineHost {
             return;
         }
 
+        if let (ui::MouseEventKind::Down(ui::MouseButton::Left), Some(scrollbar)) =
+            (mouse.kind, scrollbar)
+            && ScrollbarOrientation::VerticalRight.hit_test(scrollbar.thumb, mouse.coordinates())
+        {
+            self.scrollbar_drag_offset = Some(mouse.row().saturating_sub(scrollbar.thumb.y));
+            return;
+        }
+
         let content = ui::command_line_content_area(terminal_area, self.ui_snapshot.as_ref());
         let captured = match mouse.kind {
             ui::MouseEventKind::Drag(button) | ui::MouseEventKind::Up(button) => {
@@ -497,11 +506,6 @@ impl CommandLineHost {
                         .scrollback_offset
                         .saturating_sub(SCROLL_LINES_PER_NOTCH),
                 );
-            }
-            (ui::MouseEventKind::Down(ui::MouseButton::Left), Some(scrollbar))
-                if rect_contains(scrollbar.thumb, mouse.column(), mouse.row()) =>
-            {
-                self.scrollbar_drag_offset = Some(mouse.row().saturating_sub(scrollbar.thumb.y));
             }
             _ => {}
         }

@@ -294,6 +294,12 @@ impl ShellSession {
         regions
     }
 
+    pub(in crate::session) fn touch_scrollbar_at(&self, point: CellPosition) -> bool {
+        self.touch_regions()
+            .iter()
+            .any(|region| ScrollbarOrientation::VerticalRight.hit_test(region.track, point))
+    }
+
     pub(in crate::session) fn route_touch_pages_pointer(
         &self,
         mouse: MouseInput,
@@ -314,10 +320,7 @@ impl ShellSession {
             return Some(ShellCommand::TouchPagesPointer(mouse));
         }
         if matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
-            && self
-                .touch_regions()
-                .iter()
-                .any(|region| rect_contains(region.track, point))
+            && self.touch_scrollbar_at(point)
         {
             return Some(ShellCommand::TouchPagesPointer(mouse));
         }
@@ -473,11 +476,9 @@ impl ShellSession {
                 }
             }
             ui::MouseEventKind::Down(PointerButton::Left) => {
-                if let Some(region) = self
-                    .touch_regions()
-                    .into_iter()
-                    .find(|region| rect_contains(region.track, point))
-                {
+                if let Some(region) = self.touch_regions().into_iter().find(|region| {
+                    ScrollbarOrientation::VerticalRight.hit_test(region.track, point)
+                }) {
                     let (start, thumb) = ui::components::Scrollbar::new(
                         region.content,
                         region.viewport,
