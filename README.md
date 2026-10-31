@@ -149,7 +149,7 @@ Automated tests focus on core workflows, data safety, and permission boundaries.
 Most detailed documentation is currently in Chinese. Start with the [documentation index](docs/README.md); each crate keeps its own implementation guide.
 
 - [简体中文 README](docs/README.zh-CN.md)
-- [V1.4.1 release notes](docs/packaging/releases/v1.4.1.md) — page help, visible actions, and interaction fixes.
+- [V1.5 release notes](docs/packaging/releases/v1.5.md) — cross-platform package management, script debugging, tasks, and terminal interactions.
 - [Technical documentation](docs/README-TECHNICAL.md) — architecture, building, testing, and packaging.
 - [Source editor](docs/source-editor.md) — search, replace, soft wrap, JSON formatting, and supported text formats.
 - [Linux system management](crates/platform/docs/linux-management.md) — services, processes, packages, networks, and disks.

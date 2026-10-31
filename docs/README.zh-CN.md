@@ -132,7 +132,7 @@ cargo run --locked -p cli --bin tundra-cli -- doctor
 详细文档目前以中文为主。从[文档索引](README.md)查找功能说明；实现细节放在各自 crate 内。
 
 - [English README](../README.md)
-- [V1.4.1 发布说明](packaging/releases/v1.4.1.md)：页面帮助、可见操作按钮和交互修复。
+- [V1.5 发布说明](packaging/releases/v1.5.md)：跨平台软件包管理、脚本调试、任务与终端交互。
 - [技术文档](README-TECHNICAL.md)：架构、构建、测试和打包。
 - [源码编辑器](source-editor.md)：查找、替换、软换行、JSON 格式化和支持的文本格式。
 - [Linux 系统管理](../crates/platform/docs/linux-management.md)：服务、进程、软件包、网络和磁盘。
