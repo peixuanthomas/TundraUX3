@@ -7,6 +7,7 @@
 ```rust,no_run
 use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
 
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 let (runtime, process) = WatchdogRuntime::start(WatchdogConfig::new(
     "logs", "fallback", "data", "host", env!("CARGO_PKG_VERSION"),
 ))?;
@@ -20,6 +21,8 @@ let app = process.register_app(AppDescriptor::new(
 
 // 将 app 或包含它的 AppRuntimeContext 交给应用代码。
 runtime.shutdown()?;
+# Ok(())
+# }
 ```
 
 进程宿主负责事故展示与去重。Shell 使用独立 panic 页面，其他宿主可使用 stderr 或原生错误提示。`watchdog` 不依赖 `platform`。
