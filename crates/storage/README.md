@@ -27,6 +27,7 @@ Future schemas are rejected outright. If a current or older format cannot be par
 ## Configuration notes
 
 - `[automation].enabled` stores external CLI control, defaulting to `false`.
+- `[appearance].icon_display_mode` defaults to `ascii` on Linux and `image` on other platforms. User profiles use the same default when the field is missing.
 - `screen_timeout_seconds` stores the idle-weather timeout; `0` means never, and the default is 300 seconds.
 - `[editor].vim_mode_enabled` stores the Vim toggle, disabled by default.
 - `[editor].explorer_open_extensions` controls the suffixes handed to the built-in editor; custom lists and empty lists take precedence.

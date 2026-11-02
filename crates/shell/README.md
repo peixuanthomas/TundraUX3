@@ -53,7 +53,7 @@ When closing a page with running work, users can continue in the background, can
 - **Launcher:** organize built-in applications, custom commands, and external programs, and provide run settings, a task list, and exit options.
 - **Editor and scripts:** manage multi-document pages, switching between the standard editor and Vim, and script execution and debugging.
 - **System management:** present package, service, process, network, disk, and configuration interfaces provided by platform, with operations authorized through AA.
-- **Settings and status:** manage appearance, language, the on-screen keyboard, dashboard, clock, weather, and system settings.
+- **Settings and status:** manage appearance, language, the on-screen keyboard, dashboard, clock, weather, and system settings. New Linux profiles use ASCII icons. On a terminal with image support, users can switch to image icons in Settings → Appearance → Theme.
 - **Child terminals:** each page has an independent PTY, continues reading output while covered, and cleans up its process tree when closed.
 
 See [UI requirements](../../docs/UI-requirements.md) for shared buttons, forms, animations, and layouts. See [Editor and script workspace](../../docs/source-editor.md) for editor operations and [List selection](../../docs/list-selection.md) for page multi-selection.

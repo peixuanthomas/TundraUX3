@@ -106,6 +106,7 @@ pub use ui_state::{ShellSession, UiSessionState};
 
 pub(in crate::session) struct ShellRuntimeServices {
     language: Option<PreparedLanguage>,
+    terminal_image_support: bool,
     explorer: Option<ShellExplorerTaskRuntime>,
     diagnostics: Option<ShellDiagnosticsTaskRuntime>,
     editor: ShellEditorTaskRuntime,

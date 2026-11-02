@@ -1733,13 +1733,25 @@ fn animation_speed_is_per_user_adjustable_and_has_a_default_button() {
 #[test]
 fn default_theme_icon_picker_persists_ascii_and_image_modes_when_supported() {
     let fixture = FixtureRoot::new("theme-icon-mode-supported");
-    let platform = mock_platform(fixture.path());
+    let platform = mock_platform(fixture.path()).with_kind(platform::native_platform().kind());
     let manager = initialize_users(&platform, true, false);
+    let saved_mode = || {
+        manager
+            .load_users()
+            .unwrap()
+            .users
+            .into_iter()
+            .find(|user| user.username == "NormalUser")
+            .unwrap()
+            .appearance
+            .icon_display_mode
+    };
     let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
     state.set_terminal_image_support(true);
 
     open_settings_from_home(&mut state, &platform);
-    assert!(state.graphical_icons_enabled());
+    let images_by_default = IconDisplayMode::default() == IconDisplayMode::Image;
+    assert_eq!(state.graphical_icons_enabled(), images_by_default);
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::Theme
@@ -1760,33 +1772,25 @@ fn default_theme_icon_picker_persists_ascii_and_image_modes_when_supported() {
     assert_eq!(picker.kind, SettingsPickerKind::DefaultThemeIcons);
     assert_eq!(picker.options.len(), 2);
     assert!(picker.options.iter().all(|option| option.enabled));
-    assert_eq!(picker.selected_index, 1);
+    assert_eq!(picker.selected_index, usize::from(images_by_default));
 
     press(&mut state, &platform, "Home");
     press(&mut state, &platform, "Enter");
-    let normal = manager
-        .load_users()
-        .unwrap()
-        .users
-        .into_iter()
-        .find(|user| user.username == "NormalUser")
-        .expect("normal user");
-    assert_eq!(normal.appearance.icon_display_mode, IconDisplayMode::Ascii);
+    assert_eq!(saved_mode(), IconDisplayMode::Ascii);
     assert!(!state.graphical_icons_enabled());
 
     press(&mut state, &platform, "Enter");
     press(&mut state, &platform, "Enter");
     press(&mut state, &platform, "Down");
     press(&mut state, &platform, "Enter");
-    let normal = manager
-        .load_users()
-        .unwrap()
-        .users
-        .into_iter()
-        .find(|user| user.username == "NormalUser")
-        .expect("normal user");
-    assert_eq!(normal.appearance.icon_display_mode, IconDisplayMode::Image);
+    assert_eq!(saved_mode(), IconDisplayMode::Image);
     assert!(state.graphical_icons_enabled());
+
+    for key in ["End", "Enter", "R"] {
+        press(&mut state, &platform, key);
+    }
+    assert_eq!(saved_mode(), IconDisplayMode::default());
+    assert_eq!(state.graphical_icons_enabled(), images_by_default);
 }
 
 #[test]

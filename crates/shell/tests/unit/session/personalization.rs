@@ -72,11 +72,23 @@ fn copy_assets(source: &std::path::Path, destination: &std::path::Path) {
 }
 
 fn linux_state(manager: &StorageManager, images: bool) -> ShellSession {
+    // Synthetic users in these tests must not attach the host account.
+    let mut state = linux_startup(manager, images, identity::IdentityBackend::Local);
+    state.identity_backend = identity::IdentityBackend::Linux;
+    state
+}
+
+fn linux_startup(
+    manager: &StorageManager,
+    images: bool,
+    backend: identity::IdentityBackend,
+) -> ShellSession {
     let mut startup = ShellStartupState::clean(
         PlatformKind::Linux,
         PlatformCapabilities::native_supported(),
     );
     startup.storage_manager = Some(manager.clone());
+    startup.identity_backend = backend;
     // Keep language loading and resource repair isolated from other fixtures.
     let assets = manager
         .layout()
@@ -89,20 +101,25 @@ fn linux_state(manager: &StorageManager, images: bool) -> ShellSession {
         &assets,
     );
     let (store, _) = ui::AsciiAssetStore::load_default_with_root_and_recovery(&assets).unwrap();
-    // Build an isolated UI fixture without attaching the host NSS account.
-    let mut state = ShellSession::new_with_startup_and_assets(
+    let mut state = ShellSession::new_with_runtime_services(
         ShellLaunchConfig::default(),
         (120, 40),
         startup,
         ui::RuntimeAsciiAssets::from_store(store),
+        ShellRuntimeServices {
+            language: None,
+            terminal_image_support: images,
+            explorer: None,
+            diagnostics: None,
+            editor: ShellEditorTaskRuntime::unavailable(),
+            settings: ShellSettingsTaskRuntime::unavailable(),
+        },
     );
     // Resource normalization can report a startup repair; acknowledge it just
     // as the terminal user does before entering the onboarding flow.
     if state.app.notification_center().active_modal().is_some() {
         state.apply_input(InputEvent::from_key_label("Enter"));
     }
-    state.identity_backend = identity::IdentityBackend::Linux;
-    state.set_terminal_image_support(images);
     state
 }
 
@@ -136,6 +153,7 @@ fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices
         let (_guard, manager, session) = fixture(true);
         let mut expected_config = manager.load_config().unwrap();
         let mut state = linux_state(&manager, images);
+        assert!(!state.graphical_icons_enabled());
         state.pages.login.login_password = "must be cleared".into();
         state.complete_login(session.clone());
         assert_eq!(state.active_screen(), ShellScreen::FirstRunSetup);
@@ -159,14 +177,10 @@ fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices
         assert_eq!(record.appearance.border_shape, chosen_shape);
         assert_eq!(
             record.appearance.icon_display_mode,
-            if images {
-                storage::IconDisplayMode::Image
-            } else {
-                storage::IconDisplayMode::Ascii
-            }
+            storage::IconDisplayMode::Ascii
         );
         assert_eq!(state.app.active_appearance(), Some(&record.appearance));
-        assert_eq!(state.graphical_icons_enabled(), images);
+        assert!(!state.graphical_icons_enabled());
         assert_eq!(manager.load_config().unwrap(), expected_config);
         assert!(record.password_hash.is_empty());
         assert_eq!(record.display_name, "Peixuan");
@@ -174,6 +188,7 @@ fn linux_first_login_requires_personalization_and_persists_terminal_safe_choices
         let mut reopened = linux_state(&manager, images);
         reopened.complete_login(session);
         assert_eq!(reopened.active_screen(), ShellScreen::Home);
+        assert!(!reopened.graphical_icons_enabled());
     }
 }
 
@@ -266,6 +281,9 @@ fn linux_ignores_existing_independent_time_preferences() {
 #[test]
 fn linux_ascii_runtime_fallback_applies_to_each_existing_user_login() {
     let (_guard, manager, session) = fixture(false);
+    let mut profiles = manager.load_users().unwrap();
+    profiles.users[0].appearance.icon_display_mode = storage::IconDisplayMode::Image;
+    manager.save_users(&profiles).unwrap();
     let mut state = linux_state(&manager, false);
     for _ in 0..2 {
         state.complete_login(session.clone());
@@ -279,4 +297,28 @@ fn linux_ascii_runtime_fallback_applies_to_each_existing_user_login() {
         // fallback, but must never prevent the runtime's ASCII selection.
         state.return_to_login("Signed out");
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_auto_login_preserves_saved_image_icons_on_a_supported_terminal() {
+    let (_guard, manager, _) = fixture(false);
+    let backend = identity::IdentityBackend::Linux;
+    let session = SessionService::new(manager.clone())
+        .with_backend(backend)
+        .attach_current_linux_user()
+        .unwrap();
+    let users = UserService::new(manager.clone()).with_backend(backend);
+    let appearance = storage::AppearanceConfig {
+        icon_display_mode: storage::IconDisplayMode::Image,
+        ..Default::default()
+    };
+    users
+        .complete_personalization(&session, appearance.clone())
+        .unwrap();
+
+    let state = linux_startup(&manager, true, backend);
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert!(state.graphical_icons_enabled());
+    assert_eq!(users.current_user_appearance(&session).unwrap(), appearance);
 }

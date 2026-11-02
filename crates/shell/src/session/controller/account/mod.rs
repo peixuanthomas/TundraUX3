@@ -1067,7 +1067,7 @@ impl ShellSession {
             border_color: self.pages.setup.setup_theme_color,
             accent_color: self.pages.setup.setup_accent_color,
             icon_display_mode: if self.terminal_image_support {
-                storage::IconDisplayMode::Image
+                self.default_icon_display_mode
             } else {
                 storage::IconDisplayMode::Ascii
             },
@@ -1094,10 +1094,6 @@ impl ShellSession {
                     self.notify_status(i18n::msg!("account-personalization-save-failed"));
                     return;
                 }
-            }
-            let mut appearance = appearance;
-            if !self.terminal_image_support {
-                appearance.icon_display_mode = storage::IconDisplayMode::Ascii;
             }
             match users.complete_personalization(&session, appearance) {
                 Ok(_) => self.complete_login(session),

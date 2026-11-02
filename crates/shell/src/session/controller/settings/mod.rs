@@ -167,11 +167,15 @@ impl ShellSession {
     }
 
     pub fn graphical_icons_enabled(&self) -> bool {
+        let mode = self
+            .app
+            .active_appearance()
+            .map_or(self.default_icon_display_mode, |appearance| {
+                appearance.icon_display_mode
+            });
         self.terminal_image_support
             && self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID
-            && self.app.active_appearance().is_none_or(|appearance| {
-                appearance.icon_display_mode == storage::IconDisplayMode::Image
-            })
+            && mode == storage::IconDisplayMode::Image
     }
 
     pub(in crate::session) fn handle_settings_key(
@@ -970,7 +974,10 @@ impl ShellSession {
         }
         if category == ui::SettingsCategory::Appearance {
             self.save_settings_appearance(
-                storage::AppearanceConfig::default(),
+                storage::AppearanceConfig {
+                    icon_display_mode: self.default_icon_display_mode,
+                    ..Default::default()
+                },
                 i18n::msg!("settings-saved-appearance-defaults"),
             );
             return;

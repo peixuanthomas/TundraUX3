@@ -2826,6 +2826,7 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         ui::RuntimeAsciiAssets::load_default().unwrap(),
         ShellRuntimeServices {
             language: None,
+            terminal_image_support: false,
             explorer: None,
             diagnostics: None,
             editor: ShellEditorTaskRuntime::unavailable(),

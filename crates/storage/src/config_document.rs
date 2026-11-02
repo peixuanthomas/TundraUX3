@@ -81,9 +81,8 @@ impl StorageConfig {
     pub(crate) fn normalize(&mut self) -> bool {
         let legacy_schema = self.schema_version < 2;
         let mut changed = self.schema_version != SCHEMA_VERSION;
-        if legacy_schema && self.appearance == legacy_appearance_default() {
-            self.appearance = AppearanceConfig::default();
-            changed = true;
+        if legacy_schema {
+            self.appearance.migrate_legacy_colors();
         }
         self.schema_version = SCHEMA_VERSION;
         changed |= self.launcher.migrate_legacy_pinned_apps();
@@ -286,7 +285,7 @@ impl Default for AppearanceConfig {
             border_shape: BorderShape::Rounded,
             border_color: BorderColor::Rgb(0x29, 0x43, 0x4e),
             accent_color: BorderColor::Rgb(0x63, 0xd3, 0xe5),
-            icon_display_mode: IconDisplayMode::Image,
+            icon_display_mode: IconDisplayMode::default(),
             motion_preference: MotionPreference::Full,
             animation_speed_percent: DEFAULT_ANIMATION_SPEED_PERCENT,
             animation_timings: crate::AnimationTimingsConfig::DEFAULT,
@@ -295,17 +294,12 @@ impl Default for AppearanceConfig {
 }
 
 impl AppearanceConfig {
-    /// The complete appearance written by pre-Glacier versions.  Migration
-    /// intentionally treats only this exact tuple as the old default; any
-    /// custom border, accent, or icon choice stays untouched.
-    pub(crate) const fn is_legacy_default(&self) -> bool {
-        matches!(self.border_shape, BorderShape::Rounded)
-            && matches!(self.border_color, BorderColor::White)
-            && matches!(self.accent_color, BorderColor::Cyan)
-            && matches!(self.icon_display_mode, IconDisplayMode::Image)
-            && matches!(self.motion_preference, MotionPreference::Full)
-            && self.animation_speed_percent == DEFAULT_ANIMATION_SPEED_PERCENT
-            && self.animation_timings.is_default()
+    pub(crate) fn migrate_legacy_colors(&mut self) {
+        if *self == legacy_appearance_default() {
+            let defaults = Self::default();
+            self.border_color = defaults.border_color;
+            self.accent_color = defaults.accent_color;
+        }
     }
 
     pub fn normalized_animation_speed_percent(&self) -> u16 {
@@ -355,12 +349,26 @@ impl MotionPreference {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IconDisplayMode {
     Ascii,
-    #[default]
     Image,
+}
+
+impl IconDisplayMode {
+    pub fn default_for_platform(kind: platform::PlatformKind) -> Self {
+        match kind {
+            platform::PlatformKind::Linux => Self::Ascii,
+            _ => Self::Image,
+        }
+    }
+}
+
+impl Default for IconDisplayMode {
+    fn default() -> Self {
+        Self::default_for_platform(platform::native_platform().kind())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]

@@ -83,6 +83,8 @@ Mouse and touchscreen users can click or tap controls, scroll lists, and drag sc
 
 Use **Tasks** in Launcher to view running work, read saved output, return to the related page, or cancel a task. Language, appearance, animations, weather, and application options are available in **Settings**.
 
+Linux uses ASCII icons by default. If your terminal supports images, you can switch to image icons in **Settings → Appearance → Theme**.
+
 ## Companion CLI
 
 `tundra-cli` provides diagnostics, configuration, logs, system-management commands, and control of a running interface:
