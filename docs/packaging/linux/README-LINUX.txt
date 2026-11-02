@@ -1,176 +1,118 @@
-TundraUX3 Linux x86_64 runtime requirements
-============================================
+TundraUX3 Linux x86_64 runtime guide
+====================================
 
-Supported desktop sessions are regular systemd/Freedesktop sessions on GNOME or
-KDE, under Wayland or X11.  Run the two binaries from a real terminal:
+Running the portable build
+--------------------------
+Extract the archive and keep both binaries, assets/, vim/, and
+tundra-installation.json together. Open a terminal in that directory and run:
 
   ./tundra-shell
   ./tundra-cli doctor
 
-The portable archive keeps `assets` and `vim` next to the binaries. Do not move
-the binaries without moving those directories too. Vim mode uses the bundled
-full Vim executable and runtime, with its upstream license in vim/LICENSE and
-fixed source/version details in vim/UPSTREAM.json; it does not use vim-tiny.
-The archive also includes the root GNU GPL v3 and the Weathr component license.
-Future releases provide only portable archives.
+The archive includes the full Vim engine and runtime, the GNU GPL v3 license,
+and the Weathr component license. Vim's upstream license and source details are
+in vim/LICENSE and vim/UPSTREAM.json.
 
-Required: xdg-open (xdg-utils) and gio (libglib2.0-bin on Debian/Ubuntu,
-glib2 on Fedora/Arch).  Recommended for full
-desktop integration: a session D-Bus bus, xdg-desktop-portal, polkit, and
-XWayland when the Wayland compositor does not expose a data-control clipboard.
-Vim mode additionally needs libtinfo.so.6 from the ncurses runtime (libtinfo6 on
-Debian/Ubuntu); the complete Vim program and its scripts are provided in vim/.
+Desktop integrations use standard systemd/Freedesktop sessions on GNOME or KDE,
+under Wayland or X11.
 
-Use `tundra-cli doctor` after installation.  It reports missing optional desktop
-services and gives the relevant package/service hint; a missing desktop helper
-degrades only the affected integration, never stored data.
+Runtime dependencies
+--------------------
+Required desktop helpers:
 
-V1.3.4 release
---------------
-This release provides only the Linux x86_64 portable archive, built on Ubuntu
-24.04. Extract it and run ./tundra-shell from the extracted directory. Keep
-assets/ and tundra-installation.json beside the binaries. No DEB or RPM
-installer is published for V1.3.4.
+  - xdg-open from xdg-utils
+  - gio from libglib2.0-bin on Debian/Ubuntu or glib2 on Fedora/Arch
 
-For local builds, first run:
+Vim mode also needs libtinfo.so.6 from the ncurses runtime, usually provided by
+libtinfo6 on Debian/Ubuntu.
+
+For desktop integration, install and run a session D-Bus bus,
+xdg-desktop-portal, and polkit. XWayland may be needed for clipboard access when
+the Wayland compositor does not provide a data-control clipboard.
+
+`tundra-cli doctor` reports missing helpers and the affected integration. Local
+terminal applications can still be used when desktop services are unavailable.
+
+User accounts and permissions
+-----------------------------
+Start Tundra as your normal Linux user. The launching process UID selects the
+NSS account, HOME directory, login shell, and personal profile. File operations,
+launched programs, Trash, and settings use that user's operating-system
+permissions.
+
+Shell and CLI reject mismatched real/effective UIDs or GIDs before opening the
+interface. Root startup displays a warning and requires lowercase `y` to
+continue; any other key cancels. Both stdin and stderr must be terminals.
+
+The first launch for a UID opens Appearance setup. Completed setups open Home
+directly, and interrupted setups resume on the next launch. Linux uses the
+system account directly and does not add an application password or lock screen.
+
+User Management uses AccountsService, polkit, and libxcrypt (libcrypt.so.1).
+Ordinary users can edit their own account. AccountsService administrators can
+create, edit, lock, unlock, and delete other local login accounts. Deleting an
+account keeps its home directory; the account running Tundra cannot delete,
+lock, or demote itself.
+
+Privileged writes use the system polkit agent, with pkttyagent as a foreground
+terminal fallback when available. Password prompts are handled by the system
+agent. Changing your own password runs /usr/bin/passwd with the Tundra interface
+suspended.
+
+Package management
+------------------
+Launcher supports APT/dpkg, DNF, and pacman through AutoAdmin. System package
+management and Tundra self-update are separate features.
+
+On Arch, installed-package queries read existing pacman metadata. Repository
+queries also require /usr/bin/pacman-conf and readable sync databases with
+supported repository Usage settings. Foreign packages can be listed and removed;
+AUR helpers and builds are not included.
+
+Pacman install, selected-package upgrade, and full upgrade use -Syu --needed to
+avoid partial upgrades. Removal uses -R without recursive or cascade options.
+Review .pacnew and .pacsave files reported by pacman after a transaction.
+
+Updating Tundra
+---------------
+Updates require a writable portable directory owned by the current user, both
+binaries, and tundra-installation.json. Existing DEB/RPM installations are not
+modified.
+
+Settings -> Update provides two modes:
+
+  - Release downloads the latest stable Linux x86_64 archive and verifies its
+    SHA-256 checksum. A Rust toolchain is not needed.
+  - Beta downloads a specific master commit and builds it with the local Rust
+    toolchain. It also needs Python 3.12+, a C compiler, make, and ncurses
+    development headers.
+
+Both modes stage Shell, CLI, and the complete Vim directory together. Personal
+data and themes are preserved. The previous executables and engine remain
+available until the new Shell starts successfully; failed or interrupted
+updates are restored on the next launch.
+
+The current update protocol is v3. Updaters from protocol v2 cannot install v3
+packages. When upgrading from those versions, fully extract the new portable
+archive once.
+
+Diagnostics and development
+---------------------------
+`tundra-cli doctor` reports UID/GID, NSS identity, HOME, XDG paths, D-Bus,
+logind, polkit, pkttyagent, and portable installation status. Diagnostics only
+read the environment and do not elevate privileges.
+
+For development validation, run from the repository root:
+
+  cargo fmt --check
+  cargo check --workspace --locked
+  cargo test --workspace --locked
+
+Build a portable archive on Linux x86_64 with:
+
   python3 scripts/build-vim.py --output target/release/vim
-Then scripts/package-linux.sh produces only a portable archive, including Vim.
-Building Vim needs Python 3.12+, a C compiler, make and ncurses development
-headers (libncurses-dev on Debian/Ubuntu). Ordinary cargo builds do not download
-or compile Vim; debug builds use --output target/debug/vim.
+  bash scripts/package-linux.sh
 
-Ordinary Linux user session
---------------------------
-Log in normally through Fedora, then start tundra-shell in that user's terminal.
-Shell and CLI reject mismatched real/effective UIDs and GIDs before storage,
-recovery, watchdog, or fullscreen terminal initialization. Root execution shows
-a warning: file operations and launched programs have root privileges and may
-modify or delete system files. Press lowercase y to continue (no Enter needed);
-any other key cancels. Both stdin and stderr must be terminals; piped input
-cannot confirm. The prompt temporarily uses raw mode and restores it afterward.
-Every root startup requires confirmation; ordinary-user startup has no prompt.
-It never retries startup through sudo or su.
-
-The current process UID is resolved directly through NSS. USER, LOGNAME, saved UX
-roles, and account enumeration do not select an identity. NSS supplies HOME and
-the login shell; valid XDG paths are honored with standard fallbacks. Explorer,
-Editor, Launcher, embedded Terminal, child processes, Trash, and personal settings
-use the current user's operating-system permissions. Permission failures remain
-permission failures. Ordinary-user runs do not read or migrate old /root data.
-Confirmed root runs use root's NSS HOME, valid XDG paths and linux-uid-0 profile.
-
-On first use, the current UID's profile opens Appearance. After its preferences
-and completion marker are saved, Home opens. Interrupted setup resumes next time;
-completed profiles enter Home directly. Weather remains a separate application.
-The Linux UI has no application password login, screen lock, user switching, or system logout.
-Exit closes only Tundra. User Management requires AccountsService, polkit and
-libxcrypt (libcrypt.so.1). Ordinary users see and edit only their own account.
-AccountsService administrators can create, edit, lock/unlock and delete other
-local login accounts, including changing User/Admin status. Root, service and
-remote accounts are excluded. Locking affects password login only; existing
-sessions and key-based login are not terminated. Deletion keeps the home
-directory and files; the
-account running Tundra cannot be deleted, locked or demoted. Setting another
-user's password also unlocks that account, as defined by AccountsService.
-
-Privileged writes use the system's polkit authorization agent, with the existing
-terminal-agent fallback. Changing your own password runs /usr/bin/passwd with
-the TUI suspended; the system prompts for passwords and enforces its own rules.
-If account creation succeeds but password setup fails, the new account remains
-visible for repair. Missing services produce an error, never a local UX account
-fallback. Windows/macOS keep their existing application-local identity model.
-
-The profile key linux-uid-<UID> owns appearance, dashboard, clock, and other personal
-preferences. Historical UX passwords, Admin roles, and lock states cannot grant
-Linux permissions. Tundra's application session ID is not a logind session ID.
-No Tundra PAM policy, system account/group, system daemon, seat, VT, DRM, or input
-ownership component is installed. The application does not authenticate with PAM
-or have a sudo runtime dependency.
-
-Missing XDG_RUNTIME_DIR, user D-Bus, system D-Bus, or logind does not prevent local
-TUI applications from opening. Individual integrations report Unavailable when
-the service or environment they require is absent.
-
-Updates and system authorization
---------------------------------
-Linux updates require a writable portable directory owned by the current user,
-with tundra-installation.json and both binaries. Old system package installations
-are not updated or overwritten. Tundra self-update no longer uses PackageKit,
-apt, pacman or RPM. System package management is separate: the Launcher supports
-APT/dpkg, DNF and pacman through the existing AutoAdmin authorization and helper.
-
-On Arch, package lists, search, details and updates read existing pacman metadata
-as the ordinary user, preserving repository priority. Repository candidate queries
-also need the official /usr/bin/pacman-conf bundled with pacman; its resolved effective
-configuration includes Include files. Repository previews/search/updates/install
-and targeted upgrades require Search, Install and Upgrade for every configured
-repository (default Usage=All works). Different roles or fully disabled repositories
-report unsupported. Any sync-query stderr diagnostic rejects incomplete results,
-even an exit-zero missing-database warning; local -Qi can tolerate sync warnings.
-If pacman-conf is missing, sync cache is unavailable or repository configuration is
-unsupported, local installed lists/details and removal remain available, along with
-explicitly confirmed full-system upgrade.
-Foreign installed packages can be listed and removed; no AUR build, install, update
-or helper is provided.
-Install, selected-package upgrade, and refresh/full-system upgrade all use
-/usr/bin/pacman -Syu --needed (with -- package-name for a target). They upgrade the
-whole system to avoid partial upgrades; no standalone -Sy refresh is offered.
-Cached versions are previews. Stale installed/candidate identities are rejected
-before task launch, and pacman confirms the refreshed final versions, dependencies
-and full transaction in the AutoAdmin terminal. Removal uses only -R -- package-name,
-retaining .pacsave behavior without recursive or cascade removal. Check .pacnew
-and .pacsave files according to pacman output. No new password retention or root
-infrastructure is added.
-
-Settings -> Update -> Update mode is saved between runs; Release is the default.
-Release checks the latest published stable GitHub release, downloads the Linux
-x86_64 portable archive and verifies its SHA-256 checksum. Rust is not required.
-Beta checks the latest master commit and displays its hash as the build identifier.
-It downloads that exact source commit and builds locally with your existing Rust
-compiler and development libraries, then explicitly builds the pinned bundled Vim.
-Beta also requires Python 3.12+, a C compiler, make and ncurses development headers;
-missing build tools stop preparation and are reported in the build output.
-Neither mode installs Rust or invokes sudo.
-Switching modes clears the previous check and checks the new source. Switching is
-disabled during an update. A beta build can explicitly return to the stable release.
-
-Both modes stage and validate Shell, CLI and the complete bundled Vim directory,
-preserving personal data and themes. An archive without the required Vim runtime,
-license or upstream metadata is rejected before installation. The helper retains
-the previous executables and Vim directory until the new Shell reports readiness.
-Failed replacement, first startup failure or timeout restores the previous build
-and engine together. Interrupted updates are recovered on the next launch.
-Downloads/builds use the user cache. Keep assets/, vim/ and the portable marker
-beside the executables.
-
-This update uses protocol v3. Older v2 updaters reject the new executables before
-replacement, so users of those versions must fully extract the new portable
-archive once for this transition. Existing v2 transaction records may only be
-recovered, rolled back or cleaned up; their two-program payloads are not applied.
-
-An existing system authentication agent is
-used first. Only a required authorization with no available agent and a safe
-foreground controlling TTY can start the pkttyagent fallback. Password input goes
-directly to the system agent, never to Tundra's input events or logs. The TUI pauses
-its input loop and restores canonical terminal state for authentication, then
-restores raw mode, alternate screen, mouse, focus, paste, cursor, and redraw.
-Power requests remain fixed logind operations using the same authorization
-strategy. No privileged shell-command fallback is provided.
-
-Diagnostics and validation
---------------------------
-`tundra-cli doctor` reports real/effective UID/GID, NSS user, HOME, XDG paths,
-user/system buses, logind, polkit, pkttyagent and portable installation status. Diagnosis only observes state and never elevates.
-
-Run cargo fmt --check, cargo check --workspace --locked, and
-cargo test --workspace --locked for development validation. Linux-specific tests
-must run on Linux. A normal terminal session should report the launching user's
-id -u, id -ru, id -g, HOME, and USER in Tundra Terminal. Root launch must fail before
-entering the UI. Test forged USER/HOME, missing buses, first/repeated Appearance,
-file permissions, and terminal restoration as well as successful paths.
-
-Automated rollback tests use temporary portable directories. Arch package smoke
-tests are explicitly read-only; fixture and query results do not validate real
-package writes. Do not run destructive package transactions on a development host.
-WSL tests do not substitute for host desktop-session, hardware or
-physical-terminal checks.
+Linux-specific tests run on Linux. Use the PTY and isolated-systemd scripts in
+scripts/tests/ for terminal and privileged-service checks. Keep package write
+tests and root startup tests in disposable environments.
