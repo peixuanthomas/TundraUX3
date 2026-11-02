@@ -1,99 +1,99 @@
-# UI 设计与验收要求
+# UI design and acceptance requirements
 
-本文件适用于首页、设置、账户、文件管理、启动器、系统管理、工具栏和弹窗，包括 AutoAdmin（AA）。新增页面与修改后的页面都按此检查。
+This document applies to Home, Settings, accounts, file management, Launcher, system management, toolbars, and dialogs, including AutoAdmin (AA). Check both new and modified pages against these requirements.
 
-## 文案与操作入口
+## Text and action entry points
 
-- 按钮直接说明动作和对象，已有快捷键紧邻动作文字显示。
-- 常用操作使用可见按钮和选项，完整按键说明放在 F1 帮助。
-- 空状态、详情和状态栏分别提供有用信息；错误消息说明具体原因和下一步。
-- 中英文文案同步修改，修改后检查文字宽度、布局和点击区域。
-- 页面操作放在内容区右下方，搜索、筛选、刷新和路径导航放在顶部。每页最多直接显示五个操作，低频操作放入“更多”或“高级”。
-- 主操作位于最右侧，危险操作使用危险色。依赖选中项的按钮在无选中时保持可见并禁用。
-- “更多操作”在内容区居中，尺寸跟随最长选项和选项数量。小窗口允许滚动和按钮换行，当前选项始终可见。
+- Buttons state the action and its object directly, with any existing shortcut displayed next to the action text.
+- Common operations use visible buttons and options; complete keyboard instructions belong in F1 help.
+- Empty states, details, and status bars each provide useful information; error messages explain the specific cause and next step.
+- Update Chinese and English text together, then check text width, layout, and clickable areas.
+- Place page actions at the bottom right of the content area, with search, filters, refresh, and path navigation at the top. Show at most five actions directly on each page; put less frequent actions under More or Advanced.
+- Place the primary action at the far right and use the danger color for destructive actions. Buttons that depend on a selection remain visible but disabled when nothing is selected.
+- Center More Actions in the content area and size it to the longest option and the number of options. Allow scrolling and button wrapping in small windows, keeping the current option visible.
 
-## 按钮与输入方式
+## Buttons and input methods
 
-按钮状态由共享 Button、Theme 和 RenderContext 处理，页面只传递焦点、选中、禁用等状态。
+The shared Button, Theme, and RenderContext handle button states; pages only pass states such as focused, selected, and disabled.
 
-| 状态 | 显示与行为 |
+| State | Appearance and behavior |
 | --- | --- |
-| 普通 | 使用主题的普通文字和边框 |
-| 鼠标悬停 | 使用主题强调色 |
-| 鼠标按下 | 使用更淡的强调色；共享实现向白色混合 35%，ANSI 使用对应亮色 |
-| 键盘焦点 | 持续使用强调色，有边框的按钮同时强调边框 |
-| 禁用 | 使用 `TundraTheme::disabled_style()`，不响应操作 |
-| 点击完成 | 清除按下和悬停反馈，等待下一次实际鼠标移动 |
+| Normal | Use the theme's normal text and border |
+| Mouse hover | Use the theme's accent color |
+| Mouse pressed | Use a lighter accent color; the shared implementation blends 35% toward white, while ANSI uses the corresponding bright color |
+| Keyboard focus | Keep the accent color active; also accent the border on bordered buttons |
+| Disabled | Use `TundraTheme::disabled_style()` and ignore actions |
+| Click completed | Clear pressed and hover feedback until the next actual mouse movement |
 
-输入方式切换遵循以下规则：
+Follow these rules when switching input methods:
 
-- 初始界面显示键盘选择。有效键盘导航立即移动焦点，实际鼠标移动、点按、拖动或滚动则隐藏键盘焦点提示。
-- 切回键盘后保留逻辑焦点，静止鼠标不高亮另一个按钮；重复上报同一坐标不切换输入方式。
-- 按钮在同一目标内按下并松开后执行。拖出、失焦、缩放或页面切换取消待执行动作。
-- 双击要求第一次已松开，第二次在 500 毫秒内按下同一目标和单元格。滚动、拖动、键盘输入、失焦或缩放清除连续点击记录。
-- 弹窗只响应最上层控件，被遮挡的页面不接收悬停、按下或文字输入。Toast 不接管焦点。
-- 窗口失焦时隐藏键盘强调并保留逻辑焦点；当前页面和已选记录的高亮独立于输入方式。
-- 文字输入栏选中后持续使用强调色，并在实际位置显示闪烁下划线光标。上下键切换字段，左右键移动光标；密码保持遮罩，长文字随光标滚动。
+- Initially show the keyboard selection. Valid keyboard navigation moves focus immediately; actual mouse movement, taps, drags, or scrolling hide the keyboard focus indicator.
+- Preserve logical focus when switching back to the keyboard. A stationary mouse must not highlight another button; repeated reports of the same coordinates must not switch the input method.
+- Activate a button only after pressing and releasing within the same target. Dragging outside, losing focus, resizing, or changing pages cancels the pending action.
+- A double click requires the first click to have been released and the second press to occur on the same target and cell within 500 milliseconds. Scrolling, dragging, keyboard input, focus loss, or resizing clears the consecutive-click record.
+- Only controls in the topmost dialog respond. Covered pages receive no hover, press, or text input. Toasts do not take focus.
+- Hide keyboard emphasis when the window loses focus, while preserving logical focus. Highlighting of the current page and selected records is independent of the input method.
+- Keep selected text fields in the accent color and show a blinking underscore cursor at the actual position. Up/Down switches fields; Left/Right moves the cursor. Passwords remain masked, and long text scrolls with the cursor.
 
-## 动画与页面层次
+## Animation and page hierarchy
 
-动画用于说明页面从哪里来、回到哪里去，焦点、滚动和文字输入始终立即反馈。
+Animations show where pages come from and return to. Focus, scrolling, and text input always respond immediately.
 
-- 键盘操作直接显示最终布局。鼠标和触屏打开页面、弹窗或菜单时，边框从入口展开，关闭时返回同一入口；右键菜单没有入口坐标时从自身中心展开。
-- 详情在宽窗口中向右展开、列表向左收拢，窄窗口使用上下分栏。屏幕键盘从底部开合，相关布局使用同一动画进度。
-- 移动中的页面只绘制边框与底色，正文在开合结束后显示。关闭上层弹窗时，下层页面保持原状。
-- 默认过渡时间为页面 220ms、弹窗 180ms、菜单 160ms，速度曲线为前 25% 加速、中间 50% 匀速、后 25% 减速。
-- 设置提供动画速度、九段时长、恢复默认和减少动态效果。阶段范围为 1～2000ms；恢复默认同时恢复 100% 速度和全部阶段时长。
-- 动画中途切换键盘、反向开合或缩放时立即呈现正确状态。移动后的控件不使用旧坐标响应点击。
-- 速度曲线、计时、展开方向和分栏尺寸计算放在 `crates/ui`，Shell 管理输入来源、页面顺序和弹窗来源。
+- Keyboard actions display the final layout immediately. When a mouse or touchscreen opens a page, dialog, or menu, its border expands from the entry point and returns there on closing. A context menu without entry-point coordinates expands from its own center.
+- In wide windows, details expand to the right and the list contracts to the left; narrow windows use vertically stacked panes. The screen keyboard opens and closes from the bottom, and related layouts use the same animation progress.
+- Moving pages draw only borders and background colors; body content appears when opening or closing finishes. Closing an upper dialog leaves the underlying page unchanged.
+- Default transitions take 220ms for pages, 180ms for dialogs, and 160ms for menus. The speed curve accelerates for the first 25%, remains constant for the middle 50%, and decelerates for the final 25%.
+- Settings provides animation speed, nine phase durations, reset to defaults, and reduced motion. Each phase ranges from 1 to 2000ms; resetting restores both 100% speed and all phase durations.
+- Switching to the keyboard, reversing an opening/closing transition, or resizing during an animation must immediately produce the correct state. Moved controls must not respond to clicks at old coordinates.
+- Speed curves, timing, expansion directions, and pane-size calculations belong in `crates/ui`; Shell manages input sources, page order, and dialog origins.
 
-## 页面、导航与全局栏
+## Pages, navigation, and global bars
 
-- `ScreenCompositor` 统一绘制标题栏、返回按钮、状态栏和时钟。页面只绘制 `ShellFrameLayout.main` 及自身弹层。
-- 每次打开页面创建独立实例。页面状态、任务结果和焦点恢复核对实例编号，迟到结果不进入重新打开的页面。
-- Shell 导航管理器负责进入、覆盖和返回。Esc 与返回按钮先关闭弹窗或完成页内操作，再按打开路径逐层返回。
-- 按住 Esc 不连续退出多层。命令行和 Vim 正文的按键交给子终端，外层返回按钮仍提供关闭确认。
-- 运行中的页面关闭时提供“继续后台运行／取消任务并关闭／留在页面”。选择取消后等待进程停止和清理完成。
-- Vim 模式显示完整的 Vim 终端画面，普通编辑器菜单和状态行不覆盖其模式、选区、命令行或错误提示。
-- 临时提示使用共享 `Surface`，边框形状和颜色跟随主题，成功、警告和危险类型使用对应提示色。
+- `ScreenCompositor` draws the title bar, Back button, status bar, and clock centrally. Pages draw only `ShellFrameLayout.main` and their own overlays.
+- Create a separate instance each time a page opens. Check instance IDs for page state, task results, and focus restoration so that late results cannot enter a reopened page.
+- The Shell navigation manager handles entry, overlays, and return navigation. Esc and the Back button first close dialogs or complete page-local actions, then return one level at a time along the opening path.
+- Holding Esc must not exit multiple levels in succession. Keys in Command Line and the Vim editing area go to the child terminal; the outer Back button still offers close confirmation.
+- Closing a page with running work offers Continue in background / Cancel task and close / Stay on page. After cancellation is chosen, wait for the process to stop and cleanup to finish.
+- Vim mode displays the full Vim terminal. The ordinary editor's menus and status line must not cover Vim's mode, selection, command line, or error messages.
+- Temporary messages use the shared `Surface`, with border shape and color following the theme. Success, warning, and danger messages use their respective message colors.
 
-## 屏幕键盘、表单与选择弹窗
+## Screen keyboard, forms, and selection dialogs
 
-- 屏幕键盘入口位于右下角。普通页面展开键盘后折叠标题栏、隐藏状态栏并为内容留出空间；AA 只调整顶层弹窗的位置。
-- 弹窗和操作按钮始终位于键盘上方。窗口空间不足时提示扩大窗口，不用键盘覆盖表单。
-- 粘贴位于键盘底排左端，收起位于右端。实体按键反馈与鼠标修饰键状态分别管理，失焦或缩放后清除。
-- 键盘按键使用中性边框和可读文字，文字对比度至少 4.5:1；按下或锁定时使用强调色填充。
-- 填写弹窗使用共享 `FormDialog`。Enter 移动到下一栏并在最后一栏确认，空格或点按切换开关，Ctrl+Enter 直接确认，F10 激活默认确认按钮。
-- 长表单滚动时保持当前字段及确认、取消按钮可达。密码在画面和控件快照中都保持遮罩。
-- 软件包页使用“已安装、更新、搜索”侧栏，设置页复用相同布局。Tab/Shift+Tab 切换主分类，方向键选择项目，Enter/空格执行。
-- 数值项通过弹窗直接输入或使用减号／加号调整；AA 策略和屏幕超时使用选择弹窗。
+- Place the screen keyboard entry point at the bottom right. On ordinary pages, opening the keyboard collapses the title bar, hides the status bar, and makes room for content; AA only adjusts the position of the topmost dialog.
+- Keep dialogs and action buttons above the keyboard. When the window is too small, ask the user to enlarge it instead of covering the form with the keyboard.
+- Place Paste at the left end of the keyboard's bottom row and Hide at the right. Manage physical-key feedback separately from mouse modifier-key state, and clear both after focus loss or resizing.
+- Keyboard keys use neutral borders and readable text with a contrast ratio of at least 4.5:1; pressed or latched keys use an accent-color fill.
+- Input dialogs use the shared `FormDialog`. Enter moves to the next field and confirms from the last field; Space or a tap toggles switches; Ctrl+Enter confirms directly; F10 activates the default confirmation button.
+- Keep the current field and the Confirm and Cancel buttons reachable when scrolling long forms. Passwords remain masked in both the rendered screen and control snapshots.
+- The Packages page uses an Installed, Updates, Search sidebar, and Settings reuses the same layout. Tab/Shift+Tab switches main categories, arrow keys select items, and Enter/Space activates them.
+- Numeric options use dialogs for direct entry or adjustment with minus/plus controls; AA policy and screen timeout use selection dialogs.
 
-## 列表与排序
+## Lists and sorting
 
-软件包、服务、进程、计划任务和文件管理使用统一多选行为，适用范围见[列表多选](list-selection.md)。
+Packages, services, processes, scheduled tasks, and file management use consistent multi-selection behavior. See [list selection](list-selection.md) for its scope.
 
-- 表头可点击排序，再次点击切换升降序，并显示方向箭头。
-- 文本不区分大小写；数量、百分比、容量和速率按数值比较。文件管理保持文件夹优先。
-- 排序移动整条记录并保留选中对象，刷新后继续应用当前排序。
-- Ctrl+F6 切换排序列，Ctrl+Shift+F6 反转当前列。文件管理和启动器保留各自的排序快捷键。
-- 日志手动排序后暂停自动跟随，返回最新记录时恢复按时间倒序。
+- Clicking a column header sorts by it; clicking again toggles ascending/descending order, with an arrow showing the direction.
+- Text comparison is case-insensitive; counts, percentages, capacities, and rates use numeric comparison. File management keeps folders first.
+- Sorting moves whole records and preserves the selected objects; the current sort remains applied after refresh.
+- Ctrl+F6 switches the sort column, and Ctrl+Shift+F6 reverses the current column. File management and Launcher keep their own sorting shortcuts.
+- Manually sorting logs pauses automatic following; returning to the latest records restores reverse chronological order.
 
-## 验收
+## Acceptance checks
 
-每种输入方式分别完成完整流程，不用另一种输入补足缺失操作。鼠标和触屏验收需要终端转发对应事件；自动触屏测试使用无悬停的按下、松开和拖动模型。
+Complete each workflow separately with each input method, without using another method to supply missing actions. Mouse and touch acceptance checks require a terminal that forwards the corresponding events; automated touch tests use presses, releases, and drags without hover.
 
-| 工作流 | 键盘 | 鼠标 | 触屏 |
+| Workflow | Keyboard | Mouse | Touchscreen |
 | --- | --- | --- | --- |
-| 进入、执行、返回 | Tab/方向键、Enter/空格和快捷键 | 可见按钮、列表项和返回按钮 | 直接点按同一目标 |
-| 长列表与长弹窗 | 方向键、翻页、Home/End | 滚轮或拖动滚动条 | 拖动滚动条 |
-| 文字编辑与提交 | 输入、删除、焦点导航和提交键 | 屏幕输入工具及提交/取消按钮 | 屏幕输入工具及可点按按钮 |
-| 菜单与危险操作 | 菜单、确认、取消和焦点恢复 | 可见入口、确认和取消 | 点按入口，不依赖悬停或右键 |
-| 失焦、缩放与页面变化 | 保留逻辑选择并恢复焦点 | 取消旧按下和拖动 | 取消旧手势和坐标 |
+| Enter, act, and return | Tab/arrows, Enter/Space, and shortcuts | Visible buttons, list items, and Back button | Tap the same targets directly |
+| Long lists and dialogs | Arrows, page navigation, Home/End | Wheel or scrollbar dragging | Scrollbar dragging |
+| Text editing and submission | Typing, deletion, focus navigation, and submit keys | On-screen input tools and Submit/Cancel buttons | On-screen input tools and tappable buttons |
+| Menus and destructive actions | Menus, confirmation, cancellation, and focus restoration | Visible entry points, confirmation, and cancellation | Tap entry points without relying on hover or right-click |
+| Focus loss, resizing, and page changes | Preserve logical selection and restore focus | Cancel old presses and drags | Cancel old gestures and coordinates |
 
-至少检查以下场景：
+Check at least the following scenarios:
 
-1. 只用键盘完成页面或弹窗流程，焦点始终清楚可见。
-2. 依次验证鼠标移入、按下、松开、移出和再次移动后的颜色。
-3. 鼠标停在一个按钮上时用键盘选择另一个按钮，确认静止鼠标不抢回高亮。
-4. 验证弹窗遮挡、禁用按钮、拖出取消、失焦和缩放后的状态清理。
-5. 对共享按钮和完整弹窗流程检查实际颜色、命中位置及终端表现。
+1. Complete a page or dialog workflow using only the keyboard, with focus clearly visible throughout.
+2. Verify colors after mouse entry, press, release, exit, and subsequent movement, in that order.
+3. With the mouse resting on one button, select another using the keyboard and confirm that the stationary mouse does not reclaim the highlight.
+4. Verify dialog occlusion, disabled buttons, drag-out cancellation, and state cleanup after focus loss and resizing.
+5. Check actual colors, hit locations, and terminal behavior for shared buttons and complete dialog workflows.

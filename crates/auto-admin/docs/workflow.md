@@ -1,59 +1,59 @@
-# AutoAdmin 批准与交互
+# AutoAdmin approval and interaction
 
-`auto-admin` 管理任务、输入和收尾，Shell 管理弹窗与焦点，watchdog 监督线程和 panic。分工见 [README](../README.md)。
+`auto-admin` manages tasks, input, and cleanup; Shell manages dialogs and focus; watchdog supervises threads and panics. See the [README](../README.md) for responsibilities.
 
-## 请求与批准
+## Requests and approval
 
-“设置 → 系统 → AutoAdmin”保存 `config.toml` 的 `auto_admin`：
+Settings → System → AutoAdmin saves `auto_admin` in `config.toml`:
 
-| 设置 | 行为 |
+| Setting | Behavior |
 | --- | --- |
-| `manual`（默认） | 显示操作、目标和非密码参数，用户批准后执行 |
-| `automatic` | 跳过 AA 确认，保留系统授权和程序问题 |
-| `deny` | 在启动系统命令前拒绝 |
-| 配置不可读 | 拒绝新请求 |
+| `manual` (default) | Show the operation, target, and non-password arguments; execute after user approval |
+| `automatic` | Skip AA confirmation while retaining system authorization and program prompts |
+| `deny` | Reject before starting the system command |
+| Unreadable configuration | Reject new requests |
 
-内置管理、账户写入和电源操作从 AA 进入，普通查询不需要批准。AA 不拦截用户自己输入的命令或外部程序的系统弹窗。
+Built-in management operations, account writes, and power operations go through AA; ordinary queries do not require approval. AA does not intercept commands entered by users themselves or system dialogs from external programs.
 
-手动确认默认聚焦“同意”，Tab/Shift+Tab/左右键切换，Enter/空格批准，拒绝或 Esc 关闭。打开弹窗的按键连发不会连续批准后续问题；没有松键报告的终端使用 750ms 间隔拦截同键连发。
+Manual confirmation initially focuses Approve. Tab/Shift+Tab/Left/Right switch focus, Enter/Space approves, and Reject or Esc closes the dialog. Repeats of the key that opened the dialog cannot approve subsequent prompts in succession; terminals without key-release reports use a 750ms interval to block repeated presses of the same key.
 
-任务只启动一次，写操作不自动重放。启动失败或 panic 清除待回答问题并保存报告，无法确定结果时显示“结果未知”。
+Tasks start only once, and write operations are not replayed automatically. Startup failures or panics clear pending prompts and save a report; an indeterminate outcome is shown as "Outcome unknown".
 
-## 运行中的输入
+## Input during execution
 
-| 焦点或操作 | 行为 |
+| Focus or action | Behavior |
 | --- | --- |
-| 终端焦点 | 文字、回车、方向键、功能键、组合键和粘贴交给任务 |
-| 密码输入 | 画面和外部快照保持遮罩，输入不写入历史 |
-| 后端编号问题 | 输入编号并按 Enter |
-| F6 | 在终端与按钮之间切换 |
-| 按钮焦点 | Tab/方向键选择，Enter/空格执行，Esc 返回终端 |
-| Shift+PageUp/PageDown、滚轮 | 查看历史输出 |
+| Terminal focus | Send text, Enter, arrow keys, function keys, key combinations, and paste to the task |
+| Password input | Keep the screen and external snapshots masked; do not write input to history |
+| Numbered backend prompt | Enter the number and press Enter |
+| F6 | Switch between the terminal and buttons |
+| Button focus | Select with Tab/arrow keys, activate with Enter/Space, and return to the terminal with Esc |
+| Shift+PageUp/PageDown, mouse wheel | Browse output history |
 
-软件包通过真实 PTY 显示原生 y/n、配置冲突和安装脚本问题，并保留 y、n、Enter 按钮。输入只发送到当前未结束的请求。
+Package operations display native y/n, configuration-conflict, and installation-script prompts through a real PTY, while retaining y, n, and Enter buttons. Input is sent only to the current unfinished request.
 
-任务仍属于当前页面时，F12 或返回按钮打开关闭确认，可继续后台运行、取消并关闭或留在页面。继续后台运行后销毁页面，AA 在需要输入时自动显示。
+While a task still belongs to the current page, F12 or the Back button opens a close confirmation with options to continue in the background, cancel and close, or remain on the page. Continuing in the background destroys the page; AA appears automatically when input is needed.
 
-完成、失败或断线后保留输出，Enter/空格/Esc 或“关闭”退出。管理页面可通过 Ctrl+T 重新打开对应输出。
+Output is retained after completion, failure, or disconnection. Enter/Space/Esc or Close exits. Management pages can reopen the corresponding output with Ctrl+T.
 
-## 终止与强制结束
+## Termination and forced termination
 
 ```mermaid
 flowchart TD
-    Stop[明确点击终止任务] --> Term[停止输入并发送 SIGTERM]
-    Term --> Wait[等待结果]
-    Wait --> Done[任务返回]
-    Wait -->|10 秒仍未结束| Warn[显示风险并继续等待]
-    Warn -->|再次明确选择杀死| Kill[发送 SIGKILL]
+    Stop[Explicitly click Terminate task] --> Term[Stop input and send SIGTERM]
+    Term --> Wait[Wait for result]
+    Wait --> Done[Task returns]
+    Wait -->|Still running after 10 seconds| Warn[Show risks and keep waiting]
+    Warn -->|Explicitly choose Kill again| Kill[Send SIGKILL]
     Kill --> Wait
 ```
 
-SIGTERM 请求正常退出，SIGKILL 强制终止。只有明确的终止操作才发送信号，普通关闭、取消或断线不会触发。
+SIGTERM requests a normal exit; SIGKILL forces termination. Signals are sent only after an explicit termination action, not on ordinary closing, cancellation, or disconnection.
 
-Linux 使用 pidfd 保存稳定进程引用并跟踪后代，避免 PID 复用后操作错误进程。助手等待当前子进程结束后收尾，不结束 Shell 或整个授权会话。
+Linux uses pidfd to retain stable process references and track descendants, preventing actions against the wrong process after PID reuse. The helper waits for the current child process to exit before cleanup; it does not terminate Shell or the entire authorization session.
 
-仅等待共享 D-Bus 服务的任务没有可单独终止的本地进程，只提供取消并禁用杀死按钮。中断后先查询真实系统状态，再决定下一步。
+Tasks that only wait for a shared D-Bus service have no local process that can be terminated independently. They offer cancellation only, with the Kill button disabled. After interruption, query the actual system state before deciding the next step.
 
-## 界面
+## Interface
 
-AA 使用深蓝底、青色边框、分栏标识和背景压暗，窄窗口隐藏左侧标识。弹窗随内容调整尺寸，完成后收起空白输出并保留历史。按钮、动画和焦点遵循 [UI 要求](../../../docs/UI-requirements.md)。
+AA uses a dark blue background, cyan borders, a separate branding panel, and background dimming. Narrow windows hide the left branding panel. Dialogs resize to fit their contents; after completion, blank output space collapses while history remains. Buttons, animations, and focus follow the [UI requirements](../../../docs/UI-requirements.md).

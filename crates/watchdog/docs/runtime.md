@@ -1,37 +1,37 @@
-# Watchdog 运行、恢复与报告
+# Watchdog runtime, recovery, and reports
 
-宿主初始化与任务 API 见 [crate README](../README.md)。
+See the [crate README](../README.md) for host initialization and task APIs.
 
-## 运行约束
+## Runtime constraints
 
-每个进程创建一个 `WatchdogRuntime`，提供进程级 panic 边界、托管任务、恢复策略、操作 journal 和事故报告。`ManagedTaskGroup` 统一管理线程与 Tokio 任务。
+Each process creates one `WatchdogRuntime`, providing a process-level panic boundary, managed tasks, recovery policies, operation journals, and incident reports. `ManagedTaskGroup` manages threads and Tokio tasks through a common interface.
 
-长期线程通过 `spawn_thread_with_cancellation` 接收停止请求，并在等待期间检查 `ThreadCancellation`。系统信号监听、断线重试和阻塞读取都需要响应取消，避免超出关闭期限。
+Long-lived threads receive stop requests through `spawn_thread_with_cancellation` and check `ThreadCancellation` while waiting. System-signal listeners, reconnection retries, and blocking reads must all respond to cancellation to avoid exceeding the shutdown deadline.
 
-重启策略由 `ReplaySafety` 决定：只有 `Idempotent` 或具有恢复处理器的 `Checkpointed` 任务可以重启，`Never + RestartTask` 会被拒绝。
+Restart policies are determined by `ReplaySafety`: only `Idempotent` tasks or `Checkpointed` tasks with recovery handlers can restart. `Never + RestartTask` is rejected.
 
-## 操作 journal
+## Operation journals
 
-`OperationGuard` 在以下目录原子维护 journal：
+`OperationGuard` atomically maintains journals in:
 
 ```text
 <data>/watchdog/operations/<app-id>/
 ```
 
-操作 commit 后删除 journal，未提交的 Drop 标记为 `interrupted`。无法安全恢复时保留 journal 并阻止同类变更，等待人工处理。
+Committing an operation deletes its journal; Drop without a commit marks it `interrupted`. When safe recovery is not possible, the journal is retained and changes of the same kind are blocked pending manual handling.
 
-## 事故报告与保留
+## Incident reports and retention
 
-活动运行标记位于 `<data>/watchdog/runs/`。每起事故生成 JSON 和文本报告，主报告目录不可用时尝试 fallback，最后写入 stderr。
+Active run markers reside in `<data>/watchdog/runs/`. Each incident generates JSON and text reports. If the primary report directory is unavailable, fallback is tried, with stderr as the final destination.
 
-持久化前集中脱敏并限制大小：文本最多 4,096 bytes，数组最多 256 项。默认保留最近 30 起、30 天、总量不超过 50 MiB。调用方只提供必要的结构化上下文，不写入密码、令牌、剪贴板或原始输入。
+Centralized redaction and size limits are applied before persistence: up to 4,096 bytes of text and 256 array items. Default retention keeps the latest 30 incidents for up to 30 days, with a total limit of 50 MiB. Callers provide only necessary structured context, excluding passwords, tokens, clipboard contents, and raw input.
 
-正常退出和可捕获的 panic 都应恢复 raw mode、鼠标、备用屏幕、颜色与光标。进程被强制终止后，先重置当前终端，再检查 crashes 报告；下次启动利用未关闭的运行标记补充“原因未知”的记录。
+Both normal exits and catchable panics should restore raw mode, mouse state, alternate screen, colors, and cursor. After forced process termination, reset the current terminal first, then inspect crash reports. At the next startup, unclosed run markers add a record with an unknown cause.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p watchdog
 ```
 
-测试覆盖任务取消、关闭等待、panic 边界、journal、资源清理、报告脱敏与保留策略。真实终端恢复由对应平台的 PTY/ConPTY 测试验证。
+Tests cover task cancellation, shutdown waits, panic boundaries, journals, resource cleanup, report redaction, and retention policies. Real-terminal restoration is validated by PTY/ConPTY tests on the corresponding platform.

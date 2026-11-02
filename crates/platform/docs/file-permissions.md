@@ -1,29 +1,29 @@
-# 文件权限与归属
+# File permissions and ownership
 
-在文件管理器选择一个或多个项目，打开“属性 → 权限与归属”。文件和目录可分别设置所有者、用户组和其他用户的读、写、执行权限，默认不递归。
+Select one or more items in File Explorer and open Properties → Permissions and Ownership. Owner, group, and other users' read, write, and execute permissions can be set separately for files and directories. Operations are non-recursive by default.
 
-混合值显示 `[-]`，未修改的项保留各自原值。所有者和用户组可按名称或编号查找，也可保持不变。
+Mixed values appear as `[-]`; unchanged items retain their individual original values. Owners and groups can be looked up by name or ID, or left unchanged.
 
-## 递归范围与写入
+## Recursive scope and writes
 
-修改通过 AA 和系统授权助手执行：
+Changes are performed through AA and the system authorization helper:
 
-1. 助手扫描范围，分页列出完整路径、差异和跳过原因。
-2. 用户确认后再次扫描并核对文件身份。
-3. 符号链接、子挂载点和特殊文件跳过，重叠选择与硬链接去重。
-4. 目录权限最后修改，避免提前失去进入子目录的权限。
+1. The helper scans the scope and lists full paths, differences, and reasons for skipping in pages.
+2. After user confirmation, it rescans and checks file identity.
+3. Symbolic links, nested mount points, and special files are skipped; overlapping selections and hard links are deduplicated.
+4. Directory permissions are changed last to avoid losing access to subdirectories prematurely.
 
-目标按 Linux 原始文件名传递，清单以可见形式展示换行等特殊字符。已经符合目标的权限或归属不重复写入。
+Targets are passed using their raw Linux filenames; the listing renders special characters such as newlines visibly. Permissions or ownership already matching the target are not written again.
 
-普通权限修改保留特殊权限位。额外 ACL 不在此页面编辑，默认 ACL 保留；修改用户组权限会影响额外规则的权限上限，改变归属可能由 Linux 清除特殊权限或文件能力，界面会在确认前提示。
+Ordinary permission changes preserve special permission bits. Additional ACL entries are not edited on this page, and default ACLs are preserved. Changing group permissions affects the permission ceiling for additional rules; Linux may clear special permissions or file capabilities when ownership changes. The interface explains this before confirmation.
 
-取消或失败会停止后续修改，并列出已完成、失败和未处理的项目；已完成的修改保留。
+Cancellation or failure stops further changes and lists completed, failed, and unprocessed items; completed changes remain in place.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p platform file_permissions --lib
 cargo test --locked -p ui --test file_permissions
 ```
 
-Shell 测试同时覆盖键盘、鼠标和无悬停触屏模型。Windows/macOS 页面显示当前平台不支持该操作。
+Shell tests cover the keyboard, mouse, and touchscreen model without hover. On Windows/macOS, the page indicates that the operation is unsupported on the current platform.

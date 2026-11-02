@@ -1,38 +1,38 @@
-# Windows 软件包
+# Windows packages
 
-Windows 的“启动器 → 软件包”使用 WinGet，提供已安装、更新、搜索和详情，支持安装、卸载、升级所选软件包和全部升级。
+Launcher → Packages on Windows uses WinGet, offering Installed, Updates, Search, and Details, with support for installing, removing, and upgrading selected packages and upgrading all packages.
 
-## 使用前准备
+## Prerequisites
 
-安装提供 `winget.exe` 的 App Installer，并确保当前用户能在终端运行 WinGet。首次使用时检查版本和软件源，按 WinGet 提示完成初始化及协议确认：
+Install App Installer, which provides `winget.exe`, and ensure the current user can run WinGet in a terminal. On first use, check the version and source, then follow WinGet prompts to initialize and accept agreements:
 
 ```powershell
 winget --version
 winget search --id Microsoft.PowerToys --exact --source winget
 ```
 
-Tundra 固定使用 `winget` 源。缺少 WinGet、软件源不可用或协议尚未接受时，页面显示具体失败原因。
+Tundra always uses the `winget` source. If WinGet is missing, the source is unavailable, or agreements have not been accepted, the page shows the specific failure reason.
 
-列表解析支持英文和简体中文。无法识别的表头、被截断的软件包 ID 或版本会被拒绝，避免对错误目标执行操作。
+List parsing supports English and Simplified Chinese. Unrecognized headers and truncated package IDs or versions are rejected to avoid operating on the wrong target.
 
-## 操作与权限
+## Operations and permissions
 
-默认打开“已安装”，Tab/Shift+Tab 切换已安装、更新和搜索，详情中显示可用操作。Windows 页面不提供 Linux 的软件源编辑、数据库修复或配置冲突功能。
+Installed opens by default; Tab/Shift+Tab switches between Installed, Updates, and Search, and details show available actions. The Windows page does not offer Linux repository editing, database repair, or configuration-conflict features.
 
-软件包修改经过 AA 确认，输出和退出结果显示在任务窗口。AA 负责应用内批准，安装器所需的管理员权限由 Windows/UAC 处理，部分安装器会打开自己的图形窗口。
+Package changes require AA confirmation, with output and exit results shown in the task window. AA handles approval within the application; Windows/UAC handles administrator privileges required by installers. Some installers open their own graphical windows.
 
-执行过程中保持 Tundra 运行并等待任务结束。失败后先根据输出和列表刷新检查实际状态，已完成的安装、卸载或升级不会自动回滚。
+Keep Tundra running during execution and wait for the task to finish. After failure, first check the actual state using the output and a refreshed list. Completed installations, removals, or upgrades are not automatically rolled back.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p platform --lib winget
 ```
 
-在已完成 WinGet 准备的普通 Windows 用户终端运行只读实机检查：
+Run the read-only real-machine check in a regular Windows user's terminal after completing WinGet setup:
 
 ```powershell
 cargo test --locked -p platform --lib windows_winget_readonly_smoke -- --ignored --nocapture
 ```
 
-该用例只查询版本、已安装、搜索、详情和更新列表。真实写入验收使用可恢复的 Windows 环境，分别检查 AA、UAC、安装器窗口、成功与失败输出及修改后的列表刷新。
+This case queries only the version, installed packages, search, details, and update lists. Verify real writes in a recoverable Windows environment, checking AA, UAC, installer windows, success and failure output, and list refreshes after changes separately.

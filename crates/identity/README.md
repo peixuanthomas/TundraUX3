@@ -1,33 +1,33 @@
 # identity
 
-`identity` 负责应用身份与 UX 权限：Linux 附着当前进程的系统用户，Windows/macOS 使用 Tundra 本地账户。
+`identity` handles application identity and UX permissions: Linux attaches to the current process's system user, while Windows/macOS use Tundra local accounts.
 
-## 模块
+## Modules
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| `identity` | `AuthSession`、身份来源和用户账户 |
-| `backend` | 身份后端接口 |
-| `credentials` | 密码校验、Argon2 哈希与验证 |
-| `session_service` | 登录会话、失败计数和锁定 |
-| `user_service` | 本地账户管理 |
-| `authorization` | Guest/User/Admin 角色与权限检查 |
-| `linux` | 当前 Linux 进程用户 |
+| `identity` | `AuthSession`, identity sources, and user accounts |
+| `backend` | Identity backend interface |
+| `credentials` | Password validation, Argon2 hashing, and verification |
+| `session_service` | Login sessions, failure counts, and lockouts |
+| `user_service` | Local account management |
+| `authorization` | Guest/User/Admin roles and permission checks |
+| `linux` | Current Linux process user |
 
-## 本地账户规则
+## Local account rules
 
-以下规则用于 Windows/macOS 和测试后端：
+The following rules apply to Windows/macOS and test backends:
 
-- 密码使用随机 salt 的 Argon2 哈希，长度为 10–256 个字符，不能全为空白或等于规范化用户名。
-- 用户名匹配不区分大小写，未知用户与错误密码返回相同的无效凭据结果。
-- 连续 5 次认证失败锁定 5 分钟，失败与锁定信息持久化。
-- 认证会话只保存在内存中。
+- Passwords use Argon2 hashes with random salts. They must contain 10–256 characters and cannot consist entirely of whitespace or equal the normalized username.
+- Username matching is case-insensitive. Unknown users and incorrect passwords return the same invalid-credentials result.
+- Five consecutive authentication failures cause a five-minute lockout. Failure and lockout information is persisted.
+- Authentication sessions are kept only in memory.
 
-UX 角色分为 Guest、User 和 Admin。文件与个人资料操作面向 User/Admin；用户管理、Command Line、Launcher 管理、诊断修复和设置管理需要 Admin。
+UX roles are Guest, User, and Admin. File and profile operations are available to User/Admin; user management, Command Line, Launcher management, diagnostic repairs, and settings management require Admin.
 
-Linux 的系统账户、密码和锁定策略由操作系统管理，保存的 UX 角色不授予 Linux 权限。系统账户通过 `tundra-cli users` 和系统授权流程管理，CLI `config` 不读写身份字段。
+Linux system accounts, passwords, and lockout policies are managed by the operating system. Saved UX roles do not grant Linux permissions. System accounts are managed through `tundra-cli users` and the system authorization workflow; CLI `config` does not read or write identity fields.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p identity

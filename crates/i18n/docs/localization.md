@@ -1,20 +1,20 @@
-# 语言资源与恢复
+# Language resources and recovery
 
-TundraUX3 提供 `en-US` 和 `zh-CN`，默认语言为 `en-US`。`zh-Hans` 配置会规范化为 `zh-CN`，语言与视觉主题分别保存。
+TundraUX3 provides `en-US` and `zh-CN`, with `en-US` as the default language. A `zh-Hans` setting is normalized to `zh-CN`. Language and visual theme are saved separately.
 
-## 切换与重新加载
+## Switching and reloading
 
-在“区域与时间”选择语言并确认。再次选择当前语言也会重新读取目录和资源，便于加载更新后的翻译。
+Select and confirm a language in Region & Time. Selecting the current language again also rereads the catalog and resources, allowing updated translations to load.
 
-加载、校验和配置保存全部成功后，Shell 一次性发布新的不可变快照；失败时保留当前语言和配置。首次设置确认语言后，后续向导使用该语言。
+Only after loading, validation, and configuration saving all succeed does Shell publish the new immutable snapshot in a single step. On failure, the current language and configuration are retained. After confirming the language during initial setup, the rest of the wizard uses that language.
 
-`tundra-cli config set language zh-CN` 使用相同的目录和校验。通过 CLI 修改配置后，现有 Shell 在下次启动或重新确认语言时读取。
+`tundra-cli config set language zh-CN` uses the same catalog and validation. After a CLI configuration change, an existing Shell reads it at its next startup or when the language is confirmed again.
 
-## 目录结构
+## Directory structure
 
-源码资源位于 `crates/ascii-assets/assets/locales`，发布资源位于 `assets/locales`，与 `themes` 平级。
+Source resources reside in `crates/ascii-assets/assets/locales`; release resources reside in `assets/locales`, alongside `themes`.
 
-每个语言包包含：
+Each language pack contains:
 
 ```text
 <language>/
@@ -24,7 +24,7 @@ TundraUX3 提供 `en-US` 和 `zh-CN`，默认语言为 `en-US`。`zh-Hans` 配�
   recovery/
 ```
 
-`manifest.toml` 示例：
+Example `manifest.toml`:
 
 ```toml
 format_version = 1
@@ -32,11 +32,11 @@ code = "zh-CN"
 native_name = "简体中文"
 ```
 
-目录名与 `code` 使用规范语言代码，`.ftl` 文件按公共组件、业务模块和启动恢复组织。
+The directory name and `code` use the canonical language code. `.ftl` files are organized by shared components, application modules, and startup recovery.
 
-## 编写消息
+## Writing messages
 
-使用稳定消息 ID、完整句子和命名参数：
+Use stable message IDs, complete sentences, and named arguments:
 
 ```ftl
 files-copied =
@@ -46,28 +46,28 @@ files-copied =
     }
 ```
 
-翻译可使用不同的复数分支，但参数集合必须与英文契约一致。缺失翻译回退英文，构建时生成 `i18n::ids`、`MESSAGE_IDS` 和 `MESSAGE_CONTRACTS`。
+Translations may use different plural branches, but their argument sets must match the English contracts. Missing translations fall back to English. `i18n::ids`, `MESSAGE_IDS`, and `MESSAGE_CONTRACTS` are generated at build time.
 
-Rust 中使用 `i18n::msg!` 保留消息，使用 `i18n::tr!` 在视图模型或绘制阶段格式化。`LocalizedText::Raw` 承载外部原文。
+In Rust, use `i18n::msg!` to retain messages and `i18n::tr!` to format them in view models or during rendering. `LocalizedText::Raw` carries raw external text.
 
-命令、动作和图标使用稳定 ID 或枚举识别，不判断翻译后的标签。配置键、协议字段、路径、用户输入、第三方输出和原始诊断保持原文。日志使用稳定事件代码和固定语言描述。
+Commands, actions, and icons are identified by stable IDs or enums, not translated labels. Configuration keys, protocol fields, paths, user input, third-party output, and raw diagnostics remain unchanged. Logs use stable event codes and descriptions in a fixed language.
 
-## 默认资源修复
+## Default-resource repair
 
-启动和重新加载时检查默认英文、中文与图形资源：
+Default English, Chinese, and graphical resources are checked at startup and on reload:
 
-- 缺失或损坏的默认文件从内置内容恢复，使用同目录临时文件原子替换。
-- 健康的自定义资源保持不变，缺失默认条目可追加到现有文件。
-- 资源目录不可写时使用内存副本，保存的语言偏好不变。
-- 启动修复结果集中显示，语言重载修复随该次操作报告。
+- Missing or damaged default files are restored from built-in content, with atomic replacement through temporary files in the same directory.
+- Healthy custom resources remain unchanged; missing default entries can be appended to existing files.
+- When the resource directory is not writable, in-memory copies are used and the saved language preference remains unchanged.
+- Startup repair results are shown together; repairs during language reload are reported as part of that operation.
 
-恢复界面提供“自动修复并重启”和“退出”，执行前保存编辑器恢复数据。
+The recovery interface offers "Repair automatically and restart" and "Exit", saving editor recovery data before executing the action.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p i18n
 python3 scripts/check-localization.py
 ```
 
-Shell 集成测试覆盖同语言重载、失败回滚、目录发现和配置写入失败；UI 测试覆盖中文宽度、长文本和命中区域。发布包需要携带完整 `assets/` 目录。
+Shell integration tests cover same-language reloads, rollback on failure, catalog discovery, and configuration write failures. UI tests cover Chinese character widths, long text, and hit regions. Release packages must include the complete `assets/` directory.

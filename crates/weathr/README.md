@@ -1,26 +1,26 @@
 # weathr
 
-`weathr` 是天气场景绘制库，用于各平台的天气应用和空闲画面，Windows/macOS 还用于锁屏。它读取共享快照，不启动系统服务，也不持有全屏终端生命周期。
+`weathr` is a weather-scene rendering library used for weather applications and idle screens on all platforms, and also for lock screens on Windows/macOS. It reads shared snapshots, does not start system services, and does not own the full-screen terminal lifecycle.
 
-## 内嵌绘制
+## Embedded rendering
 
-`EmbeddedDisplay::new` 接收天气快照、翻译函数和尺寸，`render` 返回一帧 Ratatui Buffer，支持调整尺寸。它不会读取终端输入、切换终端模式或直接向终端输出。
+`EmbeddedDisplay::new` accepts a weather snapshot, a translation function, and dimensions; `render` returns a Ratatui Buffer for one frame and supports resizing. It does not read terminal input, switch terminal modes, or write directly to the terminal.
 
-天气、昼夜、季节和动画共同决定房屋、树木、云、雨雪和月相等场景。天气数据与缓存由 [system-services](../system-services/README.md) 提供，Shell 可在启动时预取。
+Weather, day/night, season, and animation together determine scenes such as houses, trees, clouds, rain and snow, and moon phases. Weather data and caching are provided by [system-services](../system-services/README.md), and Shell can prefetch them at startup.
 
-Shell 用同一绘制代码显示天气应用、空闲画面和锁屏。空闲时后台任务继续运行，按键或点按返回原页面，认证和页面状态由 Shell 管理。
+Shell uses the same rendering code for the weather application, idle screen, and lock screen. Background tasks continue while idle, and a key press or tap returns to the previous page; Shell manages authentication and page state.
 
-## 独立锁屏与控制
+## Standalone lock screen and control
 
-锁屏支持 12/24 小时制、终端 resize，以及任意按键或点击进入。宿主负责 watchdog、终端模式和 panic 页面。
+The lock screen supports 12/24-hour time, terminal resizing, and entry with any key or click. The host handles watchdog, terminal modes, and the panic page.
 
-`run_display_blocking_with_control` 接受 `DisplayControl`，让宿主读取已绘制帧并发送正常终端输入。Shell 用它支持外部 CLI 的天气画面与 `wake`，连接、开关和权限仍由 Shell 与 platform 管理。
+`run_display_blocking_with_control` accepts `DisplayControl`, allowing the host to read rendered frames and send normal terminal input. Shell uses it to support external CLI access to weather screens and `wake`; Shell and platform still manage connections, the enable switch, and permissions.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p weathr
 bash scripts/check-weathr-dependency-boundary.sh
 ```
 
-依赖边界检查确保数据绘制不会反向引入 Shell 或系统运行时。
+The dependency-boundary check ensures that data rendering does not introduce a reverse dependency on Shell or the system runtime.

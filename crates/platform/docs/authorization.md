@@ -1,49 +1,49 @@
-# Linux 管理授权与助手连接
+# Linux management authorization and helper connections
 
-`platform::management::client` 和 `authorization` 为 Shell、CLI 提供固定操作、事件接收、授权保留和任务重连。AA 决定是否批准，操作系统决定进程实际权限。
+`platform::management::client` and `authorization` provide Shell and CLI with fixed operations, event reception, retained authorization, and task reconnection. AA decides whether to approve an operation; the operating system determines the process's actual permissions.
 
-## 首次授权
+## Initial authorization
 
-1. 需要内置提权时，通过 sudo 启动 `tundra-cli __privilege-session`。
-2. 密码只经标准输入交给 sudo，验证后从内存清除。
-3. sudo 使用带命令的 `-k`，不读取或刷新其他程序的密码缓存。
-4. 授权程序继承私有双向连接，后续管理、账户、电源和任务重连复用该连接。
-5. 每次操作仍遵循 AA 的批准策略。
+1. When built-in privilege elevation is needed, start `tundra-cli __privilege-session` through sudo.
+2. Pass the password to sudo only through standard input, then clear it from memory after verification.
+3. sudo uses `-k` with a command and does not read or refresh other programs' password caches.
+4. The authorized program inherits a private bidirectional connection, reused for subsequent management, account, power, and task-reconnection requests.
+5. Each operation still follows AA's approval policy.
 
-这条连接只接受固定请求。普通用户本人资料、密码和系统已允许的电源操作沿用各自的系统授权流程。
+This connection accepts only fixed requests. Normal users' own profile and password changes, and power operations already permitted by the system, follow their respective system authorization flows.
 
-## 连接保护与撤销
+## Connection protection and revocation
 
-| 对象 | 规则 |
+| Object | Rule |
 | --- | --- |
-| 授权程序 | 只持有启动时继承的连接，不开放其他进程可连接的会话 socket |
-| Shell | 防止同用户进程通过 ptrace 或 `/proc` 复制授权 |
-| 连接描述符 | 设置 close-on-exec，不传给外部命令 |
-| 退出、注销或通信失效 | 撤销连接并结束授权程序 |
-| 正常服务错误或过期任务 | 返回错误，保留仍有效的授权会话 |
+| Authorized program | Holds only the connection inherited at startup; does not expose a session socket that other processes can connect to |
+| Shell | Prevents processes owned by the same user from copying authorization through ptrace or `/proc` |
+| Connection descriptors | Set close-on-exec; do not pass them to external commands |
+| Exit, logout, or communication failure | Revoke the connection and terminate the authorized program |
+| Normal service errors or expired tasks | Return an error and retain an authorization session that is still valid |
 
-任务的 `control.sock` 由 root 所有且只接受 root。授权程序核对 `/run/tundraux3-management/<actor>/<operation>/control.sock` 的所有者、权限和任务身份，再将已连接的描述符交给 Shell。新 Shell 需要重新授权后才能重连。
+A task's `control.sock` is owned by root and accepts only root. The authorized program checks the ownership, permissions, and task identity of `/run/tundraux3-management/<actor>/<operation>/control.sock`, then passes the connected descriptor to Shell. A new Shell must authorize again before reconnecting.
 
-SSH 确认使用授权连接提供的真实调用进程、启动时间、sshd 父进程和内核 TCP 状态，不采用调用者自行填写的进程编号或 `SSH_CONNECTION`。
+SSH confirmation uses the actual calling process, start time, sshd parent process, and kernel TCP state supplied through the authorization connection. It does not use caller-supplied process IDs or `SSH_CONNECTION`.
 
-助手通过请求接收当前语言资源副本，在内存中使用，不以 root 身份读取用户语言文件。命令参数、动作名和对象身份保持原值，事务编号通过独立事件返回。
+The helper receives a copy of the current language resources in the request and uses it in memory, without reading user language files as root. Command arguments, action names, and object identities retain their original values; transaction IDs are returned through separate events.
 
-## 固定操作与结果
+## Fixed operations and results
 
-`ManagementAction` 使用稳定动作名、`primary`、`group` 和固定 `values` 描述操作，按钮位置不影响执行内容。`OperationProblem` 返回稳定错误码、下一步和技术详情。
+`ManagementAction` describes operations using stable action names, `primary`, `group`, and fixed `values`; button positions do not affect what executes. `OperationProblem` returns stable error codes, next steps, and technical details.
 
-- 进程信号使用 pidfd 并核对启动标识。
-- 网络配置先保存原配置，再启动独立恢复助手。
-- 软件包写入保留原生命令输出和确认流程。
-- 系统配置通过私有事件交给编辑器，候选内容不进入普通草稿或运行日志。
-- 结果未知时先查询实际状态，不自动重试写入。
+- Process signals use pidfd and check the start identifier.
+- Network configuration saves the original configuration before starting an independent recovery helper.
+- Package writes preserve native command output and confirmation flows.
+- System configuration reaches the editor through private events; candidate content does not enter ordinary drafts or runtime logs.
+- When the result is unknown, query the actual state first; do not automatically retry writes.
 
-相关文档：[系统集成](integration.md)、[Linux 系统管理](linux-management.md)、[系统配置](system-config.md)、[网络与磁盘](network-disks.md)。
+Related documents: [System integration](integration.md), [Linux system management](linux-management.md), [System configuration](system-config.md), [Networks and disks](network-disks.md).
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p platform management:: --lib
 ```
 
-固定命令、身份和输入校验由自动测试覆盖；真实 sudo/polkit 授权在对应 Linux 测试主机验收。
+Automated tests cover fixed commands, identity, and input validation; real sudo/polkit authorization is verified on the corresponding Linux test host.

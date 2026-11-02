@@ -1,33 +1,33 @@
-# 用户管理
+# User management
 
-用户管理从启动器打开。Linux 通过 NSS 枚举 root、服务账户和普通账户，也可按名称精确查询不支持枚举的目录账户。远程目录来源的账户和用户组保持只读；Windows/macOS 使用本地应用账户流程。
+Open User Management from Launcher. Linux enumerates root, service accounts, and regular accounts through NSS, and can look up directory accounts by exact name when enumeration is unsupported. Accounts and groups from remote directories remain read-only; Windows/macOS use the local application account flow.
 
-## 查询
+## Queries
 
-按名称查询支持 `DOMAIN\user` 和 `user@domain`。选中账户后，通过 `id --groups` 和 NSS 组查询读取完整成员关系，不要求目录服务支持组枚举。
+Name lookups support `DOMAIN\user` and `user@domain`. After selecting an account, complete membership information is read through `id --groups` and NSS group queries, without requiring the directory service to support group enumeration.
 
-成员关系查询失败时显示未知。当前账户的管理员组尚未查明时，不执行可能移除管理权限的修改。
+Failed membership queries are shown as unknown. Until the current account's administrator groups are known, changes that could remove administrative access are not performed.
 
-## 修改与保护
+## Changes and protections
 
-Linux 支持修改显示名称、密码、主组、附加组、登录 Shell、有效期和 SSH 公钥，以及创建、重命名、删除用户组和修改成员。
+Linux supports changing display names, passwords, primary groups, supplementary groups, login Shells, expiration, and SSH public keys, as well as creating, renaming, and deleting groups and changing membership.
 
-- Shell 从 `/etc/shells` 选择，有效期使用 `YYYY-MM-DD` 或 `never`。
-- SSH 公钥位置通过 `sshd -T -C` 确定，支持用户级 `AuthorizedKeysFile`；按 SHA256 指纹添加或移除，保留其他公钥及选项。
-- 每次写入经过 AA 和系统授权，优先使用 AccountsService 支持的操作，缺失或不支持时使用固定系统工具。
-- 写入被拒绝或结果未确认时先刷新状态，不通过另一个后端重复执行。
-- root 不能删除；当前账户不能删除、锁定、立即过期或移出已识别的管理员组。
-- 删除账户保留主目录，仍作为主组使用的用户组不能删除。
-- 新账户密码设置失败时保留账户，页面提供继续设置密码的入口。
+- Select Shells from `/etc/shells`; expiration uses `YYYY-MM-DD` or `never`.
+- SSH public-key locations are determined through `sshd -T -C`, with support for user-level `AuthorizedKeysFile`. Add or remove keys by SHA256 fingerprint, preserving other keys and options.
+- Every write goes through AA and system authorization, preferring operations supported by AccountsService and using fixed system tools when those operations are unavailable or unsupported.
+- If a write is denied or its result is unconfirmed, refresh the state first rather than repeating the operation through another backend.
+- root cannot be deleted; the current account cannot be deleted, locked, expired immediately, or removed from identified administrator groups.
+- Deleting an account preserves its home directory; groups still used as primary groups cannot be deleted.
+- If setting a new account's password fails, the account is retained and the page provides an action to continue setting the password.
 
-每次修改写入受保护的操作记录，可在[配置备份与恢复](config-backups.md)中查看和恢复。密码只保存哈希，恢复保留主目录及无关属性和成员。
+Each change writes a protected operation record, which can be viewed and restored in [Configuration backups and recovery](config-backups.md). Passwords are stored only as hashes; recovery preserves home directories, unrelated attributes, and unrelated members.
 
 ## CLI
 
-页面与 CLI 共用 `platform::management::users` 的操作和输入检查：
+The page and CLI share operations and input checks from `platform::management::users`:
 
 ```sh
 tundra-cli users --help
 ```
 
-查询支持 JSON，密码通过隐藏输入或指定输入描述符传递。
+Queries support JSON; passwords are passed through hidden input or a specified input descriptor.

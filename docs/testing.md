@@ -1,8 +1,8 @@
-# 测试指南
+# Testing guide
 
-所有命令从仓库根目录运行。自动测试覆盖核心工作流、数据安全和权限边界；真实终端、触屏、系统授权和设备写操作在对应平台单独验收。
+Run all commands from the repository root. Automated tests cover core workflows, data safety, and permission boundaries; real terminals, touchscreens, system authorization, and device writes require separate acceptance checks on the corresponding platform.
 
-## 常规检查
+## Routine checks
 
 ```sh
 cargo fmt --check
@@ -13,15 +13,15 @@ python3 scripts/check-localization.py
 bash scripts/check-weathr-dependency-boundary.sh
 ```
 
-固定测试不发起 HTTP 请求，也不启动 HTTP 测试服务器。依赖已缓存时，可添加 `--offline`；排查并发问题时可添加 `-- --test-threads=1`。
+The fixed test suite makes no HTTP requests and starts no HTTP test servers. Add `--offline` when dependencies are cached; add `-- --test-threads=1` when investigating concurrency issues.
 
-资源有限时可使用：
+When resources are limited, use:
 
 ```sh
 CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 cargo test --workspace --locked
 ```
 
-## 定向测试
+## Targeted tests
 
 ```sh
 cargo test --locked -p app
@@ -34,7 +34,7 @@ cargo test --locked -p system-services --no-default-features
 cargo test --locked -p system-services --features runtime
 ```
 
-最低支持 Rust 1.95。修改工具链或依赖后，检查最低版本：
+The minimum supported version is Rust 1.95. After changing the toolchain or dependencies, check that minimum version:
 
 ```sh
 rustup toolchain install 1.95.0 --profile minimal
@@ -42,11 +42,11 @@ cargo +1.95.0 check --workspace --all-targets --all-features --locked
 cargo +1.95.0 test --workspace --locked
 ```
 
-CI 配置见 [cross-platform.yml](../.github/workflows/cross-platform.yml)、[linux.yml](../.github/workflows/linux.yml) 和对应发布工作流。Linux 相关检查在 WSL 或原生 Linux 执行，Windows 和 macOS 检查在各自平台执行。
+CI configuration is in [cross-platform.yml](../.github/workflows/cross-platform.yml), [linux.yml](../.github/workflows/linux.yml), and the corresponding release workflows. Run Linux-related checks in WSL or native Linux, and Windows and macOS checks on their respective platforms.
 
-## Linux PTY 与系统操作
+## Linux PTY and system operations
 
-先构建 Shell、CLI 和 Vim，再运行真实终端检查：
+Build Shell, CLI, and Vim before running real-terminal checks:
 
 ```sh
 cargo build --locked -p shell -p cli
@@ -56,32 +56,32 @@ TUNDRA_PTY_CHECK_CRASH=1 python3 scripts/linux-shell-smoke.py target/debug/tundr
 python3 scripts/tests/shell-control.py target/debug/tundra-shell
 ```
 
-这些脚本使用隔离的 XDG 目录和真实 PTY，检查首次设置、文件工作流、鼠标与键盘输入、命令行、外部 UI 控制、崩溃报告和终端恢复。`TUNDRA_PTY_MOUSE_EVENT_COUNT` 可调整鼠标事件洪峰测试的事件数量。
+These scripts use isolated XDG directories and real PTYs to check initial setup, file workflows, mouse and keyboard input, Command Line, external UI control, crash reports, and terminal restoration. `TUNDRA_PTY_MOUSE_EVENT_COUNT` adjusts the number of events in the mouse-event flood test.
 
-原生回收站往返测试只创建临时项：
+The native Trash round-trip test creates only temporary items:
 
 ```sh
 cargo test --locked -p platform --test native_trash_smoke -- --ignored --nocapture
 ```
 
-服务和计划任务的隔离测试使用私有 systemd、D-Bus、挂载、PID、网络和 cgroup：
+Isolated service and scheduled-task tests use private systemd, D-Bus, mount, PID, network, and cgroup environments:
 
 ```sh
-scripts/tests/isolated-systemd.sh /absolute/path/to/platform-test-binary 原用户UID selection
+scripts/tests/isolated-systemd.sh /absolute/path/to/platform-test-binary ORIGINAL_USER_UID selection
 ```
 
-root 启动检查仅放在可丢弃的 Linux 测试环境运行：
+Run root-startup checks only in disposable Linux test environments:
 
 ```sh
 sudo python3 scripts/tests/linux-root-startup.py target/debug/tundra-shell target/debug/tundra-cli
 sudo python3 scripts/linux-shell-smoke.py target/debug/tundra-shell
 ```
 
-软件包查询使用固定夹具和只读 smoke。安装、卸载与系统升级不在开发主机上执行破坏性测试；真实写操作放在隔离环境验收。
+Package queries use fixed fixtures and read-only smoke tests. Do not run destructive installation, removal, or system-upgrade tests on the development host; verify real writes in an isolated environment.
 
-## 真实 Vim 回归
+## Real Vim regression tests
 
-普通 workspace 测试会跳过需要完整 Vim 的 ignored 用例。构建引擎后显式运行：
+Ordinary workspace tests skip ignored cases that require a complete Vim. After building the engine, run them explicitly:
 
 ```sh
 cargo build --locked -p shell -p cli
@@ -90,27 +90,27 @@ TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime -
 python3 scripts/tests/editor-vim-smoke.py target/debug/tundra-shell target/debug/vim/vim
 ```
 
-Runtime 测试检查缓冲同步、撤销、编码、保存失败、`:wq`、强制放弃和只读保护。Shell smoke 检查原生画面、Visual 模式、寄存器、宏、多缓冲、缩放、F8 同步和终端恢复。
+Runtime tests check buffer synchronization, undo, encoding, save failures, `:wq`, forced discard, and read-only protection. Shell smoke tests check the native display, Visual mode, registers, macros, multiple buffers, resizing, F8 synchronization, and terminal restoration.
 
-Windows 使用 `python scripts/build-vim.py --output target/debug/vim`，并在 PowerShell 中设置：
+On Windows, use `python scripts/build-vim.py --output target/debug/vim` and set the following in PowerShell:
 
 ```powershell
 $env:TUNDRA_TEST_VIM = (Resolve-Path target/debug/vim/vim.exe).Path
 ```
 
-`editor-vim-smoke.py` 使用 Unix PTY；Windows 的 ConPTY 回归由对应 Rust 测试和 CI 执行。`TUNDRA_TEST_VIM` 用于 Rust 回归，`TUNDRA_VIM` 用于覆盖 Shell 的 Vim 路径，`TUNDRA_VIM_CLEAN=1` 用于隔离用户配置。
+`editor-vim-smoke.py` uses Unix PTYs; Windows ConPTY regressions run through the corresponding Rust tests and CI. `TUNDRA_TEST_VIM` is for Rust regressions, `TUNDRA_VIM` overrides Shell's Vim path, and `TUNDRA_VIM_CLEAN=1` isolates user configuration.
 
-## 子终端、脚本与启动器
+## Child terminals, scripts, and Launcher
 
-运行外部 TUI 的真实 PTY 检查：
+Real PTY checks for external TUIs:
 
 ```sh
 python3 scripts/tests/embedded-tui-smoke.py target/debug/tundra-shell --nvim /absolute/path/to/nvim --yazi /absolute/path/to/yazi
 ```
 
-该脚本覆盖命令行和 Launcher 启动、输入、粘贴、鼠标、缩放、退出及终端恢复。图片协议使用协议夹具测试，原生图片和物理触屏在对应设备上验收。
+This script covers startup through Command Line and Launcher, input, paste, mouse, resizing, exit, and terminal restoration. Image protocols use protocol fixtures; native images and physical touchscreens require acceptance checks on the corresponding devices.
 
-Linux 脚本工作区：
+Linux script workspace:
 
 ```sh
 cargo test --locked -p app --test script
@@ -120,13 +120,13 @@ cargo test --locked -p shell --lib controller::script::tests
 python3 scripts/tests/editor-script-smoke.py target/debug/tundra-shell
 ```
 
-仅需检查脚本运行和调试时可给 smoke 脚本添加 `--skip-vim`。多文档 Vim 与脚本切换另运行：
+Add `--skip-vim` to the smoke script when only script execution and debugging need checking. For multi-document switching between Vim and scripts, also run:
 
 ```sh
 TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p shell --lib vim_host::script_tests -- --ignored
 ```
 
-启动器整理模式：
+Launcher organize mode:
 
 ```sh
 cargo test --locked -p shell --lib controller::launcher::settings::tests
@@ -134,18 +134,18 @@ cargo test --locked -p app --test launcher
 python3 scripts/tests/launcher-organize-smoke.py target/debug/tundra-shell
 ```
 
-## 测试组织
+## Test organization
 
 ```text
-crates/<crate>/src/                 业务实现、测试模块声明和必要的测试钩子
-crates/<crate>/tests/unit/          私有实现的单元测试、夹具和辅助模块
-crates/<crate>/tests/*.rs           通过公开 API 验证的集成测试
-crates/<crate>/tests/support/       集成测试共享辅助代码
-scripts/tests/                     打包、授权、PTY 和系统服务测试
+crates/<crate>/src/                 Implementation, test module declarations, and necessary test hooks
+crates/<crate>/tests/unit/          Unit tests, fixtures, and helpers for private implementation
+crates/<crate>/tests/*.rs           Integration tests through public APIs
+crates/<crate>/tests/support/       Shared integration-test helpers
+scripts/tests/                     Packaging, authorization, PTY, and system-service tests
 ```
 
-业务模块通过 `#[cfg(test)]` 和 `#[path = ".../tests/unit/..."] mod tests;` 引入单元测试，保留私有模块作用域。`tests/unit/` 不设置独立 `main.rs`，避免 Cargo 重复发现。
+Implementation modules include unit tests with `#[cfg(test)]` and `#[path = ".../tests/unit/..."] mod tests;`, preserving private-module scope. Do not give `tests/unit/` a separate `main.rs`, to avoid duplicate discovery by Cargo.
 
-新增测试优先覆盖核心工作流、数据安全、授权边界、错误恢复和用户可见回归。共享控件验证通用状态与颜色，页面测试验证命中、模态拦截、密码遮罩、宽字符和缩放；删除用例时同步清理无用夹具与测试入口。
+New tests should prioritize core workflows, data safety, authorization boundaries, error recovery, and user-visible regressions. Shared controls test common states and colors; page tests check hit detection, modal interception, password masking, wide characters, and resizing. When deleting cases, also remove unused fixtures and test entry points.
 
-编辑器大文件的复现方法和测量口径见[编辑器大文件支持](editor-scalability.md)。历史验收结果保留在 `docs/*validation*.md` 和对应专项记录中。
+See [large-file editor support](editor-scalability.md) for reproduction steps and measurement definitions. Historical acceptance results remain in `docs/*validation*.md` and the corresponding specialized records.

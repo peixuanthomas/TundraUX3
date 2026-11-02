@@ -1,6 +1,6 @@
-# 随包 Vim
+# Bundled Vim
 
-Vim 模式使用完整的真实 Vim 进程。便携包将引擎放在 Shell 同目录：
+Vim mode uses a complete, real Vim process. Portable builds place the engine beside Shell:
 
 ```text
 tundra-shell[.exe]
@@ -12,77 +12,77 @@ vim/
   UPSTREAM.json
 ```
 
-固定版本为 **Vim 9.2.1225**。上游提交和源码 SHA-256 记录在 [`packaging/vim.json`](../../packaging/vim.json)，构建脚本使用未修改的上游源码，并保留完整 runtime 和 Vim 许可证。
+The pinned version is **Vim 9.2.1225**. The upstream commit and source SHA-256 are recorded in [`packaging/vim.json`](../../packaging/vim.json). The build script uses unmodified upstream source and preserves the complete runtime and Vim license.
 
-## 引擎获取
+## Obtaining the engine
 
-编辑器依次查找便携包的 `vim/` 和当前用户数据目录的 `vim/`。两处都没有引擎时，安装弹窗从本项目 `vim-v<版本>` Release 下载对应平台的 ZIP，显示下载、校验和解压进度，并支持取消。安装成功后直接进入 Vim。
+The editor checks the portable build's `vim/` first, then `vim/` in the current user's data directory. If neither contains an engine, the installation dialog downloads the platform's ZIP from this project's `vim-v<version>` Release, shows download, verification, and extraction progress, and supports cancellation. Successful installation enters Vim directly.
 
-`TUNDRA_VIM` 可指定其他完整 Vim 可执行文件，`TUNDRA_VIM_CLEAN=1` 可在测试中跳过个人配置和插件。
+`TUNDRA_VIM` can select another complete Vim executable; `TUNDRA_VIM_CLEAN=1` skips personal configuration and plugins during tests.
 
-## 本地构建
+## Local builds
 
-普通 Cargo 构建不处理 Vim。开发时显式构建：
+Ordinary Cargo builds do not handle Vim. Build it explicitly during development:
 
 ```sh
 cargo build --locked -p shell -p cli
 python3 scripts/build-vim.py --output target/debug/vim
 ```
 
-发布模式使用 `--output target/release/vim`。设置 `CARGO_TARGET_DIR` 或 Cargo `--target` 时，将输出放在对应 Shell 可执行文件旁的 `vim/`。下载缓存位于 Cargo target 目录下的 `vim-build/`。
+For release mode, use `--output target/release/vim`. When setting `CARGO_TARGET_DIR` or Cargo's `--target`, put the output in `vim/` beside the corresponding Shell executable. Downloads are cached in `vim-build/` under the Cargo target directory.
 
-构建需要 Python 3.12 或更新版本，以及：
+Building requires Python 3.12 or newer, plus:
 
-| 平台 | 构建工具 |
+| Platform | Build tools |
 | --- | --- |
-| Linux | C 编译器、make、ncurses 开发库；Debian/Ubuntu 使用 `build-essential libncurses-dev`，Fedora 使用 `gcc make ncurses-devel`，Arch 使用 `base-devel ncurses` |
-| macOS | Xcode Command Line Tools、Homebrew 的 `cairo` 与 `pixman` |
-| Windows x64 | Visual Studio C++ Build Tools 和 Windows SDK；脚本通过开发者命令行或 `vswhere` 查找 MSVC/NMake |
+| Linux | C compiler, make, and ncurses development libraries; `build-essential libncurses-dev` on Debian/Ubuntu, `gcc make ncurses-devel` on Fedora, `base-devel ncurses` on Arch |
+| macOS | Xcode Command Line Tools, Homebrew `cairo` and `pixman` |
+| Windows x64 | Visual Studio C++ Build Tools and Windows SDK; the script locates MSVC/NMake through a developer command prompt or `vswhere` |
 
-Windows 可使用 `python` 运行同一脚本。macOS Universal 包分别在原生 ARM 和 Intel runner 构建，再用 `lipo` 合并；本地构建只编译当前架构。
+Windows can run the same script with `python`. macOS Universal packages are built separately on native ARM and Intel runners, then combined with `lipo`; local builds compile only for the current architecture.
 
-Windows 包包含固定版本的 `libiconv-2.dll`、对应许可证和源码归档。版本、下载地址与 SHA-256 位于 `packaging/vim.json` 的 `windows_iconv`。
+Windows packages include the pinned `libiconv-2.dll`, its license, and source archive. The version, download URLs, and SHA-256 are in `windows_iconv` in `packaging/vim.json`.
 
-## 离线与校验
+## Offline builds and verification
 
-已有固定源码归档时可离线构建：
+Build offline when the pinned source archive is already available:
 
 ```sh
 python3 scripts/build-vim.py --source-archive /path/to/vim.tar.gz --output target/debug/vim
 python3 scripts/build-vim.py --verify-only --output target/debug/vim
 ```
 
-Windows 离线构建还需通过 `--iconv-archive` 和 `--iconv-source-archive` 提供固定归档，或提前放入 `target/vim-build/` 缓存。
+Offline Windows builds also require the pinned archives through `--iconv-archive` and `--iconv-source-archive`, or placed in the `target/vim-build/` cache beforehand.
 
-校验包括版本、`+eval`、`+channel`、`+autocmd`、`+timers`、`+multi_byte`、runtime、许可证和上游元数据。已有构建可直接校验并打包：
+Verification covers the version, `+eval`, `+channel`, `+autocmd`, `+timers`, `+multi_byte`, runtime, license, and upstream metadata. Existing builds can be verified and packaged directly:
 
 ```sh
 python scripts/build-vim.py --verify-only --output target/debug/vim --package target/vim-engine.zip
 ```
 
-构建脚本回归：
+Build-script regressions:
 
 ```sh
 python -B -m unittest discover -s scripts/tests -p test_build_vim.py
 ```
 
-## 发布
+## Releases
 
-`.github/workflows/vim-engine-release.yml` 为 Windows x64、Linux x86_64 和 macOS Universal 构建独立引擎包。工作流可手动触发，也可推送与固定版本一致的 `vim-v<版本>` 标签。每个 ZIP 包含引擎、runtime、许可证、上游元数据和 SHA-256 文件。
+`.github/workflows/vim-engine-release.yml` builds standalone engine packages for Windows x64, Linux x86_64, and macOS Universal. Trigger it manually or by pushing a `vim-v<version>` tag matching the pinned version. Each ZIP contains the engine, runtime, license, upstream metadata, and a SHA-256 file.
 
-应用发布工作流在对应平台显式构建 Vim。Linux 本地打包：
+Application release workflows explicitly build Vim on the corresponding platform. Local Linux packaging:
 
 ```sh
 python3 scripts/build-vim.py --output target/release/vim
 bash scripts/package-linux.sh
 ```
 
-`TUNDRAUX3_VIM_DIR` 可指向已构建的同版本引擎目录。升级 Vim 时，同时更新固定提交和源码哈希，并重新运行构建校验与真实 Vim 回归。
+`TUNDRAUX3_VIM_DIR` can point to an already-built engine directory of the same version. When upgrading Vim, update both the pinned commit and source hash, then rerun build verification and real Vim regressions.
 
-Linux 界面验收：
+Linux UI acceptance:
 
 ```sh
 python3 scripts/tests/editor-vim-ui.py /path/to/tundra-shell
 ```
 
-添加 `--missing-engine` 可检查安装弹窗、进度和取消流程；`scripts/tests/editor-vim-smoke.py` 覆盖更多编辑与保存工作流。
+Add `--missing-engine` to check the installation dialog, progress, and cancellation; `scripts/tests/editor-vim-smoke.py` covers more editing and saving workflows.

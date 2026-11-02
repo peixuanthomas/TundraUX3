@@ -1,34 +1,34 @@
-# 程序自更新
+# Application self-updates
 
-更新工作流位于 `app::update`，CLI 运行更新助手，Shell 保存设置并安排退出和重启。Linux 更新以便携目录为安装单位，与系统软件包管理分开。
+The update workflow is in `app::update`. CLI runs the update helper, while Shell saves settings and schedules exit and restart. Linux updates treat the portable directory as the installation unit, separately from system package management.
 
-## 更新模式
+## Update modes
 
-Linux 的“设置 → 更新 → 更新模式”保存到 `config.toml` 的 `linux_update_mode`，默认 `release`。
+On Linux, **Settings → Update → Update mode** is saved as `linux_update_mode` in `config.toml`, with `release` as the default.
 
-- **Release：**读取最新正式 GitHub Release，下载 Linux x86_64 便携包并验证 SHA-256，提取 Shell、CLI 和完整 Vim。不需要 Rust 或 Python。
-- **Beta：**读取 `master` 最新提交并显示哈希，下载对应源码，使用本机 Rust 构建，再运行 `scripts/build-vim.py` 构建固定 Vim。需要 Python 3.12 和对应 C 构建工具。
+- **Release:** reads the latest stable GitHub Release, downloads the Linux x86_64 portable archive, verifies SHA-256, and extracts Shell, CLI, and the complete Vim. Rust and Python are not required.
+- **Beta:** reads the latest `master` commit and displays its hash, downloads the corresponding source, builds it with local Rust, and runs `scripts/build-vim.py` to build the pinned Vim. Python 3.12 and the corresponding C build tools are required.
 
-切换模式会清除旧检查结果并重新检查，下载或构建期间保持当前模式。所有下载和构建文件写入用户缓存目录，更新过程不安装工具链或调用 sudo。
+Switching modes clears old check results and checks again. The current mode is retained during a download or build. All downloaded and built files go into the user's cache directory; the update process does not install toolchains or invoke sudo.
 
-Windows 使用默认分支源码构建更新，不显示 Linux 模式开关。macOS 当前没有程序自更新入口。
+Windows builds updates from the default branch's source and does not show the Linux mode switch. macOS currently has no application self-update entry.
 
-## 替换与回退
+## Replacement and rollback
 
-更新助手保留旧程序和旧 `vim/`，等新 Shell 报告启动成功后清理备份。替换失败、启动失败或超时同时恢复程序和 Vim；旧安装没有 Vim 时，回退移除本次新增目录。
+The update helper retains the old programs and old `vim/`, then removes the backups after the new Shell reports successful startup. Replacement failure, startup failure, or timeout restores both the programs and Vim. If the old installation had no Vim, rollback removes the directory added by this update.
 
-更新中断后，下次启动根据安装目录中的事务记录继续恢复。Vim 目录必须包含可执行文件、完整 runtime、许可证和 `UPSTREAM.json`。
+After an interrupted update, the next startup continues recovery using the transaction record in the installation directory. The Vim directory must contain the executable, complete runtime, license, and `UPSTREAM.json`.
 
-当前协议为 v3，Vim 事务状态是必需字段。v2 更新程序不能安装 v3 包，从这些版本升级时需完整解压一次新便携包；已有 v2 事务只允许恢复、回退或清理。
+The current protocol is v3, which requires the Vim transaction state field. v2 updaters cannot install v3 packages; upgrading from those versions requires fully extracting the new portable archive once. Existing v2 transactions can only be recovered, rolled back, or cleaned up.
 
-更新不替换用户数据、默认主题、自定义主题或本地 assets。Linux 保留可执行权限，助手通过 exec 接替原进程并等待新 Shell 退出。Windows 使用备份副本处理仍被运行进程占用的文件，并在后续启动时清理旧备份。
+Updates do not replace user data, default themes, custom themes, or local assets. Linux preserves executable permissions; the helper replaces the original process through exec and waits for the new Shell to exit. Windows uses backup copies to handle files still held by running processes and cleans up old backups on subsequent startups.
 
-## 取消与清理
+## Cancellation and cleanup
 
-检查、下载、Git 查询、构建、解压、校验和复制都响应取消。等待网络或子进程时也可中断，只清理本次任务创建的进程树和目录。
+Checks, downloads, Git queries, builds, extraction, validation, and copying all respond to cancellation. Waiting for the network or a child process can also be interrupted; only process trees and directories created by the current task are cleaned up.
 
-已准备的替换事务先写入 `Cancelled` 记录再删除准备目录。标记写入失败时保留目录供重试，启动时取消记录只触发清理，不触发替换。
+A prepared replacement transaction writes a `Cancelled` record before deleting the staging directory. If writing the marker fails, the directory is retained for retry. At startup, cancellation records trigger cleanup only, not replacement.
 
-准备成功与取消同时发生时，Shell 在接受结果前再次核对取消状态。更新助手接手后继续使用安装、启动确认和回退流程；同一时间只运行一项更新。
+If successful preparation and cancellation occur at the same time, Shell rechecks cancellation before accepting the result. Once the update helper takes over, it continues with installation, startup confirmation, and rollback. Only one update runs at a time.
 
-测试入口见[更新测试](update-tests.md)。
+See [Update tests](update-tests.md) for test entry points.

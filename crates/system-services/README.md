@@ -1,35 +1,35 @@
 # system-services
 
-`system-services` 定义天气、时间、存储、网络和系统指标快照。启用 `runtime` 功能后，还提供平台采集、网络请求、缓存和后台刷新。
+`system-services` defines snapshots for weather, time, storage, networking, and system metrics. Enabling the `runtime` feature also provides platform collection, network requests, caching, and background refresh.
 
-| 构建方式 | 内容 | 使用者 |
+| Build configuration | Content | Consumers |
 | --- | --- | --- |
-| 默认，无功能 | `model/` 的共享数据 | app、weathr |
-| `features = ["runtime"]` | 共享数据及 `runtime/` 服务 | Shell |
+| Default, no features | Shared data in `model/` | app, weathr |
+| `features = ["runtime"]` | Shared data and `runtime/` services | Shell |
 
-数据消费者无需引入 `reqwest`、`platform`、`watchdog` 或 `time`。Cargo 在 workspace 构建中合并功能，因此 Shell 使用完整运行时。
+Data consumers do not need to pull in `reqwest`, `platform`, `watchdog`, or `time`. Cargo unifies features in workspace builds, so Shell uses the full runtime.
 
 ```mermaid
 flowchart LR
-    Platform[平台采集] --> Snapshot[不可变 SystemSnapshot]
-    Snapshot --> App[app 快照]
-    App --> Shell[Shell 按权限整理]
-    Shell --> UI[UI 显示与通知]
+    Platform[Platform collection] --> Snapshot[Immutable SystemSnapshot]
+    Snapshot --> App[app snapshot]
+    App --> Shell[Shell organizes data by permissions]
+    Shell --> UI[UI display and notifications]
 ```
 
-## 系统指标
+## System metrics
 
-前台每 5 秒、后台每 30 秒采样，也可显式立即刷新。各项数据独立标记过期或不可用，单项失败不影响其他指标。网络 link 只表示本机接口链路状态，采集不读取 MAC/SSID，也不执行外部连通性探测。
+Sampling runs every 5 seconds in the foreground and every 30 seconds in the background, with explicit immediate refresh also available. Each metric is independently marked stale or unavailable; one failure does not affect other metrics. Network link status describes only the local interface link. Collection does not read MAC/SSID or probe external connectivity.
 
-Linux 按当前进程权限显示数据；Windows/macOS 本地管理员和普通用户可查看明细，Guest 没有 System Status 入口。写操作另行检查权限。
+Linux displays data according to the current process's permissions. Windows/macOS local administrators and ordinary users can view details; Guest has no System Status entry. Write operations check permissions separately.
 
-## 天气与时间
+## Weather and time
 
-应用与启动预取使用 Open-Meteo。天气内存和磁盘缓存为 300 秒，位置、地址及地理编码缓存为 24 小时，显式刷新绕过缓存。
+The application and startup prefetch use Open-Meteo. Weather memory and disk caches last 300 seconds; location, address, and geocoding caches last 24 hours. Explicit refresh bypasses the cache.
 
-系统时间模式每次生成快照都读取系统时间，Linux 同时使用系统本地时区。网络时间模式按最近成功同步的时间和单调时钟推进，详见 [time](../time/README.md)。
+System-time mode reads system time for every snapshot and also uses the system's local timezone on Linux. Network-time mode advances from the most recent successful synchronization using a monotonic clock. See [time](../time/README.md) for details.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p system-services --no-default-features

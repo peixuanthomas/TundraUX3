@@ -1,8 +1,8 @@
 # watchdog
 
-`watchdog` 是进程级监督运行时，负责托管任务与线程、panic 边界、操作 journal、资源清理和事故报告。可执行程序创建一个 `WatchdogRuntime`，库通过 `AppWatchdog` 使用已有实例。
+`watchdog` is a process-level supervision runtime responsible for managed tasks and threads, panic boundaries, operation journals, resource cleanup, and incident reports. Executables create one `WatchdogRuntime`; libraries use the existing instance through `AppWatchdog`.
 
-## 宿主初始化
+## Host initialization
 
 ```rust,no_run
 use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
@@ -19,45 +19,45 @@ let app = process.register_app(AppDescriptor::new(
     AppCriticality::Optional,
 ))?;
 
-// 将 app 或包含它的 AppRuntimeContext 交给应用代码。
+// Pass app, or an AppRuntimeContext containing it, to application code.
 runtime.shutdown()?;
 # Ok(())
 # }
 ```
 
-进程宿主负责事故展示与去重。Shell 使用独立 panic 页面，其他宿主可使用 stderr 或原生错误提示。`watchdog` 不依赖 `platform`。
+The process host handles incident display and deduplication. Shell uses a dedicated panic page; other hosts may use stderr or native error messages. `watchdog` does not depend on `platform`.
 
-## 任务与恢复
+## Tasks and recovery
 
-- 生产后台工作通过 `ManagedTaskGroup` 创建，并声明 `ReplaySafety`。
-- `Never + RestartTask` 会被拒绝。
-- `Idempotent` 任务可在配置的重启窗口与退避策略内重建。
-- `Checkpointed` 任务需要注册的 `RecoveryHandler` 先恢复安全状态。
-- 修改操作使用 `begin_operation` 和持久 checkpoint，人工处理结果后保留 journal 并阻止相关写入。
-- 关闭任务组会取消并等待受管理工作；仅丢弃句柄不会停止线程。
-- 长时间等待需要响应取消，取消本身不作为 panic 报告。
+- Production background work is created through `ManagedTaskGroup` and declares `ReplaySafety`.
+- `Never + RestartTask` is rejected.
+- `Idempotent` tasks can be recreated within the configured restart window and backoff policy.
+- `Checkpointed` tasks require a registered `RecoveryHandler` to restore a safe state first.
+- Modification operations use `begin_operation` and persistent checkpoints. After results are handled manually, the journal is retained and related writes are blocked.
+- Closing a task group cancels and waits for managed work; merely dropping a handle does not stop a thread.
+- Long waits must respond to cancellation; cancellation itself is not reported as a panic.
 
-内部命令使用 `platform::ManagedCommand`，所有者在错误与 Drop 时停止并回收子进程。`ManagedResource` 也覆盖 PTY 子进程，清理成功后注销，失败时保留登记以便重试。
+Internal commands use `platform::ManagedCommand`; their owner stops and reaps child processes on errors and Drop. `ManagedResource` also covers PTY child processes. Resources are unregistered after successful cleanup; failed cleanup retains the registration for retry.
 
-桌面外部程序使用独立启动路径，Tundra 退出后程序可继续运行。更新替换保留明确的启动所有者，系统管理助手将任务交给自己的 watchdog，界面断线不会直接中断软件包写入。
+External desktop programs use a separate launch path and may continue running after Tundra exits. Update replacement retains an explicit launch owner. System-management helpers hand tasks to their own watchdog, so an interface disconnection does not directly interrupt package writes.
 
-## 报告与运行标记
+## Reports and run markers
 
-报告以匹配的 JSON 和文本文件保存，操作 journal 位于：
+Reports are saved as matching JSON and text files. Operation journals reside in:
 
 ```text
 <data>/watchdog/operations/<app-id>/
 ```
 
-活动运行标记位于 `<data>/watchdog/runs/`，下次启动可据此记录未观察到的异常退出。
+Active run markers reside in `<data>/watchdog/runs/`, allowing the next startup to record abnormal exits that were not observed.
 
-事故上下文使用最小结构化元数据，不写入密码、令牌、剪贴板、粘贴内容或原始用户输入。持久化前还会集中脱敏并限制大小。
+Incident context uses minimal structured metadata, without passwords, tokens, clipboard contents, pasted content, or raw user input. Centralized redaction and size limits are also applied before persistence.
 
-运行需要 `panic = "unwind"`，在声明的边界捕获 Rust panic。无法立即捕获的进程退出由运行标记在下次启动时补充记录；需要自动重启的场景由外部监督程序负责。
+The runtime requires `panic = "unwind"` and catches Rust panics at declared boundaries. Process exits that cannot be caught immediately are recorded at the next startup using run markers. An external supervisor is responsible for scenarios requiring automatic restarts.
 
-详细规则见[运行、恢复与报告](docs/runtime.md)。
+See [Runtime, recovery, and reports](docs/runtime.md) for detailed rules.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p watchdog

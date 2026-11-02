@@ -2,7 +2,7 @@
 
 **A terminal workspace for managing your device.**
 
-English | [简体中文](docs/README.zh-CN.md)
+English | [Simplified Chinese](docs/README.zh-CN.md)
 
 TundraUX3 brings system tools, files, editors, and everyday utilities into one terminal interface. It is designed for Linux devices without a graphical desktop, with keyboard, mouse, and touchscreen support. Written in Rust with Ratatui and crossterm.
 
@@ -103,7 +103,7 @@ See the [UI control guide](crates/cli/docs/ui-control.md) for click, input, scro
 
 ## Documentation
 
-- [简体中文 README](docs/README.zh-CN.md)
+- [Simplified Chinese README](docs/README.zh-CN.md)
 - [Build, architecture, testing, and packaging](docs/README-TECHNICAL.md)
 - [Linux system management](crates/platform/docs/linux-management.md)
 - [Editor and script debugging](docs/source-editor.md)

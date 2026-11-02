@@ -1,27 +1,27 @@
 # runtime-log
 
-`runtime-log` 保存和查询结构化运行事件，处理脱敏、轮转、保留期限、容量限制和安全清理。Shell 的 Logs 页面与 CLI 共用这些数据，Linux journal 和指定文件读取由 `platform` 提供。
+`runtime-log` stores and queries structured runtime events, handling redaction, rotation, retention, capacity limits, and safe cleanup. Shell's Logs page and the CLI share these data; `platform` provides Linux journal and selected-file reading.
 
-## 模块
+## Modules
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| `model` | 事件、级别、查询和状态类型 |
-| `writer` | 有界队列、去重、刷新、轮转和容量管理 |
-| `reader` | 查询、过滤、导出和有界读取 |
-| `privacy` | 敏感数据与控制序列清理 |
-| `clear` | 预览和清理受管理日志文件 |
+| `model` | Event, level, query, and status types |
+| `writer` | Bounded queue, deduplication, flushing, rotation, and capacity management |
+| `reader` | Queries, filtering, export, and bounded reads |
+| `privacy` | Removal of sensitive data and control sequences |
+| `clear` | Preview and cleanup of managed log files |
 
-UX 故障阶段 `Incident` 在查询时统一映射到最高等级 `Critical`，原始文件保持不变，恢复结果继续使用原等级。
+The UX failure phase `Incident` is consistently mapped to the highest level, `Critical`, during queries. Original files remain unchanged, and recovery results continue to use their original levels.
 
-日志正文使用固定语言和稳定事件代码，不由可编辑翻译文件生成。密码、令牌、剪贴板、文件正文和命令内容不作为日志上下文。
+Log bodies use a fixed language and stable event codes, rather than being generated from editable translation files. Passwords, tokens, clipboard contents, file bodies, and command contents are not used as log context.
 
-## 文档与验证
+## Documentation and validation
 
-[日志指南](docs/logs.md)说明来源、权限、TUI、CLI、跟随、导出、清理和磁盘配额。事故身份与任务编号由 [watchdog](../watchdog/README.md) 管理。
+The [log guide](docs/logs.md) describes sources, permissions, TUI, CLI, following, export, cleanup, and disk quotas. Incident identities and task IDs are managed by [watchdog](../watchdog/README.md).
 
 ```sh
 cargo test --locked -p runtime-log
 ```
 
-修改页面或命令后同时运行受影响的 Shell/CLI 测试，Linux journal/dmesg 数据源在 Linux 环境验证。
+After changing pages or commands, also run the affected Shell/CLI tests. Validate Linux journal/dmesg sources in a Linux environment.

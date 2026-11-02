@@ -1,50 +1,50 @@
 # ascii-assets
 
-`ascii-assets` 加载、校验和修复主题、ASCII 图案、图标、字体与语言资源文件，并计算绘制所需尺寸。语言加载与翻译由 [i18n](../i18n/README.md) 负责。
+`ascii-assets` loads, validates, and repairs themes, ASCII artwork, icons, fonts, and language resource files, and calculates the dimensions needed for rendering. [i18n](../i18n/README.md) handles language loading and translation.
 
-## 模块
+## Modules
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| `artwork` | 文本图案、art set、主页/启动器/文件图标类型 |
-| `asset_manifest` | 必需资源清单、资源类型和默认主题 ID |
-| `asset_resolver` | 环境变量、程序目录和安装位置的资源根解析 |
-| `asset_store` | 资源加载与绘制尺寸统计 |
-| `asset_validation` | 必需资源和默认主题检查 |
-| `asset_restore` | 从内置默认内容恢复资源文件 |
-| `asset_distribution` | 将规范资源复制到 Cargo 输出目录 |
-| `embedded_defaults` | 共享的内置默认文件与图片字节 |
-| `clock_font` | 时钟字体资源 |
+| `artwork` | Text artwork, art sets, and Home/Launcher/file icon types |
+| `asset_manifest` | Required asset manifest, asset types, and default theme ID |
+| `asset_resolver` | Resolve asset roots from environment variables, the program directory, and installation locations |
+| `asset_store` | Asset loading and rendering-dimension statistics |
+| `asset_validation` | Required asset and default theme checks |
+| `asset_restore` | Restore asset files from embedded defaults |
+| `asset_distribution` | Copy canonical assets to the Cargo output directory |
+| `embedded_defaults` | Shared embedded default files and image bytes |
+| `clock_font` | Clock font assets |
 
-## 资源格式
+## Asset formats
 
-默认清单包含 25 项：20 个文本资源、4 个 TOML art set 和 1 个时钟字体。
+The default manifest contains 25 items: 20 text assets, 4 TOML art sets, and 1 clock font.
 
-- 文本资源只包含可打印 ASCII，TOML art set 使用 schema v1。
-- 图片支持 GIF、JPEG、PNG 和 WebP，路径必须是资源根内的相对路径。
-- 语言资源位于 `locales/<code>/`，包含 `manifest.toml` 和递归读取的 `.ftl` 文件。
-- 默认图片字节由静态资源表共享，校验、修复和内存回退复用同一份数据。
-- 所有资源参与尺寸统计，更新资源可能改变最小终端尺寸。
+- Text assets contain only printable ASCII; TOML art sets use schema v1.
+- Images support GIF, JPEG, PNG, and WebP; paths must be relative paths within the asset root.
+- Language resources live in `locales/<code>/`, containing `manifest.toml` and recursively read `.ftl` files.
+- Default image bytes are shared through a static asset table; validation, repair, and in-memory fallback reuse the same data.
+- All assets contribute to dimension calculations; updating assets may change the minimum terminal size.
 
-资源根按以下顺序解析：
+Asset roots are resolved in this order:
 
-1. `TUNDRA_ASCII_ASSETS_DIR`；
-2. 程序同目录的 `assets/`；
-3. Linux 的 `/usr/share/tundraux3/assets`。
+1. `TUNDRA_ASCII_ASSETS_DIR`;
+2. `assets/` alongside the program;
+3. `/usr/share/tundraux3/assets` on Linux.
 
-## 默认资源修复
+## Default asset repair
 
-启动时检查默认图形和中英文语言资源。缺失或损坏的默认文件从内置内容恢复，健康的自定义内容保持不变。默认主题的旧配置可补充新增条目，不移除用户已有图案。
+Startup checks default graphics and the Chinese and English language resources. Missing or corrupt default files are restored from embedded content, while healthy custom content remains unchanged. Older default-theme configurations can gain new entries without removing the user's existing artwork.
 
-无法写入资源目录时，程序使用内存副本并报告修复结果。语言消息 ID、参数契约和回退规则见[语言资源与恢复](../i18n/docs/localization.md)。
+If the asset directory cannot be written, the program uses in-memory copies and reports the repair result. See [Language resources and recovery](../i18n/docs/localization.md) for language message IDs, argument contracts, and fallback rules.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p ascii-assets
 python scripts/check-embedded-assets.py target/release/tundra-shell.exe target/release/tundra-cli.exe
 ```
 
-Linux/macOS 使用不带 `.exe` 的程序路径。检查脚本核对每张默认图片是否恰好嵌入一次；某平台完全未使用图片时可添加 `--allow-missing`，仅检查重复项。
+On Linux/macOS, use program paths without `.exe`. The check script verifies that each default image is embedded exactly once; if a platform does not use images at all, add `--allow-missing` to check only for duplicates.
 
-资源文件位于 `assets/`，界面预览命令见[调试界面预览](../shell/docs/previews.md)。
+Asset files are in `assets/`; see [Debug interface previews](../shell/docs/previews.md) for interface preview commands.

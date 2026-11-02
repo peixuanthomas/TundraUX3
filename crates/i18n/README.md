@@ -1,10 +1,10 @@
 # i18n
 
-`i18n` 负责 Fluent 语言包加载、校验、默认资源修复和不可变语言快照。它与 `ascii-assets` 共用资源根，语言包位于 `root/locales/<code>/`。
+`i18n` handles Fluent language-pack loading, validation, default-resource repair, and immutable language snapshots. It shares a resource root with `ascii-assets`; language packs reside in `root/locales/<code>/`.
 
-## 语言包
+## Language packs
 
-每个语言包包含 `manifest.toml`：
+Each language pack contains a `manifest.toml`:
 
 ```toml
 format_version = 1
@@ -12,9 +12,9 @@ code = "zh-CN"
 native_name = "简体中文"
 ```
 
-`common`、`modules` 和 `recovery` 中的 `.ftl` 文件递归加载。`zh-Hans` 是 `zh-CN` 的输入别名，目录与清单使用规范代码。`LanguageCatalog::built_in()` 不访问文件系统即可提供中英文选择信息。
+`.ftl` files in `common`, `modules`, and `recovery` are loaded recursively. `zh-Hans` is an input alias for `zh-CN`; directories and manifests use the canonical code. `LanguageCatalog::built_in()` provides English and Chinese language choices without accessing the filesystem.
 
-## 快照与消息
+## Snapshots and messages
 
 ```rust
 use std::sync::Arc;
@@ -30,37 +30,37 @@ i18n::with_snapshot(&snapshot, || {
 });
 ```
 
-- `msg!` 保留消息 ID 和类型化参数，`tr!` 立即格式化。
-- `enter_snapshot` 返回线程绑定的 RAII guard，作用域可嵌套并在线程间隔离。
-- `current_snapshot()` 克隆当前线程的快照，后台助手可通过 `export()` / `restore()` 传递语言资源。
-- `String` 和 `&str` 转换为 `LocalizedText` 时始终表示原文，不参与翻译。
-- 渲染只读取内存，不访问磁盘或写日志。
+- `msg!` retains a message ID and typed arguments; `tr!` formats immediately.
+- `enter_snapshot` returns a thread-bound RAII guard. Scopes can nest and are isolated between threads.
+- `current_snapshot()` clones the current thread's snapshot; background helpers can transfer language resources through `export()` / `restore()`.
+- `String` and `&str` always represent raw text when converted to `LocalizedText` and are not translated.
+- Rendering reads only memory, without disk access or log writes.
 
-快照分别保存当前语言、英文回退、内置英文和最小应急资源。缺失消息或格式化失败按这些层级回退，未知 ID 显示为 `[message-id]`。
+Snapshots separately retain the current language, English fallback, built-in English, and minimal emergency resources. Missing messages or formatting failures fall back through these layers; unknown IDs appear as `[message-id]`.
 
-## 加载与校验
+## Loading and validation
 
-严格加载检查 manifest、Fluent 语法、重复 ID、引用与循环、函数和英文参数契约。支持 `NUMBER`，缺失翻译会记录在加载诊断中并回退英文。
+Strict loading checks manifests, Fluent syntax, duplicate IDs, references and cycles, functions, and English argument contracts. `NUMBER` is supported. Missing translations are recorded in loading diagnostics and fall back to English.
 
-启动加载可跳过损坏的翻译文件，使用内置中英文资源继续运行。已有快照在磁盘文件变化后保持不变，重新加载成功后由调用方发布新快照。
+Startup loading can skip damaged translation files and continue with built-in English and Chinese resources. Existing snapshots remain unchanged when disk files change; after a successful reload, the caller publishes a new snapshot.
 
-构建脚本从 `crates/ascii-assets/assets/locales/en-US` 嵌入英文，并生成：
+The build script embeds English from `crates/ascii-assets/assets/locales/en-US` and generates:
 
-- `i18n::ids` 消息常量；
-- `MESSAGE_IDS`；
-- `MESSAGE_CONTRACTS` 和 `message_contract(id)`。
+- `i18n::ids` message constants;
+- `MESSAGE_IDS`;
+- `MESSAGE_CONTRACTS` and `message_contract(id)`.
 
-默认英文和中英文损坏文件通过同目录临时文件与原子重命名修复。健康文件保持原字节，缺失条目追加到合适文件，写入失败时保留内存修正并返回结构化诊断。
+Default English resources and damaged English or Chinese files are repaired using temporary files in the same directory and atomic renames. Healthy files retain their original bytes, missing entries are appended to the appropriate files, and write failures retain the in-memory corrections and return structured diagnostics.
 
-`render_diagnostic` 始终使用内置英文，适合错误 `Display` 和日志。`LocalizedError` 保存稳定 `event_code`、消息和可选原因链。
+`render_diagnostic` always uses built-in English and is suitable for error `Display` implementations and logs. `LocalizedError` retains a stable `event_code`, a message, and an optional cause chain.
 
-## 文档与验证
+## Documentation and validation
 
-使用与资源恢复见[语言资源与恢复](docs/localization.md)。
+See [Language resources and recovery](docs/localization.md) for usage and resource recovery.
 
 ```sh
 cargo test --locked -p i18n
 python3 scripts/check-localization.py
 ```
 
-测试覆盖目录、修复、参数契约、复数回退、快照生命周期、线程隔离和序列化。
+Tests cover catalogs, repair, argument contracts, plural fallback, snapshot lifetimes, thread isolation, and serialization.

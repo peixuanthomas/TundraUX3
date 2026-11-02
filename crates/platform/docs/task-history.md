@@ -1,33 +1,33 @@
-# 任务与执行历史
+# Tasks and execution history
 
-标题栏和启动器的“任务”打开同一页面。列表显示名称、状态、开始时间和所属功能，支持搜索、状态筛选、查看输出、返回所属页面和取消任务，每批显示 50 条。
+Tasks in the title bar and Launcher open the same page. The list shows name, state, start time, and owning feature, with search, state filtering, output viewing, return to the associated page, and task cancellation. Each batch displays 50 records.
 
-当前页面仍存在时返回原实例；页面已关闭时只打开所属功能，不重复执行原操作。
+If the associated page still exists, return to its original instance; if it has closed, open only the associated feature without repeating the original operation.
 
-## 状态与存储
+## State and storage
 
-状态包括等待批准、等待输入、运行、取消中、成功、失败、已取消和待核实。调用 systemd 成功表示已提交启动请求，实际执行结果以独立历史为准。
+States include awaiting approval, awaiting input, running, canceling, succeeded, failed, canceled, and needs verification. A successful systemd call means the start request was submitted; the separate execution history determines the actual result.
 
-| 来源 | 位置 |
+| Source | Location |
 | --- | --- |
-| 普通页面 | 当前用户数据目录的 `task-history/` |
-| Linux 授权助手 | `/var/lib/tundraux3/task-history/UID/` |
-| 定时任务 | `/var/lib/tundraux3/scheduled-results/UID/history/` |
+| Ordinary pages | `task-history/` in the current user's data directory |
+| Linux authorization helper | `/var/lib/tundraux3/task-history/UID/` |
+| Scheduled tasks | `/var/lib/tundraux3/scheduled-results/UID/history/` |
 
-页面与助手使用同一稳定编号，列表合并重复结果并优先显示系统归档。定时任务使用 systemd 的独立执行编号，Tundra 关闭期间也能记录。
+Pages and helpers use the same stable ID; the list merges duplicate results and gives precedence to system archives. Scheduled tasks use separate systemd invocation IDs and can record results while Tundra is closed.
 
-输出逐块写盘，每次最多读取 64 KiB，可向前或向后翻阅。历史保存摘要和输出，不保存密码、按键、粘贴输入或配置查询正文。输出写入失败会标记不完整。
+Output is written to disk in chunks and read at most 64 KiB at a time, with forward and backward browsing. History stores summaries and output, not passwords, keystrokes, pasted input, or configuration-query contents. Failed output writes are marked incomplete.
 
-重启后根据开机标记、PID 和进程启动时间核对状态，无法确认的记录显示待核实，不自动重跑。
+After a restart, state is checked using the boot marker, PID, and process start time. Records that cannot be confirmed are shown as needing verification and are not automatically rerun.
 
-## 清理
+## Cleanup
 
-历史只通过手动清理删除。页面显示总占用和各来源占用，清理预览列出任务、时间、结果和释放空间，确认后重新核对同一批记录。运行中的记录不能删除。
+History is deleted only through manual cleanup. The page shows total storage use and use by source. The cleanup preview lists tasks, times, results, and space to be freed; after confirmation, the same records are checked again. Running records cannot be deleted.
 
-系统归档和个人副本分开清理。删除系统归档后，保留的个人副本可能重新显示并注明来源。其他执行账户的历史可授权读取，但其清理按钮保持禁用。
+System archives and personal copies are cleaned up separately. After a system archive is deleted, a retained personal copy may reappear with its source identified. History belonging to other execution accounts can be read with authorization, but its cleanup buttons remain disabled.
 
-Linux 系统记录读取需要显式授权。自动刷新更新个人历史，点击刷新后重新读取系统变化；系统工具诊断在输出中保留原文。
+Reading Linux system records requires explicit authorization. Automatic refresh updates personal history; clicking Refresh rereads system changes. System-tool diagnostics retain their original text in the output.
 
-## 验证
+## Validation
 
-自动回归覆盖输出分段、重复编号、PID 复用、重启、待核实状态、取消收尾、写入失败和清理版本检查。历史设备验收结果见[操作可用性验收记录](../../../docs/operations-usability-validation.md)。
+Automated regressions cover output chunking, duplicate IDs, PID reuse, rebooting, states needing verification, cancellation cleanup, write failures, and cleanup version checks. Historical device acceptance results are in the [Operations usability acceptance record](../../../docs/operations-usability-validation.md).

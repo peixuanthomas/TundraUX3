@@ -1,27 +1,27 @@
 # ui
 
-`ui` 将界面数据转换为 Ratatui 布局和画面，提供共享控件、主题、焦点、命中检查、动画和自动化快照。它不管理宿主终端，不执行系统操作，也不在绘制过程中修改应用状态。
+`ui` converts interface data into Ratatui layouts and frames, providing shared controls, themes, focus, hit testing, animations, and automation snapshots. It does not manage the host terminal, perform system operations, or modify application state while rendering.
 
-## 模块结构
+## Module structure
 
-| 位置 | 内容 |
+| Location | Contents |
 | --- | --- |
-| `src/foundation/` | 输入事件、焦点、命中检查和共享基础类型 |
-| `src/components/` | 按钮、列表、表格、表单、弹窗和滚动条 |
-| `src/screens/` | 页面数据模型、布局与绘制 |
-| `src/theme/` | 主题、颜色、控件状态和动画调度 |
-| `src/motion.rs`、`surface_motion.rs` | 页面、弹窗、详情和键盘的过渡计算 |
-| `src/automation.rs` | 从实际绘制帧采集控件树与文字 |
-| `src/terminal_images.rs` | 子终端图片裁切、缓存与回退 |
-| `assets/` | 图标和时区地图，来源见[资源说明](assets/README.md) |
+| `src/foundation/` | Input events, focus, hit testing, and shared basic types |
+| `src/components/` | Buttons, lists, tables, forms, dialogs, and scrollbars |
+| `src/screens/` | Page data models, layouts, and rendering |
+| `src/theme/` | Themes, colors, control states, and animation scheduling |
+| `src/motion.rs`, `surface_motion.rs` | Transition calculations for pages, dialogs, details, and the keyboard |
+| `src/automation.rs` | Capture control trees and text from actual rendered frames |
+| `src/terminal_images.rs` | Child-terminal image clipping, caching, and fallbacks |
+| `assets/` | Icons and timezone maps; see [Asset notes](assets/README.md) for sources |
 
-页面只绘制 `ShellFrameLayout.main` 中的内容和自身弹层。Shell 负责全局标题栏、状态栏、Toast 和模态弹窗，绘制与点击使用同一份布局。
+Pages render only the content in `ShellFrameLayout.main` and their own overlays. Shell handles the global title bar, status bar, Toast, and modal dialogs, using the same layout for rendering and clicks.
 
-## 共享控件
+## Shared controls
 
-### 表单
+### Forms
 
-`components::FormDialog` 统一处理填写弹窗的布局、输入、选项、开关、滚动和按钮。调用方提供字段与按钮，组件返回确认、取消或自定义动作，业务检查和保存由调用方完成。
+`components::FormDialog` handles form-dialog layout, input, options, switches, scrolling, and buttons in one place. The caller supplies fields and buttons; the component returns a submit, cancel, or custom action. The caller performs application checks and saving.
 
 ```rust
 let mut form = FormDialog::new("create", title, vec![
@@ -36,56 +36,56 @@ let event = form.handle_event(input, area);
 form.render_frame(frame, area, context);
 ```
 
-Enter 移到下一栏并在最后一栏确认，空格或点按切换开关，Ctrl+Enter 直接确认，F10 激活默认确认按钮。需要重建表单时，用 `interaction_state()` 和 `with_interaction()` 保留滚动与拖动位置。`ManagementForm` 是兼容名称。
+Enter moves to the next field and submits from the last field; Space or a tap toggles a switch; Ctrl+Enter submits directly; F10 activates the default submit button. When rebuilding a form, use `interaction_state()` and `with_interaction()` to preserve scroll and drag positions. `ManagementForm` is a compatibility name.
 
-### 列表与页面布局
+### Lists and page layouts
 
-- `DataTable` 提供表格绘制、选中行、排序和列宽计算。
-- `SidebarWorkspaceLayout` 提供导航、列表与详情分栏，窄窗口切换为顶部导航和上下布局。
-- `ManagementWorkspace` 组织管理页的搜索、详情、操作栏和高级区域。
-- `PageActionBar` 最多直接显示五个操作，支持主色、危险色、禁用和窄窗口换行。
-- `ManagementViewModel::selected_rows` 表示全部已选行，`selected` 表示当前位置。
-- `ScrollbarOrientation::hit_test` 将指针判定在竖条左右或横条上下扩展一格，视觉布局保持不变。
+- `DataTable` provides table rendering, selected rows, sorting, and column-width calculation.
+- `SidebarWorkspaceLayout` provides navigation, list, and detail columns, switching to top navigation and a vertical layout in narrow windows.
+- `ManagementWorkspace` organizes search, details, action bars, and advanced areas on management pages.
+- `PageActionBar` displays up to five actions directly, supporting primary and danger colors, disabled states, and wrapping in narrow windows.
+- `ManagementViewModel::selected_rows` represents all selected rows; `selected` represents the current position.
+- `ScrollbarOrientation::hit_test` extends pointer hit detection by one cell on either side of a vertical bar or above and below a horizontal bar, without changing the visual layout.
 
-### 输入与主题
+### Input and themes
 
-`TextInput` 提供光标、选区、滚动和密码遮罩。按钮的悬停、按下、焦点、当前项和禁用样式由 `TundraTheme` 与 `RenderContext` 统一计算。键盘、鼠标和触屏规则见 [UI 要求](../../docs/UI-requirements.md)。
+`TextInput` provides a cursor, selection, scrolling, and password masking. Button hover, pressed, focused, current-item, and disabled styles are calculated centrally by `TundraTheme` and `RenderContext`. See [UI requirements](../../docs/UI-requirements.md) for keyboard, mouse, and touchscreen rules.
 
-## 动画
+## Animations
 
-共享动画包括：
+Shared animations include:
 
-- `ease_in_out_cruise` 与 `MotionPhases`：三段时长和连续速度曲线。
-- `reveal_rect`、`morph_surface`：页面、弹窗和菜单从入口展开或收回。
-- `PanelMotion`、`expand_trailing_pane`：详情分栏、屏幕键盘和中途反向。
-- `ANIMATION_FRAME_INTERVAL`：30 FPS 动画调度。
-- `RainbowText`：按终端字符宽度着色的持续彩虹文字。
+- `ease_in_out_cruise` and `MotionPhases`: three phase durations and a continuous velocity curve.
+- `reveal_rect`, `morph_surface`: expand or collapse pages, dialogs, and menus from their entry points.
+- `PanelMotion`, `expand_trailing_pane`: detail panes, the on-screen keyboard, and reversal during a transition.
+- `ANIMATION_FRAME_INTERVAL`: animation scheduling at 30 FPS.
+- `RainbowText`: continuous rainbow text colored by terminal character width.
 
-`ui::animate` 导出 animate 0.8 的 `Tween`、`Spring`、`Clock` 和宏，支持 `Rect`、`Color`、`Style` 等 Ratatui 类型：
+`ui::animate` exports `Tween`, `Spring`, `Clock`, and macros from animate 0.8, with support for Ratatui types such as `Rect`, `Color`, and `Style`:
 
 ```rust
 use ui::animate::{self, Clock};
 ```
 
-调用方保存动画状态，每帧使用同一个 `MotionFrame` 推进时钟；键盘操作或减少动态效果时直接到达目标。
+Callers retain animation state and advance the clock with the same `MotionFrame` for each frame; keyboard actions or reduced motion go directly to the target.
 
-## 子终端与图片
+## Child terminals and images
 
-`TerminalImageFragment` 描述 RGBA 数据、源裁切、内容区坐标、像素边距和层级。`TerminalImageCache` 按视口裁切并缓存 Kitty、Sixel 和 iTerm2 图片。
+`TerminalImageFragment` describes RGBA data, source cropping, content-area coordinates, pixel margins, and layers. `TerminalImageCache` clips and caches Kitty, Sixel, and iTerm2 images by viewport.
 
-文本终端、弹窗遮挡、布局过渡、透明或重叠图片使用字符色块合成。快照保留宽字符、斜体和原生光标形状；编辑器 Vim 区域通过 `editor_vim_terminal_area` 共用绘制、PTY 尺寸和鼠标坐标。
+Text terminals, dialog occlusion, layout transitions, and transparent or overlapping images use character-block compositing. Snapshots preserve wide characters, italics, and native cursor shapes; the editor's Vim region shares rendering, PTY sizing, and mouse coordinates through `editor_vim_terminal_area`.
 
-## 自动化快照
+## Automation snapshots
 
-`automation::FrameCapture` 在外部控制开启时随实际绘制收集控件树：
+When external control is enabled, `automation::FrameCapture` collects the control tree during actual rendering:
 
-1. Shell 用 `begin` 开始帧，并用 `set_group` 标记页面与弹层。
-2. 控件按真实布局记录 ID、名称、区域、焦点、选中、禁用和敏感状态。
-3. `finish` 读取最终 Buffer，补齐未被控件覆盖的可见文字。
+1. Shell starts the frame with `begin` and marks pages and overlays with `set_group`.
+2. Controls record their IDs, names, regions, focus, selection, disabled status, and sensitive status using the actual layout.
+3. `finish` reads the final Buffer and adds visible text not covered by controls.
 
-密码区域在控件和整屏文字中统一遮罩，子终端导出解析后的可见文字。采集只描述画面，业务操作仍由 Shell 的正常输入流程执行。
+Password regions are consistently masked in both controls and full-screen text; child terminals export parsed visible text. Capture only describes the screen; application operations still run through Shell's normal input flow.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p ui
@@ -93,6 +93,6 @@ cargo test --locked -p ui --test automation
 tundra-cli debug ui-test
 ```
 
-共享控件测试覆盖按钮状态、表单、模态拦截、密码遮罩、宽字符和缩放。页面命中与完整流程由 Shell 测试和真实终端验收覆盖。
+Shared-control tests cover button states, forms, modal interception, password masking, wide characters, and resizing. Page hit testing and complete workflows are covered by Shell tests and real-terminal acceptance checks.
 
-相关文档：[调试预览](../shell/docs/previews.md)、[Shell 会话](../shell/docs/session.md)、[UI 要求](../../docs/UI-requirements.md)。
+Related documentation: [Debug previews](../shell/docs/previews.md), [Shell sessions](../shell/docs/session.md), [UI requirements](../../docs/UI-requirements.md).

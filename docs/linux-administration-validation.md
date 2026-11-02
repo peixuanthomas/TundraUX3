@@ -1,29 +1,29 @@
-# Linux 管理功能验收记录
+# Linux administration acceptance record
 
-日期：2026-10-16。开发主机为 Windows，Linux 检查使用本机 Ubuntu WSL。测试使用真实系统工具；需要写系统文件、启动服务或改规则的用例在独立挂载、网络或 systemd 环境运行。
+Date: 2026-10-16. The development host was Windows, with Linux checks run in local Ubuntu WSL. Tests used real system tools; cases requiring system-file writes, service startup, or rule changes ran in isolated mount, network, or systemd environments.
 
-| 检查 | 结果与范围 |
+| Check | Result and scope |
 | --- | --- |
-| Windows `cargo check --workspace --locked` | 通过；Linux 操作仍由平台条件阻止 |
-| WSL `cargo test --workspace --locked` | 最终复测通过，使用 `CARGO_BUILD_JOBS=2`；platform 单元测试 359 项通过、19 项默认跳过，真实工具用例另行运行 |
-| 配置备份 | 8 项测试通过：分组原件、文件属性、受保护内容、版本冲突、原先缺失文件、撤销恢复及原生任务差异 |
-| 账户恢复 | 5 项单元测试及 1 项真实隔离测试通过，覆盖密码日期、同名重建、编号冲突、保留主目录及无关属性 |
-| 防火墙 | 20 项规则测试、2 项监听端口测试通过；私有 UFW、firewalld 和离线启动恢复的真实测试通过，宿主 nftables 前后相同 |
-| SSH | 12 项普通测试及真实连接、SSH 与 UFW 联动、私有 systemd 服务/socket 测试通过；拒绝旧连接和连接复用确认，检查目标端口及独立回退 |
-| 定时任务 | 9 项单元测试和私有 systemd/crontab 真实测试通过；验证执行身份、成功与失败结果、暂停、恢复及撤销恢复 |
-| 网络备份接入 | 31 项普通测试通过；检查修改和回退分别保留记录、已保存配置与临时配置的区别，以及失败重试时的版本检查 |
-| 国际化 | 27 项语言测试及真实授权助手传递自定义中文的测试通过；检查 2989 处调用和 3316 对中英文资源，保留原生数据标识 |
-| 共享表单和屏幕键盘 | Shell 的 521 项测试通过；包含共享键盘、鼠标、无悬停触屏事件路径、缓存页面切换语言及授权列表刷新 |
-| 真实 PTY | 最终复测通过；隔离 XDG 目录和 140×40、108×20 终端，覆盖管理搜索与表单、CLI、鼠标、输入优先级及终端恢复；64 个排队鼠标事件后，输入立即接受，字符在 0.008 秒内显示 |
+| Windows `cargo check --workspace --locked` | Passed; platform conditions still prevent Linux operations |
+| WSL `cargo test --workspace --locked` | Final rerun passed with `CARGO_BUILD_JOBS=2`; 359 platform unit tests passed and 19 were skipped by default; real-tool cases ran separately |
+| Configuration backups | 8 tests passed: grouped originals, file attributes, protected content, version conflicts, originally missing files, undoing restores, and native-task diffs |
+| Account recovery | 5 unit tests and 1 real isolated test passed, covering password dates, recreation under the same name, ID conflicts, preservation of home directories, and unrelated attributes |
+| Firewall | 20 rule tests and 2 listening-port tests passed; real tests with private UFW, firewalld, and offline startup recovery passed, with host nftables unchanged before and after |
+| SSH | 12 ordinary tests and real-connection, SSH/UFW integration, and private systemd service/socket tests passed; rejected confirmation over old or reused connections, checked the target port and independent rollback |
+| Scheduled tasks | 9 unit tests and real private-systemd/crontab tests passed; verified execution identity, success and failure results, pause, resume, and undoing restores |
+| Network backup integration | 31 ordinary tests passed; checked separate records for changes and rollback, saved versus temporary configuration, and version checks on retries after failure |
+| Internationalization | 27 language tests and a real authorization-helper test passing custom Chinese text passed; checked 2989 calls and 3316 Chinese/English resource pairs, preserving native data identifiers |
+| Shared forms and screen keyboard | 521 Shell tests passed, including shared keyboard, mouse, touch-event paths without hover, language switching on cached pages, and authorization-list refresh |
+| Real PTY | Final rerun passed; isolated XDG directories and 140×40 and 108×20 terminals covered management searches and forms, CLI, mouse, input priority, and terminal restoration. After 64 queued mouse events, input was accepted immediately and the character appeared within 0.008 seconds |
 
-完整工作区默认并行编译曾因 WSL 内存不足退出，后续以 `CARGO_BUILD_JOBS=2` 限制编译并发；不减少测试用例。完整测试还发现新增入口的英文资源、旧帮助断言及启动器入口数量需要同步，已修正。PTY 检查按最终画面判断表单关闭，不要求终端重复输出未变化的搜索标签。
+Default parallel compilation of the full workspace previously exited because WSL ran out of memory. Subsequent runs limited build concurrency with `CARGO_BUILD_JOBS=2` without reducing test cases. The full test suite also found that English resources for new entry points, old help assertions, and Launcher entry counts needed updating; these were fixed. PTY checks determine form closure from the final screen and do not require the terminal to re-emit unchanged search labels.
 
-`cargo fmt --all -- --check` 会报告仓库已有的 `third_party/lsh` 排版差异。本次没有修改第三方代码；新增和修改的 Rust 文件单独格式化及检查。
+`cargo fmt --all -- --check` reports existing formatting differences in `third_party/lsh`. No third-party code was changed in this round; new and modified Rust files were formatted and checked individually.
 
-真实系统工具只从官方 Ubuntu 包解压到测试目录，没有向开发机安装、启用或切换防火墙/SSH 服务。账户测试使用临时 `/etc` 等目录；防火墙脚本使用私有网络和 DBus；定时任务和 SSH 脚本启动只含测试单元的独立 systemd，结束后清理专用 cgroup。官方工具的临时解压目录已清理。
+Real system tools were extracted into test directories only from official Ubuntu packages; no firewall/SSH services were installed, enabled, or switched on the development machine. Account tests used temporary `/etc` and other directories; firewall scripts used private networking and DBus; scheduled-task and SSH scripts started isolated systemd instances containing only test units and cleaned up their dedicated cgroups afterward. Temporary directories containing the extracted official tools were removed.
 
-SSH 在独立 systemd 下分别验证普通服务和 `Accept=no` socket，两种监听方式各检查取消与超时恢复。测试实际执行 `systemctl` 和正式加载、恢复代码，检查普通服务进程保持、socket 对应服务重新启动、旧连接仍可执行命令、新目标端口的新连接可确认，以及恢复旧端口。另用 `systemd-socket-activate` 覆盖继承监听及不同账户的真实连接。独立 root 子进程负责超时恢复；测试缩短恢复时限，启动恢复通过改变测试记录的启动编号验证，没有实际重启开发机。
+Under isolated systemd, SSH tests separately verified ordinary services and `Accept=no` sockets, checking cancellation and timeout recovery for both listening modes. The tests actually ran `systemctl` and production reload/recovery code, checking that ordinary service processes were preserved, socket-associated services restarted, old connections could still execute commands, new connections to the new target port could confirm, and the old port was restored. Additional `systemd-socket-activate` tests covered inherited listeners and real connections under different accounts. A separate root subprocess handled timeout recovery; tests shortened the recovery deadline, and startup recovery was verified by changing the boot ID in test records without actually rebooting the development machine.
 
-尚未进行物理触屏设备验收、整机断电/重启验收、桌面 sudo 授权窗口验收，以及真实 NetworkManager/Netplan/networkd 写入和无线硬件验收。触屏结果仅指自动测试中的点按事件，不等于物理设备通过。
+Physical touchscreen acceptance, whole-device power-loss/reboot acceptance, desktop sudo authorization-dialog acceptance, and real NetworkManager/Netplan/networkd writes and wireless-hardware acceptance have not been performed. Touch results refer only to tap events in automated tests and do not establish physical-device acceptance.
 
-重复验证参见 [配置备份](../crates/platform/docs/config-backups.md)、[防火墙](../crates/platform/docs/firewall.md)、[SSH](../crates/platform/docs/ssh-management.md)、[定时任务](../crates/platform/docs/scheduled-tasks.md) 和 [测试指南](testing.md)。
+For repeat validation, see [configuration backups](../crates/platform/docs/config-backups.md), [firewall](../crates/platform/docs/firewall.md), [SSH](../crates/platform/docs/ssh-management.md), [scheduled tasks](../crates/platform/docs/scheduled-tasks.md), and the [testing guide](testing.md).

@@ -1,70 +1,70 @@
 # platform
 
-`platform` 提供操作系统查询与读写接口，包括应用路径、文件、进程、终端能力、系统指标、账户、服务、软件包、网络和磁盘。Shell 与 CLI 通过这些接口执行操作，不在页面层拼接提权命令。
+`platform` provides operating-system query and read/write interfaces, including application paths, files, processes, terminal capabilities, system metrics, accounts, services, packages, networks, and disks. Shell and CLI perform operations through these interfaces rather than assembling privilege-elevation commands in page code.
 
-## 模块结构
+## Module structure
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| `paths` | 各平台配置、状态、缓存、日志和临时目录 |
-| `document` | 普通文件检查、分块读取、文档指纹和原子写入 |
-| `platform` | 目录、卷、回收站、文件打开和平台能力 |
-| `process`、`managed_process` | 进程参数、输出、取消和子进程管理 |
-| `terminal` | 宿主终端能力、颜色与全屏序列 |
-| `system_monitor` | CPU、内存、电池、网络和进程指标 |
-| `management` | 类型化的系统管理查询、动作与固定后端 |
-| `command_session` | 系统命令会话与可执行文件查找 |
-| `shell_control` | 本机 Shell 控制连接与会话发现 |
-| `task_history` | 页面、助手和定时任务的历史与输出 |
-| `diagnostics` | `doctor` 环境和路径检查 |
+| `paths` | Platform-specific configuration, state, cache, log, and temporary directories |
+| `document` | Regular-file checks, chunked reads, document fingerprints, and atomic writes |
+| `platform` | Directories, volumes, trash, opening files, and platform capabilities |
+| `process`, `managed_process` | Process arguments, output, cancellation, and child-process management |
+| `terminal` | Host terminal capabilities, colors, and fullscreen sequences |
+| `system_monitor` | CPU, memory, battery, network, and process metrics |
+| `management` | Typed system-management queries, actions, and fixed backends |
+| `command_session` | System command sessions and executable lookup |
+| `shell_control` | Local Shell control connections and session discovery |
+| `task_history` | History and output for pages, helpers, and scheduled tasks |
+| `diagnostics` | `doctor` environment and path checks |
 
-平台专用实现位于 `src/linux/`、`src/windows/` 和 `src/macos/`。文档读取拒绝 FIFO、设备、符号链接和其他非普通文件，打开后再次核对文件身份。
+Platform-specific implementations are in `src/linux/`, `src/windows/`, and `src/macos/`. Document reads reject FIFOs, devices, symbolic links, and other non-regular files, and recheck file identity after opening.
 
-## 管理接口
+## Management interfaces
 
-`ManagementQuery`、`ManagementSnapshot`、`ManagementAction` 和 `ManagementCommand` 描述查询、页面数据、可用操作和执行请求。动作 ID、字段 ID 和目标身份保持稳定，显示文字使用调用方语言。
+`ManagementQuery`, `ManagementSnapshot`, `ManagementAction`, and `ManagementCommand` describe queries, page data, available operations, and execution requests. Action IDs, field IDs, and target identities remain stable; display text uses the caller's language.
 
-当前管理类型包括服务、进程、软件包、网络、磁盘、用户、系统配置、配置备份、防火墙、SSH、计划任务、任务历史、文件权限和操作系统设置。
+Current management types cover services, processes, packages, networks, disks, users, system configuration, configuration backups, firewalls, SSH, scheduled tasks, task history, file permissions, and operating-system settings.
 
-- 查询使用当前进程权限；需要额外权限的操作先经过 AA 和系统授权。
-- 批量操作先核对全部目标。服务使用一次 systemctl，进程绑定原进程身份，同一 cron 来源合并保存。
-- APT、DNF 和 pacman 支持批量软件包操作；pacman 安装和升级包含完整系统升级。
-- Homebrew 位于 `management/homebrew/`，按 Formula/Cask 区分目标；WinGet 使用准确包编号和版本。
-- 后端拒绝或无法确认结果时先读取实际状态，避免换后端重复写入。
+- Queries use the current process's permissions; operations requiring additional permissions first go through AA and system authorization.
+- Batch operations check all targets first. Services use one systemctl invocation, processes are bound to their original identity, and changes from the same cron source are saved together.
+- APT, DNF, and pacman support batch package operations; pacman installation and upgrades include a full system upgrade.
+- Homebrew is in `management/homebrew/` and distinguishes Formula and Cask targets; WinGet uses exact package IDs and versions.
+- If a backend rejects an operation or cannot confirm the result, read the actual state first to avoid repeating writes through a different backend.
 
-## Shell 控制连接
+## Shell control connections
 
-`shell_control` 为外部 CLI 提供本机连接。Unix 使用当前用户私有的 socket 和登记文件并核对对端 UID/PID；Windows 命名管道和目录只允许当前用户 SID。
+`shell_control` provides local connections for the external CLI. Unix uses a socket and registration file private to the current user and checks the peer's UID/PID; Windows named pipes and directories allow only the current user's SID.
 
-Shell 每次轮询最多处理 16 个连接，每连接读写 64 KiB；请求上限 1 MiB，响应上限 32 MiB。连接在 30 秒后清理，退出时删除登记和 socket。协议类型由 [shell-control](../shell-control/README.md) 定义。
+Each Shell poll processes at most 16 connections, with 64 KiB of reads and writes per connection; requests are limited to 1 MiB and responses to 32 MiB. Connections are cleaned up after 30 seconds, and registration files and sockets are removed on exit. Protocol types are defined by [shell-control](../shell-control/README.md).
 
-## 文档导航
+## Documentation
 
-| 主题 | 文档 |
+| Topic | Document |
 | --- | --- |
-| 路径、启动身份、桌面和文件集成 | [系统集成](docs/integration.md) |
-| 服务、进程、软件包与任务 | [Linux 系统管理](docs/linux-management.md) |
-| 授权连接、撤销和固定操作 | [授权与助手连接](docs/authorization.md) |
-| 网络、Wi-Fi、磁盘和目录扫描 | [网络和磁盘](docs/network-disks.md) |
-| 用户、用户组和 SSH 公钥 | [用户管理](docs/user-management.md) |
-| 文件权限、归属和递归范围 | [文件权限](docs/file-permissions.md) |
-| 主机名、时区和自动校时 | [操作系统设置](docs/system-settings.md) |
-| 配置检查、保存和恢复 | [系统配置文件](docs/system-config.md) |
-| 配置历史、保留和清理 | [配置备份与恢复](docs/config-backups.md) |
-| 监听端口、UFW 和 firewalld | [防火墙与端口](docs/firewall.md) |
-| SSH 设置与新连接确认 | [SSH 服务管理](docs/ssh-management.md) |
-| systemd timer 与 cron | [定时任务](docs/scheduled-tasks.md) |
-| 任务摘要、输出和清理 | [任务历史](docs/task-history.md) |
-| Homebrew Formula 与 Cask | [Homebrew 软件包](docs/homebrew.md) |
-| WinGet 软件包 | [Windows 软件包](docs/windows-packages.md) |
-| 进程、日志和目录性能 | [性能与复测](docs/performance.md) |
-| 运维命令、任务编号与退出码 | [运维 CLI](../cli/docs/operations.md) |
+| Paths, startup identity, desktop and file integration | [System integration](docs/integration.md) |
+| Services, processes, packages, and tasks | [Linux system management](docs/linux-management.md) |
+| Authorization connections, revocation, and fixed operations | [Authorization and helper connections](docs/authorization.md) |
+| Networks, Wi-Fi, disks, and directory scans | [Networks and disks](docs/network-disks.md) |
+| Users, groups, and SSH public keys | [User management](docs/user-management.md) |
+| File permissions, ownership, and recursive scope | [File permissions](docs/file-permissions.md) |
+| Hostname, timezone, and automatic time synchronization | [Operating-system settings](docs/system-settings.md) |
+| Configuration validation, saving, and recovery | [System configuration files](docs/system-config.md) |
+| Configuration history, retention, and cleanup | [Configuration backups and recovery](docs/config-backups.md) |
+| Listening ports, UFW, and firewalld | [Firewall and ports](docs/firewall.md) |
+| SSH settings and confirmation from a new connection | [SSH service management](docs/ssh-management.md) |
+| systemd timers and cron | [Scheduled tasks](docs/scheduled-tasks.md) |
+| Task summaries, output, and cleanup | [Task history](docs/task-history.md) |
+| Homebrew Formulae and Casks | [Homebrew packages](docs/homebrew.md) |
+| WinGet packages | [Windows packages](docs/windows-packages.md) |
+| Process, log, and directory performance | [Performance and retesting](docs/performance.md) |
+| Operations commands, task IDs, and exit codes | [Operations CLI](../cli/docs/operations.md) |
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p platform
 cargo test --locked -p platform --test shell_control
 ```
 
-Linux 管理测试在 Linux 或 WSL 运行。真实授权、服务写入、无线设备、挂载和物理盘操作使用对应的隔离环境或测试主机；具体入口见各专题文档。
+Run Linux management tests on Linux or WSL. Use the corresponding isolated environment or test host for real authorization, service writes, wireless devices, mounts, and physical-disk operations; see each topic's document for specific entry points.

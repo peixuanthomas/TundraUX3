@@ -1,45 +1,45 @@
-# 列表多选
+# List multi-selection
 
-多选用于能对多个对象执行同一操作的列表。只查看详情、填写独立参数或逐项配置的列表保持单选。
+Multi-selection is for lists where the same operation can be applied to multiple objects. Lists used only to view details, enter individual parameters, or configure items one at a time remain single-selection.
 
-## 通用操作
+## Common operations
 
-软件包、服务、进程、计划任务和文件管理提供“选择多项／完成选择”、勾选框和已选数量。
+Packages, services, processes, scheduled tasks, and file management provide Select Multiple / Finish Selection controls, checkboxes, and a selection count.
 
-- 点按列表行切换勾选，方向键移动当前位置，Enter 或空格切换当前行。
-- 退出选择模式后清除批量选择，恢复当前行单选；空选择不能执行批量操作。
-- 排序和刷新保留仍存在的目标，改变筛选或查询条件时清除选择。
-- 确认和授权窗口列出全部目标，后台在执行前再次核对对象。
-- 文件管理保留 Shift+点击范围选择和 Ctrl/Command+点击逐项选择；其他管理页使用 Shift+点击或 Shift+Enter 逐项选择。
-- 鼠标或触屏手势在拖出、滚动、失焦或缩放后取消，避免松开时操作新目标。
+- Tapping a row toggles its checkbox; arrow keys move the current position; Enter or Space toggles the current row.
+- Exiting selection mode clears the batch selection and restores single selection of the current row. Batch operations cannot run with an empty selection.
+- Sorting and refreshing retain targets that still exist; changing filters or query criteria clears the selection.
+- Confirmation and authorization dialogs list every target, and background processing checks the objects again before execution.
+- File management retains Shift+click for range selection and Ctrl/Command+click for individual selection; other management pages use Shift+click or Shift+Enter for individual selection.
+- Mouse and touchscreen gestures are canceled after dragging out, scrolling, focus loss, or resizing, so releasing cannot act on a new target.
 
-软件包按包编号保存选择，全部已选包都支持同一操作时才允许安装、卸载或更新。APT、DNF 和 pacman 使用批量命令；pacman 的安装和更新同时执行完整系统升级。Homebrew 按 Formula/Cask 分组，WinGet 按准确编号和版本逐包处理。
+Package selections are stored by package ID. Installation, removal, or upgrade is allowed only when all selected packages support the same operation. APT, DNF, and pacman use batch commands; pacman installation and upgrade also perform a full system upgrade. Homebrew groups by Formula/Cask, while WinGet processes packages individually using exact IDs and versions.
 
-服务支持批量启动、停止、重启、重载、启用和禁用。进程支持批量暂停、继续、终止和设置相同优先级，并在执行前核对进程身份。计划任务支持批量暂停、恢复和立即执行，同一 cron 来源合并保存。
+Services support batch start, stop, restart, reload, enable, and disable. Processes support batch suspend, resume, termination, and assignment of the same priority, with process identity checked before execution. Scheduled tasks support batch pause, resume, and run-now; changes from the same cron source are saved together.
 
-## 各页面的选择方式
+## Selection behavior by page
 
-| 页面或列表 | 选择方式 | 说明 |
+| Page or list | Selection | Notes |
 | --- | --- | --- |
-| 软件包：已安装、更新、搜索 | 多选 | 批量安装、卸载和更新 |
-| 软件包：软件源、配置冲突、检查结果 | 单选 | 分别查看、比较或修复 |
-| 文件浏览器：普通目录与回收站 | 多选 | 复制、剪切、删除、恢复和权限修改 |
-| 文件浏览器：快速访问、历史与选项 | 单选 | 一次打开一个目录或修改一个选项 |
-| 服务管理 | 多选 | 日志查看和配置编辑保持单项 |
-| 进程管理 | 多选 | 批量发送信号或设置优先级 |
-| 计划任务 | 多选 | 创建、编辑和时间预览保持单项 |
-| 防火墙规则与监听端口 | 单选 | 规则逐项核对，端口以查看为主 |
-| 用户、用户组与应用内账户 | 单选 | 密码、成员、归属和删除针对一个账户 |
-| 网络、磁盘、SSH、系统设置 | 单选 | 每项配置使用独立参数和检查 |
-| 配置文件与配置备份 | 单选 | 一次编辑或恢复一个配置 |
-| 启动器应用与快捷方式 | 单选 | 打开、排序和编辑针对一个项目 |
-| 设置分类、应用列表与字段选项 | 单选 | 复选框仍可分别勾选 |
-| 日志、日志文件与事故报告 | 单选 | 打开详情、跟随和查看 |
-| 诊断检查项与修复预览 | 单选 | 支持修复当前项或全部修复 |
-| 系统状态卡片与选择弹窗 | 单选 | 数据查看和卡片编辑逐项进行 |
-| 时钟闹钟与计时器 | 单选 | 管理弹窗一次处理一项 |
-| 编辑器文档与菜单 | 单选 | 正文选区和 Vim Visual 使用各自规则 |
-| 登录、首次设置与时区地图 | 单选 | 一次选择一个账户、选项或输入字段 |
-| 首页、帮助、通知、命令行、AA、天气 | 单选 | 以入口、说明、消息或当前任务为主 |
+| Packages: Installed, Updates, Search | Multiple | Batch installation, removal, and upgrades |
+| Packages: sources, configuration conflicts, check results | Single | Inspect, compare, or repair individually |
+| File Explorer: ordinary directories and Trash | Multiple | Copy, cut, delete, restore, and change permissions |
+| File Explorer: quick access, history, and options | Single | Open one directory or change one option at a time |
+| Service management | Multiple | Log viewing and configuration editing remain individual |
+| Process management | Multiple | Send signals or set priorities in batches |
+| Scheduled tasks | Multiple | Creation, editing, and time previews remain individual |
+| Firewall rules and listening ports | Single | Review rules individually; ports are primarily for inspection |
+| Users, groups, and in-app accounts | Single | Passwords, membership, ownership, and deletion concern one account |
+| Networks, disks, SSH, system settings | Single | Each configuration uses separate parameters and checks |
+| Configuration files and configuration backups | Single | Edit or restore one configuration at a time |
+| Launcher applications and shortcuts | Single | Opening, ordering, and editing concern one item |
+| Settings categories, application lists, and field options | Single | Checkboxes can still be toggled individually |
+| Logs, log files, and incident reports | Single | Open details, follow, and inspect |
+| Diagnostic checks and repair previews | Single | Supports repairing the current item or all items |
+| System status cards and selection dialogs | Single | Inspect data and edit cards individually |
+| Clock alarms and timers | Single | Management dialogs handle one item at a time |
+| Editor documents and menus | Single | Text selections and Vim Visual mode follow their own rules |
+| Login, initial setup, and timezone map | Single | Select one account, option, or input field at a time |
+| Home, Help, notifications, Command Line, AA, weather | Single | Primarily entry points, instructions, messages, or the current task |
 
-新增批量操作时，先让后端接收并核对多个目标，再接入页面选择、确认和授权流程。各页面的完整快捷键见 F1 帮助。
+When adding a batch operation, first make the backend accept and validate multiple targets, then connect page selection, confirmation, and authorization. See F1 help for each page's complete shortcuts.
