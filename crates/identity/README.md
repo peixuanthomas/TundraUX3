@@ -1,11 +1,34 @@
 # identity
 
-`identity` 负责应用身份：Linux 使用当前进程的系统用户，Windows/macOS 使用 Tundra 本地账户。
+`identity` 负责应用身份与 UX 权限：Linux 附着当前进程的系统用户，Windows/macOS 使用 Tundra 本地账户。
 
-## 账户和权限
+## 模块
 
-以下本地账户规则用于 Windows、macOS 和测试后端。Linux 仅附着当前进程的 NSS 用户；系统账号、密码、锁定和过期策略由 Linux 系统管理，个人操作遵循普通进程权限。
+| 模块 | 职责 |
+| --- | --- |
+| `identity` | `AuthSession`、身份来源和用户账户 |
+| `backend` | 身份后端接口 |
+| `credentials` | 密码校验、Argon2 哈希与验证 |
+| `session_service` | 登录会话、失败计数和锁定 |
+| `user_service` | 本地账户管理 |
+| `authorization` | Guest/User/Admin 角色与权限检查 |
+| `linux` | 当前 Linux 进程用户 |
 
-密码不以明文持久化，而使用随机 salt 的 Argon2 哈希。密码长度必须为 **10–256** 个字符，不能全为空白，也不能等于规范化后的用户名。认证会话只保存在内存中；用户名匹配不区分大小写，未知用户与错误密码统一返回无效凭据。连续 **5 次**认证失败会锁定账户 **5 分钟**；锁定与失败信息持久化，避免重启绕过。
+## 本地账户规则
 
-UX 访问权限区分 Guest、User 与 Admin。文件读写和个人资料操作面向 User/Admin；用户管理、Command Line、Launcher 管理、诊断修复和设置管理仅允许 Admin。保存的 UX 角色不授予 Linux 系统权限；Linux 账户修改仍需实际系统授权并遵守当前账户保护规则。CLI 的 `config` 不读写身份字段；系统账户通过正式 `users` 命令管理，密码只允许隐藏输入或指定输入描述符。
+以下规则用于 Windows/macOS 和测试后端：
+
+- 密码使用随机 salt 的 Argon2 哈希，长度为 10–256 个字符，不能全为空白或等于规范化用户名。
+- 用户名匹配不区分大小写，未知用户与错误密码返回相同的无效凭据结果。
+- 连续 5 次认证失败锁定 5 分钟，失败与锁定信息持久化。
+- 认证会话只保存在内存中。
+
+UX 角色分为 Guest、User 和 Admin。文件与个人资料操作面向 User/Admin；用户管理、Command Line、Launcher 管理、诊断修复和设置管理需要 Admin。
+
+Linux 的系统账户、密码和锁定策略由操作系统管理，保存的 UX 角色不授予 Linux 权限。系统账户通过 `tundra-cli users` 和系统授权流程管理，CLI `config` 不读写身份字段。
+
+## 验证
+
+```sh
+cargo test --locked -p identity
+```

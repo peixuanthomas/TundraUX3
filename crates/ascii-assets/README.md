@@ -1,96 +1,50 @@
 # ascii-assets
 
-用户角色和时钟表单按钮使用 `modules/ui-user-management.ftl`、`modules/ui-clock.ftl` 的中英文标签。权限帮助说明统一为“空格切换、Enter 下一栏／最后一栏确认”。
+`ascii-assets` 加载、校验和修复主题、ASCII 图案、图标、字体与语言资源文件，并计算绘制所需尺寸。语言加载与翻译由 [i18n](../i18n/README.md) 负责。
 
-中英文 modules/ui-launcher.ftl 包含整理模式、新增启动命令、右键菜单、固定尺寸字符图标编辑与越界提示，以及退出选项、翻页和排序帮助。新增表单使用默认图标。modules/terminal-launcher.ftl 同步提供程序退出后按回车返回的提示。
+## 模块
 
-`ui-launcher-keep-screen` 用于新增表单及右键菜单的“退出后保留界面”开关，“开／关”复用设置页中英文文案。
+| 模块 | 职责 |
+| --- | --- |
+| `artwork` | 文本图案、art set、主页/启动器/文件图标类型 |
+| `asset_manifest` | 必需资源清单、资源类型和默认主题 ID |
+| `asset_resolver` | 环境变量、程序目录和安装位置的资源根解析 |
+| `asset_store` | 资源加载与绘制尺寸统计 |
+| `asset_validation` | 必需资源和默认主题检查 |
+| `asset_restore` | 从内置默认内容恢复资源文件 |
+| `asset_distribution` | 将规范资源复制到 Cargo 输出目录 |
+| `embedded_defaults` | 共享的内置默认文件与图片字节 |
+| `clock_font` | 时钟字体资源 |
 
-中英文 `modules/terminal-launcher.ftl` 提供 Launcher 运行设置、参数和目录检查，以及嵌入终端的启动、输入和关闭提示。
+## 资源格式
 
-中英文 `modules/selection.ftl` 提供可点击多选入口、已选数量和整页操作限制，沿用现有语言包自动加载。
+默认清单包含 25 项：20 个文本资源、4 个 TOML art set 和 1 个时钟字体。
 
-`modules/tasks.ftl` 提供统一任务页、运行状态和清理说明。
+- 文本资源只包含可打印 ASCII，TOML art set 使用 schema v1。
+- 图片支持 GIF、JPEG、PNG 和 WebP，路径必须是资源根内的相对路径。
+- 语言资源位于 `locales/<code>/`，包含 `manifest.toml` 和递归读取的 `.ftl` 文件。
+- 默认图片字节由静态资源表共享，校验、修复和内存回退复用同一份数据。
+- 所有资源参与尺寸统计，更新资源可能改变最小终端尺寸。
 
-`modules/management-schedule-workflow.ftl` 提供定时任务向导、原生编辑和补执行说明。
+资源根按以下顺序解析：
 
-`modules/backup-filters.ftl` 和 `backup-history.ftl` 提供日期、来源筛选、分页、保留和清理预览说明。
+1. `TUNDRA_ASCII_ASSETS_DIR`；
+2. 程序同目录的 `assets/`；
+3. Linux 的 `/usr/share/tundraux3/assets`。
 
-中英文 `modules/script.ftl` 提供脚本编辑器入口、运行与调试操作、六区工作区、表达式和执行状态文字。语言资源沿用目录自动收集，不新增单独的加载路径。
-脚本编辑器复用当前主题的编辑器图片和 ASCII 图案，已有自定义主题也使用同一图案。
+## 默认资源修复
 
-`management-winget.ftl` 提供 Windows 软件包的中英文标签、缺少依赖、输出解析及执行结果提示，沿用现有语言包加载流程。
+启动时检查默认图形和中英文语言资源。缺失或损坏的默认文件从内置内容恢复，健康的自定义内容保持不变。默认主题的旧配置可补充新增条目，不移除用户已有图案。
 
-中英文 `modules/editor-vim.ftl` 也提供引擎安装弹窗、下载进度、取消及尚未发布的提示。
+无法写入资源目录时，程序使用内存副本并报告修复结果。语言消息 ID、参数契约和回退规则见[语言资源与恢复](../i18n/docs/localization.md)。
 
-中英文 `modules/settings.ftl` 保存屏幕超时时间及说明，`modules/weathr.ftl` 保存空闲天气画面的返回提示。
+## 验证
 
-`modules/regression-startup.ftl` 保存完整 CLI 命令列表及精简后的 doctor、REPL、应用入口和屏幕键盘帮助；doctor 使用顶层命令。它也保存 `tundra-shell --help` 中供 agent 使用的 UI automation 介绍与命令示例。
+```sh
+cargo test --locked -p ascii-assets
+python scripts/check-embedded-assets.py target/release/tundra-shell.exe target/release/tundra-cli.exe
+```
 
-`ascii-assets` 加载和校验主题、ASCII 图案、图标及字体，统计绘制所需尺寸，并提供内置资源用于修复。语言源码也随资源分发；加载和翻译由 `i18n` 负责。
+Linux/macOS 使用不带 `.exe` 的程序路径。检查脚本核对每张默认图片是否恰好嵌入一次；某平台完全未使用图片时可添加 `--allow-missing`，仅检查重复项。
 
-中英文 `modules/screen-keyboard.ftl` 包含 QWERTY 键盘的导航键与字母区／功能区切换标签。
-
-启动器的任务模块使用 `builtin.tasks`，同时提供四行 ASCII 图案与 `launcher_icons/tasks.png`。默认图标会嵌入程序，旧主题升级时补齐缺少的任务图标并保留已有自定义内容。图片由内置 imagegen 根据现有青色发光图标风格生成，内容为两项已完成、一项运行中的任务清单，不含文字。
-
-AA 自动策略的显示名称统一为“一律放行” / “Always allow”，帮助文字继续说明其只跳过 AA 确认。
-
-编辑器 Vim 开关、“VIM模式已启用／未启用”状态按钮和按需打开的使用帮助位于中英文 `modules/editor-vim.ftl`；模式、命令行和错误提示保留原生 Vim 的显示。
-
-软件包分栏页的主导航和高级区文字位于中英文 `modules/management-services-process-packages.ftl`；键盘操作统一放在 F1 帮助。
-
-软件包、服务、进程和计划任务的 Shift+点击、Shift+Enter、多选保留和批量操作说明位于中英文 `modules/help.ftl`；无效选择、部分项目不支持操作及批量进度提示位于 `modules/management-services-process-packages.ftl`。
-
-中英文 `modules/management-homebrew.ftl` 提供 macOS Formula/Cask 类型、查询要求、原生交互和执行结果提示。
-
-文件权限与归属的中英文提示集中在 `modules/file-permissions.ftl`，包括空格与 Enter 的勾选操作说明。
-
-操作系统设置和校时配置的中英文提示集中在 `modules/system-settings.ftl`，区分环境能力、工具和查询失败原因，并保留原始诊断详情。
-
-`modules/settings.ftl` 和 `modules/ui-settings.ftl` 提供“区域与时间”直接修改 Linux 系统时区、自动校时和服务器的中英文提示，包含地图、刷新和服务器保存说明。
-
-这两份资源也保存“应用设置”的分类名称、应用列表标题及恢复当前应用默认值的文字。
-
-默认资源表使用一份静态数据，校验、修复和内存回退共用其中的图片字节，避免在同一个可执行文件中重复嵌入 PNG。
-
-语言资源包含防火墙、SSH、配置恢复和定时任务的中英文界面文字；新增启动器入口复用现有图片，并提供各自的 ASCII 图标。旧图标目录会补入四个新入口，保留已有的自定义图案。
-
-定时任务后端的表单、确认和错误提示集中在中英文 `modules/management-scheduled-tasks.ftl`，由 `i18n` 语言快照传给后台线程和授权助手。
-
-用户管理的账户/用户组视图字段使用 `modules/management-users.ftl` 中的专用标签，与服务的系统/当前用户作用域区分。
-
-中英文资源也包含运行期尺寸提示、可移植表单快捷键、管理能力与备份空状态说明；账户来源和任务名称使用各自的业务标签。
-
-管理页和文件管理的中英文搜索入口统一提示 `[/]`；管理搜索输入时提示 `[Enter]` 提交。
-
-动画高级选项弹窗的打开、关闭、阶段名称、毫秒说明和恢复提示位于中英文 `modules/settings.ftl`。
-
-同一资源提供设置数值弹窗的范围校验、调整、输入、确认和取消提示；`modules/help.ftl` 同步说明 Tab/Shift+Tab 切换大类、方向键移动内容区焦点与弹窗内的数值操作。
-
-中英文 `modules/ui-logs.ftl` 提供六个日志等级、最低等级筛选和“打开文件夹”文字；`modules/help.ftl` 说明日志默认显示全部、故障最高，以及 L 筛选、G 打开 UX 日志根目录和不使用 Tab 切换日志视图。
-
-重建发布程序后，可运行 `python scripts/check-embedded-assets.py target/release/tundra-shell.exe target/release/tundra-cli.exe` 检查每张默认图片是否恰好嵌入一次；Linux/macOS 使用不带 `.exe` 的程序路径。脚本逐字节匹配源码中的完整 PNG，同时检查遗漏和重复。
-
-若某个平台的程序没有用到内置图片，编译器可以完全移除这些字节。此时添加 `--allow-missing`，只检查有无重复；脚本仍会打印实际图片数量和字节数。
-
-## 资源校验
-
-资源清单固定要求 25 项：20 个文本资源、4 个 TOML art set 和 1 个时钟字体。文本资源只能包含可打印 ASCII；TOML art set 使用 schema v1。图片路径不得是绝对路径或包含路径穿越，并且只允许 GIF、JPEG、PNG、WebP。
-
-资源根可由 `TUNDRA_ASCII_ASSETS_DIR` 指定，也会从二进制同目录查找；Linux 在前两者未命中时再回退至 `/usr/share/tundraux3/assets`。所有资源都会参与尺寸统计，因此资源更新可能改变启动时的最小终端要求。
-
-中英文 `modules/ui-test.ftl` 保存共享控件展示页的文字；`debug ui-test` 固定使用编译进程序的英文，不读取磁盘上的语言资源。
-
-同一资源文件也保存 `debug test-rainbow-text` 的帮助、标题、示例和退出提示，中英文命令目录均包含此入口。
-
-`modules/help.ftl` 保存各页 F1 帮助；启动器空列表使用简短说明和文件浏览器按钮，中英文同步提供。
-
-外部 Shell 控制的开关、CLI 帮助与错误提示位于中英文 `modules/settings.ftl`；CLI 根帮助及公开配置字段列表同步列出 `ui` 和 `automation.enabled`。
-
-同一帮助列出 `tundra-cli ui wake`，用于关闭空闲天气或天气锁屏并读取后续 Shell 画面。
-
-外部控制的中英文错误提示明确要求用户操作后重新执行 `tundra-cli ui snapshot`；CLI 和 Shell 帮助同步说明自动更新、单纯移动鼠标与天气画面的例外。
-
-设置数值弹窗的中英文提示说明左右键移动光标，减号／加号按钮调整数值。
-
-管理空状态、授权和天气地点确认使用简短中英文文案；按钮直接说明操作，详细帮助按需打开。设置中的“操作系统”“调整时长”和时钟中的创建按钮明确标出目标。
+资源文件位于 `assets/`，界面预览命令见[调试界面预览](../shell/docs/previews.md)。

@@ -1,20 +1,12 @@
 # watchdog
 
-[中文运行与恢复约束](docs/runtime.md) · [Workspace guide](../../docs/README-TECHNICAL.md)
+`watchdog` 是进程级监督运行时，负责托管任务与线程、panic 边界、操作 journal、资源清理和事故报告。可执行程序创建一个 `WatchdogRuntime`，库通过 `AppWatchdog` 使用已有实例。
 
-`watchdog` is the single process-level supervision runtime for TundraUX3.
-Executables own one `WatchdogRuntime`, install its `ProcessWatchdog` once, and
-register every application before starting application code. Libraries receive
-an `AppWatchdog`; they never install panic hooks or create unmanaged production
-threads/tasks.
-
-## Host setup
+## 宿主初始化
 
 ```rust,no_run
-use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig,
-    WatchdogRuntime};
+use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 let (runtime, process) = WatchdogRuntime::start(WatchdogConfig::new(
     "logs", "fallback", "data", "host", env!("CARGO_PKG_VERSION"),
 ))?;
@@ -26,61 +18,44 @@ let app = process.register_app(AppDescriptor::new(
     AppCriticality::Optional,
 ))?;
 
-// Give `app` (or an AppRuntimeContext containing it) to application code.
+// 将 app 或包含它的 AppRuntimeContext 交给应用代码。
 runtime.shutdown()?;
-# Ok(())
-# }
 ```
 
-The process host is the only incident consumer. It chooses the host presentation: Shell uses its independent panic page;
-other hosts may use stderr or a native critical dialog and de-duplicates by incident ID.
-The watchdog crate emits structured receipts and deliberately has no dependency
-on `platform`.
+进程宿主负责事故展示与去重。Shell 使用独立 panic 页面，其他宿主可使用 stderr 或原生错误提示。`watchdog` 不依赖 `platform`。
 
-## Task and recovery rules
+## 任务与恢复
 
-- Create production work through `ManagedTaskGroup` only.
-- Declare `ReplaySafety` for every task. `Never + RestartTask` is rejected.
-- `Idempotent` tasks may be reconstructed by their factory under the configured
-  restart window and backoff.
-- `Checkpointed` tasks restart only after a registered `RecoveryHandler`
-  establishes a safe state.
-- Mutating operations use `begin_operation` and durable checkpoints. A manual
-  outcome keeps the journal and must leave related writes disabled.
-- Shutting down a task group cancels and waits for tracked work; dropping a
-  handle alone does not stop its worker. Threads must observe cancellation and
-  bound blocking waits. Cancellation is not reported as a panic.
+- 生产后台工作通过 `ManagedTaskGroup` 创建，并声明 `ReplaySafety`。
+- `Never + RestartTask` 会被拒绝。
+- `Idempotent` 任务可在配置的重启窗口与退避策略内重建。
+- `Checkpointed` 任务需要注册的 `RecoveryHandler` 先恢复安全状态。
+- 修改操作使用 `begin_operation` 和持久 checkpoint，人工处理结果后保留 journal 并阻止相关写入。
+- 关闭任务组会取消并等待受管理工作；仅丢弃句柄不会停止线程。
+- 长时间等待需要响应取消，取消本身不作为 panic 报告。
 
-Internal commands use `platform::ManagedCommand`. Their owners stop and reap
-children on errors and on drop, and register cleanup with the current watchdog.
-Process shutdown stops registered resources before waiting for worker threads;
-cleanup failures and workers that exceed the shutdown deadline return an error.
-`ManagedResource` also covers PTY children. Cleanup must have a time limit and
-must not wait for another worker that needs shutdown to finish. Successful
-cleanup unregisters the resource; failures remain registered for a later retry.
+内部命令使用 `platform::ManagedCommand`，所有者在错误与 Drop 时停止并回收子进程。`ManagedResource` 也覆盖 PTY 子进程，清理成功后注销，失败时保留登记以便重试。
 
-Desktop applications use the separate external-launch path. Its reaper stops
-waiting when UX exits, while the application continues independently. Update
-replacements keep an explicit owning launcher until the replacement exits.
-System-operation helpers transfer work to their own watchdog so disconnecting
-the UI does not interrupt a package database write. The privileged authorization
-broker monitors its private connection and cancels its own work on disconnect.
+桌面外部程序使用独立启动路径，Tundra 退出后程序可继续运行。更新替换保留明确的启动所有者，系统管理助手将任务交给自己的 watchdog，界面断线不会直接中断软件包写入。
 
-Reports live under the configured report directory as matching JSON and text
-files. Operation journals live under
-`<data>/watchdog/operations/<app-id>/`. Active-run markers live under
-`<data>/watchdog/runs/` and allow the next launch to report exits that could not
-be observed in-process.
+## 报告与运行标记
 
-## Security and hard limits
+报告以匹配的 JSON 和文本文件保存，操作 journal 位于：
 
-Never put passwords, tokens, clipboard/paste contents, or raw user input into
-panic messages, breadcrumbs, snapshots, or operation payloads. The runtime also
-applies central redaction and size limits before persistence, but callers must
-still provide minimal structured context.
+```text
+<data>/watchdog/operations/<app-id>/
+```
 
-With `panic = "unwind"`, Rust panics can be caught at declared boundaries. An
-in-process watchdog cannot recover `abort`, OOM abort, stack overflow, native
-faults, forced termination, power loss, or deadlock. Run markers provide a
-next-launch “reason unknown” report for many of those cases; immediate process
-restart requires a separate external supervisor.
+活动运行标记位于 `<data>/watchdog/runs/`，下次启动可据此记录未观察到的异常退出。
+
+事故上下文使用最小结构化元数据，不写入密码、令牌、剪贴板、粘贴内容或原始用户输入。持久化前还会集中脱敏并限制大小。
+
+运行需要 `panic = "unwind"`，在声明的边界捕获 Rust panic。无法立即捕获的进程退出由运行标记在下次启动时补充记录；需要自动重启的场景由外部监督程序负责。
+
+详细规则见[运行、恢复与报告](docs/runtime.md)。
+
+## 验证
+
+```sh
+cargo test --locked -p watchdog
+```

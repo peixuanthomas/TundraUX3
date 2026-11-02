@@ -1,13 +1,26 @@
 # weathr
 
-`weathr` 是天气场景绘制库。各平台用于天气应用和空闲画面；Windows/macOS 还用于锁屏。它读取共享快照，不启动系统服务或持有全屏终端生命周期。
+`weathr` 是天气场景绘制库，用于各平台的天气应用和空闲画面，Windows/macOS 还用于锁屏。它读取共享快照，不启动系统服务，也不持有全屏终端生命周期。
 
-`EmbeddedDisplay::new` 接收快照、翻译函数和尺寸，`render` 返回一帧 Ratatui Buffer，支持调整尺寸，不读终端输入、不切换终端模式、不向终端输出。Shell 用它显示空闲天气，继续运行后台任务并保留原页面；画面提示按键或点按返回，认证仍由 Shell 管理。独立锁屏与内嵌画面共用同一绘制代码。
+## 内嵌绘制
 
-## 天气场景和锁屏
+`EmbeddedDisplay::new` 接收天气快照、翻译函数和尺寸，`render` 返回一帧 Ratatui Buffer，支持调整尺寸。它不会读取终端输入、切换终端模式或直接向终端输出。
 
-天气来自 [system-services](../system-services/README.md) 的共享快照；提供方选择和缓存由该 crate 说明。Shell 可在启动时预取天气。
+天气、昼夜、季节和动画共同决定房屋、树木、云、雨雪和月相等场景。天气数据与缓存由 [system-services](../system-services/README.md) 提供，Shell 可在启动时预取。
 
-天气标准化结果、昼夜、季节和动画共同决定 ASCII 房屋、树木、云、雨雪和月相等场景。锁屏支持 12/24 小时制、终端 resize、任意按键或点击终端任意位置进入；资源尺寸会抬高共同最小终端要求。Shell 锁屏模式提示进入系统，由 Shell 负责创建 watchdog 与恢复终端。锁屏 UI 发生 panic 时直接进入全屏 panic 页面，等待用户重启或退出。
+Shell 用同一绘制代码显示天气应用、空闲画面和锁屏。空闲时后台任务继续运行，按键或点按返回原页面，认证和页面状态由 Shell 管理。
 
-宿主可通过 `run_display_blocking_with_control` 提供 `DisplayControl`，读取已经绘制的帧并送入普通终端输入；Shell 用它让外部 CLI 可以读取和进入锁屏。连接、开关和权限仍由 Shell 与 platform 管理，Weathr 不创建控制服务。
+## 独立锁屏与控制
+
+锁屏支持 12/24 小时制、终端 resize，以及任意按键或点击进入。宿主负责 watchdog、终端模式和 panic 页面。
+
+`run_display_blocking_with_control` 接受 `DisplayControl`，让宿主读取已绘制帧并发送正常终端输入。Shell 用它支持外部 CLI 的天气画面与 `wake`，连接、开关和权限仍由 Shell 与 platform 管理。
+
+## 验证
+
+```sh
+cargo test --locked -p weathr
+bash scripts/check-weathr-dependency-boundary.sh
+```
+
+依赖边界检查确保数据绘制不会反向引入 Shell 或系统运行时。
