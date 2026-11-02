@@ -53,5 +53,4 @@
 - [CHANGELOG](CHANGELOG.md) 与[版本发布说明](packaging/releases/v1.5.md)
 - [Linux 管理验收记录](linux-administration-validation.md)
 - [操作可用性验收记录](operations-usability-validation.md)
-- [界面验收记录](ui-review-2026-10-31.md)
 - [Linux 便携包历史验证](packaging/linux/VALIDATION-2026-09-18.md)
