@@ -823,6 +823,52 @@ fn update_confirmation_draws_complete_buttons_and_blocks_underlying_hits() {
 }
 
 #[test]
+fn release_update_shows_download_and_notes_without_build_panels_or_blank_space() {
+    let mut model = sample_model();
+    model.selected_category = SettingsCategory::Update;
+    model.cards.clear();
+    model.update = Some(SettingsUpdateViewModel {
+        summary_title: Some("Release notes".into()),
+        activity: Some(ui::components::UpdateActivityViewModel {
+            output: vec!["compiler diagnostic".into()],
+            ..Default::default()
+        }),
+        commits: vec![ui::SettingsUpdateCommitViewModel {
+            sha: "1.5.0".into(),
+            message: "Update fixes".into(),
+        }],
+        empty_message: String::new(),
+        confirmation: None,
+    });
+    for (width, height) in [(120, 40), (108, 20)] {
+        let area = Rect::new(0, 0, width, height);
+        let main = match ui::compute_shell_layout(area) {
+            ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
+        };
+        assert_eq!(settings_layout(main, &model).max_scroll_offset, 0);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_settings(
+                    frame,
+                    frame.area(),
+                    &chrome(),
+                    &model,
+                    &TundraTheme::default_dark(),
+                );
+            })
+            .unwrap();
+        let output = terminal_output(&terminal);
+        assert!(output.contains("Download: waiting"));
+        assert!(output.contains("Release notes"));
+        assert!(output.contains("Update fixes"));
+        assert!(!output.contains("Compilation"));
+        assert!(!output.contains("Live output"));
+        assert!(!output.contains("compiler diagnostic"));
+    }
+}
+
+#[test]
 fn update_activity_shows_both_meters_and_latest_output_with_page_scrolling() {
     use ui::components::{UpdateActivityViewModel, UpdateMeterViewModel};
     let mut model = sample_model();
@@ -832,6 +878,7 @@ fn update_activity_shows_both_meters_and_latest_output_with_page_scrolling() {
     model.update = Some(SettingsUpdateViewModel {
         summary_title: None,
         activity: Some(UpdateActivityViewModel {
+            show_build_details: true,
             download: UpdateMeterViewModel {
                 percent: Some(100),
                 display_basis_points: None,

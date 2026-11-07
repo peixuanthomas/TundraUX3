@@ -12,6 +12,7 @@ pub struct UpdateMeterViewModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateActivityViewModel {
+    pub show_build_details: bool,
     pub download: UpdateMeterViewModel,
     pub compilation: UpdateMeterViewModel,
     pub output: Vec<String>,
@@ -20,6 +21,7 @@ pub struct UpdateActivityViewModel {
 impl Default for UpdateActivityViewModel {
     fn default() -> Self {
         Self {
+            show_build_details: false,
             download: UpdateMeterViewModel {
                 percent: None,
                 display_basis_points: None,
@@ -40,9 +42,12 @@ impl Default for UpdateActivityViewModel {
 pub struct UpdateActivity<'a>(&'a UpdateActivityViewModel);
 
 impl<'a> UpdateActivity<'a> {
-    pub const HEIGHT: u16 = 17;
     pub fn new(model: &'a UpdateActivityViewModel) -> Self {
         Self(model)
+    }
+
+    pub fn height(&self) -> u16 {
+        if self.0.show_build_details { 17 } else { 3 }
     }
 
     pub fn render_scrolled(
@@ -52,15 +57,17 @@ impl<'a> UpdateActivity<'a> {
         y: i32,
         context: &RenderContext,
     ) {
-        if let Some((area, _)) = visible_scrolled_rect(clip.x, y, clip.width, 4, clip) {
+        let progress_height = if self.0.show_build_details { 4 } else { 3 };
+        if let Some((area, _)) = visible_scrolled_rect(clip.x, y, clip.width, progress_height, clip)
+        {
             Surface::new()
                 .titled(i18n::tr!("ui-components-progress-padded"))
                 .bordered(true)
                 .raised(true)
                 .render_frame(frame, area, context);
         }
-        for (index, meter) in [&self.0.download, &self.0.compilation]
-            .into_iter()
+        for (index, meter) in std::iter::once(&self.0.download)
+            .chain(self.0.show_build_details.then_some(&self.0.compilation))
             .enumerate()
         {
             if let Some((area, _)) = visible_scrolled_rect(
@@ -86,6 +93,9 @@ impl<'a> UpdateActivity<'a> {
                     area,
                 );
             }
+        }
+        if !self.0.show_build_details {
+            return;
         }
         let log_y = y + 5;
         if let Some((area, _)) = visible_scrolled_rect(clip.x, log_y, clip.width, 12, clip) {

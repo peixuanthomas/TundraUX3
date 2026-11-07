@@ -610,6 +610,7 @@ impl UiTestGallery {
         let area = caption(frame, layout.samples[1], "ui-test-metric", context);
         MetricCard::new(&model).render_frame(frame, area, context);
         let model = UpdateActivityViewModel {
+            show_build_details: true,
             download: UpdateMeterViewModel {
                 percent: Some(75),
                 display_basis_points: None,

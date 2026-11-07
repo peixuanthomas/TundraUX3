@@ -136,6 +136,7 @@ fn retained_update_labels_follow_the_render_snapshot_and_preserve_raw_output() {
     let english = fixture.snapshot("en-US");
     let chinese = fixture.snapshot("zh-CN");
     let mut model = with_snapshot(&english, UpdateActivityViewModel::default);
+    model.show_build_details = true;
     model
         .output
         .push("Compiling external-crate /tmp/build.rs".into());

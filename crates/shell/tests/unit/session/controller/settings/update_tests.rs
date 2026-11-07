@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn update_view_shows_build_details_only_for_source_updates() {
+    let mut session = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    session.app.dispatch_at(
+        app::AppCommand::SetActiveAppearance(Some(Default::default())),
+        Instant::now(),
+    );
+    session.pages.settings.settings_state = Some(SettingsState {
+        focus: Default::default(),
+        form_selected: 0,
+        form_interaction: Default::default(),
+        application: Default::default(),
+        system_time: Default::default(),
+        animation_editor: None,
+        number_editor: None,
+        category: ui::SettingsCategory::Update,
+        selected_field: ui::SettingsField::InstalledVersion,
+        status: "Ready".into(),
+        scroll_offset: 0,
+        picker: None,
+        color_editor: None,
+        weather_location_editor: None,
+        file_extensions_editor: None,
+        time_sync_server_editor: None,
+        time_sync_validation_request_id: None,
+    });
+    session.settings_update_state.activity = Some(Default::default());
+    for mode in [
+        storage::LinuxUpdateMode::Release,
+        storage::LinuxUpdateMode::Beta,
+    ] {
+        session.settings_update_state.mode = mode;
+        let model = session.to_settings_view_model().unwrap();
+        assert_eq!(
+            model.update.unwrap().activity.unwrap().show_build_details,
+            cfg!(windows) || mode == storage::LinuxUpdateMode::Beta,
+        );
+    }
+}
+
+#[test]
 fn prepared_update_waits_for_auto_admin_completion_or_rejection() {
     for approve in [false, true] {
         let mut state = ShellSession::new_for_home_mode(

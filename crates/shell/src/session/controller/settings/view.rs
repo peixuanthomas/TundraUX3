@@ -109,7 +109,15 @@ impl ShellSession {
                 summary_title: check
                     .filter(|result| result.release.is_some())
                     .map(|_| i18n::tr!("settings-release-latest")),
-                activity: self.settings_update_state.activity.clone(),
+                activity: self
+                    .settings_update_state
+                    .activity
+                    .clone()
+                    .map(|mut activity| {
+                        activity.show_build_details = cfg!(windows)
+                            || self.settings_update_state.mode == storage::LinuxUpdateMode::Beta;
+                        activity
+                    }),
                 commits: check
                     .map(|result| {
                         result

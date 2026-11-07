@@ -1170,8 +1170,9 @@ fn render_cards(
         && let Some(update) = &model.update
     {
         if let Some(activity) = &update.activity {
-            UpdateActivity::new(activity).render_scrolled(frame, detail_area, y, context);
-            y += i32::from(UpdateActivity::HEIGHT) + 1;
+            let activity = UpdateActivity::new(activity);
+            activity.render_scrolled(frame, detail_area, y, context);
+            y += i32::from(activity.height()) + 1;
         }
         render_update_commits(frame, detail_area, y, update, context);
     }
@@ -1190,8 +1191,8 @@ fn settings_content_height(detail_width: u16, model: &SettingsViewModel) -> usiz
     if model.selected_category == SettingsCategory::Update
         && let Some(update) = &model.update
     {
-        if update.activity.is_some() {
-            next_y += usize::from(UpdateActivity::HEIGHT) + 1;
+        if let Some(activity) = &update.activity {
+            next_y += usize::from(UpdateActivity::new(activity).height()) + 1;
         }
         let lines = update_commit_lines(update);
         content_height = content_height

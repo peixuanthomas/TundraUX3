@@ -57,6 +57,7 @@ Selection dialogs keep this extended scrollbar hit area clear of option rows and
 - The ordinary editor keeps Save, Undo, and Find visible. Its context menu reuses edit actions, enabled states, and keyboard navigation, stays inside the window, and preserves the selection; Rich Markdown keeps its selection-formatting menu.
 - Launcher search uses `TextInput` and shares its region between rendering and hit testing. Empty results show a search message; built-in and blank-area context menus reuse page actions while retaining restrictions on built-in entries.
 - Settings uses Tab/Shift+Tab across categories, the operating-system entry, and controls. Arrows switch categories when that region is focused and operate content otherwise; ordinary numeric options open the shared input dialog.
+- Update activity shows download progress for Release and adds compilation progress and live output for source builds. Hidden build panels take no space, keeping release notes close to the download meter.
 - Login keeps the password and submit controls visible at 108×20. First-time setup keeps completion with default appearance at the bottom of the visible area while its body scrolls; the administrator label identifies the role as belonging to Tundra.
 
 ### Input and themes
