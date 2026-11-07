@@ -200,6 +200,14 @@ fn load(native: &mut impl Native, flag: &AtomicBool) -> Result<State, Management
             (0, "running") => (true, false),
             (251, _) => (true, true),
             (252, _) => (false, false),
+            (253, _) => {
+                return Err(ManagementError::PermissionDenied(i18n::tr!(
+                    "platform-firewall-state-error",
+                    code = code.to_string(),
+                    error = error.to_string(),
+                    output = output.to_string()
+                )));
+            }
             _ => {
                 return Err(ManagementError::Failed(i18n::tr!(
                     "platform-firewall-state-error",

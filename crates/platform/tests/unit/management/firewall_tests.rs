@@ -323,6 +323,18 @@ fn simultaneous_backends_disable_all_changes() {
 }
 
 #[test]
+fn firewalld_authorization_exit_code_preserves_the_permission_error() {
+    let mut fixture = Fixture::firewalld("", "");
+    fixture.commands[0].2.clear();
+    fixture.commands[0].3 = 253;
+    fixture.error = "Not authorized".into();
+    let error = load(&mut fixture, &flag()).unwrap_err();
+    assert!(matches!(error, ManagementError::PermissionDenied(_)));
+    assert!(error.to_string().contains("253"));
+    assert!(error.to_string().contains("Not authorized"));
+}
+
+#[test]
 fn a_running_failed_firewalld_is_never_treated_as_stopped() {
     let mut fixture = Fixture::firewalld("public\n rich rules:\n", "public\n rich rules:\n");
     fixture.commands[0].2 = "failed".into();
