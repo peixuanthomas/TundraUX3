@@ -102,8 +102,19 @@ fn navigation() -> PageHelpSection {
 }
 
 fn management_selection_help(mut rows: Vec<PageHelpRow>) -> Vec<PageHelpSection> {
-    rows.insert(0, row("Shift+Click", i18n::tr!("ui-help-selection-toggle")));
+    rows.insert(0, row("Shift+Click", i18n::tr!("ui-help-selection-range")));
     rows.insert(0, row("Shift+Enter", i18n::tr!("ui-help-selection-toggle")));
+    rows.insert(
+        0,
+        row(
+            if cfg!(target_os = "macos") {
+                "Cmd+Click"
+            } else {
+                "Ctrl+Click"
+            },
+            i18n::tr!("ui-help-selection-toggle"),
+        ),
+    );
     vec![
         actions(rows),
         advanced(vec![
@@ -111,7 +122,8 @@ fn management_selection_help(mut rows: Vec<PageHelpRow>) -> Vec<PageHelpSection>
                 "↑↓ / Home / End / PgUp / PgDn",
                 i18n::tr!("ui-help-selection-move"),
             ),
-            row("Enter / Tab", i18n::tr!("ui-help-selection-actions")),
+            row("Tab / Shift+Tab", i18n::tr!("ui-help-management-focus")),
+            row("Enter / Space", i18n::tr!("ui-help-nav-activate")),
             row("F4", i18n::tr!("ui-help-management-details")),
             row("F5", i18n::tr!("ui-help-explorer-refresh")),
             row("/", i18n::tr!("ui-help-explorer-search")),
@@ -223,13 +235,22 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
             vec![
                 actions(vec![
                     row("Shift+Enter", i18n::tr!("ui-help-selection-toggle")),
-                    row("Shift+Click", i18n::tr!("ui-help-selection-toggle")),
+                    row(
+                        if cfg!(target_os = "macos") {
+                            "Cmd+Click"
+                        } else {
+                            "Ctrl+Click"
+                        },
+                        i18n::tr!("ui-help-selection-toggle"),
+                    ),
+                    row("Shift+Click", i18n::tr!("ui-help-selection-range")),
                     row("I / X / U", i18n::tr!("ui-help-packages-apply")),
                     row("Enter / F4", i18n::tr!("ui-help-management-details")),
                 ]),
                 advanced(vec![
                     row("↑↓", i18n::tr!("ui-help-selection-move")),
-                    row("Tab / Shift+Tab", i18n::tr!("ui-help-packages-pages")),
+                    row("Tab / Shift+Tab", i18n::tr!("ui-help-management-focus")),
+                    row("F7 / F8 / F6", i18n::tr!("ui-help-packages-pages")),
                     row("F5", i18n::tr!("ui-help-explorer-refresh")),
                     row("/", i18n::tr!("ui-help-explorer-search")),
                 ]),

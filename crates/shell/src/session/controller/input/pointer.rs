@@ -112,11 +112,11 @@ impl ShellSession {
         if let Some(form) = self.active_form_dialog()
             && rect_contains(self.touch_main(), point)
         {
-            if form
-                .layout(self.touch_main())
+            let layout = form.layout(self.touch_main());
+            if layout
                 .scrollbars
                 .iter()
-                .any(|bar| bar.hit_test(point))
+                .any(|bar| layout.scrollbar_hit_test(bar, point))
             {
                 return None;
             }

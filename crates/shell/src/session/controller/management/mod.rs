@@ -5,6 +5,7 @@ mod packages;
 mod scheduled;
 mod selection;
 mod task_center;
+mod workspace;
 use scheduled::ScheduledWizard;
 mod backups;
 use crate::session::*;
@@ -155,6 +156,7 @@ pub(in crate::session) struct ManagementState {
     selected: usize,
     selection: Option<std::collections::BTreeSet<String>>,
     selection_mode: bool,
+    selection_anchor: Option<String>,
     scroll: usize,
     list_scroll_explicit: bool,
     table_scroll: usize,
@@ -173,8 +175,10 @@ pub(in crate::session) struct ManagementState {
     actions_focused: bool,
     workspace_focus: ui::components::WorkspaceFocus,
     package_advanced_open: bool,
+    expert_open: bool,
     filtering: bool,
     filter_input: String,
+    filter_edit: ui::components::TextEditState,
     shortcut_repeat_guard: Option<InputKey>,
     status: String,
     outcome: Option<String>,
@@ -343,7 +347,7 @@ fn management_action_shortcut(
         "recover" => return Some(("F9", InputKey::F(9))),
         "cancel_operation" => return Some(("F10", InputKey::F(10))),
         "query_details" => return Some(("F4", InputKey::F(4))),
-        "package_advanced" => return Some(("F3", InputKey::F(3))),
+        "package_advanced" | "expert_mode" => return Some(("F3", InputKey::F(3))),
         _ => return None,
     };
     let label = match letter {
@@ -1653,7 +1657,7 @@ impl ShellSession {
         let s = &self.pages.management.management_state;
         let actions = self.management_actions();
         ui::ManagementViewModel {
-            workspace: (s.kind == Some(ManagementKind::Packages)).then(|| self.package_workspace_model(&actions)),
+            workspace: self.management_workspace_model(&actions),
             scope_id: format!("{:?}", s.kind),
             action_tones: actions.iter().map(|(action, _)| if action.confirm { ui::components::ComponentTone::Danger } else { ui::components::ComponentTone::Default }).collect(),
             detail_action_start: Some(0),
@@ -1764,13 +1768,15 @@ impl ShellSession {
                             "package_advanced" => format!("{} {}", if s.package_advanced_open { "▾" } else { "▸" }, self.package_advanced_label()),
                             _ => action_label(a),
                         }
+                    } else if a.id == "expert_mode" {
+                        format!("{} {}", if s.expert_open { "▾" } else { "▸" }, i18n::tr!("management-expert-mode"))
                     } else { action_label(a) };
                     let shortcut = if a.id == "current_task" {
                         "Ctrl+T".to_string()
                     } else if let Some((shortcut, _)) = management_action_shortcut(s.kind, &a.id) {
                         shortcut.to_string()
                     } else {
-                        if s.kind == Some(ManagementKind::Packages) && index >= 10 { String::new() } else { ((index + 1) % 10).to_string() }
+                        if index >= 10 { String::new() } else { ((index + 1) % 10).to_string() }
                     };
                     (
                         if shortcut.is_empty() { label } else { format!("{shortcut} {label}") },
@@ -1797,6 +1803,7 @@ impl ShellSession {
             selected_action: s.selected_action,
             actions_focused: s.actions_focused,
             filter: s.filter_input.clone(),
+            filter_edit: s.filter_edit.clone(),
             filtering: s.filtering,
             status: if let Some(selection) = &s.selection {
                 format!("{} · {}", i18n::tr!("selection-count", count = selection.len()), s.status)

@@ -280,7 +280,14 @@ fn service_row(record: &ServiceRecord, scope: Scope) -> ManagementRow {
             confirm: id != "view_logs",
             privileged: scope == Scope::System && id != "view_logs",
             disabled_reason,
-            primary: matches!(id, "start" | "stop"),
+            primary: if matches!(
+                record.active.as_str(),
+                "active" | "activating" | "reloading" | "deactivating"
+            ) {
+                id == "stop"
+            } else {
+                id == "start"
+            },
             group: if matches!(id, "enable" | "disable") {
                 "startup"
             } else {

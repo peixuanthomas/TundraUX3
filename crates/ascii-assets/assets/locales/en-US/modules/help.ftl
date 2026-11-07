@@ -58,6 +58,7 @@ ui-help-management-focus = Switch area
 ui-help-management-details = Show details
 ui-help-management-pages = Switch page
 ui-help-packages-title = Package manager
+ui-help-selection-range = Select the range from the selection anchor to this item
 ui-help-selection-toggle = Select or deselect this item, keeping other selections
 ui-help-packages-apply = Install, remove or upgrade all selected packages when every item supports the action
 ui-help-selection-move = Move the current row, keeping multiple selections; a plain click selects one item

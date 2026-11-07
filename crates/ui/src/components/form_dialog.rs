@@ -449,7 +449,10 @@ impl FormDialog {
                 }
                 match mouse.kind {
                     crate::MouseEventKind::Down(super::MouseButton::Left) => {
-                        if let Some(bar) = layout.scrollbars.iter().find(|bar| bar.hit_test(point))
+                        if let Some(bar) = layout
+                            .scrollbars
+                            .iter()
+                            .find(|bar| layout.scrollbar_hit_test(bar, point))
                         {
                             let grab = bar.grab_at(point);
                             self.scroll(bar.target, bar.offset_at(point, grab));
@@ -630,12 +633,12 @@ impl FormDialog {
 
     /// For hosts that already check matching pointer presses and releases.
     pub fn handle_confirmed_pointer(&mut self, mouse: super::MouseInput, main: Rect) -> FormEvent {
+        let layout = self.layout(main);
         if mouse.kind == crate::MouseEventKind::Down(super::MouseButton::Left)
-            && !self
-                .layout(main)
+            && !layout
                 .scrollbars
                 .iter()
-                .any(|bar| bar.hit_test(mouse.coordinates()))
+                .any(|bar| layout.scrollbar_hit_test(bar, mouse.coordinates()))
         {
             self.activate_pointer(main, mouse)
         } else {

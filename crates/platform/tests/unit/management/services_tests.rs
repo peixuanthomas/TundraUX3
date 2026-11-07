@@ -236,3 +236,30 @@ fn native_system_manager_lists_loaded_and_installed_services_and_reads_details()
     assert!(journal.detail.iter().any(|(key, _)| key == "UnitFileState"));
     assert_eq!(journal.identity["scope"], "system");
 }
+
+#[test]
+fn service_primary_action_tracks_its_running_state() {
+    for (active, expected) in [
+        ("active", "stop"),
+        ("activating", "stop"),
+        ("inactive", "start"),
+        ("failed", "start"),
+    ] {
+        let row = service_row(
+            &ServiceRecord {
+                name: "example.service".into(),
+                active: active.into(),
+                ..Default::default()
+            },
+            Scope::User,
+        );
+        assert_eq!(
+            row.actions
+                .iter()
+                .filter(|action| action.primary)
+                .map(|action| action.id.as_str())
+                .collect::<Vec<_>>(),
+            [expected]
+        );
+    }
+}

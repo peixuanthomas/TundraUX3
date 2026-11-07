@@ -1,5 +1,6 @@
 management-system-config = System configuration
 management-users = Users and groups
+management-expert-mode = Expert controls
 management-more-actions = More actions
 management-current-task = Current task
 management-system-authorization = System authorization required. Enter your password.

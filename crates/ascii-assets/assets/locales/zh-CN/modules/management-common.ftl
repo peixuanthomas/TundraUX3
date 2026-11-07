@@ -1,5 +1,6 @@
 management-system-config = 系统配置
 management-users = 用户和用户组
+management-expert-mode = 专家操作
 management-more-actions = 更多操作
 management-current-task = 当前任务
 management-system-authorization = 需要系统授权。请输入密码。

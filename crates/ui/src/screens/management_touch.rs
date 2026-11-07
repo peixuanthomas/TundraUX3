@@ -49,6 +49,7 @@ pub struct ManagementViewModel {
     pub action_scroll: Option<usize>,
     pub actions_focused: bool,
     pub filter: String,
+    pub filter_edit: crate::components::TextEditState,
     pub filtering: bool,
     pub status: String,
     pub loading: bool,
@@ -623,6 +624,20 @@ pub struct ManagementLayout {
     pub choice_cancel: Rect,
     pub scrollbars: Vec<ManagementScrollbar>,
 }
+
+impl ManagementLayout {
+    pub fn scrollbar_hit_test(&self, bar: &ManagementScrollbar, point: (u16, u16)) -> bool {
+        let position = point.into();
+        bar.track.contains(position)
+            || (bar.hit_test(point)
+                && !self
+                    .choice_rows
+                    .iter()
+                    .any(|(_, row)| row.contains(position))
+                && !self.choice_cancel.contains(position))
+    }
+}
+
 fn add_text_bar(
     bars: &mut Vec<ManagementScrollbar>,
     target: ManagementScrollTarget,
@@ -678,8 +693,18 @@ fn management_content_layout(
 ) -> ManagementLayout {
     // Very short shell content areas keep actionable controls before repeated
     // titles, status text, borders, and the list/detail preview.
-    let compact_actions =
-        model.detail_action_start.is_some() && main.height < 10 && !model.terminal;
+    let compact_actions = model.detail_action_start.is_some()
+        && main.height
+            < if model
+                .workspace
+                .as_ref()
+                .is_some_and(|workspace| workspace.navigation_actions.is_empty())
+            {
+                5
+            } else {
+                10
+            }
+        && !model.terminal;
     let header_y = main
         .y
         .saturating_add(u16::from(!compact_actions))
@@ -1616,11 +1641,15 @@ pub fn render_management_content(
         );
         button.render_borderless_frame(frame, *area, &theme);
     }
-    let mut filter = TextInput::new(format!("management.filter.{}", model.scope_id))
+    let mut filter = model
+        .filter_edit
+        .input(
+            format!("management.filter.{}", model.scope_id),
+            &model.filter,
+        )
         .with_capture_name(i18n::tr!("management-search"))
         .with_cursor_symbol("_")
         .with_horizontal_scroll(true);
-    filter.set_value(&model.filter);
     filter.set_focused(model.filtering && model.form.is_none());
     filter.render_borderless_frame_with_prefix(
         frame,

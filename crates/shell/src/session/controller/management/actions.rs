@@ -17,6 +17,7 @@ impl ShellSession {
                         | "more_actions"
                         | "current_task"
                         | "package_advanced"
+                        | "expert_mode"
                         | "query_details"
                         | "selection_mode"
                 ))
@@ -212,7 +213,6 @@ impl ShellSession {
             primary = all
                 .iter()
                 .filter(|(a, _)| a.primary)
-                .take(2)
                 .cloned()
                 .collect::<Vec<_>>();
         }
@@ -237,9 +237,38 @@ impl ShellSession {
                                     | "open_directory"
                             )
                     })
-                    .take(2)
                     .cloned(),
             );
+        }
+        if kind == Some(ManagementKind::Services)
+            && self
+                .pages
+                .management
+                .management_state
+                .selection
+                .as_ref()
+                .is_none_or(|selection| selection.len() <= 1)
+            && primary
+                .iter()
+                .any(|(action, _)| matches!(action.id.as_str(), "start" | "stop") && action.primary)
+        {
+            primary.retain(|(action, _)| {
+                !matches!(action.id.as_str(), "start" | "stop") || action.primary
+            });
+        }
+        if kind == Some(ManagementKind::ScheduledTasks) {
+            let available_toggle = primary
+                .iter()
+                .find(|(action, _)| {
+                    matches!(action.id.as_str(), "pause" | "resume")
+                        && action.disabled_reason.is_none()
+                })
+                .map(|(action, _)| action.id.clone());
+            if let Some(toggle) = available_toggle {
+                primary.retain(|(action, _)| {
+                    !matches!(action.id.as_str(), "pause" | "resume") || action.id == toggle
+                });
+            }
         }
         let state = &self.pages.management.management_state;
         if state.can_show_details() && (state.snapshot.rows.is_empty() || state.problem.is_some()) {
@@ -310,34 +339,61 @@ impl ShellSession {
             );
         }
         if let Some(selection) = all.iter().find(|(action, _)| action.id == "selection_mode") {
-            primary.retain(|(action, _)| action.id != "selection_mode");
-            primary.retain(|(action, _)| action.id != "more_actions");
-            primary.truncate(3);
             primary.push(selection.clone());
-            if all.iter().any(|(action, _)| action.id != "selection_mode") {
-                primary.push((
-                    ManagementAction {
-                        id: "more_actions".into(),
-                        label: i18n::tr!("management-more-actions"),
-                        ..Default::default()
-                    },
-                    None,
-                ));
-            }
         }
-        if matches!(kind, Some(ManagementKind::Backups | ManagementKind::Users)) && primary.len() > 5 {
-            primary.retain(|(action, _)| action.id != "more_actions");
-            primary.truncate(4);
+        let advanced = all
+            .into_iter()
+            .filter(|(action, _)| {
+                !primary
+                    .iter()
+                    .any(|(shown, _)| shown.id == action.id && shown.values == action.values)
+            })
+            .map(|(mut action, row)| {
+                if kind == Some(ManagementKind::ScheduledTasks) && action.id == "edit_task" {
+                    action.values.insert("__advanced".into(), "true".into());
+                }
+                (action, row)
+            })
+            .collect::<Vec<_>>();
+        if !advanced.is_empty() {
             primary.push((
                 ManagementAction {
-                    id: "more_actions".into(),
-                    label: i18n::tr!("management-more-actions"),
+                    id: "expert_mode".into(),
+                    label: i18n::tr!("management-expert-mode"),
                     ..Default::default()
                 },
                 None,
             ));
+            primary.extend(advanced);
         }
         primary
+    }
+
+    pub(super) fn management_workspace_model(
+        &self,
+        actions: &[(ManagementAction, Option<ManagementRow>)],
+    ) -> Option<ui::ManagementWorkspace> {
+        let state = &self.pages.management.management_state;
+        if state.kind == Some(ManagementKind::Packages) {
+            return Some(self.package_workspace_model(actions));
+        }
+        if state.kind == Some(ManagementKind::Tasks) {
+            return None;
+        }
+        let toggle = actions
+            .iter()
+            .position(|(action, _)| action.id == "expert_mode");
+        let primary_end = toggle.unwrap_or(actions.len());
+        Some(ui::ManagementWorkspace {
+            primary_actions: (0..primary_end).collect(),
+            advanced_toggle: toggle,
+            advanced_actions: toggle
+                .map(|index| (index + 1..actions.len()).collect())
+                .unwrap_or_default(),
+            advanced_open: state.expert_open,
+            focus: state.workspace_focus,
+            ..Default::default()
+        })
     }
 
     pub(in crate::session) fn activate_management_action(&mut self, index: usize) {
@@ -345,9 +401,8 @@ impl ShellSession {
         let Some((action, row)) = self.management_actions().get(index).cloned() else {
             return;
         };
-        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-            let actions = self.management_actions();
-            let workspace = self.package_workspace_model(&actions);
+        let actions = self.management_actions();
+        if let Some(workspace) = self.management_workspace_model(&actions) {
             self.pages.management.management_state.workspace_focus =
                 if workspace.navigation_actions.contains(&index) {
                     ui::components::WorkspaceFocus::Navigation
@@ -363,6 +418,44 @@ impl ShellSession {
             self.pages.management.management_state.filtering = false;
         }
         self.activate_management_item(action, row);
+    }
+
+    pub(super) fn open_management_action_menu(
+        &mut self,
+        mut items: Vec<(ManagementAction, Option<ManagementRow>)>,
+    ) {
+        items.sort_by(|(a, _), (b, _)| a.group.cmp(&b.group));
+        let choices = items
+            .iter()
+            .map(|(a, _)| {
+                let label = action_label(a);
+                let group = if a.group.is_empty() {
+                    String::new()
+                } else {
+                    format!("{} · ", management_text("group", &a.group, &a.group))
+                };
+                let shortcut =
+                    management_action_shortcut(self.pages.management.management_state.kind, &a.id)
+                        .map(|(key, _)| format!("    {key}"))
+                        .unwrap_or_default();
+                format!("{group}{label}{shortcut}")
+            })
+            .collect::<Vec<_>>();
+        self.pages.management.management_state.form = Some(ManagementEditor {
+            instance: next_management_form_instance(),
+            input_states: Default::default(),
+            title: i18n::tr!("management-more-actions"),
+            message: String::new(),
+            message_scroll: 0,
+            fields: vec![ManagementField {
+                id: "action".into(),
+                choices,
+                ..Default::default()
+            }],
+            selected: 0,
+            purpose: FormPurpose::Menu(items),
+        });
+        self.open_management_choice_field(0);
     }
 
     pub(in crate::session) fn activate_management_item(
@@ -385,9 +478,18 @@ impl ShellSession {
             self.begin_scheduled_wizard(action, row);
             return;
         }
+        if action.id == "expert_mode" {
+            self.pages.management.management_state.expert_open =
+                !self.pages.management.management_state.expert_open;
+            return;
+        }
         if action.id == "package_advanced" {
             self.pages.management.management_state.package_advanced_open =
                 !self.pages.management.management_state.package_advanced_open;
+            return;
+        }
+        if action.id == "query_refresh" {
+            self.management_touch_control(ui::ManagementControl::Refresh);
             return;
         }
         if action.id == "query_details" {
@@ -401,40 +503,7 @@ impl ShellSession {
         if action.id == "more_actions" {
             let mut items = self.all_management_actions();
             items.retain(|(action, _)| action.id != "selection_mode");
-            items.sort_by(|(a, _), (b, _)| a.group.cmp(&b.group));
-            let choices = items
-                .iter()
-                .map(|(a, _)| {
-                    let label = action_label(a);
-                    let group = if a.group.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{} · ", management_text("group", &a.group, &a.group))
-                    };
-                    let shortcut = management_action_shortcut(
-                        self.pages.management.management_state.kind,
-                        &a.id,
-                    )
-                    .map(|(key, _)| format!("    {key}"))
-                    .unwrap_or_default();
-                    format!("{group}{label}{shortcut}")
-                })
-                .collect::<Vec<_>>();
-            self.pages.management.management_state.form = Some(ManagementEditor {
-                instance: next_management_form_instance(),
-                input_states: Default::default(),
-                title: i18n::tr!("management-more-actions"),
-                message: String::new(),
-                message_scroll: 0,
-                fields: vec![ManagementField {
-                    id: "action".into(),
-                    choices,
-                    ..Default::default()
-                }],
-                selected: 0,
-                purpose: FormPurpose::Menu(items),
-            });
-            self.open_management_choice_field(0);
+            self.open_management_action_menu(items);
             return;
         }
         if let Some(reason) = &action.disabled_reason {
@@ -677,6 +746,7 @@ impl ShellSession {
         if management_view_action(&action) {
             self.pages.management.management_state.selection_mode = false;
             self.pages.management.management_state.selection = None;
+            self.pages.management.management_state.selection_anchor = None;
             let package_view =
                 self.pages.management.management_state.kind == Some(ManagementKind::Packages);
             let previous_scope = self
@@ -788,7 +858,7 @@ impl ShellSession {
                 } else {
                     ui::components::WorkspaceFocus::List
                 };
-                self.focus_package_workspace(focus);
+                self.focus_management_workspace(focus);
             }
             self.refresh_management();
             return;

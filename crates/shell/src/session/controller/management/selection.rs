@@ -26,6 +26,7 @@ impl ShellSession {
     pub(super) fn toggle_management_selection_mode(&mut self) {
         let state = &mut self.pages.management.management_state;
         state.selection_mode = !state.selection_mode;
+        state.selection_anchor = None;
         if state.selection_mode {
             state.selection.get_or_insert_with(Default::default);
         } else {
@@ -74,6 +75,35 @@ impl ShellSession {
             }
         } else {
             state.selection = None;
+        }
+        state.selection_anchor = Some(row_id(state.kind, row));
+        state.selected = index;
+        state.revision = state.revision.wrapping_add(1);
+    }
+
+    pub(super) fn select_management_range(&mut self, index: usize, additive: bool) {
+        let state = &mut self.pages.management.management_state;
+        if index >= state.snapshot.rows.len() {
+            return;
+        }
+        let anchor = state
+            .selection_anchor
+            .as_ref()
+            .and_then(|id| {
+                state
+                    .snapshot
+                    .rows
+                    .iter()
+                    .position(|row| row_id(state.kind, row) == *id)
+            })
+            .unwrap_or(state.selected.min(state.snapshot.rows.len() - 1));
+        state.selection_anchor = Some(row_id(state.kind, &state.snapshot.rows[anchor]));
+        let selection = state.selection.get_or_insert_with(Default::default);
+        if !additive && !state.selection_mode {
+            selection.clear();
+        }
+        for row in &state.snapshot.rows[anchor.min(index)..=anchor.max(index)] {
+            selection.insert(row_id(state.kind, row));
         }
         state.selected = index;
         state.revision = state.revision.wrapping_add(1);
@@ -163,6 +193,7 @@ impl ShellSession {
     pub(super) fn handle_management_selection_key(&mut self, key: &KeyInput) -> bool {
         let state = &self.pages.management.management_state;
         let direct = state.selection_mode
+            && state.workspace_focus == ui::components::WorkspaceFocus::List
             && !state.actions_focused
             && !key.modifiers.shift
             && !key.has_non_shift_modifier()
@@ -184,8 +215,11 @@ impl ShellSession {
             let index = state.selected;
             self.select_management_row(index, true);
             self.pages.management.management_state.actions_focused = false;
-            if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-                self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+            if self
+                .management_workspace_model(&self.management_actions())
+                .is_some()
+            {
+                self.focus_management_workspace(ui::components::WorkspaceFocus::List);
             }
             self.clamp_management_scroll();
         }

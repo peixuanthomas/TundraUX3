@@ -112,7 +112,11 @@ fn script_creation_reaches_time_settings_with_unmodified_pointer_clicks() {
     next(&mut session);
     let model = session.to_management_view_model();
     let form = model.form.unwrap();
-    assert!(form.fields.iter().any(|field| field.id == "hour"));
+    assert!(
+        form.fields.iter().any(|field| field.id == "hour"),
+        "{form:?}; state={:?}",
+        session.pages.management.management_state.form
+    );
     assert!(form.fields.iter().any(|field| field.id == "minute"));
     assert!(
         form.fields

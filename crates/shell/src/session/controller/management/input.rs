@@ -2,6 +2,34 @@ use super::*;
 use crate::session::*;
 
 impl ShellSession {
+    pub(super) fn edit_management_filter(&mut self, event: InputEvent) {
+        let area = if matches!(event, InputEvent::Mouse(_)) {
+            let model = self.to_management_view_model();
+            let layout = ui::management_layout(self.management_main(), &model);
+            let prefix = ratatui::text::Line::from(ui::management_search_prefix(
+                layout.filter.width,
+            ))
+            .width() as u16;
+            Rect::new(
+                layout.filter.x + prefix,
+                layout.filter.y,
+                layout.filter.width.saturating_sub(prefix),
+                layout.filter.height,
+            )
+        } else {
+            Rect::default()
+        };
+        let state = &mut self.pages.management.management_state;
+        if let InputEvent::Paste(value) = &event {
+            if state.filter_input.len() + value.len() > 16 * 1024 {
+                return;
+            }
+        }
+        state
+            .filter_edit
+            .handle_event(&mut state.filter_input, event, area);
+    }
+
     pub(in crate::session) fn handle_management_paste(&mut self, value: &str) {
         if self
             .pages
@@ -17,14 +45,7 @@ impl ShellSession {
             return;
         }
         if self.pages.management.management_state.filtering {
-            if self.pages.management.management_state.filter_input.len() + value.len() <= 16 * 1024
-            {
-                self.pages
-                    .management
-                    .management_state
-                    .filter_input
-                    .extend(value.chars().filter(|c| !c.is_control()));
-            }
+            self.edit_management_filter(InputEvent::Paste(value.to_owned()));
         } else if self.pages.management.management_state.terminal_mode {
             let bracketed = self
                 .pages
@@ -125,7 +146,7 @@ impl ShellSession {
         if self.handle_management_form_key(key) {
             return;
         }
-        if self.handle_management_selection_key(key) || self.handle_package_workspace_key(key) {
+        if self.handle_management_selection_key(key) || self.handle_management_workspace_key(key) {
             return;
         }
         if self.pages.management.management_state.filtering {
@@ -139,15 +160,14 @@ impl ShellSession {
                 }
                 return;
             }
-            if key.has_non_shift_modifier() {
-                return;
-            }
             match key.key {
                 InputKey::Escape => {
                     self.pages.management.management_state.filtering = false;
-                    if self.pages.management.management_state.kind == Some(ManagementKind::Packages)
+                    if self
+                        .management_workspace_model(&self.management_actions())
+                        .is_some()
                     {
-                        self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+                        self.focus_management_workspace(ui::components::WorkspaceFocus::List);
                     }
                 }
                 InputKey::Enter => {
@@ -160,21 +180,7 @@ impl ShellSession {
                 InputKey::F(5) if key.phase == InputPhase::Press => {
                     self.management_touch_control(ui::ManagementControl::Refresh);
                 }
-                InputKey::Backspace => {
-                    self.pages.management.management_state.filter_input.pop();
-                }
-                InputKey::Space => self
-                    .pages
-                    .management
-                    .management_state
-                    .filter_input
-                    .push(' '),
-                InputKey::Char(c) => {
-                    if !c.is_control() {
-                        self.pages.management.management_state.filter_input.push(c);
-                    }
-                }
-                _ => {}
+                _ => self.edit_management_filter(InputEvent::Key(key.clone())),
             }
             return;
         }
@@ -408,7 +414,14 @@ impl ShellSession {
                         self.toggle_management_details();
                         return;
                     }
-                    self.pages.management.management_state.actions_focused = true;
+                    if self
+                        .management_workspace_model(&self.management_actions())
+                        .is_some()
+                    {
+                        self.focus_management_workspace(ui::components::WorkspaceFocus::Actions);
+                    } else {
+                        self.pages.management.management_state.actions_focused = true;
+                    }
                     if let Some(id) = self
                         .pages
                         .management
@@ -425,10 +438,28 @@ impl ShellSession {
                     }
                 }
             }
-            InputKey::Char(c) if ('1'..='9').contains(&c) => {
-                self.activate_management_action(c as usize - '1' as usize)
+            InputKey::Char(c @ '0'..='9') => {
+                let index = if c == '0' {
+                    9
+                } else {
+                    c as usize - '1' as usize
+                };
+                let actions = self.management_actions();
+                if self
+                    .management_workspace_model(&actions)
+                    .is_none_or(|workspace| {
+                        [
+                            ui::components::WorkspaceFocus::Navigation,
+                            ui::components::WorkspaceFocus::Actions,
+                            ui::components::WorkspaceFocus::Advanced,
+                        ]
+                        .into_iter()
+                        .any(|focus| workspace.action_group(focus).contains(&index))
+                    })
+                {
+                    self.activate_management_action(index);
+                }
             }
-            InputKey::Char('0') => self.activate_management_action(9),
             InputKey::Up
             | InputKey::Down
             | InputKey::PageUp
@@ -476,15 +507,18 @@ impl ShellSession {
             .management
             .management_state
             .details_horizontal_scroll = 0;
-        let package_view =
-            self.pages.management.management_state.kind == Some(ManagementKind::Packages);
-        self.pages.management.management_state.actions_focused = !package_view;
-        if package_view {
-            self.focus_package_workspace(if self.pages.management.management_state.details_only {
-                ui::components::WorkspaceFocus::Details
-            } else {
-                ui::components::WorkspaceFocus::List
-            });
+        let workspace = self
+            .management_workspace_model(&self.management_actions())
+            .is_some();
+        self.pages.management.management_state.actions_focused = !workspace;
+        if workspace {
+            self.focus_management_workspace(
+                if self.pages.management.management_state.details_only {
+                    ui::components::WorkspaceFocus::Details
+                } else {
+                    ui::components::WorkspaceFocus::List
+                },
+            );
         }
         if self.pages.management.management_state.kind == Some(ManagementKind::Backups)
             && !self.pages.management.management_state.details_only
@@ -522,6 +556,8 @@ impl ShellSession {
             .get(self.pages.management.management_state.selected)
             .map(|row| row.id.clone());
         let details_only = self.pages.management.management_state.details_only;
+        let package_view =
+            self.pages.management.management_state.kind == Some(ManagementKind::Packages);
         if let Some(query) = &mut self.pages.management.management_state.query {
             query.target = if package_view
                 && (!details_only
@@ -582,8 +618,11 @@ impl ShellSession {
         state.list_scroll_explicit = false;
         state.actions_focused = false;
         state.revision = state.revision.wrapping_add(1);
-        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-            self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+        if self
+            .management_workspace_model(&self.management_actions())
+            .is_some()
+        {
+            self.focus_management_workspace(ui::components::WorkspaceFocus::List);
         }
         self.clamp_management_scroll();
     }

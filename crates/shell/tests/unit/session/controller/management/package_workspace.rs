@@ -368,9 +368,13 @@ fn package_navigation_and_shortcuts_work_while_the_search_field_is_focused() {
             .as_ref()
             .unwrap()
             .scope,
-        "updates"
+        ""
     );
-    session.handle_management_key(&KeyInput::new(InputKey::Tab));
+    assert_eq!(
+        session.pages.management.management_state.workspace_focus,
+        WorkspaceFocus::List
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::BackTab));
     assert!(session.pages.management.management_state.filtering);
     session.handle_management_key(&KeyInput::new(InputKey::F(6)));
     assert_eq!(
@@ -520,7 +524,7 @@ fn package_details_without_overflow_keep_scroll_and_selection_unchanged() {
 }
 
 #[test]
-fn package_tab_cycles_main_pages_in_both_directions_from_every_region() {
+fn package_tab_moves_focus_without_switching_main_pages() {
     use ui::components::WorkspaceFocus;
     for focus in [
         WorkspaceFocus::Navigation,
@@ -536,46 +540,224 @@ fn package_tab_cycles_main_pages_in_both_directions_from_every_region() {
             KeyInput::with_modifiers(InputKey::Tab, ui::KeyModifiers::SHIFT),
         ] {
             let mut session = package_list_state();
-            session.focus_package_workspace(focus);
-            let scopes = if key.key == InputKey::Tab && !key.modifiers.shift {
-                ["updates", "search", "installed"]
-            } else {
-                ["search", "updates", "installed"]
-            };
-            for scope in scopes {
-                session.handle_management_key(&key);
-                let state = &session.pages.management.management_state;
-                assert_eq!(state.query.as_ref().unwrap().scope, scope);
-                assert_eq!(state.filtering, scope == "search");
-                assert!(!state.actions_focused);
-                assert!(!state.details_only);
-            }
+            session.focus_management_workspace(focus);
+            let backwards = key.key == InputKey::BackTab || key.modifiers.shift;
+            let before = session.pages.management.management_state.workspace_focus;
+            session.handle_management_key(&key);
+            let state = &session.pages.management.management_state;
+            assert_eq!(state.query.as_ref().unwrap().scope, "");
+            assert_eq!(state.workspace_focus, before.step(backwards));
+            assert_eq!(
+                state.filtering,
+                state.workspace_focus == WorkspaceFocus::Search
+            );
         }
     }
 }
 
 #[test]
-fn package_arrows_select_rows_regardless_of_previous_focus() {
+fn package_arrows_operate_the_focused_region() {
     use ui::components::WorkspaceFocus;
     for focus in [
         WorkspaceFocus::Navigation,
-        WorkspaceFocus::Search,
-        WorkspaceFocus::List,
-        WorkspaceFocus::Details,
         WorkspaceFocus::Actions,
         WorkspaceFocus::Advanced,
     ] {
         let mut session = package_list_state();
-        session.focus_package_workspace(focus);
+        session.focus_management_workspace(focus);
+        let before = session.pages.management.management_state.selected;
         session.handle_management_key(&KeyInput::new(InputKey::Down));
-        assert_eq!(session.pages.management.management_state.selected, 2);
+        assert_eq!(session.pages.management.management_state.selected, before);
         assert_eq!(
             session.pages.management.management_state.workspace_focus,
-            WorkspaceFocus::List
+            focus
         );
-        assert!(!session.pages.management.management_state.filtering);
-        assert!(!session.pages.management.management_state.actions_focused);
-        session.handle_management_key(&KeyInput::new(InputKey::Up));
-        assert_eq!(session.pages.management.management_state.selected, 1);
     }
+    let mut session = package_list_state();
+    session.focus_management_workspace(WorkspaceFocus::List);
+    session.handle_management_key(&KeyInput::new(InputKey::Down));
+    assert_eq!(session.pages.management.management_state.selected, 2);
+}
+
+#[test]
+fn management_search_edits_at_the_cursor_and_replaces_selection() {
+    for kind in [
+        ManagementKind::Packages,
+        ManagementKind::Services,
+        ManagementKind::Processes,
+    ] {
+        for modifier in [
+            ui::KeyModifiers::CTRL,
+            ui::KeyModifiers {
+                super_key: true,
+                ..Default::default()
+            },
+        ] {
+            let mut session = selection::list_state(kind);
+            session.handle_management_key(&KeyInput::new(InputKey::Char('/')));
+            session.handle_management_paste("abcd中文");
+            session.handle_management_key(&KeyInput::new(InputKey::Left));
+            session.handle_management_key(&KeyInput::new(InputKey::Left));
+            session.handle_management_paste("X");
+            assert_eq!(
+                session.pages.management.management_state.filter_input,
+                "abcdX中文"
+            );
+            session.handle_management_key(&KeyInput::new(InputKey::Home));
+            session.handle_management_key(&KeyInput::new(InputKey::Delete));
+            session.handle_management_key(&KeyInput::new(InputKey::End));
+            session.handle_management_key(&KeyInput::new(InputKey::Backspace));
+            assert_eq!(
+                session.pages.management.management_state.filter_input,
+                "bcdX中"
+            );
+            session.handle_management_key(&KeyInput::with_modifiers(InputKey::Char('a'), modifier));
+            session.handle_management_key(&KeyInput::new(InputKey::Char('z')));
+            assert_eq!(session.pages.management.management_state.filter_input, "z");
+            assert!(session.pages.management.management_state.filtering);
+        }
+    }
+}
+
+#[test]
+fn management_search_pointer_places_the_cursor_after_wide_text() {
+    let mut session = package_list_state();
+    session.handle_management_key(&KeyInput::new(InputKey::Char('/')));
+    session.handle_management_paste("a中bc");
+    let layout = ui::management_layout(
+        session.management_main(),
+        &session.to_management_view_model(),
+    );
+    let prefix =
+        ratatui::text::Line::from(ui::management_search_prefix(layout.filter.width)).width() as u16;
+    session.handle_management_pointer(MouseInput::new(
+        layout.filter.x + prefix + 3,
+        layout.filter.y,
+        ui::MouseEventKind::Down(PointerButton::Left),
+    ));
+    session.handle_management_paste("X");
+    assert_eq!(
+        session.pages.management.management_state.filter_input,
+        "a中Xbc"
+    );
+}
+
+#[test]
+fn physical_space_activates_focused_management_buttons() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    for kind in [ManagementKind::Packages, ManagementKind::Services] {
+        let mut session = shortcut_action_state(
+            kind,
+            if kind == ManagementKind::Packages {
+                "remove"
+            } else {
+                "start"
+            },
+        );
+        while session.notification_dismiss_active_modal_without_response() {}
+        session.focus_management_workspace(ui::components::WorkspaceFocus::Actions);
+        let selected = session.pages.management.management_state.selected_action;
+        let expected = session.management_actions()[selected].0.id.clone();
+        session.apply_input(crossterm_event_to_input(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        ))));
+        assert!(
+            matches!(&session.pages.management.management_state.form.as_ref().unwrap().purpose, FormPurpose::Action(action, _) if action.id == expected)
+        );
+    }
+}
+
+#[test]
+fn management_numbers_only_activate_visible_workspace_actions() {
+    let mut session = shortcut_action_state(ManagementKind::Services, "start");
+    session.pages.management.management_state.snapshot.rows[0]
+        .actions
+        .push(ManagementAction {
+            id: "configure_fixture".into(),
+            label: "Configure".into(),
+            confirm: true,
+            ..Default::default()
+        });
+    let actions = session.management_actions();
+    let hidden = actions
+        .iter()
+        .position(|(action, _)| action.id == "configure_fixture")
+        .unwrap();
+    assert!(hidden < 10);
+    let key = KeyInput::new(InputKey::Char(
+        char::from_digit(((hidden + 1) % 10) as u32, 10).unwrap(),
+    ));
+    session.handle_management_key(&key);
+    assert!(session.pages.management.management_state.form.is_none());
+    assert!(
+        session
+            .pages
+            .management
+            .management_state
+            .operation_job
+            .is_none()
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::F(3)));
+    session.handle_management_key(&key);
+    assert!(
+        matches!(&session.pages.management.management_state.form.as_ref().unwrap().purpose, FormPurpose::Action(action, _) if action.id == "configure_fixture")
+    );
+}
+
+#[test]
+fn management_pointer_and_enter_keep_focus_in_the_activated_region() {
+    use ui::components::WorkspaceFocus;
+    let mut session = shortcut_action_state(ManagementKind::Services, "start");
+    session.settings_task_runtime = ShellSettingsTaskRuntime::unavailable();
+    session.pages.management.management_state.snapshot.rows[0]
+        .actions
+        .push(ManagementAction {
+            id: "configure_fixture".into(),
+            label: "Configure".into(),
+            confirm: true,
+            ..Default::default()
+        });
+    let actions = session.management_actions();
+    let expert = actions
+        .iter()
+        .position(|(action, _)| action.id == "expert_mode")
+        .unwrap();
+    let layout = ui::management_layout(
+        session.management_main(),
+        &session.to_management_view_model(),
+    );
+    click_management_point(
+        &mut session,
+        (layout.actions[expert].x, layout.actions[expert].y),
+    );
+    assert_eq!(
+        session.pages.management.management_state.workspace_focus,
+        WorkspaceFocus::Advanced
+    );
+    assert_eq!(
+        session.pages.management.management_state.selected_action,
+        expert
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::Down));
+    assert_eq!(
+        session.pages.management.management_state.workspace_focus,
+        WorkspaceFocus::Advanced
+    );
+    assert_ne!(
+        session.pages.management.management_state.selected_action,
+        expert
+    );
+    session.focus_management_workspace(WorkspaceFocus::List);
+    session.handle_management_key(&KeyInput::new(InputKey::Enter));
+    assert_eq!(
+        session.pages.management.management_state.workspace_focus,
+        WorkspaceFocus::Actions
+    );
+    session.handle_management_key(&KeyInput::new(InputKey::Down));
+    assert_eq!(
+        session.pages.management.management_state.workspace_focus,
+        WorkspaceFocus::Actions
+    );
+    assert_eq!(session.pages.management.management_state.selected, 0);
 }

@@ -337,6 +337,7 @@ impl ShellSession {
                 query.options.remove("cursor");
                 query.options.remove("anchor");
                 self.pages.management.management_state.list_scroll_explicit = false;
+                self.pages.management.management_state.selection_anchor = None;
                 self.pages.management.management_state.selection = self
                     .pages
                     .management
@@ -352,8 +353,11 @@ impl ShellSession {
             query.target = None;
         }
         self.pages.management.management_state.filtering = false;
-        if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-            self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+        if self
+            .management_workspace_model(&self.management_actions())
+            .is_some()
+        {
+            self.focus_management_workspace(ui::components::WorkspaceFocus::List);
         }
         self.pages.management.management_state.list_scroll_explicit = false;
         self.refresh_management();
@@ -367,13 +371,17 @@ impl ShellSession {
             }
             ui::ManagementControl::Search => {
                 self.pages.management.management_state.filtering = true;
-                if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-                    self.focus_package_workspace(ui::components::WorkspaceFocus::Search);
+                if self
+                    .management_workspace_model(&self.management_actions())
+                    .is_some()
+                {
+                    self.focus_management_workspace(ui::components::WorkspaceFocus::Search);
                 }
             }
             ui::ManagementControl::ApplySearch => self.apply_management_filter(),
             ui::ManagementControl::ClearSearch => {
                 self.pages.management.management_state.filter_input.clear();
+                self.pages.management.management_state.filter_edit = Default::default();
                 self.apply_management_filter();
             }
             ui::ManagementControl::Details => {
@@ -651,6 +659,61 @@ impl ShellSession {
             }
             return;
         }
+        if matches!(
+            mouse.kind,
+            ui::MouseEventKind::Down(PointerButton::Right)
+                | ui::MouseEventKind::Click(PointerButton::Right)
+        ) {
+            let state = &mut self.pages.management.management_state;
+            if state.form.is_some() || state.terminal_mode {
+                return;
+            }
+            let row = layout
+                .list_rows
+                .contains(position)
+                .then(|| state.scroll + usize::from(point.1 - layout.list_rows.y))
+                .filter(|index| *index < state.snapshot.rows.len());
+            if let Some(index) = row {
+                let id = selection::row_id(state.kind, &state.snapshot.rows[index]);
+                let already_selected = state
+                    .selection
+                    .as_ref()
+                    .map_or(state.selected == index, |selection| selection.contains(&id));
+                if !already_selected {
+                    state.selection = state
+                        .selection_mode
+                        .then(|| std::collections::BTreeSet::from([id.clone()]));
+                    state.selection_anchor = Some(id);
+                }
+                state.selected = index;
+            }
+            let mut items: Vec<_> = if row.is_some() {
+                self.all_management_actions()
+                    .into_iter()
+                    .filter(|(action, _)| action.id != "selection_mode")
+                    .collect()
+            } else {
+                self.pages
+                    .management
+                    .management_state
+                    .snapshot
+                    .actions
+                    .iter()
+                    .cloned()
+                    .map(|action| (action, None))
+                    .collect()
+            };
+            items.push((
+                ManagementAction {
+                    id: "query_refresh".into(),
+                    label: i18n::tr!("management-control-refresh"),
+                    ..Default::default()
+                },
+                None,
+            ));
+            self.open_management_action_menu(items);
+            return;
+        }
         if !matches!(
             mouse.kind,
             ui::MouseEventKind::Down(PointerButton::Left)
@@ -658,7 +721,11 @@ impl ShellSession {
         ) {
             return;
         }
-        if let Some(bar) = bars.iter().find(|bar| bar.hit_test(point)).copied() {
+        if let Some(bar) = bars
+            .iter()
+            .find(|bar| layout.scrollbar_hit_test(bar, point))
+            .copied()
+        {
             self.pages.management.management_state.scrollbar_grab =
                 Some((bar.target, bar.grab_at(point)));
             self.drag_management_scrollbar(point);
@@ -803,9 +870,13 @@ impl ShellSession {
         }
         if layout.filter.contains(position) {
             self.pages.management.management_state.filtering = true;
-            if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-                self.focus_package_workspace(ui::components::WorkspaceFocus::Search);
+            if self
+                .management_workspace_model(&self.management_actions())
+                .is_some()
+            {
+                self.focus_management_workspace(ui::components::WorkspaceFocus::Search);
             }
+            self.edit_management_filter(InputEvent::Mouse(mouse));
             return;
         }
         if self.pages.management.management_state.terminal_mode {
@@ -842,10 +913,15 @@ impl ShellSession {
                     .saturating_sub(1),
             );
             if self.management_multiselect_available() {
-                if mouse.modifiers.has_non_shift_modifier() {
+                if mouse.modifiers.alt || mouse.modifiers.hyper || mouse.modifiers.meta {
                     return;
                 }
-                self.select_management_row(index, mouse.modifiers.shift);
+                let toggle = mouse.modifiers.is_control() || mouse.modifiers.super_key;
+                if mouse.modifiers.shift {
+                    self.select_management_range(index, toggle);
+                } else {
+                    self.select_management_row(index, toggle);
+                }
             } else {
                 self.pages.management.management_state.selected = index;
             }
@@ -856,13 +932,18 @@ impl ShellSession {
                 .management_state
                 .details_horizontal_scroll = 0;
             self.pages.management.management_state.action_scroll = None;
-            if self.pages.management.management_state.kind == Some(ManagementKind::Packages) {
-                self.focus_package_workspace(ui::components::WorkspaceFocus::List);
+            if self
+                .management_workspace_model(&self.management_actions())
+                .is_some()
+            {
+                self.focus_management_workspace(ui::components::WorkspaceFocus::List);
             }
         } else if layout.details.contains(position)
-            && self.pages.management.management_state.kind == Some(ManagementKind::Packages)
+            && self
+                .management_workspace_model(&self.management_actions())
+                .is_some()
         {
-            self.focus_package_workspace(ui::components::WorkspaceFocus::Details);
+            self.focus_management_workspace(ui::components::WorkspaceFocus::Details);
         }
         self.clamp_management_scroll();
     }

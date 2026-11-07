@@ -454,3 +454,139 @@ fn selection_survives_sorting_and_refresh_but_clears_on_a_different_list() {
     session.handle_management_key(&KeyInput::new(InputKey::F(8)));
     assert_eq!(session.to_management_view_model().selected_rows, None);
 }
+
+#[test]
+fn management_modifier_clicks_toggle_items_and_extend_a_stable_range() {
+    for kind in [
+        ManagementKind::Packages,
+        ManagementKind::Services,
+        ManagementKind::Processes,
+        ManagementKind::ScheduledTasks,
+    ] {
+        for modifier in [
+            ui::KeyModifiers::CTRL,
+            ui::KeyModifiers {
+                super_key: true,
+                ..Default::default()
+            },
+        ] {
+            let mut session = list_state(kind);
+            let click = |session: &mut ShellSession, index: u16, modifiers| {
+                let layout = ui::management_layout(
+                    session.management_main(),
+                    &session.to_management_view_model(),
+                );
+                session.handle_management_pointer(
+                    MouseInput::new(
+                        layout.list_rows.x,
+                        layout.list_rows.y + index,
+                        ui::MouseEventKind::Down(PointerButton::Left),
+                    )
+                    .with_modifiers(modifiers),
+                );
+            };
+            click(&mut session, 0, ui::KeyModifiers::NONE);
+            click(&mut session, 2, modifier);
+            assert_eq!(
+                session.to_management_view_model().selected_rows,
+                Some(vec![0, 2])
+            );
+            click(&mut session, 0, ui::KeyModifiers::SHIFT);
+            assert_eq!(
+                session.to_management_view_model().selected_rows,
+                Some(vec![0, 1, 2])
+            );
+            click(&mut session, 1, ui::KeyModifiers::SHIFT);
+            assert_eq!(
+                session.to_management_view_model().selected_rows,
+                Some(vec![1, 2])
+            );
+            click(&mut session, 1, modifier);
+            assert_eq!(
+                session.to_management_view_model().selected_rows,
+                Some(vec![2])
+            );
+        }
+    }
+}
+
+#[test]
+fn management_context_menu_preserves_selected_targets_and_selects_new_targets() {
+    for kind in [
+        ManagementKind::Packages,
+        ManagementKind::Services,
+        ManagementKind::Processes,
+        ManagementKind::ScheduledTasks,
+    ] {
+        let mut session = list_state(kind);
+        while session.notification_dismiss_active_modal_without_response() {}
+        session.select_management_row(2, true);
+        for (index, expected) in [(1, Some(vec![1, 2])), (0, None)] {
+            session.refresh_hit_map();
+            let layout = ui::management_layout(
+                session.management_main(),
+                &session.to_management_view_model(),
+            );
+            session.apply_input(InputEvent::mouse_down(
+                PointerButton::Right,
+                (layout.list_rows.x, layout.list_rows.y + index),
+            ));
+            assert_eq!(session.to_management_view_model().selected_rows, expected);
+            let form = session
+                .pages
+                .management
+                .management_state
+                .form
+                .as_ref()
+                .expect("right-click menu");
+            let FormPurpose::Menu(items) = &form.purpose else {
+                panic!("expected action menu")
+            };
+            let (action, row) = items
+                .iter()
+                .find(|(action, _)| platform::management::selection::supports(kind, &action.id))
+                .unwrap();
+            if index == 1 {
+                let targets: Vec<platform::management::selection::Target> =
+                    serde_json::from_str(&action.values[platform::management::selection::KEY])
+                        .unwrap();
+                assert_eq!(targets.len(), 2);
+                assert!(row.is_none());
+            } else {
+                assert_eq!(
+                    row.as_ref().unwrap().id,
+                    session.pages.management.management_state.snapshot.rows[0].id
+                );
+            }
+            session.handle_management_key(&KeyInput::new(InputKey::Escape));
+            assert!(session.pages.management.management_state.form.is_none());
+        }
+        let layout = ui::management_layout(
+            session.management_main(),
+            &session.to_management_view_model(),
+        );
+        session.handle_management_pointer(MouseInput::new(
+            layout.details.x,
+            layout.details.y,
+            ui::MouseEventKind::Down(PointerButton::Right),
+        ));
+        let FormPurpose::Menu(items) = &session
+            .pages
+            .management
+            .management_state
+            .form
+            .as_ref()
+            .unwrap()
+            .purpose
+        else {
+            panic!("expected background menu")
+        };
+        assert!(items.iter().all(|(_, row)| row.is_none()));
+        assert!(items.iter().any(|(action, _)| action.id == "query_refresh"));
+        assert!(
+            !items
+                .iter()
+                .any(|(action, _)| platform::management::selection::supports(kind, &action.id))
+        );
+    }
+}

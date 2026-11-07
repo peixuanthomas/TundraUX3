@@ -61,7 +61,7 @@ impl PageAction {
     }
 }
 
-/// Renders at most 5 caller-supplied actions within 3 rows at the minimum supported width.
+/// Wraps caller-supplied actions to their full label widths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageActionBar {
     pub page_id: ComponentId,
@@ -100,8 +100,7 @@ impl PageActionBar {
             .action_rows(width)
             .iter()
             .map(|row| self.row_height(row, width))
-            .sum::<u16>()
-            .min(4);
+            .sum::<u16>();
         let status_capacity = 4u16.saturating_sub(action_rows);
         let status = (self.status.len() as u16).min(3).min(status_capacity);
         status.saturating_add(action_rows)
@@ -238,11 +237,6 @@ impl PageActionBar {
         if !row.is_empty() {
             rows.push(row);
         }
-        debug_assert!(
-            rows.len() <= 3 || width < 48,
-            "PageActionBar accepts at most 5 actions fitting 3 rows at the minimum width"
-        );
-        rows.truncate(3);
         rows
     }
 

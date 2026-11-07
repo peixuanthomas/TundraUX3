@@ -176,6 +176,35 @@ fn moving_out_resizing_or_changing_the_form_cancels_the_pending_click() {
 }
 
 #[test]
+fn long_choice_last_row_is_not_swallowed_by_scrollbar_padding() {
+    let area = Rect::new(0, 0, 108, 20);
+    let last = format!("/{}/script.sh", "long-directory/".repeat(8));
+    let mut field = FormField::text("path", "Path", "parent");
+    field.choices = vec!["parent".into(), last.clone()];
+    let mut form = FormDialog::new("path-choice", "Choose script", vec![field]);
+    form.handle_event(InputEvent::key(Key::Space), area);
+    let layout = form.layout(area);
+    assert!(
+        layout
+            .scrollbars
+            .iter()
+            .any(|bar| bar.target == ui::ManagementScrollTarget::ChoiceColumns)
+    );
+    let row = layout
+        .choice_rows
+        .iter()
+        .find(|(index, _)| *index == 1)
+        .unwrap()
+        .1;
+    let point = (row.x, row.y);
+    form.handle_event(InputEvent::mouse_down(MouseButton::Left, point), area);
+    assert_eq!(form.fields[0].value, "parent");
+    form.handle_event(InputEvent::mouse_up(MouseButton::Left, point), area);
+    assert!(form.choice.is_none());
+    assert_eq!(form.fields[0].value, last);
+}
+
+#[test]
 fn choosing_an_option_returns_to_the_form_before_enter_moves_on() {
     let area = Rect::new(0, 0, 40, 15);
     let mut field = FormField::text("role", "Role", "User");

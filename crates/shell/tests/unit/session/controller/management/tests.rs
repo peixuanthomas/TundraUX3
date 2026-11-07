@@ -32,6 +32,8 @@ fn process_confirmation_enter_cancels_without_starting_an_operation() {
 mod package_workspace;
 #[path = "selection.rs"]
 mod selection;
+#[path = "visible_actions.rs"]
+mod visible_actions;
 
 #[test]
 fn management_form_click_navigation_and_editing_keep_the_same_input_position() {
@@ -451,9 +453,14 @@ fn empty_management_information_keeps_full_requirements_and_backup_guidance_reac
             ..Default::default()
         };
         let model = session.to_management_view_model();
-        assert_eq!(model.empty_message, if kind == ManagementKind::Backups {
-            i18n::tr!("management-backups-empty")
-        } else { "Short explanation".into() });
+        assert_eq!(
+            model.empty_message,
+            if kind == ManagementKind::Backups {
+                i18n::tr!("management-backups-empty")
+            } else {
+                "Short explanation".into()
+            }
+        );
         assert!(!model.details.contains("Short explanation"));
         assert!(model.details.contains("Full requirements"));
         let index = session
@@ -543,7 +550,7 @@ fn translated_management_language(generation: u64) -> i18n::LanguageSnapshot {
 }
 
 #[test]
-fn management_form_f10_answers_once_and_tab_applies_pending_search() {
+fn management_form_f10_answers_once_and_tab_preserves_pending_search() {
     let mut session = state();
     let (job, responses) = session.management_job();
     session.register_management_job(&job, TaskDomain::ManagementOperation, TaskClass::Operation);
@@ -578,6 +585,25 @@ fn management_form_f10_answers_once_and_tab_applies_pending_search() {
     assert!(session.pages.management.management_state.filtering);
     session.handle_management_key(&KeyInput::new(InputKey::Tab));
     assert!(!session.pages.management.management_state.filtering);
+    assert!(
+        session
+            .pages
+            .management
+            .management_state
+            .query
+            .as_ref()
+            .unwrap()
+            .filter
+            .is_empty()
+    );
+    assert_eq!(
+        session.pages.management.management_state.filter_input,
+        "alice"
+    );
+    assert!(!session.pages.management.management_state.actions_focused);
+    session.handle_management_key(&KeyInput::new(InputKey::BackTab));
+    assert!(session.pages.management.management_state.filtering);
+    session.handle_management_key(&KeyInput::new(InputKey::Enter));
     assert_eq!(
         session
             .pages
@@ -589,7 +615,6 @@ fn management_form_f10_answers_once_and_tab_applies_pending_search() {
             .filter,
         "alice"
     );
-    assert!(!session.pages.management.management_state.actions_focused);
 }
 
 #[test]
@@ -1322,24 +1347,27 @@ fn common_account_actions_are_visible_and_dangerous_changes_stay_in_more() {
             ..Default::default()
         }));
     let actions = session.management_actions();
-    assert_eq!(
-        actions
-            .iter()
-            .map(|(action, _)| action.id.as_str())
-            .collect::<Vec<_>>(),
-        [
-            "user_create",
-            "set_view",
-            "user_info",
-            "user_password",
-            "more_actions"
-        ]
-    );
-    assert_eq!(
-        session.to_management_view_model().detail_action_start,
-        Some(0)
-    );
-    session.activate_management_action(4);
+    let workspace = session.management_workspace_model(&actions).unwrap();
+    let primary = workspace
+        .primary_actions
+        .iter()
+        .map(|index| actions[*index].0.id.as_str())
+        .collect::<Vec<_>>();
+    for id in [
+        "user_create",
+        "set_view",
+        "user_info",
+        "user_password",
+        "user_groups",
+    ] {
+        assert!(primary.contains(&id));
+    }
+    assert!(!primary.contains(&"user_delete"));
+    let more = actions
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    session.activate_management_action(more);
     assert!(
         matches!(&session.pages.management.management_state.form.as_ref().unwrap().purpose, FormPurpose::Menu(items) if ["user_groups", "user_delete"].iter().all(|id| items.iter().any(|(action, _)| action.id == *id)))
     );
@@ -1434,7 +1462,7 @@ fn account_view_field_keeps_its_meaning_in_both_languages() {
 }
 
 #[test]
-fn services_expose_restart_and_logs_but_keep_startup_changes_in_more() {
+fn services_expose_restart_and_logs_and_keep_startup_changes_in_expert_controls() {
     let mut session = shortcut_action_state(ManagementKind::Services, "start");
     session.pages.management.management_state.snapshot.rows[0]
         .actions
@@ -1445,11 +1473,25 @@ fn services_expose_restart_and_logs_but_keep_startup_changes_in_more() {
             }),
         );
     let model = session.to_management_view_model();
-    assert_eq!(model.actions.len(), 5);
+    let actions = session.management_actions();
+    let workspace = model.workspace.as_ref().unwrap();
     let layout = ui::management_layout(Rect::new(0, 0, 100, 24), &model);
-    assert_eq!(layout.actions.len(), 5);
-    assert!(layout.action_next.is_empty());
-    assert!(model.actions[2].0.starts_with("T "));
+    for id in ["start", "restart", "view_logs"] {
+        let index = actions
+            .iter()
+            .position(|(action, _)| action.id == id)
+            .unwrap();
+        assert!(workspace.primary_actions.contains(&index));
+        assert!(!layout.actions[index].is_empty());
+    }
+    for id in ["enable", "disable"] {
+        let index = actions
+            .iter()
+            .position(|(action, _)| action.id == id)
+            .unwrap();
+        assert!(workspace.advanced_actions.contains(&index));
+        assert!(layout.actions[index].is_empty());
+    }
     assert!(
         session
             .management_actions()
@@ -2279,11 +2321,18 @@ fn management_menu_paging_keys_keep_secondary_actions_reachable() {
         session.management_main(),
         &session.to_management_view_model(),
     );
-    assert_eq!(
-        layout.actions.len(),
-        2,
-        "selection and more-actions stay on the page"
-    );
+    let model = session.to_management_view_model();
+    let workspace = model.workspace.unwrap();
+    for index in workspace
+        .primary_actions
+        .iter()
+        .chain(workspace.advanced_toggle.iter())
+    {
+        assert!(!layout.actions[*index].is_empty());
+    }
+    for index in &workspace.advanced_actions {
+        assert!(layout.actions[*index].is_empty());
+    }
     let more = session
         .management_actions()
         .iter()
@@ -3031,7 +3080,6 @@ fn compact_more_actions_makes_every_secondary_action_touch_reachable() {
     for index in 0..6 {
         let layout =
             ui::management_layout(state.management_main(), &state.to_management_view_model());
-        assert_eq!(layout.actions.len(), 2);
         assert!(layout.action_next.is_empty());
         let more = state
             .management_actions()
@@ -3162,12 +3210,27 @@ fn main_actions_keep_selection_and_more_keyboard_reachable() {
         })
         .collect();
     let actions = state.management_actions();
-    assert_eq!(actions.len(), 4);
-    assert_eq!(actions[2].0.id, "selection_mode");
-    assert_eq!(actions[3].0.id, "more_actions");
-    state.handle_management_key(&KeyInput::new(InputKey::Tab));
-    state.handle_management_key(&KeyInput::new(InputKey::End));
-    assert_eq!(state.pages.management.management_state.selected_action, 3);
+    let workspace = state.management_workspace_model(&actions).unwrap();
+    for index in 0..5 {
+        assert!(
+            workspace
+                .primary_actions
+                .iter()
+                .any(|action| actions[*action].0.id == format!("action-{index}"))
+        );
+    }
+    assert!(
+        workspace
+            .primary_actions
+            .iter()
+            .any(|index| actions[*index].0.id == "selection_mode")
+    );
+    let more = actions
+        .iter()
+        .position(|(action, _)| action.id == "more_actions")
+        .unwrap();
+    state.focus_management_workspace(ui::components::WorkspaceFocus::Actions);
+    state.pages.management.management_state.selected_action = more;
     state.handle_management_key(&KeyInput::new(InputKey::Enter));
     assert!(
         matches!(&state.pages.management.management_state.form.as_ref().unwrap().purpose,FormPurpose::Menu(items) if items.len()==5)

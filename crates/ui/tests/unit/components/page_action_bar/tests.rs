@@ -182,3 +182,22 @@ fn long_literal_labels_wrap_without_changing_the_existing_button_id() {
         label.split_whitespace().collect::<String>()
     );
 }
+
+#[test]
+fn required_actions_are_not_truncated_after_three_rows() {
+    let bar = PageActionBar::new("files").with_actions(
+        (0..9)
+            .map(|index| PageAction::new(format!("action-{index}"), "Ctrl+C Copy selected files"))
+            .collect(),
+    );
+    let height = bar.height(50);
+    assert!(height > 3);
+    let layout = bar.layout(Rect::new(0, 0, 50, height));
+    assert_eq!(layout.actions.len(), 9);
+    for action in &layout.actions {
+        assert_eq!(
+            bar.hit(&layout, action.area.x, action.area.y).unwrap().id,
+            action.id
+        );
+    }
+}
