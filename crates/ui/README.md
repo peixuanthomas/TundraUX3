@@ -53,6 +53,7 @@ Selection dialogs keep this extended scrollbar hit area clear of option rows and
 
 ### Page controls
 
+- Home uses the same system-application artwork and images as Launcher, while preserving Home-specific theme overrides.
 - Explorer keeps Undo Move/Rename visible and disabled when no history is available; the context menu and platform-specific Ctrl/Cmd+Z shortcut use the same command. Save pickers keep the filename and Save/Cancel controls beside directory browsing; Tab moves between them, F10 saves, and Esc cancels.
 - The ordinary editor keeps Save, Undo, and Find visible. Its context menu reuses edit actions, enabled states, and keyboard navigation, stays inside the window, and preserves the selection; Rich Markdown keeps its selection-formatting menu.
 - Launcher search uses `TextInput` and shares its region between rendering and hit testing. Empty results show a search message; built-in and blank-area context menus reuse page actions while retaining restrictions on built-in entries.

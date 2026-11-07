@@ -21,6 +21,42 @@ use ui::{
 };
 
 #[test]
+fn home_system_entries_use_their_application_artwork_and_images() {
+    let assets = ui::RuntimeAsciiAssets::load_default().unwrap();
+    let home = HomeViewModel::user_with_icon_assets("User", "Now", Vec::new(), assets.clone());
+    for key in [
+        "packages",
+        "services",
+        "processes",
+        "network",
+        "disks",
+        "firewall",
+        "ssh",
+        "users",
+        "scheduled-tasks",
+        "tasks",
+        "logs",
+        "backups",
+    ] {
+        let application_key = format!("builtin.{key}");
+        let expected = assets.launcher_icon(&application_key).unwrap();
+        let icon = home.home_icon_for_label(key).unwrap();
+        assert_eq!(icon.lines(), expected.lines(), "Home icon {key}");
+        assert_eq!(
+            home.home_icon_image_path_for_label(key),
+            assets.launcher_icon_image_path(&application_key),
+            "Home image path {key}"
+        );
+        let image = home.home_icon_image_bytes_for_label(key).expect("Home image");
+        assert_eq!(
+            Some(image),
+            assets.launcher_icon_image_bytes(&application_key),
+            "Home image bytes {key}"
+        );
+    }
+}
+
+#[test]
 fn storage_free_debug_home_does_not_expose_logout_hit_area() {
     let home = HomeViewModel::debug(DebugDiagnosticsViewModel {
         tick_count: 0,

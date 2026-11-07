@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::artwork::{
-    ArtItem, ArtSet, ExplorerIcon, HomeIconCatalog, LauncherIcon, TextArt, load_art_set,
+    ArtItem, ArtSet, ExplorerIcon, HomeIcon, HomeIconCatalog, LauncherIcon, TextArt, load_art_set,
     load_explorer_icons, load_home_icon_catalog, load_launcher_icons, load_text_art,
 };
 use crate::asset_error::AssetError;
@@ -125,15 +125,22 @@ impl AsciiAssetStore {
         &self.home_icons
     }
 
+    pub fn home_icon(&self, key: &str) -> Option<&HomeIcon> {
+        self.home_icons
+            .icon_for_key(key)
+            .or_else(|| self.launcher_icon(key))
+            .or_else(|| self.launcher_icon(&format!("builtin.{key}")))
+    }
+
     pub fn home_icon_image_path(&self, key: &str) -> Option<PathBuf> {
-        let relative_path = self.home_icons.icon_for_key(key)?.image_path()?;
+        let relative_path = self.home_icon(key)?.image_path()?;
         self.image_assets
             .contains_key(relative_path)
             .then(|| self.resolver.asset_path(&self.theme_id, relative_path))
     }
 
     pub fn home_icon_image_bytes(&self, key: &str) -> Option<&[u8]> {
-        let relative_path = self.home_icons.icon_for_key(key)?.image_path()?;
+        let relative_path = self.home_icon(key)?.image_path()?;
         self.image_assets.get(relative_path).map(Vec::as_slice)
     }
 
