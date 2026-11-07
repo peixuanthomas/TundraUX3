@@ -242,6 +242,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
     let command_line = CommandLineViewModel::new(CommandLineTerminalSnapshot::blank(120, 40));
     let mut editor = EditorViewModel::source("sample.txt", "editor content marker");
     let mut settings = SettingsViewModel {
+        focus: Default::default(),
         form_selected: 0,
         form_interaction: Default::default(),
         selected_application: Default::default(),

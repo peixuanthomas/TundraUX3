@@ -78,6 +78,14 @@ impl SettingsCategory {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettingsFocus {
+    Categories,
+    OperatingSystem,
+    #[default]
+    Content,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SettingsField {
     ApplicationList,
@@ -351,6 +359,7 @@ pub struct SettingsTimeSyncServerEditorViewModel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SettingsViewModel {
+    pub focus: SettingsFocus,
     pub form_selected: usize,
     pub form_interaction: crate::components::FormInteraction,
     pub selected_application: SettingsApplication,
@@ -880,10 +889,14 @@ pub fn render_settings_content(
     let buttons = SettingsCategory::ALL
         .into_iter()
         .map(|category| {
-            Button::new(
+            let mut button = Button::new(
                 format!("settings.category.{category:?}").to_ascii_lowercase(),
                 category.label(),
-            )
+            );
+            button.set_focused(
+                model.focus == SettingsFocus::Categories && category == model.selected_category,
+            );
+            button
         })
         .collect::<Vec<_>>();
     let active = SettingsCategory::ALL
@@ -897,9 +910,10 @@ pub fn render_settings_content(
     if terminal_width(&system_label) + 2 > layout.operating_system.width as usize {
         system_label = i18n::tr!("system-settings-group-button-short");
     }
-    let button = Button::new("settings.operating-system", system_label)
+    let mut button = Button::new("settings.operating-system", system_label)
         .with_centered_label(true)
         .with_bracketed_label(false);
+    button.set_focused(model.focus == SettingsFocus::OperatingSystem);
     if layout.workspace.vertical && layout.operating_system.height >= 3 {
         button.render_frame(frame, layout.operating_system, theme);
     } else {
@@ -1073,7 +1087,10 @@ fn render_cards(
                 *row += usize::from(settings_item_height(item));
                 Some((item, start))
             })
-            .find_map(|(item, row)| (item.field == model.selected_field).then_some(row))
+            .find_map(|(item, row)| {
+                (model.focus == SettingsFocus::Content && item.field == model.selected_field)
+                    .then_some(row)
+            })
             .filter(|index| *index >= first_visible && *index < visible_end);
         let tones = card
             .items
@@ -1129,7 +1146,12 @@ fn render_cards(
             if matches!(item.kind, SettingsControlKind::Slider { .. })
                 && let Some(slider) = SettingsSliderLayout::new(detail_area, row_y + 1, item)
             {
-                slider.render(frame, item, item.field == model.selected_field, theme);
+                slider.render(
+                    frame,
+                    item,
+                    model.focus == SettingsFocus::Content && item.field == model.selected_field,
+                    theme,
+                );
             }
             if row_y < i32::from(detail_area.y) || row_y >= i32::from(detail_area.bottom()) {
                 continue;
@@ -1144,7 +1166,7 @@ fn render_cards(
                     row.height,
                 ),
                 item,
-                item.field == model.selected_field,
+                model.focus == SettingsFocus::Content && item.field == model.selected_field,
                 theme,
             );
         }

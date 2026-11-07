@@ -70,7 +70,8 @@ impl SettingsApplicationsLayout {
         model: &SettingsViewModel,
         context: &RenderContext,
     ) {
-        let focused = model.selected_field == SettingsField::ApplicationList;
+        let focused = model.focus == super::SettingsFocus::Content
+            && model.selected_field == SettingsField::ApplicationList;
         Surface::new()
             .titled(i18n::tr!("ui-settings-application-list"))
             .bordered(true)

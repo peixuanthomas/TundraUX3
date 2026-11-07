@@ -2856,8 +2856,9 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
     assert_eq!(state.active_screen(), ShellScreen::Home);
 
     state.open_settings();
-    state.apply_input(InputEvent::from_key_label("Tab"));
-    state.apply_input(InputEvent::from_key_label("Tab"));
+    for key in ["Shift+Tab", "Shift+Tab", "Down", "Down", "Enter"] {
+        state.apply_input(InputEvent::from_key_label(key));
+    }
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_category,
         ui::SettingsCategory::System
@@ -3984,6 +3985,7 @@ fn settings_editor_identities_distinguish_variants_without_mutable_content() {
     );
     state.enter_screen(ShellScreen::Settings);
     state.pages.settings.settings_state = Some(SettingsState {
+        focus: Default::default(),
         form_selected: 0,
         form_interaction: Default::default(),
         application: Default::default(),

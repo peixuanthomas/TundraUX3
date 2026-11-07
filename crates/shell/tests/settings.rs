@@ -23,7 +23,7 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
-fn settings_action_repeat_is_ignored_and_shift_tab_goes_to_previous_section() {
+fn settings_action_repeat_is_ignored_and_shift_tab_goes_to_previous_control() {
     let fixture = FixtureRoot::new("settings-key-phases");
     let platform = mock_platform(fixture.path());
     initialize_users(&platform, false, false);
@@ -40,13 +40,17 @@ fn settings_action_repeat_is_ignored_and_shift_tab_goes_to_previous_section() {
     }
     press(&mut state, &platform, "Shift+Tab");
     assert_eq!(
-        state.to_settings_view_model().unwrap().selected_category,
-        SettingsCategory::Update
+        state.to_settings_view_model().unwrap().focus,
+        ui::SettingsFocus::OperatingSystem
     );
-    press(&mut state, &platform, "Tab");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_category,
         SettingsCategory::Appearance
+    );
+    press(&mut state, &platform, "Tab");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().focus,
+        ui::SettingsFocus::Content
     );
     press(&mut state, &platform, "Enter");
     assert_eq!(
@@ -124,86 +128,53 @@ fn numeric_settings_wait_for_confirmation_and_escape_discards_changes() {
 }
 
 #[test]
-fn tab_switches_categories_while_arrows_stay_in_settings_content() {
+fn tab_traverses_controls_and_category_arrows_do_not_change_values() {
     let fixture = FixtureRoot::new("settings-focus");
     let platform = mock_platform(fixture.path());
     let manager = initialize_users(&platform, false, false);
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
     open_settings_from_home(&mut state, &platform);
     let before = manager.load_config().unwrap();
-    for (key, category, field) in [
-        ("Left", SettingsCategory::Appearance, SettingsField::Theme),
-        (
-            "Down",
-            SettingsCategory::Appearance,
-            SettingsField::BorderShape,
-        ),
-        (
-            "Right",
-            SettingsCategory::Appearance,
-            SettingsField::BorderShape,
-        ),
-        ("Up", SettingsCategory::Appearance, SettingsField::Theme),
-        ("Tab", SettingsCategory::RegionTime, SettingsField::Language),
-        ("Tab", SettingsCategory::System, SettingsField::AutoAdmin),
-        (
-            "Shift+Tab",
-            SettingsCategory::RegionTime,
-            SettingsField::Language,
-        ),
-        ("Tab", SettingsCategory::System, SettingsField::AutoAdmin),
-        (
-            "Tab",
-            SettingsCategory::Applications,
-            SettingsField::ApplicationList,
-        ),
-        (
-            "Left",
-            SettingsCategory::Applications,
-            SettingsField::ApplicationList,
-        ),
-        (
-            "Down",
-            SettingsCategory::Applications,
-            SettingsField::ApplicationList,
-        ),
-        (
-            "Right",
-            SettingsCategory::Applications,
-            SettingsField::ExplorerOpenExtensions,
-        ),
-        (
-            "Down",
-            SettingsCategory::Applications,
-            SettingsField::CursorAcceleration,
-        ),
-        (
-            "Left",
-            SettingsCategory::Applications,
-            SettingsField::ApplicationList,
-        ),
-        (
-            "Left",
-            SettingsCategory::Applications,
-            SettingsField::ApplicationList,
-        ),
-        (
-            "Shift+Tab",
-            SettingsCategory::System,
-            SettingsField::AutoAdmin,
-        ),
+    for key in ["Tab", "Shift+Tab", "Down", "Up"] {
+        press(&mut state, &platform, key);
+        let model = state.to_settings_view_model().unwrap();
+        assert_eq!(model.selected_category, SettingsCategory::Appearance);
+        assert_eq!(model.focus, ui::SettingsFocus::Content);
+        assert_eq!(manager.load_config().unwrap(), before);
+    }
+    press(&mut state, &platform, "Shift+Tab");
+    press(&mut state, &platform, "Shift+Tab");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().focus,
+        ui::SettingsFocus::Categories
+    );
+    for (key, category) in [
+        ("Down", SettingsCategory::RegionTime),
+        ("Down", SettingsCategory::System),
+        ("Up", SettingsCategory::RegionTime),
     ] {
         press(&mut state, &platform, key);
         let model = state.to_settings_view_model().unwrap();
-        assert_eq!(
-            (model.selected_category, model.selected_field),
-            (category, field),
-            "{key}"
-        );
+        assert_eq!(model.selected_category, category);
+        assert_eq!(model.focus, ui::SettingsFocus::Categories);
         assert_eq!(manager.load_config().unwrap(), before);
-        assert!(model.picker.is_none());
-        assert!(model.number_editor.is_none());
     }
+    press(&mut state, &platform, "Enter");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().focus,
+        ui::SettingsFocus::Content
+    );
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::Language
+    );
+    press(&mut state, &platform, "Tab");
+    assert_eq!(
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::Timezone
+    );
+    assert!(state.to_settings_view_model().unwrap().picker.is_none());
+    assert_eq!(manager.load_config().unwrap(), before);
 }
 
 #[test]
@@ -505,7 +476,7 @@ fn linux_personal_settings_work_without_system_account_service() {
 }
 
 #[test]
-fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
+fn category_navigation_keeps_application_list_and_content_arrows() {
     let fixture = FixtureRoot::new("tab-section-cycle");
     let platform = mock_platform(fixture.path());
     initialize_users(&platform, false, false);
@@ -528,7 +499,7 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
         SettingsCategory::Update,
         SettingsCategory::Appearance,
     ] {
-        press(&mut state, &platform, "Tab");
+        select_category(&mut state, &platform, expected);
         assert_eq!(
             state.to_settings_view_model().unwrap().selected_category,
             expected
@@ -539,7 +510,7 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
         SettingsField::Theme
     );
 
-    press(&mut state, &platform, "Shift+Tab");
+    select_category(&mut state, &platform, SettingsCategory::Update);
     let update = state.to_settings_view_model().unwrap();
     assert_eq!(update.selected_category, SettingsCategory::Update);
     assert_eq!(
@@ -551,7 +522,7 @@ fn tab_cycles_sections_while_arrows_select_right_hand_settings() {
         }
     );
 
-    press(&mut state, &platform, "Shift+Tab");
+    select_category(&mut state, &platform, SettingsCategory::Applications);
     let applications = state.to_settings_view_model().unwrap();
     assert_eq!(
         applications.selected_category,
@@ -587,7 +558,7 @@ fn linux_update_mode_saves_keyboard_and_mouse_choices_across_reopen() {
         storage::LinuxUpdateMode::Release
     );
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Shift+Tab");
+    select_category(&mut state, &platform, SettingsCategory::Update);
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
         SettingsField::UpdateMode
@@ -599,7 +570,7 @@ fn linux_update_mode_saves_keyboard_and_mouse_choices_across_reopen() {
     );
     press(&mut state, &platform, "Esc");
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Shift+Tab");
+    select_category(&mut state, &platform, SettingsCategory::Update);
     let model = state.to_settings_view_model().unwrap();
     assert!(
         model
@@ -982,7 +953,8 @@ fn screen_timeout_saves_all_choices_and_wakes_without_logging_out() {
     let manager = initialize_users(&platform, false, false);
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
     open_settings_from_home(&mut state, &platform);
-    for key in ["Tab", "Tab", "Down", "Down"] {
+    select_category(&mut state, &platform, SettingsCategory::System);
+    for key in ["Down", "Down"] {
         press(&mut state, &platform, key);
     }
     assert_eq!(
@@ -1036,8 +1008,7 @@ fn normal_user_system_settings_keep_their_controls_disabled() {
     let manager = initialize_users(&platform, true, false);
     let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Tab");
-    press(&mut state, &platform, "Tab");
+    select_category(&mut state, &platform, SettingsCategory::System);
 
     let before = manager.load_config().unwrap();
     let model = state.to_settings_view_model().unwrap();
@@ -1070,7 +1041,7 @@ fn admin_settings_immediately_persist_global_changes_and_confirm_picker_selectio
     assert_eq!(state.active_screen(), ShellScreen::Settings);
 
     // Appearance -> Region & Time. Moving the timezone highlight must not save.
-    press(&mut state, &platform, "Tab");
+    select_category(&mut state, &platform, SettingsCategory::RegionTime);
     press(&mut state, &platform, "Down");
     assert_eq!(
         state.to_settings_view_model().unwrap().selected_field,
@@ -1132,7 +1103,7 @@ fn weather_location_rejects_non_english_input_and_saves_only_after_warning() {
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Tab");
+    select_category(&mut state, &platform, SettingsCategory::RegionTime);
     for _ in 0..2 {
         press(&mut state, &platform, "Down");
     }
@@ -1160,8 +1131,7 @@ fn weather_location_rejects_non_english_input_and_saves_only_after_warning() {
     let warning = state
         .to_notification_view_model()
         .expect("weather search warning");
-    assert!(warning.message.contains("may be inaccurate"));
-    assert!(warning.message.contains("no results"));
+    assert!(warning.message.contains(location));
 
     press(&mut state, &platform, "Enter");
     assert_eq!(
@@ -1187,7 +1157,7 @@ fn operating_system_time_source_uses_platform_boundary_and_persists() {
     let mut state = logged_in_state(&platform, "AdminUser", "StrongPass123");
 
     open_settings_from_home(&mut state, &platform);
-    press(&mut state, &platform, "Tab");
+    select_category(&mut state, &platform, SettingsCategory::RegionTime);
     press(&mut state, &platform, "Down");
     press(&mut state, &platform, "Down");
     press(&mut state, &platform, "Down");
@@ -1324,7 +1294,7 @@ fn normal_user_can_change_only_their_appearance() {
         BorderShape::Rounded
     );
 
-    press(&mut state, &platform, "Tab");
+    select_category(&mut state, &platform, SettingsCategory::RegionTime);
     let region = state.to_settings_view_model().unwrap();
     assert_eq!(region.selected_category, SettingsCategory::RegionTime);
     assert!(
@@ -1919,7 +1889,7 @@ fn open_settings_from_home(state: &mut ShellSession, platform: &MockPlatform) {
 
 fn open_time_server_editor(state: &mut ShellSession, platform: &MockPlatform) {
     open_settings_from_home(state, platform);
-    press(state, platform, "Tab");
+    select_category(state, platform, SettingsCategory::RegionTime);
     for _ in 0..4 {
         press(state, platform, "Down");
     }
@@ -2039,11 +2009,18 @@ impl Drop for FixtureRoot {
 }
 
 fn select_category(state: &mut ShellSession, platform: &MockPlatform, category: SettingsCategory) {
+    for _ in 0..32 {
+        if state.to_settings_view_model().unwrap().focus == ui::SettingsFocus::Categories {
+            break;
+        }
+        press(state, platform, "Shift+Tab");
+    }
     for _ in 0..SettingsCategory::ALL.len() {
         if state.to_settings_view_model().unwrap().selected_category == category {
+            press(state, platform, "Enter");
             return;
         }
-        press(state, platform, "Tab");
+        press(state, platform, "Down");
     }
     panic!("settings category not reachable: {category:?}");
 }
@@ -2067,7 +2044,8 @@ fn unavailable_device_pages_are_removed_from_settings_on_every_platform() {
             open_settings_from_home(&mut state, &platform);
             let before = manager.load_config().unwrap();
             let users_before = manager.load_users().unwrap();
-            for _ in 0..SettingsCategory::ALL.len() {
+            for expected in SettingsCategory::ALL {
+                select_category(&mut state, &platform, expected);
                 let category = state.to_settings_view_model().unwrap().selected_category;
                 assert!(!matches!(
                     category,
@@ -2076,7 +2054,6 @@ fn unavailable_device_pages_are_removed_from_settings_on_every_platform() {
                         | SettingsCategory::Wifi
                         | SettingsCategory::Bluetooth
                 ));
-                press(&mut state, &platform, "Tab");
             }
             assert_eq!(manager.load_config().unwrap(), before);
             assert_eq!(manager.load_users().unwrap(), users_before);

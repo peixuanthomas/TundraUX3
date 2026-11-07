@@ -3,6 +3,7 @@ use super::*;
 impl ShellSession {
     pub(super) fn select_settings_application(&mut self, application: ui::SettingsApplication) {
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
+            state.focus = ui::SettingsFocus::Content;
             state.application = application;
             state.selected_field = ui::SettingsField::ApplicationList;
             state.scroll_offset = 0;

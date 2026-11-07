@@ -192,6 +192,7 @@ fn animation_settings_session() -> ShellSession {
     );
     state.enter_screen(ShellScreen::Settings);
     state.pages.settings.settings_state = Some(SettingsState {
+        focus: Default::default(),
         form_selected: 0,
         form_interaction: Default::default(),
         application: Default::default(),
@@ -498,6 +499,7 @@ fn aa_keyboard_keeps_background_layout_and_places_one_global_launcher_on_every_p
             );
             if screen == ShellScreen::Settings {
                 state.pages.settings.settings_state = Some(SettingsState {
+                    focus: Default::default(),
                     form_selected: 0,
                     form_interaction: Default::default(),
                     application: Default::default(),

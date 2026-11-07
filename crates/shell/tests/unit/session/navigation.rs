@@ -32,6 +32,7 @@ fn prepare_page(state: &mut ShellSession, screen: ShellScreen) {
     }
     if screen == ShellScreen::Settings {
         state.pages.settings.settings_state = Some(SettingsState {
+            focus: Default::default(),
             form_selected: 0,
             form_interaction: Default::default(),
             application: Default::default(),

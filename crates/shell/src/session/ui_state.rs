@@ -160,6 +160,7 @@ pub(super) struct SettingsNumberEditorState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsState {
+    pub(super) focus: ui::SettingsFocus,
     pub(super) form_selected: usize,
     pub(super) form_interaction: ui::components::FormInteraction,
     pub(super) application: ui::SettingsApplication,

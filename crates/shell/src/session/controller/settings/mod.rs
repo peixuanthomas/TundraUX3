@@ -122,6 +122,7 @@ impl ShellSession {
         );
         self.enter_new_page(ShellScreen::Settings);
         self.pages.settings.settings_state = Some(SettingsState {
+            focus: Default::default(),
             form_selected: 0,
             form_interaction: Default::default(),
             application: Default::default(),
@@ -254,6 +255,41 @@ impl ShellSession {
             return;
         }
 
+        if matches!(key.key, InputKey::Tab | InputKey::BackTab) {
+            self.step_settings_focus(key.key == InputKey::BackTab || key.modifiers.shift);
+            self.refresh_hit_map();
+            return;
+        }
+        let focus = self.pages.settings.settings_state.as_ref().unwrap().focus;
+        if focus != ui::SettingsFocus::Content
+            && !matches!(key.key, InputKey::Escape | InputKey::F(_))
+        {
+            match (focus, &key.key) {
+                (ui::SettingsFocus::Categories, InputKey::Up | InputKey::Left) => {
+                    self.select_settings_category_delta(-1)
+                }
+                (ui::SettingsFocus::Categories, InputKey::Down) => {
+                    self.select_settings_category_delta(1)
+                }
+                (ui::SettingsFocus::Categories, InputKey::Home) => {
+                    self.select_settings_category(ui::SettingsCategory::ALL[0])
+                }
+                (ui::SettingsFocus::Categories, InputKey::End) => {
+                    self.select_settings_category(*ui::SettingsCategory::ALL.last().unwrap())
+                }
+                (
+                    ui::SettingsFocus::Categories,
+                    InputKey::Enter | InputKey::Char(' ') | InputKey::Right,
+                ) => self.select_settings_field_at(0),
+                (ui::SettingsFocus::OperatingSystem, InputKey::Enter | InputKey::Char(' ')) => {
+                    self.open_operating_system_settings()
+                }
+                _ => {}
+            }
+            self.refresh_hit_map();
+            return;
+        }
+
         let choosing_application =
             self.pages
                 .settings
@@ -286,9 +322,6 @@ impl ShellSession {
                 self.open_operating_system_settings()
             }
             InputKey::Escape => self.close_settings(),
-            InputKey::Tab if key.modifiers.shift => self.select_settings_category_delta(-1),
-            InputKey::Tab => self.select_settings_category_delta(1),
-            InputKey::BackTab => self.select_settings_category_delta(-1),
             InputKey::Up => self.select_settings_field_delta(-1),
             InputKey::Down => self.select_settings_field_delta(1),
             InputKey::Home => self.select_settings_field_at(0),
@@ -448,6 +481,7 @@ impl ShellSession {
             Some(ui::SettingsHitTarget::AdjustField(_, _)) => {}
             Some(ui::SettingsHitTarget::SliderOption(field, _)) => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
+                    state.focus = ui::SettingsFocus::Content;
                     state.selected_field = field;
                 }
             }
@@ -455,9 +489,13 @@ impl ShellSession {
             Some(ui::SettingsHitTarget::UpdateCancel) => self.cancel_update_confirmation(),
             Some(ui::SettingsHitTarget::Category(category)) => {
                 self.select_settings_category(category);
+                if let Some(state) = self.pages.settings.settings_state.as_mut() {
+                    state.focus = ui::SettingsFocus::Categories;
+                }
             }
             Some(ui::SettingsHitTarget::Field(field)) => {
                 if let Some(state) = self.pages.settings.settings_state.as_mut() {
+                    state.focus = ui::SettingsFocus::Content;
                     state.selected_field = field;
                 }
                 self.activate_selected_setting(platform);
@@ -487,6 +525,31 @@ impl ShellSession {
             | None => {}
         }
         self.refresh_hit_map();
+    }
+
+    fn step_settings_focus(&mut self, backwards: bool) {
+        let fields = self.settings_visible_fields();
+        let Some(state) = self.pages.settings.settings_state.as_mut() else {
+            return;
+        };
+        let index = match state.focus {
+            ui::SettingsFocus::Categories => 0,
+            ui::SettingsFocus::OperatingSystem => 1,
+            ui::SettingsFocus::Content => {
+                fields
+                    .iter()
+                    .position(|field| *field == state.selected_field)
+                    .unwrap_or(0)
+                    + 2
+            }
+        };
+        let count = fields.len() + 2;
+        let next = (index + if backwards { count - 1 } else { 1 }) % count;
+        match next {
+            0 => state.focus = ui::SettingsFocus::Categories,
+            1 => state.focus = ui::SettingsFocus::OperatingSystem,
+            _ => self.select_settings_field_at(next - 2),
+        }
     }
 
     pub(in crate::session) fn select_settings_category_delta(&mut self, delta: isize) {
@@ -564,6 +627,7 @@ impl ShellSession {
             let Some(state) = self.pages.settings.settings_state.as_mut() else {
                 return;
             };
+            state.focus = ui::SettingsFocus::Content;
             state.selected_field = fields[index.min(fields.len().saturating_sub(1))];
         }
         if let Some(layout) = self.current_settings_layout()

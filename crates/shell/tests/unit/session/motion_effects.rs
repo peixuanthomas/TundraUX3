@@ -386,6 +386,7 @@ fn reduced_cleanup_invalidates_completed_exit_before_same_id_reopens() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        focus: Default::default(),
         form_selected: 0,
         form_interaction: Default::default(),
         application: Default::default(),
@@ -1083,6 +1084,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
     while state.notification_dismiss_active_modal_without_response() {}
     state.set_navigation_path(vec![ShellScreen::Settings]);
     state.pages.settings.settings_state = Some(SettingsState {
+        focus: Default::default(),
         form_selected: 0,
         form_interaction: Default::default(),
         application: Default::default(),

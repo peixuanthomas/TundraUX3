@@ -57,10 +57,10 @@ pub use launcher::{
     launcher_entry_overlay_area, launcher_layout, render_launcher_content, render_launcher_overlay,
 };
 pub use settings::{
-    SettingsAnimationEditorViewModel, SettingsAnimationLayout,
-    SettingsApplication, SettingsApplicationsLayout, SettingsCardViewModel, SettingsCategory,
-    SettingsCategoryLayout, SettingsColorEditorViewModel, SettingsControl, SettingsControlKind,
-    SettingsField, SettingsFieldLayout, SettingsFileExtensionsEditorViewModel, SettingsHitTarget,
+    SettingsAnimationEditorViewModel, SettingsAnimationLayout, SettingsApplication,
+    SettingsApplicationsLayout, SettingsCardViewModel, SettingsCategory, SettingsCategoryLayout,
+    SettingsColorEditorViewModel, SettingsControl, SettingsControlKind, SettingsField,
+    SettingsFieldLayout, SettingsFileExtensionsEditorViewModel, SettingsFocus, SettingsHitTarget,
     SettingsItemViewModel, SettingsLayout, SettingsNumberEditorViewModel, SettingsNumberLayout,
     SettingsPickerKind, SettingsPickerOptionLayout, SettingsPickerOptionViewModel,
     SettingsPickerViewModel, SettingsSliderLayout, SettingsTimeSyncServerEditorViewModel,

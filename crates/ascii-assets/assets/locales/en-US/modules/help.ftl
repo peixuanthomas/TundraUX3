@@ -40,8 +40,8 @@ ui-help-logs-back = Back
 
 ui-help-settings-title = Settings
 ui-help-settings-open = Open or change value
-ui-help-settings-adjust = Select options; Left/Right moves between the application list and settings
-ui-help-settings-section = Switch main category
+ui-help-settings-adjust = Up/Down selects categories when navigation is focused, or content items; Left/Right moves between the application list and settings
+ui-help-settings-section = Move through categories, Operating System and the current page controls
 ui-help-settings-number = In a number dialog: adjust, type, then confirm
 
 ui-help-users-title = User Management
