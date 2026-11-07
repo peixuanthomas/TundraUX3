@@ -23,6 +23,127 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn explorer_undo_is_visible_and_buttons_menu_and_shortcuts_restore_the_same_file() {
+    let fixture = FixtureRoot::new("visible-undo");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let original = fixture.path().join("Documents/original.txt");
+    fs::write(&original, "keep contents").unwrap();
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    let enabled = |state: &ShellSession| {
+        state
+            .to_explorer_view_model()
+            .toolbar
+            .buttons
+            .into_iter()
+            .find(|button| button.action == ui::ExplorerToolbarAction::Undo)
+            .unwrap()
+            .enabled
+    };
+    assert!(!enabled(&state));
+    for (index, trigger) in ["button", "control", "command", "menu"]
+        .into_iter()
+        .enumerate()
+    {
+        state.apply_input_with_platform(
+            InputEvent::Resize {
+                width: 160,
+                height: 45,
+            },
+            &platform,
+        );
+        state.apply_input_with_platform(InputEvent::key(InputKey::F(2)), &platform);
+        type_text(&mut state, &platform, &format!("renamed-{index}"));
+        state.apply_input_with_platform(InputEvent::key(InputKey::Enter), &platform);
+        let renamed = fixture
+            .path()
+            .join(format!("Documents/renamed-{index}.txt"));
+        assert!(renamed.exists());
+        assert!(enabled(&state));
+        if trigger == "control" || trigger == "command" {
+            state.apply_input_with_platform(
+                InputEvent::Key(KeyInput::with_modifiers(
+                    InputKey::Char('z'),
+                    if trigger == "control" {
+                        InputModifiers::CTRL
+                    } else {
+                        InputModifiers {
+                            super_key: true,
+                            ..InputModifiers::none()
+                        }
+                    },
+                )),
+                &platform,
+            );
+        } else {
+            if trigger == "menu" {
+                state.apply_input_with_platform(
+                    InputEvent::Key(KeyInput::with_modifiers(
+                        InputKey::F(10),
+                        InputModifiers::SHIFT,
+                    )),
+                    &platform,
+                );
+            }
+            let model = state.to_explorer_view_model();
+            let ui::ShellLayout::Full { main, .. } =
+                ui::compute_shell_layout(Rect::new(0, 0, 160, 45))
+            else {
+                panic!("full layout")
+            };
+            let layout = ui::explorer_layout(main, &model);
+            let area = if trigger == "button" {
+                layout
+                    .page_actions
+                    .iter()
+                    .find(|button| button.action == ui::ExplorerToolbarAction::Undo)
+                    .unwrap()
+                    .area
+            } else {
+                let Some(ui::ExplorerOverlayViewModel::ContextMenu(menu)) = &model.overlay else {
+                    panic!("context menu")
+                };
+                let index = menu
+                    .items
+                    .iter()
+                    .position(|item| item.id == "undo")
+                    .unwrap();
+                assert!(menu.items[index].enabled);
+                assert_eq!(
+                    menu.items[index].shortcut.as_deref(),
+                    Some(ui::ExplorerToolbarAction::Undo.shortcut_label())
+                );
+                layout
+                    .overlay
+                    .as_ref()
+                    .unwrap()
+                    .controls
+                    .iter()
+                    .find(|control| {
+                        control.control == ui::ExplorerOverlayControl::ContextItem(index)
+                    })
+                    .unwrap()
+                    .area
+            };
+            let point = (area.x, area.y);
+            state.apply_input_with_platform(
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+            );
+            assert!(renamed.exists(), "mouse down must not undo");
+            state.apply_input_with_platform(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+            );
+        }
+        assert_eq!(fs::read_to_string(&original).unwrap(), "keep contents");
+        assert!(!renamed.exists());
+        assert!(!enabled(&state));
+    }
+}
+
+#[test]
 fn rename_uses_shared_selection_clipboard_and_cursor_editing() {
     let fixture = FixtureRoot::new("rename-selection");
     let platform = mock_platform(fixture.path());
@@ -1027,8 +1148,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
 
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Right"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("a"), &platform);
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     assert_eq!(state.focused_component(), ShellComponent::Launcher);
     state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
@@ -1690,14 +1810,23 @@ fn explorer_address_shortcut_selects_the_path_for_direct_paste() {
     let mut state = logged_in_state(&platform);
     state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
     state.apply_input_with_platform(ctrl_key('l'), &platform);
-    assert_eq!(state.to_explorer_view_model().address_selection_anchor, Some(0));
+    assert_eq!(
+        state.to_explorer_view_model().address_selection_anchor,
+        Some(0)
+    );
     state.apply_input_with_platform(
         InputEvent::Paste(target.to_string_lossy().into_owned()),
         &platform,
     );
-    assert_eq!(state.to_explorer_view_model().address_value, target.to_string_lossy());
+    assert_eq!(
+        state.to_explorer_view_model().address_value,
+        target.to_string_lossy()
+    );
     state.apply_input_with_platform(InputEvent::key(InputKey::Enter), &platform);
-    assert_eq!(PathBuf::from(state.to_explorer_view_model().current_path), target);
+    assert_eq!(
+        PathBuf::from(state.to_explorer_view_model().current_path),
+        target
+    );
 }
 
 #[test]
@@ -1903,10 +2032,7 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
     type_text(&mut state, &platform, "cCxXvVdDntro");
     let model = state.to_explorer_view_model();
     assert!(model.address_editing);
-    assert_eq!(
-        model.address_value,
-        "cCxXvVdDntro"
-    );
+    assert_eq!(model.address_value, "cCxXvVdDntro");
     assert!(state.to_notification_view_model().is_none());
     assert!(model.operation.is_none());
     assert!(!model.entry_presentations.iter().any(|entry| entry.cut));

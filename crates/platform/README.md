@@ -6,6 +6,8 @@
 
 文档读取、尾部读取和指纹计算在打开文件前拒绝 FIFO、设备等非普通文件，避免等待管道写入方；仍拒绝路径中的符号链接，并在打开后继续核对文件类型。
 
+`file_operations` 提供文件身份和不覆盖目标的原子重命名，供 Explorer 移动、重命名及撤销复用。Linux 沿用 `renameat2(RENAME_NOREPLACE)`，macOS 沿用 `renamex_np(RENAME_EXCL)`，Windows 使用不带替换标志的 `MoveFileExW`；目标已存在时保留两边文件。
+
 | 内容 | 文档 |
 | --- | --- |
 | 数据目录、Linux 启动身份、桌面和文件集成 | [系统集成](docs/integration.md) |

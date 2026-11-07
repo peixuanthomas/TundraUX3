@@ -232,6 +232,7 @@ pub(in crate::session) struct ExplorerContextMenuInput {
     pub(in crate::session) selected_count: usize,
     pub(in crate::session) entry_count: usize,
     pub(in crate::session) clipboard_available: bool,
+    pub(in crate::session) undo_available: bool,
     pub(in crate::session) is_trash: bool,
     pub(in crate::session) trash_has_items: bool,
     pub(in crate::session) focused_index: usize,
@@ -248,6 +249,7 @@ pub(in crate::session) fn explorer_context_menu_view_model(
         selected_count,
         entry_count,
         clipboard_available,
+        undo_available,
         is_trash,
         trash_has_items,
         focused_index,
@@ -271,6 +273,7 @@ pub(in crate::session) fn explorer_context_menu_view_model(
                 "copy" => Some("C"),
                 "paste" => Some("V"),
                 "rename" => Some("F2"),
+                "undo" => Some(ui::ExplorerToolbarAction::Undo.shortcut_label()),
                 "delete" => Some("Del"),
                 "select-all" => Some("Ctrl+A"),
                 "invert-selection" => Some("Ctrl+I"),
@@ -373,6 +376,12 @@ pub(in crate::session) fn explorer_context_menu_view_model(
             false,
         ));
     }
+    items.push(item(
+        "undo",
+        i18n::tr!("ui-explorer-undo-move"),
+        undo_available,
+        false,
+    ));
     if selected_count > 0 {
         items.extend([
             item("sort", i18n::tr!("shell-sort"), true, false),

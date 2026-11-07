@@ -256,6 +256,13 @@ impl ShellSession {
             InputKey::Char('i' | 'I') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::ExplorerInvertSelection)
             }
+            InputKey::Char('z' | 'Z')
+                if (key.modifiers.control || key.modifiers.super_key)
+                    && !key.modifiers.shift
+                    && !key.modifiers.alt =>
+            {
+                (target, ShellCommand::ExplorerUndo)
+            }
             InputKey::Char('a' | 'A') if key.modifiers.control || key.modifiers.super_key => {
                 (target, ShellCommand::ExplorerSelectAll)
             }
@@ -334,6 +341,9 @@ impl ShellSession {
                 }
                 InputKey::Char('a' | 'A') if command_modifier => Some("select-all"),
                 InputKey::Char('i' | 'I') if command_modifier => Some("invert-selection"),
+                InputKey::Char('z' | 'Z') if command_modifier && !key.modifiers.shift => {
+                    Some("undo")
+                }
                 InputKey::Char('c' | 'C') => Some("copy"),
                 InputKey::Char('x' | 'X') => Some("cut"),
                 InputKey::Char('v' | 'V') => Some("paste"),

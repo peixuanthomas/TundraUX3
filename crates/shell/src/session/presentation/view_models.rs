@@ -1867,6 +1867,7 @@ impl ShellSession {
                 | ui::ExplorerToolbarAction::Copy
                 | ui::ExplorerToolbarAction::Delete => model.selected_count > 0 && !busy,
                 ui::ExplorerToolbarAction::Paste => state.clipboard.is_some() && !busy,
+                ui::ExplorerToolbarAction::Undo => state.can_undo && !busy,
                 ui::ExplorerToolbarAction::Rename => {
                     !is_trash && model.selected_count == 1 && !busy
                 }
@@ -2052,6 +2053,7 @@ impl ShellSession {
                         selected_count: model.selected_count,
                         entry_count: state.entries.len(),
                         clipboard_available: state.clipboard.is_some(),
+                        undo_available: state.can_undo && !busy,
                         is_trash,
                         trash_has_items: !state.entries.is_empty(),
                         focused_index: self.pages.explorer.explorer_overlay_selection,

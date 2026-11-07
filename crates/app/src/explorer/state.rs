@@ -41,6 +41,7 @@ impl ExplorerState {
             forward_history: Vec::new(),
             quick_locations: Vec::new(),
             clipboard: None,
+            can_undo: false,
             pending_dialog: None,
             pending_conflict: None,
             pending_restore: None,

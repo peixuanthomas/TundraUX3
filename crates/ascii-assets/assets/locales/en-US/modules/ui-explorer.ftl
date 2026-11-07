@@ -96,3 +96,4 @@ ui-explorer-save-title = Save document
 ui-explorer-save-filename = File name
 ui-explorer-save-confirm = F10 Save
 ui-explorer-save-cancel = Esc Cancel
+ui-explorer-undo-move = Undo move/rename

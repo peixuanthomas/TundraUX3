@@ -87,3 +87,4 @@ ui-explorer-save-title = 保存文档
 ui-explorer-save-filename = 文件名
 ui-explorer-save-confirm = F10 保存
 ui-explorer-save-cancel = Esc 取消
+ui-explorer-undo-move = 撤销移动/重命名

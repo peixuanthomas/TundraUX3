@@ -8,6 +8,8 @@ mod state;
 mod controller;
 
 mod files;
+mod operations;
+pub use operations::ExplorerUndoMove;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -86,6 +88,7 @@ pub struct ExplorerState {
     pub forward_history: Vec<ExplorerLocation>,
     pub quick_locations: Vec<ExplorerQuickLocation>,
     pub clipboard: Option<ExplorerClipboard>,
+    pub can_undo: bool,
     pub pending_dialog: Option<ExplorerDialog>,
     pub pending_conflict: Option<ExplorerConflict>,
     pub pending_restore: Option<ExplorerPendingRestore>,
@@ -726,6 +729,7 @@ pub enum ExplorerCommand {
     Copy,
     Cut,
     Paste,
+    Undo,
     BeginDrag,
     UpdateDrag {
         target: Option<PathBuf>,
@@ -756,6 +760,7 @@ impl Default for ExplorerController {
 #[derive(Debug, Clone)]
 pub struct ExplorerFileService {
     permission_service: PermissionService,
+    operations: Arc<std::sync::Mutex<operations::ExplorerFileOperations>>,
 }
 
 impl Default for ExplorerFileService {

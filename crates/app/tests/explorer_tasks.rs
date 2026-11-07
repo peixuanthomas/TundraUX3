@@ -235,6 +235,18 @@ impl Platform for TestPlatform {
         }
         default_rename_path(source, target)
     }
+
+    fn rename_path_no_replace(&self, source: &Path, target: &Path) -> Result<(), PlatformError> {
+        if self
+            .cross_device_source_root
+            .as_ref()
+            .is_some_and(|root| source.starts_with(root))
+        {
+            self.rename_path(source, target)
+        } else {
+            platform::rename_path_no_replace(source, target)
+        }
+    }
 }
 
 fn finished(
@@ -466,6 +478,90 @@ fn replace_moves_old_target_to_injected_trash() {
 }
 
 #[test]
+fn same_volume_move_returns_history_that_the_file_service_can_undo() {
+    let tree = TempTree::new("move-undo");
+    let source_root = tree.path("source");
+    let destination = tree.path("destination");
+    fs::create_dir_all(&source_root).unwrap();
+    fs::create_dir(&destination).unwrap();
+    let source = source_root.join("note.txt");
+    fs::write(&source, "preserved").unwrap();
+    let platform = Arc::new(TestPlatform::default());
+    let engine = engine(platform.clone(), tree.path("trash"));
+    engine
+        .submit(ExplorerTaskPlan::Transfer(ExplorerTransferPlan::new(
+            ExplorerTransferOperation::Move,
+            vec![source.clone()],
+            &destination,
+        )))
+        .unwrap();
+    let (_, summary) = finished(&engine);
+    assert_eq!(summary.undo_moves.as_ref().map(Vec::len), Some(1));
+    let files = app::explorer::ExplorerFileService::default();
+    files.record_moves(summary.undo_moves);
+    let controller = app::explorer::ExplorerController::new(files);
+    let mut state = app::explorer::ExplorerState::new(&destination, true);
+    let storage = storage::StorageManager::open(
+        platform::build_windows_app_paths(
+            tree.path("Roaming"),
+            tree.path("Local"),
+            tree.path("Temp"),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+    .manager;
+    let actor = identity::AuthSession {
+        source: identity::IdentitySource::LocalAccount,
+        session_id: "undo-test".into(),
+        user_id: "admin".into(),
+        username: "admin".into(),
+        role: identity::UserRole::Admin,
+        started_at_epoch_ms: 0,
+    };
+    controller.apply(
+        &mut state,
+        app::explorer::ExplorerCommand::Undo,
+        Some(&actor),
+        platform.as_ref(),
+        &storage,
+    );
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(fs::read_to_string(source).unwrap(), "preserved");
+    assert!(!destination.join("note.txt").exists());
+}
+
+#[test]
+fn merged_or_replaced_moves_do_not_offer_incomplete_undo() {
+    for directory in [false, true] {
+        let tree = TempTree::new("move-undo-unavailable");
+        let source_root = tree.path("source");
+        let destination = tree.path("destination");
+        fs::create_dir_all(&source_root).unwrap();
+        fs::create_dir(&destination).unwrap();
+        let source = source_root.join("item");
+        let target = destination.join("item");
+        if directory {
+            fs::create_dir(&source).unwrap();
+            fs::create_dir(&target).unwrap();
+            fs::write(source.join("new.txt"), "new").unwrap();
+            fs::write(target.join("existing.txt"), "existing").unwrap();
+        } else {
+            fs::write(&source, "new").unwrap();
+            fs::write(&target, "existing").unwrap();
+        }
+        let engine = engine(Arc::new(TestPlatform::default()), tree.path("trash"));
+        let mut plan =
+            ExplorerTransferPlan::new(ExplorerTransferOperation::Move, vec![source], &destination);
+        plan.collisions = ExplorerCollisionPolicy::replace();
+        engine.submit(ExplorerTaskPlan::Transfer(plan)).unwrap();
+        let (_, summary) = finished(&engine);
+        assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+        assert!(summary.undo_moves.is_none());
+    }
+}
+
+#[test]
 fn move_uses_cross_device_copy_commit_delete_fallback() {
     let tree = TempTree::new("cross-device");
     let source_root = tree.path("source");
@@ -488,6 +584,7 @@ fn move_uses_cross_device_copy_commit_delete_fallback() {
     let (_, summary) = finished(&engine);
 
     assert!(summary.failures.is_empty(), "{:?}", summary.failures);
+    assert!(summary.undo_moves.is_none());
     assert!(!source.exists());
     assert_eq!(
         fs::read(destination.join("folder/nested/item.txt")).unwrap(),

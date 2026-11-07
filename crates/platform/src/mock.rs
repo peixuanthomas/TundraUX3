@@ -600,6 +600,24 @@ impl Platform for MockPlatform {
             crate::default_rename_path(source, target)
         }
     }
+
+    fn rename_path_no_replace(&self, source: &Path, target: &Path) -> Result<(), PlatformError> {
+        self.record(MockCall::RenamePath {
+            source: source.to_path_buf(),
+            target: target.to_path_buf(),
+        });
+        if let Some(result) = self
+            .rename_results
+            .lock()
+            .expect("rename results lock poisoned")
+            .get(&(source.to_path_buf(), target.to_path_buf()))
+            .cloned()
+        {
+            result
+        } else {
+            crate::rename_path_no_replace(source, target)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

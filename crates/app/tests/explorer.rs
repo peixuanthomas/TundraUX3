@@ -909,6 +909,310 @@ fn same_directory_copy_uses_conflict_resolution_and_keep_both_name() {
     assert!(state.pending_conflict.is_none());
 }
 
+#[test]
+fn explorer_clipboard_is_shared_across_existing_page_instances_and_cleared_after_cut() {
+    for cut in [false, true] {
+        let fixture = Fixture::new(if cut { "shared-cut" } else { "shared-copy" });
+        let source = fixture.documents.join("note.txt");
+        let destination = fixture.documents.join("destination");
+        fs::write(&source, "shared contents").unwrap();
+        fs::create_dir(&destination).unwrap();
+        let storage = fixture.storage();
+        let mut app = app::AppState::default();
+        app.dispatch_at(
+            app::AppCommand::SetAuthSession(Some(session())),
+            std::time::Instant::now(),
+        );
+        let first = app::PageInstanceId::new();
+        let second = app::PageInstanceId::new();
+        app.register_page(first, app::AppPageKind::Explorer);
+        app.dispatch_at(
+            app::AppCommand::SetExplorerState(Some(ExplorerState::new(&fixture.documents, true))),
+            std::time::Instant::now(),
+        );
+        app.register_page(second, app::AppPageKind::Explorer);
+        app.dispatch_at(
+            app::AppCommand::SetExplorerState(Some(ExplorerState::new(&destination, true))),
+            std::time::Instant::now(),
+        );
+        app.select_page(Some(first), app::AppPageKind::Explorer);
+        app.dispatch_explorer_at(
+            ExplorerCommand::Refresh,
+            &fixture.platform,
+            &storage,
+            std::time::Instant::now(),
+        );
+        let index = app
+            .explorer_state()
+            .unwrap()
+            .entries
+            .iter()
+            .position(|entry| entry.path == source)
+            .unwrap();
+        app.dispatch_explorer_at(
+            ExplorerCommand::SelectIndex(index),
+            &fixture.platform,
+            &storage,
+            std::time::Instant::now(),
+        );
+        app.dispatch_explorer_at(
+            if cut {
+                ExplorerCommand::Cut
+            } else {
+                ExplorerCommand::Copy
+            },
+            &fixture.platform,
+            &storage,
+            std::time::Instant::now(),
+        );
+        app.select_page(Some(second), app::AppPageKind::Explorer);
+        assert_eq!(
+            app.explorer_state()
+                .unwrap()
+                .clipboard
+                .as_ref()
+                .unwrap()
+                .paths,
+            [source.clone()]
+        );
+        app.dispatch_explorer_at(
+            ExplorerCommand::Paste,
+            &fixture.platform,
+            &storage,
+            std::time::Instant::now(),
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("note.txt")).unwrap(),
+            "shared contents"
+        );
+        assert_eq!(source.exists(), !cut);
+        app.select_page(Some(first), app::AppPageKind::Explorer);
+        assert_eq!(app.explorer_state().unwrap().clipboard.is_none(), cut);
+        if cut {
+            app.dispatch_explorer_at(
+                ExplorerCommand::Undo,
+                &fixture.platform,
+                &storage,
+                std::time::Instant::now(),
+            );
+            assert_eq!(fs::read_to_string(&source).unwrap(), "shared contents");
+            assert!(!destination.join("note.txt").exists());
+        }
+        app.dispatch_at(
+            app::AppCommand::SetAuthSession(None),
+            std::time::Instant::now(),
+        );
+        app.select_page(Some(second), app::AppPageKind::Explorer);
+        assert!(app.explorer_state().unwrap().clipboard.is_none());
+    }
+}
+
+#[test]
+fn explorer_rename_and_directory_move_can_be_undone_without_overwriting() {
+    let fixture = Fixture::new("undo-rename-move");
+    let source = fixture.documents.join("folder");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("note.txt"), "preserved").unwrap();
+    let destination = fixture.documents.join("destination");
+    fs::create_dir(&destination).unwrap();
+    let storage = fixture.storage();
+    let actor = session();
+    let controller = ExplorerController::default();
+    let apply = |state: &mut ExplorerState, command| {
+        controller.apply(state, command, Some(&actor), &fixture.platform, &storage)
+    };
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    apply(&mut state, ExplorerCommand::Refresh);
+    select_name(&mut state, "folder");
+    apply(&mut state, ExplorerCommand::Rename("renamed".into()));
+    assert!(state.error.is_none(), "{:?}", state.error);
+    apply(&mut state, ExplorerCommand::Undo);
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(
+        fs::read_to_string(source.join("note.txt")).unwrap(),
+        "preserved"
+    );
+    select_name(&mut state, "folder");
+    apply(&mut state, ExplorerCommand::Cut);
+    apply(&mut state, ExplorerCommand::Navigate(destination.clone()));
+    apply(&mut state, ExplorerCommand::Paste);
+    assert!(!source.exists());
+    apply(&mut state, ExplorerCommand::Undo);
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(
+        fs::read_to_string(source.join("note.txt")).unwrap(),
+        "preserved"
+    );
+    assert!(!destination.join("folder").exists());
+    apply(
+        &mut state,
+        ExplorerCommand::Navigate(fixture.documents.clone()),
+    );
+    select_name(&mut state, "folder");
+    apply(&mut state, ExplorerCommand::Rename("destination".into()));
+    assert!(state.error.is_some());
+    assert!(source.join("note.txt").exists());
+    assert!(destination.is_dir());
+}
+
+#[test]
+fn explorer_undo_refuses_replaced_or_occupied_paths_without_moving_other_items() {
+    for conflict in ["replaced", "occupied"] {
+        let fixture = Fixture::new(conflict);
+        let first = fixture.documents.join("first.txt");
+        let second = fixture.documents.join("second.txt");
+        let destination = fixture.documents.join("destination");
+        fs::write(&first, "first").unwrap();
+        fs::write(&second, "second").unwrap();
+        fs::create_dir(&destination).unwrap();
+        let storage = fixture.storage();
+        let actor = session();
+        let controller = ExplorerController::default();
+        let apply = |state: &mut ExplorerState, command| {
+            controller.apply(state, command, Some(&actor), &fixture.platform, &storage)
+        };
+        let mut state = ExplorerState::new(&fixture.documents, true);
+        apply(&mut state, ExplorerCommand::Refresh);
+        state.selected_paths = [first.clone(), second.clone()].into_iter().collect();
+        apply(&mut state, ExplorerCommand::Cut);
+        apply(&mut state, ExplorerCommand::Navigate(destination.clone()));
+        apply(&mut state, ExplorerCommand::Paste);
+        let moved_first = destination.join("first.txt");
+        match conflict {
+            "replaced" => {
+                fs::rename(&moved_first, destination.join("original.txt")).unwrap();
+                fs::write(&moved_first, "first").unwrap();
+            }
+            "occupied" => fs::write(&first, "new occupant").unwrap(),
+            _ => unreachable!(),
+        }
+        apply(&mut state, ExplorerCommand::Undo);
+        assert!(state.error.is_some(), "{conflict} must refuse undo");
+        assert!(moved_first.exists());
+        assert_eq!(
+            fs::read_to_string(destination.join("second.txt")).unwrap(),
+            "second"
+        );
+        assert!(!second.exists());
+        if conflict == "occupied" {
+            assert_eq!(fs::read_to_string(&first).unwrap(), "new occupant");
+        }
+    }
+}
+
+#[test]
+fn unsupported_move_clears_older_undo_history_and_reports_the_limit() {
+    let fixture = Fixture::new("undo-cross-device-limit");
+    let original = fixture.documents.join("original.txt");
+    let renamed = fixture.documents.join("renamed.txt");
+    let destination = fixture.documents.join("destination");
+    fs::write(&original, "preserved contents").unwrap();
+    fs::create_dir(&destination).unwrap();
+    let storage = fixture.storage();
+    let actor = session();
+    let controller = ExplorerController::default();
+    let apply = |state: &mut ExplorerState, command| {
+        controller.apply(state, command, Some(&actor), &fixture.platform, &storage)
+    };
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    apply(&mut state, ExplorerCommand::Refresh);
+    select_name(&mut state, "original.txt");
+    apply(&mut state, ExplorerCommand::Rename("renamed.txt".into()));
+    assert!(state.can_undo);
+    fixture.platform.set_cross_device_rename(
+        renamed.clone(),
+        destination.join("renamed.txt"),
+        "test cross-device move",
+    );
+    select_name(&mut state, "renamed.txt");
+    apply(&mut state, ExplorerCommand::Cut);
+    apply(&mut state, ExplorerCommand::Navigate(destination.clone()));
+    apply(&mut state, ExplorerCommand::Paste);
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert!(!state.can_undo);
+    assert!(
+        state
+            .message
+            .as_ref()
+            .unwrap()
+            .render_current()
+            .contains("cannot be undone")
+    );
+    apply(&mut state, ExplorerCommand::Undo);
+    assert!(state.error.is_some());
+    assert_eq!(
+        fs::read_to_string(destination.join("renamed.txt")).unwrap(),
+        "preserved contents"
+    );
+    assert!(!renamed.exists());
+    assert!(!original.exists());
+}
+
+#[test]
+fn explorer_undo_restores_successive_moves_and_renames_in_reverse_order() {
+    let fixture = Fixture::new("undo-history");
+    let original = fixture.documents.join("original.txt");
+    let renamed = fixture.documents.join("renamed.txt");
+    let destination = fixture.documents.join("destination");
+    fs::write(&original, "original contents").unwrap();
+    fs::create_dir(&destination).unwrap();
+    let storage = fixture.storage();
+    let actor = session();
+    let controller = ExplorerController::default();
+    let apply = |state: &mut ExplorerState, command| {
+        controller.apply(state, command, Some(&actor), &fixture.platform, &storage)
+    };
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    apply(&mut state, ExplorerCommand::Refresh);
+    select_name(&mut state, "original.txt");
+    apply(&mut state, ExplorerCommand::Rename("renamed.txt".into()));
+    select_name(&mut state, "renamed.txt");
+    apply(&mut state, ExplorerCommand::Cut);
+    apply(&mut state, ExplorerCommand::Navigate(destination.clone()));
+    apply(&mut state, ExplorerCommand::Paste);
+    apply(&mut state, ExplorerCommand::Rename("final.txt".into()));
+    fs::write(
+        destination.join("final.txt"),
+        "edited after all three operations",
+    )
+    .unwrap();
+    for expected in [destination.join("renamed.txt"), renamed, original] {
+        apply(&mut state, ExplorerCommand::Undo);
+        assert!(state.error.is_none(), "{:?}", state.error);
+        assert_eq!(
+            fs::read_to_string(expected).unwrap(),
+            "edited after all three operations"
+        );
+    }
+    assert!(fs::read_dir(destination).unwrap().next().is_none());
+}
+
+#[test]
+fn explorer_undo_restores_location_and_preserves_later_content_edits() {
+    let fixture = Fixture::new("undo-tree-change");
+    let source = fixture.documents.join("folder");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("note.txt"), "before").unwrap();
+    let storage = fixture.storage();
+    let actor = session();
+    let controller = ExplorerController::default();
+    let apply = |state: &mut ExplorerState, command| {
+        controller.apply(state, command, Some(&actor), &fixture.platform, &storage)
+    };
+    let mut state = ExplorerState::new(&fixture.documents, true);
+    apply(&mut state, ExplorerCommand::Refresh);
+    apply(&mut state, ExplorerCommand::Rename("renamed".into()));
+    let renamed = fixture.documents.join("renamed");
+    fs::write(renamed.join("note.txt"), "edited nested document").unwrap();
+    apply(&mut state, ExplorerCommand::Undo);
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert!(!renamed.exists());
+    assert_eq!(
+        fs::read_to_string(source.join("note.txt")).unwrap(),
+        "edited nested document"
+    );
+}
+
 fn select_name(state: &mut ExplorerState, name: &str) {
     let index = state
         .entries

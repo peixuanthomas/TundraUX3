@@ -962,6 +962,7 @@ pub(super) fn explorer_page_action_buttons(
             ExplorerToolbarAction::Cut,
             ExplorerToolbarAction::Paste,
             ExplorerToolbarAction::Rename,
+            ExplorerToolbarAction::Undo,
             ExplorerToolbarAction::SelectionMode,
             ExplorerToolbarAction::Delete,
             ExplorerToolbarAction::Menu,

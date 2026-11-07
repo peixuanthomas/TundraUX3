@@ -3930,6 +3930,7 @@ fn explorer_address_and_search_keep_non_overlay_text_input_routing() {
         state.begin_explorer_input(mode);
         state.pages.explorer.explorer_input = "界a".into();
         state.pages.explorer.explorer_address_cursor = 2;
+        state.pages.explorer.explorer_address_selection_anchor = None;
 
         assert_eq!(state.resolved_explorer_overlay(), None);
         assert_eq!(state.active_overlay_descriptor(), None);

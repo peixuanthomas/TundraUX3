@@ -1857,7 +1857,7 @@ fn ensure_restore_parent(parent: &Path) -> Result<(), PlatformError> {
         })
 }
 
-fn rename_noreplace(source: &Path, destination: &Path) -> io::Result<()> {
+pub(crate) fn rename_noreplace(source: &Path, destination: &Path) -> io::Result<()> {
     let source = std::ffi::CString::new(source.as_os_str().as_encoded_bytes())
         .map_err(|_| io::Error::new(ErrorKind::InvalidInput, "source path contains NUL"))?;
     let destination = std::ffi::CString::new(destination.as_os_str().as_encoded_bytes())

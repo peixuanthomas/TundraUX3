@@ -47,6 +47,7 @@ pub enum ExplorerToolbarAction {
     Copy,
     Paste,
     Rename,
+    Undo,
     Delete,
     Restore,
     DumpTrash,
@@ -62,7 +63,7 @@ impl ExplorerToolbarAction {
         )
     }
 
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::SelectionMode,
         Self::Open,
         Self::Menu,
@@ -75,6 +76,7 @@ impl ExplorerToolbarAction {
         Self::Copy,
         Self::Paste,
         Self::Rename,
+        Self::Undo,
         Self::Delete,
         Self::Restore,
         Self::DumpTrash,
@@ -82,7 +84,7 @@ impl ExplorerToolbarAction {
         Self::Options,
     ];
 
-    pub const REGULAR: [Self; 15] = [
+    pub const REGULAR: [Self; 16] = [
         Self::SelectionMode,
         Self::Open,
         Self::Menu,
@@ -95,6 +97,7 @@ impl ExplorerToolbarAction {
         Self::Copy,
         Self::Paste,
         Self::Rename,
+        Self::Undo,
         Self::Delete,
         Self::Sort,
         Self::Options,
@@ -126,6 +129,7 @@ impl ExplorerToolbarAction {
             Self::Copy => i18n::tr!("ui-explorer-copy"),
             Self::Paste => i18n::tr!("ui-explorer-paste"),
             Self::Rename => i18n::tr!("ui-explorer-rename"),
+            Self::Undo => i18n::tr!("ui-explorer-undo-move"),
             Self::Delete => i18n::tr!("ui-explorer-delete"),
             Self::Restore => i18n::tr!("ui-explorer-restore"),
             Self::DumpTrash => i18n::tr!("ui-explorer-dump-trash"),
@@ -148,6 +152,7 @@ impl ExplorerToolbarAction {
             Self::Copy => "copy",
             Self::Paste => "paste",
             Self::Rename => "rename",
+            Self::Undo => "back",
             Self::Delete => "delete",
             Self::Restore => "refresh",
             Self::DumpTrash => "delete",
@@ -188,6 +193,13 @@ impl ExplorerToolbarAction {
                 }
             }
             Self::Rename => "F2",
+            Self::Undo => {
+                if cfg!(target_os = "macos") {
+                    "Cmd+Z"
+                } else {
+                    "Ctrl+Z"
+                }
+            }
             Self::Delete => "Del",
             Self::Restore => "R",
             Self::DumpTrash => "",

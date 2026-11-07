@@ -8,7 +8,9 @@ use super::notification::{
 use super::pages::{AppPageKind, AppPageModels, PageInstanceId};
 use crate::diagnostics::DiagnosticsSnapshot;
 use crate::editor::{EditorCommand, EditorEffect, EditorState, EditorViewport};
-use crate::explorer::{ExplorerCommand, ExplorerController, ExplorerEffect, ExplorerState};
+use crate::explorer::{
+    ExplorerCommand, ExplorerController, ExplorerEffect, ExplorerFileService, ExplorerState,
+};
 use crate::launcher::{LauncherCommand, LauncherController, LauncherEffect, LauncherState};
 use identity::{AuthSession, UserAccount};
 use time::{ClockDisplay, ClockSnapshot, NetworkClock, TimeSyncResult};
@@ -108,6 +110,7 @@ pub struct AppState {
     active_system_status_dashboard: Option<storage::SystemStatusDashboardConfig>,
     system_status_snapshot: Option<AppSystemStatusSnapshot>,
     page_models: AppPageModels,
+    explorer_files: ExplorerFileService,
 }
 
 impl AppState {
@@ -132,6 +135,7 @@ impl AppState {
             active_system_status_dashboard: None,
             system_status_snapshot: None,
             page_models: AppPageModels::default(),
+            explorer_files: ExplorerFileService::default(),
         }
     }
 
@@ -154,6 +158,12 @@ impl AppState {
                 AppAction::Redraw
             }
             AppCommand::SetAuthSession(auth_session) => {
+                if self.auth_session.as_ref().map(|session| &session.user_id)
+                    != auth_session.as_ref().map(|session| &session.user_id)
+                {
+                    self.explorer_files = ExplorerFileService::default();
+                    self.sync_explorer_clipboard();
+                }
                 self.auth_session = auth_session;
                 AppAction::Redraw
             }
@@ -181,7 +191,11 @@ impl AppState {
                 self.active_system_status_dashboard = dashboard;
                 AppAction::Redraw
             }
-            AppCommand::SetExplorerState(explorer_state) => {
+            AppCommand::SetExplorerState(mut explorer_state) => {
+                if let Some(state) = &mut explorer_state {
+                    state.clipboard = self.explorer_files.clipboard();
+                    state.can_undo = self.explorer_files.can_undo();
+                }
                 *self.page_models.explorer = explorer_state;
                 AppAction::Redraw
             }
@@ -380,7 +394,7 @@ impl AppState {
         storage: &storage::StorageManager,
         _at: Instant,
     ) -> (AppAction, ExplorerEffect) {
-        let controller = ExplorerController::default()
+        let controller = ExplorerController::new(self.explorer_files.clone())
             .with_editor_extensions(self.storage_config.editor.explorer_open_extensions.clone());
         let effect = self
             .page_models
@@ -396,7 +410,39 @@ impl AppState {
                 )
             })
             .unwrap_or(ExplorerEffect::None);
+        self.sync_explorer_clipboard();
         (AppAction::Redraw, effect)
+    }
+
+    fn sync_explorer_clipboard(&mut self) {
+        let clipboard = self.explorer_files.clipboard();
+        let can_undo = self.explorer_files.can_undo();
+        if let Some(state) = self.page_models.explorer.as_mut() {
+            state.clipboard = clipboard.clone();
+            state.can_undo = can_undo;
+        }
+        for id in self.page_models.explorer.ids() {
+            if let Some(Some(state)) = self.page_models.explorer.get_mut(id) {
+                state.clipboard = clipboard.clone();
+                state.can_undo = can_undo;
+            }
+        }
+    }
+
+    pub fn explorer_operation_started(&mut self) {
+        self.explorer_files.set_operation_busy(true);
+        self.sync_explorer_clipboard();
+    }
+
+    pub fn explorer_operation_finished(&mut self, moved_sources: &[std::path::PathBuf]) {
+        self.explorer_files.set_operation_busy(false);
+        self.explorer_files.consume_cut_paths(moved_sources);
+        self.sync_explorer_clipboard();
+    }
+
+    pub fn record_explorer_moves(&mut self, moves: Option<Vec<crate::explorer::ExplorerUndoMove>>) {
+        self.explorer_files.record_moves(moves);
+        self.sync_explorer_clipboard();
     }
     pub fn launcher_state(&self) -> Option<&LauncherState> {
         self.page_models.launcher.as_ref()

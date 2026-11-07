@@ -2,7 +2,12 @@ use super::*;
 
 impl ExplorerFileService {
     pub fn new(permission_service: PermissionService) -> Self {
-        Self { permission_service }
+        Self {
+            permission_service,
+            operations: Arc::new(std::sync::Mutex::new(
+                operations::ExplorerFileOperations::default(),
+            )),
+        }
     }
 
     pub fn refresh(
@@ -268,11 +273,21 @@ impl ExplorerFileService {
         })?;
         let target = child_path(parent, name)?;
         self.authorize(session, PermissionAction::WriteFile, path)?;
-        platform.rename_path(path, &target)?;
-        state.set_success(msg!(
-            "app-explorer-renamed",
-            path = target.display().to_string()
-        ));
+        if path == target {
+            return self.refresh(state, session, platform, storage);
+        }
+        let movement = ExplorerUndoMove::prepare(path, &target).ok();
+        platform.rename_path_no_replace(path, &target)?;
+        let movement = movement.filter(ExplorerUndoMove::target_matches);
+        let undoable = movement.is_some();
+        self.record_moves(movement.map(|movement| vec![movement]));
+        let message: LocalizedText =
+            msg!("app-explorer-renamed", path = target.display().to_string()).into();
+        state.set_success(if undoable {
+            message
+        } else {
+            msg!("app-explorer-undo-unavailable", message = message).into()
+        });
         self.refresh(state, session, platform, storage)
     }
 
@@ -804,65 +819,99 @@ impl ExplorerFileService {
         });
 
         let mut succeeded = Vec::new();
+        let mut succeeded_sources = Vec::new();
+        let mut undo_moves = Some(Vec::new());
         let mut skipped = 0usize;
-        for (index, source) in clipboard.paths.iter().enumerate() {
-            let file_name = source.file_name().ok_or_else(|| {
-                ExplorerError::Localized(LocalizedError::new(
-                    "EXPLORER_INVALID_OPERATION",
-                    msg!("app-explorer-clipboard-no-name"),
-                ))
-            })?;
-            let original_target = destination.join(file_name);
-            let resolution = resolutions
-                .get(&original_target)
-                .copied()
-                .unwrap_or(ExplorerConflictAction::KeepBoth);
-            let target_exists = path_exists_no_follow(&original_target)?;
-            if resolution == ExplorerConflictAction::Skip {
-                skipped += 1;
+        let result = (|| -> Result<(), ExplorerError> {
+            for (index, source) in clipboard.paths.iter().enumerate() {
+                let file_name = source.file_name().ok_or_else(|| {
+                    ExplorerError::Localized(LocalizedError::new(
+                        "EXPLORER_INVALID_OPERATION",
+                        msg!("app-explorer-clipboard-no-name"),
+                    ))
+                })?;
+                let original_target = destination.join(file_name);
+                let resolution = resolutions
+                    .get(&original_target)
+                    .copied()
+                    .unwrap_or(ExplorerConflictAction::KeepBoth);
+                let target_exists = path_exists_no_follow(&original_target)?;
+                if resolution == ExplorerConflictAction::Skip {
+                    skipped += 1;
+                    if let Some(operation) = state.operation.as_mut() {
+                        operation.completed_items = index + 1;
+                    }
+                    continue;
+                }
+                let target = if target_exists && resolution == ExplorerConflictAction::KeepBoth {
+                    unique_sibling_path(&original_target)?
+                } else {
+                    original_target.clone()
+                };
+                let movement = if clipboard.mode == ExplorerClipboardMode::Cut
+                    && !(target_exists && resolution == ExplorerConflictAction::Replace)
+                {
+                    ExplorerUndoMove::prepare(source, &target).ok()
+                } else {
+                    None
+                };
+                if target_exists && resolution == ExplorerConflictAction::Replace {
+                    move_existing_to_trash(platform, &original_target)?;
+                }
+
+                match clipboard.mode {
+                    ExplorerClipboardMode::Copy => {
+                        copy_path_staged(source, &target)?;
+                    }
+                    ExplorerClipboardMode::Cut => {
+                        match platform.rename_path_no_replace(source, &target) {
+                            Ok(()) => {}
+                            Err(PlatformError::CrossDevice { .. }) => {
+                                copy_path_staged(source, &target)?;
+                                remove_source_path(source)?;
+                            }
+                            Err(error) => return Err(error.into()),
+                        }
+                    }
+                }
+                if clipboard.mode == ExplorerClipboardMode::Cut {
+                    match movement.filter(ExplorerUndoMove::target_matches) {
+                        Some(movement) => {
+                            if let Some(moves) = &mut undo_moves {
+                                moves.push(movement);
+                            }
+                        }
+                        None => undo_moves = None,
+                    }
+                }
+                succeeded_sources.push(source.clone());
+                succeeded.push(target);
                 if let Some(operation) = state.operation.as_mut() {
                     operation.completed_items = index + 1;
                 }
-                continue;
             }
-            let target = if target_exists && resolution == ExplorerConflictAction::KeepBoth {
-                unique_sibling_path(&original_target)?
-            } else {
-                original_target.clone()
-            };
-            if target_exists && resolution == ExplorerConflictAction::Replace {
-                move_existing_to_trash(platform, &original_target)?;
-            }
+            Ok(())
+        })();
 
-            match clipboard.mode {
-                ExplorerClipboardMode::Copy => {
-                    copy_path_staged(source, &target)?;
-                }
-                ExplorerClipboardMode::Cut => match platform.rename_path(source, &target) {
-                    Ok(()) => {}
-                    Err(PlatformError::CrossDevice { .. }) => {
-                        copy_path_staged(source, &target)?;
-                        remove_source_path(source)?;
-                    }
-                    Err(error) => return Err(error.into()),
-                },
-            }
-            succeeded.push(target);
-            if let Some(operation) = state.operation.as_mut() {
-                operation.completed_items = index + 1;
-            }
-        }
-
+        let undo_unavailable = clipboard.mode == ExplorerClipboardMode::Cut && undo_moves.is_none();
         if clipboard.mode == ExplorerClipboardMode::Cut {
-            state.clipboard = None;
+            self.consume_cut_paths(&succeeded_sources);
+            self.record_moves(undo_moves);
         }
         state.operation = None;
+        result?;
         state.selected_paths = succeeded.into_iter().collect();
-        state.set_success(msg!(
+        let message: LocalizedText = msg!(
             "app-explorer-transferred",
             count = state.selected_paths.len() as i64,
             skipped = skipped as i64
-        ));
+        )
+        .into();
+        state.set_success(if undo_unavailable {
+            msg!("app-explorer-undo-unavailable", message = message).into()
+        } else {
+            message
+        });
 
         self.refresh(state, session, platform, storage)
     }

@@ -10,7 +10,9 @@ pub mod service;
 pub use linux_logs::query_linux_logs;
 mod document;
 mod error_details;
+mod file_operations;
 pub use error_details::CapturedIoError;
+pub use file_operations::{FileIdentity, file_identity, rename_path_no_replace};
 #[cfg(target_os = "linux")]
 pub mod linux;
 pub mod macos;

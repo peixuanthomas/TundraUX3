@@ -68,6 +68,8 @@ impl ExplorerController {
             event
         });
         let result = self.try_apply(state, command, session, platform, storage);
+        state.clipboard = self.file_service.clipboard();
+        state.can_undo = self.file_service.can_undo();
         if let Some(started) = log {
             let mut event = runtime_log::RuntimeLogEvent::new(
                 started.context,
@@ -448,26 +450,26 @@ impl ExplorerController {
             ExplorerCommand::Copy => {
                 ensure_filesystem_location(state)?;
                 let paths = selected_paths_or_error(state)?;
-                state.clipboard = Some(ExplorerClipboard {
+                self.file_service.set_clipboard(Some(ExplorerClipboard {
                     paths,
                     mode: ExplorerClipboardMode::Copy,
-                });
+                }));
                 state.set_success(msg!("app-explorer-copied-selection"));
                 ExplorerEffect::None
             }
             ExplorerCommand::Cut => {
                 ensure_filesystem_location(state)?;
                 let paths = selected_paths_or_error(state)?;
-                state.clipboard = Some(ExplorerClipboard {
+                self.file_service.set_clipboard(Some(ExplorerClipboard {
                     paths,
                     mode: ExplorerClipboardMode::Cut,
-                });
+                }));
                 state.set_success(msg!("app-explorer-cut-selection"));
                 ExplorerEffect::None
             }
             ExplorerCommand::Paste => {
                 ensure_filesystem_location(state)?;
-                let clipboard = state.clipboard.clone().ok_or_else(|| {
+                let clipboard = self.file_service.clipboard().ok_or_else(|| {
                     ExplorerError::Localized(LocalizedError::new(
                         "EXPLORER_INVALID_OPERATION",
                         msg!("app-explorer-clipboard-empty"),
@@ -475,6 +477,10 @@ impl ExplorerController {
                 })?;
                 self.file_service
                     .paste(state, session, platform, storage, clipboard)?;
+                ExplorerEffect::None
+            }
+            ExplorerCommand::Undo => {
+                self.file_service.undo(state, session, platform, storage)?;
                 ExplorerEffect::None
             }
             ExplorerCommand::BeginDrag => {

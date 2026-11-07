@@ -655,7 +655,7 @@ impl ShellSession {
         plan: ExplorerTaskPlan,
         kind: ShellExplorerTaskKind,
     ) {
-        let Some(runtime) = self.explorer_task_runtime.as_ref() else {
+        let Some(runtime) = self.explorer_task_runtime.clone() else {
             self.report_explorer_task_error(i18n::LocalizedText::from(i18n::msg!(
                 "shell-explorer-task-service-is-unavailable"
             )));
@@ -669,6 +669,7 @@ impl ShellSession {
         let operation = plan.operation();
         match runtime.submit(plan, kind, actor) {
             Ok(id) => {
+                self.app.explorer_operation_started();
                 let cancel = runtime.clone();
                 let finished = runtime.clone();
                 self.register_page_task(
@@ -778,6 +779,38 @@ impl ShellSession {
             &event,
             ExplorerTaskEvent::Finished { .. } | ExplorerTaskEvent::Panicked { .. }
         );
+        if self.tasks.owner(TaskDomain::Explorer, id.0).is_some()
+            && let Some(context) = self.explorer_task_context(id)
+        {
+            match &event {
+                ExplorerTaskEvent::Finished { summary, .. } => {
+                    let moved_sources =
+                        if matches!(context.kind, ShellExplorerTaskKind::Move { .. }) {
+                            self.app.record_explorer_moves(summary.undo_moves.clone());
+                            context
+                                .sources
+                                .iter()
+                                .filter(|source| {
+                                    summary.succeeded_sources.iter().any(|path| {
+                                        explorer_task_paths_match(path, &source.canonical)
+                                    })
+                                })
+                                .map(|source| source.original.clone())
+                                .collect::<Vec<_>>()
+                        } else {
+                            Vec::new()
+                        };
+                    self.app.explorer_operation_finished(&moved_sources);
+                }
+                ExplorerTaskEvent::Panicked { .. } => {
+                    if matches!(context.kind, ShellExplorerTaskKind::Move { .. }) {
+                        self.app.record_explorer_moves(None);
+                    }
+                    self.app.explorer_operation_finished(&[]);
+                }
+                _ => {}
+            }
+        }
         match &event {
             ExplorerTaskEvent::Finished { summary, .. } => {
                 use platform::task_history::TaskStatus;
@@ -828,9 +861,10 @@ impl ShellSession {
     fn apply_explorer_session_event(&mut self, event: ExplorerTaskEvent) {
         match event {
             ExplorerTaskEvent::Finished { id, summary } => {
-                if let Some(runtime) = &self.explorer_task_runtime {
-                    runtime.finish(id);
-                }
+                let context = self
+                    .explorer_task_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.finish(id));
                 let detail =
                     explorer_task_error_detail(summary.fatal_error.as_ref(), &summary.failures);
                 let message = if summary.cancelled {
@@ -853,6 +887,18 @@ impl ShellSession {
                         arg1 = summary.succeeded_items,
                         arg2 = summary.skipped_items
                     )
+                };
+                let message: i18n::LocalizedText = if context.is_some_and(|context| {
+                    matches!(context.kind, ShellExplorerTaskKind::Move { .. })
+                }) && summary.undo_moves.is_none()
+                {
+                    i18n::msg!(
+                        "app-explorer-undo-unavailable",
+                        message = i18n::LocalizedText::from(message)
+                    )
+                    .into()
+                } else {
+                    message.into()
                 };
                 self.notify_alert_with_key(
                     format!("explorer.task.{}", id.0),
@@ -971,23 +1017,6 @@ impl ShellSession {
                     .map(|source| source.original.clone())
                     .collect::<Vec<_>>();
 
-                if let ShellExplorerTaskKind::Move {
-                    from_clipboard: true,
-                } = context.kind
-                {
-                    let _ = self.update_explorer_state(|state| {
-                        if let Some(clipboard) = state.clipboard.as_mut()
-                            && clipboard.mode == ExplorerClipboardMode::Cut
-                        {
-                            clipboard
-                                .paths
-                                .retain(|path| !succeeded_originals.contains(path));
-                            if clipboard.paths.is_empty() {
-                                state.clipboard = None;
-                            }
-                        }
-                    });
-                }
                 if context.kind == ShellExplorerTaskKind::Delete {
                     let _ = self.update_explorer_state(|state| {
                         for path in &succeeded_originals {
@@ -1034,6 +1063,16 @@ impl ShellSession {
                 };
                 let has_error = summary.failed_items > 0
                     || (!summary.cancelled && summary.fatal_error.is_some());
+                let message = if matches!(context.kind, ShellExplorerTaskKind::Move { .. })
+                    && summary.undo_moves.is_none()
+                {
+                    i18n::LocalizedText::from(i18n::msg!(
+                        "app-explorer-undo-unavailable",
+                        message = message
+                    ))
+                } else {
+                    message
+                };
                 let _ = self.update_explorer_state(|state| {
                     state.operation = None;
                     state.message = Some(message.clone());

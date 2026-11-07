@@ -1305,7 +1305,10 @@ fn path_size(path: &Path, metadata: &std::fs::Metadata) -> u64 {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_rename_exclusive(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+pub(crate) fn macos_rename_exclusive(
+    source: &Path,
+    destination: &Path,
+) -> Result<(), std::io::Error> {
     use std::os::unix::ffi::OsStrExt;
     const RENAME_EXCL: u32 = 0x0000_0004;
     let source = CString::new(source.as_os_str().as_bytes())

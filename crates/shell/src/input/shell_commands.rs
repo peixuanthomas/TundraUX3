@@ -187,6 +187,7 @@ pub enum ShellCommand {
     ExplorerCopy,
     ExplorerCut,
     ExplorerPaste,
+    ExplorerUndo,
     ExplorerDelete,
     ExplorerConfirmDelete,
     ExplorerRestore,

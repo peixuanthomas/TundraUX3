@@ -1116,6 +1116,9 @@ impl ShellSession {
                 self.apply_explorer_command(ExplorerCommand::Paste, platform)
             }
             ExplorerToolbarAction::Rename => self.begin_explorer_input(ExplorerInputMode::Rename),
+            ExplorerToolbarAction::Undo => {
+                self.apply_explorer_command(ExplorerCommand::Undo, platform)
+            }
             ExplorerToolbarAction::Delete => {
                 self.apply_explorer_command(ExplorerCommand::DeleteToTrash, platform)
             }
@@ -1177,6 +1180,7 @@ impl ShellSession {
                     "cut" => self.apply_explorer_command(ExplorerCommand::Cut, platform),
                     "copy" => self.apply_explorer_command(ExplorerCommand::Copy, platform),
                     "rename" => self.begin_explorer_input(ExplorerInputMode::Rename),
+                    "undo" => self.apply_explorer_command(ExplorerCommand::Undo, platform),
                     "delete" => {
                         self.apply_explorer_command(ExplorerCommand::DeleteToTrash, platform)
                     }
@@ -1674,6 +1678,44 @@ impl ShellSession {
             area: layout.rows.iter().find(|row| row.index == index)?.area,
             disabled: false,
         })
+    }
+
+    pub(in crate::session) fn explorer_action_button_at(
+        &self,
+        point: CellPosition,
+    ) -> Option<ui::components::ButtonRegion> {
+        if self.active_screen() != ShellScreen::Explorer {
+            return None;
+        }
+        let model = self.to_explorer_view_model();
+        let layout = ui::explorer_layout(self.touch_main(), &model);
+        if model.overlay.is_some() {
+            let control = layout.overlay?.controls.into_iter().find(|control| {
+                matches!(control.control, ui::ExplorerOverlayControl::ContextItem(_))
+                    && rect_contains(control.area, point)
+            })?;
+            let ui::ExplorerOverlayControl::ContextItem(index) = control.control else {
+                return None;
+            };
+            return Some(ui::components::ButtonRegion {
+                id: format!("explorer.context.{index}").into(),
+                area: control.area,
+                disabled: !control.enabled,
+            });
+        }
+        if !self.interactive_overlays().is_empty() {
+            return None;
+        }
+        layout
+            .toolbar_buttons
+            .iter()
+            .chain(&layout.page_actions)
+            .find(|button| rect_contains(button.area, point))
+            .map(|button| ui::components::ButtonRegion {
+                id: format!("explorer.toolbar.{:?}", button.action).into(),
+                area: button.area,
+                disabled: !button.enabled,
+            })
     }
 
     pub(in crate::session) fn explorer_hit_target_at(

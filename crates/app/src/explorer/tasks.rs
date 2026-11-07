@@ -182,6 +182,7 @@ pub struct ExplorerItemFailure {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerTaskSummary {
+    pub undo_moves: Option<Vec<super::ExplorerUndoMove>>,
     pub total_items: u64,
     pub succeeded_items: u64,
     pub skipped_items: u64,
@@ -199,6 +200,7 @@ pub struct ExplorerTaskSummary {
 impl ExplorerTaskSummary {
     fn empty() -> Self {
         Self {
+            undo_moves: Some(Vec::new()),
             total_items: 0,
             succeeded_items: 0,
             skipped_items: 0,
@@ -1348,7 +1350,33 @@ fn execute_task(
                     break;
                 }
                 let failures_before = context.summary.failed_items;
+                let movement = if plan.operation == ExplorerTransferOperation::Move
+                    && matches!(
+                        node.disposition,
+                        PreparedDisposition::File { replace: false }
+                            | PreparedDisposition::Directory {
+                                replace: false,
+                                merge: false,
+                                ..
+                            }
+                    ) {
+                    super::ExplorerUndoMove::prepare(&node.source, &node.target).ok()
+                } else {
+                    None
+                };
                 let clean = context.run_node(node, plan.operation);
+                if plan.operation == ExplorerTransferOperation::Move
+                    && !matches!(node.disposition, PreparedDisposition::Skip)
+                {
+                    match movement.filter(|movement| clean && movement.target_matches()) {
+                        Some(movement) => {
+                            if let Some(moves) = &mut context.summary.undo_moves {
+                                moves.push(movement);
+                            }
+                        }
+                        None => context.summary.undo_moves = None,
+                    }
+                }
                 if clean && context.summary.failed_items == failures_before {
                     context.summary.succeeded_sources.push(node.source.clone());
                 } else {
@@ -2322,7 +2350,10 @@ impl<'a> ExecutionContext<'a> {
                     "target": node.target.display().to_string(),
                 }),
             )?;
-            return match self.platform.rename_path(&node.source, &node.target) {
+            return match self
+                .platform
+                .rename_path_no_replace(&node.source, &node.target)
+            {
                 Ok(()) => {
                     self.checkpoint(
                         "target_committed",

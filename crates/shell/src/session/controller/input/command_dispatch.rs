@@ -1322,6 +1322,10 @@ impl ShellSession {
                 self.apply_explorer_command(ExplorerCommand::Paste, platform);
                 ShellAction::Redraw
             }
+            ShellCommand::ExplorerUndo => {
+                self.apply_explorer_command(ExplorerCommand::Undo, platform);
+                ShellAction::Redraw
+            }
             ShellCommand::ExplorerDelete => {
                 self.apply_explorer_command(ExplorerCommand::DeleteToTrash, platform);
                 ShellAction::Redraw

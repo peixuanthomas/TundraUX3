@@ -62,6 +62,96 @@ fn test_explorer_watchdog() -> watchdog::AppWatchdog {
 }
 
 #[test]
+fn completed_move_from_an_old_session_cannot_change_new_clipboard_or_undo_history() {
+    let fixture = std::env::temp_dir().join(format!(
+        "tundra-shell-explorer-stale-move-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
+    ));
+    let source_root = fixture.join("source");
+    let destination = fixture.join("destination");
+    std::fs::create_dir_all(&source_root).unwrap();
+    std::fs::create_dir(&destination).unwrap();
+    let source = source_root.join("old.txt");
+    std::fs::write(&source, "old session move").unwrap();
+    let storage = storage_at(&fixture);
+    let runtime = ShellExplorerTaskRuntime::new_managed(storage.clone(), test_explorer_watchdog());
+    let id = runtime
+        .submit(
+            ExplorerTaskPlan::Transfer(ExplorerTransferPlan::new(
+                ExplorerTransferOperation::Move,
+                vec![source],
+                &destination,
+            )),
+            ShellExplorerTaskKind::Move {
+                from_clipboard: true,
+            },
+            "same-user".into(),
+        )
+        .unwrap();
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let mut actor = AuthSession {
+        source: identity::IdentitySource::LocalAccount,
+        session_id: "old-session".into(),
+        user_id: "same-user".into(),
+        username: "tester".into(),
+        role: UserRole::Admin,
+        started_at_epoch_ms: 1,
+    };
+    state.app.dispatch_at(
+        app::AppCommand::SetAuthSession(Some(actor.clone())),
+        Instant::now(),
+    );
+    state.enter_new_page(ShellScreen::Explorer);
+    state.explorer_task_runtime = Some(runtime.clone());
+    state.tasks.register(
+        TaskDomain::Explorer,
+        id.0,
+        TaskOwner::Session,
+        TaskClass::Operation,
+        TaskControl::new(|| {}, || true),
+    );
+    state.app.explorer_operation_started();
+    let summary = wait_for_summary(&runtime);
+    assert_eq!(summary.undo_moves.as_ref().map(Vec::len), Some(1));
+    state.tasks.reset();
+    state
+        .app
+        .dispatch_at(app::AppCommand::SetAuthSession(None), Instant::now());
+    actor.session_id = "new-session".into();
+    state
+        .app
+        .dispatch_at(app::AppCommand::SetAuthSession(Some(actor)), Instant::now());
+    let fresh = source_root.join("new.txt");
+    std::fs::write(&fresh, "new session clipboard").unwrap();
+    state.replace_explorer_state(Some(ExplorerState::new(&source_root, true)));
+    let platform = platform::native_platform();
+    for command in [ExplorerCommand::Refresh, ExplorerCommand::Cut] {
+        state
+            .app
+            .dispatch_explorer_at(command, platform.as_ref(), &storage, Instant::now());
+    }
+    state.apply_explorer_task_event(
+        ExplorerTaskEvent::Finished { id, summary },
+        platform.as_ref(),
+    );
+    let explorer = state.app.explorer_state().unwrap();
+    assert_eq!(explorer.clipboard.as_ref().unwrap().paths, [fresh]);
+    assert!(!explorer.can_undo);
+    assert!(destination.join("old.txt").exists());
+    drop(state);
+    drop(runtime);
+    std::fs::remove_dir_all(fixture).unwrap();
+}
+
+#[test]
 fn shell_runtime_executes_copy_on_real_temporary_paths() {
     let fixture = std::env::temp_dir().join(format!(
         "tundra-shell-explorer-task-{}-{}",

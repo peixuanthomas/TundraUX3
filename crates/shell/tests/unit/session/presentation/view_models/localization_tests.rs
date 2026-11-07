@@ -90,6 +90,7 @@ fn selected_file_menu_keeps_the_actions_moved_from_the_toolbar() {
             selected_count: 1,
             entry_count: 1,
             clipboard_available: false,
+            undo_available: false,
             is_trash: false,
             trash_has_items: false,
             focused_index: 0,

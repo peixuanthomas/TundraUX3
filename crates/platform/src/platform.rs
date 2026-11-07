@@ -685,6 +685,10 @@ pub trait Platform: Send + Sync {
         default_rename_path(source, target)
     }
 
+    fn rename_path_no_replace(&self, source: &Path, target: &Path) -> Result<(), PlatformError> {
+        crate::rename_path_no_replace(source, target)
+    }
+
     fn create_temp_file(&self, prefix: &str) -> Result<PathBuf, PlatformError> {
         let app_paths = self.app_paths()?;
         create_temp_file(app_paths.temp_path(), prefix).map_err(|error| {
