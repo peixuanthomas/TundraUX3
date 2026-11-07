@@ -121,7 +121,7 @@ Page buttons show their shortcuts, and F1 opens complete help for the current pa
 | Page | Common input |
 | --- | --- |
 | General | Tab/Shift+Tab moves focus, Enter/Space executes, Esc returns |
-| Home | E/A/S/M/U opens Files, Launcher, Settings, Status, and Users; Q/Esc opens exit confirmation |
+| Home | Arrows select entries; Enter/Space opens the selection; Q/Esc opens exit confirmation |
 | Launcher | Enter opens, V switches views, R/F5 refreshes, F2 organizes |
 | File management | S, Ctrl+F, or `/` searches; F5 refreshes; F6 sorts; Ctrl/Cmd+Z undoes a move or rename |
 | Management pages | S searches, R/F5 refreshes, F3 toggles expert actions, F4 shows details, Ctrl+Enter submits |

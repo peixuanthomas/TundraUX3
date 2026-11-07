@@ -248,7 +248,10 @@ def main():
                 key("F10" if current["page"] == "FirstRunSetup" and not modal else "Enter")
                 shell.drain(0.1)
             until(lambda snapshot: snapshot["page"] == "Home")
-            key("a")
+            key("End")
+            key("Left")
+            key("Left")
+            key("Enter")
             current = until(lambda snapshot: snapshot["page"] == "Launcher")
             command_node = next(node for node in current["nodes"]
                                 if node["role"] == "button" and "Command Line" in node["name"])

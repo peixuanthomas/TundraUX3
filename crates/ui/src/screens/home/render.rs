@@ -100,12 +100,11 @@ fn render_user_main(
         }
         .bg(context.theme.raised);
         let content_width = usize::from(tile.width.saturating_sub(2));
-        let mut surface = Button::new(format!("home.entry.{index}"), entry.label_with_shortcut());
+        let mut surface = Button::new(format!("home.entry.{index}"), entry.label.clone());
         surface.state.selected = index == home.selected_entry_index();
         surface.set_focused(index == home.selected_entry_index());
         if tile.height < HOME_TILE_MIN_HEIGHT {
-            let mut compact =
-                Button::new(format!("home.entry.{index}"), entry.label_with_shortcut());
+            let mut compact = Button::new(format!("home.entry.{index}"), entry.label.clone());
             compact.state.selected = index == home.selected_entry_index();
             compact.set_focused(index == home.selected_entry_index());
             compact.render_borderless_frame(frame, tile, theme);
@@ -150,7 +149,7 @@ fn render_user_main(
         if label_y < inner.bottom() {
             frame.render_widget(
                 Paragraph::new(Line::styled(
-                    centered_home_tile_text(&entry.label_with_shortcut(), content_width),
+                    centered_home_tile_text(&entry.label, content_width),
                     style,
                 ))
                 .alignment(HorizontalAlignment::Left)

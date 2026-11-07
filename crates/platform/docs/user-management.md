@@ -1,6 +1,6 @@
 # User management
 
-Open User Management from Launcher. Linux enumerates root, service accounts, and regular accounts through NSS, and can look up directory accounts by exact name when enumeration is unsupported. Accounts and groups from remote directories remain read-only; Windows/macOS use the local application account flow.
+Open User Management from Home. Linux enumerates root, service accounts, and regular accounts through NSS, and can look up directory accounts by exact name when enumeration is unsupported. Accounts and groups from remote directories remain read-only; Windows/macOS use the local application account flow.
 
 ## Queries
 

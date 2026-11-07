@@ -198,7 +198,10 @@ def main():
                     break
                 key("F10" if current["page"] == "FirstRunSetup" and not modal else "Enter")
             until(lambda current: current["page"] == "Home")
-            key("a")
+            key("End")
+            key("Left")
+            key("Left")
+            key("Enter")
             current = until(lambda current: current["page"] == "Launcher")
             entry = next(item for item in current["nodes"] if item["role"] == "button" and item["name"] == "Script Editor")
             ui("click", "--id", entry["id"], "--double")

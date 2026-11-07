@@ -38,7 +38,7 @@ The export directory must not already exist. The program creates a private direc
 
 ## TUI controls
 
-Open Logs from Launcher. All levels are shown by default.
+Open Logs from Home. All levels are shown by default.
 
 | Input | Behavior |
 | --- | --- |

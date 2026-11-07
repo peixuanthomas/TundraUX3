@@ -278,9 +278,11 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
     if first_interface is None:
         raise SystemExit("management PTY requires a visible network interface")
     offset = len(output)
-    # The fixed catalog orders Network eighth; Home removes any previous
-    # Command Line selection. This isolated profile has no external entries.
-    os.write(master, b"\x1b[H" + b"\x1b[C" * 7 + b"\r")
+    os.write(master, b"\x1b")
+    if not wait_for_output(master, output, b"Explorer", child, 5.0, offset):
+        raise SystemExit("Launcher did not return to Home")
+    # Network is the fifth Home entry on Linux.
+    os.write(master, b"\x1b[H" + b"\x1b[C" * 4 + b"\r")
     if not wait_for_output(master, output, b"More actions", child, 10.0, offset):
         raise SystemExit("Network did not load its operation menu:\n" + output_diagnostic(output[offset:]))
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -344,10 +346,10 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
         raise SystemExit("clearing the combined search did not restore network rows")
     offset = len(output)
     os.write(master, b"\x1b")
-    if not wait_for_output(master, output, b"Launcher", child, 5.0, offset):
-        raise SystemExit("Network did not return to Launcher")
+    if not wait_for_output(master, output, b"Explorer", child, 5.0, offset):
+        raise SystemExit("Network did not return to Home")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
-        raise SystemExit("Launcher did not settle after management verification")
+        raise SystemExit("Home did not settle after management verification")
 
 
 def check_package_and_log_views(master: int, slave: int, output: bytearray, child: subprocess.Popen) -> None:
@@ -376,8 +378,7 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
-    # At 140 columns, Packages is directly below Command Line; Up returns to it.
-    step(b"\x1b[H\x1b[B\x1b[A\x1b[B\r", b"Installed packages", "Launcher row navigation did not open Packages")
+    step(b"\x1b[H\x1b[C\r", b"Installed packages", "Home navigation did not open Packages")
     # Installed rows must return after leaving the full detail page, even
     # when a detail query targeted only the first package.
     if Path("/usr/bin/dpkg-query").is_file():
@@ -405,8 +406,8 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
         step(b"\x1b[B\r", title,
              "Package auxiliary view did not open", timeout=45.0)
         step(b"\x1b[18~", b"Installed packages", "Auxiliary view could not return to packages")
-    step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Packages did not return to Launcher")
-    step(b"\x1b[H" + b"\x1b[C" * 3 + b"\r", b"UX log", "Logs did not open")
+    step(b"\x1b", b"Explorer", "Packages did not return to Home")
+    step(b"\x1b[H" + b"\x1b[C" * 11 + b"\r", b"UX log", "Logs did not open")
     step(b"f", b"Service scope", "Visible log filter shortcut did not open its form")
     step(b"\x1b", b"UX events", "Log filter cancellation did not restore its page")
     step(b"\x1b[21~", b"L Level", "Log More actions did not open")
@@ -416,7 +417,7 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     # Clicking outside the centered menu closes it without opening a covered
     # category or toolbar control. The layout tests check exact bounds/colors.
     step(b"\x1b[<0;3;6M\x1b[<0;3;6m", b"UX log", "Log menu outside click did not close it")
-    step(b"\x1b", b"Launcher \xc2\xb7 Large icons", "Logs did not return to Launcher")
+    step(b"\x1b", b"Explorer", "Logs did not return to Home")
     print("PASS: all six package views, detail return, visible log filters, and log menu keyboard/outside-click dismissal")
 
 
@@ -470,7 +471,7 @@ def check_crash_screen(master: int, output: bytearray, child: subprocess.Popen, 
     os.write(master, b"\x1b")
     wait_for_output_quiet(master, output, child, quiet_period=0.3)
     offset = len(output)
-    os.write(master, b"a")
+    os.write(master, b"\x1b[F\x1b[D\x1b[D\r")
     if not wait_for_output(master, output, b"Command Line", child, 5.0, offset):
         raise SystemExit("could not open Launcher for crash-page test")
     wait_for_output_quiet(master, output, child, quiet_period=0.3)
@@ -579,7 +580,7 @@ def check_permission_draft(master, slave, output, child, path):
 
 
 def check_animation_settings(master, output, child):
-    os.write(master, b"s")
+    os.write(master, b"\x1b[F\x1b[D\r")
     if not wait_for_painted_text(master, output, "Animation speed", child):
         raise SystemExit("Settings did not paint the animation percentage")
     os.write(master, b"\x1b[B" * 5 + b"\r\x1b[C\r\x1b[B\r")
@@ -609,7 +610,7 @@ def check_system_settings_environment(master, output, child):
     if Path("/proc/1/comm").read_text().strip() == "systemd":
         return
     offset = len(output)
-    os.write(master, b"s")
+    os.write(master, b"\x1b[F\x1b[D\r")
     if not wait_for_output(master, output, b"OS settings", child, 5.0, offset):
         raise SystemExit("Settings did not expose the operating system entry")
     wait_for_output_quiet(master, output, child, quiet_period=0.3)
@@ -645,7 +646,7 @@ def check_editor_resize(master, slave, output, child, isolated):
     path.write_text(original)
 
     offset = len(output)
-    os.write(master, b"e")
+    os.write(master, b"\x1b[H\r")
     if not wait_for_painted_text(master, output, "Quick access", child):
         raise SystemExit("Explorer did not open for the resize regression")
     if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -940,7 +941,7 @@ def main() -> int:
         # Exercise the companion CLI launched by the real Shell, not just a
         # standalone REPL. Rebuilding Shell alone can leave an older CLI beside it.
         launcher_offset = len(output)
-        os.write(master, b"a")
+        os.write(master, b"\x1b[F\x1b[D\x1b[D\r")
         if not wait_for_output(master, output, b"Command Line", child, 5.0, launcher_offset):
             raise SystemExit("Launcher did not show Command Line")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -996,10 +997,6 @@ def main() -> int:
             raise SystemExit("Launcher did not settle after CLI exit:\n" + output_diagnostic(output[launcher_offset:]))
         check_management_menu(master, slave, output, child)
         check_package_and_log_views(master, slave, output, child)
-        home_offset = len(output)
-        os.write(master, b"\x1b")
-        if not wait_for_output(master, output, b"Explorer", child, 5.0, home_offset):
-            raise SystemExit("Launcher did not return to Home")
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 140, 0, 0))
         os.kill(child.pid, signal.SIGWINCH)
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1009,7 +1006,7 @@ def main() -> int:
         # Quotes, dollar signs and semicolons must stay part of the directory
         # name: this entry sets the child cwd rather than typing a cd command.
         explorer_offset = len(output)
-        os.write(master, b"e")
+        os.write(master, b"\x1b[H\r")
         if not wait_for_painted_text(master, output, "Quick access", child):
             raise SystemExit("Explorer did not open before terminal directory verification")
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1062,11 +1059,11 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle after Explorer terminal verification")
 
-        # Reproduce Escape and an SGR report in the same terminal read. The
-        # report's final M must never become Home's System Status shortcut.
+        # Reproduce Escape and an SGR report in the same terminal read without
+        # activating a Home entry from leftover report bytes.
         for report in (b"\x1b[<35;45;12M", b"\x1b[<35;90;22M"):
             explorer_offset = len(output)
-            os.write(master, b"e")
+            os.write(master, b"\x1b[H\r")
             if not wait_for_painted_text(master, output, "Quick access", child):
                 raise SystemExit("Explorer did not open before Escape/mouse regression")
             if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
@@ -1093,11 +1090,11 @@ def main() -> int:
         if b"Dashboard" in output[invalid_offset:]:
             raise SystemExit("invalid terminal input activated System Status")
 
-        # A real shortcut still works immediately after discarded reports.
+        # Keyboard navigation still works immediately after discarded reports.
         status_offset = len(output)
-        os.write(master, b"m")
+        os.write(master, b"\x1b[F\r")
         if not wait_for_output(master, output, b"Dashboard", child, 5.0, status_offset):
-            raise SystemExit("valid System Status shortcut was lost after filtering")
+            raise SystemExit("System Status navigation was lost after filtering")
         # Live metrics redraw continuously; allow the page entrance animation
         # to finish while draining output instead of requiring a quiet screen.
         deadline = time.monotonic() + 0.5

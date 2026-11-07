@@ -152,28 +152,6 @@ impl ShellSession {
             return (RoutedTarget::Global, ShellCommand::Logout);
         }
         if self.active_screen() == ShellScreen::Home
-            && key.phase == InputPhase::Press
-            && !key.has_non_shift_modifier()
-            && let InputKey::Char(character) = key.key
-            && let Some(entry) = self.user_home_entries().into_iter().find(|entry| {
-                entry
-                    .shortcut()
-                    .is_some_and(|shortcut| shortcut.eq_ignore_ascii_case(&character))
-            })
-        {
-            let command = match entry.icon_identity() {
-                "explorer" => ShellCommand::OpenExplorer,
-                "launcher" => ShellCommand::OpenLauncher,
-                "settings" => ShellCommand::OpenSettings,
-                "system_status" => ShellCommand::OpenSystemStatus,
-                "user_management" | "user_profile" | "users" => ShellCommand::OpenUserManagement,
-                "tasks" => ShellCommand::ToggleTasks,
-                _ => ShellCommand::Noop,
-            };
-            return (RoutedTarget::Global, command);
-        }
-
-        if self.active_screen() == ShellScreen::Home
             && (key.has_non_shift_modifier()
                 || (key.phase != InputPhase::Press
                     && matches!(

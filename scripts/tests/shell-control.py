@@ -112,8 +112,6 @@ def main():
                 time.sleep(0.1)
             current = until(lambda current: current["page"] == "Home")
             print("PASS: external CLI completed first-use setup")
-            key("a")
-            current = until(lambda current: current["page"] == "Launcher")
             packages = node_by(current, lambda node: node["role"] == "button" and "Packages" in node["name"])
             click(packages["id"], double=True)
 
@@ -135,14 +133,10 @@ def main():
             until(lambda current: "Shift+Enter" in "\n".join(current["lines"]))
             key("Escape")
             key("Escape")
-            until(lambda current: current["page"] == "Launcher")
-            key("Escape")
             current = until(lambda current: current["page"] == "Home")
             print("PASS: real Shift+click and Shift+Enter toggled package selection; F1 showed the controls")
             process_filter = f"tundra-selection-{child.pid}"
             batch_children = [subprocess.Popen(["/bin/bash", "-c", f"exec -a {process_filter} /bin/sleep 120"]) for _ in range(2)]
-            key("a")
-            current = until(lambda current: current["page"] == "Launcher")
             processes = node_by(current, lambda node: node["role"] == "button" and "Processes" in node["name"])
             click(processes["id"], double=True)
             until(lambda current: current["page"] == "Management")
@@ -182,8 +176,6 @@ def main():
                 process.wait(timeout=5)
             batch_children = []
             key("Escape")
-            until(lambda current: current["page"] == "Launcher")
-            key("Escape")
             current = until(lambda current: current["page"] == "Home")
             print("PASS: one reviewed batch paused and continued both owned test processes")
             assert current["width"] == 140 and current["height"] == 40
@@ -195,7 +187,7 @@ def main():
             ui("move", "--x", 0, "--y", 0, "--snapshot", old)
             os.write(master, b"\x1b[<35;4;4M")
             ui("move", "--x", 0, "--y", 0, "--snapshot", old)
-            os.write(master, b"s")
+            os.write(master, b"\x1b[F\x1b[D\r")
             for options in [[], ["--snapshot", old]]:
                 refused = ui("key", "e", *options, okay=False)
                 assert refused["error"]["code"] == "stale_snapshot", refused
@@ -236,7 +228,8 @@ def main():
             print("PASS: configured idle weather and keyboard wake preserved Settings and its help dialog")
             click("chrome/shell.back")
             until(lambda current: current["page"] == "Home")
-            key("e")
+            key("Home")
+            key("Enter")
             until(lambda current: current["page"] == "Explorer")
             document = root / "sample.rs"
             document.write_text("// original\n", encoding="utf-8")
@@ -280,7 +273,10 @@ def main():
             until(lambda current: current["page"] == "Explorer")
             click("chrome/shell.back")
             until(lambda current: current["page"] == "Home")
-            key("a")
+            key("End")
+            key("Left")
+            key("Left")
+            key("Enter")
             current = until(lambda current: current["page"] == "Launcher")
             command = node_by(current, lambda node: node["role"] == "button" and "Command Line" in node["name"])
             click(command["id"], double=True)
@@ -305,7 +301,9 @@ def main():
             print("PASS: external input reached the embedded terminal and its output appeared in snapshots")
             click("chrome/shell.back")
             until(lambda current: current["page"] == "Home")
-            key("s")
+            key("End")
+            key("Left")
+            key("Enter")
             until(lambda current: current["page"] == "Settings")
             click("page/settings.category.system")
             response = click("page/settings.field.automationenabled")

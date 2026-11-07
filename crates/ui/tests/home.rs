@@ -47,12 +47,73 @@ fn home_system_entries_use_their_application_artwork_and_images() {
             assets.launcher_icon_image_path(&application_key),
             "Home image path {key}"
         );
-        let image = home.home_icon_image_bytes_for_label(key).expect("Home image");
+        let image = home
+            .home_icon_image_bytes_for_label(key)
+            .expect("Home image");
         assert_eq!(
             Some(image),
             assets.launcher_icon_image_bytes(&application_key),
             "Home image bytes {key}"
         );
+    }
+}
+
+#[test]
+fn home_cards_show_only_names_in_compact_and_full_layouts() {
+    for labels in [
+        [
+            "Explorer",
+            "Launcher",
+            "Settings",
+            "System Status",
+            "Users",
+            "Tasks",
+        ],
+        [
+            "文件管理器",
+            "启动器",
+            "设置",
+            "系统状态",
+            "用户管理",
+            "任务",
+        ],
+    ] {
+        let entries = [
+            "explorer",
+            "launcher",
+            "settings",
+            "system_status",
+            "users",
+            "tasks",
+        ]
+        .into_iter()
+        .zip(labels)
+        .map(|(key, label)| ShellEntry::new(label, "").with_icon_key(key))
+        .collect();
+        let home = HomeViewModel::user("User", "Now", entries);
+        for (width, height) in [(108, 8), (140, 40)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    ui::render_home_content(
+                        frame,
+                        frame.area(),
+                        &home,
+                        &ui::RenderContext::default(),
+                        None,
+                    )
+                })
+                .unwrap();
+            let text = terminal_output(&terminal).replace(' ', "");
+            for (shortcut, label) in ['E', 'A', 'S', 'M', 'U', 'T'].into_iter().zip(labels) {
+                let label = label.replace(' ', "");
+                assert!(text.contains(&label), "missing {label} at {width}x{height}");
+                assert!(
+                    !text.contains(&format!("{shortcut}{label}")),
+                    "unexpected shortcut for {label}"
+                );
+            }
+        }
     }
 }
 

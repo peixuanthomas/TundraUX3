@@ -137,7 +137,10 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
         PageHelpScreen::Home => (
             i18n::tr!("ui-help-home-title"),
             vec![
-                actions(vec![row("E A S M U", i18n::tr!("ui-help-home-entries"))]),
+                actions(vec![row(
+                    "Enter / Space",
+                    i18n::tr!("ui-help-home-entries"),
+                )]),
                 advanced(vec![
                     row("←→↑↓", i18n::tr!("ui-help-home-move")),
                     row("Ctrl+L", i18n::tr!("ui-help-home-logout")),

@@ -1,3 +1,7 @@
+#[path = "support/home.rs"]
+mod home;
+use home::open_home_entry;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -30,7 +34,7 @@ fn explorer_undo_is_visible_and_buttons_menu_and_shortcuts_restore_the_same_file
     let original = fixture.path().join("Documents/original.txt");
     fs::write(&original, "keep contents").unwrap();
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let enabled = |state: &ShellSession| {
         state
             .to_explorer_view_model()
@@ -152,7 +156,7 @@ fn rename_uses_shared_selection_clipboard_and_cursor_editing() {
     let original = documents.join("notes (2).txt");
     fs::write(&original, "keep").unwrap();
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(InputEvent::from_key_label("F2"), &platform);
     let dialog = match state.to_explorer_view_model().overlay.unwrap() {
         ui::ExplorerOverlayViewModel::Name(dialog) => dialog,
@@ -204,7 +208,7 @@ fn context_menu_shortcut_labels_activate_the_named_actions() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     for (key, id) in [
         ("N", "new-folder"),
         ("T", "new-text"),
@@ -268,7 +272,8 @@ fn explorer_options_mark_non_defaults_and_restore_them_without_losing_focus() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
     let mut state = logged_in_state(&platform);
-    for key in ["e", "o"] {
+    open_home_entry(&mut state, &platform, "explorer");
+    for key in ["o"] {
         state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
     }
     let options = |state: &ShellSession| match state.to_explorer_view_model().overlay {
@@ -318,7 +323,7 @@ fn explorer_uses_authenticated_account_directories_instead_of_process_directorie
             "AnotherPass123",
         )
         .unwrap();
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let explorer = state.to_explorer_view_model();
     assert_eq!(
         explorer.current_path,
@@ -354,7 +359,7 @@ fn explorer_uses_authenticated_account_directories_instead_of_process_directorie
     state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
     type_text(&mut state, &platform, "AnotherPass123");
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let explorer = state.to_explorer_view_model();
     assert_eq!(
         explorer.current_path,
@@ -380,7 +385,7 @@ fn explorer_reports_account_resolution_failure_without_opening_process_directori
     );
     bootstrap_with_shell(&platform);
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     assert_eq!(state.active_screen(), ShellScreen::Home);
     assert!(state.app_state().explorer_state().is_none());
     assert!(
@@ -403,7 +408,7 @@ fn explorer_prefers_an_existing_personal_directory_when_documents_is_not_a_direc
     fs::write(fixture.path().join("Documents"), "not a directory").unwrap();
     fs::create_dir(fixture.path().join("Downloads")).unwrap();
     fs::write(fixture.path().join("Downloads/visible.txt"), "visible").unwrap();
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let model = state.to_explorer_view_model();
     assert_eq!(
         model.current_path,
@@ -432,7 +437,7 @@ fn explorer_without_standard_personal_directories_opens_working_directory() {
     let mut state = logged_in_state(&platform);
     fs::remove_dir(fixture.path().join("Documents")).unwrap();
     let working_directory = std::env::current_dir().unwrap();
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let model = state.to_explorer_view_model();
     assert_eq!(model.current_path, working_directory.to_string_lossy());
     assert_eq!(
@@ -465,7 +470,8 @@ fn explorer_arrow_history_and_toolbar_keys_perform_actions() {
     let folder = documents.join("folder");
     fs::create_dir(&folder).unwrap();
     let mut state = logged_in_state(&platform);
-    for key in ["e", "Enter"] {
+    open_home_entry(&mut state, &platform, "explorer");
+    for key in ["Enter"] {
         state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
     }
     assert_eq!(
@@ -526,7 +532,7 @@ fn login_can_open_explorer_and_search_current_directory() {
     fs::write(fixture.path().join("Documents").join("beta.txt"), "beta").expect("beta");
     let mut state = logged_in_state(&platform);
 
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
 
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     assert_eq!(state.focused_component(), ShellComponent::Explorer);
@@ -551,7 +557,7 @@ fn tab_cycles_explorer_quick_locations_in_both_directions_and_wraps() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
 
     let locations = state
         .to_explorer_view_model()
@@ -606,7 +612,7 @@ fn tab_from_non_quick_location_starts_at_the_directional_edge() {
     let nested = fixture.path().join("Documents").join("nested");
     fs::create_dir(&nested).expect("nested folder");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     assert_eq!(
         state.to_explorer_view_model().current_path,
@@ -650,7 +656,7 @@ fn tab_does_not_navigate_when_explorer_sidebar_is_not_rendered() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let initial = state.to_explorer_view_model().current_path;
 
     state.apply_input_with_platform(
@@ -674,7 +680,7 @@ fn disabled_quick_location_is_skipped_and_mouse_activation_is_ignored() {
     let downloads = fixture.path().join("Downloads");
     fs::create_dir(fixture.path().join("Pictures")).expect("Pictures quick location");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
 
     let model = state.to_explorer_view_model();
     let disabled_index = model
@@ -718,7 +724,7 @@ fn mouse_single_click_selects_and_double_click_opens_file() {
     let target = fixture.path().join("Documents").join("alpha.txt");
     fs::write(&target, "alpha").expect("alpha");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let first_entry = first_entry_coordinates(&state);
 
     state.apply_input_with_platform(
@@ -761,7 +767,8 @@ fn default_rust_suffix_opens_in_editor_from_explorer() {
     fs::write(&target, "fn main() {}\n").unwrap();
 
     let mut state = logged_in_state(&platform);
-    for key in ["e", "Enter"] {
+    open_home_entry(&mut state, &platform, "explorer");
+    for key in ["Enter"] {
         state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
     }
     drive_editor_tasks_until_idle(&mut state, &platform);
@@ -791,7 +798,7 @@ fn configured_suffix_opens_in_editor_from_explorer() {
     fs::write(&target, "fn main() {}\n").expect("rust source");
 
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     drive_editor_tasks_until_idle(&mut state, &platform);
 
@@ -815,7 +822,7 @@ fn mouse_double_click_on_first_rendered_row_does_not_open_second_entry() {
     fs::write(&alpha, "alpha").expect("alpha");
     fs::write(&beta, "beta").expect("beta");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let first_entry = first_entry_coordinates(&state);
 
     state.apply_input_with_platform(
@@ -849,7 +856,7 @@ fn right_click_selects_explorer_entry_and_opens_context_menu() {
     bootstrap_with_shell(&platform);
     fs::write(fixture.path().join("Documents").join("alpha.txt"), "alpha").expect("alpha");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let first_entry = first_entry_coordinates(&state);
 
     state.apply_input_with_platform(
@@ -886,7 +893,7 @@ fn mouse_modifiers_select_ranges_and_toggle_files_without_opening_them() {
         .unwrap();
     }
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(Rect::new(0, 0, 120, 40))
     else {
         panic!("full layout");
@@ -951,7 +958,7 @@ fn context_menu_outside_click_closes_without_changing_selection_or_opening_file(
     bootstrap_with_shell(&platform);
     fs::write(fixture.path().join("Documents/alpha.txt"), "test").unwrap();
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let entry = first_entry_coordinates(&state);
     state.apply_input_with_platform(
         InputEvent::mouse_down(PointerButton::Right, entry),
@@ -991,7 +998,7 @@ fn normal_directory_click_release_does_not_start_a_drag_move() {
     let folder = fixture.path().join("Documents").join("folder");
     fs::create_dir(&folder).expect("folder");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let first_entry = first_entry_coordinates(&state);
 
     state.apply_input_with_platform(
@@ -1027,7 +1034,7 @@ fn explorer_scrollbar_thumb_drags_to_the_end_without_starting_a_file_drag() {
         .expect("overflowing Explorer fixture");
     }
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
 
     let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
@@ -1087,7 +1094,7 @@ fn context_menu_supports_arrow_and_enter_keyboard_activation() {
     bootstrap_with_shell(&platform);
     fs::write(fixture.path().join("Documents").join("alpha.txt"), "alpha").expect("alpha");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     let first_entry = first_entry_coordinates(&state);
     state.apply_input_with_platform(
         InputEvent::mouse_down(PointerButton::Right, first_entry),
@@ -1112,7 +1119,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     fs::write(&script, "echo launcher").expect("script");
     let mut state = logged_in_state(&platform);
 
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(ctrl_key('a'), &platform);
     let first_entry = first_entry_coordinates(&state);
     state.apply_input_with_platform(
@@ -1148,7 +1155,7 @@ fn admin_batch_adds_launcher_targets_and_high_risk_launch_requires_confirmation(
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
 
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("a"), &platform);
+    open_home_entry(&mut state, &platform, "launcher");
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     assert_eq!(state.focused_component(), ShellComponent::Launcher);
     state.apply_input_with_platform(InputEvent::from_key_label("End"), &platform);
@@ -1405,7 +1412,7 @@ fn delete_key_moves_selection_to_system_trash() {
     let target = fixture.path().join("Documents").join("alpha.txt");
     fs::write(&target, "alpha").expect("alpha");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
 
     state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
     let confirmation = state
@@ -1457,7 +1464,7 @@ fn failed_system_trash_delete_reports_a_stable_operation_error() {
     let target = fixture.path().join("Documents").join("alpha.txt");
     fs::write(&target, "alpha").expect("alpha");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
     platform.set_move_to_trash_result(Err(platform::PlatformError::Native {
         operation: "move to system Trash",
@@ -1512,7 +1519,8 @@ fn explorer_error_details_remain_in_status_after_selection_changes() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
     let mut state = logged_in_state(&platform);
-    for key in ["e", "v"] {
+    open_home_entry(&mut state, &platform, "explorer");
+    for key in ["v"] {
         state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
     }
     let error = state.to_explorer_view_model().error.unwrap();
@@ -1553,7 +1561,7 @@ fn explorer_alert_resolves_after_success_and_close_without_clearing_unrelated_al
         NotificationTone::Warning,
     );
 
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     assert_eq!(
         state.to_shell_chrome_view_model().status.error.as_deref(),
@@ -1683,7 +1691,7 @@ fn keyboard_selection_supports_pages_focus_invert_and_clear() {
         .unwrap();
     }
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(modified_key(InputKey::Down, true, false), &platform);
     let model = state.to_explorer_view_model();
     assert_eq!(model.selected_index, Some(1));
@@ -1728,7 +1736,7 @@ fn batch_copy_cut_paste_and_delete_use_the_selected_files() {
         fs::write(documents.join(name), name).unwrap();
     }
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(InputEvent::from_key_label("Down"), &platform);
     state.apply_input_with_platform(modified_key(InputKey::Down, false, true), &platform);
     assert_eq!(state.to_explorer_view_model().selected_count, 2);
@@ -1808,7 +1816,7 @@ fn explorer_address_shortcut_selects_the_path_for_direct_paste() {
     let target = fixture.path().join("Documents/目标目录");
     fs::create_dir_all(&target).unwrap();
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(ctrl_key('l'), &platform);
     assert_eq!(
         state.to_explorer_view_model().address_selection_anchor,
@@ -1838,7 +1846,7 @@ fn explorer_address_edit_appends_mixed_separators_and_navigates() {
     let target = documents.join("子目录/child");
     fs::create_dir_all(&target).unwrap();
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
 
     let area = Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
     let ui::ShellLayout::Full { main, .. } = ui::compute_shell_layout(area) else {
@@ -1892,7 +1900,7 @@ fn explorer_address_selection_edits_unicode_and_pasted_paths() {
     let platform = mock_platform(fixture.path());
     bootstrap_with_shell(&platform);
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(ctrl_key('l'), &platform);
     let original = state.to_explorer_view_model().address_value;
     let prefix = format!("{original}{}", std::path::MAIN_SEPARATOR);
@@ -2000,7 +2008,7 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
     let documents = fixture.path().join("Documents");
     fs::write(documents.join("cxvd.txt"), "keep").unwrap();
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     // Keep a real clipboard available so an accidental V action would have an effect.
     state.apply_input_with_platform(InputEvent::from_key_label("c"), &platform);
     for opener in ["n", "t", "F2"] {
@@ -2209,7 +2217,8 @@ fn conflict_buttons_execute_the_same_choice_with_keyboard_and_mouse() {
             let target = fixture.path().join("Documents/alpha.txt");
             fs::write(&target, "alpha").unwrap();
             let mut state = logged_in_state(&platform);
-            for key in ["e", "c", "v"] {
+            open_home_entry(&mut state, &platform, "explorer");
+            for key in ["c", "v"] {
                 state.apply_input_with_platform(InputEvent::from_key_label(key), &platform);
             }
             let model = state.to_explorer_view_model();

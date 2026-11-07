@@ -113,7 +113,10 @@ def main():
                 time.sleep(0.1)
             current = until(lambda current: current["page"] == "Home")
             print("PASS: external CLI completed first-use setup")
-            key("a")
+            key("End")
+            key("Left")
+            key("Left")
+            key("Enter")
             current = until(lambda current: current["page"] == "Launcher")
             def toolbar(label):
                 current = snapshot()

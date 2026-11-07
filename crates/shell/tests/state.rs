@@ -1123,7 +1123,9 @@ fn enter_on_launcher_without_an_authenticated_storage_session_stays_on_home() {
     let mut state =
         ShellSession::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
 
-    state.apply_input(InputEvent::from_key_label("Right"));
+    state.apply_input(InputEvent::from_key_label("End"));
+    state.apply_input(InputEvent::from_key_label("Left"));
+    state.apply_input(InputEvent::from_key_label("Left"));
     state.apply_input(InputEvent::from_key_label("Enter"));
 
     assert_eq!(
@@ -1138,11 +1140,17 @@ fn enter_on_launcher_without_an_authenticated_storage_session_stays_on_home() {
 fn mouse_single_click_on_home_entry_selects_that_entry() {
     let mut state =
         ShellSession::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
-    let launcher = home_entry_coordinates(&state, 1);
+    let index = state
+        .to_home_view_model()
+        .entries()
+        .iter()
+        .position(|entry| entry.icon_identity() == "launcher")
+        .unwrap();
+    let launcher = home_entry_coordinates(&state, index);
 
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
 
-    assert_eq!(state.selected_home_entry_index(), 1);
+    assert_eq!(state.selected_home_entry_index(), index);
     assert_eq!(
         state.last_command(),
         Some(&ShellCommand::ActivateHomeEntryAt(
@@ -1157,13 +1165,19 @@ fn mouse_single_click_on_home_entry_selects_that_entry() {
 fn mouse_double_click_on_launcher_without_authentication_stays_on_home() {
     let mut state =
         ShellSession::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
-    let launcher = home_entry_coordinates(&state, 1);
+    let index = state
+        .to_home_view_model()
+        .entries()
+        .iter()
+        .position(|entry| entry.icon_identity() == "launcher")
+        .unwrap();
+    let launcher = home_entry_coordinates(&state, index);
 
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, launcher));
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, launcher));
 
-    assert_eq!(state.selected_home_entry_index(), 1);
+    assert_eq!(state.selected_home_entry_index(), index);
     assert_eq!(
         state.last_command(),
         Some(&ShellCommand::ActivateHomeEntryAt(

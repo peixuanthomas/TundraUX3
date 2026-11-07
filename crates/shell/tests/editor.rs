@@ -1,3 +1,7 @@
+#[path = "support/home.rs"]
+mod home;
+use home::open_home_entry;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1485,7 +1489,7 @@ fn nested_file_picker_returns_to_the_original_directory_and_selection() {
         )
         .expect("seed document");
         let mut state = logged_in_state(&platform);
-        state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+        open_home_entry(&mut state, &platform, "explorer");
         let original = state.to_explorer_view_model();
         state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
         wait_for_editor_background_tasks(&mut state, &platform);
@@ -1535,7 +1539,7 @@ fn escape_cancels_an_in_flight_large_file_open() {
     )
     .expect("seed large log");
     let mut state = logged_in_state(&platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
 
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
@@ -1568,7 +1572,7 @@ fn editor_rejects_documents_above_the_one_gibibyte_limit_without_allocating_them
         .expect("size sparse oversized document");
     let mut state = logged_in_state(&platform);
 
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    open_home_entry(&mut state, &platform, "explorer");
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     wait_for_editor_background_tasks(&mut state, &platform);
 
@@ -1608,7 +1612,7 @@ fn closing_editor_returns_to_the_original_explorer_for_markdown_and_text_files()
             .expect("seed editor document");
         let mut state = logged_in_state(&platform);
 
-        state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+        open_home_entry(&mut state, &platform, "explorer");
         assert_eq!(state.active_screen(), ShellScreen::Explorer);
         let explorer_before = state.to_explorer_view_model();
         let entry_names_before = explorer_before
@@ -2318,7 +2322,7 @@ fn click_editor_setting(
 }
 
 fn open_editor_from_home(state: &mut ShellSession, platform: &MockPlatform) {
-    state.apply_input_with_platform(InputEvent::from_key_label("A"), platform);
+    open_home_entry(state, platform, "launcher");
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     let editor_index = state
         .to_launcher_view_model()
@@ -2334,7 +2338,7 @@ fn open_editor_from_home(state: &mut ShellSession, platform: &MockPlatform) {
 }
 
 fn open_only_document_in_editor(state: &mut ShellSession, platform: &MockPlatform) {
-    state.apply_input_with_platform(InputEvent::from_key_label("e"), platform);
+    open_home_entry(state, platform, "explorer");
     assert_eq!(state.active_screen(), ShellScreen::Explorer);
     assert_eq!(state.to_explorer_view_model().entries.len(), 1);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);

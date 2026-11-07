@@ -2739,9 +2739,9 @@ fn action_capture_requires_matching_release() {
 }
 
 #[test]
-fn launcher_management_entries_follow_platform_support_and_guest_is_blocked() {
+fn home_management_entries_follow_platform_support_and_guest_is_blocked() {
     let mut state = state();
-    let entries = state.built_in_launcher_applications();
+    let entries = state.user_home_entries();
     for kind in [
         ManagementKind::Services,
         ManagementKind::Processes,
@@ -2752,7 +2752,7 @@ fn launcher_management_entries_follow_platform_support_and_guest_is_blocked() {
         assert_eq!(
             entries
                 .iter()
-                .any(|entry| entry.id == format!("builtin.{}", kind.id())),
+                .any(|entry| entry.icon_identity() == kind.id()),
             cfg!(target_os = "linux")
                 || (kind == ManagementKind::Packages && cfg!(any(target_os = "macos", windows)))
         );

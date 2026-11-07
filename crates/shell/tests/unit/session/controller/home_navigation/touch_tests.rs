@@ -118,8 +118,18 @@ fn launcher_excludes_applications_already_available_on_home() {
             "{id} must only be shown on Home"
         );
     }
-    assert!(launcher.items.iter().any(|item| item.id == "builtin.editor"));
-    assert!(launcher.items.iter().any(|item| item.id == "builtin.command-line"));
+    assert!(
+        launcher
+            .items
+            .iter()
+            .any(|item| item.id == "builtin.editor")
+    );
+    assert!(
+        launcher
+            .items
+            .iter()
+            .any(|item| item.id == "builtin.command-line")
+    );
 }
 
 #[test]
@@ -157,7 +167,7 @@ fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
 }
 
 #[test]
-fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
+fn home_letters_are_inactive_and_launcher_shortcuts_require_fresh_unmodified_keys() {
     let mut state = state((120, 40));
     for (key, modifiers) in [
         (InputKey::Char('l'), InputModifiers::ALT),
@@ -172,36 +182,18 @@ fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
             ShellCommand::RecordInput,
         );
     }
-    for (label, command) in [
-        ("E", ShellCommand::OpenExplorer),
-        ("A", ShellCommand::OpenLauncher),
-        ("S", ShellCommand::OpenSettings),
-        ("M", ShellCommand::OpenSystemStatus),
-        ("U", ShellCommand::OpenUserManagement),
-        ("T", ShellCommand::ToggleTasks),
-    ] {
-        assert_eq!(
-            state.route_key_input(&KeyInput::from_label(label)).1,
-            command
-        );
-        assert_eq!(
-            state
-                .route_key_input(&KeyInput::from_label(&label.to_lowercase()))
-                .1,
-            command
-        );
-        assert_ne!(
-            state
-                .route_key_input(&KeyInput::with_modifiers(
-                    KeyInput::from_label(label).key,
-                    InputModifiers::ALT
-                ))
-                .1,
-            command
-        );
-        let mut repeated = KeyInput::from_label(label);
-        repeated.phase = InputPhase::Repeat;
-        assert_ne!(state.route_key_input(&repeated).1, command);
+    let home = state.active_page_id();
+    for label in ["E", "e", "A", "a", "S", "s", "M", "m", "U", "u", "T", "t"] {
+        for phase in [InputPhase::Press, InputPhase::Repeat, InputPhase::Release] {
+            let mut key = KeyInput::from_label(label);
+            key.phase = phase;
+            state.apply_input(InputEvent::Key(key));
+            assert_eq!(state.active_page_id(), home, "Home key {label} {phase:?}");
+            assert!(matches!(
+                state.last_command(),
+                Some(ShellCommand::RecordInput | ShellCommand::Noop)
+            ));
+        }
     }
     state.enter_screen(ShellScreen::Launcher);
     for (label, command) in [

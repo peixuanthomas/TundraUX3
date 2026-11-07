@@ -7267,8 +7267,13 @@ fn launcher_sort_preserves_builtin_identity_and_keyboard_order() {
     state.set_navigation_path(vec![ShellScreen::Home, ShellScreen::Launcher]);
     state.pages.common.focused_component = ShellComponent::Launcher;
     state.pages.launcher.launcher_view_mode = ui::LauncherViewMode::Details;
-    state.pages.launcher.launcher_selected_index = 2;
-    let original_id = state.to_launcher_view_model().items[2].id.clone();
+    let original_id = app::EDITOR_APPLICATION.id;
+    state.pages.launcher.launcher_selected_index = state
+        .to_launcher_view_model()
+        .items
+        .iter()
+        .position(|item| item.id == original_id)
+        .unwrap();
     state.sort_active_table(0);
     let model = state.to_launcher_view_model();
     assert_eq!(model.items[model.selected_index.unwrap()].id, original_id);
