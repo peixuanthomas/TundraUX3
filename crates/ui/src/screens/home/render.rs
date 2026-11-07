@@ -250,10 +250,18 @@ fn home_layout_for_entries(
 ) -> HomeLayout {
     let mut grid = home_entry_grid_area(main);
     let mut columns = home_entry_column_count(grid.width, entry_count);
+    // Prefer compact named actions to scrolling core tasks out of the first screen.
+    let minimum_height = if entry_count.div_ceil(columns) as u16
+        * HOME_TILE_MIN_HEIGHT.saturating_add(HOME_TILE_GAP)
+        > grid.height.saturating_add(HOME_TILE_GAP)
+    {
+        1
+    } else {
+        HOME_TILE_MIN_HEIGHT
+    };
     let max_rows = usize::from(
-        (grid.height.saturating_add(HOME_TILE_GAP)
-            / HOME_TILE_MIN_HEIGHT.saturating_add(HOME_TILE_GAP))
-        .max(1),
+        (grid.height.saturating_add(HOME_TILE_GAP) / minimum_height.saturating_add(HOME_TILE_GAP))
+            .max(1),
     );
     let mut rows = entry_count.div_ceil(columns).min(max_rows).max(1);
     let needs_scrollbar =

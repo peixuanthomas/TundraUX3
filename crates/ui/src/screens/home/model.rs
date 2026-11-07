@@ -40,7 +40,8 @@ impl ShellEntry {
             "launcher" => Some('A'),
             "settings" => Some('S'),
             "system_status" => Some('M'),
-            "user_management" | "user_profile" => Some('U'),
+            "user_management" | "user_profile" | "users" => Some('U'),
+            "tasks" => Some('T'),
             _ => None,
         }
     }

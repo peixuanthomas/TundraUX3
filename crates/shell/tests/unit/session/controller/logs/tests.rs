@@ -594,7 +594,7 @@ fn logs_launcher_entry_and_direct_route_enforce_guest_gate() {
         let mut state = state(role);
         assert_eq!(
             state.user_home_entries().iter().any(|e| e.label == "Logs"),
-            false
+            role != UserRole::Guest
         );
         if role != UserRole::Guest {
             assert!(

@@ -159,7 +159,8 @@ impl ShellSession {
                 "launcher" => ShellCommand::OpenLauncher,
                 "settings" => ShellCommand::OpenSettings,
                 "system_status" => ShellCommand::OpenSystemStatus,
-                "user_management" | "user_profile" => ShellCommand::OpenUserManagement,
+                "user_management" | "user_profile" | "users" => ShellCommand::OpenUserManagement,
+                "tasks" => ShellCommand::OpenTasks,
                 _ => ShellCommand::Noop,
             };
             return (RoutedTarget::Global, command);

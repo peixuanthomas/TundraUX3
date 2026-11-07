@@ -38,6 +38,27 @@ fn storage_free_debug_home_does_not_expose_logout_hit_area() {
 }
 
 #[test]
+fn minimum_supported_login_shows_password_and_submit_without_scrolling() {
+    let model = LoginViewModel::new(Vec::new(), 0, 0, 0, LoginField::Password, None);
+    let mut terminal = Terminal::new(TestBackend::new(108, 20)).unwrap();
+    let chrome = chrome_for("Login");
+    terminal
+        .draw(|frame| {
+            render_login(
+                frame,
+                frame.area(),
+                &chrome,
+                &model,
+                &TundraTheme::default_dark(),
+            );
+        })
+        .unwrap();
+    let text = terminal_output(&terminal);
+    assert!(text.contains(&i18n::tr!("ui-auth-enter-sign-in")));
+    assert!(text.contains(&i18n::tr!("ui-auth-password")));
+}
+
+#[test]
 fn home_entry_index_at_maps_coordinates_to_entry_tiles() {
     let main = main_rect(100, 30);
     let tile_areas = ui::home_entry_tile_areas(main, 5);

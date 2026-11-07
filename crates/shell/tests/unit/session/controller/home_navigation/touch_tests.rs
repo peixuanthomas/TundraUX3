@@ -62,6 +62,48 @@ fn draw_buttons(state: &mut ShellSession) {
 }
 
 #[test]
+fn core_home_tasks_are_visible_and_open_without_launcher_at_minimum_size() {
+    for size in [(108, 20), (140, 40)] {
+        let mut state = state(size);
+        draw_buttons(&mut state);
+        let model = state.to_home_view_model();
+        let layout = ui::home_layout(main_area(&state), &model);
+        assert_eq!(layout.items.len(), model.entries().len());
+        assert!(layout.scrollbar.is_none());
+        for key in ["packages", "tasks", "logs", "users"] {
+            let index = model
+                .entries()
+                .iter()
+                .position(|entry| entry.icon_identity() == key)
+                .unwrap();
+            let item = layout
+                .items
+                .iter()
+                .find(|item| item.index == index)
+                .unwrap();
+            assert_eq!(
+                state.home_entry_index_at((item.area.x, item.area.y)),
+                Some(index)
+            );
+        }
+        let index = model
+            .entries()
+            .iter()
+            .position(|entry| entry.icon_identity() == "tasks")
+            .unwrap();
+        state.select_home_entry(index);
+        state.apply_input(InputEvent::key(InputKey::Enter));
+        assert_eq!(state.active_screen(), ShellScreen::Management);
+        assert!(
+            state
+                .to_management_view_model()
+                .title
+                .starts_with(&i18n::tr!("tasks-title"))
+        );
+    }
+}
+
+#[test]
 fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
     // Three card rows need 13 cells: three 3-cell cards and two 2-cell gaps.
     // At this height they fit only after the old 2-cell Exit footer is removed.
@@ -75,14 +117,12 @@ fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
     );
     let model = state.to_home_view_model();
     let layout = ui::home_layout(main_area(&state), &model);
-    assert_eq!(layout.items.len(), model.entries().len());
-    assert!(layout.scrollbar.is_none());
+    assert!(!layout.items.is_empty());
     assert!(model.entries().iter().all(|entry| !matches!(
         entry.icon_key.as_deref(),
         Some("user_management" | "user_profile")
     )));
-    // Keep the three-row geometry check independent of the application count:
-    // Users now lives in Launcher, so the normal Home needs fewer rows.
+    // Keep the three-row geometry check independent of the application count.
     let three_rows = ui::home_entry_tile_areas(main_area(&state), layout.columns * 3);
     assert_eq!(
         three_rows
@@ -118,6 +158,8 @@ fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
         ("A", ShellCommand::OpenLauncher),
         ("S", ShellCommand::OpenSettings),
         ("M", ShellCommand::OpenSystemStatus),
+        ("U", ShellCommand::OpenUserManagement),
+        ("T", ShellCommand::OpenTasks),
     ] {
         assert_eq!(
             state.route_key_input(&KeyInput::from_label(label)).1,
@@ -141,13 +183,6 @@ fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
         let mut repeated = KeyInput::from_label(label);
         repeated.phase = InputPhase::Repeat;
         assert_ne!(state.route_key_input(&repeated).1, command);
-    }
-    for label in ["U", "u"] {
-        assert_eq!(
-            state.route_key_input(&KeyInput::from_label(label)).1,
-            ShellCommand::RecordInput,
-            "Users is opened from Launcher"
-        );
     }
     state.enter_screen(ShellScreen::Launcher);
     for (label, command) in [

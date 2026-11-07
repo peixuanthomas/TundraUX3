@@ -27,7 +27,7 @@ pub struct LoginLayout {
 
 pub fn login_viewport(main: Rect, model: &LoginViewModel) -> super::AuthViewport {
     // Stacked user list, password and actions remain reachable on short screens.
-    let viewport = super::auth_viewport(main, 16, model.scroll_offset);
+    let viewport = super::auth_viewport(main, 12, model.scroll_offset);
     if login_inner_area(viewport.content).width <= LOGIN_USER_LIST_WIDTH.saturating_add(10) {
         super::auth_viewport(main, 24, model.scroll_offset)
     } else {
@@ -312,7 +312,9 @@ fn render_login_button(
 
 pub fn login_layout(main: Rect) -> LoginLayout {
     let (user_list, form) = login_columns(main);
-    let reserved_password_height = LOGIN_PASSWORD_FIELD_HEIGHT.saturating_add(LOGIN_FORM_GAP);
+    let reserved_password_height = LOGIN_PASSWORD_FIELD_HEIGHT
+        .saturating_add(LOGIN_FORM_GAP)
+        .saturating_add(1);
     let height = if form.height > reserved_password_height {
         form.height
             .saturating_sub(reserved_password_height)

@@ -191,19 +191,35 @@ impl ShellSession {
             return Vec::new();
         }
         let mut entries = user_home_entries();
-        entries.retain(|entry| {
-            !matches!(
-                entry.icon_identity(),
-                "logs"
-                    | "services"
-                    | "processes"
-                    | "packages"
-                    | "network"
-                    | "disks"
-                    | "user_management"
-                    | "user_profile"
+        let applications = self.built_in_launcher_applications();
+        let tasks = [
+            "packages",
+            "services",
+            "processes",
+            "network",
+            "disks",
+            "firewall",
+            "ssh",
+            "users",
+            "scheduled-tasks",
+            "tasks",
+            "logs",
+            "backups",
+        ]
+        .into_iter()
+        .filter_map(|key| {
+            let application = applications
+                .iter()
+                .find(|application| application.id.strip_prefix("builtin.") == Some(key))?;
+            Some(
+                ui::ShellEntry::new(
+                    application.localized_name().render_current(),
+                    application.localized_description().render_current(),
+                )
+                .with_icon_key(key),
             )
         });
+        entries.splice(1..1, tasks);
         entries
     }
 
@@ -278,6 +294,20 @@ impl ShellSession {
             "settings" => self.open_settings(),
             "system_status" => self.open_system_status(),
             "user_management" | "user_profile" => self.open_user_management(),
+            "users" => self.open_user_management(),
+            "tasks" => self.open_tasks(),
+            "logs" => self.open_logs(),
+            "packages" => self.open_management(platform::management::ManagementKind::Packages),
+            "services" => self.open_management(platform::management::ManagementKind::Services),
+            "processes" => self.open_management(platform::management::ManagementKind::Processes),
+            "network" => self.open_management(platform::management::ManagementKind::Network),
+            "disks" => self.open_management(platform::management::ManagementKind::Disks),
+            "firewall" => self.open_management(platform::management::ManagementKind::Firewall),
+            "ssh" => self.open_management(platform::management::ManagementKind::Ssh),
+            "backups" => self.open_management(platform::management::ManagementKind::Backups),
+            "scheduled-tasks" => {
+                self.open_management(platform::management::ManagementKind::ScheduledTasks)
+            }
             _ => {}
         }
     }
