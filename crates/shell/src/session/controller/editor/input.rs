@@ -170,7 +170,57 @@ impl ShellSession {
         if self.handle_editor_vim_key(&key, platform) {
             return;
         }
-        let command_key = key.modifiers.control
+        let mac_command = platform.kind() == PlatformKind::Macos
+            && key.modifiers.super_key
+            && !key.modifiers.is_control()
+            && !key.modifiers.alt;
+        let mac_option = platform.kind() == PlatformKind::Macos
+            && key.modifiers.alt
+            && !key.modifiers.is_control()
+            && !key.modifiers.super_key;
+        if mac_command && key.key == InputKey::Backspace {
+            if self
+                .app
+                .editor_state()
+                .is_some_and(|state| state.is_read_only())
+            {
+                return;
+            }
+            if self
+                .app
+                .editor_state()
+                .is_some_and(|state| !state.has_selection())
+            {
+                self.apply_editor_command(
+                    app::editor::EditorCommand::MoveCursor {
+                        movement: app::editor::CursorMove::LineStart,
+                        extend_selection: true,
+                    },
+                    platform,
+                );
+            }
+            self.apply_editor_command(app::editor::EditorCommand::DeleteSelection, platform);
+            return;
+        }
+        if mac_option {
+            let command = match key.key {
+                InputKey::Left | InputKey::Right => app::editor::EditorCommand::MoveCursor {
+                    movement: if key.key == InputKey::Left {
+                        app::editor::CursorMove::WordLeft
+                    } else {
+                        app::editor::CursorMove::WordRight
+                    },
+                    extend_selection: key.modifiers.shift,
+                },
+                InputKey::Backspace | InputKey::Delete => app::editor::EditorCommand::DeleteWord {
+                    backwards: key.key == InputKey::Backspace,
+                },
+                _ => return,
+            };
+            self.apply_editor_command(command, platform);
+            return;
+        }
+        let command_key = key.modifiers.is_control()
             || (platform.kind() == PlatformKind::Macos && key.modifiers.super_key);
         if command_key {
             if matches!(key.key, InputKey::Tab | InputKey::BackTab) {
@@ -196,6 +246,10 @@ impl ShellSession {
                 return;
             }
             let navigation = match key.key {
+                InputKey::Left if mac_command => Some(app::editor::CursorMove::LineStart),
+                InputKey::Right if mac_command => Some(app::editor::CursorMove::LineEnd),
+                InputKey::Up if mac_command => Some(app::editor::CursorMove::DocumentStart),
+                InputKey::Down if mac_command => Some(app::editor::CursorMove::DocumentEnd),
                 InputKey::Left => Some(app::editor::CursorMove::WordLeft),
                 InputKey::Right => Some(app::editor::CursorMove::WordRight),
                 InputKey::Home => Some(app::editor::CursorMove::DocumentStart),
@@ -203,6 +257,9 @@ impl ShellSession {
                 _ => None,
             };
             if let Some(movement) = navigation {
+                if mac_command && !key.modifiers.shift {
+                    self.apply_editor_command(app::editor::EditorCommand::ClearSelection, platform);
+                }
                 self.apply_editor_command(
                     app::editor::EditorCommand::MoveCursor {
                         movement,
@@ -1142,3 +1199,7 @@ impl ShellSession {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/session/controller/editor/platform_keys.rs"]
+mod platform_keys;
