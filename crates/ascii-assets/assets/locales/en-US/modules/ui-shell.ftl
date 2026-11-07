@@ -14,3 +14,7 @@ ui-shell-n-esc-cancel = N / Esc: Cancel
 ui-shell-time-sync-failed = Time synchronization failed
 shell-component-help-button = Help button
 shell-component-help-dialog = Help dialog
+
+ui-shell-tasks-button = Tasks
+ui-shell-tasks-active = Tasks · Running
+ui-shell-tasks-waiting = Tasks · Approval

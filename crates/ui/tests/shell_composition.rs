@@ -9,6 +9,9 @@ fn chrome(width: u16, height: u16) -> ShellChromeViewModel {
         terminal_size: (width, height),
         back_button_hovered: false,
         help_available: false,
+        tasks_label: None,
+        tasks_button_focused: false,
+        tasks_button_hovered: false,
         help_button_hovered: false,
         help_button_focused: false,
         back_shortcut: "Esc",
@@ -387,4 +390,26 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
     assert_page_leaves_shell_chrome_untouched(ScreenContent::SystemStatus(&system_status));
     clock.create_dialog = Some(ClockCreateDialogViewModel::default());
     assert_page_leaves_shell_chrome_untouched(ScreenContent::Clock(&clock));
+}
+
+#[test]
+fn task_status_entry_stays_separate_from_help_back_and_keyboard_content() {
+    for size in [(108, 20), (140, 40)] {
+        let mut model = chrome(size.0, size.1);
+        model.tasks_label = Some("任务 · 待批准".into());
+        let context = RenderContext::default();
+        let layout = ShellFrameLayout::new(Rect::new(0, 0, size.0, size.1), None, &context)
+            .with_help_button(true)
+            .with_tasks_button(model.tasks_label.as_deref());
+        assert!(layout.tasks_button.unwrap().right() < layout.help_button.unwrap().x);
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal
+            .draw(|frame| render_shell_chrome(frame, &layout, &model, &context))
+            .unwrap();
+        assert!(row(&terminal, 1).replace(' ', "").contains("任务·待批准"));
+        let collapsed =
+            layout.with_input_keyboard(Rect::new(0, size.1 / 2, size.0, size.1 / 2), 1000);
+        assert_eq!(collapsed.tasks_button.unwrap().height, 1);
+        assert!(collapsed.tasks_button.unwrap().bottom() <= collapsed.main.y);
+    }
 }

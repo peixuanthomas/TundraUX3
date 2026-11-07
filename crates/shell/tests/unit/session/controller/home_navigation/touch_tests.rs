@@ -341,3 +341,60 @@ fn launcher_open_button_waits_for_release_and_drag_cancels_activation() {
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(state.active_screen(), ShellScreen::Editor);
 }
+
+#[test]
+fn global_tasks_entry_opens_tasks_from_another_page_at_minimum_size() {
+    for size in [(108, 20), (140, 40)] {
+        let mut state = state(size);
+        state.open_settings();
+        state.refresh_hit_map();
+        let area = state
+            .frame_layout
+            .unwrap()
+            .tasks_button
+            .expect("visible task entry");
+        let point = (area.x + 1, area.y + 1);
+        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+        assert_eq!(state.active_screen(), ShellScreen::Management);
+        assert!(
+            state
+                .to_management_view_model()
+                .title
+                .starts_with(&i18n::tr!("tasks-title"))
+        );
+    }
+}
+
+#[test]
+fn global_task_status_distinguishes_operations_queries_and_pending_approval() {
+    let mut state = state((108, 20));
+    let initial = state.tasks_button_label().unwrap();
+    state.tasks.register(
+        TaskDomain::Logs,
+        1,
+        TaskOwner::Session,
+        TaskClass::Query,
+        TaskControl::new(|| {}, || false),
+    );
+    assert_eq!(state.tasks_button_label().unwrap(), initial);
+    state.tasks.register(
+        TaskDomain::Explorer,
+        2,
+        TaskOwner::Session,
+        TaskClass::Operation,
+        TaskControl::new(|| {}, || false),
+    );
+    assert_eq!(
+        state.tasks_button_label().unwrap(),
+        i18n::tr!("ui-shell-tasks-active")
+    );
+    let (tx, _rx) = mpsc::channel();
+    state
+        .begin_auto_admin("test approval".into(), true, tx)
+        .unwrap();
+    assert_eq!(
+        state.tasks_button_label().unwrap(),
+        i18n::tr!("ui-shell-tasks-waiting")
+    );
+}

@@ -2291,6 +2291,10 @@ impl ShellSession {
         ui::ShellChromeViewModel {
             back_button_hovered: self.hovered_component == Some(ShellComponent::BackButton),
             help_available: self.help_button_available(),
+            tasks_label: self.tasks_button_label(),
+            tasks_button_focused: self.pages.common.focused_component
+                == ShellComponent::TasksButton,
+            tasks_button_hovered: self.hovered_component == Some(ShellComponent::TasksButton),
             help_button_hovered: self.hovered_component == Some(ShellComponent::HelpButton),
             help_button_focused: self.pages.common.focused_component == ShellComponent::HelpButton,
             back_shortcut: self.shell_back_shortcut(),

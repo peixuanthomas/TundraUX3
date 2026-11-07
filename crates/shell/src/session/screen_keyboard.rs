@@ -154,6 +154,7 @@ impl ShellSession {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let mut main = ui::ShellFrameLayout::new(bounds, None, &ui::RenderContext::default())
             .with_help_button(self.help_button_available())
+            .with_tasks_button(self.tasks_button_label().as_deref())
             .main;
         if self.auto_admin_visible() {
             let bottom = self.input_keyboard_layout().keyboard.y.min(
@@ -169,7 +170,8 @@ impl ShellSession {
         let bounds = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let layout = self.input_keyboard_content_layout(
             ui::ShellFrameLayout::new(bounds, None, &ui::RenderContext::default())
-                .with_help_button(self.help_button_available()),
+                .with_help_button(self.help_button_available())
+                .with_tasks_button(self.tasks_button_label().as_deref()),
         );
         ui::command_line_terminal_area_in(&layout)
     }

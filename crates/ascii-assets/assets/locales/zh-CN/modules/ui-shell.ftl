@@ -14,3 +14,7 @@ ui-shell-n-esc-cancel = N / Esc：取消
 ui-shell-time-sync-failed = 联网校准时间失败
 shell-component-help-button = 帮助按钮
 shell-component-help-dialog = 帮助弹窗
+
+ui-shell-tasks-button = 任务
+ui-shell-tasks-active = 任务 · 进行中
+ui-shell-tasks-waiting = 任务 · 待批准

@@ -334,6 +334,14 @@ pub(in crate::session) fn build_shell_hit_map(
         });
     }
 
+    if let Some(area) = frame_layout.tasks_button {
+        regions.push(ShellHitRegion {
+            component: ShellComponent::TasksButton,
+            area,
+            layer: ShellHitLayer::ShellChrome,
+        });
+    }
+
     let overlay_interaction_ready =
         !overlay_blocks_interaction || motion_context.overlay_interaction_ready();
     if !overlay_interaction_ready {

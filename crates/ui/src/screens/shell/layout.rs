@@ -85,6 +85,7 @@ pub struct ShellFrameLayout {
     pub main: Rect,
     pub back_button: Option<Rect>,
     pub help_button: Option<Rect>,
+    pub tasks_button: Option<Rect>,
     pub status_message: Option<Rect>,
     pub time_button: Option<Rect>,
 }
@@ -128,6 +129,7 @@ impl ShellFrameLayout {
             main,
             back_button,
             help_button: None,
+            tasks_button: None,
             status_message,
             time_button,
         }
@@ -164,6 +166,9 @@ impl ShellFrameLayout {
                     button.height = if top.height < 3 { 1 } else { 3 };
                 }
                 if let Some(button) = &mut self.help_button {
+                    button.height = if top.height < 3 { 1 } else { 3 };
+                }
+                if let Some(button) = &mut self.tasks_button {
                     button.height = if top.height < 3 { 1 } else { 3 };
                 }
                 self.status_message = self
@@ -231,6 +236,16 @@ impl ShellFrameLayout {
         let x = back.x.saturating_sub(width.saturating_add(1));
         self.help_button =
             (width > 0 && x >= self.bounds.x).then(|| Rect::new(x, back.y, width, back.height));
+        self
+    }
+
+    pub fn with_tasks_button(mut self, label: Option<&str>) -> Self {
+        self.tasks_button = label.and_then(|label| {
+            let next = self.help_button.or(self.back_button)?;
+            let width = usize_to_u16(crate::components::terminal_width(label).saturating_add(4));
+            let x = next.x.checked_sub(width.saturating_add(1))?;
+            (x >= self.bounds.x).then_some(Rect::new(x, next.y, width, next.height))
+        });
         self
     }
 

@@ -168,9 +168,12 @@ pub fn render_shell_chrome_with_status_focus(
         } else {
             (chrome.app_name.clone(), theme.title_style())
         };
-        let width = layout.back_button.map_or(layout.bounds.width, |button| {
-            button.x.saturating_sub(layout.bounds.x)
-        });
+        let width = layout
+            .tasks_button
+            .or(layout.back_button)
+            .map_or(layout.bounds.width, |button| {
+                button.x.saturating_sub(layout.bounds.x)
+            });
         let line = Rect::new(layout.bounds.x, layout.bounds.y, width, 1);
         frame.render_widget(Clear, line);
         frame.render_widget(
@@ -193,6 +196,13 @@ pub fn render_shell_chrome_with_status_focus(
             button.state.hovered = chrome.back_button_hovered;
             button.render_borderless_frame(frame, area, &theme);
         }
+        if let (Some(mut area), Some(label)) = (layout.tasks_button, &chrome.tasks_label) {
+            area.height = 1;
+            let mut button = Button::new("shell.tasks", label);
+            button.state.focused = chrome.tasks_button_focused;
+            button.state.hovered = chrome.tasks_button_hovered;
+            button.render_borderless_frame(frame, area, &theme);
+        }
         if let ShellLayout::Full { status, .. } = layout.shell {
             render_status(frame, status, layout, chrome, context, status_focused);
         }
@@ -205,7 +215,8 @@ pub fn render_shell_chrome_with_status_focus(
         top.x,
         top.y,
         layout
-            .help_button
+            .tasks_button
+            .or(layout.help_button)
             .or(layout.back_button)
             // Share the separator with the button instead of drawing two borders.
             .map_or(top.width, |button| {
@@ -230,6 +241,12 @@ pub fn render_shell_chrome_with_status_focus(
         let mut button = Button::new("shell.help", i18n::tr!("ui-shell-help-button"));
         button.state.hovered = chrome.help_button_hovered;
         button.state.focused = chrome.help_button_focused;
+        button.render_frame(frame, area, &context.compatibility_theme());
+    }
+    if let (Some(area), Some(label)) = (layout.tasks_button, &chrome.tasks_label) {
+        let mut button = Button::new("shell.tasks", label);
+        button.state.focused = chrome.tasks_button_focused;
+        button.state.hovered = chrome.tasks_button_hovered;
         button.render_frame(frame, area, &context.compatibility_theme());
     }
     render_status(frame, status, layout, chrome, context, status_focused);

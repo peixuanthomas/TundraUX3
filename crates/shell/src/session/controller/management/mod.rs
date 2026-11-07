@@ -1595,7 +1595,8 @@ impl ShellSession {
                 self.status_time_button_label().as_deref(),
                 &ui::RenderContext::default(),
             )
-            .with_help_button(self.help_button_available()),
+            .with_help_button(self.help_button_available())
+            .with_tasks_button(self.tasks_button_label().as_deref()),
         )
         .main
     }

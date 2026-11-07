@@ -404,6 +404,12 @@ impl ShellTasks {
         !self.records.is_empty()
     }
 
+    pub(in crate::session) fn has_running_operations(&self) -> bool {
+        self.records
+            .values()
+            .any(|task| task.class == TaskClass::Operation && !(task.control.finished)())
+    }
+
     pub(in crate::session) fn has_running(&self) -> bool {
         self.records.values().any(|task| !(task.control.finished)())
     }

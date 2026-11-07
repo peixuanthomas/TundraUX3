@@ -27,7 +27,8 @@ impl ShellSession {
         let layout =
             ui::ShellFrameLayout::new(bounds, self.status_time_button_label().as_deref(), &context)
                 .with_back_shortcut(self.shell_back_shortcut())
-                .with_help_button(self.help_button_available());
+                .with_help_button(self.help_button_available())
+                .with_tasks_button(self.tasks_button_label().as_deref());
         self.refresh_hit_map_with_frame_layout(motion, self.input_keyboard_content_layout(layout));
     }
 
@@ -42,7 +43,8 @@ impl ShellSession {
                         &ui::RenderContext::default(),
                     )
                     .with_back_shortcut(self.shell_back_shortcut())
-                    .with_help_button(self.help_button_available()),
+                    .with_help_button(self.help_button_available())
+                    .with_tasks_button(self.tasks_button_label().as_deref()),
                 )
             })
             .shell
@@ -278,6 +280,9 @@ impl ShellSession {
             order.push(ShellComponent::HomeLogout);
         }
         order.push(ShellComponent::ClockButton);
+        if self.tasks_button_label().is_some() {
+            order.push(ShellComponent::TasksButton);
+        }
         if self
             .frame_layout
             .and_then(|layout| layout.help_button)

@@ -40,6 +40,10 @@ pub(in crate::session) struct AutoAdminState {
 }
 
 impl AutoAdminState {
+    pub(in crate::session) fn waiting_for_approval(&self) -> bool {
+        self.job.as_ref().is_some_and(|job| job.phase() == WAITING)
+    }
+
     pub(in crate::session) fn guard_opening_key(&mut self, key: KeyInput, at: Instant) {
         self.action_key = Some((key.key, at));
     }
