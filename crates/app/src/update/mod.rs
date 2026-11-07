@@ -1,7 +1,7 @@
 use platform::ManagedCommand;
 use std::fmt;
 use std::fs::{self, File};
-use std::io::{self, Cursor, Read};
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -600,6 +600,7 @@ struct PlatformPreparationOperations<'a> {
     platform: &'a dyn Platform,
     toolchain: toolchain::Toolchain,
     cancel: &'a UpdateCancellation,
+    build_log: &'a File,
 }
 
 impl PreparationOperations for PlatformPreparationOperations<'_> {
@@ -621,9 +622,21 @@ impl PreparationOperations for PlatformPreparationOperations<'_> {
         name: &str,
         progress: &mut dyn FnMut(UpdateProgress),
     ) -> Result<ProcessExit, UpdateError> {
-        let exit = self
-            .platform
-            .spawn_streaming_cancellable(spec, &|| self.cancel.is_cancelled(), &mut |output| {
+        let mut log = self.build_log;
+        writeln!(log, "\n=== {name} ===")?;
+        let log_failed = std::cell::Cell::new(false);
+        let mut log_error = None;
+        let exit = self.platform.spawn_streaming_cancellable(
+            spec,
+            &|| self.cancel.is_cancelled() || log_failed.get(),
+            &mut |output| {
+                // Persist the full stream before UI filtering and tail limits.
+                if !log_failed.get()
+                    && let Err(error) = writeln!(log, "{}", output.text)
+                {
+                    log_failed.set(true);
+                    log_error = Some(error);
+                }
                 let line = clean_output(&output.text);
                 if let Some((completed, total)) = cargo_progress(&line) {
                     progress(UpdateProgress {
@@ -642,9 +655,20 @@ impl PreparationOperations for PlatformPreparationOperations<'_> {
                         detail: UpdateProgressDetail::Output,
                     });
                 }
-            })
-            .map_err(|error| process_error(error, name, self.cancel))?;
-        checked_exit(exit, name)
+            },
+        );
+        if let Some(error) = log_error {
+            return Err(error.into());
+        }
+        let result = exit
+            .map_err(|error| process_error(error, name, self.cancel))
+            .and_then(|exit| checked_exit(exit, name));
+        match &result {
+            Ok(exit) => writeln!(log, "=== {name} exited: {:?} ===", exit.code)?,
+            Err(error) => writeln!(log, "=== {name} failed: {error} ===")?,
+        }
+        log.sync_all()?;
+        result
     }
 }
 
@@ -657,17 +681,50 @@ fn prepare_extracted(
     cancel: &UpdateCancellation,
 ) -> Result<PreparedUpdate, UpdateError> {
     cancel.check()?;
-    prepare_extracted_with_operations(
-        check,
-        progress,
-        work_dir,
-        source_root,
-        &PlatformPreparationOperations {
-            platform,
-            cancel,
-            toolchain: toolchain::Toolchain::discover()?,
-        },
-    )
+    let paths = platform
+        .app_paths()
+        .map_err(|error| UpdateError::new(error.to_string()))?;
+    fs::create_dir_all(paths.logs_path())?;
+    platform::validate_no_follow_path(paths.logs_path(), true)
+        .map_err(|error| UpdateError::new(error.to_string()))?;
+    let log_path = paths
+        .logs_path()
+        .join(work_dir.file_name().expect("update directory has a name"))
+        .with_extension("log");
+    let log_path_text = log_path.display().to_string();
+    let result = (|| {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut log = options.open(&log_path)?;
+        writeln!(log, "Update source commit: {}", check.head_sha)?;
+        notify_output(progress, UpdatePhase::CheckingToolchain, &log_path_text);
+        let result = toolchain::Toolchain::discover().and_then(|toolchain| {
+            prepare_extracted_with_operations(
+                check,
+                progress,
+                work_dir,
+                source_root,
+                &PlatformPreparationOperations {
+                    platform,
+                    cancel,
+                    toolchain,
+                    build_log: &log,
+                },
+            )
+        });
+        match &result {
+            Ok(_) => writeln!(log, "Update build completed")?,
+            Err(error) => writeln!(log, "Update build failed: {error}")?,
+        }
+        log.sync_all()?;
+        result
+    })();
+    result.map_err(|error: UpdateError| error.context(&log_path_text))
 }
 
 fn prepare_extracted_with_operations(

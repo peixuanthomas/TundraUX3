@@ -13,6 +13,14 @@ Switching modes clears old check results and checks again. The current mode is r
 
 Windows builds updates from the default branch's source and does not show the Linux mode switch. macOS currently has no application self-update entry.
 
+Release shows release notes and download progress without compilation or live-output panels. Beta and Windows source updates also show compilation progress and live output.
+
+## Build logs
+
+Each source update writes Cargo and Vim stdout and stderr to a separate `update-*.log` in the application log directory, before the UI applies its 200-line tail and line-length limits. Build progress output and long diagnostic lines are retained. The file includes the target commit, build stages, and exit results, and remains after failure or cancellation even when temporary build files are removed.
+
+Build failures include the log path. Open **Logs → Open folder** to find the file and view it in the editor. On Linux the directory is `$XDG_STATE_HOME/TundraUX3/logs`, or `~/.local/state/TundraUX3/logs` when `XDG_STATE_HOME` is unset. These separate text logs can be removed with the existing `tundra-cli debug clear-logs legacy --yes` command; runtime JSONL rotation does not manage them.
+
 ## Replacement and rollback
 
 The update helper retains the old programs and old `vim/`, then removes the backups after the new Shell reports successful startup. Replacement failure, startup failure, or timeout restores both the programs and Vim. If the old installation had no Vim, rollback removes the directory added by this update.

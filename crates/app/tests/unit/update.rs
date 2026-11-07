@@ -11,6 +11,9 @@ mod marker_write_failure;
 #[path = "update_vim.rs"]
 mod vim_bundle;
 
+#[path = "update_build_log.rs"]
+mod build_log;
+
 fn mark_portable_fixture(install: &Path) {
     #[cfg(target_os = "linux")]
     {
