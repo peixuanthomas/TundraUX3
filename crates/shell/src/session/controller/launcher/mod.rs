@@ -62,23 +62,20 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn selected_external_launcher_index(&self) -> Option<usize> {
-        self.pages
-            .launcher
-            .launcher_selected_index
+        let model = self.to_launcher_view_model();
+        let item = model.items.get(model.selected_index?)?;
+        self.canonical_launcher_index(&item.id)?
             .checked_sub(self.built_in_launcher_count())
-            .filter(|index| {
-                self.app
-                    .launcher_state()
-                    .is_some_and(|state| *index < state.items.len())
-            })
     }
 
     pub(in crate::session) fn selected_built_in_launcher_application(
         &self,
     ) -> Option<app::BuiltInApplicationDescriptor> {
+        let model = self.to_launcher_view_model();
+        let item = model.items.get(model.selected_index?)?;
         self.built_in_launcher_applications()
-            .get(self.pages.launcher.launcher_selected_index)
-            .copied()
+            .into_iter()
+            .find(|application| application.id == item.id)
     }
 
     pub(in crate::session) fn open_launcher(&mut self, platform: &dyn Platform) {
@@ -152,7 +149,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn move_launcher_item(&mut self, delta: isize, platform: &dyn Platform) {
-        if !self.pages.launcher.organizing {
+        if !self.pages.launcher.organizing || !self.pages.launcher.search.value().is_empty() {
             return;
         }
         let model = self.to_launcher_view_model();
@@ -293,7 +290,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_launcher_delta(&mut self, delta: isize) {
-        let len = self.launcher_item_count();
+        let len = self.to_launcher_view_model().items.len();
         if len == 0 {
             return;
         }
@@ -324,7 +321,7 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn select_launcher_last(&mut self) {
-        let last = self.launcher_item_count().saturating_sub(1);
+        let last = self.to_launcher_view_model().items.len().saturating_sub(1);
         self.select_launcher_index(last);
     }
 
@@ -669,7 +666,14 @@ impl ShellSession {
         };
         let model = self.to_launcher_view_model();
         match ui::launcher_layout(main, &model).hit_test(coordinates.0, coordinates.1) {
+            Some(ui::LauncherHitTarget::Search) => {
+                self.handle_launcher_search_input(
+                    InputEvent::mouse_down(PointerButton::Left, coordinates),
+                    platform,
+                );
+            }
             Some(ui::LauncherHitTarget::Item(index)) => {
+                self.pages.launcher.search.set_focused(false);
                 self.select_launcher_index(index);
                 let organizing = self.pages.launcher.organizing;
                 if let Some(capture) = &mut self.interaction.button_capture {
@@ -680,6 +684,7 @@ impl ShellSession {
                     && self.pages.launcher.organizing
                     && self.can_manage_launcher()
                     && !self.pages.common.table_sorts.contains_key("launcher")
+                    && self.pages.launcher.search.value().is_empty()
                     && let Some(item_id) = model.items.get(index).map(|item| item.id.clone())
                 {
                     self.pages.launcher.launcher_drag = Some(LauncherDragState {
@@ -688,15 +693,12 @@ impl ShellSession {
                     });
                 }
             }
-            Some(ui::LauncherHitTarget::Toolbar(action)) => match action {
-                ui::LauncherToolbarAction::Organize => self.toggle_launcher_organize(),
-                ui::LauncherToolbarAction::Add => self.open_launcher_add(),
-                ui::LauncherToolbarAction::Open => self.request_launcher_launch(platform),
-                ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
-                ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
-                ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
-                ui::LauncherToolbarAction::RunSettings => self.open_launcher_run_settings(),
-            },
+            Some(ui::LauncherHitTarget::Toolbar(action)) => {
+                self.activate_launcher_toolbar(action, platform)
+            }
+            Some(ui::LauncherHitTarget::EmptyContent) => {
+                self.pages.launcher.search.set_focused(false)
+            }
             Some(ui::LauncherHitTarget::EmptyOpenExplorer) => self.open_explorer(platform),
             Some(ui::LauncherHitTarget::Confirm) => self.confirm_launcher_action(platform),
             Some(ui::LauncherHitTarget::Cancel) => {
@@ -710,6 +712,23 @@ impl ShellSession {
                 self.pages.launcher.launcher_run_settings = None
             }
             _ => {}
+        }
+    }
+
+    fn activate_launcher_toolbar(
+        &mut self,
+        action: ui::LauncherToolbarAction,
+        platform: &dyn Platform,
+    ) {
+        self.pages.launcher.search.set_focused(false);
+        match action {
+            ui::LauncherToolbarAction::Organize => self.toggle_launcher_organize(),
+            ui::LauncherToolbarAction::Add => self.open_launcher_add(),
+            ui::LauncherToolbarAction::Open => self.request_launcher_launch(platform),
+            ui::LauncherToolbarAction::Remove => self.request_launcher_remove(),
+            ui::LauncherToolbarAction::Refresh => self.refresh_launcher(platform),
+            ui::LauncherToolbarAction::ToggleView => self.toggle_launcher_view(),
+            ui::LauncherToolbarAction::RunSettings => self.open_launcher_run_settings(),
         }
     }
 
@@ -736,7 +755,9 @@ impl ShellSession {
             .saturating_add_signed(delta * layout.visible_capacity as isize)
             .min(max_start);
         self.pages.launcher.launcher_viewport_offset = start;
-        self.select_launcher_index(start.min(self.launcher_item_count().saturating_sub(1)));
+        self.select_launcher_index(
+            start.min(self.to_launcher_view_model().items.len().saturating_sub(1)),
+        );
     }
 
     fn sync_launcher_viewport(&mut self) {
@@ -830,7 +851,7 @@ impl ShellSession {
             layout.visible_capacity,
         );
         self.pages.launcher.launcher_viewport_offset = requested / layout.columns * layout.columns;
-        let count = self.launcher_item_count();
+        let count = self.to_launcher_view_model().items.len();
         if count > 0 {
             let last = self
                 .pages
@@ -989,7 +1010,8 @@ impl ShellSession {
                 .unwrap_or(usize::MAX)
         });
         for item in &mut items {
-            item.capabilities.reorderable = self.pages.launcher.organizing;
+            item.capabilities.reorderable =
+                self.pages.launcher.organizing && self.pages.launcher.search.value().is_empty();
         }
         let sort = self.pages.common.table_sorts.get("launcher").copied();
         if let Some(sort) = sort {
@@ -1006,6 +1028,14 @@ impl ShellSession {
                 item.capabilities.reorderable = false;
             }
         }
+        let query = self.pages.launcher.search.value().trim().to_lowercase();
+        if !query.is_empty() {
+            items.retain(|item| {
+                [&item.name, &item.path, &item.type_label]
+                    .iter()
+                    .any(|value| value.to_lowercase().contains(&query))
+            });
+        }
         let selected = items.iter().position(|item| item.selected);
         let mut model = ui::LauncherViewModel::with_ascii_assets(
             items,
@@ -1015,6 +1045,7 @@ impl ShellSession {
             self.ascii_assets.clone(),
         );
         model.set_organizing(self.pages.launcher.organizing, self.can_manage_launcher());
+        model.search = self.pages.launcher.search.clone();
         model.sort = sort;
         model.run_settings = self.launcher_run_settings_form();
         model.context_menu = self

@@ -121,6 +121,7 @@ pub enum ShellCommand {
     LauncherRunSettings,
     LauncherContextMenu(CellPosition),
     LauncherEntryInput(InputEvent),
+    LauncherSearchInput(InputEvent),
     LauncherRunSettingsKey(KeyInput),
     LauncherRunSettingsPaste(String),
     LauncherRunSettingsPointer(MouseInput),

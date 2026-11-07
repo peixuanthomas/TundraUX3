@@ -53,6 +53,13 @@ impl ShellSession {
             );
         }
 
+        if key.is_ctrl_c()
+            && self.active_screen() == ShellScreen::Launcher
+            && self.pages.launcher.search.state.focused
+        {
+            return self.route_launcher_key(key);
+        }
+
         if key.is_ctrl_c() && self.active_screen() != ShellScreen::Explorer {
             return (RoutedTarget::Global, ShellCommand::Shutdown);
         }

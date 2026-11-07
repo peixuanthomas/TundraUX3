@@ -220,6 +220,7 @@ impl LauncherDropTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherViewModel {
+    pub search: crate::components::TextInput,
     pub organizing: bool,
     pub items: Vec<LauncherItemViewModel>,
     pub sort: Option<crate::TableSort>,
@@ -307,6 +308,8 @@ impl LauncherViewModel {
             ));
         }
         Self {
+            search: crate::components::TextInput::new("launcher.search")
+                .with_horizontal_scroll(true),
             items,
             selected_index,
             view_mode,
@@ -402,6 +405,7 @@ pub trait LauncherIconRenderer {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherHitTarget {
+    Search,
     Toolbar(LauncherToolbarAction),
     Item(usize),
     Scrollbar,
@@ -446,6 +450,7 @@ pub struct LauncherRunSettingsLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherLayout {
+    pub search: Rect,
     pub panel: Rect,
     pub toolbar: Rect,
     pub content: Rect,
@@ -489,6 +494,9 @@ impl LauncherLayout {
                 return Some(LauncherHitTarget::Cancel);
             }
             return contains(confirmation.area, x, y).then_some(LauncherHitTarget::OverlaySurface);
+        }
+        if contains(self.search, x, y) {
+            return Some(LauncherHitTarget::Search);
         }
         if self
             .action_bar
@@ -577,7 +585,13 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
     );
     let action_bar = bar.layout(footer);
     let toolbar = footer;
-    let content_y = inner.y.saturating_add(u16::from(inner.height > 0));
+    let search = Rect::new(
+        inner.x,
+        inner.y.saturating_add(1),
+        inner.width,
+        u16::from(inner.y.saturating_add(1) < footer.y),
+    );
+    let content_y = search.bottom();
     let content = Rect::new(
         inner.x,
         content_y,
@@ -671,6 +685,7 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
         None
     };
     LauncherLayout {
+        search,
         panel,
         toolbar,
         content,
@@ -691,7 +706,7 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
 
 fn launcher_action_bar(model: &LauncherViewModel) -> PageActionBar {
     let mut actions = Vec::new();
-    if model.items.is_empty() {
+    if model.items.is_empty() && model.search.value().is_empty() {
         actions.push(
             PageAction::new(
                 "empty.explorer",
@@ -968,6 +983,12 @@ pub fn render_launcher_content(
         .bordered(true)
         .render_frame(frame, layout.panel, context);
     render_launcher_toolbar(frame, &layout, model, context);
+    model.search.render_borderless_frame_with_prefix(
+        frame,
+        layout.search,
+        theme,
+        &format!("{} ", i18n::tr!("ui-launcher-search")),
+    );
     match model.view_mode {
         LauncherViewMode::LargeIcons => render_launcher_grid(frame, &layout, model, context, icons),
         LauncherViewMode::Details => {
@@ -1051,10 +1072,14 @@ fn render_launcher_grid(
     let theme = &context.compatibility_theme();
     if model.items.is_empty() {
         frame.render_widget(
-            Paragraph::new(empty_message())
-                .style(theme.muted_style())
-                .alignment(HorizontalAlignment::Center)
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(if model.search.value().is_empty() {
+                empty_message()
+            } else {
+                i18n::tr!("ui-launcher-no-matches")
+            })
+            .style(theme.muted_style())
+            .alignment(HorizontalAlignment::Center)
+            .wrap(Wrap { trim: true }),
             layout.content,
         );
         return;
@@ -1068,12 +1093,16 @@ fn render_launcher_grid(
         let mut surface = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
             .with_current(selected);
         surface.set_disabled(!model.organizing && item.status != LauncherItemStatus::Ready);
-        surface.set_focused(model.selected_index == Some(item_layout.index));
+        surface.set_focused(
+            !model.search.state.focused && model.selected_index == Some(item_layout.index),
+        );
         if item_layout.area.height < 3 {
             let mut compact = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
                 .with_current(selected);
             compact.set_disabled(!model.organizing && item.status != LauncherItemStatus::Ready);
-            compact.set_focused(model.selected_index == Some(item_layout.index));
+            compact.set_focused(
+                !model.search.state.focused && model.selected_index == Some(item_layout.index),
+            );
             compact.render_borderless_frame(frame, item_layout.area, theme);
             continue;
         }
@@ -1167,10 +1196,14 @@ fn render_launcher_details(
     let width = layout.content.width.saturating_sub(scrollbar_width);
     if model.items.is_empty() {
         frame.render_widget(
-            Paragraph::new(empty_message())
-                .style(theme.muted_style())
-                .alignment(HorizontalAlignment::Center)
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(if model.search.value().is_empty() {
+                empty_message()
+            } else {
+                i18n::tr!("ui-launcher-no-matches")
+            })
+            .style(theme.muted_style())
+            .alignment(HorizontalAlignment::Center)
+            .wrap(Wrap { trim: true }),
             Rect::new(
                 layout.content.x,
                 layout.content.y,
@@ -1212,7 +1245,7 @@ fn render_launcher_details(
         .with_row_tones(tones)
         .bordered(false);
     table.selected = model.selected_index;
-    table.capture_focused_row = model.selected_index;
+    table.capture_focused_row = model.selected_index.filter(|_| !model.search.state.focused);
     table.row_ids = model.items.iter().map(|item| item.id.clone()).collect();
     table.state.focused = false;
     let table_context = RenderContext {

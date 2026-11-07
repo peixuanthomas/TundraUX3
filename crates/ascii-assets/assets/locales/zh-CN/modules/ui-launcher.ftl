@@ -51,3 +51,7 @@ ui-launcher-command-help = 此启动命令将在内嵌终端中运行。修改�
 ui-launcher-icon-help = 在固定边框内编辑两行图案，每行最多 5 格。中文通常占 2 格；留空使用默认图标。
 app-launcher-icon-bounds = 图标最多两行，每行最多 5 格；不能包含控制字符。
 app-launcher-entry-saved = 启动项已保存。
+
+ui-launcher-search = 搜索（Ctrl/Cmd+F）：
+ui-launcher-no-matches = 没有匹配的应用，请修改或清空搜索。
+ui-launcher-search-help = 搜索应用；Enter 打开结果，下键进入列表，Esc 清空搜索

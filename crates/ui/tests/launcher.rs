@@ -24,6 +24,8 @@ fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
             .flat_map(|main| [None, Some(false), Some(true)].map(|wait| (main, wait)))
         {
             let menu = ui::LauncherContextMenu {
+                editable: true,
+                toolbar: vec![],
                 anchor: (main.right(), main.bottom()),
                 selected: 0,
                 command_enabled: true,
@@ -77,6 +79,8 @@ fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
 fn launcher_entry_overlays_keep_wide_characters_inside_fixed_frames() {
     for main in [Rect::new(2, 3, 108, 14), Rect::new(2, 3, 42, 9)] {
         let menu = ui::LauncherContextMenu {
+            editable: true,
+            toolbar: vec![],
             anchor: (main.right(), main.bottom()),
             selected: 0,
             command_enabled: true,
@@ -211,6 +215,9 @@ fn chrome(size: (u16, u16)) -> ShellChromeViewModel {
         terminal_size: size,
         back_button_hovered: false,
         help_available: false,
+        tasks_label: None,
+        tasks_button_focused: false,
+        tasks_button_hovered: false,
         help_button_hovered: false,
         help_button_focused: false,
         back_shortcut: "Esc",
@@ -535,5 +542,30 @@ fn confirmation_overlay_takes_precedence_in_hit_testing_and_rendering() {
         let output = render(&model, width, 30);
         assert!(output.contains("[Y Launch]"));
         assert!(output.contains("[Esc Cancel]"));
+    }
+}
+
+#[test]
+fn launcher_search_is_always_visible_and_empty_results_do_not_offer_an_unrelated_launch() {
+    for width in [40, 64, 108] {
+        let main = Rect::new(1, 2, width, 20);
+        let mut model = LauncherViewModel::new(vec![], None, LauncherViewMode::LargeIcons, true);
+        model.search.set_value("unmatched");
+        model.search.set_focused(true);
+        let layout = launcher_layout(main, &model);
+        assert_eq!(layout.search.intersection(main), layout.search);
+        assert!(layout.search.height > 0);
+        assert_eq!(
+            layout.hit_test(layout.search.x, layout.search.y),
+            Some(LauncherHitTarget::Search)
+        );
+        assert!(
+            !layout
+                .action_bar
+                .actions
+                .iter()
+                .any(|action| action.id.as_str() == "empty.explorer")
+        );
+        assert!(layout.content.y >= layout.search.bottom());
     }
 }

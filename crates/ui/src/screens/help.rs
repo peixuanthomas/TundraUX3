@@ -168,6 +168,7 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
             i18n::tr!("ui-help-launcher-title"),
             vec![
                 actions(vec![
+                    row("Ctrl/Cmd+F / Tab", i18n::tr!("ui-launcher-search-help")),
                     row("Enter", i18n::tr!("ui-help-launcher-open")),
                     row("V", i18n::tr!("ui-help-launcher-view")),
                     row("F4", i18n::tr!("ui-help-launcher-run-settings")),

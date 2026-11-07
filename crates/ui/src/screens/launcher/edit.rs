@@ -3,6 +3,7 @@ use crate::components::{ButtonEmphasis, TextInput};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LauncherEntryAction {
+    Toolbar(LauncherToolbarAction),
     Name,
     Command,
     Icon,
@@ -21,6 +22,7 @@ impl LauncherEntryAction {
 
     pub fn label(self) -> String {
         match self {
+            Self::Toolbar(action) => action.label(),
             Self::Name => i18n::tr!("ui-launcher-change-name"),
             Self::Command => i18n::tr!("ui-launcher-change-command"),
             Self::Icon => i18n::tr!("ui-launcher-change-icon"),
@@ -32,6 +34,8 @@ impl LauncherEntryAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherContextMenu {
+    pub editable: bool,
+    pub toolbar: Vec<LauncherToolbarButtonViewModel>,
     pub anchor: (u16, u16),
     pub selected: usize,
     pub command_enabled: bool,
@@ -40,9 +44,25 @@ pub struct LauncherContextMenu {
 
 impl LauncherContextMenu {
     pub fn actions(&self) -> impl Iterator<Item = LauncherEntryAction> + '_ {
-        LauncherEntryAction::ALL.into_iter().filter(|action| {
-            *action != LauncherEntryAction::WaitForEnter || self.wait_for_enter.is_some()
-        })
+        self.toolbar
+            .iter()
+            .map(|button| LauncherEntryAction::Toolbar(button.action))
+            .chain(LauncherEntryAction::ALL.into_iter().filter(|action| {
+                self.editable
+                    && (*action != LauncherEntryAction::WaitForEnter
+                        || self.wait_for_enter.is_some())
+            }))
+    }
+
+    pub fn enabled(&self, action: LauncherEntryAction) -> bool {
+        match action {
+            LauncherEntryAction::Toolbar(action) => self
+                .toolbar
+                .iter()
+                .any(|button| button.action == action && button.enabled),
+            LauncherEntryAction::Command => self.command_enabled,
+            _ => self.editable,
+        }
     }
 
     fn button(&self, index: usize, action: LauncherEntryAction) -> Button {
@@ -67,7 +87,7 @@ impl LauncherContextMenu {
             .with_capture_selected(checked);
         }
         button.set_focused(self.selected == index);
-        button.set_disabled(action == LauncherEntryAction::Command && !self.command_enabled);
+        button.set_disabled(!self.enabled(action));
         if action == LauncherEntryAction::Remove {
             button = button.with_emphasis(ButtonEmphasis::Danger);
         }

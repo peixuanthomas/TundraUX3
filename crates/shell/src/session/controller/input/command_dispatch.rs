@@ -137,6 +137,15 @@ impl ShellSession {
                 RoutedTarget::Component(ShellComponent::Management),
                 ShellCommand::ManagementPaste(value.clone()),
             ),
+            InputEvent::Paste(_)
+                if self.active_screen() == ShellScreen::Launcher
+                    && self.pages.launcher.search.state.focused =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::Launcher),
+                    ShellCommand::LauncherSearchInput(input.clone()),
+                )
+            }
             InputEvent::Paste(value) if self.active_screen() == ShellScreen::Editor => (
                 RoutedTarget::Component(ShellComponent::Editor),
                 ShellCommand::EditorPaste(value.clone()),
@@ -929,6 +938,10 @@ impl ShellSession {
             }
             ShellCommand::LauncherContextMenu(point) => {
                 self.open_launcher_context_menu(point);
+                ShellAction::Redraw
+            }
+            ShellCommand::LauncherSearchInput(input) => {
+                self.handle_launcher_search_input(input, platform);
                 ShellAction::Redraw
             }
             ShellCommand::LauncherEntryInput(input) => {

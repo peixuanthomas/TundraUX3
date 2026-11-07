@@ -42,6 +42,17 @@ impl ShellSession {
                 _ => (target, ShellCommand::CaptureOverlayInput),
             };
         }
+        if self.pages.launcher.search.state.focused
+            || matches!(key.key, InputKey::Tab | InputKey::BackTab)
+            || matches!(key.key, InputKey::Char('f' | 'F'))
+                && (key.modifiers.is_control() || key.modifiers.super_key)
+                && !key.modifiers.alt
+        {
+            return (
+                target,
+                ShellCommand::LauncherSearchInput(InputEvent::Key(key.clone())),
+            );
+        }
         if self.pages.launcher.launcher_drag.is_some() && matches!(key.key, InputKey::Escape) {
             return (target, ShellCommand::LauncherCancelDrag);
         }
@@ -75,7 +86,9 @@ impl ShellSession {
             InputKey::End => (target, ShellCommand::LauncherLast),
             InputKey::Enter | InputKey::Char(' ') if key.phase == InputPhase::Press => (
                 target,
-                if self.to_launcher_view_model().items.is_empty() {
+                if self.to_launcher_view_model().items.is_empty()
+                    && self.pages.launcher.search.value().is_empty()
+                {
                     ShellCommand::OpenExplorer
                 } else {
                     ShellCommand::LauncherActivate
@@ -114,6 +127,20 @@ impl ShellSession {
         if self.pages.launcher.launcher_run_settings.is_some() {
             return (target, ShellCommand::LauncherRunSettingsPointer(mouse));
         }
+        if matches!(
+            mouse.kind,
+            ui::MouseEventKind::Down(PointerButton::Left)
+                | ui::MouseEventKind::Drag(PointerButton::Left)
+                | ui::MouseEventKind::Up(PointerButton::Left)
+        ) && self
+            .launcher_content_layout()
+            .is_some_and(|layout| rect_contains(layout.search, coordinates))
+        {
+            return (
+                target,
+                ShellCommand::LauncherSearchInput(InputEvent::Mouse(mouse)),
+            );
+        }
         match mouse.kind {
             ui::MouseEventKind::Down(PointerButton::Right) => {
                 (target, ShellCommand::LauncherContextMenu(coordinates))
@@ -149,6 +176,109 @@ impl ShellSession {
                 (target, ShellCommand::Hover(Some(ShellComponent::Launcher)))
             }
             _ => (target, ShellCommand::CaptureOverlayInput),
+        }
+    }
+}
+
+impl ShellSession {
+    pub(in crate::session) fn handle_launcher_search_input(
+        &mut self,
+        input: InputEvent,
+        platform: &dyn Platform,
+    ) {
+        let Some(layout) = self.launcher_content_layout() else {
+            return;
+        };
+        if let InputEvent::Key(key) = &input {
+            if !key.phase.is_press_like() {
+                return;
+            }
+            let shortcut =
+                (key.modifiers.is_control() || key.modifiers.super_key) && !key.modifiers.alt;
+            if shortcut && matches!(key.key, InputKey::Char('f' | 'F')) {
+                self.pages.launcher.search.set_focused(true);
+                return;
+            }
+            if !key.has_non_shift_modifier() {
+                match key.key {
+                    InputKey::Tab | InputKey::BackTab => {
+                        let focused = !self.pages.launcher.search.state.focused;
+                        self.pages.launcher.search.set_focused(focused);
+                        return;
+                    }
+                    InputKey::Enter | InputKey::Down => {
+                        self.pages.launcher.search.set_focused(false);
+                        if let Some(index) = self.to_launcher_view_model().selected_index {
+                            self.select_launcher_index(index);
+                            if key.key == InputKey::Enter && key.phase == InputPhase::Press {
+                                self.request_launcher_launch(platform);
+                            }
+                        }
+                        return;
+                    }
+                    InputKey::Escape => {
+                        if self.pages.launcher.search.value().is_empty() {
+                            self.pages.launcher.search.set_focused(false);
+                            return;
+                        }
+                        self.pages.launcher.search.set_value("");
+                        self.pages.launcher.launcher_viewport_offset = 0;
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            if shortcut && matches!(key.key, InputKey::Char('c' | 'C' | 'x' | 'X' | 'v' | 'V')) {
+                if key.phase != InputPhase::Press {
+                    return;
+                }
+                if matches!(key.key, InputKey::Char('v' | 'V')) {
+                    match platform.read_clipboard_text() {
+                        Ok(text) => {
+                            self.handle_launcher_search_input(InputEvent::Paste(text), platform)
+                        }
+                        Err(error) => self.notify_status(error.to_string()),
+                    }
+                    return;
+                }
+                if let Some(text) = self.pages.launcher.search.selected_text() {
+                    match platform.write_clipboard_text(&text) {
+                        Ok(()) if matches!(key.key, InputKey::Char('x' | 'X')) => {
+                            self.handle_launcher_search_input(
+                                InputEvent::key(InputKey::Delete),
+                                platform,
+                            );
+                        }
+                        Err(error) => self.notify_status(error.to_string()),
+                        _ => {}
+                    }
+                }
+                return;
+            }
+        }
+        let before = self.pages.launcher.search.value().to_owned();
+        self.pages.launcher.search.set_focused(true);
+        let prefix = ratatui::text::Line::from(format!("{} ", i18n::tr!("ui-launcher-search")))
+            .width() as u16;
+        let area = Rect::new(
+            layout
+                .search
+                .x
+                .saturating_add(prefix.min(layout.search.width)),
+            layout.search.y,
+            layout.search.width.saturating_sub(prefix),
+            layout.search.height,
+        );
+        self.pages
+            .launcher
+            .search
+            .handle_event_borderless(input, area);
+        if before != self.pages.launcher.search.value() {
+            self.pages.launcher.launcher_viewport_offset = 0;
+            self.pages.launcher.launcher_drag = None;
+            if let Some(index) = self.to_launcher_view_model().selected_index {
+                self.select_launcher_index(index);
+            }
         }
     }
 }

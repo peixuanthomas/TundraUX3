@@ -230,12 +230,13 @@ pub(super) struct LauncherRunSettingsState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherContextMenuState {
-    pub(super) id: String,
+    pub(super) id: Option<String>,
     pub(super) menu: ui::LauncherContextMenu,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherPageState {
+    pub(super) search: ui::components::TextInput,
     pub(super) context_menu: Option<LauncherContextMenuState>,
     pub(super) entry_editor: Option<ui::LauncherEntryEditor>,
     pub(super) organizing: bool,
@@ -252,6 +253,7 @@ pub(super) struct LauncherPageState {
 impl Default for LauncherPageState {
     fn default() -> Self {
         Self {
+            search: ui::components::TextInput::new("launcher.search").with_horizontal_scroll(true),
             context_menu: None,
             entry_editor: None,
             organizing: false,

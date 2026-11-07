@@ -7,7 +7,7 @@ mod tests;
 
 impl ShellSession {
     pub(in crate::session) fn open_launcher_add(&mut self) {
-        if !self.pages.launcher.organizing || !self.can_manage_launcher() {
+        if !self.can_manage_launcher() {
             return;
         }
         self.pages.launcher.launcher_run_settings = Some(page_state::LauncherRunSettingsState {

@@ -11,51 +11,74 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn open_launcher_context_menu(&mut self, point: CellPosition) {
-        if !self.can_manage_launcher() {
-            return;
-        }
         let Some(main) = self.launcher_main_area() else {
             return;
         };
         let model = self.to_launcher_view_model();
-        let Some(ui::LauncherHitTarget::Item(index)) =
-            ui::launcher_layout(main, &model).hit_test(point.0, point.1)
-        else {
-            return;
+        let item = match ui::launcher_layout(main, &model).hit_test(point.0, point.1) {
+            Some(ui::LauncherHitTarget::Item(index)) => {
+                self.select_launcher_index(index);
+                model.items.get(index)
+            }
+            Some(ui::LauncherHitTarget::EmptyContent) => None,
+            _ => return,
         };
-        let item = &model.items[index];
-        if item.is_builtin() {
-            return;
+        let editable = self.can_manage_launcher() && item.is_some_and(|item| !item.is_builtin());
+        let id = item.map(|item| item.id.clone());
+        let mut toolbar = Vec::new();
+        if !editable {
+            let selected_model = self.to_launcher_view_model();
+            toolbar.extend(selected_model.toolbar.into_iter().filter(
+                |button| match button.action {
+                    ui::LauncherToolbarAction::Open => item.is_some(),
+                    ui::LauncherToolbarAction::RunSettings | ui::LauncherToolbarAction::Remove => {
+                        false
+                    }
+                    _ => true,
+                },
+            ));
+            if item.is_none()
+                && self.can_manage_launcher()
+                && !toolbar
+                    .iter()
+                    .any(|button| button.action == ui::LauncherToolbarAction::Add)
+            {
+                toolbar.insert(
+                    0,
+                    ui::LauncherToolbarButtonViewModel::new(ui::LauncherToolbarAction::Add, true),
+                );
+            }
         }
-        self.select_launcher_index(index);
+        self.pages.launcher.search.set_focused(false);
         self.pages.launcher.launcher_drag = None;
+        let wait_for_enter = id
+            .as_ref()
+            .and_then(|id| {
+                self.app
+                    .launcher_state()
+                    .and_then(|state| state.items.iter().find(|item| &item.record.id == id))
+            })
+            .and_then(|item| {
+                item.record
+                    .custom
+                    .as_ref()
+                    .map(|custom| custom.wait_for_enter)
+                    .or_else(|| {
+                        item.record
+                            .terminal
+                            .as_ref()
+                            .map(|settings| settings.wait_for_enter.unwrap_or(false))
+                    })
+            });
         self.pages.launcher.context_menu = Some(page_state::LauncherContextMenuState {
-            id: item.id.clone(),
+            id,
             menu: ui::LauncherContextMenu {
+                editable,
+                toolbar,
                 anchor: point,
                 selected: 0,
                 command_enabled: self.can_execute_command_line(),
-                wait_for_enter: self
-                    .app
-                    .launcher_state()
-                    .and_then(|state| {
-                        state
-                            .items
-                            .iter()
-                            .find(|record| record.record.id == item.id)
-                    })
-                    .and_then(|item| {
-                        item.record
-                            .custom
-                            .as_ref()
-                            .map(|custom| custom.wait_for_enter)
-                            .or_else(|| {
-                                item.record
-                                    .terminal
-                                    .as_ref()
-                                    .map(|settings| settings.wait_for_enter.unwrap_or(false))
-                            })
-                    }),
+                wait_for_enter,
             },
         });
         self.last_click = None;
@@ -68,10 +91,17 @@ impl ShellSession {
         let Some(action) = state.menu.actions().nth(index) else {
             return;
         };
-        if action == LauncherEntryAction::Command && !state.menu.command_enabled {
+        if !state.menu.enabled(action) {
             return;
         }
-        let id = state.id.clone();
+        if let LauncherEntryAction::Toolbar(action) = action {
+            self.pages.launcher.context_menu = None;
+            self.activate_launcher_toolbar(action, platform);
+            return;
+        }
+        let Some(id) = state.id.clone() else {
+            return;
+        };
         if action == LauncherEntryAction::WaitForEnter {
             let wait = !state.menu.wait_for_enter.unwrap_or(false);
             self.apply_launcher_command(
@@ -152,7 +182,9 @@ impl ShellSession {
                     })
                     .collect()
             }
-            LauncherEntryAction::WaitForEnter | LauncherEntryAction::Remove => unreachable!(),
+            LauncherEntryAction::Toolbar(_)
+            | LauncherEntryAction::WaitForEnter
+            | LauncherEntryAction::Remove => unreachable!(),
         };
         let inputs = values
             .into_iter()
@@ -187,8 +219,11 @@ impl ShellSession {
                 .map(|(index, area)| ButtonRegion {
                     id: format!("launcher.menu.{index}").into(),
                     area,
-                    disabled: state.menu.actions().nth(index) == Some(LauncherEntryAction::Command)
-                        && !state.menu.command_enabled,
+                    disabled: state
+                        .menu
+                        .actions()
+                        .nth(index)
+                        .is_none_or(|action| !state.menu.enabled(action)),
                 });
         }
         let editor = self.pages.launcher.entry_editor.as_ref()?;
@@ -423,7 +458,9 @@ impl ShellSession {
                     icon
                 })
             }
-            LauncherEntryAction::WaitForEnter | LauncherEntryAction::Remove => unreachable!(),
+            LauncherEntryAction::Toolbar(_)
+            | LauncherEntryAction::WaitForEnter
+            | LauncherEntryAction::Remove => unreachable!(),
         };
         self.apply_launcher_command(
             LauncherCommand::EditEntry {

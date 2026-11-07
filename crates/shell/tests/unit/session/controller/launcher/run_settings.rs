@@ -439,7 +439,15 @@ fn context_menu_outside_clicks_and_canceled_presses_do_not_activate_the_page() {
             PointerButton::Right,
             (builtin.x, builtin.y),
         ));
-        assert!(fixture.state.pages.launcher.context_menu.is_none());
+        assert!(
+            fixture
+                .state
+                .pages
+                .launcher
+                .context_menu
+                .as_ref()
+                .is_some_and(|state| !state.menu.editable)
+        );
         assert!(fixture.state.pages.launcher.entry_editor.is_none());
     }
 }
@@ -740,6 +748,8 @@ fn launcher_wheel_pages_to_boundaries_in_both_views() {
 fn organizing_add_cancel_persist_and_delete_only_user_entries() {
     let mut fixture = Fixture::new();
     fixture.input(InputEvent::from_key_label("Insert"));
+    assert!(fixture.state.pages.launcher.launcher_run_settings.is_some());
+    fixture.input(InputEvent::key(InputKey::Escape));
     fixture.input(InputEvent::from_key_label("Delete"));
     assert!(fixture.state.pages.launcher.launcher_run_settings.is_none());
     assert!(
@@ -892,3 +902,6 @@ fn organize_pointer_and_keyboard_reorder_builtin_icons_and_reopen() {
         );
     }
 }
+
+#[path = "search_context.rs"]
+mod search_context;

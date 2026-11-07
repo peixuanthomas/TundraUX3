@@ -54,3 +54,7 @@ ui-launcher-command-help = This shell command runs in the embedded terminal. Edi
 ui-launcher-icon-help = Edit two rows inside the fixed frame, up to 5 cells per row. Wide characters use 2 cells; leave blank for the default icon.
 app-launcher-icon-bounds = Icons allow two rows of up to 5 cells each, with no control characters.
 app-launcher-entry-saved = Launcher entry saved.
+
+ui-launcher-search = Search (Ctrl/Cmd+F):
+ui-launcher-no-matches = No matching applications. Change or clear the search.
+ui-launcher-search-help = Search applications; Enter opens the result, Down selects results, Esc clears the search

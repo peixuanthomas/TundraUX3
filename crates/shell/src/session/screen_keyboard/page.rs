@@ -71,6 +71,9 @@ impl ShellSession {
             ShellScreen::Login | ShellScreen::BootstrapAdmin | ShellScreen::Editor => {
                 Some(format!("{:?}", self.active_screen()))
             }
+            ShellScreen::Launcher if self.pages.launcher.search.state.focused => {
+                Some("launcher-search".into())
+            }
             ShellScreen::Explorer => Some(format!(
                 "explorer:{:?}",
                 self.pages.explorer.explorer_input_mode
@@ -96,6 +99,9 @@ impl ShellSession {
                 }
             }
             ShellScreen::Launcher => {
+                if self.pages.launcher.search.state.focused {
+                    target.push_str(":search");
+                }
                 if let Some(editor) = &self.pages.launcher.entry_editor {
                     target.push_str(&format!(":edit:{}:{}", editor.id, editor.selected));
                 }
@@ -146,6 +152,11 @@ impl ShellSession {
         match self.active_screen() {
             ShellScreen::Launcher => {
                 self.pages.common.focused_component = ShellComponent::Launcher;
+                if self.pages.launcher.entry_editor.is_none()
+                    && self.pages.launcher.launcher_run_settings.is_none()
+                {
+                    self.pages.launcher.search.set_focused(true);
+                }
                 if let Some(editor) = &mut self.pages.launcher.entry_editor {
                     editor.selected = editor.selected.min(editor.inputs.len().saturating_sub(1));
                 }

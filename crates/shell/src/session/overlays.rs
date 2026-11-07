@@ -258,7 +258,10 @@ impl ShellSession {
             if let Some(state) = &self.pages.launcher.context_menu {
                 return Some(ShellOverlayDescriptor {
                     kind: ui::MotionOverlayKind::Popover,
-                    id: format!("launcher-menu:{}", state.id),
+                    id: format!(
+                        "launcher-menu:{}",
+                        state.id.as_deref().unwrap_or("background")
+                    ),
                     category: ShellOverlayCategory::PagePopover,
                     target: Some(RoutedTarget::Component(ShellComponent::Launcher)),
                     immediate: false,
