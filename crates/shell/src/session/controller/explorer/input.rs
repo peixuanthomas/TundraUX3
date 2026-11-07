@@ -223,10 +223,6 @@ impl ShellSession {
                 target,
                 ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Refresh),
             ),
-            InputKey::Delete if is_trash && key.is_unmodified_action_key() => (
-                target,
-                ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::DumpTrash),
-            ),
             InputKey::F(6) if key.phase == InputPhase::Press && key.is_unmodified_action_key() => (
                 target,
                 ShellCommand::ExplorerToolbarShortcut(ui::ExplorerToolbarAction::Sort),
@@ -332,13 +328,7 @@ impl ShellSession {
                 InputKey::Char('t' | 'T') if !key.has_non_shift_modifier() => Some("new-text"),
                 InputKey::Char('o' | 'O') if !key.has_non_shift_modifier() => Some("options"),
                 InputKey::Char('r' | 'R') if !key.has_non_shift_modifier() => Some("restore"),
-                InputKey::Delete if key.is_unmodified_action_key() => {
-                    Some(if menu.items.iter().any(|item| item.id == "dump-trash") {
-                        "dump-trash"
-                    } else {
-                        "delete"
-                    })
-                }
+                InputKey::Delete if key.is_unmodified_action_key() => Some("delete"),
                 _ => None,
             };
             if let Some(index) = id.and_then(|id| {

@@ -47,6 +47,9 @@ fn prepared_update_waits_for_auto_admin_completion_or_rejection() {
                 .is_none()
         );
 
+        if approve {
+            assert!(state.handle_auto_admin_input(&InputEvent::key(InputKey::Tab)));
+        }
         let key = if approve {
             InputKey::Enter
         } else {

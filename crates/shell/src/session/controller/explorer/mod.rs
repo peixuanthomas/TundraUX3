@@ -476,7 +476,10 @@ impl ShellSession {
                 | ExplorerCommand::DeleteToTrash
                 | ExplorerCommand::DumpTrash
         ) {
-            self.pages.explorer.explorer_overlay_selection = 0;
+            self.pages.explorer.explorer_overlay_selection = usize::from(matches!(
+                command,
+                ExplorerCommand::DeleteToTrash | ExplorerCommand::DumpTrash
+            ));
         }
         if self.try_handle_explorer_background_command(&command, platform) {
             return;
@@ -586,7 +589,8 @@ impl ShellSession {
                         .with_follow_up(ShellCommand::CancelExplorerInput),
                     ],
                 )
-                .with_key(EXPLORER_DELETE_NOTIFICATION_KEY),
+                .with_key(EXPLORER_DELETE_NOTIFICATION_KEY)
+                .with_cancel_default(),
             );
         }
 

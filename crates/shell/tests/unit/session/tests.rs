@@ -2,6 +2,90 @@ use super::overlays::{ResolvedExplorerOverlay, ShellOverlayCategory};
 use super::*;
 
 #[test]
+fn clock_management_enter_cancels_without_deleting_or_changing_entries() {
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    let now = Instant::now();
+    let mut clock = ClockScheduler::default();
+    let alarm = clock
+        .create_daily_alarm("07 30 00", &state.app.snapshot().clock)
+        .unwrap();
+    let countdown = clock
+        .create_countdown("00 01 00", &state.app.snapshot().clock, now)
+        .unwrap();
+    state.clock_scheduler = Some(clock);
+    let before = state.clock_scheduler.as_ref().unwrap().entries(now);
+    for id in [alarm, countdown] {
+        state.show_clock_manage_dialog(id);
+        let modal = state.to_notification_view_model().unwrap();
+        assert_eq!(
+            modal
+                .actions
+                .iter()
+                .find(|action| action.selected)
+                .unwrap()
+                .id,
+            "cancel"
+        );
+        state.apply_input(InputEvent::key(InputKey::Enter));
+        assert!(state.to_notification_view_model().is_none());
+        assert_eq!(state.clock_scheduler.as_ref().unwrap().entries(now), before);
+        state.apply_input(InputEvent::key(InputKey::Down));
+    }
+}
+
+#[test]
+fn trash_delete_never_empties_other_items_and_empty_confirmation_defaults_to_cancel() {
+    let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+    state.storage_manager = Some(
+        StorageManager::open(platform.app_paths().unwrap())
+            .unwrap()
+            .manager,
+    );
+    state.update_explorer_state(|explorer| {
+        explorer.current_location = app::explorer::ExplorerLocation::Trash;
+        explorer.select_index(0, app::explorer::ExplorerSelectionMode::Replace);
+    });
+    let before = state.app.explorer_state().unwrap().entries.clone();
+    state.apply_input_with_platform(InputEvent::key(InputKey::Delete), &platform);
+    assert!(state.to_notification_view_model().is_none());
+    assert!(state.app.explorer_state().unwrap().pending_dialog.is_none());
+    open_explorer_blank_context_for_test(&mut state, &platform);
+    assert!(
+        explorer_test_context_menu(&state)
+            .items
+            .iter()
+            .any(|item| item.id == "dump-trash" && item.shortcut.is_none())
+    );
+    state.apply_input_with_platform(InputEvent::key(InputKey::Delete), &platform);
+    assert!(state.app.explorer_state().unwrap().pending_dialog.is_none());
+    state.close_explorer_popup();
+    state.activate_explorer_toolbar(ui::ExplorerToolbarAction::DumpTrash, (0, 0), &platform);
+    let modal = state.to_notification_view_model().unwrap();
+    assert_eq!(
+        modal
+            .actions
+            .iter()
+            .find(|action| action.selected)
+            .unwrap()
+            .id,
+        "cancel"
+    );
+    state.apply_input_with_platform(InputEvent::key(InputKey::Enter), &platform);
+    assert!(state.to_notification_view_model().is_none());
+    assert!(state.app.explorer_state().unwrap().pending_dialog.is_none());
+    assert_eq!(state.app.explorer_state().unwrap().entries, before);
+    assert!(
+        !platform
+            .calls()
+            .contains(&platform::mock::MockCall::EmptyTrash)
+    );
+}
+
+#[test]
 fn strong_clock_due_events_keep_reminder_semantics_and_dismiss_actions() {
     for (kind, title) in [
         (ScheduledClockEntryKind::DailyAlarm, "Alarm reminder"),

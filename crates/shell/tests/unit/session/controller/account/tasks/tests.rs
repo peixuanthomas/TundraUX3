@@ -228,7 +228,8 @@ fn password_change_waits_for_approval_and_two_matching_hidden_answers() {
             .password_hash,
         old
     );
-    assert!(state.auto_admin_view().unwrap().approve_selected);
+    assert!(!state.auto_admin_view().unwrap().approve_selected);
+    state.apply_input(InputEvent::key(InputKey::Tab));
     state.apply_input(InputEvent::key(InputKey::Enter));
     secret_prompt(&mut state);
     answer_secret(&mut state, "NewPassword123!");
@@ -268,7 +269,7 @@ fn password_change_waits_for_approval_and_two_matching_hidden_answers() {
 }
 
 #[test]
-fn enter_approves_enabling_the_selected_user_and_updates_the_account() {
+fn explicitly_selected_approval_enables_the_selected_user_and_updates_the_account() {
     let (mut state, storage, _fixture) = local_state(storage::AutoAdminPolicy::Manual);
     let service = UserService::new(storage.clone());
     service
@@ -292,6 +293,8 @@ fn enter_approves_enabling_the_selected_user_and_updates_the_account() {
         );
     }
     assert_eq!(std::fs::read(&storage.layout().users_path).unwrap(), before);
+    assert!(!state.auto_admin_view().unwrap().approve_selected);
+    state.apply_input_at(InputEvent::key(InputKey::Tab), at + Duration::from_secs(1));
     state.apply_input_at(
         InputEvent::key(InputKey::Enter),
         at + Duration::from_secs(2),

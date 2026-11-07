@@ -265,7 +265,6 @@ pub(in crate::session) fn explorer_context_menu_view_model(
                 "add-to-launcher" => Some("A"),
                 "refresh" => Some("F5"),
                 "restore" => Some("R"),
-                "dump-trash" => Some("Del"),
                 "sort" => Some("F6"),
                 "options" => Some("O"),
                 "cut" => Some("X"),

@@ -506,7 +506,7 @@ impl ShellSession {
                 title: management_label(&action.id, &action.label),
                 message,
                 fields: action.fields.clone(),
-                selected: 0,
+                selected: usize::from(action.fields.is_empty()),
                 purpose: FormPurpose::Action(action, row),
             });
         } else {

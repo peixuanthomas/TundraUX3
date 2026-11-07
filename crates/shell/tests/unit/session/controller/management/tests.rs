@@ -1,5 +1,33 @@
 use super::*;
 
+#[test]
+fn process_confirmation_enter_cancels_without_starting_an_operation() {
+    for id in ["term", "kill"] {
+        let mut session = shortcut_action_state(ManagementKind::Processes, id);
+        let mut row = session.pages.management.management_state.snapshot.rows[0].clone();
+        let mut action = row.actions.remove(0);
+        action.fields.clear();
+        action.privileged = false;
+        session.activate_management_item(action, Some(row));
+        let form = session.to_management_view_model().form.unwrap();
+        assert_eq!(
+            form.actions()[form.selected].action,
+            ui::components::FormAction::Cancel
+        );
+        session.handle_management_key(&KeyInput::new(InputKey::Enter));
+        assert!(session.pages.management.management_state.form.is_none());
+        assert!(
+            session
+                .pages
+                .management
+                .management_state
+                .operation_job
+                .is_none()
+        );
+        assert!(session.auto_admin_view().is_none());
+    }
+}
+
 #[path = "package_workspace.rs"]
 mod package_workspace;
 #[path = "selection.rs"]

@@ -727,6 +727,7 @@ impl ShellSession {
             .with_key(format!(
                 "{CLOCK_MANAGE_NOTIFICATION_KEY_PREFIX}.{user_id}.{id}"
             ))
+            .with_cancel_default()
             .with_component(ShellComponent::NotificationDialog),
         );
     }

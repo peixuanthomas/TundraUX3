@@ -2135,7 +2135,7 @@ fn finish_user_management_aa(state: &mut ShellSession, approve: bool) {
         InputModifiers::NONE,
         InputPhase::Release,
     )));
-    if !approve {
+    if approve {
         state.apply_input(InputEvent::from_key_label("Tab"));
     }
     state.apply_input(InputEvent::from_key_label("Enter"));

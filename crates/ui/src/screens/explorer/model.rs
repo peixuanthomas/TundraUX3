@@ -172,7 +172,7 @@ impl ExplorerToolbarAction {
             Self::Rename => "F2",
             Self::Delete => "Del",
             Self::Restore => "R",
-            Self::DumpTrash => "Del",
+            Self::DumpTrash => "",
             Self::Sort => "F6",
             Self::Options => "O",
         }

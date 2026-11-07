@@ -267,7 +267,7 @@ impl ShellSession {
             job: Some(job.clone()),
             task_request: Some(task_request),
             visible: true,
-            approve_selected: true,
+            approve_selected: false,
             suppress_repeats: true,
             ..Default::default()
         };
@@ -409,7 +409,7 @@ impl ShellSession {
             }
             self.auto_admin = AutoAdminState {
                 job: Some(job),
-                approve_selected: true,
+                approve_selected: false,
                 ..Default::default()
             };
         }

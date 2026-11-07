@@ -130,6 +130,13 @@ impl ShellNotification {
         self
     }
 
+    pub fn with_cancel_default(mut self) -> Self {
+        if let Some(index) = self.actions.iter().position(|action| action.cancel) {
+            self.selected_action = index;
+        }
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn with_selected_action(mut self, index: usize) -> Self {
         self.selected_action = index.min(self.actions.len().saturating_sub(1));

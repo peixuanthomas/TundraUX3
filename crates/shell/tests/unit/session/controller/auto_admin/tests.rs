@@ -12,14 +12,8 @@ fn job(policy: storage::AutoAdminPolicy) -> (AutoAdminJob, mpsc::Receiver<Operat
 }
 
 #[test]
-fn a_new_confirmation_focuses_approve_and_keyboard_denial_still_cancels() {
-    for deny_key in [
-        InputKey::Tab,
-        InputKey::BackTab,
-        InputKey::Right,
-        InputKey::Left,
-        InputKey::Escape,
-    ] {
+fn a_new_confirmation_defaults_to_denial_without_running_the_operation() {
+    for deny_key in [InputKey::Enter, InputKey::Space, InputKey::Escape] {
         let mut state = ShellSession::new_for_home_mode(
             ShellLaunchConfig::default(),
             (120, 40),
@@ -29,12 +23,8 @@ fn a_new_confirmation_focuses_approve_and_keyboard_denial_still_cancels() {
         let job = state
             .begin_auto_admin("Enable demo".into(), true, tx)
             .unwrap();
-        assert!(state.auto_admin_view().unwrap().approve_selected);
+        assert!(!state.auto_admin_view().unwrap().approve_selected);
         state.apply_input(InputEvent::key(deny_key.clone()));
-        if deny_key != InputKey::Escape {
-            assert!(!state.auto_admin_view().unwrap().approve_selected);
-            state.apply_input(InputEvent::key(InputKey::Enter));
-        }
         assert_eq!(job.phase(), DENIED);
         assert!(job.wait_for_approval().is_err());
         assert!(
@@ -721,7 +711,7 @@ fn closing_pending_approval_denies_it_and_reopening_cannot_approve_it() {
         .begin_auto_admin("Remove demo".into(), true, tx)
         .unwrap();
     assert_eq!(job.phase(), WAITING);
-    assert!(state.auto_admin.approve_selected);
+    assert!(!state.auto_admin.approve_selected);
     let (tx, _rx) = mpsc::channel();
     assert!(
         state
