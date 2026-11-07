@@ -100,126 +100,129 @@ fn reset_item() -> ui::SettingsItemViewModel {
     )
 }
 
+pub(super) fn editor(appearance: &storage::AppearanceConfig) -> SettingsAnimationEditorState {
+    use ui::components::{FormAction, FormButton, FormControl, FormDialog, FormField};
+    let timings = appearance.animation_timings.normalized();
+    let values = [timings.page, timings.dialog, timings.menu];
+    let fields = phase_items(appearance)
+        .into_iter()
+        .take(9)
+        .enumerate()
+        .map(|(index, item)| {
+            let mut field = FormField::text(
+                format!("phase-{index}"),
+                item.label,
+                values[index / 3][index % 3].to_string(),
+            );
+            field.control = FormControl::Number {
+                minimum: storage::MIN_ANIMATION_PHASE_MS.into(),
+                maximum: storage::MAX_ANIMATION_PHASE_MS.into(),
+                step: 1,
+            };
+            field.disabled = !item.enabled;
+            field
+        })
+        .collect();
+    let mut form = FormDialog::new(
+        "settings.animation",
+        i18n::tr!("settings-animation-advanced"),
+        fields,
+    );
+    form.columns = 3;
+    form.submit_label = Some(i18n::tr!("settings-save"));
+    form.cancel_label = Some(i18n::tr!("settings-cancel"));
+    form.buttons = form.actions();
+    form.buttons.insert(
+        0,
+        FormButton::new(
+            "reset",
+            i18n::tr!("settings-restore-speed"),
+            FormAction::Custom("reset".into()),
+        ),
+    );
+    SettingsAnimationEditorState {
+        form,
+        reset_speed: false,
+    }
+}
+
 impl ShellSession {
-    pub(super) fn handle_settings_animation_key(&mut self, key: &KeyInput) {
-        if key.has_non_shift_modifier() {
-            return;
-        }
-        let Some(editor) = self
-            .pages
-            .settings
-            .settings_state
-            .as_mut()
-            .and_then(|state| state.animation_editor.as_mut())
-        else {
-            return;
-        };
-        let close = PHASE_FIELDS.len() + 1;
-        let mut reveal = false;
-        match key.key {
-            InputKey::Escape => self.close_settings_animation(),
-            InputKey::Up | InputKey::Left | InputKey::BackTab => {
-                editor.selected_index = editor.selected_index.saturating_sub(1);
-                reveal = true;
-            }
-            InputKey::Tab if key.modifiers.shift => {
-                editor.selected_index = editor.selected_index.saturating_sub(1);
-                reveal = true;
-            }
-            InputKey::Down | InputKey::Right | InputKey::Tab => {
-                editor.selected_index = (editor.selected_index + 1).min(close);
-                reveal = true;
-            }
-            InputKey::Home => {
-                editor.selected_index = 0;
-                reveal = true;
-            }
-            InputKey::End => {
-                editor.selected_index = close;
-                reveal = true;
-            }
-            InputKey::PageUp => self.scroll_settings_animation(-6),
-            InputKey::PageDown => self.scroll_settings_animation(6),
-            InputKey::Enter | InputKey::Char(' ') => match editor.selected_index {
-                index if index == close => self.close_settings_animation(),
-                index if index == PHASE_FIELDS.len() => self.reset_settings_animation_speed(),
-                index if key.key == InputKey::Enter => {
-                    self.open_settings_number(PHASE_FIELDS[index]);
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-        if reveal {
-            self.reveal_settings_animation_selection();
-        }
-        self.refresh_hit_map();
-    }
-
-    pub(super) fn close_settings_animation(&mut self) {
+    pub(super) fn open_settings_animation(&mut self) {
+        let editor = editor(self.app.active_appearance().unwrap());
         if let Some(state) = self.pages.settings.settings_state.as_mut() {
-            state.animation_editor = None;
+            state.animation_editor = Some(editor);
         }
     }
 
-    pub(super) fn select_settings_animation_field(&mut self, field: ui::SettingsField) {
-        let index = PHASE_FIELDS
-            .iter()
-            .position(|candidate| *candidate == field)
-            .unwrap_or(PHASE_FIELDS.len());
-        if let Some(editor) = self
+    pub(super) fn reset_settings_animation_draft(&mut self) {
+        let mut appearance = self.app.active_appearance().unwrap().clone();
+        appearance.animation_timings = Default::default();
+        let mut editor = editor(&appearance);
+        editor.reset_speed = true;
+        self.pages
+            .settings
+            .settings_state
+            .as_mut()
+            .unwrap()
+            .animation_editor = Some(editor);
+    }
+
+    pub(super) fn apply_settings_animation(&mut self) {
+        let mut appearance = self.app.active_appearance().unwrap().clone();
+        let editor = self
             .pages
             .settings
             .settings_state
             .as_mut()
-            .and_then(|state| state.animation_editor.as_mut())
-        {
-            editor.selected_index = index;
-        }
-    }
-
-    fn reveal_settings_animation_selection(&mut self) {
-        let Some(layout) = self
-            .current_settings_layout()
-            .and_then(|layout| layout.animation_editor)
-        else {
-            return;
-        };
-        if let Some(editor) = self
-            .pages
-            .settings
-            .settings_state
+            .unwrap()
+            .animation_editor
             .as_mut()
-            .and_then(|state| state.animation_editor.as_mut())
-        {
-            let row = editor.selected_index.min(PHASE_FIELDS.len()) as u16;
-            editor.scroll_offset = if row < layout.scroll_offset {
-                row
-            } else if row >= layout.scroll_offset.saturating_add(layout.viewport.height) {
-                row.saturating_add(1).saturating_sub(layout.viewport.height)
-            } else {
-                layout.scroll_offset
+            .unwrap();
+        let mut values = [0u16; 9];
+        for (index, field) in editor.form.fields.iter().enumerate() {
+            match field.value.parse::<u16>() {
+                Ok(value)
+                    if (storage::MIN_ANIMATION_PHASE_MS..=storage::MAX_ANIMATION_PHASE_MS)
+                        .contains(&value) =>
+                {
+                    values[index] = value
+                }
+                _ => {
+                    editor.form.selected = index;
+                    editor.form.message = i18n::tr!(
+                        "settings-number-range",
+                        min = storage::MIN_ANIMATION_PHASE_MS,
+                        max = storage::MAX_ANIMATION_PHASE_MS
+                    );
+                    return;
+                }
             }
-            .min(layout.max_scroll_offset);
         }
-    }
-
-    pub(super) fn scroll_settings_animation(&mut self, delta: i16) {
-        let Some(layout) = self
-            .current_settings_layout()
-            .and_then(|layout| layout.animation_editor)
-        else {
-            return;
-        };
-        if let Some(editor) = self
-            .pages
-            .settings
-            .settings_state
-            .as_mut()
-            .and_then(|state| state.animation_editor.as_mut())
-        {
-            editor.scroll_offset =
-                settings_scroll_offset(layout.scroll_offset, delta, layout.max_scroll_offset);
+        appearance
+            .animation_timings
+            .page
+            .copy_from_slice(&values[0..3]);
+        appearance
+            .animation_timings
+            .dialog
+            .copy_from_slice(&values[3..6]);
+        appearance
+            .animation_timings
+            .menu
+            .copy_from_slice(&values[6..9]);
+        if editor.reset_speed {
+            appearance.animation_speed_percent = storage::DEFAULT_ANIMATION_SPEED_PERCENT;
+        }
+        if self.save_settings_appearance(
+            appearance,
+            settings_saved_field(ui::SettingsField::AnimationAdvanced),
+        ) {
+            self.pages
+                .settings
+                .settings_state
+                .as_mut()
+                .unwrap()
+                .animation_editor = None;
         }
     }
 }

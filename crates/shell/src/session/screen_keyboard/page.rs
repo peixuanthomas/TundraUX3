@@ -32,7 +32,16 @@ impl ShellSession {
                 ),
                 Some(ShellComponent::Settings) => {
                     (overlay.id.starts_with("settings-editor:")
-                        && overlay.id != "settings-editor:animation")
+                        && (overlay.id != "settings-editor:animation"
+                            || self
+                                .pages
+                                .settings
+                                .settings_state
+                                .as_ref()
+                                .and_then(|state| state.animation_editor.as_ref())
+                                .is_some_and(|editor| {
+                                    editor.form.fields.iter().any(|field| !field.disabled)
+                                })))
                         || self
                             .pages
                             .settings
@@ -102,6 +111,17 @@ impl ShellSession {
             }
             ShellScreen::Management => {
                 target.push_str(&self.management_keyboard_target());
+            }
+            ShellScreen::Settings => {
+                if let Some(editor) = self
+                    .pages
+                    .settings
+                    .settings_state
+                    .as_ref()
+                    .and_then(|state| state.animation_editor.as_ref())
+                {
+                    target.push_str(&format!(":animation:{}", editor.form.selected));
+                }
             }
             ShellScreen::UserManagement => match &self.pages.user_management.user_management_mode {
                 UserManagementMode::Create(form) => {
@@ -211,6 +231,14 @@ impl ShellSession {
                     .and_then(|state| state.number_editor.as_mut())
                 {
                     editor.selected_index = 0;
+                } else if let Some(editor) = self
+                    .pages
+                    .settings
+                    .settings_state
+                    .as_mut()
+                    .and_then(|state| state.animation_editor.as_mut())
+                {
+                    editor.form.selected = editor.form.selected.min(editor.form.fields.len() - 1);
                 }
             }
             ShellScreen::UserManagement => {

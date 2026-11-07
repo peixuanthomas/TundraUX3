@@ -5,6 +5,8 @@ impl SettingsViewModel {
     pub fn form_dialog(&self) -> Option<FormDialog> {
         let mut form = if let Some(editor) = &self.number_editor {
             editor.dialog()
+        } else if let Some(editor) = &self.animation_editor {
+            return Some(editor.clone());
         } else {
             let (id, title, help, value, editing, error, busy) = if let Some(editor) =
                 &self.color_editor

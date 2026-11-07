@@ -241,16 +241,6 @@ impl ShellSession {
             self.handle_settings_picker_key(key);
             return;
         }
-        if self
-            .pages
-            .settings
-            .settings_state
-            .as_ref()
-            .is_some_and(|state| state.animation_editor.is_some())
-        {
-            self.handle_settings_animation_key(key);
-            return;
-        }
         if key.has_non_shift_modifier() {
             return;
         }
@@ -384,17 +374,6 @@ impl ShellSession {
                 ScrollDirection::Down => 3,
                 ScrollDirection::Left | ScrollDirection::Right => return,
             };
-            if self
-                .pages
-                .settings
-                .settings_state
-                .as_ref()
-                .is_some_and(|state| state.animation_editor.is_some())
-            {
-                self.scroll_settings_animation(delta as i16);
-                self.refresh_hit_map();
-                return;
-            }
             if self.active_overlay_descriptor().is_none()
                 && self.current_settings_layout().is_some_and(|layout| {
                     layout.applications.is_some_and(|applications| {
@@ -451,22 +430,6 @@ impl ShellSession {
             ui::ShellLayout::Full { main, .. } => main,
         };
         let layout = ui::settings_layout(app_area, &model);
-        if model.animation_editor.is_some() {
-            match ui::settings_hit_test(&layout, coordinates) {
-                Some(ui::SettingsHitTarget::OverlayCancel) => self.close_settings_animation(),
-                Some(ui::SettingsHitTarget::Field(field)) => {
-                    self.select_settings_animation_field(field);
-                    if field == ui::SettingsField::ResetAnimationSpeed {
-                        self.reset_settings_animation_speed();
-                    } else {
-                        self.open_settings_number(field);
-                    }
-                }
-                _ => {}
-            }
-            self.refresh_hit_map();
-            return;
-        }
         match ui::settings_hit_test(&layout, coordinates) {
             Some(ui::SettingsHitTarget::Application(application)) => {
                 self.select_settings_application(application)
@@ -722,12 +685,7 @@ impl ShellSession {
             }
             ui::SettingsField::RefreshSystemTime => self.refresh_system_time_settings(),
             ui::SettingsField::AnimationAdvanced => {
-                if let Some(state) = self.pages.settings.settings_state.as_mut() {
-                    state.animation_editor = Some(SettingsAnimationEditorState {
-                        selected_index: 0,
-                        scroll_offset: 0,
-                    });
-                }
+                self.open_settings_animation();
             }
             ui::SettingsField::Theme => {
                 if self.ascii_assets.theme_id() == ui::DEFAULT_THEME_ID {

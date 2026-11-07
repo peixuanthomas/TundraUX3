@@ -27,6 +27,8 @@ pub(in crate::session) struct LogsUiState {
     new_events: usize,
     last_refresh: Option<Instant>,
     background_refresh: bool,
+    expert_open: bool,
+    expert_focus: Option<usize>,
     more_selected: Option<usize>,
     more_scrollbar_grab: Option<u16>,
     filter_form: Option<ui::ManagementForm>,
@@ -820,6 +822,47 @@ impl ShellSession {
             }
             return;
         }
+        if !key.has_non_shift_modifier() && self.pages.logs.logs_state.expert_open {
+            let controls = ui::logs_expert_controls();
+            let focus = self.pages.logs.logs_state.expert_focus;
+            if matches!(key.key, InputKey::Tab | InputKey::BackTab) {
+                let reverse = key.key == InputKey::BackTab || key.modifiers.shift;
+                self.pages.logs.logs_state.expert_focus = match focus {
+                    None => Some(if reverse { controls.len() - 1 } else { 0 }),
+                    Some(0) if reverse => None,
+                    Some(index) if !reverse && index + 1 == controls.len() => None,
+                    Some(index) => Some(if reverse { index - 1 } else { index + 1 }),
+                };
+                return;
+            }
+            if let Some(index) = focus {
+                match key.key {
+                    InputKey::Left | InputKey::Up => {
+                        self.pages.logs.logs_state.expert_focus = Some(index.saturating_sub(1));
+                        return;
+                    }
+                    InputKey::Right | InputKey::Down => {
+                        self.pages.logs.logs_state.expert_focus =
+                            Some((index + 1).min(controls.len() - 1));
+                        return;
+                    }
+                    InputKey::Escape => {
+                        self.pages.logs.logs_state.expert_focus = None;
+                        return;
+                    }
+                    InputKey::Enter | InputKey::Space | InputKey::Char(' ') => {
+                        let target = controls[index].0;
+                        if key.phase == InputPhase::Press
+                            && ui::logs_control_enabled(&self.to_logs_view_model(), target)
+                        {
+                            self.logs_touch_action(target);
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
         let detail_navigation = (key.modifiers.shift || key.modifiers.is_control())
             && !key.modifiers.alt
             && !key.modifiers.super_key
@@ -839,6 +882,7 @@ impl ShellSession {
             InputKey::Char('i' | 'I') => Some(ui::LogsHitTarget::RelatedIncident),
             InputKey::Char('e' | 'E') => Some(ui::LogsHitTarget::RelatedEvents),
             InputKey::Char('p' | 'P') => Some(ui::LogsHitTarget::Follow),
+            InputKey::F(3) => Some(ui::LogsHitTarget::Expert),
             InputKey::F(10) => Some(ui::LogsHitTarget::More),
             InputKey::Char('f' | 'F') => Some(ui::LogsHitTarget::Filters),
             InputKey::Char('g' | 'G') => Some(ui::LogsHitTarget::OpenFolder),
@@ -911,6 +955,7 @@ impl ShellSession {
             InputKey::Char('m' | 'M') => self.logs_filter_module(),
             InputKey::Char('t' | 'T') => self.logs_filter_time(),
             InputKey::Char('p' | 'P') => self.logs_follow_control(),
+            InputKey::F(3) => self.logs_touch_action(ui::LogsHitTarget::Expert),
             InputKey::F(10) => self.pages.logs.logs_state.more_selected = Some(0),
             InputKey::Char('f' | 'F') => self.logs_open_filter_form(),
             InputKey::Char('g' | 'G') => self.logs_open_folder(),
@@ -1051,6 +1096,8 @@ impl ShellSession {
             loading: state.job.as_ref().is_some_and(|job| !job.0.background),
             following: !state.paused,
             new_events: state.new_events,
+            expert_open: state.expert_open,
+            expert_focus: state.expert_focus,
             more_selected: state.more_selected,
             filter_form: state.filter_form.clone(),
             selected_file: state.query.file_path.is_some(),

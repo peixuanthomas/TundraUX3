@@ -40,6 +40,7 @@ pub fn logs_control_enabled(model: &LogsViewModel, target: LogsHitTarget) -> boo
         target,
         LogsHitTarget::Follow
             | LogsHitTarget::More
+            | LogsHitTarget::Expert
             | LogsHitTarget::Filters
             | LogsHitTarget::FormApply
             | LogsHitTarget::FormCancel

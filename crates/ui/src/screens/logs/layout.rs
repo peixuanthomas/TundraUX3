@@ -24,6 +24,7 @@ pub enum LogsHitTarget {
     Scrollbar,
     Follow,
     More,
+    Expert,
     CloseMore,
     MoreScrollbar,
     Filters,
@@ -86,12 +87,26 @@ pub(super) fn controls(model: &LogsViewModel) -> Vec<(LogsHitTarget, String)> {
             },
         ),
         (LogsHitTarget::Filters, i18n::tr!("ui-logs-source-filters")),
-        (LogsHitTarget::More, i18n::tr!("ui-logs-more")),
+        (LogsHitTarget::Expert, i18n::tr!("ui-logs-expert")),
     ];
     if model.category == LogsCategory::Ux {
         controls.push((LogsHitTarget::OpenFolder, i18n::tr!("ui-logs-open-folder")));
     }
+    if model.expert_open {
+        controls.extend(logs_expert_controls());
+    }
     controls
+}
+pub fn logs_expert_controls() -> Vec<(LogsHitTarget, String)> {
+    logs_more_controls()
+        .into_iter()
+        .filter(|(target, _)| {
+            !matches!(
+                target,
+                LogsHitTarget::FilterLevel | LogsHitTarget::CloseMore
+            )
+        })
+        .collect()
 }
 pub fn logs_more_controls() -> Vec<(LogsHitTarget, String)> {
     vec![
@@ -407,7 +422,10 @@ pub(super) fn logs_action_bar(model: &LogsViewModel) -> PageActionBar {
         .map(|(target, label)| {
             let action = PageAction::new(logs_action_id(model, target), label)
                 .disabled(!super::render::logs_control_enabled(model, target))
-                .latched(target == LogsHitTarget::Follow && model.following);
+                .latched(
+                    target == LogsHitTarget::Follow && model.following
+                        || target == LogsHitTarget::Expert && model.expert_open,
+                );
             if target == primary {
                 action.primary()
             } else {
@@ -423,7 +441,13 @@ pub(super) fn logs_action_bar(model: &LogsViewModel) -> PageActionBar {
             tone: ComponentTone::Muted,
         })
         .collect();
-    PageActionBar::new("logs")
+    let mut bar = PageActionBar::new("logs")
         .with_actions(actions)
-        .with_status(status)
+        .with_status(status);
+    bar.selected = model.expert_focus.and_then(|index| {
+        logs_expert_controls()
+            .get(index)
+            .map(|(target, _)| logs_action_id(model, *target).into())
+    });
+    bar
 }

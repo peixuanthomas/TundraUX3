@@ -138,6 +138,9 @@ fn render(
         terminal_size: (width, height),
         back_button_hovered: false,
         help_available: false,
+        tasks_label: None,
+        tasks_button_focused: false,
+        tasks_button_hovered: false,
         help_button_hovered: false,
         help_button_focused: false,
         back_shortcut: "Esc",
@@ -279,4 +282,35 @@ fn long_log_details_expose_a_draggable_scrollbar_and_the_last_line() {
     model.detail_scroll = end;
     let output = terminal_output(&render(120, 32, &model, &TundraTheme::default_dark()));
     assert!(output.contains("detail-79"), "{output}");
+}
+
+#[test]
+fn expert_controls_stay_beside_the_list_at_supported_sizes() {
+    let mut model = model();
+    model.expert_open = true;
+    for (width, height) in [(140, 40), (108, 20)] {
+        let context = RenderContext::default();
+        let main = ui::ShellFrameLayout::new(Rect::new(0, 0, width, height), None, &context).main;
+        let layout = logs_layout(main, &model);
+        assert!(layout.visible_capacity > 0);
+        for (target, _) in ui::logs_expert_controls() {
+            let control = layout
+                .controls
+                .iter()
+                .find(|control| control.target == target)
+                .unwrap();
+            assert!(!control.area.is_empty());
+            assert_eq!(control.area.intersection(main), control.area);
+            assert_eq!(
+                logs_hit_test(main, &model, (control.area.x, control.area.y)),
+                Some(target)
+            );
+        }
+        let row = layout.content.rows[0].area;
+        assert!(!row.is_empty());
+        assert!(matches!(
+            logs_hit_test(main, &model, (row.x, row.y)),
+            Some(LogsHitTarget::Event(_))
+        ));
+    }
 }

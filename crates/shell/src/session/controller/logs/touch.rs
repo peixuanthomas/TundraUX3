@@ -110,6 +110,10 @@ impl ShellSession {
             ui::LogsHitTarget::FilterModule => self.logs_filter_module(),
             ui::LogsHitTarget::FilterTime => self.logs_filter_time(),
             ui::LogsHitTarget::Follow => self.logs_follow_control(),
+            ui::LogsHitTarget::Expert => {
+                self.pages.logs.logs_state.expert_open = !self.pages.logs.logs_state.expert_open;
+                self.pages.logs.logs_state.expert_focus = None;
+            }
             ui::LogsHitTarget::More => {
                 self.cancel_logs_pointer_gesture();
                 self.pages.logs.logs_state.more_selected = Some(0);
@@ -230,6 +234,17 @@ impl ShellSession {
         {
             self.pages.logs.logs_state.more_selected = None;
         }
+        self.pages.logs.logs_state.expert_focus = self
+            .pages
+            .logs
+            .logs_state
+            .expert_open
+            .then(|| {
+                ui::logs_expert_controls()
+                    .iter()
+                    .position(|(control, _)| *control == target)
+            })
+            .flatten();
         match target {
             ui::LogsHitTarget::MoreScrollbar => {
                 self.pages.logs.logs_state.scrollbar_grab = None;
@@ -258,6 +273,7 @@ impl ShellSession {
                 self.drag_logs_scrollbar(point);
             }
             ui::LogsHitTarget::Event(index) => {
+                self.pages.logs.logs_state.expert_focus = None;
                 let click = self.register_click(
                     Some(ShellComponent::Logs),
                     point,

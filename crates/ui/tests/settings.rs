@@ -964,77 +964,62 @@ fn scrolled_categories_render_and_hit_the_same_rows() {
 }
 
 #[test]
-fn animation_modal_scrolls_and_captures_only_its_visible_controls() {
-    let phases = [
-        SettingsField::PageAcceleration,
-        SettingsField::PageCruise,
-        SettingsField::PageDeceleration,
-        SettingsField::DialogAcceleration,
-        SettingsField::DialogCruise,
-        SettingsField::DialogDeceleration,
-        SettingsField::MenuAcceleration,
-        SettingsField::MenuCruise,
-        SettingsField::MenuDeceleration,
-    ];
+fn animation_form_shows_nine_fields_and_shared_actions_at_supported_sizes() {
     for label in ["Page acceleration", "页面加速时长"] {
-        for (width, height) in [(120, 32), (80, 12), (46, 11)] {
+        for (width, height) in [(140, 40), (108, 20), (46, 11)] {
             let mut model = sample_model();
-            let mut items = phases
-                .map(|field| {
-                    SettingsItemViewModel::new(
-                        field,
-                        label,
-                        "55 ms",
-                        "",
-                        SettingsControlKind::Stepper,
-                    )
-                })
-                .to_vec();
-            items.push(SettingsItemViewModel::new(
-                SettingsField::ResetAnimationSpeed,
-                "Restore defaults",
-                "Reset",
-                "",
-                SettingsControlKind::Action,
-            ));
-            model.animation_editor = Some(ui::SettingsAnimationEditorViewModel {
-                items,
-                selected_index: 0,
-                scroll_offset: 0,
-            });
-            let area = Rect::new(0, 0, width, height);
-            let layout = settings_layout(area, &model);
-            let editor = layout.animation_editor.as_ref().unwrap();
-            assert_eq!(editor.dialog.intersection(area), editor.dialog);
-            assert!(!editor.fields.is_empty());
-            for field in &editor.fields {
-                assert_eq!(field.area.intersection(editor.viewport), field.area);
-                assert_eq!(
-                    settings_hit_test(&layout, (field.area.x, field.area.y)),
-                    Some(SettingsHitTarget::Field(field.field))
-                );
-            }
-            assert_eq!(
-                settings_hit_test(&layout, (editor.close.x, editor.close.y)),
-                Some(SettingsHitTarget::OverlayCancel)
+            let mut form = ui::components::FormDialog::new(
+                "settings.animation",
+                "Animation timing",
+                (0..9)
+                    .map(|index| {
+                        let mut field =
+                            ui::components::FormField::text(format!("phase-{index}"), label, "55");
+                        field.control = ui::components::FormControl::Number {
+                            minimum: 1,
+                            maximum: 2000,
+                            step: 1,
+                        };
+                        field
+                    })
+                    .collect(),
             );
-            assert_eq!(settings_hit_test(&layout, (area.x, area.y)), None);
-            model.animation_editor.as_mut().unwrap().scroll_offset = u16::MAX;
+            form.columns = 3;
+            model.animation_editor = Some(form);
+            let area = ui::ShellFrameLayout::new(
+                Rect::new(0, 0, width, height),
+                None,
+                &ui::RenderContext::default(),
+            )
+            .main;
             let layout = settings_layout(area, &model);
             let editor = layout.animation_editor.as_ref().unwrap();
+            assert_eq!(editor.form.intersection(area), editor.form);
+            assert!(!editor.fields.is_empty());
+            if width >= 108 {
+                assert_eq!(editor.fields.len(), 9);
+            }
+            for (_, field) in &editor.fields {
+                assert_eq!(field.intersection(editor.fields_area), *field);
+            }
+            assert!(!editor.submit.is_empty());
+            assert!(!editor.cancel.is_empty());
             assert_eq!(
-                editor.fields.last().unwrap().field,
-                SettingsField::ResetAnimationSpeed
+                settings_hit_test(&layout, (editor.cancel.x, editor.cancel.y)),
+                Some(SettingsHitTarget::OverlayCancel)
             );
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal
                 .draw(|frame| {
-                    let context = ui::RenderContext::default();
-                    ui::render_settings_content(frame, &layout, &model, &context);
-                    ui::render_settings_overlay(frame, &layout, &model, &context);
+                    ui::render_settings_overlay(
+                        frame,
+                        &layout,
+                        &model,
+                        &ui::RenderContext::default(),
+                    );
                 })
                 .unwrap();
-            assert!(terminal_output(&terminal).contains("[Reset]"));
+            assert!(terminal_output(&terminal).contains("55"));
         }
     }
 }
@@ -1044,17 +1029,15 @@ fn number_dialog_renders_shared_controls_and_blocks_the_underlying_dialog() {
     for title in ["Animation speed (%)", "动画速度（百分比）"] {
         for (width, height) in [(46, 11), (108, 20), (140, 40)] {
             let mut model = sample_model();
-            model.animation_editor = Some(ui::SettingsAnimationEditorViewModel {
-                items: vec![SettingsItemViewModel::new(
-                    SettingsField::PageAcceleration,
+            model.animation_editor = Some(ui::components::FormDialog::new(
+                "animation",
+                "Animation timing",
+                vec![ui::components::FormField::text(
+                    "phase-0",
                     "Page acceleration",
-                    "55 ms",
-                    "",
-                    SettingsControlKind::Stepper,
+                    "55",
                 )],
-                selected_index: 0,
-                scroll_offset: 0,
-            });
+            ));
             let mut input = ui::components::TextInput::new("settings.number.input");
             input.set_value("125");
             input.set_focused(true);

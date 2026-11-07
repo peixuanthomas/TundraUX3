@@ -1143,3 +1143,33 @@ fn sorting_log_headers_waits_for_release_and_refresh_preserves_selected_event() 
             .contains_key(&state.logs_sort_key())
     );
 }
+
+#[test]
+fn expert_actions_remain_visible_after_filtering_and_changing_selection() {
+    let mut state = state(UserRole::Admin);
+    state.open_logs();
+    state.pages.logs.logs_state.job = None;
+    state.pages.logs.logs_state.known_modules = vec!["alpha".into(), "beta".into()];
+    key(&mut state, "F3");
+    assert!(state.pages.logs.logs_state.expert_open);
+    assert!(!state.logs_has_active_overlay());
+    key(&mut state, "m");
+    assert_eq!(
+        state.pages.logs.logs_state.query.module.as_deref(),
+        Some("alpha")
+    );
+    key(&mut state, "Down");
+    assert!(state.pages.logs.logs_state.expert_open);
+    assert!(state.pages.logs.logs_state.more_selected.is_none());
+    key(&mut state, "Tab");
+    assert_eq!(state.pages.logs.logs_state.expert_focus, Some(0));
+    key(&mut state, "Esc");
+    assert!(state.pages.logs.logs_state.expert_focus.is_none());
+    assert!(state.pages.logs.logs_state.expert_open);
+    assert_eq!(state.active_screen(), ShellScreen::Logs);
+    key(&mut state, "f");
+    key(&mut state, "Esc");
+    assert!(state.pages.logs.logs_state.expert_open);
+    key(&mut state, "F3");
+    assert!(!state.pages.logs.logs_state.expert_open);
+}

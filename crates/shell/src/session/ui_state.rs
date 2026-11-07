@@ -142,8 +142,8 @@ pub(super) struct SettingsTimeSyncServerEditorState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct SettingsAnimationEditorState {
-    pub(super) selected_index: usize,
-    pub(super) scroll_offset: u16,
+    pub(super) form: ui::components::FormDialog,
+    pub(super) reset_speed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

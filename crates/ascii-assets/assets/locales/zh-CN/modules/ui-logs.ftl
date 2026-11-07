@@ -67,3 +67,5 @@ ui-logs-level-info = 信息
 ui-logs-level-warning = 警告
 ui-logs-level-error = 错误
 ui-logs-level-critical = 故障
+
+ui-logs-expert = F3 专家工具

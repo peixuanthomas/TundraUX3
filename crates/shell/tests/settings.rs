@@ -1360,19 +1360,30 @@ fn advanced_animation_phases_save_per_user_and_restore_with_speed_defaults() {
             .any(|item| phases.contains(&item.field))
     );
     press(&mut state, &platform, "Enter");
-    for (index, field) in phases.into_iter().enumerate() {
+    for (index, value) in [56, 111, 56, 46, 91, 46, 41, 81, 41]
+        .into_iter()
+        .enumerate()
+    {
         let model = state.to_settings_view_model().unwrap();
-        let editor = model.animation_editor.as_ref().expect("advanced modal");
-        assert_eq!(model.selected_field, SettingsField::AnimationAdvanced);
-        assert_eq!(editor.items[editor.selected_index].field, field);
-        press(&mut state, &platform, "Enter");
-        adjust_number(&mut state, &platform, true);
-        press(&mut state, &platform, "Enter");
-        if index < phases.len() - 1 {
-            press(&mut state, &platform, "Down");
-        }
+        assert_eq!(model.animation_editor.as_ref().unwrap().selected, index);
+        assert!(model.number_editor.is_none());
+        press(&mut state, &platform, "Ctrl+A");
+        state.apply_input_with_platform(InputEvent::Paste(value.to_string()), &platform);
+        press(&mut state, &platform, "Tab");
     }
-    press(&mut state, &platform, "Esc");
+    assert_eq!(
+        manager
+            .load_users()
+            .unwrap()
+            .users
+            .iter()
+            .find(|user| user.username == "NormalUser")
+            .unwrap()
+            .appearance
+            .animation_timings,
+        storage::AnimationTimingsConfig::default()
+    );
+    press(&mut state, &platform, "F10");
     let model = state.to_settings_view_model().unwrap();
     assert!(model.animation_editor.is_none());
     assert_eq!(model.selected_field, SettingsField::AnimationAdvanced);
@@ -1429,151 +1440,81 @@ fn advanced_animation_phases_save_per_user_and_restore_with_speed_defaults() {
 }
 
 #[test]
-fn animation_modal_blocks_background_supports_pointer_reset_and_restores_focus() {
-    let fixture = FixtureRoot::new("animation-modal");
+fn animation_form_cancels_drafts_and_validates_all_fields_before_saving() {
+    let fixture = FixtureRoot::new("animation-form");
     let platform = mock_platform(fixture.path());
-    initialize_users(&platform, true, false);
+    let manager = initialize_users(&platform, true, false);
     let mut state = logged_in_state(&platform, "NormalUser", "NormalPass123");
     open_settings_from_home(&mut state, &platform);
+    for _ in 0..6 {
+        press(&mut state, &platform, "Down");
+    }
+    press(&mut state, &platform, "Enter");
+    let original = manager.load_users().unwrap();
+    press(&mut state, &platform, "Ctrl+A");
+    state.apply_input_with_platform(InputEvent::Paste("123".into()), &platform);
+    press(&mut state, &platform, "Esc");
+    assert!(
+        state
+            .to_settings_view_model()
+            .unwrap()
+            .animation_editor
+            .is_none()
+    );
+    assert_eq!(manager.load_users().unwrap(), original);
+    press(&mut state, &platform, "Enter");
+    press(&mut state, &platform, "Ctrl+A");
+    state.apply_input_with_platform(InputEvent::Paste("123".into()), &platform);
+    press(&mut state, &platform, "Tab");
+    press(&mut state, &platform, "Ctrl+A");
+    state.apply_input_with_platform(InputEvent::Paste("99999".into()), &platform);
+    press(&mut state, &platform, "F10");
+    let model = state.to_settings_view_model().unwrap();
+    let editor = model.animation_editor.as_ref().unwrap();
+    assert_eq!(editor.selected, 1);
+    assert!(!editor.message.is_empty());
+    assert_eq!(manager.load_users().unwrap(), original);
     let main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 40)) {
         ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
     };
-    let layout = ui::settings_layout(main, &state.to_settings_view_model().unwrap());
-    let advanced = layout
-        .fields
+    let layout = editor.layout(main);
+    let reset = layout
+        .form_buttons
         .iter()
-        .find(|item| item.field == SettingsField::AnimationAdvanced)
+        .find(|(index, _)| editor.buttons[*index].id == "reset")
         .unwrap()
-        .area;
+        .1;
     state.apply_input_with_platform(
-        InputEvent::mouse_down(ui::MouseButton::Left, (advanced.x, advanced.y)),
+        InputEvent::mouse_down(ui::MouseButton::Left, (reset.x, reset.y)),
         &platform,
     );
-    let model = state.to_settings_view_model().unwrap();
-    assert!(model.animation_editor.is_some());
-    let editor = ui::settings_layout(main, &model).animation_editor.unwrap();
-    let background = layout
-        .category_cards
-        .iter()
-        .find(|item| item.category == SettingsCategory::RegionTime)
-        .unwrap()
-        .area;
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(ui::MouseButton::Left, (background.x, background.y)),
-        &platform,
-    );
-    assert_eq!(
-        state.to_settings_view_model().unwrap().selected_category,
-        SettingsCategory::Appearance
-    );
-    let value = editor
-        .fields
-        .iter()
-        .find(|field| field.field == SettingsField::PageAcceleration)
-        .unwrap()
-        .area;
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(ui::MouseButton::Left, (value.x, value.y)),
-        &platform,
-    );
-    assert!(
-        state
-            .to_settings_view_model()
-            .unwrap()
-            .number_editor
-            .is_some()
-    );
-    adjust_number(&mut state, &platform, true);
-    press(&mut state, &platform, "Enter");
     assert_eq!(
         state
             .to_settings_view_model()
             .unwrap()
             .animation_editor
             .unwrap()
-            .items[0]
+            .fields[0]
             .value,
-        "56 ms"
-    );
-    press(&mut state, &platform, "End");
-    press(&mut state, &platform, "Up");
-    press(&mut state, &platform, "Enter");
-    assert_eq!(
-        state
-            .to_settings_view_model()
-            .unwrap()
-            .animation_editor
-            .unwrap()
-            .items[0]
-            .value,
-        "55 ms"
+        "123"
     );
     state.apply_input_with_platform(
-        InputEvent::Resize {
-            width: 120,
-            height: 18,
-        },
+        InputEvent::mouse_up(ui::MouseButton::Left, (reset.x, reset.y)),
         &platform,
     );
-    let short_main = match ui::compute_shell_layout(Rect::new(0, 0, 120, 18)) {
-        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
-    };
-    let model = state.to_settings_view_model().unwrap();
-    let editor = ui::settings_layout(short_main, &model)
+    let draft = state
+        .to_settings_view_model()
+        .unwrap()
         .animation_editor
         .unwrap();
-    assert!(editor.scrollbar.is_some());
-    for _ in 0..10 {
-        state.apply_input_with_platform(
-            InputEvent::mouse_scroll(
-                shell::ScrollDirection::Down,
-                (editor.viewport.x, editor.viewport.y),
-            ),
-            &platform,
-        );
-    }
-    let scrolled = state.to_settings_view_model().unwrap();
-    assert_eq!(scrolled.scroll_offset, model.scroll_offset);
+    assert_eq!(draft.fields[0].value, "55");
+    assert_eq!(draft.fields[1].value, "110");
+    assert_eq!(manager.load_users().unwrap(), original);
+    press(&mut state, &platform, "Esc");
     assert_eq!(
-        scrolled.animation_editor.unwrap().scroll_offset,
-        editor.max_scroll_offset
+        state.to_settings_view_model().unwrap().selected_field,
+        SettingsField::AnimationAdvanced
     );
-    press(&mut state, &platform, "Home");
-    assert_eq!(
-        state
-            .to_settings_view_model()
-            .unwrap()
-            .animation_editor
-            .unwrap()
-            .scroll_offset,
-        0
-    );
-    let track = editor.scrollbar.unwrap();
-    let bottom = (track.x, track.bottom() - 1);
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(ui::MouseButton::Left, bottom),
-        &platform,
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_up(ui::MouseButton::Left, bottom),
-        &platform,
-    );
-    assert!(
-        state
-            .to_settings_view_model()
-            .unwrap()
-            .animation_editor
-            .unwrap()
-            .scroll_offset
-            > 0
-    );
-    state.apply_input_with_platform(
-        InputEvent::mouse_down(ui::MouseButton::Left, (editor.close.x, editor.close.y)),
-        &platform,
-    );
-    let model = state.to_settings_view_model().unwrap();
-    assert!(model.animation_editor.is_none());
-    assert_eq!(model.selected_field, SettingsField::AnimationAdvanced);
     assert_eq!(state.active_screen(), ShellScreen::Settings);
 }
 

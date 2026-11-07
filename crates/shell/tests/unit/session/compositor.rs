@@ -198,8 +198,16 @@ fn animation_settings_session() -> ShellSession {
         application: Default::default(),
         system_time: Default::default(),
         animation_editor: Some(SettingsAnimationEditorState {
-            selected_index: 0,
-            scroll_offset: 0,
+            form: ui::components::FormDialog::new(
+                "animation",
+                "Animation timing",
+                vec![ui::components::FormField::text(
+                    "phase-0",
+                    "Page acceleration",
+                    "55",
+                )],
+            ),
+            reset_speed: false,
         }),
         number_editor: None,
         category: ui::SettingsCategory::Appearance,
@@ -216,6 +224,29 @@ fn animation_settings_session() -> ShellSession {
     state
 }
 
+fn open_test_number_editor(state: &mut ShellSession) {
+    let mut input = ui::components::TextInput::new("settings.number.input");
+    input.set_value("55");
+    input.set_focused(true);
+    state
+        .pages
+        .settings
+        .settings_state
+        .as_mut()
+        .unwrap()
+        .number_editor = Some(SettingsNumberEditorState {
+        field: ui::SettingsField::PageAcceleration,
+        title: "Page acceleration".into(),
+        input,
+        minimum: 1,
+        maximum: 2000,
+        step: 1,
+        error: None,
+        selected_index: 0,
+    });
+    state.refresh_hit_map();
+}
+
 #[test]
 fn settings_number_dialog_captures_only_its_buttons_and_waits_for_release() {
     let platform = platform::mock::UnsupportedPlatform;
@@ -225,14 +256,8 @@ fn settings_number_dialog_captures_only_its_buttons_and_waits_for_release() {
     let mut prepared = home_frame(&state, 0, true);
     prepared.page = ScreenViewModel::Settings(Box::new(state.to_settings_view_model().unwrap()));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
-    let covered = state
-        .button_regions
-        .iter()
-        .find(|region| region.id.as_str() == "settings.field.pagecruise")
-        .unwrap()
-        .area;
-    let point = (covered.right() - 1, covered.y);
-    state.handle_settings_key(&KeyInput::new(InputKey::Enter), &platform);
+    let point = (1, 1);
+    open_test_number_editor(&mut state);
     let layout = state.current_settings_layout().unwrap();
     let number = layout.number_editor.unwrap();
     assert!(!rect_contains(number.dialog, point));
@@ -285,7 +310,7 @@ fn settings_number_dialog_captures_only_its_buttons_and_waits_for_release() {
     state.handle_settings_key(&KeyInput::new(InputKey::Escape), &platform);
     let model = state.to_settings_view_model().unwrap();
     assert!(model.number_editor.is_none());
-    assert_eq!(model.animation_editor.unwrap().selected_index, 0);
+    assert_eq!(model.animation_editor.unwrap().selected, 0);
     assert_eq!(
         state
             .app
@@ -325,10 +350,10 @@ fn settings_nested_dialogs_keep_parents_visible_when_opening_and_closing() {
             .unwrap()
             .animation_editor
             .unwrap()
-            .dialog;
+            .form;
         let corner = (parent.x, parent.y);
         let border = terminal.backend().buffer()[corner].symbol().to_owned();
-        state.handle_settings_key(&KeyInput::new(InputKey::Enter), &platform);
+        open_test_number_editor(&mut state);
         assert_eq!(
             state
                 .interactive_overlays()
@@ -379,7 +404,7 @@ fn settings_nested_dialogs_keep_parents_visible_when_opening_and_closing() {
         );
         let model = state.to_settings_view_model().unwrap();
         assert!(model.number_editor.is_none());
-        assert_eq!(model.animation_editor.unwrap().selected_index, 0);
+        assert_eq!(model.animation_editor.unwrap().selected, 0);
     }
 }
 
@@ -1879,4 +1904,44 @@ fn scrolling_or_leaving_a_pressed_modal_button_cancels_the_click() {
         assert_eq!(state.active_screen(), ShellScreen::ExitConfirm);
         assert!(state.interaction.button_capture.is_none());
     }
+}
+
+#[test]
+fn animation_form_screen_keyboard_targets_the_current_numeric_field() {
+    let mut state = animation_settings_session();
+    assert_eq!(
+        state.page_keyboard_identity().as_deref(),
+        Some("settings-editor:animation")
+    );
+    assert!(state.keyboard_launcher_area().is_some());
+    state.toggle_input_keyboard();
+    assert!(state.input_keyboard_open());
+    state
+        .pages
+        .settings
+        .settings_state
+        .as_mut()
+        .unwrap()
+        .animation_editor
+        .as_mut()
+        .unwrap()
+        .form
+        .selected = 1;
+    assert!(state.sync_input_keyboard());
+    state.toggle_input_keyboard();
+    state.toggle_input_keyboard();
+    assert_eq!(
+        state
+            .pages
+            .settings
+            .settings_state
+            .as_ref()
+            .unwrap()
+            .animation_editor
+            .as_ref()
+            .unwrap()
+            .form
+            .selected,
+        0
+    );
 }

@@ -67,3 +67,5 @@ ui-logs-level-info = Info
 ui-logs-level-warning = Warning
 ui-logs-level-error = Error
 ui-logs-level-critical = Critical
+
+ui-logs-expert = F3 Expert tools

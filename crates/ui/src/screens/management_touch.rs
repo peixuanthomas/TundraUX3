@@ -587,7 +587,7 @@ pub fn management_toolbar(
     }
     result
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagementLayout {
     pub workspace: Option<crate::components::SidebarWorkspaceLayout>,
     pub compact_actions: bool,

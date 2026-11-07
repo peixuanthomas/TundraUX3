@@ -32,6 +32,18 @@ impl ShellSession {
             event => form.handle_event(event, self.touch_main()),
         };
         let state = self.pages.settings.settings_state.as_mut().unwrap();
+        if state.animation_editor.is_some() && state.number_editor.is_none() {
+            state.animation_editor.as_mut().unwrap().form = form;
+            match result {
+                FormEvent::Action(FormAction::Submit) => self.apply_settings_animation(),
+                FormEvent::Action(FormAction::Cancel) => state.animation_editor = None,
+                FormEvent::Action(FormAction::Custom(id)) if id == "reset" => {
+                    self.reset_settings_animation_draft();
+                }
+                _ => {}
+            }
+            return true;
+        }
         state.form_selected = form.selected;
         state.form_interaction = form.interaction_state();
         let field = form.fields.remove(0);

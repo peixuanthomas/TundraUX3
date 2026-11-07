@@ -399,10 +399,10 @@ settings-check-mode-description = 检查所选更新模式，显示发布说明�
 settings-release-available = 有更新的正式版可用
 settings-release-different = 当前构建与正式版不同，可选择替换为此正式版
 
-settings-animation-advanced = 动画时长
+settings-animation-advanced = 动画时长（ms）
 settings-animation-open = 调整时长
 settings-animation-close = Esc 关闭
-settings-animation-advanced-help = 分别细调页面、弹窗、菜单的加速、匀速和减速时间。
+settings-animation-advanced-help = 同时编辑九项阶段时长，Tab 连续填写，统一保存。
 settings-animation-page = 页面
 settings-animation-dialog = 弹窗
 settings-animation-menu = 菜单
@@ -411,7 +411,7 @@ settings-animation-cruise = 匀速
 settings-animation-deceleration = 减速
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
-settings-animation-phase-help = 打开数值后调整或输入 1～2000ms，确认后保存；表示 100% 速度下的时长。
+settings-animation-phase-help = 在表单内调整或输入 1～2000ms，表示 100% 速度下的时长。
 settings-number-range = 范围：{ $min }～{ $max }
 settings-number-help = 左右键移动光标 · 直接输入数字 · −/+ 调整数值 · 回车确认 · Esc 取消
 

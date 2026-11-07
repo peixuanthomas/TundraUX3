@@ -399,10 +399,10 @@ settings-check-mode-description = Refresh the selected update mode and its relea
 settings-release-available = A newer release is available
 settings-release-different = The installed build differs; you can replace it with this release
 
-settings-animation-advanced = Animation timing
+settings-animation-advanced = Animation timing (ms)
 settings-animation-open = Adjust timing
 settings-animation-close = Esc Close
-settings-animation-advanced-help = Fine-tune acceleration, cruise and deceleration times for pages, dialogs and menus.
+settings-animation-advanced-help = Edit nine phase times together; use Tab to move between fields and save once.
 settings-animation-page = Page
 settings-animation-dialog = Dialog
 settings-animation-menu = Menu
@@ -411,7 +411,7 @@ settings-animation-cruise = Cruise
 settings-animation-deceleration = Deceleration
 settings-animation-phase-label = { $kind } · { $phase }
 settings-animation-ms = { $value } ms
-settings-animation-phase-help = Open a value to adjust or type 1–2000 ms, then confirm. Times apply at 100% speed.
+settings-animation-phase-help = Adjust or type 1–2000 ms in the form. Times apply at 100% speed.
 settings-number-range = Range: { $min }–{ $max }
 settings-number-help = Left/Right: move cursor · Type digits · −/+: adjust · Enter: confirm · Esc: cancel
 

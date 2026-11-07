@@ -105,12 +105,9 @@ impl ShellSession {
                     .cards
                     .into_iter()
                     .flat_map(|card| card.items)
-                    .chain(
-                        model
-                            .animation_editor
-                            .into_iter()
-                            .flat_map(|editor| editor.items),
-                    )
+                    .chain(animation::phase_items(
+                        self.app.active_appearance().unwrap(),
+                    ))
                     .find(|item| item.field == field)
                     .map(|item| item.label)
             })

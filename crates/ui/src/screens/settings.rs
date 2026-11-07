@@ -699,7 +699,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         animation_editor: model
             .animation_editor
             .as_ref()
-            .map(|editor| SettingsAnimationLayout::new(area, editor)),
+            .map(|editor| editor.layout(area)),
         number_editor: model
             .number_editor
             .as_ref()
@@ -770,14 +770,13 @@ pub fn settings_hit_test(layout: &SettingsLayout, point: (u16, u16)) -> Option<S
         return contains(editor.input, point).then_some(SettingsHitTarget::NumberEditor);
     }
     if let Some(editor) = &layout.animation_editor {
-        if contains(editor.close, point) {
-            return Some(SettingsHitTarget::OverlayCancel);
-        }
-        return editor
-            .fields
-            .iter()
-            .find(|field| contains(field.area, point))
-            .map(|field| SettingsHitTarget::Field(field.field));
+        return if contains(editor.submit, point) {
+            Some(SettingsHitTarget::OverlayApply)
+        } else if contains(editor.cancel, point) {
+            Some(SettingsHitTarget::OverlayCancel)
+        } else {
+            None
+        };
     }
 
     if layout.update_confirmation.is_some() {
@@ -961,10 +960,9 @@ pub(crate) fn render_settings_overlay_underlay(
     context: &RenderContext,
 ) {
     if model.number_editor.is_some()
-        && let (Some(editor), Some(editor_layout)) =
-            (&model.animation_editor, &layout.animation_editor)
+        && let (Some(editor), Some(_)) = (&model.animation_editor, &layout.animation_editor)
     {
-        animation::render(frame, editor_layout, editor, context);
+        editor.render_frame(frame, layout.main, context);
     }
 }
 
@@ -974,11 +972,6 @@ pub(crate) fn render_settings_overlay_top(
     model: &SettingsViewModel,
     context: &RenderContext,
 ) {
-    if let (Some(editor), Some(editor_layout)) = (&model.animation_editor, &layout.animation_editor)
-        && model.number_editor.is_none()
-    {
-        animation::render(frame, editor_layout, editor, context);
-    }
     if let Some(picker) = &model.picker {
         render_picker(frame, layout.main, picker, context);
     }

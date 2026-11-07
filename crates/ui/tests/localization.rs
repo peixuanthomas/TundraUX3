@@ -225,7 +225,7 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
                         ui::LogsHitTarget::Filters,
                         i18n::tr!("ui-logs-source-filters"),
                     ),
-                    (ui::LogsHitTarget::More, i18n::tr!("ui-logs-more")),
+                    (ui::LogsHitTarget::Expert, i18n::tr!("ui-logs-expert")),
                 ];
                 assert_eq!(layout.controls.len(), controls.len());
                 for (target, label) in controls {

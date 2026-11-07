@@ -36,6 +36,8 @@ pub struct LogsViewModel {
     pub feedback: Option<String>,
     pub following: bool,
     pub new_events: usize,
+    pub expert_open: bool,
+    pub expert_focus: Option<usize>,
     pub more_selected: Option<usize>,
     pub filter_form: Option<crate::ManagementForm>,
     pub selected_file: bool,

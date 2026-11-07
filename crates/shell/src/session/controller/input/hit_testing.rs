@@ -477,7 +477,7 @@ pub(in crate::session) fn build_shell_hit_map(
                     .number_editor
                     .map(|editor| editor.dialog)
                     .or(layout.picker_dialog)
-                    .or(layout.animation_editor.map(|editor| editor.dialog))
+                    .or(layout.animation_editor.map(|editor| editor.form))
                     .or(layout.color_editor)
                     .or(layout.weather_location_editor)
                     .or(layout.file_extensions_editor)

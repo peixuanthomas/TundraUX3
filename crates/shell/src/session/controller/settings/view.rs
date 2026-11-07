@@ -167,13 +167,10 @@ impl ShellSession {
                 && !state.category.is_system_device())
             .then_some(i18n::tr!("settings-locked")),
             scroll_offset: state.scroll_offset,
-            animation_editor: state.animation_editor.as_ref().map(|editor| {
-                ui::SettingsAnimationEditorViewModel {
-                    items: super::animation::phase_items(appearance),
-                    selected_index: editor.selected_index,
-                    scroll_offset: editor.scroll_offset,
-                }
-            }),
+            animation_editor: state
+                .animation_editor
+                .as_ref()
+                .map(|editor| editor.form.clone()),
             number_editor: state.number_editor.as_ref().map(|editor| {
                 ui::SettingsNumberEditorViewModel {
                     field: editor.field,
