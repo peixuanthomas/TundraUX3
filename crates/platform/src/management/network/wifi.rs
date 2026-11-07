@@ -186,10 +186,7 @@ pub(super) fn row(
             vec![password.clone()]
         },
         disabled_reason: if unsupported {
-            Some(
-                "This network needs an unsupported security type. Use the system network settings."
-                    .into(),
-            )
+            Some(i18n::tr!("management-network-wifi-unsupported").into())
         } else {
             reason
         },
@@ -213,11 +210,11 @@ pub(super) fn row(
         cells: vec![
             display_ssid(&ap.ssid),
             if ap.connected {
-                "Connected"
+                i18n::tr!("management-network-wifi-connected")
             } else if ap.saved_uuid.is_some() {
-                "Saved"
+                i18n::tr!("management-network-wifi-saved")
             } else {
-                "Available"
+                i18n::tr!("management-network-wifi-available")
             }
             .into(),
             format!("{}%", ap.signal),

@@ -345,7 +345,7 @@ pub(super) fn detect(name: &str) -> Owner {
             OwnerKind::Unknown,
             None,
             String::new(),
-            "Invalid interface name",
+            i18n::tr!("management-network-invalid-interface"),
         );
     }
     let nm = nm_device(name).ok().filter(|d| d.managed);
@@ -364,7 +364,7 @@ pub(super) fn detect(name: &str) -> Owner {
         });
     if let Some(mut owner) = netplan {
         if interfaces.is_some() {
-            owner.reason = Some("Both Netplan and Debian interfaces define this device; resolve ownership outside Tundra first".into());
+            owner.reason = Some(i18n::tr!("management-network-conflicting-sources").into());
         }
         return owner;
     }
@@ -373,7 +373,7 @@ pub(super) fn detect(name: &str) -> Owner {
             OwnerKind::Netplan,
             None,
             String::new(),
-            "A Netplan-generated profile exists, but its original YAML definition cannot be identified exactly",
+            i18n::tr!("management-network-netplan-source-missing"),
         );
     }
     if let Some(owner) = interfaces {
@@ -382,7 +382,7 @@ pub(super) fn detect(name: &str) -> Owner {
                 OwnerKind::Unknown,
                 owner.path,
                 name.into(),
-                "More than one network manager claims this device",
+                i18n::tr!("management-network-multiple-managers"),
             );
         }
         return owner;
@@ -393,14 +393,14 @@ pub(super) fn detect(name: &str) -> Owner {
                 OwnerKind::Unknown,
                 None,
                 name.into(),
-                "Both NetworkManager and networkd claim this device",
+                i18n::tr!("management-network-nm-networkd-conflict"),
             );
         }
         let reason = match device.filename.as_deref() {
             Some(p) if native_nm_file(p) => None,
-            Some(_) => Some("NetworkManager's profile is generated or belongs to another configuration source".into()),
+            Some(_) => Some(i18n::tr!("management-network-nm-generated").into()),
             None if device.uuid.is_empty() => None,
-            None => Some("The active NetworkManager profile has no persistent source; only its owner can safely replace it".into()),
+            None => Some(i18n::tr!("management-network-nm-not-persistent").into()),
         };
         return Owner {
             kind: OwnerKind::NetworkManager,
@@ -412,12 +412,9 @@ pub(super) fn detect(name: &str) -> Owner {
     }
     if let Some(path) = networkd {
         let reason = if !path.starts_with("/etc/systemd/network") {
-            Some(
-                "networkd uses a generated or vendor-owned file; Tundra does not take over it"
-                    .into(),
-            )
+            Some(i18n::tr!("management-network-networkd-generated").into())
         } else if has_networkd_dropins(&path) {
-            Some("networkd drop-in files affect this interface; editing the main file alone is ambiguous".into())
+            Some(i18n::tr!("management-network-networkd-dropins").into())
         } else {
             fs::read_to_string(&path)
                 .map_err(|e| e.to_string())
@@ -484,13 +481,16 @@ fn simple_networkd(text: &str, interface: &str) -> Result<(), String> {
         if line.starts_with('[') && line.ends_with(']') {
             section = &line[1..line.len() - 1];
             if !matches!(section, "Match" | "Network") {
-                return Err(format!(
-                    "The [{section}] section needs a more detailed network editor"
+                return Err(i18n::tr!(
+                    "management-network-networkd-section",
+                    section = section
                 ));
             }
             continue;
         }
-        let (key, value) = line.split_once('=').ok_or("Invalid networkd directive")?;
+        let (key, value) = line
+            .split_once('=')
+            .ok_or(i18n::tr!("management-network-networkd-invalid"))?;
         match (section, key.trim()) {
             ("Match", "Name") if value.trim() == interface => exact_match = true,
             (
@@ -498,15 +498,15 @@ fn simple_networkd(text: &str, interface: &str) -> Result<(), String> {
                 "DHCP" | "Address" | "Gateway" | "DNS" | "IPv6AcceptRA" | "LinkLocalAddressing",
             ) => {}
             _ => {
-                return Err(format!(
-                    "networkd directive {} needs a more detailed network editor",
-                    key.trim()
+                return Err(i18n::tr!(
+                    "management-network-networkd-directive",
+                    directive = key.trim()
                 ));
             }
         }
     }
     if !exact_match {
-        return Err("networkd's match does not select exactly this interface".into());
+        return Err(i18n::tr!("management-network-networkd-match").into());
     }
     Ok(())
 }
@@ -563,11 +563,11 @@ fn netplan_owner(name: &str) -> Option<Owner> {
                         continue;
                     }
                     let reason = if category != "ethernets" {
-                        Some("This Netplan device is not a plain Ethernet definition; personal Wi-Fi editing is available for native NetworkManager only".into())
+                        Some(i18n::tr!("management-network-netplan-complex").into())
                     } else if root != "/etc/netplan" {
-                        Some("The definition is supplied by a vendor or runtime generator".into())
+                        Some(i18n::tr!("management-network-vendor-definition").into())
                     } else if text.contains("cloud-init") || text.contains("will not persist") {
-                        Some("This Netplan file is generated by cloud-init; edit its owning source outside Tundra".into())
+                        Some(i18n::tr!("management-network-cloud-init").into())
                     } else {
                         None
                     };
@@ -587,12 +587,12 @@ fn netplan_owner(name: &str) -> Option<Owner> {
             OwnerKind::Netplan,
             None,
             name.into(),
-            "Several Netplan definitions match this device; merged ownership cannot be edited safely",
+            i18n::tr!("management-network-netplan-multiple"),
         ));
     }
     let mut owner = found.pop()?;
     if unreadable {
-        owner.reason = Some("Some Netplan files could not be read or parsed, so configuration ownership is incomplete".into());
+        owner.reason = Some(i18n::tr!("management-network-netplan-unreadable").into());
     }
     Some(owner)
 }
@@ -609,7 +609,7 @@ fn interfaces_files() -> (Vec<PathBuf>, Option<String>) {
         let text = match fs::read_to_string(&files[position]) {
             Ok(t) => t,
             Err(_) => {
-                reason = Some("Some included interfaces files cannot be read; configuration ownership is incomplete".into());
+                reason = Some(i18n::tr!("management-network-interfaces-unreadable").into());
                 position += 1;
                 continue;
             }
@@ -629,7 +629,7 @@ fn interfaces_files() -> (Vec<PathBuf>, Option<String>) {
                 || !(words[0] == "source" && words[1] == "/etc/network/interfaces.d/*"
                     || words[0] == "source-directory" && words[1] == "/etc/network/interfaces.d")
             {
-                reason = Some("interfaces uses custom include paths or patterns; edit it through its owning administrator".into());
+                reason = Some(i18n::tr!("management-network-interfaces-custom-includes").into());
                 continue;
             }
             match fs::read_dir("/etc/network/interfaces.d") {
@@ -637,7 +637,7 @@ fn interfaces_files() -> (Vec<PathBuf>, Option<String>) {
                     for entry in entries {
                         let Ok(entry) = entry else {
                             reason = Some(
-                                "An interfaces include directory could not be read completely"
+                                i18n::tr!("management-network-interfaces-incomplete-directory")
                                     .into(),
                             );
                             continue;
@@ -660,11 +660,13 @@ fn interfaces_files() -> (Vec<PathBuf>, Option<String>) {
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => reason = Some("The interfaces include directory cannot be read".into()),
+                Err(_) => {
+                    reason = Some(i18n::tr!("management-network-interfaces-directory").into())
+                }
             }
         }
         if files.len() > 256 {
-            reason = Some("Too many interfaces include files to establish ownership safely".into());
+            reason = Some(i18n::tr!("management-network-interfaces-limit").into());
             break;
         }
     }
@@ -690,7 +692,7 @@ fn interfaces_owner(name: &str) -> Option<Owner> {
             OwnerKind::Interfaces,
             None,
             name.into(),
-            "Several interfaces files define this device",
+            i18n::tr!("management-network-interfaces-multiple"),
         ));
     }
     let Some((path, text)) = found.pop() else {
@@ -723,12 +725,10 @@ fn simple_interfaces(text: &str, interface: &str) -> Result<(), String> {
                     || !matches!(p[2], "inet" | "inet6")
                     || !matches!(p[3], "dhcp" | "static" | "manual" | "auto")
                 {
-                    return Err(
-                        "Only plain DHCP/static IPv4/IPv6 interfaces stanzas are supported".into(),
-                    );
+                    return Err(i18n::tr!("management-network-interfaces-complex").into());
                 }
                 if families.insert(p[2], ()).is_some() {
-                    return Err("Several stanzas define the same address family".into());
+                    return Err(i18n::tr!("management-network-interfaces-family").into());
                 }
             }
         } else if matches!(
@@ -737,9 +737,9 @@ fn simple_interfaces(text: &str, interface: &str) -> Result<(), String> {
         ) {
             target = false;
         } else if target && !matches!(p[0], "address" | "netmask" | "gateway" | "dns-nameservers") {
-            return Err(format!(
-                "interfaces directive {} may run scripts or affect other settings; use the owning editor",
-                p[0]
+            return Err(i18n::tr!(
+                "management-network-interfaces-directive",
+                directive = p[0]
             ));
         }
     }
@@ -1510,6 +1510,47 @@ mod tests {
             ("dns".into(), "192.0.2.53".into()),
         ])
     }
+    #[test]
+    fn network_status_and_read_only_reasons_use_the_selected_language() {
+        let language = i18n::LanguageSnapshotData {
+            code: "zh-CN".into(),
+            generation: 1,
+            current: vec![
+                include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../ascii-assets/assets/locales/zh-CN/modules/management-network-disks.ftl"
+                ))
+                .into(),
+            ],
+            english: Vec::new(),
+        }
+        .restore()
+        .unwrap();
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(language));
+        assert!(detect("bad/name").reason.unwrap().contains("接口"));
+        assert!(
+            simple_networkd("[Link]\nMTUBytes=1500\n", "eth0")
+                .unwrap_err()
+                .contains("配置段")
+        );
+        let row = wifi::row(
+            wifi::WifiAccessPoint {
+                interface: "wlan0".into(),
+                path: "/ap/1".into(),
+                ssid: b"demo".to_vec(),
+                signal: 70,
+                security: "open".into(),
+                connected: false,
+                saved_uuid: None,
+                password_saved: false,
+            },
+            &ManagementRow::default(),
+            None,
+        );
+        assert_eq!(row.cells[1], "可连接");
+        assert_eq!(row.identity["security"], "open");
+    }
+
     #[test]
     fn rejects_invalid_address_families_prefixes_and_dns() {
         for (key, bad) in [

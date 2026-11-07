@@ -84,15 +84,25 @@ pub fn query(
                 name.into(),
                 entry["operstate"].as_str().unwrap_or("unknown").into(),
                 address_list,
-                if owner.kind == config::OwnerKind::Unknown { i18n::tr!("management-network-owner-unknown") } else { owner.label().into() },
+                if owner.kind == config::OwnerKind::Unknown {
+                    i18n::tr!("management-network-owner-unknown")
+                } else {
+                    owner.label().into()
+                },
             ],
             detail: vec![
-                (i18n::tr!("management-network-config-source"), owner.source_display()),
+                (
+                    i18n::tr!("management-network-config-source"),
+                    owner.source_display(),
+                ),
                 (
                     i18n::tr!("management-network-read-only"),
                     owner.reason.clone().unwrap_or_default(),
                 ),
-            ].into_iter().filter(|(_, value)| !value.is_empty()).collect(),
+            ]
+            .into_iter()
+            .filter(|(_, value)| !value.is_empty())
+            .collect(),
             identity: interface_identity(name)?,
             ..Default::default()
         };
@@ -112,7 +122,16 @@ pub fn query(
             fields,
             confirm: true,
             privileged: true,
-            disabled_reason: owner.reason.clone().or_else(|| owner.path.is_none().then(|| "There is no active persistent profile to configure; activate a native profile first".into())).or_else(recovery_unavailable),
+            disabled_reason: owner
+                .reason
+                .clone()
+                .or_else(|| {
+                    owner
+                        .path
+                        .is_none()
+                        .then(|| i18n::tr!("management-network-profile-missing").into())
+                })
+                .or_else(recovery_unavailable),
             ..Default::default()
         });
         if owner.kind == config::OwnerKind::NetworkManager
@@ -215,12 +234,16 @@ pub fn query(
                 ("source".into(), path.display().to_string()),
             ]);
             let mut reason = None;
-            match std::fs::read(path) { Ok(bytes) => { identity.insert("configuration".into(), fingerprint(&bytes)); }, Err(_) => reason = Some("Authorize reading protected network settings before deleting this saved profile".into()) }
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    identity.insert("configuration".into(), fingerprint(&bytes));
+                }
+                Err(_) => {
+                    reason = Some(i18n::tr!("management-network-forget-authorization").into())
+                }
+            }
             if active.lines().any(|s| s == profile.uuid) {
-                reason = Some(
-                    "Use Forget on the active interface so disconnection has independent recovery"
-                        .into(),
-                );
+                reason = Some(i18n::tr!("management-network-forget-active").into());
             }
             snapshot.rows.push(ManagementRow {
                 id: format!("profile:{}", profile.uuid),
@@ -474,7 +497,7 @@ fn field(id: &str, label: &str, value: &str, required: bool, choices: &[&str]) -
 
 fn recovery_unavailable() -> Option<String> {
     if !std::path::Path::new("/run/systemd/system").is_dir() || program("systemd-run").is_err() {
-        Some("No systemd system manager is available to run recovery independently of SSH and the UI".into())
+        Some(i18n::tr!("management-network-recovery-unavailable").into())
     } else {
         None
     }
