@@ -117,3 +117,25 @@ fn scheduled_run_and_available_pause_or_resume_are_primary() {
         );
     }
 }
+
+#[test]
+fn danger_color_uses_operation_risk_independently_of_confirmation() {
+    for (confirm, dangerous, expected) in [
+        (false, true, ui::components::ComponentTone::Danger),
+        (true, false, ui::components::ComponentTone::Default),
+    ] {
+        let mut session = shortcut_action_state(ManagementKind::Processes, "cont");
+        let action = &mut session.pages.management.management_state.snapshot.rows[0].actions[0];
+        action.confirm = confirm;
+        action.dangerous = dangerous;
+        let actions = session.management_actions();
+        let index = actions
+            .iter()
+            .position(|(action, _)| action.id == "cont")
+            .unwrap();
+        assert_eq!(
+            session.to_management_view_model().action_tones[index],
+            expected
+        );
+    }
+}

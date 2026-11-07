@@ -70,6 +70,7 @@ pub fn task_row(summary: &TaskSummary, bucket: &str, privileged: bool) -> Manage
         privileged: (privileged && matches!(id, "task_output" | "task_cleanup" | "task_cancel"))
             || (bucket.starts_with("scheduled-") && id == "task_cancel"),
         confirm: id == "task_cancel",
+        dangerous: matches!(id, "task_cancel" | "task_cleanup"),
         disabled_reason: disabled.then(|| i18n::tr!("task-action-unavailable")),
         primary: id != "task_cleanup",
         ..Default::default()

@@ -278,6 +278,7 @@ fn service_row(record: &ServiceRecord, scope: Scope) -> ManagementRow {
             id: id.into(),
             label: label.into(),
             confirm: id != "view_logs",
+            dangerous: matches!(id, "stop" | "restart" | "disable"),
             privileged: scope == Scope::System && id != "view_logs",
             disabled_reason,
             primary: if matches!(

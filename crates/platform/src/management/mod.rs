@@ -131,6 +131,8 @@ pub struct ManagementAction {
     pub label: String,
     pub fields: Vec<ManagementField>,
     pub confirm: bool,
+    #[serde(default)]
+    pub dangerous: bool,
     pub privileged: bool,
     #[serde(default)]
     pub requires_approval: bool,

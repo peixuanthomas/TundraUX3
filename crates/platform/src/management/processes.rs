@@ -432,6 +432,7 @@ fn row(process: &ProcessRecord, boot_id: &str, depth: usize) -> ManagementRow {
         id: id.into(),
         label: label.into(),
         confirm: true,
+        dangerous: matches!(id, "term" | "kill" | "stop"),
         // Raising priority can require CAP_SYS_NICE even for the caller's own process.
         privileged: id == "nice" || process.uid != caller,
         disabled_reason: protected

@@ -432,6 +432,7 @@ pub(super) fn query(
                     label: label.into(),
                     group: "configuration".into(),
                     confirm: false,
+                    dangerous: id == "source_remove",
                     ..Default::default()
                 });
             }

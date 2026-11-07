@@ -283,6 +283,7 @@ fn action(id: &str, label: &str, privileged: bool) -> ManagementAction {
         id: id.into(),
         label: label.into(),
         confirm: privileged,
+        dangerous: id == "remove",
         privileged,
         primary: matches!(id, "install" | "remove" | "refresh" | "pacman_install"),
         group: if matches!(id, "scope_search" | "scope_installed" | "scope_updates") {

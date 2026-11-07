@@ -72,3 +72,5 @@ table-column-level = Level
 table-column-module = Module
 table-column-operation = Operation
 table-column-message = Message
+
+management-process-target = { $name } (PID { $pid })

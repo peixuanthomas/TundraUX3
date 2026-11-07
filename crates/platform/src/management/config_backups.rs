@@ -808,6 +808,7 @@ fn query_at(
         }];
         actions.push(ManagementAction {
             id: "restore".into(),
+            dangerous: true,
             label: i18n::tr!("platform-backups-restore").into(),
             privileged: true,
             confirm: true,
@@ -910,6 +911,7 @@ fn legacy_rows_excluding(
             ]),
             actions: vec![ManagementAction {
                 id: "restore_legacy".into(),
+                dangerous: true,
                 label: i18n::tr!("platform-backups-restore-legacy").into(),
                 privileged: true,
                 confirm: true,

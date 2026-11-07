@@ -72,3 +72,5 @@ table-column-level = 级别
 table-column-module = 模块
 table-column-operation = 操作
 table-column-message = 消息
+
+management-process-target = { $name }（PID { $pid }）

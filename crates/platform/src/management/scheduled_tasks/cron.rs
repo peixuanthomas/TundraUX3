@@ -365,6 +365,7 @@ fn rows(
             actions.push(advanced);
             actions.push(ManagementAction {
                 id: "delete_task".into(),
+                dangerous: true,
                 label: i18n::tr!("schedule-delete"),
                 privileged: true,
                 confirm: true,

@@ -253,6 +253,7 @@ fn row(
             ];
             row.actions.push(ManagementAction {
                 id: "restore_legacy".into(),
+                dangerous: true,
                 label: i18n::tr!("platform-backups-restore-legacy"),
                 privileged: true,
                 confirm: true,
@@ -275,6 +276,7 @@ fn row(
         });
         row.actions.push(ManagementAction {
             id: "restore".into(),
+            dangerous: true,
             label: i18n::tr!("platform-backups-restore"),
             privileged: true,
             confirm: true,
@@ -453,6 +455,7 @@ pub(super) fn query_at(
             .values
             .insert("cleanup_token".into(), token(query, &ordered)?);
         action.confirm = true;
+        action.dangerous = true;
         action.privileged = true;
         action.primary = true;
         action.disabled_reason = filtered

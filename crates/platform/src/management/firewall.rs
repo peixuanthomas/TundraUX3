@@ -659,6 +659,7 @@ fn snapshot(state: State, filter: &str) -> Result<ManagementSnapshot, Management
             actions: if allow {
                 vec![ManagementAction {
                     id: "remove_rule".into(),
+                    dangerous: true,
                     label: i18n::tr!("platform-firewall-remove-rule").into(),
                     confirm: true,
                     privileged: true,

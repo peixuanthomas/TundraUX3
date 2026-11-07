@@ -13,6 +13,25 @@ pub(super) fn row_id(kind: Option<ManagementKind>, row: &ManagementRow) -> Strin
 }
 
 impl ShellSession {
+    pub(super) fn management_target_label(
+        &self,
+        id: &str,
+        identity: &BTreeMap<String, String>,
+    ) -> String {
+        let state = &self.pages.management.management_state;
+        if state.kind == Some(ManagementKind::Processes)
+            && let Some(name) = state
+                .snapshot
+                .rows
+                .iter()
+                .find(|row| row.id == id && &row.identity == identity)
+                .and_then(|row| row.cells.first())
+        {
+            return i18n::tr!("management-process-target", name = name.trim(), pid = id);
+        }
+        id.to_owned()
+    }
+
     pub(in crate::session) fn management_keyboard_target(&self) -> String {
         self.pages
             .management
@@ -170,6 +189,7 @@ impl ShellSession {
                     action.privileged |= candidate.privileged;
                     action.requires_approval |= candidate.requires_approval;
                     action.confirm |= candidate.confirm;
+                    action.dangerous |= candidate.dangerous;
                 }
                 if !rows.iter().all(|row| {
                     row.actions.iter().any(|candidate| {

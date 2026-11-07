@@ -590,3 +590,33 @@ fn management_context_menu_preserves_selected_targets_and_selects_new_targets() 
         );
     }
 }
+
+#[test]
+fn process_batch_confirmation_shows_each_name_and_pid() {
+    let mut session = list_state(ManagementKind::Processes);
+    for (index, row) in session
+        .pages
+        .management
+        .management_state
+        .snapshot
+        .rows
+        .iter_mut()
+        .enumerate()
+    {
+        row.cells[0] = format!("worker {index}");
+        row.actions[0].confirm = true;
+        row.actions[0].privileged = false;
+    }
+    session.select_management_row(0, false);
+    session.select_management_range(1, false);
+    let (action, row) = session
+        .selected_management_actions()
+        .into_iter()
+        .find(|(action, _)| action.id == "term")
+        .unwrap();
+    session.activate_management_item(action, row);
+    let form = session.to_management_view_model().form.unwrap();
+    for text in ["worker 0", "101", "worker 1", "102"] {
+        assert!(form.message.contains(text));
+    }
+}

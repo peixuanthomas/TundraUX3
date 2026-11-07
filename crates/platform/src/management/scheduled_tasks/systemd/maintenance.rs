@@ -187,6 +187,7 @@ pub(super) fn append_actions(
     let owned = editable_path(scope, timer, props, flag);
     actions.push(ManagementAction {
         id: "delete_task".into(),
+        dangerous: true,
         label: i18n::tr!("schedule-delete"),
         privileged: true,
         confirm: true,

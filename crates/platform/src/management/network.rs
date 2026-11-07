@@ -171,6 +171,7 @@ pub fn query(
                         id: id.into(),
                         label: label.into(),
                         confirm: true,
+                        dangerous: true,
                         privileged: true,
                         disabled_reason: owner.reason.clone().or_else(recovery_unavailable),
                         ..Default::default()
@@ -239,6 +240,7 @@ pub fn query(
                 ],
                 actions: vec![ManagementAction {
                     id: "forget_saved_wifi".into(),
+                    dangerous: true,
                     label: "Forget saved Wi-Fi profile".into(),
                     confirm: true,
                     privileged: true,

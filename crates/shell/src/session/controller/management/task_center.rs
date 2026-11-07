@@ -440,6 +440,7 @@ impl ShellSession {
                             serde_json::to_string(&preview).expect("task preview serializes"),
                         );
                         action.confirm = true;
+                        action.dangerous = true;
                         self.pages.management.management_state.form = Some(ManagementEditor {
                             title: i18n::tr!("task-action-cleanup"),
                             message: text,
@@ -447,7 +448,7 @@ impl ShellSession {
                             instance: PageInstanceId::new().get(),
                             input_states: Default::default(),
                             fields: vec![],
-                            selected: 0,
+                            selected: 1,
                             purpose: FormPurpose::Action(action, Some(row.clone())),
                         });
                         let _ = store;

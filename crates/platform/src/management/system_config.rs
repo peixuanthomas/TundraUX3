@@ -1248,6 +1248,7 @@ pub fn query(
                 )]),
                 actions: vec![ManagementAction {
                     id: "restore".into(),
+                    dangerous: true,
                     label: "Restore old version".into(),
                     privileged: true,
                     confirm: true,

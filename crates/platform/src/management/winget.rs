@@ -356,6 +356,7 @@ fn action(id: &str, key: &str, write: bool) -> ManagementAction {
         id: id.into(),
         label: i18n::tr!(key),
         confirm: write,
+        dangerous: id == "remove",
         privileged: write,
         primary: matches!(id, "install" | "remove" | "upgrade"),
         group: if write { "package" } else { "view" }.into(),

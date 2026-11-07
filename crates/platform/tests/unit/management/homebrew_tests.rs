@@ -168,7 +168,16 @@ fn formula_and_cask_lists_search_details_and_updates_keep_distinct_identities() 
                 .unwrap();
             assert_eq!(row.identity["installed_version"], "1.0");
             assert_eq!(row.identity["available_version"], candidate);
-            assert!(row.actions.iter().any(|action| action.id == "remove"));
+            assert!(
+                row.actions
+                    .iter()
+                    .any(|action| action.id == "remove" && action.dangerous)
+            );
+            assert!(
+                row.actions
+                    .iter()
+                    .all(|action| action.dangerous == (action.id == "remove"))
+            );
             assert!(
                 row.actions.iter().all(|action| !action.privileged
                     && action.requires_approval

@@ -383,6 +383,7 @@ pub fn query(
                 };
                 row.actions.push(ManagementAction {
                     id: "unmount".into(),
+                    dangerous: true,
                     label: "Unmount filesystem".into(),
                     privileged: true,
                     confirm: true,

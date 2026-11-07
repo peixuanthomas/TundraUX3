@@ -125,6 +125,7 @@ impl ShellSession {
                     id: "cancel_operation".into(),
                     label: "Request cancellation".into(),
                     confirm: true,
+                    dangerous: true,
                     ..Default::default()
                 },
                 None,
@@ -535,7 +536,7 @@ impl ShellSession {
                 serde_json::from_str(selection).expect("selected package targets");
             message = targets
                 .into_iter()
-                .map(|target| target.id)
+                .map(|target| self.management_target_label(&target.id, &target.identity))
                 .collect::<Vec<_>>()
                 .join("\n");
         }
@@ -911,7 +912,7 @@ impl ShellSession {
                 if kind == ManagementKind::Tasks {
                     r.cells.first().cloned().unwrap_or_else(|| r.id.clone())
                 } else {
-                    r.id.clone()
+                    self.management_target_label(&r.id, &r.identity)
                 }
             }))
             .chain(
@@ -925,7 +926,7 @@ impl ShellSession {
                         )
                         .expect("selected package targets")
                         .into_iter()
-                        .map(|target| target.id)
+                        .map(|target| self.management_target_label(&target.id, &target.identity))
                     }),
             )
             .chain(

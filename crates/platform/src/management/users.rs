@@ -328,6 +328,10 @@ fn action(id: &str, label: &str, fields: Vec<ManagementField>, group: &str) -> M
         group: group.into(),
         privileged: true,
         confirm: true,
+        dangerous: matches!(
+            id,
+            "user_delete" | "group_delete" | "user_lock" | "user_ssh_remove"
+        ),
         ..Default::default()
     }
 }

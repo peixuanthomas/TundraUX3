@@ -1659,7 +1659,7 @@ impl ShellSession {
         ui::ManagementViewModel {
             workspace: self.management_workspace_model(&actions),
             scope_id: format!("{:?}", s.kind),
-            action_tones: actions.iter().map(|(action, _)| if action.confirm { ui::components::ComponentTone::Danger } else { ui::components::ComponentTone::Default }).collect(),
+            action_tones: actions.iter().map(|(action, _)| if action.dangerous { ui::components::ComponentTone::Danger } else { ui::components::ComponentTone::Default }).collect(),
             detail_action_start: Some(0),
             sort: s.sort,
             column_width_limits: if s.kind == Some(ManagementKind::Packages) {

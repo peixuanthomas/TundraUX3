@@ -214,6 +214,7 @@ fn action(id: &str) -> ManagementAction {
         id: id.into(),
         label: i18n::tr!(format!("management-action-{}", id.replace('_', "-"))),
         requires_approval: !id.starts_with("scope_"),
+        dangerous: id == "remove",
         primary: matches!(id, "install" | "upgrade"),
         group: if id.starts_with("scope_") {
             "view"
