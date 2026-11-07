@@ -1,18 +1,30 @@
-# 语言资源与恢复
+# Language resources and recovery
 
-TundraUX3 的语言资源与视觉主题独立。程序提供 `en-US` 和 `zh-CN`；`zh-Hans` 配置会规范化为 `zh-CN`。默认语言为 `en-US`，不会根据操作系统语言自动改变。
+TundraUX3 provides `en-US` and `zh-CN`, with `en-US` as the default language. A `zh-Hans` setting is normalized to `zh-CN`. Language and visual theme are saved separately.
 
-## 切换和重新加载
+## Switching and reloading
 
-在设置的区域与时间页面选择语言并确认。即使再次选择当前语言，也会重新读取磁盘资源和语言目录。加载、校验及配置保存全部成功后，程序整体发布新语言快照；失败时保留当前语言和配置。键盘和鼠标使用同一个语言选择控件。
+Select and confirm a language in Region & Time. Selecting the current language again also rereads the catalog and resources, allowing updated translations to load.
 
-首次设置中确认语言后，后续向导使用所选语言。CLI 的 `config set language zh-CN` 使用相同的语言目录和资源校验；CLI 普通帮助及交互文案仍使用英文。外部配置修改不会触发文件监听，在下次启动或界面确认语言选择时读取。
+Only after loading, validation, and configuration saving all succeed does Shell publish the new immutable snapshot in a single step. On failure, the current language and configuration are retained. After confirming the language during initial setup, the rest of the wizard uses that language.
 
-## 目录
+`tundra-cli config set language zh-CN` uses the same catalog and validation. After a CLI configuration change, an existing Shell reads it at its next startup or when the language is confirmed again.
 
-源码资源位于 `crates/ascii-assets/assets/locales`，发布后位于程序资源根目录的 `assets/locales`。资源根目录解析与图形资源共用，包括既有环境变量及 Linux 安装位置。语言目录与 `themes` 平级。
+## Directory structure
 
-每个语言包包含 `manifest.toml`：
+Source resources reside in `crates/ascii-assets/assets/locales`; release resources reside in `assets/locales`, alongside `themes`.
+
+Each language pack contains:
+
+```text
+<language>/
+  manifest.toml
+  common/
+  modules/
+  recovery/
+```
+
+Example `manifest.toml`:
 
 ```toml
 format_version = 1
@@ -20,11 +32,11 @@ code = "zh-CN"
 native_name = "简体中文"
 ```
 
-目录名必须等于规范语言代码。Fluent 文件按公共组件、业务模块和启动恢复分别放在 `common`、`modules`、`recovery` 内。新增语言目录在启动或确认语言选择时重新发现；可以先再次选择当前语言，再从更新后的列表选择新语言。
+The directory name and `code` use the canonical language code. `.ftl` files are organized by shared components, application modules, and startup recovery.
 
-## 编写消息
+## Writing messages
 
-使用稳定消息 ID 和完整句子，参数按名称传递，不要依赖参数顺序或在代码中拼接译文片段。例如：
+Use stable message IDs, complete sentences, and named arguments:
 
 ```ftl
 files-copied =
@@ -34,20 +46,28 @@ files-copied =
     }
 ```
 
-中文可以使用同一 ID 和参数，但采用完整的中文句子。数量作为数值参数传递。消息和参数契约来自随程序提供的英文包；翻译包可以有不同的复数分支，但不能改变参数集合。缺失翻译会回退英文。
+Translations may use different plural branches, but their argument sets must match the English contracts. Missing translations fall back to English. `i18n::ids`, `MESSAGE_IDS`, and `MESSAGE_CONTRACTS` are generated at build time.
 
-编译时从英文包生成 `i18n::ids` 消息常量、`MESSAGE_IDS` 和 `MESSAGE_CONTRACTS` 参数契约；缺失内置英文源码或常量名冲突会阻止构建。
+In Rust, use `i18n::msg!` to retain messages and `i18n::tr!` to format them in view models or during rendering. `LocalizedText::Raw` carries raw external text.
 
-Rust 使用 `i18n::msg!` 创建保留 ID 和参数的消息，使用 `LocalizedText::Raw` 显式承载原文。通知、弹窗及状态保存消息对象，在视图模型生成时解析。`i18n::tr!` 用于绘制或视图模型阶段的一次性文本。Shell 使用线程作用域内的不可变快照，使布局和绘制读取同一套内存资源；主题对象不保存语言。
+Commands, actions, and icons are identified by stable IDs or enums, not translated labels. Configuration keys, protocol fields, paths, user input, third-party output, and raw diagnostics remain unchanged. Logs use stable event codes and descriptions in a fixed language.
 
-命令、动作及图标必须以稳定 ID 或枚举识别，不能判断翻译后的显示标签。配置键、协议字段、路径、用户输入、第三方输出和原始诊断不能作为译文处理。日志使用固定语言事件描述、稳定事件代码及原始原因链，可附带消息 ID 和结构化参数，不使用可编辑语言包生成正文。
+## Default-resource repair
 
-## 自动修复
+Default English, Chinese, and graphical resources are checked at startup and on reload:
 
-程序启动和重新加载语言时自动检查英文与简体中文语言资源，启动时还会检查默认图形资源。健康的自定义资源保持原样；缺失或损坏的默认资源从二进制内置内容恢复，按文件原子替换并重新校验。中英文缺失消息会补齐默认条目；其他语言包不自动覆盖。编译时校验内置中文消息的参数与英文一致。
+- Missing or damaged default files are restored from built-in content, with atomic replacement through temporary files in the same directory.
+- Healthy custom resources remain unchanged; missing default entries can be appended to existing files.
+- When the resource directory is not writable, in-memory copies are used and the saved language preference remains unchanged.
+- Startup repair results are shown together; repairs during language reload are reported as part of that operation.
 
-无法写入资源目录时，程序使用内存中的内置默认资源；中文仍可使用中文副本，不需要把应急文件写入临时目录。启动后通过弹窗汇总实际修复及内存兜底结果，同一次程序启动只显示一次。恢复界面仅提供“自动修复并重启”和“退出”：前者重新检查图形和语言资源，成功后沿用正常重启流程；失败时显示原因并保留这两个选项。退出和重启均先保存编辑器恢复数据。长报告支持鼠标滚轮及 PageUp/PageDown，按钮保留在可视区域。语言重载发生修复时会报告该次修复结果。资源暂时不可用不会改写保存的语言偏好。
+The recovery interface offers "Repair automatically and restart" and "Exit", saving editor recovery data before executing the action.
 
-## 验证
+## Validation
 
-`cargo test --locked -p i18n` 校验语言包格式、消息契约、复数、修复和回退。Shell 的语言集成测试验证同语言重载、回滚、目录发现及配置写入失败；UI 测试覆盖中文宽度、长文本和命中区域。提交前运行受影响模块测试与 workspace 回归。Windows、macOS 和 Linux 打包流程都携带完整 `assets` 目录；复制测试验证两种语言的清单、公共文案、业务文案和恢复提示。`python3 scripts/check-localization.py` 校验生产代码的消息引用及两种语言的键覆盖。
+```sh
+cargo test --locked -p i18n
+python3 scripts/check-localization.py
+```
+
+Shell integration tests cover same-language reloads, rollback on failure, catalog discovery, and configuration write failures. UI tests cover Chinese character widths, long text, and hit regions. Release packages must include the complete `assets/` directory.

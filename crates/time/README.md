@@ -1,12 +1,22 @@
 # time
 
-`time` 提供 `NetworkClock`、`ClockDisplay` 和 `ClockSnapshot`。`clock.rs` 推进时间并转换时区，`network.rs` 获取 HTTP 时间；闹钟和计时任务属于 [app](../app/README.md)。
+`time` provides `NetworkClock`, `ClockDisplay`, and `ClockSnapshot`, handling time advancement, HTTP time synchronization, and timezone conversion. Alarms and timer tasks belong to [app](../app/README.md).
 
-1. 默认每 5 分钟依次请求 Google、Cloudflare、Microsoft 的 HTTP `Date` 响应头，每次连接和总请求超时均为 5 秒。这不是 NTP。
-2. 成功后保存 UTC 时间与单调时钟 `Instant`，用经过的时间推进当前值。
-3. 通过 `chrono-tz` 转换到配置的 IANA 时区，夏令时不使用固定偏移。
-4. 同步失败时保留可信的既有时间；没有可信时间时才使用系统时钟。
+## How it works
 
-`NetworkClock::operating_system()` 每次读取当前系统时间和本地时区，不使用已保存的网络时间；Linux Shell 使用此模式。演示平台设置仍可选择平台时钟、默认 HTTP(S) 服务器或自定义地址。自定义地址验证成功后才保存；本 crate 不修改操作系统时间。
+1. By default, request HTTP `Date` response headers from Google, Cloudflare, and Microsoft in sequence every 5 minutes. Each connection timeout and total request timeout is 5 seconds.
+2. After success, retain the UTC time and a monotonic `Instant`, advancing the current value by the elapsed time.
+3. Use `chrono-tz` to convert to the configured IANA timezone; timezone rules handle daylight saving time.
+4. On synchronization failure, retain the most recent trusted time; use the system clock if no trusted time is available.
 
-验证：`cargo test --locked --manifest-path crates/time/Cargo.toml`（从仓库根目录运行，避免与同名依赖混淆）。测试只检查离线日期解析、服务器地址校验和本地时钟计算，不发起 HTTP 请求。
+HTTP time is used for application display and does not change the operating-system time.
+
+`NetworkClock::operating_system()` reads system time and the local timezone on every call. Linux Shell uses this mode. Settings on demonstration platforms can still select the platform clock, default HTTP(S) servers, or a custom address; a custom address is saved after successful validation.
+
+## Validation
+
+```sh
+cargo test --locked --manifest-path crates/time/Cargo.toml
+```
+
+Run from the repository root to avoid confusion with the workspace dependency of the same name. Tests cover offline date parsing, server-address validation, and local-clock calculations without making HTTP requests.

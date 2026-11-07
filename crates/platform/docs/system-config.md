@@ -1,47 +1,52 @@
-# 系统配置文件 / System configuration files
+# System configuration files
 
-系统配置仍在文本编辑器中编辑。服务覆盖配置、软件源和开机挂载配置会打开同一个编辑器，返回时保留原页面。
+Service overrides, package repositories, fstab, and other system files are edited in the same text editor. Saving includes version checks, diff previews, candidate validation, system authorization, backups, and atomic replacement.
 
-## 读取、预览和检查
+## Reading and validation
 
-读取时记录文件内容版本、所有者、用户组和权限。保存前显示内容与属性差异，检查候选文件，再请求系统授权。候选内容只出现在助手的私有连接和临时检查目录，不写入普通运行日志或普通编辑器草稿。检查失败阻止保存；工具缺失或没有检查器时显示“未检查”，必须明确选择继续保存。
+Reads record the file's content version, owner, group, and permissions. Before saving, content and attribute differences are shown, and the corresponding validator runs against a private candidate view.
 
-Linux 检查使用单独进程的私有挂载空间。候选文件覆盖在该进程看见的临时目录中，正式文件不变。SSH 从主配置执行 `sshd -t -ddd`，包括主配置引用的文件和主机密钥。编辑片段时，还必须从 OpenSSH 的解析记录确认主配置实际读到了该片段；仅匹配 Include 模式但没有读取片段不算通过。systemd 使用 `systemd-analyze verify`，保留原服务和其他覆盖配置；用户服务使用 `--user` 和文件对应的 `SYSTEMD_UNIT_PATH`。fstab 使用 `findmnt --verify`，软件源使用各发行版的解析检查。配置有效与网络连接、挂载或服务运行成功分别报告。
+- SSH uses `sshd -t -ddd` to check the main configuration, Include fragments actually read, and host keys.
+- systemd uses `systemd-analyze verify`, preserving the original unit and other overrides; user services use the corresponding `SYSTEMD_UNIT_PATH`.
+- fstab uses `findmnt --verify`; package repositories use the distribution's parsing checks.
+- Time-synchronization configuration can validate multiple candidate files together and back them up as one operation.
 
-## 保存与恢复
+Candidate content appears only in private connections and temporary validation directories. Failed validation blocks saving; when no validator is available, saving without validation must be selected explicitly.
 
-保存通过原子替换完成，保留所有者、用户组、权限、ACL 和扩展属性。新目录与新文件继承最近的已有父目录所有者，避免授权助手把用户服务文件变成 root 所有。文件路径逐层拒绝符号链接。备份完成后再次核对内容版本和父目录；外部改动返回差异检查。保留属性失败则停止写入。
+## Saving and recovery
 
-每次保存先在 `/var/lib/tundraux3/config-backups` 保存恢复记录。目录为 `0700`，记录为 `0600`。记录包含原内容和属性，只有助手可读；不写入普通日志。恢复也先预览差异、检查当前版本和检查候选配置。恢复“原先不存在”会删除本次创建的配置文件，并留下这次删除前的恢复记录。
+Before writing, recheck the original file and its parent directory. Save through atomic replacement, preserving owner, group, permissions, ACLs, and extended attributes. New files inherit the owner of the nearest existing parent directory; symbolic links are rejected at every level of the path.
 
-操作系统校时表单支持一次检查多个候选文件并分组备份。全部版本核对后逐个保存；中途失败时按各文件本次保存后的版本恢复先前写入，遇到外部改动则停止覆盖并报告需恢复的文件。
+Recovery records are in `/var/lib/tundraux3/config-backups`, with directory permissions `0700` and file permissions `0600`. Records contain original content, attributes, and the version after modification.
 
-## 加载与命令行
+Before recovery, preview the diff again, check the current version, and validate the candidate configuration. Restoring an originally absent file deletes the file created by the operation and retains a recovery record for that deletion.
 
-默认仅保存。SSH 的“重新加载”只允许固定的 SSH 服务，并要求提供此次保存的备份编号；检查配置和监听方式后准备独立恢复任务，再加载。必须在 120 秒内从新的真实 SSH 连接执行 `tundra-cli ssh confirm ID`，否则恢复保存前的配置。旧连接或复用旧连接不能确认。详细说明见 [SSH 管理](ssh-management.md)。
+If a multi-file save fails partway through, restore previously written files against their versions from this save. If external changes are found, stop overwriting and report a conflict.
 
-systemd 默认重新读取服务定义；显式选择 `reload_service=true` 才再重新加载该服务。完成后查询服务状态。普通服务加载失败、查询失败或取消等待都保留已保存内容，可查看日志、继续编辑或手动恢复。
+## Loading after saving
 
-外部命令使用 `tundra-cli system-config read|diff|check|apply|permissions|history|restore|reload …`。脚本保存必须提供 `--expected-version`；未验证保存必须显式指定 `--allow-unvalidated`。系统授权不会被 `--yes` 替代。内建 Command Line 使用 `/system-config …`。
+By default, only the configuration is saved.
 
-## 验证
+- Reloading SSH requires the backup ID from this save and `tundra-cli ssh confirm ID` from an actual new connection within 120 seconds; otherwise, the old configuration is restored.
+- systemd rereads service definitions by default; `reload_service=true` also reloads the service.
+- Configuration saving, service loading, and runtime state are reported separately. If loading fails, inspect logs or restore from a backup.
 
-普通自动测试覆盖版本冲突、保存期间的外部改动、父目录替换、取消或拒绝后的原文件、备份权限、ACL 与扩展属性、恢复原先缺失的文件，以及 SSH 片段解析证据。真实检查器测试默认忽略，须在私有 root 挂载空间运行；不修改真实 `/etc`。
+CLI usage:
 
 ```sh
-# 用系统中已有的 sshd，或仅解压 Ubuntu openssh-server 包到私有目录。
-# TUNDRA_TEST_CHECKER_LIBRARIES 可指向同一私有目录中解压的依赖库。
+tundra-cli system-config read|diff|check|apply|permissions|history|restore|reload …
+```
+
+Scripted saves must provide `--expected-version`; saving without validation must explicitly provide `--allow-unvalidated`. In the built-in Command Line, use `/system-config …`.
+
+## Validation
+
+```sh
 TUNDRA_TEST_SSHD=/private/test/usr/sbin/sshd \
   cargo test --locked -p platform real_isolated_ssh -- --ignored
 cargo test --locked -p platform real_isolated_user_service -- --ignored
 ```
 
-检查器测试须以 root 运行；SSH 测试还检查当前挂载空间与系统初始空间不同，在此私有空间提供临时 sshd 分离权限账户。若系统没有 `/run/sshd`，只在运行测试的私有挂载空间覆盖 `/run` 并创建此目录。真实服务重新加载和授权窗口仍需在对应测试主机验收。
-
-## English summary
-
-The existing text editor handles system files. It reads the file version and metadata, previews the content and property differences, checks a private candidate view, requests OS authorization and atomically replaces the file. Failed checks block saving; missing checkers require explicit unvalidated saving. SSH validates the main configuration, actual included fragments and host keys with `sshd -t`; systemd checks the original unit together with its drop-ins. Neither check modifies the live configuration.
-
-Recovery records are protected by a `0700` system directory and `0600` files. Saving retains ownership, permissions, ACLs and extended attributes and rechecks the original file and parent directory after backup. Restoring a previously absent file removes the newly created file and keeps a recovery record of that removal. SSH activation requires the saved backup ID and a real new connection confirmation within 120 seconds; an independent task restores unconfirmed changes. Other service reloads report their result separately from saving.
+Ordinary tests cover version conflicts, external changes, attribute preservation, backup permissions, and recovery. Real-validator tests run as root in a private mount namespace, using a temporary `/etc` and validation tools without changing host configuration.
 
 References: [OpenSSH sshd](https://man.openbsd.org/sshd.8), [OpenSSH Include parser](https://github.com/openssh/openssh-portable/blob/master/servconf.c), [systemd-analyze](https://www.freedesktop.org/software/systemd/man/latest/systemd-analyze.html).

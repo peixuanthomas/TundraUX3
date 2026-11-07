@@ -37,9 +37,7 @@ impl UsersDocument {
 
         if self.schema_version < 3 {
             for user in &mut self.users {
-                if user.appearance.is_legacy_default() {
-                    user.appearance = AppearanceConfig::default();
-                }
+                user.appearance.migrate_legacy_colors();
             }
         }
         if self.schema_version < 4 {

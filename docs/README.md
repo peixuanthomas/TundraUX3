@@ -1,37 +1,54 @@
-# 文档索引
+# Documentation index
 
-[English](../README.md) · [简体中文](README.zh-CN.md)
+[English](../README.md) · [Simplified Chinese](README.zh-CN.md)
 
-## 从这里开始
+## Getting started and development
 
-| 需要了解什么 | 入口 |
+| Topic | Documentation |
 | --- | --- |
-| 安装、运行与当前限制 | [项目 README](README.zh-CN.md) |
-| 整体分工、构建与打包 | [技术文档](README-TECHNICAL.md) |
-| 检查命令、PTY 和 CI | [测试指南](testing.md) |
-| 新增 Linux 管理功能的真实工具与输入验收 | [2026-10-16 验收记录](linux-administration-validation.md) |
-| 非命令行用户的运维流程、规模测量与本轮验收 | [2026-10-26 验收记录](operations-usability-validation.md) |
-| 用户交互第一阶段修复与验证 | [2026-11-07 修复记录](ui-usability-fixes-2026-11-07.md) |
-| 所有页面的共同交互要求 | [UI 要求](UI-requirements.md) |
-| 原生 UI automation 画面、按钮和文案检查 | [2026-10-31 界面验收](ui-review-2026-10-31.md) |
-| 各页面是否适合多选、管理页的多选规则 | [列表多选检查](list-selection.md) |
-| 已发布版本的变化 | [CHANGELOG](CHANGELOG.md) |
-| Linux 运行依赖和便携安装 | [Linux 说明](packaging/linux/README-LINUX.txt) |
+| Features, installation, and interface controls | [Chinese README](README.zh-CN.md) · [English README](../README.md) |
+| Architecture, building, testing, and packaging overview | [Technical documentation](README-TECHNICAL.md) |
+| Automated tests, real terminals, and platform acceptance checks | [Testing guide](testing.md) |
+| Interface interaction and acceptance criteria | [UI requirements](UI-requirements.md) |
+| Linux runtime dependencies and portable updates | [Linux runtime notes](packaging/linux/README-LINUX.txt) |
+| Building and releasing bundled Vim | [Bundled Vim](packaging/vim.md) |
 
-## 按功能查找
+## Feature guides
 
-| 功能 | 文档 |
+| Topic | Documentation |
 | --- | --- |
-| 页面、焦点、返回与弹窗 | [Shell](../crates/shell/README.md) |
-| 文件、编辑器、启动器与应用状态 | [app](../crates/app/README.md) |
-| 系统服务、进程、软件包、网络、磁盘和账户 | [platform](../crates/platform/README.md) |
-| 命令行与脚本 | [CLI](../crates/cli/README.md) |
-| 批准、密码和管理任务 | [AutoAdmin](../crates/auto-admin/README.md) |
-| 日志、查询、跟随、导出和清理 | [runtime-log](../crates/runtime-log/README.md) |
-| 语言资源与恢复 | [i18n](../crates/i18n/docs/localization.md) |
-| 保存、格式校验和损坏恢复 | [storage](../crates/storage/README.md) |
-| 异常报告和后台任务 | [watchdog](../crates/watchdog/README.md) |
+| Standard editor, Vim, and script debugging | [Editor and script workspace](source-editor.md) |
+| Editor computation and benchmarks for large files | [Editor large-file support](editor-scalability.md) |
+| List multiselection behavior on each page | [List multiselection](list-selection.md) |
+| Linux services, packages, networks, and disks | [Linux system management](../crates/platform/docs/linux-management.md) |
+| CLI commands, diagnostics, and UI control | [CLI guide](../crates/cli/README.md) |
+| Built-in applications and Launcher | [Application guide](../crates/app/docs/applications.md) |
+| Log queries and export | [Log guide](../crates/runtime-log/docs/logs.md) |
+| Language resources and recovery | [Localization guide](../crates/i18n/docs/localization.md) |
 
-其他 crate 见[完整分工表](README-TECHNICAL.md#crate-分工)。单个 crate 的说明放在 `crates/<crate>/README.md` 或其 `docs/`；本目录只保留跨 crate 的说明、规范、发行和历史验证记录。
+## Crate documentation
 
-`packaging/releases/` 记录对应已发布版本；`packaging/linux/VALIDATION-*.md` 是当时的验证记录，不能据此推断当前仍支持旧系统包更新。
+| Crate | Responsibilities and documentation |
+| --- | --- |
+| [shell](../crates/shell/README.md) | Pages, navigation, input, dialogs, and full-frame composition |
+| [app](../crates/app/README.md) | Application state, files, editor, Launcher, and updates |
+| [ui](../crates/ui/README.md) | Shared controls, layouts, themes, rendering, and animation |
+| [cli](../crates/cli/README.md) | External commands, REPL, diagnostics, and UI control |
+| [platform](../crates/platform/README.md) | File, process, package, and operating-system interfaces |
+| [terminal-runtime](../crates/terminal-runtime/README.md) | Host and child terminals |
+| [vim-runtime](../crates/vim-runtime/README.md) | Vim processes, buffer synchronization, and saving |
+| [auto-admin](../crates/auto-admin/README.md) | Authorization, password input, and administrative tasks |
+| [storage](../crates/storage/README.md) | Configuration formats, atomic saves, migration, and recovery |
+| [identity](../crates/identity/README.md) | System users and local application accounts |
+| [system-services](../crates/system-services/README.md) | System and weather snapshots, background services |
+| [runtime-log](../crates/runtime-log/README.md) | Logging, queries, and incident reports |
+| [watchdog](../crates/watchdog/README.md) | Process and task supervision, recovery records |
+
+See the [complete responsibility table](README-TECHNICAL.md#crate-responsibilities) for the remaining crates. Implementation details are in `crates/<crate>/README.md` or its `docs/` directory.
+
+## Historical records
+
+The following files preserve the state at the time and are not current usage guides:
+
+- [CHANGELOG](CHANGELOG.md) and [release notes](packaging/releases/v1.5.md)
+- [Historical Linux portable-build validation](packaging/linux/VALIDATION-2026-09-18.md)

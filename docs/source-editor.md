@@ -1,101 +1,95 @@
-# 编辑器：Microsoft Edit 风格界面
+# Editor and script workspace
 
-界面参考 [Microsoft Edit](https://github.com/microsoft/edit/tree/cb6de0a8966aecd01d19a3541dab1829d0e679ca/crates/edit/src/bin/edit)，固定参考提交 `cb6de0a8966aecd01d19a3541dab1829d0e679ca`。菜单为文件、编辑、视图和帮助，取消常驻工具栏及正文外框，查找和替换直接显示在正文上方。底部提供语言、换行、编码、缩进、行列位置和文件切换入口。
+The built-in editor provides multiple documents, syntax highlighting, search and replace, soft wrapping, JSON formatting, and a real Vim mode. The Linux script workspace reuses the same editor and provides Bash execution and debugging.
 
-普通编辑器使用现有 Ratatui/Shell 界面：按钮、主题、强调色、边框形状、弹窗焦点和全局标题栏由 Tundra 的共享组件管理。Microsoft Edit 的绘制框架未直接复制；已有 LSH 语法高亮代码继续使用其 MIT 许可版本。F8 可进入下文的真实 Vim 界面。
+## Standard editor
 
-左侧保留行号，新增行绿色、修改行黄色、删除位置红色；保存后清除标记。软换行续行仍显示原行对应的 `↪`。
+The interface is modeled on [Microsoft Edit](https://github.com/microsoft/edit/tree/cb6de0a8966aecd01d19a3541dab1829d0e679ca/crates/edit/src/bin/edit), with File, Edit, View, and Help menus. Find and Replace bars appear above the document; controls for language, line endings, encoding, indentation, line/column position, and document switching appear at the bottom.
 
-Vim 关闭时，Ctrl+N 创建独立文档；Ctrl+O 选择文件后保留先前文档，取消选择直接回到原文档。Ctrl+P 或底部文件名打开当前这组文档的列表，Ctrl+Tab / Ctrl+Shift+Tab 切换，Ctrl+W 关闭当前文件，Ctrl+Q 逐个关闭这一组文件。未保存文件仍逐个询问保存、丢弃或取消。每个文档保留独立的撤销、光标、搜索选项、文件任务与恢复草稿。
+- Ctrl+N creates a document, Ctrl+O opens a file, and Ctrl+P shows the document list.
+- Ctrl+Tab / Ctrl+Shift+Tab switches documents, Ctrl+W closes the current document, and Ctrl+Q closes the entire group one document at a time.
+- Each document keeps its own undo history, cursor, search options, file tasks, and recovery draft.
+- F10 focuses the menu, Alt+F/E/V/H opens the corresponding menu, and Esc returns to the document.
+- Ctrl+F10 opens Linux system configuration files; saving goes through a diff preview, configuration validation, authorization, and backup.
+- Green, yellow, and red marks beside line numbers indicate additions, changes, and deletions, and clear after saving.
 
-普通编辑器中，F10 聚焦菜单，Alt+F/E/V/H 打开对应菜单，方向键和 Enter 操作，Esc 返回正文。视图菜单可聚焦底部信息行，再用 Tab、方向键和 Enter 选择设置。Linux 配置文件操作入口改为 Ctrl+F10；配置检查、差异预览、权限确认和私密内容保护继续沿用原流程。
+Text is stored in `ropey::Rope`. UI positions and editing boundaries use Unicode grapheme clusters, while search and syntax tokens use UTF-8 byte ranges.
 
-编码、语言、换行和缩进直接显示选项，选择后立即应用，Esc 关闭。弹窗按文字和字段数量决定尺寸；小窗口减少留白，长内容保留滚动，按钮放不下时换行。“关于”只显示关闭按钮。普通文档中的“系统配置文件…”直接打开路径表单，说明要填写系统配置文件的绝对路径，不再经过只有一个选项的中间菜单，也不会自动填入普通文档的路径。
+## Common operations
 
-普通 Source 编辑器以 `ropey::Rope` 保存可编辑文本。显示、搜索及语法标记使用原文的 UTF-8 字节范围；界面定位和修改边界遵守 Unicode grapheme cluster。Vim 开启期间，编辑和撤销由 Vim 自己的缓冲处理，宿主同步文档内容和保存状态。
-
-## 使用
-
-以下为普通编辑器的操作；Vim 开启后使用其原生命令和窗口。
-
-| 操作 | 入口 | 行为 |
+| Operation | Entry point | Notes |
 | --- | --- | --- |
-| 查找 | Ctrl+F / 编辑 → 查找 | 普通字符串、正则、区分大小写、整词及向前查找。显示所有匹配，当前匹配成为选区。 |
-| 下一处／上一处 | F3 / Shift+F3 | 循环导航，包括零宽正则匹配。 |
-| 替换 | Ctrl+R、Ctrl+H / 编辑 → 替换 | 在第二个输入框填写替换文本；留空表示删除。Enter 替换一处，Ctrl+Enter 替换全部，也可点击对应按钮。 |
-| 关闭查找栏 | Esc / 关闭按钮 | 保留查找内容、替换内容和选项，返回正文。 |
-| 转到行 | Ctrl+G / 视图 → 转到行 | 输入从 1 开始的行号或 `行:列`。 |
-| 换行与编码 | 底部换行、编码按钮 | LF / CRLF / CR 转换；UTF-8、UTF-8 BOM、UTF-16LE、UTF-16BE。转换可撤销，UTF-16 保存时写入 BOM。 |
-| 缩进 | 底部缩进按钮 / Tab、Shift+Tab | 选择空格或制表符及缩进宽度；选中多行后可一次增加或减少缩进。 |
-| 软换行 | Alt+Z / 视图 → 切换软换行 | 默认关闭。按显示宽度折行，续行显示 `↪`；不修改文件、不产生撤销记录。 |
-| 格式化 JSON | Ctrl+Shift+J | 两空格缩进，每个字段及数组元素单独成行；一次撤销恢复。 |
+| Find | Ctrl+F / Edit → Find | Supports plain strings, regex, case sensitivity, whole words, and backward search |
+| Next / previous match | F3 / Shift+F3 | Cycles through matches, including zero-width regex matches |
+| Replace | Ctrl+R, Ctrl+H / Edit → Replace | Enter replaces one match; Ctrl+Enter replaces all. An empty replacement deletes the matched text |
+| Close Find bar | Esc / Close button | Preserves the query, replacement text, and options |
+| Go to line | Ctrl+G / View → Go to Line | Enter a 1-based line number or `line:column` |
+| Line endings and encoding | Bottom buttons | Supports LF/CRLF/CR and UTF-8, UTF-8 BOM, UTF-16LE, UTF-16BE |
+| Indentation | Bottom button / Tab, Shift+Tab | Sets spaces or tabs and their width; supports adjusting indentation on multiple lines |
+| Soft wrap | Alt+Z / View menu | Wraps to the display width, marks continuation lines with `↪`, and does not change the file |
+| Format JSON | Ctrl+Shift+J | Uses two-space indentation and can be reverted with one undo |
 
-正则采用 Rust `regex` 语法，默认启用多行锚点；跨行匹配可用 `(?s)`。替换支持 `$0`、`$1`、`${name}` 和 `$$`；普通字符串模式保留 `$` 原样。不支持正则后向引用及 look-around，非法表达式会留在表单中显示错误。会切开组合字符、emoji 或 CRLF 的匹配被跳过。
+Regular expressions use Rust `regex` syntax with multiline anchors enabled by default; use `(?s)` for matches across lines. Replacements support `$0`, `$1`, `${name}`, and `$$`. Matches that would split combining characters, emoji, or CRLF are skipped.
 
-普通文档在后台计算替换，计算期间更改查询、文档或关闭查找栏会取消旧请求；应用前再次核对文档编号和修改版本，整批修改一次撤销。单次替换限制为 10,000 处或 8 MiB，超过时提示缩小范围。管理员配置文件保留原来的替换预览确认：显示前 40 处，每处前后文本最多显示 100 个字符；确认时应用完整结果。只读文档允许查找、复制、新建和打开其他文件，拒绝修改当前内容及保存格式。
+Replacements are computed in the background. Before applying them, the document ID, revision, and original text are checked; the whole batch is a single undo operation. One replacement operation handles at most 10,000 matches or 8 MiB of data. System configuration replacement previews show the first 40 matches and apply the full result after confirmation.
 
-当前编码选择覆盖 Unicode 文本，没有接入 Microsoft Edit 使用 ICU 提供的全部旧编码。制表符仍沿用现有文本显示规则，缩进宽度控制插入的空格数量；真实触屏和不同终端需要独立验收。
+JSON formatting validates the entire document first, then adjusts whitespace outside strings while preserving field order, duplicate keys, number notation, string escapes, and BOM. Invalid JSON reports its location and leaves the original text intact.
 
-JSON 格式化先验证完整 JSON，再只调整字符串外的空白；保留字段顺序、重复键、数字写法、字符串转义、UTF-8 BOM、首选换行风格及末尾换行状态。逗号仍按合法 JSON 语法保留，显示不再挤在一行。无效 JSON 返回位置错误并保留原文。格式化会将混合换行统一为文档的首选风格；保存仍使用原有保存流程。
+## Real Vim mode
 
-## 真实 Vim 模式
+F8 or the Vim button switches to the bundled real Vim. The editing area directly displays Vim's mode, selections, registers, macros, windows, command line, search, errors, and `:help`; Vim handles the keys.
 
-F8 或 Vim 按钮开启固定版本的真实终端 Vim。编辑区域直接显示 Vim 的模式提示、待完成按键、命令行、错误、窗口和帮助；Normal、Insert、Replace、Visual、Visual Line、Visual Block、次数、operator/text object、寄存器、宏、搜索和 Ex 命令都由 Vim 处理。`Ctrl+W` 用于 Vim 窗口操作；`:help` 打开随包的原生帮助。
-
-| 操作 | 行为 |
+| Operation | Behavior |
 | --- | --- |
-| F8 / VIM模式已启用 | 同步当前未保存内容并回到普通编辑器，不自动保存文件；Vim 进程保留。 |
-| 再按 F8 | 同步普通编辑器中的修改，继续原 Vim 进程，保留已有寄存器、宏及撤销记录。 |
-| `:w`、`:write 文件名` | 将文档写入请求送给宿主，等待现有保存任务完成；保存成功后才确认。 |
-| `:wq` | 保存成功后按 Vim 规则退出；失败时保留未保存内容并显示错误。 |
-| `:q`、`:q!`、`:qa!` | 按 Vim 窗口与缓冲规则退出；未保存检查、强制放弃由 Vim 处理。 |
+| F8 / VIM mode enabled | Synchronizes unsaved content and returns to the standard editor without automatically writing the file |
+| Press F8 again | Synchronizes changes from the standard editor and resumes the same Vim process |
+| `:w`, `:write filename` | Writes through the host save task and confirms after success |
+| `:wq` | Exits after a successful save; retains changes on failure |
+| `:q`, `:q!`, `:qa!` | Follows Vim's window, buffer, and discard rules |
 
-通过 Vim 文档命令发起的写入沿用已有保存 worker、外部变更检查和权限处理。普通文件的 `:w!` 可按这次观察到的目标状态覆盖，仍检查文件指纹；若实际写入前又被外部修改，会拒绝覆盖。
+Vim writes reuse the host's asynchronous saving, external-change checks, and permission workflow. System configuration still goes through diff review, validation, authorization, and backup; protected configuration accepts full-document UTF-8 writes without a BOM.
 
-受保护系统配置继续走差异预览、配置检查、授权和备份，只读文档继续拒绝修改/保存。受保护配置目前仅接受全文、UTF-8、无 BOM，输出字节须与宿主审核的文本一致；部分写入、追加或写入时额外进行编码、BOM、行尾等字节转换会被拒绝。需要其他编码或格式时，可按 Vim 的写入参数保存到普通路径的副本，仍使用当前用户权限和既有保存流程。
+The standard editor supports UTF-8 and UTF-16. After using another `fileencoding` in Vim, convert to a host-supported encoding before returning to the standard editor. Normal operation loads the user's Vim configuration and plugins.
 
-普通编辑器支持 UTF-8（含 BOM）、UTF-16LE 和 UTF-16BE。Vim 支持的其他 `fileencoding` 可在 Vim 内保存，但 F8 返回前，已加载的普通缓冲需改为宿主支持的编码；例如使用 `:set fileencoding=utf-8`。存在其他编码时会提示并保留 Vim，不把它默认为 UTF-8 后继续普通编辑。普通运行按 Vim 的方式加载用户配置和插件，插件所需的外部组件由用户环境提供。
+Portable builds place the complete engine in `vim/` beside Shell. If the engine is missing, the installation dialog can download a prebuilt package from the project's Release. For development builds, use:
 
-便携包保留 Shell 旁的 `vim/`。缺少随包及用户目录引擎时，开启 Vim 会显示安装弹窗，从项目 Release 下载对应版本的预编译包，显示进度并支持取消；安装成功后自动进入 Vim，失败或取消不改动文档。对应引擎 Release 需要先发布。开发时仍可执行 `python3 scripts/build-vim.py --output target/debug/vim`；release 或自定义 target 将目录放到对应 Shell 旁，普通 Cargo 构建不下载 Vim。调试可用 `TUNDRA_VIM` 指定其他兼容的完整 Vim，无效路径仍直接报错；`TUNDRA_VIM_CLEAN=1` 跳过个人配置和插件，适合隔离回归。依赖和固定版本见[随包 Vim](packaging/vim.md)。
+```sh
+python3 scripts/build-vim.py --output target/debug/vim
+```
 
-Linux 验收使用真实 PTY 与隔离配置。Windows/macOS 已接入各自构建和运行时 CI，仍需在对应 runner 验证，Linux 结果不能替代。测试入口见[真实 Vim 回归](testing.md#真实-vim-回归)。
+`TUNDRA_VIM` selects another full Vim; `TUNDRA_VIM_CLEAN=1` isolates personal configuration and plugins. See [bundled Vim](packaging/vim.md) for build and release details, and [real Vim regression tests](testing.md#real-vim-regression-tests) for test entry points.
 
-## Linux 脚本工作区
+## Linux script workspace
 
-从启动器打开“脚本编辑器”，或在普通编辑器打开 `.sh`、`.bash` 等脚本后选择“脚本 → 脚本工作区”。新建脚本使用 `#!/usr/bin/env bash`。运行设置可指定解释器、参数及工作目录；留空时使用脚本首行声明，`.bash` 默认 Bash，其他无声明脚本默认 `/bin/sh`，工作目录默认脚本所在目录。参数仅解析引号与转义，不执行命令替换或变量展开。
+Open Script Editor from Launcher, or choose Script → Script Workspace in a script document. New scripts use `#!/usr/bin/env bash`.
 
-有修改时选择“保存并运行／保存并调试”，保存成功后才启动原文件。执行期间当前文档只读，结束后继续编辑；每个文档可独立运行。普通运行支持所选解释器，断点调试要求 Bash 5.2 或更新版本。固定版本的 bashdb 已随程序内置，普通 Cargo 构建不下载调试器。
+Run settings can specify the interpreter, arguments, and working directory. When the interpreter is blank, it is read from the script's first line; `.bash` defaults to Bash, and other scripts without a declaration default to `/bin/sh`. Argument parsing handles quotes and escapes without command substitution or variable expansion. Breakpoint debugging requires Bash 5.2 or newer and uses the bundled bashdb debugger.
 
-界面默认显示源码与输出，通过变量、调用栈、表达式或断点标签打开详情；宽窗口再次点击当前详情标签可收起，窄窗口保留源码并在下方切换详情。空闲时只显示运行、调试和设置，运行时显示停止，调试暂停后显示继续、下一步、步入、跳出和停止。快捷键保持不变，设置也可从编辑器菜单进入。源码断点列和执行箭头与文件修改标记分别显示，软换行使用原始逻辑行号。
-
-| 操作 | 快捷键 |
+| Operation | Shortcut |
 | --- | --- |
-| 运行／调试或继续 | Ctrl+F5／F5 |
-| 单步跳过／进入／运行到函数返回 | F7／F11／Shift+F11 |
-| 停止／切换当前行断点 | Shift+F5／F9 |
-| 切换区域／反向切换 | F6／Shift+F6 |
-| 区域内操作／编辑器菜单 | Tab、Enter／F10 |
-| 表达式求值／执行 Bash 命令 | Enter／Ctrl+Enter |
+| Run / debug or continue | Ctrl+F5 / F5 |
+| Step over / into / out | F7 / F11 / Shift+F11 |
+| Stop / toggle breakpoint | Shift+F5 / F9 |
+| Next / previous region | F6 / Shift+F6 |
+| Actions within a region / editor menu | Tab, Enter / F10 |
+| Evaluate expression / execute Bash command | Enter / Ctrl+Enter |
 
-表达式仅在暂停时执行；查看变量不会自动执行表达式。“执行命令”可以修改正在调试的脚本变量，结果和错误保留在表达式区。输出区接收脚本的按键和粘贴，Ctrl+C、Esc 交给脚本；F6 返回其他区域。各项操作都有可点击按钮，源码、输出、表达式与运行参数使用共享屏幕键盘。
+- Modified scripts start only after saving successfully; the current document is read-only during execution.
+- The interface provides source, output, variables, call stack, expressions, and breakpoints regions, with clickable buttons for every operation.
+- Expressions are evaluated while paused; Execute Command can change variables in the debugged program. The output region directly receives script key and paste input.
+- Function-call and breakpoint lists can navigate to files included with `source`. Hitting a breakpoint in the background leaves execution paused, and a notification provides a way back.
+- Scrollable output remains after execution ends. Closing the page offers continuing in the background, stopping and closing, or staying on the page.
+- Breakpoints and expression history belong to the current document page. Invalid breakpoints appear as Not active; validity is confirmed when they are actually hit.
 
-Vim 编辑时先同步和保存，然后暂时使用普通源码视图调试；结束后恢复原 Vim，不改动全局 Vim 选项。函数调用和断点列表可以定位 `source` 引入的文件，这些源码仅供查看。后台运行命中断点后保持暂停，可从通知返回。关闭页面可以继续后台运行、停止并关闭或留在页面；停止要等子进程实际结束。
+## Implementation structure
 
-运行结束后仍可滚动查看输出。其他源码沿用编辑器的普通文件读取规则；管道、设备和符号链接无法打开时会显示原因。
+- `crates/app/src/editor/syntax.rs` feeds line-by-line text to LSH, maintains state across lines, and caches token types and byte ranges.
+- `TundraTheme::syntax_style` in `crates/ui/src/theme/mod.rs` maps tokens to theme colors.
+- `crates/app/src/editor/search.rs` implements an independent search engine; replacements are committed together through a Source transaction.
+- `crates/app/src/editor/soft_wrap.rs` generates mappings between logical and display lines, shared by the cursor, mouse, scrolling, and line numbers.
+- LSH uses the MIT-licensed component from [Microsoft Edit](https://github.com/microsoft/edit/tree/1be69c85a63bcd475a0b397196d0be3dbed60023/crates/lsh), with source in `third_party/lsh`.
 
-断点和表达式历史只保留在当前文档页。bashdb 不提供完整的可执行行列表，因此新断点先显示待验证，实际命中后才确认；空行、注释和函数声明等被调试器拒绝的位置显示“未生效”。调试覆盖主 Bash、函数和 `source` 文件，不自动跟踪新启动的独立解释器。调试期间发现已查看的源码被外部修改会停止本轮，避免执行行与显示内容不一致。
-
-## 实现边界
-
-- `crates/app/src/editor/syntax.rs` 从 Rope 逐行向 LSH 提供文本，保持跨行词法状态，仅返回 token 类型和字节范围。结果按缓冲修改与文件路径缓存；主题改变不需重新解析。
-- `crates/ui/src/theme/mod.rs` 的 `TundraTheme::syntax_style` 将 token 映射到现有主题角色；选区样式优先于匹配标记及语法样式。
-- `crates/app/src/editor/search.rs` 是独立 `SearchEngine`。`EditorCommand::ReplaceMatches` 验证预览版本、原文、排序及 grapheme 边界，再通过已有 Source 事务一次提交；沿用撤销、恢复及保存逻辑。
-- `crates/app/src/editor/soft_wrap.rs` 按显示单元宽度生成逻辑行到显示行的映射，保留完整 grapheme。映射按缓冲修改和视口宽度缓存，鼠标、光标、滚动和行号使用同一份数据。保留一个行末光标单元及稳定的滚动条区域；缩放后重新排版。Home/End 仍定位逻辑行首尾。
-- 语法分析及换行映射在首次请求或缓存失效后按文档重建；普通视口滚动复用缓存。搜索仅在请求时构建结果，同版本 F3 导航复用匹配范围。
-
-LSH 来自 [Microsoft Edit](https://github.com/microsoft/edit/tree/1be69c85a63bcd475a0b397196d0be3dbed60023/crates/lsh)，固定提交 `1be69c85a63bcd475a0b397196d0be3dbed60023`，保留 MIT 许可证于 `third_party/lsh/LICENSE`。仅复用 LSH 编译器、内置定义、路径匹配与运行时；不引入 Edit 的文本缓冲、颜色或终端绘制代码。
-
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p app -p ui -p shell --test editor --test editor_advanced
@@ -105,5 +99,3 @@ python3 scripts/build-vim.py --output target/debug/vim
 TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime --test real_vim -- --ignored
 python3 scripts/tests/editor-vim-smoke.py target/debug/tundra-shell target/debug/vim/vim
 ```
-
-覆盖跨行语法、主题与选区优先级、UTF-8/grapheme、捕获组替换、零宽匹配、过期预览、只读保护、原子撤销、JSON 保真、软换行点击定位及键盘移动和缩放。

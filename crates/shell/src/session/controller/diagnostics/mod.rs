@@ -393,7 +393,7 @@ impl ShellSession {
                     .find(|user| user.username == self.pages.login.login_username)
             })
             .map(|user| user.appearance.icon_display_mode)
-            .unwrap_or_default()
+            .unwrap_or(self.default_icon_display_mode)
     }
 
     pub(in crate::session) fn open_diagnostics(&mut self) {

@@ -1,63 +1,71 @@
-# 调试界面预览
+# Debug interface previews
 
-预览由 CLI 命令启动，Shell 和 UI 提供界面；关闭后恢复终端。它们不执行真实管理任务。
+Previews are launched by the CLI, with interfaces provided by Shell and UI. They use demonstration data, do not perform real management tasks, and restore the terminal when closed.
 
-## 全部共享控件
+## All shared controls
 
-运行 `tundra-cli debug ui-test`，或从源码运行 `cargo run --locked -p cli --bin tundra-cli -- debug ui-test`。此命令直接启动演示，跳过 Linux 启动确认、配置和日志初始化；使用内置深色主题及内置英文，不读取或保存用户状态，也不依赖磁盘上的语言和主题资源。
+```sh
+tundra-cli debug ui-test
+# Or run from source
+cargo run --locked -p cli --bin tundra-cli -- debug ui-test
+```
 
-F1–F6、PageUp/PageDown 或底部按钮切换六页；Tab/Shift+Tab 切换焦点，方向键选择，输入框和命令面板可输入或粘贴。Esc、Ctrl+C 或退出按钮结束。终端至少需要 88 列 × 30 行，推荐 120 列 × 36 行；窗口过小时显示尺寸提醒，放大后恢复。弹窗页将三个控件作为并排样例持续显示，操作后保留样例，不执行真实任务。
+The preview uses the built-in dark theme and English, without reading or saving user configuration, language files, or logs. The terminal must be at least 88 columns × 30 rows; 120 × 36 is recommended.
 
-| 页面 | 控件 |
+F1–F6, PageUp/PageDown, or the bottom buttons switch pages. Tab/Shift+Tab moves focus. Esc, Ctrl+C, or the Exit button ends the preview.
+
+| Page | Controls |
 | --- | --- |
-| 基础 | Button 的普通、焦点、悬停、按下、选中、禁用状态；TextInput（TextField 别名）、Surface、Panel |
-| 选择 | List、DataTable、Tabs、Picker、垂直和水平 Scrollbar |
-| 导航 | NavRail、SidebarWorkspaceLayout，随宽度改变导航和分栏位置 |
-| 提示 | EmptyState、Skeleton、CommandStatus、四种 Toast |
-| 弹窗 | Dialog、ContextMenu、CommandPalette |
-| 进度 | ProgressGauge、MetricCard、UpdateActivity |
+| Basics | Button states, TextInput, Surface, Panel |
+| Selection | List, DataTable, Tabs, Picker, horizontal and vertical Scrollbar |
+| Navigation | NavRail, SidebarWorkspaceLayout |
+| Feedback | EmptyState, Skeleton, CommandStatus, Toast |
+| Dialogs | Dialog, ContextMenu, CommandPalette |
+| Progress | ProgressGauge, MetricCard, UpdateActivity |
 
-六页展示上述基础公共控件；彩虹文本使用下方独立演示。项目专用页面和编辑器内部绘制不属于此清单。入口为 `crates/shell/src/previews/ui_test.rs`，控件组合为 `crates/ui/src/ui_test.rs`。
+The entry point is `crates/shell/src/previews/ui_test.rs`, and the control compositions are in `crates/ui/src/ui_test.rs`.
 
-## 彩虹文本
+## Rainbow text
 
-运行 `tundra-cli debug test-rainbow-text`，使用共享 `RainbowText` 控件展示逐字着色、持续循环的彩虹文本。示例包含中文、组合字符和 emoji。使用内置主题和英文，无需启动确认，不读写配置、语言文件或日志。Esc、Ctrl+C、Enter 或可点击的退出按钮结束，随后恢复终端。
+```sh
+tundra-cli debug test-rainbow-text
+```
 
-## 屏幕键盘
+This preview shows continuous rainbow coloring of Chinese text, combining characters, and emoji. Esc, Ctrl+C, Enter, or the Exit button ends it.
 
-外部终端运行 `tundra-cli debug screen-keyboard`。此独立演示只操作本次演示文本，不能在内嵌 Command Line 运行；“测试 AA”不执行命令或申请授权。实际 AA 弹窗和命令行页面已有独立的[屏幕键盘入口](session.md#aa-与命令行的屏幕键盘)。
+## On-screen keyboard
 
-| 部分 | 行为 |
+```sh
+tundra-cli debug screen-keyboard
+```
+
+This demo only edits sample text for the current session. Test AA only displays an input dialog; it does not execute commands or request authorization. See [The on-screen keyboard for AA and Command Line](session.md#on-screen-keyboard-for-aa-and-command-line) for access from actual pages.
+
+| Part | Behavior |
 | --- | --- |
-| 布局 | 英文 QWERTY 位于下半屏，宽度随终端调整，高窗口增加键高，无中括号装饰 |
-| 按键 | 数字、符号、F1–F12、Shift、Tab、CapsLock、Ctrl、Alt 和右 Ctrl |
-| 修饰键 | 点击锁定，再点释放，可组合多个键；收起或失焦释放 Shift/Ctrl/Alt，CapsLock 保留 |
-| 字符键 | 只显示当前输入字符，随 Shift/CapsLock 更新 |
-| 编辑 | Backspace 删除末尾字符，屏幕 Enter/Tab 插入换行/制表符；功能键和组合显示在最近按键栏 |
-| 剪贴板 | 复制或 Ctrl+C 复制全文，粘贴或 Ctrl+V 追加内容 |
-| 工具栏 | 收起/展开、清空、退出；Esc 也退出。工具栏固定，键盘滑动 |
-| 全局设置 | 读取当前用户的主题、动画速度和减少动态效果；减少动态效果时立即切换 |
+| Layout | QWERTY in the lower half of the screen, with function keys and a navigation area in wide windows |
+| Modifiers | Click to latch, click again to release; multiple keys can be combined |
+| Editing | Backspace deletes; Enter/Tab inserts a newline or tab |
+| Clipboard | Copy all text; paste appends content |
+| Toolbar | Collapse, expand, clear, and exit |
+| Settings | Read the current theme, animation speed, and reduced-motion setting |
 
-实体按键与鼠标锁定状态分别保存。支持增强报告的终端按住亮起、松开熄灭；快速点按至少显示约 100 ms，无松键报告时显示约 200 ms，连发刷新提示。不报告独立修饰键时，只能随组合提示 Shift/Ctrl/Alt；无法区分左右 Ctrl 时显示 Ctrl。收起、失焦或缩放清除实体高亮，粘贴不模拟按键。
+Physical-key highlighting and mouse-latched states are stored separately and cleared on focus loss, collapse, or resize. Dialogs and the keyboard use the same layout calculation for rendering and click positions.
 
-“测试 AA”打开输入弹窗并先收起键盘，弹窗可展开键盘、返回演示或退出。Tab/方向键选按钮，Enter/空格执行；直接输入文字后，Enter/空格输入换行/空格。
+## Interface and animation styles
 
-`ScreenCompositor` 最后绘制键盘，先为弹窗留出空间，再随动画上移；绘制和点击共用矩形。键盘可覆盖状态/时间栏，不可遮住弹窗或把它移出屏幕。小于 60 × 18 时优先保留弹窗并提示放大，通用规则见 [UI 要求](../../../docs/UI-requirements.md#屏幕键盘与弹窗)。
+```sh
+tundra-cli debug view-ui-style 2
+# Use in Command Line
+/debug view-ui-style 2
+```
 
-## 界面与动画样式
+The preview requires at least 60 × 24; 100 × 35 or larger is recommended.
 
-UI 样式预览可在 Command Line 中运行 `/debug view-ui-style 2`，或在外部终端运行 `tundra-cli debug view-ui-style 2`。源码运行方式为 `cargo run --locked -p cli --bin tundra-cli -- debug view-ui-style 2`。预览至少需要 60 × 24 个字符，建议使用 100 × 35 或更大的窗口。
-
-| 版本 | 显示方式 |
+| Version | Style |
 | --- | --- |
-| `1` Glacier | 带边框组件、直接更新进度、tachyonfx 扫入 |
-| `2` Tea | 无边框列表/表单、留白、450 ms cubic 进度；借鉴 Bubble Tea 的状态/消息/绘制方式，仍由 Rust/Ratatui 实现 |
-| `3` Spring | 卡片、保留当前速度的弹簧进度、柔和入场；连续变化从当前值追随新目标 |
+| `1` Glacier | Bordered components, direct progress updates, and sweep-in effects |
+| `2` Tea | Borderless lists and forms, whitespace, and cubic progress |
+| `3` Spring | Cards, spring progress, and gentle entrances, sharing the production interface implementation |
 
-`F1`–`F3` 切换版本；`F4` 切换减少动态效果；`F5` 或 Replay 按钮重播；`Tab` / `Shift-Tab` 切换焦点；方向键、鼠标和滚轮操作列表；输入框支持文字与粘贴；Open dialog 展示弹窗。`Esc` 先关闭弹窗，再退出预览，`Ctrl-C` 直接退出。不同版本共用列表、输入框、按钮、Dialog 和原生 Gauge，渲染与命中使用同一份布局；低于最小尺寸时暂停组件交互并提示放大窗口。
-
-进度任务为本地模拟；进入时读取全局外观配置中的强调色、边框、动画速度与减少动态效果偏好，预览中的切换仅对本次会话生效。关闭预览会还原终端。实现入口为 `crates/shell/src/previews/style.rs`，页面组合为 `crates/ui/src/style_preview.rs`；常规页面和业务状态不依赖预览模块。
-
-正式 Shell 已采用第 `3` 种 Spring 风格。常规尺寸下主内容区留出一格外边距，主页和启动器卡片、设置分栏使用统一间距，列表、弹窗和卡片复用现有组件与主题的 raised 背景。页面保留各自的信息结构，移除多余外框；小窗口继续使用紧凑布局。绘制和鼠标命中共用布局计算。
-
-页面和对话框入场复用 `crates/shell/src/spring_style.rs` 的柔和扫入和淡入效果。更新下载、编译进度及系统状态用量条的填充复用 `ui::SpringValue` 阻尼弹簧，连续变化时保留当前速度；百分比文字和业务状态始终展示真实值。动画状态仅存在于 Shell 会话中，收敛或离开页面后停止请求重绘。动画速度和减少动态效果沿用外观设置；编辑器和内嵌终端保留不改变文字内容的颜色过渡。预览 `3` 与正式界面共享弹簧计算和入场实现。
+F1–F3 switches versions, F4 toggles reduced motion, F5 replays, Tab moves focus, and Esc closes a dialog before exiting. The preview only changes demonstration state for the current session. Entry points are `crates/shell/src/previews/style.rs` and `crates/ui/src/style_preview.rs`.

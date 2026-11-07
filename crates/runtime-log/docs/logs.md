@@ -1,35 +1,22 @@
-# Logs APP
+# Logs and diagnostics
 
-Logs is a standalone home application for signed-in users. System Status retains
-health checks and metrics; legacy `logs`, `activity`, and `incidents` dashboard
-widgets and their layout placements are removed on load and persisted on the
-next normal settings save. Other placements are preserved.
+Logs is a standalone application that brings together UX runtime events, incident reports, Linux logs, and selected log files. System Status retains system metrics and health checks.
 
-## Sources and access
+## Sources and permissions
 
-- **UX log** combines structured runtime events and incident reports in one list.
-  Incidents use Critical, the highest level, including historical incident records.
-  Reports without a corresponding runtime event also appear, without duplicating
-  incidents already present in the runtime log. It works on Linux, Windows, and macOS. Guest has no access.
-  A regular TundraUX user sees only records owned by that user, captured when a
-  task is submitted. Unknown-owner and legacy reports require administrator
-  access. Full Incident reports remain administrator-only inside the TUI.
-- **Linux log** reads journal on demand, falling back to dmesg if journal is
-  unavailable. It does not scan `/var/log` automatically and never escalates privileges. An explicitly selected file is read with the current OS permissions. The TUI
-  requires an administrator; operating-system permissions still apply. Windows
-  and macOS report Unsupported. Permission failures, partial output, cancellation,
-  and unavailable sources are distinguished from an empty successful result.
+| Source | Content and access |
+| --- | --- |
+| UX log | Structured runtime events and incident reports; incidents appear at the highest level, Critical. Ordinary users see only their own records; full incident reports require an administrator |
+| Linux log | Read the journal on demand, falling back to dmesg when unavailable. The TUI requires an administrator, and operating-system permissions still apply |
+| Selected file | Read the absolute path chosen by the user, using current operating-system permissions and bounded tail reads |
 
-Source and severity are separate. An Explorer `EACCES` is an Error in
-`ux.explorer`, while kernel/driver messages use `linux.kernel` and external
-service messages use `linux.service`. Journal priorities map to runtime severity;
-raw priorities and source/time notes remain available. dmesg boot-relative times
-are not represented as precise wall-clock times; unsupported time filtering is
-reported explicitly. Linux records do not acquire fictitious UX run/task IDs.
+UX supports Linux, Windows, and macOS. Guest has no Logs entry. The Linux source displays Unsupported on Windows/macOS.
 
-## CLI
+Sources and levels are separate: Explorer errors belong to `ux.explorer`, kernel messages to `linux.kernel`, and service messages to `linux.service`. Journal priorities map to log levels; original source and timestamp notes are retained.
 
-Use the installed `tundra-cli` command (or `cargo run --locked -p cli --bin tundra-cli --`):
+Permission failures, partial output, cancellation, and unavailable sources are shown separately rather than treated as empty results. Linux records are not assigned invented UX run/task IDs.
+
+## CLI queries and export
 
 ```sh
 tundra-cli logs query
@@ -41,114 +28,84 @@ tundra-cli logs incidents --incident-id INCIDENT_ID
 tundra-cli logs export --run-id RUN_ID --output ./diagnostics-new
 ```
 
-Queries default to the latest 200 events, with a maximum of 10,000. Supported
-filters include source, UTC time range, minimum level, module, run, operation,
-task, and incident. Text and JSONL output are available. Follow mode keeps
-bounded memory; see the following and filtering section below. The standalone CLI relies on current OS identity and file access;
-it does not accept a claimed administrator role or a TundraUX owner identity.
+Queries return the latest 200 records by default, up to 10,000. Filters include source, UTC time, minimum level, module, run, operation, task, and incident. Text and JSONL output are supported.
 
-Exit codes: 0 success (including empty results), 1 failure or partial/truncated
-results, 2 invalid arguments, 3 permission denied, 4 unsupported, 130 cancellation.
-Diagnostic export creates a new private directory and refuses to overwrite an
-existing target. Its manifest records source status, truncation, damaged records,
-and writer health. Partial exports retain usable records and report omissions.
-Exports are user-owned artifacts outside the managed runtime retention quota.
+The standalone CLI uses the current operating-system identity and file permissions. It does not accept caller-declared Tundra roles or owners.
+
+Exit codes: 0 for success (including empty results), 1 for failure or truncated results, 2 for invalid arguments, 3 for permission denied, 4 for unsupported operations, and 130 for cancellation.
+
+The export directory must not already exist. The program creates a private directory and writes a manifest recording source status, truncation, damaged records, and writer health. Partial exports retain available records and report omissions. Exported files do not count toward managed-log quotas.
+
+## TUI controls
+
+Open Logs from Launcher. All levels are shown by default.
+
+| Input | Behavior |
+| --- | --- |
+| Left / Right | Switch between UX / Linux sources |
+| L | Cycle the minimum level; Warning includes Error and Critical |
+| M / T / C | Filter by module / filter by time / clear filters |
+| R or F5 | Refresh |
+| Enter or O | Open a redacted query document in read-only Editor |
+| I / E | Open the full incident report / view related events |
+| G / Open folder | Open the UX log root directory in the built-in Explorer |
+| Esc | Return while retaining filters and selection |
+
+Use arrow keys, PageUp/PageDown, Home/End, the mouse, and scrollbars to browse. Tab does not switch log sources.
+
+Opening a file generates a new snapshot filtered for the current user; it does not bypass owner checks. Full incident reports use an allowlist and redacted copies, without directly exposing original crash-file paths.
+
+## Following and filtering logs
+
+The Logs application continuously collects new records. Manually scrolling up, selecting an older record, or dragging the scrollbar pauses automatic following; collection continues in the background and shows the number of new records. Back to latest resumes following. The current buffer retains up to 1,000 records.
+
+Service, boot, individual run, and file selection are in the filter form. Service, process, and configuration tasks can open logs with a service name, system/user scope, boot ID, run ID, and time, then return to the original page.
+
+```sh
+tundra-cli logs follow --unit ssh.service --scope system --boot 0 --json
+tundra-cli logs query --unit worker.service --boot -1
+tundra-cli logs follow --file /var/log/syslog --format jsonl
+```
+
+Use `/logs follow …` in the built-in Command Line. JSONL emits one event per line; status and truncation notices go to standard error. Ctrl+C stops following and returns 130.
+
+Selected files use bounded tail reads and report replacement, truncation, deletion, and permission changes. Following continues with the new file after rotation and keeps waiting when the file is temporarily absent. Unknown timestamps and levels in original files remain unknown. Neither queries nor following modify the log source.
 
 ## Clearing logs
 
-Use `/debug clear-logs` in Command Line, or `tundra-cli debug clear-logs` in an
-external terminal. No arguments shows help. A target without `--yes` previews
-matching files and their sizes; `--yes` confirms permanent clearing.
+Use `/debug clear-logs` or external `tundra-cli debug clear-logs`. Without `--yes`, the command only previews files and sizes; `--yes` confirms cleanup.
 
 ```sh
 tundra-cli debug clear-logs all
-tundra-cli debug clear-logs all --yes
 tundra-cli debug clear-logs incidents --yes
-tundra-cli debug clear-logs --type incidents --yes
 tundra-cli debug clear-logs runtime --yes
 tundra-cli debug clear-logs snapshots --yes
+tundra-cli debug clear-logs legacy --yes
 tundra-cli debug clear-logs --file crashes/crash-EXAMPLE.json --yes
-tundra-cli debug clear-logs --file runtime/runtime-EXAMPLE.jsonl --yes
 ```
 
-| Target | Files in the configured Tundra logs directory |
+| Target | File scope |
 | --- | --- |
-| `all` (also `--all`) | All four categories below. |
-| `runtime` | `runtime/runtime-*.jsonl` event segments. |
-| `incidents` | JSON, TXT and LOG report files directly under `crashes/`. |
-| `snapshots` | `runtime/snapshots/snapshot-*.json` and `*.jsonl` viewer snapshots. |
-| `legacy` | Top-level `*.log` files. |
-| `--file PATH` | One recognized log file; accepts a relative path or an absolute path inside the configured logs directory. |
+| `all` / `--all` | All categories below |
+| `runtime` | `runtime/runtime-*.jsonl` |
+| `incidents` | JSON, TXT, and LOG reports under `crashes/` |
+| `snapshots` | `runtime/snapshots/snapshot-*.json` and `*.jsonl` |
+| `legacy` | `*.log` in the log root directory |
+| `--file PATH` | One supported file within the log root directory |
 
-Exactly one target is required; `--type TYPE` is an alias for a named category.
-Selecting one incident JSON file does not delete its TXT sibling; `incidents`
-clears both report formats. Clearing incident reports leaves the corresponding
-runtime events intact. Clear `runtime` or `all` as well to remove those events.
+Select only one target at a time; `--type TYPE` is an alias for category selection. Clearing a single incident JSON file does not delete its TXT copy, while category cleanup handles both formats. Corresponding UX events require selecting `runtime` or `all` separately.
 
-Clearing uses current OS filesystem permissions, refuses directory traversal
-and symlinks, and preserves log retention settings and locks. Inactive files are
-removed; active runtime segments are emptied while holding the same reservation
-lock used by writers. Writers resume at the actual end of the file so clearing
-cannot leave zero-filled gaps in subsequent events. A locked file that cannot
-be emptied is reported as a failure. Running processes can write queued events,
-repeat summaries, and new events after clearing; this command does not stop
-logging. The displayed file list describes this invocation, not future files.
+Cleanup uses only current operating-system permissions and rejects path traversal and symbolic links. The active runtime segment is emptied under the same lock as the writer, which resumes writing at the actual end of the file. Running processes may continue to produce new events after cleanup.
 
-Scope is the configured Tundra logs directory only. Temporary watchdog fallback
-reports, user-owned exported bundles, Linux journal/dmesg, configuration,
-accounts, and watchdog state/run markers are excluded. Clearing does not dismiss
-in-memory notifications or regenerate an already open editor document; refresh
-Logs to read the current files.
+Export directories, Linux journal/dmesg, configuration, accounts, watchdog state, and run markers are outside the cleanup scope.
 
-Output lists each removed or emptied file and reports failures individually.
-Exit codes are 0 for complete (including no matching files), 1 when no selected
-file can be cleared or output fails, 2 for invalid command arguments, and 3 for
-partial failure. A missing explicitly selected file is an error.
+Cleanup exit codes: 0 for complete success or no matches, 1 for no files eligible for cleanup or output failure, 2 for invalid arguments, and 3 for partial failure.
 
-## TUI navigation
+## Storage and quotas
 
-Open **Logs** from Launcher. UX opens with all levels shown by default.
-Left/Right switches UX/Linux source; Tab does not switch log views.
-Arrow keys, Page Up/Down, Home/End, mouse
-selection, wheel scrolling, and scrollbar dragging use existing UI components.
-The visible level button and `L` cycle All, Trace, Debug, Info, Warning, Error,
-and Critical. A selected level includes more severe records; selecting Warning
-includes Warning, Error and Critical. `M` filters modules, `T` time windows,
-and `C` clears filters. `I` opens the selected event's full incident report when
-authorized, and `E` shows its related events. `R`/F5 refreshes; Enter/`O` opens
-a sanitized query document in the existing
-read-only Editor. `G` or **Open folder** opens the UX log root (containing
-`runtime` and `crashes`) in the built-in Explorer, using the existing log-folder
-access permissions. Escape returns with filters and selection retained. Refresh
-inside that Editor regenerates the authorized query snapshot before reloading.
+Runtime files reside in `runtime/` under the platform log directory. Events carry a schema, UTC time, event ID, process/run/app/module/operation/task IDs, owner, phase, level, and optional incident ID.
 
-Files never bypass ownership checks: ordinary users do not see mixed-owner
-segments, and opening a segment produces a newly filtered snapshot. Source
-notices appear in the document's first JSONL metadata row. Full reports are
-whitelisted, sanitized copies rather than raw crash-file paths.
-
-## Persistence and correlation
-
-Runtime files live under the platform logs directory's `runtime/` subdirectory.
-The existing watchdog owns run/task/operation/Incident identity. Runtime event
-IDs are added to breadcrumbs and report metadata, joining operations before a
-fault with the corresponding report. Old watchdog report fields remain readable.
-Routine operation errors do not automatically create Incidents.
-
-Events carry schema version, UTC timestamp, event ID, process/run/app/module/
-operation/task IDs, owner, phase, severity, optional native error code and cause
-chain, and optional source/target paths and Incident ID. Producers log at the
-boundary that knows the result. Repeated alerts are merged by identity; changes
-of phase and explicit final results are immediate, with count summaries every
-60 seconds. Silence and notification dismissal do not imply recovery.
-
-The writer has a bounded 4,096-event queue, nonblocking submission, bounded event
-and deduplication memory, one-second flushing, and at most two seconds of exit
-flush waiting. Queue saturation and write failure are exposed as health counters
-without terminal output or recursive logging. A timed-out exit flush can lose
-pending events; it never waits indefinitely for a slow disk.
-
-Default settings under `[runtime_logs]` in the existing TOML configuration:
+Default configuration:
 
 ```toml
 [runtime_logs]
@@ -157,50 +114,18 @@ max_total_mib = 200
 segment_mib = 10
 ```
 
-Segments rotate each UTC day or at the configured segment size. Retention uses
-cross-process locking and does not remove another active writer's locked segment.
-Read-only Editor snapshots share the total capacity, additionally capped at
-20 MiB with a 30-minute TTL and 5 MiB per document. When safe cleanup cannot free
-space, writing reports a failure instead of exceeding the configured capacity.
-Watchdog crash-report retention continues to use its existing independent policy.
-Settings are loaded when starting the process; changed retention applies after
-restart.
+Segments rotate by UTC date or configured size. Retention cleanup uses a cross-process lock and does not delete segments locked by other active writers. Configuration is read at process startup.
 
-Instrumentation supplies metadata only: no passwords, tokens, authentication
-headers, clipboard text, file bodies, or command contents. Bounded sanitization
-also removes recognizable secrets and control sequences from error/source text.
+Editor snapshots share the total capacity limit and also have a 20 MiB limit, a 30-minute TTL, and a 5 MiB limit per document. watchdog crash reports use a separate retention policy.
 
-## Assets and verification
+The writer uses a bounded queue of 4,096 events, non-blocking submission, one-second flushes, and at most a two-second shutdown wait. Queue saturation and write failures are reported through health counters, without recursively writing logs. Repeated warnings are merged by identity, with count summaries generated every 60 seconds.
 
-The Logs PNG and ASCII icon are stored with the default theme's home assets and
-registered in the embedded catalog. Distribution, validation, startup recovery,
-and diagnostic repair use the existing asset pipeline. An older home-icon table
-receives the missing Logs entry while retaining healthy custom entries.
-
-Focused tests cover core storage, Linux parsing/cancellation/fallback, permission
-isolation, CLI/export, Logs rendering, and asset restoration. CI runs Linux source
-tests on Ubuntu/Fedora and UX plus Unsupported-source tests on Windows/macOS.
-A successful macOS run does not stand in for a native journal/dmesg integration
-run on Linux.
-
-## 日志跟随与集中排查 / Following and filtering logs
-
-日志应用默认持续收集新日志并滚动到最新内容。手动上滚、选择旧日志或拖动滚动条会暂停自动滚动，后台仍继续收集。暂停时显示新增数量，点击“回到最新”恢复跟随。当前缓冲最多保留 1000 条，达到上限时显示截断提示。
-
-常驻操作是刷新、打开、暂停滚动或回到最新，以及“更多操作”。服务、启动批次、单次运行和文件选择放在二级菜单的筛选表单中。服务、进程和配置任务可携带服务名称、system/user 范围、启动 ID、运行 ID 与开始时间打开日志，并能返回原页面。
-
-“更多操作”或 F10 打开内容区中央的菜单，文字居中并与边框留出空隙。方向键、Tab 和 Home/End 选择可用操作，Enter 或空格执行；Esc、“关闭”或点击菜单外侧返回日志。菜单内的空白处不关闭菜单，小窗口下可用滚轮或滚动条查看其余选项。
-
-指定文件只读取操作系统允许访问的绝对路径，逐次读取有界尾部。文件更换、截断、删除和权限变化都有状态提示。原始文件按行展示；未知的时间和级别不会伪装成解析出的真实记录，不能对原始文件使用事件时间、模块或级别筛选。Linux 拒绝把符号链接当成指定日志文件。
+## Validation
 
 ```sh
-tundra-cli logs follow --unit ssh.service --scope system --boot 0 --json
-tundra-cli logs query --unit worker.service --boot -1
-tundra-cli logs follow --file /var/log/syslog --format jsonl
+cargo test --locked -p runtime-log
+cargo test --locked -p cli --test logs
+cargo test --locked -p shell --lib logs
 ```
 
-内建 Command Line 使用 `/logs follow …`。JSONL 每行一个事件，状态和截断提示写入标准错误。Ctrl+C 停止跟随，返回 130。文件轮转后跟随新文件；文件临时不存在时继续等待，恢复后继续读取。查询不会修改日志源。
-
-自动测试覆盖有界缓冲、暂停时保留位置并统计新增内容、筛选表单、二级菜单点击区域、服务返回位置、文件截断与轮转，以及真实 CLI 子进程的追加、轮转、截断和 SIGINT。真实终端触屏、各主题实际颜色及操作系统日志权限仍需要对应环境验收。
-
-The log application keeps collecting while scrolling is paused and displays the number of new records. “Latest” resumes following. Service filters support system/user scope, boot ID, invocation ID and time range. Selected text files use bounded tail reads and report rotation, truncation, disappearance or access changes. JSONL records go to stdout; progress and source notices go to stderr. Neither viewing nor following modifies the original log.
+Tests cover core storage, Linux parsing and fallback, permission isolation, CLI/export, TUI, file rotation, and cleanup. Linux sources are validated on Ubuntu/Fedora; UX and Unsupported sources are validated on Windows/macOS.

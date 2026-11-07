@@ -392,6 +392,144 @@ fn system_status_history_expires_without_new_ready_insertions() {
 }
 
 #[test]
+fn system_status_arrow_navigation_follows_mixed_size_card_edges() {
+    use super::controller::system_status::ui_widget_kind;
+    use storage::SystemStatusWidgetKind::*;
+
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.enter_screen(ShellScreen::SystemStatus);
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
+
+    for editing in [false, true] {
+        if editing {
+            state.begin_system_status_dashboard_edit();
+            state
+                .pages
+                .system_status
+                .system_status_dashboard_draft
+                .as_mut()
+                .unwrap()
+                .wide
+                .placements
+                .reverse();
+        }
+        for (from, targets) in [
+            (
+                SystemOverview,
+                [SystemOverview, Cpu, SystemOverview, Storage],
+            ),
+            (Cpu, [SystemOverview, Memory, Cpu, Diagnostics]),
+            (Memory, [Cpu, Memory, Memory, Diagnostics]),
+            (Storage, [Storage, Network, SystemOverview, UptimeLoad]),
+            (Network, [Storage, Diagnostics, SystemOverview, UptimeLoad]),
+            (Diagnostics, [Network, Diagnostics, Cpu, Diagnostics]),
+            (UptimeLoad, [UptimeLoad, Diagnostics, Storage, UptimeLoad]),
+        ] {
+            for (key, expected) in ["Left", "Right", "Up", "Down"].into_iter().zip(targets) {
+                state.pages.system_status.system_status_selected_widget = Some(from);
+                state.restore_system_status_widget_focus();
+                state.apply_input(InputEvent::from_key_label(key));
+                assert_eq!(
+                    state.pages.system_status.system_status_selected_widget,
+                    Some(expected),
+                    "{from:?} {key}, editing={editing}"
+                );
+                assert_eq!(
+                    state.pages.system_status.system_status_dashboard_focus,
+                    ui::SystemStatusDashboardFocus::Widget(ui_widget_kind(expected))
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn system_status_arrow_navigation_handles_staggered_cards_and_gaps() {
+    use storage::{SystemStatusWidgetKind::*, SystemStatusWidgetSize::*, WidgetPlacement};
+
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    set_test_auth_role(&mut state, UserRole::User);
+    state.enter_screen(ShellScreen::SystemStatus);
+    state.pages.common.focused_component = ShellComponent::SystemStatus;
+
+    for (placements, key, expected) in [
+        (
+            [
+                (Cpu, 0, 2, Small),
+                (Memory, 4, 3, Small),
+                (Storage, 2, 0, Small),
+            ],
+            "Right",
+            Memory,
+        ),
+        (
+            [
+                (Cpu, 2, 0, Small),
+                (Memory, 3, 4, Small),
+                (Storage, 0, 2, Small),
+            ],
+            "Down",
+            Memory,
+        ),
+        (
+            [
+                (Cpu, 4, 0, Wide),
+                (Memory, 2, 2, Large),
+                (Storage, 6, 3, Small),
+            ],
+            "Down",
+            Memory,
+        ),
+        (
+            [
+                (Cpu, 0, 0, Small),
+                (Memory, 2, 10, Small),
+                (Storage, 3, 3, Small),
+            ],
+            "Right",
+            Storage,
+        ),
+    ] {
+        let config = storage::SystemStatusDashboardConfig {
+            widgets: placements.iter().map(|p| p.0).collect(),
+            wide: storage::DashboardLayout {
+                placements: placements
+                    .into_iter()
+                    .map(|(kind, column, row, size)| WidgetPlacement {
+                        kind,
+                        column,
+                        row,
+                        size,
+                    })
+                    .collect(),
+            },
+            narrow: storage::DashboardLayout::default(),
+        };
+        state.app.dispatch_at(
+            app::AppCommand::SetActiveSystemStatusDashboard(Some(config)),
+            Instant::now(),
+        );
+        state.pages.system_status.system_status_selected_widget = Some(Cpu);
+        state.restore_system_status_widget_focus();
+        state.apply_input(InputEvent::from_key_label(key));
+        assert_eq!(
+            state.pages.system_status.system_status_selected_widget,
+            Some(expected),
+            "{placements:?}, {key}"
+        );
+    }
+}
+
+#[test]
 fn system_status_arrow_navigation_reaches_offscreen_cards_and_scroll_clamps() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
@@ -2772,6 +2910,7 @@ fn system_status_live_service_home_open_refresh_and_background_close() {
         ui::RuntimeAsciiAssets::load_default().unwrap(),
         ShellRuntimeServices {
             language: None,
+            terminal_image_support: false,
             explorer: None,
             diagnostics: None,
             editor: ShellEditorTaskRuntime::unavailable(),

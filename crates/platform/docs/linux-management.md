@@ -1,106 +1,77 @@
-# Linux 系统管理
+# Linux system management
 
-从首页打开“启动器”，可以找到服务、进程、软件包、网络、磁盘、用户管理。日志从首页单独打开。Tundra 通常以普通用户运行；需要系统权限的操作统一进入 AutoAdmin（AA），经批准和系统认证后，由独立助手执行固定操作。`tundra-cli` 需要与 `tundra-shell` 放在同一目录。
+Open Services, Processes, Packages, Network, Disks, User Management, Firewall, SSH, and Scheduled Tasks from Launcher. The application normally runs as a regular user; operations requiring system permissions go through AutoAdmin (AA) and fixed authorization helpers.
 
-相关说明见 [正式 CLI 与服务、进程、软件包](../../cli/docs/operations.md)、[网络与磁盘](network-disks.md)、[完整账户管理](user-management.md)、[系统配置编辑器](system-config.md) 和 [日志与诊断](../../runtime-log/docs/logs.md)。
+## Page controls
 
-AA 的批准模式、输入、前台弹窗与终止规则见 [AutoAdmin 操作流程](../../auto-admin/docs/workflow.md)。
+The top of management pages contains search, filtering, and refresh controls. Primary actions are at the bottom right, and less frequent actions are under More Actions. Every action has a visible button labeled with its actual shortcut.
 
-## 使用方式
-
-列表和详情优先显示；顶部保留搜索、筛选和刷新，常用操作放在右侧底部，低频操作放入“更多操作”。任务存在时出现“当前任务”。按钮显示实际快捷键。按钮直接使用动作名，可用鼠标或触屏点击；按下后在同一按钮内松开才执行，拖动不会顺带执行操作。长列表、详情和表单可滚动。输入文字时，字母正常输入，不触发页面操作。
-
-管理页和弹出表单跟随全局外观设置，统一使用所选的圆角或矩形边框。
-
-“更多操作”按选项数量和文字宽度居中显示，四周留白；快捷键靠近动作名称，关闭按钮放在下方。窗口较小时可滚动，键盘翻页按当前能显示的行数移动。
-
-| 按键 | 行为 |
+| Key | Behavior |
 | --- | --- |
-| `S` 或 `/` | 输入搜索内容，Enter 应用，Esc 结束输入 |
-| Ctrl+Enter / Ctrl+U | 应用搜索 / 清除搜索；表单中提交 / 清空当前文字字段 |
-| ↑ / ↓、PgUp / PgDn | 移动列表或操作选择 |
-| Enter | 打开选中操作或菜单；服务、进程、用户详情也随列表选择更新 |
-| Tab / Shift+Tab | 在列表与操作区之间切换 |
-| `R` 或 F5 | 重新读取当前列表；软件包源操作另行下载仓库信息，Arch 同时执行完整系统升级 |
-| F4 | 切换详情显示 |
-| Alt+← / Alt+→ | 滚动可用操作按钮 |
-| 菜单右侧标注的字母或功能键 | 执行对应操作，仍需通过确认和权限检查 |
-| Ctrl+T | 打开该操作的 AutoAdmin 终端；尚未执行操作时切换页面输出视图 |
-| F12 | 任务归属当前页面时打开页面关闭确认；完成后关闭或重新查看最近的 AutoAdmin 操作 |
-| Esc | 返回；表单中取消当前表单 |
+| S or `/` | Enter search text; Enter applies it and Esc finishes input |
+| R or F5 | Refresh the current list |
+| F4 | Expand or collapse details |
+| Tab / Shift+Tab | Move between navigation, list, details, and actions |
+| Ctrl+Enter / Ctrl+U | Submit a search or form / clear the current text field |
+| Ctrl+T | Open the operation's AA output |
+| F12 | Open the task-close confirmation for the current page |
+| Esc | Close a form or details, or go back |
 
-表单中用 Tab 或 ↑ / ↓ 移动，← / → 切换选项，Ctrl+U 清空当前文本字段。Enter 在文字字段中移到下一项，在选择字段中打开选项列表；选中提交项后按 Enter 或直接用 Ctrl+Enter 提交。选项列表用 ↑ / ↓、Home / End 选择，Enter 应用，Esc 返回表单。PgUp / PgDn 滚动说明，可查看较长的依赖和配置提示。
+In forms, Enter moves to the next field, selection fields open an option list, and Ctrl+Enter submits directly. Long lists, details, and forms support the keyboard, mouse wheel, and scrollbars.
 
-搜索栏编辑时显示 `_` 光标，长文字会滚动到输入末尾。按 Enter 应用搜索，或按 F5/点击刷新使用搜索栏里的当前文字；清空后刷新会恢复完整列表。
+See [List selection](../../../docs/list-selection.md) for multiple-selection behavior, and [AutoAdmin workflow](../../auto-admin/docs/workflow.md) for AA input and stopping rules.
 
-任务运行中通过 AA 接收终端输入、隐藏密码和编号选项；快捷键及停止规则统一见 [AA 操作流程](../../auto-admin/docs/workflow.md)。
+## Supported operations
 
-用户管理中的创建、修改资料、修改密码、锁定、解锁、角色调整和删除都通过 AA 执行。修改自己或其他用户密码时，批准后输入新密码并再次确认，输入只显示圆点；两次不一致会重新询问，Ctrl+C 可取消。新密码与首次授权时输入的 sudo 密码分开处理，自动批准不会自动填写新密码。删除账户的确认也由 AA 提供。
-
-管理员使用本次 sudo 会话授权。普通用户修改自己的资料和密码仍使用系统原有的授权与 `passwd` 流程，不要求加入 sudoers；logind 已允许的关机也不会额外要求 sudo。系统允许的普通操作无需获得完整管理员会话。
-
-## 支持范围
-
-| 入口 | 可执行操作 | 条件与限制 |
+| Entry | Main operations | Backend and requirements |
 | --- | --- | --- |
-| 服务 | 启停、重启、重新加载配置、重新读取服务定义、依赖和先后顺序、失败日志、新服务及模板实例草稿 | 使用 systemd；通过编辑器检查保存单元或覆盖配置，默认不启动或开机启用 |
-| 进程 | 进程树、信号、优先级、选中进程的文件、端口、读写累计量和速率、所属服务跳转 | 核对 PID 和启动时间；端口按持有的 socket 匹配，权限不足和退出明确报告 |
-| 软件包 | 查询、安装、卸载、升级、占用原因、失败处理、配置冲突和软件源管理 | APT/dpkg、DNF、pacman；Arch 保持完整升级。源文件与冲突合并进入配置编辑器 |
-| 网络 | 地址、路由与 DNS；可选 Wi-Fi 列表、密码连接与结果；分步诊断 | Wi-Fi 要求 NetworkManager；成功验证后自动保留，失败恢复；VPN、网桥、VLAN、企业 Wi-Fi 暂不支持 |
-| 磁盘 | 挂载、自动挂载草稿、健康、inode 文件数量额度、扫描排序及定位文件 | fstab 使用稳定标识，通过编辑器保存；保存不立即挂载。未知健康信息不显示为正常 |
-| 用户 | 完整可枚举账户、按名查询、组、Shell、SSH 公钥、有效期 | 远程账户只读；缺少 AccountsService 时固定工具补足，实际系统授权决定能否修改 |
-| 防火墙与端口 | TCP/UDP 监听端口及进程，放行规则增删 | 支持 UFW/firewalld，区分当前生效、保存及重启加载；两者同时运行时只读 |
-| SSH | 生效设置、监听端口、公钥和登录策略 | 修改前检查，独立回退任务；120 秒内真实新连接确认 |
-| 配置备份 | 原件、时间、差异、操作结果及选中记录恢复 | 文件版本冲突时停止；账户只恢复相关属性，敏感内容受保护 |
-| 定时任务 | systemd/cron 列表，新建 service/timer、暂停、恢复和立即执行 | 新建系统任务默认以当前用户执行，退出 Tundra 后仍运行 |
+| Services | Start, stop, restart, reload, enable, disable, dependencies, logs, and unit configuration | systemd |
+| Processes | Process tree, signals, priority, files, ports, and read/write metrics | Check PID and start time |
+| Packages | Query, install, remove, upgrade, repositories, and configuration conflicts | APT/dpkg, DNF, pacman |
+| Network | Addresses, routes, DNS, Wi-Fi, and diagnostics | Wi-Fi uses NetworkManager |
+| Disks | Mounts, fstab, health, inodes, and directory scans | UDisks/smartctl and system file interfaces |
+| Users | Accounts, groups, Shell, expiration, and SSH public keys | NSS, AccountsService, and fixed system tools |
+| Firewall and ports | Listening ports, adding and removing allow rules | UFW or firewalld |
+| SSH | Effective settings, ports, public keys, and login policies | OpenSSH and systemd |
+| Configuration backups | Diffs, originals, results, recovery, and cleanup | Shared recovery records |
+| Scheduled tasks | systemd timers, crontab, pause, resume, and run now | systemd and local cron |
 
-缺少系统工具、服务未运行或配置归属不明确时，界面会显示原因。程序不会为此自动安装系统组件。
+See [Networks and disks](network-disks.md), [User management](user-management.md), [Firewall](firewall.md), [SSH](ssh-management.md), and [Scheduled tasks](scheduled-tasks.md) for detailed requirements.
 
-## 软件包确认与失败处理
+## Packages page
 
-软件包页左侧从上到下提供已安装、更新、搜索三个入口，默认打开已安装；F7/F8/F6 分别切换，空列表和查询失败时仍可使用。当前页持续显示强调色和 `->`，鼠标操作后列表仍保留选中条。搜索页的高级区管理软件源，更新页检查包管理器状态与修复，已安装页处理配置冲突；F3 展开或收起。Tab/Shift+Tab 切换导航、搜索、列表、详情、主要操作和高级区域，方向键选择，Enter/空格执行。三个主列表之间保留搜索词；切换子页先清除旧列表，进入或离开软件源、冲突、状态页时也清除用途不同的筛选和目标。
+The left side offers Installed, Updates, and Search, opening Installed by default. Details query the local database or repositories. Primary actions are at the bottom of the details area, while advanced sections handle repositories, state repair, and configuration conflicts separately.
 
-在软件包列表按 Enter 或 F4 查看详情，Esc 或 F4 返回列表并保留选中项。已安装软件包的详情优先读取本机数据库；配置文件读取、比较和历史记录不会替换软件包列表。这种列表与详情分开的方式参考了 [aptitude 的软件包信息界面](https://www.debian.org/doc/manuals/aptitude/ch02s02s02.en.html)。
+- Queries use existing repository information; explicitly refresh when current data is needed.
+- Search displays at most 2,000 rows; narrow the query if needed.
+- Before writing, recheck installed versions, candidate versions, and the complete target list.
+- Native dependency confirmations, configuration conflicts, and installation-script questions appear in the AA terminal, which accepts input.
+- Normal removal does not automatically purge or autoremove; APT/DNF upgrades are not distribution upgrades.
 
-普通分栏下，将焦点移到详情区后用方向键、翻页和 Home/End 滚动说明；放大的详情页保留方向键切换软件包的行为。主要操作位于详情底部，仍使用原来的确认、授权和 AA 任务流程。
+### Arch / pacman
 
-列表中的长包名、版本和软件源地址使用省略号，避免单条记录挤走其他列；完整值可以在右侧详情或 F4 详情页查看。
+Installed-package, search, detail, and update queries use `/usr/bin/pacman`. Repository queries also require `/usr/bin/pacman-conf` and an available sync database; repositories must support the corresponding Search, Install, and Upgrade uses.
 
-搜索和列表使用已有仓库信息，不提权、不刷新源。Ubuntu/Debian 和 Fedora 需要最新信息时选择“刷新源”；Arch 提供“刷新源并升级系统”，不能只下载仓库信息而不升级。搜索最多显示 2,000 行，更多结果请缩小搜索范围。更新列表来自只读查询，不会据此自动批准后续安装。
+Installation, selected-package upgrades, and upgrading all packages execute `pacman -Syu --needed`, appending package names when targets are specified. These operations upgrade the entire system; pacman confirms final versions, dependencies, and the transaction in the AA terminal.
 
-Arch 的已安装、搜索、详情和可更新列表通过固定的 `/usr/bin/pacman` 只读命令读取本地与已有同步数据库，候选按系统仓库优先级选取。仓库查询还需要 pacman 自带的官方 `/usr/bin/pacman-conf`，读取它解析 Include 后的规范化生效配置。仓库外（foreign）已安装软件包可以查看和普通卸载；Tundra 不构建、安装或更新 AUR 软件包，也不调用 AUR 助手。
+Normal removal uses `pacman -R -- PACKAGE_NAME`, preserving `.pacsave` behavior. Check `.pacnew` files after upgrades according to native output. Packages outside repositories can be inspected and removed; AUR builds and helpers are outside the backend's scope.
 
-依赖仓库的预览、搜索、更新列表、安装和指定软件包升级，要求每个配置仓库同时启用 `Search`、`Install`、`Upgrade`（默认 `Usage = All` 满足）。用途不同或完全禁用的仓库会显示不支持原因，避免列表与实际事务选用不同仓库。`pacman-conf` 缺失、同步缓存不可用或仓库配置不受支持时，本地已安装列表和详情仍可用，行操作只提供普通卸载；仍保留需明确确认的全系统 `-Syu` 操作。同步数据库查询只要出现 stderr 诊断（包括退出成功但提示数据库缺失），就拒绝不完整结果；本地 `-Qi` 详情可容忍同步缓存警告。
+## Background tasks and authorization
 
-任务启动前重新核对已安装版本，以及界面曾展示的仓库候选版本；已经变化时，拒绝旧请求，须刷新列表再确认。Arch 还核对缓存候选的仓库来源。实际运行的 APT、DNF 或 pacman 会重新计算依赖。APT 可能直接执行已明确指定且没有额外依赖的单包操作，这种情况只有 AA 的操作确认（自动批准时省略），不宣称每次都有原生二次确认。依赖确认、dpkg 配置冲突和特殊安装脚本的问题都在 AA 终端中原样显示，直接按程序提示输入回答，不再转换为 Continue/Cancel 表单。长计划可滚动查看后再回答。
+When closing a page with an active operation, you can keep it running in the background, cancel and close, or stay on the page. AA reappears when input is needed. Exiting Shell requests that current-session tasks stop and waits for cleanup.
 
-Arch 的安装、选中软件包升级和全部升级都执行 `pacman -Syu --needed`；有指定目标时追加 `-- 软件包名`。这些操作会刷新仓库并升级整个系统，包括未选中的软件包，以避免部分升级。界面中的版本只是缓存预览，刷新后的最终版本、依赖和完整系统事务由 pacman 在 AA 终端中列出并等待原生确认；AA 自动批准也不会替用户回答。不得用单独的 `pacman -Sy` 代替这些操作。
+The first built-in elevation establishes a private authorization connection for the current Shell through sudo; the password is cleared after verification. Exit, logout, or connection failure revokes authorization; restarting Shell requires authorization again.
 
-普通卸载不自动执行 purge 或 autoremove。DNF 不自动清理不再使用的依赖；Arch 只执行 `pacman -R -- 软件包名`，保留 pacman 的 `.pacsave` 行为，不用 `-Rns`、`-Rs` 或级联删除。升级后可能留下 `.pacnew`，卸载后可能留下 `.pacsave`，请按原生输出检查和合并配置；RPM 配置变化可能留下 `.rpmnew` 或 `.rpmsave`。APT/DNF 的普通软件包升级不是完整系统发行版升级；Arch 的上述操作明确包含完整系统软件包升级。
+Tasks still running in a helper can restore output and interaction through Reconnect System Task. When the result is unknown, query the actual state first instead of resubmitting the same write operation.
 
-进入修改阶段后，关闭页面或退出 Tundra 不会强杀软件包管理器。安装终端会过滤 Ctrl+C、Ctrl+D、Ctrl+Z 和 Ctrl+\\，以免中断修改。失败可能已经改变部分软件包；界面会显示真实退出结果，需要根据输出处理，不承诺自动恢复整个软件包事务。
+Network configuration and loading SSH settings use independent recovery tasks and require confirmation within 120 seconds. Confirm network changes with `network confirm`; SSH uses `tundra-cli ssh confirm ID` and verifies an actual new connection.
 
-## 后台任务与网络回退
-
-系统操作由独立助手执行。关闭仍有操作的页面时，可以选择“继续后台运行”“取消任务并关闭”或“留在页面”。选择后台运行后，操作留在本次 Shell 会话中，页面关闭；需要密码或确认时会重新显示 AA。注销、返回锁屏或退出 Shell 会请求取消任务并等待结束。若连接意外中断且助手仍保留任务，可在操作区选择“重新连接系统任务”。不要在结果未知时重复提交同一操作。
-
-首次内置提权会提示输入 sudo 密码，并说明本次 Shell 内的系统管理、用户管理、关机重启和任务重连可复用授权。密码验证后清除，不保存到磁盘；授权通过当前 Shell 私有的连接保留，退出或注销后撤销。每次操作仍遵守 AA 的手动批准、自动批准或禁止设置。重新启动 Shell 需要重新授权。
-
-重新连接可以接收仍在等待的问题和保留的输出。提权任务的控制接口只允许 root 连接；会话授权程序把核验后的连接交给当前 Shell，同一用户下其他程序不能仅凭接口路径接管任务。历史输出有大小限制，完成结果保留约十分钟；机器重启或助手被外部终止后，不能恢复原来的进程。
-
-普通网络配置修改先准备备份和独立恢复任务，再暂时应用配置，须在 120 秒内确认保留；脚本通过 `network confirm` 确认。Wi-Fi 连接由助手核对所选网络及所需地址，成功自动保留，失败或超时恢复。互联网目标连接测试单独报告。配置被其他程序同时改动时会报告冲突，不能保证任何外部改动下都能恢复。缺少所需恢复工具时不执行修改。
-
-## 验证范围
-
-软件包自动测试覆盖缓存查询解析、仓库优先级、配置用途与不完整查询拒绝、本地降级、过期版本校验、固定操作参数、输入限制，以及真实 PTY 的确认、断开等待、脚本交互和失败结果。另有显式只读 APT/pacman 检查，读取已安装、搜索、详情和可更新列表，不执行安装、卸载、刷新源或升级。Arch CI 在普通用户身份下运行软件包夹具测试和只读 pacman 检查。
-
-运行软件包检查：
+## Validation
 
 ```sh
 cargo test --locked -p platform management::packages --lib
 cargo test --locked -p platform management::packages::query::tests::live_apt_installed_search_updates_and_details --lib -- --ignored
-# 以下命令仅在有 pacman/pacman-conf、完整同步数据库及受支持仓库用途的 Arch 环境运行
 cargo test --locked -p platform management::packages::pacman::tests::live_pacman_installed_search_updates_and_details --lib -- --ignored
 ```
 
-完整仓库检查使用 `cargo test --workspace --locked`。夹具或只读测试通过不代表真实 Fedora/Arch 软件包写入、Wi-Fi 或物理磁盘挂载已验收；真实软件包事务只能在明确授权且可恢复的测试环境中验证，不应在开发主机执行破坏性测试。
+The ignored APT/pacman cases query the local database without writing. Real package writes, Wi-Fi, mounts, and authorization flows are verified in recoverable isolated environments or on test hosts.

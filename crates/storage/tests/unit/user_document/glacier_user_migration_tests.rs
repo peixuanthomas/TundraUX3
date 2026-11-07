@@ -65,7 +65,13 @@ fn users_schema_two_exact_default_migrates_but_custom_value_does_not() {
         users: vec![user(legacy), user(custom.clone())],
     };
     assert!(document.normalize());
-    assert_eq!(document.users[0].appearance, AppearanceConfig::default());
+    assert_eq!(
+        document.users[0].appearance,
+        AppearanceConfig {
+            icon_display_mode: IconDisplayMode::Image,
+            ..AppearanceConfig::default()
+        }
+    );
     assert_eq!(document.users[1].appearance, custom);
     assert_eq!(document.schema_version, USERS_SCHEMA_VERSION);
 }

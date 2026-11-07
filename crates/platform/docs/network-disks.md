@@ -1,35 +1,38 @@
-# 网络与磁盘操作
+# Network and disk operations
 
-## 网络连接与恢复
+## Network connections and recovery
 
-网络页同时列出接口和 NetworkManager 已发现的 Wi-Fi。Wi-Fi 行显示名称、信号、加密、已保存和当前连接状态。选择网络后点击“连接”；需要密码时在弹出的表单输入。开放网络和已确认保存密码的连接省去密码输入。“连接隐藏网络”和“输入其他密码”放在更多操作中。企业 Wi-Fi、VPN、网桥和 VLAN 留待后续版本。
+The Network page lists interfaces and Wi-Fi networks discovered by NetworkManager, showing name, signal, encryption, saved state, and connection state. Open networks connect directly; encrypted networks ask for a password in a form. Hidden networks and other password entry points are under More Actions.
 
-连接先在后台准备独立恢复服务，然后切换网络。助手确认当前连接的配置编号、网络名称以及配置要求的地址，成功后自动保留；密码错误、地址获取超时或取消都会恢复原连接。新密码通过 D-Bus 传递，不进入命令行、恢复记录或调试文本。互联网目标是否可访问由网络诊断单独检查。
+Before connecting, an independent recovery service is prepared in the background, then the network is switched. The helper checks the connection UUID, network name, and address acquisition result, and keeps the connection on success. An incorrect password, timeout, or cancellation restores the original connection. Passwords travel through D-Bus and are not written to command lines or ordinary logs.
 
-地址、网关和 DNS 修改继续使用 120 秒保留确认。脚本可设置 `defer_confirmation=true`，取得修改任务编号后查询结果，再确认保留；超时仍由独立恢复服务执行恢复。确认不能延长原期限，也不能操作其他账户发起的修改。
+Address, gateway, and DNS changes use a 120-second confirmation window to keep the changes. Scripts can set `defer_confirmation=true`, receive a task ID, then query the result and confirm; the independent recovery service handles timeouts.
 
-“网络诊断”依次检查设备、无线开关、连接、地址、路由、DNS 和目标端口。结果列出失败项目、下一步，以及“再次检查”“选择网络”或配置入口。检查目标可以填写域名或 IP；互联网检查失败不改变 Wi-Fi 的连接结果。
+Network Diagnostics checks the device, wireless switch, connection, address, routes, DNS, and target port in order. Results offer actions to check again, select a network, or open configuration.
 
-网络配置修改、Wi-Fi 连接保存和忘记连接也写入统一配置备份历史。记录保存在 `/var/lib/tundraux3/config-backups`，与 `/run` 中本次连接检查的临时任务分开；重启后仍能查看并恢复已完成操作。记录先保存现有配置文件、原活动连接 UUID 和新 UUID 原先不存在这一事实。NetworkManager 保存新连接后，再核对该 UUID 的真实文件位置并登记“原先不存在”。密码只在 root 私有原配置备份中保留，页面差异隐藏 NetworkManager 文件内容；新输入密码不进入普通日志或脱敏操作计划。
+Network changes and saving or forgetting Wi-Fi connections are recorded in the shared configuration backup system. Before restoring a configuration in use, check file versions, device, MAC, native connection, and the currently active connection, then apply it temporarily and require a new confirmation within 120 seconds. Restoring a saved Wi-Fi configuration that is not in use only reloads configuration without switching the current network.
 
-从统一历史恢复正在使用的网络配置时，程序先比较文件版本、设备编号、MAC 地址、原生连接内容及当前活动连接，发现外部改动则停止。恢复也启动新的独立恢复任务，临时应用旧配置，再要求 120 秒确认；未确认会回到恢复前的当前连接。恢复不依赖已消失的 `/run` 任务编号。恢复未使用的已保存 Wi-Fi 只重新加载该配置，不切换当前网络，并再次核对活动连接没有改变。
+## Disks, mounts, and health
 
-自动回退在替换已变化的保存文件前，也先保存一条完整的网络恢复记录；原操作已核对的修改后版本保持原样。恢复失败只更新结果文字，不把失败后的外部改动采为允许覆盖的版本。恢复记录包含实际文件、相关 UUID 和当时活动的连接，继续通过同一套 120 秒连接检查恢复。若当时涉及临时连接或尚未保存的内存设置，记录只保存真实磁盘文件，并显示无法重建临时状态的原因；程序不会为了备份把这些设置保存到磁盘。
+The Disks page shows total and remaining byte capacity and inode counts, along with usage percentages. File quotas not reported by the system are shown as unknown.
 
-## 磁盘、挂载和健康
+Mount at Boot generates an `/etc/fstab` draft and opens it in the editor:
 
-磁盘页显示字节容量，以及文件数量额度（inode，一种记录文件信息的磁盘额度）的总数、剩余数和使用率。文件额度为零或系统没有报告时显示未知，不能把未知当成空闲。可用额度为零时，按文件数量扫描有助于定位含大量小文件的目录。
+- Identify filesystems by UUID, preserving other entries and comments.
+- Existing device-path entries can be converted to UUIDs.
+- Duplicate UUIDs, occupied mount points, or devices that cannot be confirmed report a specific reason.
+- Check the original content on which the draft was based before saving; saving does not mount immediately.
 
-“开机挂载”生成 `/etc/fstab` 草稿并打开现有编辑器。草稿使用 UUID 识别文件系统，保留其他条目和注释；已有设备路径条目会改用 UUID。相同 UUID 有多个条目、重复数据盘 UUID、挂载点被其他条目占用时，返回明确说明。编辑器读取后还会比较草稿所依据的原文，避免覆盖这期间的外部修改。保存配置不会立即挂载设备。
+Check Disk Health first reads UDisks SMART and uses `smartctl` JSON when valid data is unavailable. Queries do not start self-tests, change disk settings, or deliberately wake standby disks. Temperature, bad sectors, and sample time appear separately; missing fields are shown as unknown.
 
-“检查磁盘健康”优先读取 UDisks 的 SMART 数据；缺少有效数据时读取 `smartctl` 的 JSON 输出。仅查询健康与已有属性，不开始自检、不修改磁盘设置、不唤醒处于待机状态的磁盘。需要额外权限时提供授权入口。磁盘报告失败时保留实际结果与工具退出码；不支持、工具缺失、读不到数据均显示未知。温度、坏扇区和样本时间分别显示，缺失字段不会用零代替。
+## Directory scans
 
-## 目录扫描
+Directory scans use the original user's permissions, skip symbolic links, other mounts, and bind mounts, and count hard links only once.
 
-目录扫描仍以原用户权限执行，跳过符号链接、其他挂载及绑定挂载，硬链接文件只计一次。扫描结果可按占用字节、内容字节或文件数量排序；排序不重新扫描。目录行直接进入文件管理器，文件行进入所在目录并选中文件。结果保留文件类型、设备和文件编号，文件管理器打开前可以检查文件是否已被替换；返回后保留扫描结果。
+Results can be sorted by allocated bytes, content bytes, or file count without rescanning. Directory rows open File Explorer; file rows open their containing directory and select the file. Device, file ID, and type can be checked before opening; results are retained on return.
 
-## 验证与资料
+## Validation and references
 
-后端单元测试和只读接口/磁盘清单检查可在 Ubuntu WSL 运行。Wi-Fi 关联、密码错误后的实际恢复、独立恢复进程在断线后的运行和物理盘 SMART 仍需要带对应设备的 Linux 主机验收；模拟测试不能代替这些结果。
+Backend unit tests and read-only interfaces can run on Linux/WSL. Wi-Fi association, recovery from incorrect passwords, independent recovery after disconnection, and physical-disk SMART are verified on the corresponding Linux host.
 
-接口依据：[NetworkManager 接入点属性](https://www.networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.AccessPoint.html)、[NetworkManager 类型与安全标记](https://www.networkmanager.dev/docs/api/latest/nm-dbus-types.html)、[UDisks ATA SMART 属性](https://storaged.org/doc/udisks2-api/latest/gdbus-org.freedesktop.UDisks2.Drive.Ata.html)、[fstab 文件规则](https://man7.org/linux/man-pages/man5/fstab.5.html)。
+References: [NetworkManager access points](https://www.networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.AccessPoint.html), [NetworkManager types](https://www.networkmanager.dev/docs/api/latest/nm-dbus-types.html), [UDisks SMART](https://storaged.org/doc/udisks2-api/latest/gdbus-org.freedesktop.UDisks2.Drive.Ata.html), [fstab](https://man7.org/linux/man-pages/man5/fstab.5.html).

@@ -1,74 +1,57 @@
 # app
 
-Launcher 的 AddCustom 检查管理与命令行权限，保存名称、文字图案、Shell 命令和退出后是否等待回车。RequestLaunch 使用现有 OpenTerminalRequested 传递退出选项，在 Unix 交给 /bin/sh -c，在 Windows 交给 cmd.exe /C。SetOrder 保存包含内置入口的图标顺序，不把内置入口写成可删除条目。
+`app` stores application state and handles domain commands without depending on UI, Ratatui, or crossterm. Shell/UI handles window dimensions, keys, focus, and click positions; platform reads and writes go through `platform` and `storage`.
 
-Remove 保存删除结果后只移除对应条目，保留其余条目的顺序和检查状态，避免图标前移后停留在没有检查任务的“检查中”。
+## Modules
 
-EditEntry 保存用户条目的名称、命令、图标及退出后保留界面的选项，拒绝空名称、空命令、越界图案与未授权修改。保留界面仅支持自定义命令和嵌入终端程序，启动时传给已有终端宿主。图案限两行、每行五个终端格；更改普通文件入口的命令会保留 ID、名称、图标、工作目录和退出选项，转为自定义 Shell 命令。内置入口不进入可编辑配置。
-
-内置应用目录提供“任务”入口；它与标题栏打开同一任务页，名称和说明使用当前语言。
-
-Launcher 可为已批准的原生程序和可直接执行的 Unix 脚本保存嵌入终端运行设置，参数以数组传递，目录在保存和启动时检查。修改沿用 Launcher 管理权限，嵌入启动同时要求命令行权限，脚本仍需二次确认；启动 effect 由 Shell 创建独立终端页面。
-
-`script/` 解析脚本声明、解释器、参数和工作目录，保留每份文档的断点、运行编号和暂停编号；旧会话或旧暂停位置的结果不能覆盖当前数据。参数只解析引号，不展开变量或执行命令。
-
-断点分别记录已验证和被调试器明确拒绝，区分尚未验证与未生效；编辑移动或开始新一轮运行时清除旧结果。
-
-文件选择器用 `OpenSelectedInEditor` 明确请求读取脚本，普通浏览仅在编辑器文件类型规则选中 Shell 脚本时进入编辑器；读取不触发启动器的执行授权。禁止打开的文件仍被阻止，原生程序及安装器仍交给启动器。
-
-普通编辑器从实际修改、撤销和重做记录输出 `SourceLineChange`；Vim 镜像使用原生行变化通知。断点按这些记录移动，整行删除时移除对应断点。执行只读标记独立于文件原有只读权限，解除执行标记不会解除原有文件保护。
-
-批量替换按实际各处匹配记录行变化，中间未改动的行不当作删除；正文仍只形成一次撤销，撤销和重做按各处匹配反向或正向移动断点。编辑边界形成或拆开的 CRLF 按实际逻辑行数处理。
-
-`update/vim/install.rs` 从项目独立引擎 Release 下载固定版本的 ZIP，复用现有可取消的 HTTP 请求，报告下载字节及解压、校验阶段。验证 SHA-256、目录内容和上游清单后才替换用户数据目录的 `vim/`，失败或取消时清理本次临时目录。
-
-Windows 引擎校验还要求 `libiconv-2.dll`、对应许可证和源码归档完整；下载及更新都保留这些文件，支持真实 Vim 的 UTF-16 保存。
-
-`app` 保存应用状态并处理命令。它不依赖 UI、Ratatui 或 crossterm；窗口大小、按键、焦点和点击位置由 Shell/UI 处理。
-
-`runtime_logs` 将已授权的故障报告合并到运行日志查询结果中，以最高等级 `Critical` 显示；已有对应故障事件时不重复加入，恢复记录保留。合并后统一按时间排序、限制条数，沿用用户归属和完整报告的访问限制。
-
-文件管理的显式选择模式把空选择与当前光标位置分开：没有勾选时不会把当前文件自动当作操作对象，退出选择模式后恢复普通单选。
-
-| 模块 | 职责 |
+| Module | Responsibilities |
 | --- | --- |
-| `application/` | 全局状态、应用命令、通知和只读快照 |
-| `editor/` | 文本、选择、撤销、保存快照和恢复 |
-| `script/` | 脚本解释器、参数、文档所属的运行状态、断点和调试数据 |
-| `explorer/` | 文件列表、选择、操作任务与恢复 |
-| `launcher/` | 内置入口、固定应用和启动工作流 |
-| `diagnostics/`、`runtime_logs/` | 诊断状态、日志查询和查看 |
-| `clock.rs` | 闹钟和计时任务的调度 |
-| `update/` | 更新检查、下载、构建、替换与回退 |
+| `application/` | Global state, application catalog, notifications, commands, and read-only snapshots |
+| `editor/` | Text buffers, multiple documents, undo, saving, recovery, and Vim mirrors |
+| `script/` | Script interpreters, arguments, breakpoints, and per-document execution state |
+| `explorer/` | File lists, selection, operation tasks, and recovery |
+| `launcher/` | Built-in entries, custom commands, external programs, and launch workflows |
+| `diagnostics/`, `runtime_logs/` | Diagnostics, log queries, and merging failure reports |
+| `system_settings` | System settings backend interfaces and availability state |
+| `clock.rs` | Alarm and timer scheduling |
+| `update/` | Update checks, downloads, builds, Vim installation, replacement, and rollback |
 
-`editor/` 将文本缓冲、文档、编辑状态和命令处理分别放在 `source_buffer.rs`、`document.rs`、`state.rs`、`controller.rs`；`explorer/` 将状态、命令处理和文件操作分别放在 `state.rs`、`controller.rs`、`files.rs`。`update/` 的 Git 查询、工具链和 Linux 正式包处理分别位于 `git.rs`、`toolchain.rs`、`release.rs`。
+Callers modify state through `AppCommand` and read a consistent view through `AppSnapshot`. `AppAction` only expresses requests to redraw, exit, reboot, or power off; Shell performs terminal restoration and process operations.
 
-外部 Vim 的原始保存字节通过 `SaveSnapshot::external_bytes` 交给现有异步原子保存流程，不重新编码、不改换行或 BOM；Vim 继续负责缓冲的修改标记、撤销和路径，快照不会认领普通编辑器的待保存记录。`synchronize_external_source` 仅镜像文本、元数据、光标和修改状态，保留只读保存边界。
+## Main state and workflows
 
-更新同时准备 Shell、CLI 和完整 `vim/` 目录，校验 Vim 的运行资源、许可和上游构建信息；发布失败、启动失败或中断恢复时一并回退。旧版没有 Vim 目录时，回退会移除本次新增目录。Beta 在 Cargo 构建后显式运行 `scripts/build-vim.py`，需要 Python 3.12 及 Vim 的 C 构建依赖；普通 Cargo 构建不会下载 Vim。默认主题、自定义资源和用户文件继续保留。
+### Explorer and Launcher
 
-调用方通过 `AppCommand` 修改状态，通过 `AppSnapshot` 读取状态。`AppAction` 返回重绘、退出或电源请求，Shell 执行终端恢复与进程操作。
+Explorer manages directories, filtering, sorting, multiple selection, the clipboard, and operation progress. `ExplorerTaskEngine` provides cancellation, checkpoints, and recovery for lengthy file tasks; the platform layer performs the actual copy, move, trash, and directory operations.
 
-`SetClockTimezone` 的 `timezone_id: None` 让时钟直接跟随系统时间和时区。此模式忽略旧的同步时间，保存其他设置也不会重新套用配置中的独立时区。
+`ExplorerFileService` shares copied and cut files across pages in the current session and clears them when switching accounts. It records completed moves and renames within one filesystem for cross-page undo. Undo restores the location while preserving later content edits, checks the object and both parent-directory identities, and rejects replaced objects or an occupied original path without recursively scanning directories. Cross-volume moves, replacements, and directory merges cannot be undone and clear older undo records. The system file clipboard is not connected; the text clipboard does not carry file transfers.
 
-Explorer 刷新当前目录时保留搜索、选择和视口；切换目录才重置导航状态。编辑器保存后由 Shell 刷新所有指向该目录的已有页面。
+Launcher stores built-in applications, custom Shell commands, and approved external programs. Custom entries support a name, a 5×2 terminal-cell text icon, arguments, a working directory, and retained output after exit; built-in entries are not stored in removable configuration. Custom commands use `/bin/sh -c` on Unix and `cmd.exe /C` on Windows.
 
-Explorer 的文件剪贴板由会话内的 `ExplorerFileService` 统一保存，页面实例共享复制与剪切，切换账户时清空。该服务也记录同一文件系统内的完整移动和重命名，支持跨页面撤销；后台任务返回实际完成的记录。撤销只恢复位置，保留同一文件或目录内后续编辑的内容；检查对象及两端父目录身份，拒绝原位置占用或对象被替换，不递归扫描目录。跨卷移动、替换与目录合并不记录为可撤销操作，并清除旧记录，避免撤销到较早的其他操作。系统文件剪贴板尚未接入，普通文本剪贴板不承载文件传输格式。
+### Editor and scripts
 
-Explorer 默认交给编辑器的 106 种后缀包含现有语法着色支持的全部 99 种后缀和原有文本后缀。测试直接核对语法定义，避免已有支持的类型遗漏；自定义列表仍按用户设置匹配。
+The editor handles user-visible characters as graphemes, using save snapshots tied to an exact revision and separate recovery records. Bytes written externally by Vim enter the same atomic save workflow through `SaveSnapshot::external_bytes`, without re-encoding or changing line endings.
 
-Linux 启动器固定包含防火墙与端口、SSH 服务、配置备份与恢复、定时任务入口；这些入口和已有管理应用一样，由 Shell 打开独立页面，由 platform 执行实际操作。
+Script state stores the interpreter, arguments, breakpoints, run ID, and pause ID for each document. Editing, undo, and redo move breakpoints; results from an old run or pause location do not overwrite current data.
 
-软件包入口支持 Linux、Windows 和 macOS；Windows 使用 platform 的 WinGet 后端，macOS 使用 Homebrew 后端管理 Formula 和 Cask。内置应用目录按 `PlatformKind` 声明支持的平台，其他系统管理入口继续按各平台已有支持显示。
+### Updates and logs
 
-部分文件和启动器操作仍在 `apply` 中调用平台或存储服务；不能假定每条命令都没有文件读写。后台任务使用 watchdog，写操作不能未经判断自动重放。
+Updates prepare Shell, CLI, and the complete `vim/` together, validate assets, licenses, and upstream metadata, and roll them all back on failure or startup timeout. Vim installation packages are checked for SHA-256, directory contents, and the pinned version; Windows also checks the iconv DLL, license, and source code.
 
-- [应用行为与保存约束](docs/applications.md)
-- [程序自更新](docs/update.md)与[更新测试](docs/update-tests.md)
-- [系统配置保存](../platform/docs/system-config.md)
+Runtime logs merge failure reports that the user is authorized to access at the highest severity, `Critical`, sort them by time, and respect report access restrictions.
 
-验证：`cargo test --locked -p app`。修改跨 crate 的命令或共享类型后运行 workspace 测试。
+## Documentation
 
-更新与 Vim 安装测试只保留离线校验、取消、文件安全和回退检查，不运行 HTTP 下载测试或本地 HTTP 服务器。
+- [Application state and built-in applications](docs/applications.md)
+- [Application self-updates](docs/update.md)
+- [Update tests](docs/update-tests.md)
+- [Editor and script workspace](../../docs/source-editor.md)
+- [Saving system configuration](../platform/docs/system-config.md)
 
-更新模块解析 Cargo 清单时与其余模块共用 TOML 0.9，避免发布程序重复链接旧版解析器。
+## Validation
+
+```sh
+cargo test --locked -p app
+```
+
+Run workspace tests after changing cross-crate commands or shared types. Update and Vim installation tests use offline data and cover validation, cancellation, file safety, and rollback.

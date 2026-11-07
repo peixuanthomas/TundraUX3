@@ -640,6 +640,7 @@ pub struct UiSessionState {
     pub(super) diagnostics_restart_required: bool,
     pub(super) terminal_size: (u16, u16),
     pub(super) terminal_flags: ShellTerminalFlags,
+    pub(super) default_icon_display_mode: storage::IconDisplayMode,
     pub(super) terminal_image_support: bool,
     pub(super) terminal_text_sizing_support: bool,
     pub(super) pending_default_ascii_icon_fallback: bool,

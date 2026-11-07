@@ -1,11 +1,34 @@
 # identity
 
-`identity` 负责应用身份：Linux 使用当前进程的系统用户，Windows/macOS 使用 Tundra 本地账户。
+`identity` handles application identity and UX permissions: Linux attaches to the current process's system user, while Windows/macOS use Tundra local accounts.
 
-## 账户和权限
+## Modules
 
-以下本地账户规则用于 Windows、macOS 和测试后端。Linux 仅附着当前进程的 NSS 用户；系统账号、密码、锁定和过期策略由 Linux 系统管理，个人操作遵循普通进程权限。
+| Module | Responsibility |
+| --- | --- |
+| `identity` | `AuthSession`, identity sources, and user accounts |
+| `backend` | Identity backend interface |
+| `credentials` | Password validation, Argon2 hashing, and verification |
+| `session_service` | Login sessions, failure counts, and lockouts |
+| `user_service` | Local account management |
+| `authorization` | Guest/User/Admin roles and permission checks |
+| `linux` | Current Linux process user |
 
-密码不以明文持久化，而使用随机 salt 的 Argon2 哈希。密码长度必须为 **10–256** 个字符，不能全为空白，也不能等于规范化后的用户名。认证会话只保存在内存中；用户名匹配不区分大小写，未知用户与错误密码统一返回无效凭据。连续 **5 次**认证失败会锁定账户 **5 分钟**；锁定与失败信息持久化，避免重启绕过。
+## Local account rules
 
-UX 访问权限区分 Guest、User 与 Admin。文件读写和个人资料操作面向 User/Admin；用户管理、Command Line、Launcher 管理、诊断修复和设置管理仅允许 Admin。保存的 UX 角色不授予 Linux 系统权限；Linux 账户修改仍需实际系统授权并遵守当前账户保护规则。CLI 的 `config` 不读写身份字段；系统账户通过正式 `users` 命令管理，密码只允许隐藏输入或指定输入描述符。
+The following rules apply to Windows/macOS and test backends:
+
+- Passwords use Argon2 hashes with random salts. They must contain 10–256 characters and cannot consist entirely of whitespace or equal the normalized username.
+- Username matching is case-insensitive. Unknown users and incorrect passwords return the same invalid-credentials result.
+- Five consecutive authentication failures cause a five-minute lockout. Failure and lockout information is persisted.
+- Authentication sessions are kept only in memory.
+
+UX roles are Guest, User, and Admin. File and profile operations are available to User/Admin; user management, Command Line, Launcher management, diagnostic repairs, and settings management require Admin.
+
+Linux system accounts, passwords, and lockout policies are managed by the operating system. Saved UX roles do not grant Linux permissions. System accounts are managed through `tundra-cli users` and the system authorization workflow; CLI `config` does not read or write identity fields.
+
+## Validation
+
+```sh
+cargo test --locked -p identity
+```

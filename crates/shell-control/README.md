@@ -1,11 +1,11 @@
 # shell-control
 
-定义外部 CLI 与运行中 Shell 共用的 JSON 请求、响应、界面树和快照。此 crate 不读取配置、不连接终端、不执行系统操作。坐标以终端字符格为单位，左上角是 `(0, 0)`。
+Defines the JSON requests, responses, interface trees, and snapshots shared by the external CLI and a running Shell. This crate does not read configuration, connect to terminals, or perform system operations. Coordinates use terminal character cells, with `(0, 0)` at the top left.
 
-连接由 platform 提供；Shell 在实际绘制后发布快照，并把请求转换为正常键盘、鼠标和粘贴输入。协议版本为 1，错误代码不随语言改变。
+Connections are provided by platform. Shell publishes snapshots after actual rendering and converts requests into normal keyboard, mouse, and paste input. The protocol version is 1, and error codes do not change with the language.
 
-`wake` 请求关闭空闲天气或天气锁屏，返回后续 Shell 画面；普通页面只返回当前快照，不发送按键。
+A `wake` request closes idle weather or the weather lock screen and returns the subsequent Shell screen. On ordinary pages, it only returns the current snapshot without sending a key.
 
-快照编号随绘制递增，但自动更新不会使旧编号失效。Shell 在真实用户操作后拒绝控制请求，直到再次读取快照；显式指定用户操作之前的编号仍会拒绝，天气画面除外。
+Snapshot numbers increase with rendering, but automatic updates do not invalidate old numbers. After real user actions, Shell rejects control requests until a snapshot is read again; explicitly specifying a number from before the user action is still rejected, except on weather screens.
 
-验证：`cargo test --locked -p shell-control`。
+Validation: `cargo test --locked -p shell-control`.

@@ -1,19 +1,27 @@
 # runtime-log
 
-`runtime-log` 保存和查询结构化运行事件，处理脱敏、轮转、保留期限、容量限制和安全清理。Shell 的 Logs 页面及 CLI 共用这些数据；Linux journal 和指定日志文件的读取由 `platform` 提供。
+`runtime-log` stores and queries structured runtime events, handling redaction, rotation, retention, capacity limits, and safe cleanup. Shell's Logs page and the CLI share these data; `platform` provides Linux journal and selected-file reading.
 
-查询 UX 故障阶段（`Incident`）的历史记录时，先统一为最高等级 `Critical`，再按等级筛选；原始日志文件保持不变。恢复结果继续使用原有等级。
+## Modules
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| `model` | 事件、级别、查询和状态类型 |
-| `writer` | 有界写入队列、去重、刷新、轮转和容量管理 |
-| `reader` | 查询、过滤和有界读取 |
-| `privacy` | 敏感数据与控制序列清理 |
-| `clear` | 预览和清理受管理日志文件 |
+| `model` | Event, level, query, and status types |
+| `writer` | Bounded queue, deduplication, flushing, rotation, and capacity management |
+| `reader` | Queries, filtering, export, and bounded reads |
+| `privacy` | Removal of sensitive data and control sequences |
+| `clear` | Preview and cleanup of managed log files |
 
-日志正文使用固定语言和稳定事件代码，不能用可编辑的翻译文件生成。密码、令牌、剪贴板、文件正文和命令内容不得作为日志上下文。
+The UX failure phase `Incident` is consistently mapped to the highest level, `Critical`, during queries. Original files remain unchanged, and recovery results continue to use their original levels.
 
-[日志指南](docs/logs.md)集中说明权限、TUI、查询、跟随、导出、清理、退出码和磁盘配额。事故报告及任务编号由 [watchdog](../watchdog/README.md) 管理，普通操作失败不自动成为事故。
+Log bodies use a fixed language and stable event codes, rather than being generated from editable translation files. Passwords, tokens, clipboard contents, file bodies, and command contents are not used as log context.
 
-验证：`cargo test --locked -p runtime-log`，再运行受影响的 Shell/CLI 日志测试；Linux 数据源必须在 Linux 检查。
+## Documentation and validation
+
+The [log guide](docs/logs.md) describes sources, permissions, TUI, CLI, following, export, cleanup, and disk quotas. Incident identities and task IDs are managed by [watchdog](../watchdog/README.md).
+
+```sh
+cargo test --locked -p runtime-log
+```
+
+After changing pages or commands, also run the affected Shell/CLI tests. Validate Linux journal/dmesg sources in a Linux environment.

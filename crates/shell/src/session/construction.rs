@@ -73,6 +73,7 @@ impl ShellSession {
             ascii_assets,
             ShellRuntimeServices {
                 language: None,
+                terminal_image_support: false,
                 explorer: explorer_task_runtime,
                 diagnostics: diagnostics_task_runtime,
                 editor: editor_task_runtime,
@@ -237,7 +238,10 @@ impl ShellSession {
             diagnostics_restart_required,
             terminal_size,
             terminal_flags: ShellTerminalFlags::enabled(),
-            terminal_image_support: false,
+            default_icon_display_mode: storage::IconDisplayMode::default_for_platform(
+                startup.platform_kind,
+            ),
+            terminal_image_support: runtime_services.terminal_image_support,
             terminal_text_sizing_support: false,
             pending_default_ascii_icon_fallback: false,
 

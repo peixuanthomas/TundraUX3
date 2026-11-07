@@ -1,43 +1,45 @@
-# 列表多选检查
+# List multi-selection
 
-检查范围包含所有内置页面的数据列表、导航列表和选择弹窗。是否需要多选，取决于选中多项后能否执行有意义且规则一致的操作；不必给每个列表都增加多选。
+Multi-selection is for lists where the same operation can be applied to multiple objects. Lists used only to view details, enter individual parameters, or configure items one at a time remain single-selection.
 
-## 已接入的统一选择
+## Common operations
 
-软件包、服务、进程、定时任务和文件管理提供可点击的“选择多项／完成选择”。进入后显示勾选框和已选数量；已有明确选择继续保留，否则从空选择开始。点按列表行切换勾选，方向键只移动当前位置，Enter/空格切换勾选；退出时清除批量选择并恢复当前行单选。排序和同一查询刷新保留仍存在的目标，改变筛选清空选择。选择模式中的文件行在原行按下并松开后切换；拖出、滚动、失焦或缩放取消旧按下。
+Packages, services, processes, scheduled tasks, and file management provide Select Multiple / Finish Selection controls, checkboxes, and a selection count.
 
-软件包、服务、进程和计划任务使用同样的 Ctrl/Cmd 逐项选择、Shift 范围选择、方向键保留多选及普通点击恢复单选。服务、进程和计划任务的批量范围见下表；说明放在各自的 F1 帮助。进程编号被复用、同一 cron 行变成另一条命令时，会移除原来的选择。
+- Tapping a row toggles its checkbox; arrow keys move the current position; Enter or Space toggles the current row.
+- Exiting selection mode clears the batch selection and restores single selection of the current row. Batch operations cannot run with an empty selection.
+- Sorting and refreshing retain targets that still exist; changing filters or query criteria clears the selection.
+- Confirmation and authorization dialogs list every target, and background processing checks the objects again before execution.
+- File management and management lists share Ctrl/Cmd+click for individual selection, Shift+click for a continuous range from a stable anchor, and Shift+Enter to toggle the current row. Arrow navigation preserves the selection; an ordinary click restores single selection.
+- Mouse and touchscreen gestures are canceled after dragging out, scrolling, focus loss, or resizing, so releasing cannot act on a new target.
 
-- 已安装、更新、搜索支持 Ctrl/Cmd+点击、Shift+Enter 逐项切换，保留其他已选项；Shift+点击从稳定锚点选择连续范围。
-- 多选后方向键移动当前位置，普通点击恢复单选。可以取消全部选择，取消后不执行任何针对选中包的操作。
-- 排序按包编号保留选择；刷新删除已消失的选择。切换子页或更改搜索条件清除多选。
-- 安装、卸载、更新处理全部已选包。全部目标都支持同一操作时才能执行，授权窗口列出完整包名；详情仍查看当前位置的包。
-- 执行前核对每个包的信息。APT、DNF、pacman 使用一次命令；pacman 安装和更新继续包含完整系统升级。Homebrew 按类型分组；WinGet 保留准确编号和版本，依次处理。失败即停止，已完成的修改保留，可刷新列表查看实际结果。
-- 快捷键说明放在中英文 F1 帮助；可见的多选入口、勾选框和已选数量不依赖组合键。保留的 Shift 快捷键仍要求终端正确转发。
+Package selections are stored by package ID. Installation, removal, or upgrade is allowed only when all selected packages support the same operation. APT, DNF, and pacman use batch commands; pacman installation and upgrade also perform a full system upgrade. Homebrew groups by Formula/Cask, while WinGet processes packages individually using exact IDs and versions.
 
-## 逐页结果
+Services support batch start, stop, restart, reload, enable, and disable. Processes support batch suspend, resume, termination, and assignment of the same priority, with process identity checked before execution. Scheduled tasks support batch pause, resume, and run-now; changes from the same cron source are saved together.
 
-| 页面或列表 | 当前情况与建议 | 原因 |
+## Selection behavior by page
+
+| Page or list | Selection | Notes |
 | --- | --- | --- |
-| 软件包：已安装、更新、搜索 | 本次接入多选和批量操作 | 安装、卸载、更新可作用于多个包 |
-| 软件包：软件源、配置冲突、检查结果 | 保留单选 | 编辑源文件、比较配置及修复需要分别查看 |
-| 文件浏览器：普通目录与回收站 | 已有多选，保留现有操作 | 复制、剪切、删除、恢复、权限修改已接收多项；现有 Shift+点击是连续范围，Ctrl/Command+点击逐项切换，未在本次更改 |
-| 文件浏览器：快速访问、历史与选项 | 保留单选 | 一次进入一个目录或修改一个选项 |
-| 服务管理 | 已接入 | 启动、停止、重启、重载、启用、禁用；查看日志与编辑配置保留单项 |
-| 进程管理 | 已接入 | 暂停、继续、终止、强制终止及设置同一主线程优先级；刷新和执行时核对原进程身份 |
-| 计划任务 | 已接入 | 暂停、恢复、立即执行处理全部选择；同一 cron 来源合并保存，创建和预览保留单项 |
-| 防火墙：规则 | 后续可接入批量删除 | 必须逐项核对规则；监听端口列表主要用于查看，继续单选 |
-| 用户与用户组、应用内账户 | 先保留单选 | 当前编辑、密码、成员、归属和删除确认都针对一个账户；批量禁用或删除需要另行明确确认范围 |
-| 网络、磁盘、SSH、系统设置 | 保留单选 | 连接网络、修改设备、挂载、配置登录和主机设置各自需要独立参数与检查 |
-| 配置文件与配置备份 | 保留单选 | 一次查看、编辑或恢复一个配置；同时恢复多个操作可能覆盖同一文件 |
-| 启动器：应用与快捷方式 | 当前保留单选，批量移除快捷方式可后续考虑 | 打开应用、拖动排序和编辑快捷方式针对一项 |
-| 设置：分类、应用列表、预设与字段选项 | 保留单选 | 一次选一个分类、应用、预设值或字段值；原有复选框继续各自勾选 |
-| 日志：事件、日志文件、事故报告 | 当前保留单选 | 主要是打开详情、跟随与查看；以后增加指定多份文件导出或清理时再接入 |
-| 诊断：检查项、修复预览、报告 | 当前保留单选 | 已有修复当前项和全部修复；指定一部分检查项批量修复可后续考虑 |
-| 系统状态：设备、进程、卡片及选择弹窗 | 保留单选 | 数据主要用于查看，卡片编辑与添加一次操作一项 |
-| 时钟：闹钟与计时器 | 当前保留单选 | 当前管理弹窗一次处理一项；批量暂停、删除可以后续考虑 |
-| 编辑器：文档与菜单 | 保留单选 | 一次操作当前文档；正文文字选择及 Vim Visual 使用各自原有规则 |
-| 登录、首次设置、时区地图 | 保留单选 | 一次选择一个账户、语言、主题、时区或输入字段 |
-| 首页、帮助、通知、命令行、AA、天气 | 无需接入数据列表多选 | 以入口、说明、消息、终端输出或当前任务为主；按钮和菜单仍逐项执行 |
+| Packages: Installed, Updates, Search | Multiple | Batch installation, removal, and upgrades |
+| Packages: sources, configuration conflicts, check results | Single | Inspect, compare, or repair individually |
+| File Explorer: ordinary directories and Trash | Multiple | Copy, cut, delete, restore, and change permissions |
+| File Explorer: quick access, history, and options | Single | Open one directory or change one option at a time |
+| Service management | Multiple | Log viewing and configuration editing remain individual |
+| Process management | Multiple | Send signals or set priorities in batches |
+| Scheduled tasks | Multiple | Creation, editing, and time previews remain individual |
+| Firewall rules and listening ports | Single | Review rules individually; ports are primarily for inspection |
+| Users, groups, and in-app accounts | Single | Passwords, membership, ownership, and deletion concern one account |
+| Networks, disks, SSH, system settings | Single | Each configuration uses separate parameters and checks |
+| Configuration files and configuration backups | Single | Edit or restore one configuration at a time |
+| Launcher applications and shortcuts | Single | Opening, ordering, and editing concern one item |
+| Settings categories, application lists, and field options | Single | Checkboxes can still be toggled individually |
+| Logs, log files, and incident reports | Single | Open details, follow, and inspect |
+| Diagnostic checks and repair previews | Single | Supports repairing the current item or all items |
+| System status cards and selection dialogs | Single | Inspect data and edit cards individually |
+| Clock alarms and timers | Single | Management dialogs handle one item at a time |
+| Editor documents and menus | Single | Text selections and Vim Visual mode follow their own rules |
+| Login, initial setup, and timezone map | Single | Select one account, option, or input field at a time |
+| Home, Help, notifications, Command Line, AA, weather | Single | Primarily entry points, instructions, messages, or the current task |
 
-后续接入其他管理页时，应先让后端接收并检查多个目标，再接入页面选择和确认，避免只高亮多行却执行一项。管理列表与文件管理沿用相同的修饰键选择语义。
+When adding a batch operation, first make the backend accept and validate multiple targets, then connect page selection, confirmation, and authorization. See F1 help for each page's complete shortcuts.

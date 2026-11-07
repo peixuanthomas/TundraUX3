@@ -927,40 +927,44 @@ impl ShellSession {
                 ui::SystemStatusDashboardFocus::Widget(widgets[0].kind);
             return;
         };
-        let center = |widget: &ui::SystemStatusWidgetViewModel| {
-            (
-                i32::from(widget.column) * 2 + i32::from(widget.size.cols()),
-                i32::from(widget.row) * 2 + i32::from(widget.size.rows()),
-            )
+        // Logical bounds retain offscreen cards and are not distorted by viewport clipping.
+        let bounds = |widget: &ui::SystemStatusWidgetViewModel| {
+            let x = i32::from(widget.column);
+            let y = i32::from(widget.row);
+            let right = x + i32::from(widget.size.cols());
+            let bottom = y + i32::from(widget.size.rows());
+            if column_delta == 0 {
+                (y, bottom, x, right)
+            } else {
+                (x, right, y, bottom)
+            }
         };
-        let (cx, cy) = center(current);
+        let (start, end, cross_start, cross_end) = bounds(current);
         let candidate = widgets
-            .into_iter()
+            .iter()
             .filter(|widget| widget.kind != current.kind)
             .filter_map(|widget| {
-                let (x, y) = center(widget);
-                let dx = x - cx;
-                let dy = y - cy;
-                let in_direction = match (column_delta, row_delta) {
-                    (-1, 0) => dx < 0,
-                    (1, 0) => dx > 0,
-                    (0, -1) => dy < 0,
-                    (0, 1) => dy > 0,
-                    _ => false,
+                let (other_start, other_end, other_cross_start, other_cross_end) = bounds(widget);
+                let primary = match (column_delta, row_delta) {
+                    (-1, 0) | (0, -1) => start - other_end,
+                    (1, 0) | (0, 1) => other_start - end,
+                    _ => return None,
                 };
-                in_direction.then(|| {
-                    let primary = if column_delta == 0 {
-                        dy.abs()
-                    } else {
-                        dx.abs()
-                    };
-                    let secondary = if column_delta == 0 {
-                        dx.abs()
-                    } else {
-                        dy.abs()
-                    };
-                    ((primary, secondary, y, x), widget.kind)
-                })
+                if primary < 0 {
+                    return None;
+                }
+                let aligned = other_cross_start < cross_end && other_cross_end > cross_start;
+                let secondary = (cross_start - other_cross_end)
+                    .max(other_cross_start - cross_end)
+                    .max(0);
+                let distance = i64::from(primary).pow(2) + i64::from(secondary).pow(2);
+                let center_offset =
+                    (cross_start + cross_end - other_cross_start - other_cross_end).abs();
+                // Prefer neighbors across the same edge before considering diagonal cards.
+                Some((
+                    (!aligned, distance, center_offset, widget.row, widget.column),
+                    widget.kind,
+                ))
             })
             .min_by_key(|(score, _)| *score)
             .map(|(_, kind)| storage_widget_kind(kind));

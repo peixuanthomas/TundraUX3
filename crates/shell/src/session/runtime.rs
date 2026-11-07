@@ -951,6 +951,7 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
         ascii_assets,
         ShellRuntimeServices {
             language: Some(language_runtime.clone()),
+            terminal_image_support: launcher_icons.is_some(),
             explorer: explorer_task_runtime,
             diagnostics: diagnostics_task_runtime,
             editor: ShellEditorTaskRuntime::new_managed(shell_watchdog.clone()),
@@ -979,7 +980,6 @@ pub(super) fn run_fullscreen_shell_session<W: Write>(
     state.apply_system_status_snapshot(app::AppSystemStatusSnapshot::from(
         &*system_status_snapshots.borrow_and_update(),
     ));
-    state.set_terminal_image_support(launcher_icons.is_some());
     state.set_terminal_text_sizing_support(terminal_graphics_probe.text_sizing_protocol());
     if show_terminal_graphics_notice {
         state.apply_terminal_graphics_startup_policy(terminal_graphics_probe.status());

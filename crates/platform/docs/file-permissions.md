@@ -1,13 +1,29 @@
-# 文件权限与归属
+# File permissions and ownership
 
-在文件管理器中选择一个或多个项目，打开“属性 → 权限与归属”。所有者、所属用户组和其他用户各有读、写、执行三个勾选项；混合值显示 `[-]`，未操作的项保留各自原值。文件和目录分别设置，默认不递归。所有者和用户组可按名称或编号查找，也可保持原值。
+Select one or more items in File Explorer and open Properties → Permissions and Ownership. Owner, group, and other users' read, write, and execute permissions can be set separately for files and directories. Operations are non-recursive by default.
 
-修改通过已有 AA 与系统授权助手执行。助手先扫描范围，分页列出完整路径、差异和跳过原因，等待明确确认后再次扫描和核对文件身份。符号链接、子挂载点及特殊文件不修改；重叠选择和硬链接去重。目录权限最后修改，避免先失去进入子目录的权限。
+Mixed values appear as `[-]`; unchanged items retain their individual original values. Owners and groups can be looked up by name or ID, or left unchanged.
 
-目标按 Linux 原始文件名传递，不要求文件名使用特定文本编码。清单把换行等特殊字符写成可见形式；归属和权限已符合目标时不重复写入，避免无意清除特殊权限。点过再切回原值的勾选项仍会统一应用到递归范围；未点过的项保持各自原值。
+## Recursive scope and writes
 
-额外访问规则不在此编辑；修改用户组权限也会改变额外规则的权限上限。目录的默认访问规则单独提示并保留，新建项目仍会继承这些规则。普通权限修改保留特殊权限位；改变归属可能由 Linux 清除特殊权限或文件能力，程序明确提示且不会自动恢复。
+Changes are performed through AA and the system authorization helper:
 
-取消或失败会停止后续修改，输出已完成、失败和未处理的项目。已完成的文件修改不自动回滚。Windows/macOS 显示不支持原因。
+1. The helper scans the scope and lists full paths, differences, and reasons for skipping in pages.
+2. After user confirmation, it rescans and checks file identity.
+3. Symbolic links, nested mount points, and special files are skipped; overlapping selections and hard links are deduplicated.
+4. Directory permissions are changed last to avoid losing access to subdirectories prematurely.
 
-Linux 临时文件测试：`cargo test --locked -p platform file_permissions --lib`。界面测试：`cargo test --locked -p ui --test file_permissions`；Shell 同时验证键盘、鼠标及无悬停触摸模型。
+Targets are passed using their raw Linux filenames; the listing renders special characters such as newlines visibly. Permissions or ownership already matching the target are not written again.
+
+Ordinary permission changes preserve special permission bits. Additional ACL entries are not edited on this page, and default ACLs are preserved. Changing group permissions affects the permission ceiling for additional rules; Linux may clear special permissions or file capabilities when ownership changes. The interface explains this before confirmation.
+
+Cancellation or failure stops further changes and lists completed, failed, and unprocessed items; completed changes remain in place.
+
+## Validation
+
+```sh
+cargo test --locked -p platform file_permissions --lib
+cargo test --locked -p ui --test file_permissions
+```
+
+Shell tests cover the keyboard, mouse, and touchscreen model without hover. On Windows/macOS, the page indicates that the operation is unsupported on the current platform.

@@ -1,33 +1,42 @@
 # vim-runtime
 
-按键、粘贴、鼠标与焦点转发共用 `terminal-runtime::pty::PtyProcess`，按发送时的子终端模式编码；Vim 专用的缓冲和保存交互仍由本 crate 管理。
+`vim-runtime` runs real Vim and synchronizes buffers, terminal frames, and save requests between Vim and the Tundra editor. Vim itself handles modes, editing keys, undo, registers, macros, windows, search, and Ex commands; this crate does not reimplement those features.
 
-宿主通过 `set_cell_size` 提供实际字符格的像素尺寸，图片定位及终端尺寸查询与共享渲染器使用同一几何。
+## Processes and communication
 
-`VimPoll::terminal` 按 PTY 输出版本共享 `Arc` 快照；没有新输出时不重新扫描整屏，输出、尺寸变化及同步刷新结束后更新。Shell 仅在快照变化或恢复显示时转换 UI 单元格，退出后仍保留收完输出的最后画面。
+`VimHost` launches Vim through `terminal-runtime` using a Unix PTY or Windows ConPTY, with process cleanup supervised by watchdog. The bundled `bridge.vim` exchanges JSON lines over a local loopback connection authenticated with a random token.
 
-缓冲使用 Vim 原生 `listener_add()` 收集逐次行变化，随正文快照输出给宿主，用于脚本断点定位。宿主导入不产生编辑通知；一次轮询收到多次快照时合并通知，下一轮不重复交付。原有文本、光标及撤销仍由 Vim 管理。
+A full Vim build with `+eval`, `+channel`, and `+timers` is required. Release packages provide `vim/vim` (`vim/vim.exe` on Windows) and `vim/runtime`; callers use `VimConfig` to specify paths, size, user configuration, and initial buffers.
 
-启动时将内置 `bridge.vim` 的换行统一为 LF，避免 Windows 检出的 CRLF 在隔离运行的 Unix Vim 中被当成命令字符；此处理只作用于启动脚本，不改变用户文档。
+Keys, paste, mouse, and focus use the shared `PtyProcess` interface. `set_cell_size` supplies the actual character-cell dimensions in pixels for image positioning and terminal queries.
 
-运行真正的 Vim，Vim 开启期间由 Vim 管理文本、模式、撤销、寄存器、宏、窗口、搜索和 Ex 命令；本 crate 不解释 Vim 编辑按键。Shell 只负责输入路由、页面生命周期和保存授权，UI 绘制真实 PTY 快照。
+## Buffer synchronization
 
-`VimHost` 使用已有 `terminal-runtime` 的 Unix PTY / Windows ConPTY 与 watchdog 进程树清理。初始化脚本通过带随机令牌认证的本机回环连接交换 JSON 行；缓冲内容不写入 IPC 文件、日志或临时脚本。运行时需要包含 `+eval`、`+channel`、`+timers` 的完整 Vim；发布包在程序同目录提供 `vim/vim`（Windows 为 `vim/vim.exe`）及 `vim/runtime`，由调用方指定路径。
+- `open_buffer` imports text, encoding, line endings, BOM, trailing newline, cursor, and protection flags; the same `host_id` updates the existing buffer.
+- `activate_buffer` switches the current buffer while preserving Vim state; `remove_buffer` removes documents closed by the host.
+- `request_export` exports current content; request IDs and state snapshots confirm synchronization completion.
+- Vim's `listener_add()` collects line changes for locating script breakpoints; host imports do not create user undo entries.
+- `VimHost` is retained while display is suspended, preserving the process, registers, macros, and undo history.
 
-`open_buffer` 导入未保存文本与编码、换行、BOM、末尾换行、光标和保护标志；同 `host_id` 更新原缓冲，相同文本不重建撤销历史。`activate_buffer` 只切换，保留 Vim 状态。状态快照携带全部已加载的普通缓冲，正文按变化发送并共享内存；`request_export` 的编号可与 `state.last_command` 对应，用于确认暂停前同步完成。
+`VimPoll::terminal` shares `Arc` snapshots by PTY output revision. Static frames are reused when there is no new output; output, size changes, and post-exit refreshes generate new snapshots.
 
-重新导入相同文本也会同步 Vim 原生只读和可编辑选项，脚本运行结束后可以继续编辑并执行普通 `:write`。
+## Controlled saving
 
-`BufWriteCmd`、`FileWriteCmd`、`FileAppendCmd` 将保存请求交给宿主，包含实际目标、当前缓冲路径、范围/追加与强制标志。宿主调用现有文件权限、差异检查和异步保存流程后，通过 `respond_save` 回应；只有成功回应才清除相应修改标记，失败会使 `:wq` 留在 Vim。脚本不直接写目标文件。只读缓冲禁止修改和保存，自动 swap、备份和持久撤销均关闭，保护配置不会进入普通恢复文件。
+`BufWriteCmd`, `FileWriteCmd`, and `FileAppendCmd` delegate write requests to the host, including the target path, buffer path, write range, append flag, and force flag.
 
-`request_close(false)` 由 Vim 自己检查未保存缓冲并显示 E37；正常 `:q!` / `:qa!` 退出状态明确告知宿主丢弃未保存内容。暂停时不要销毁 `VimHost`，以保留寄存器、宏和撤销；关闭宿主前先导出并处理保存/放弃，再清理进程。
+After completing permission, external-change, configuration-diff, and asynchronous-save checks, the host replies with the result through `respond_save`. Only a successful response clears the modified flag; on failure, `:wq` stays in Vim. Read-only buffers reject editing and saving, and protected configuration does not enter ordinary swap, backup, or persistent undo files.
 
-真实运行时回归：
+`request_close(false)` lets Vim check for unsaved changes; `:q!` and `:qa!` discard content according to Vim's rules. Before closing the host, export and handle saving or discarding first, then clean up the process.
 
-```console
+## Validation
+
+After building full Vim, run the real-runtime regressions:
+
+```sh
 TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime --test real_vim -- --ignored --nocapture
+cargo test --locked -p vim-runtime --test terminal_cache
 ```
 
-测试需要真实 PTY 和本机回环网络；受限开发沙箱必须允许回环连接。覆盖初始缓冲不进入撤销、真实 Vim 编辑/跨缓冲撤销、受控保存失败和成功、`:wq` 等待、强制丢弃，以及只读保护。不能用 tiny Vim 或仅编译通过代替完整运行时验证。
+Tests require a real PTY and a local loopback connection. They cover buffer import, cross-buffer undo, controlled saving, `:wq`, forced discard, read-only protection, and static frames, output, resizing, and post-exit refreshes.
 
-`cargo test --locked -p vim-runtime --test terminal_cache` 使用受控子进程与真实 PTY 验证静止画面复用、输出、缩放及退出刷新；它不替代完整 Vim 回归。
+See [Bundled Vim](../../docs/packaging/vim.md) for building and packaging, and [Editor and script workspace](../../docs/source-editor.md#real-vim-mode) for user operations.

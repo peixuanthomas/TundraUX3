@@ -1,111 +1,53 @@
 # TundraUX3
 
-**Visual device control, entirely in the terminal.**
+**A terminal workspace for managing your device.**
 
-English | [简体中文](docs/README.zh-CN.md)
+English | [Simplified Chinese](docs/README.zh-CN.md)
 
-TundraUX3 helps you operate a device when only a terminal is available and there is no graphical desktop. It brings menus, buttons, lists, forms, and system information into a terminal interface, making everyday tasks easier to discover and carry out without memorizing every command.
+TundraUX3 brings system tools, files, editors, and everyday utilities into one terminal interface. It is designed for Linux devices without a graphical desktop, with keyboard, mouse, and touchscreen support. Written in Rust with Ratatui and crossterm.
 
-The project has two priorities: **practical Linux system control** and **independent operation with a keyboard, a mouse, or a touchscreen**. Each input method should be sufficient on its own, so users can work with whichever their device provides.
+## Features
 
-TundraUX3 is written in Rust, using Ratatui and crossterm. It is under active development; some workflows and system integrations are still incomplete.
+- **Linux system management:** manage services, processes, packages, networks, disks, users, firewall rules, SSH, and scheduled tasks. Review configuration history and restore previous changes.
+- **Cross-platform packages:** search, install, remove, and upgrade software using native Linux package tools, Homebrew on macOS, or WinGet on Windows.
+- **Files and editing:** browse directories, share copied or cut files between pages, undo same-filesystem moves and renames, and manage permissions. Edit text with syntax highlighting, search and replace, soft wrap, and JSON formatting. Press F8 to switch between the built-in editor and Vim.
+- **Development tools:** run programs in an embedded terminal and debug Bash scripts with breakpoints, stepping, variables, and call stacks.
+- **System activity:** monitor resource usage, inspect logs and notifications, and track background tasks and their output.
+- **Personal workspace:** search Launcher by name or command, organize custom entries, choose themes and languages, and use the built-in clock and weather apps.
 
-## Platform focus
-
-| Platform | Role |
+| Platform | Main support |
 | --- | --- |
-| **Linux** | The main target for device operation and system management in terminal-only environments. |
-| **macOS** | Interface exploration and Homebrew package management for Formulae and Casks. |
-| **Windows** | WinGet package management, with other system controls remaining demonstration features. |
-
-System-management development focuses on Linux. Windows supports software packages through WinGet, and macOS through Homebrew; other system controls on those platforms do not promise the same coverage as Linux. Available operations depend on the installed tools, running services, and your user's permissions.
-
-## What you can do
-
-- **Show weather while idle:** Settings → System lets you choose Never, 30 seconds, or 1/2/5/10/30 minutes (default: 5 minutes). Press a key or tap to return to the same page without signing in again.
-
-- **Let agents operate the interface:** enable external CLI control in Settings → System, then use `tundra-cli ui` to inspect controls, click, drag, scroll, or type. User operations require a new snapshot; animations and automatic updates do not. Use `tundra-cli ui wake` to close idle weather or the weather lockscreen. Snapshot collection avoids repeated screen scans to reduce CPU use on large lists. Connections are local and restricted to the same OS user. See `tundra-shell --help` and [CLI control](crates/cli/docs/ui-control.md).
-
-- **Manage a Linux device:** inspect and control services and processes, manage software packages, configure supported network connections, and inspect disks and mount points. Services, processes and scheduled tasks support Ctrl/Cmd+click for individual selections, Shift+click for ranges and Shift+Enter to toggle the current row; F1 explains the controls.
-- **Browse packages:** open Installed by default, use Tab/Shift+Tab to move between regions, and use arrows within the focused region. F7/F8/F6 open Installed/Updates/Search. Ctrl/Cmd+click or Shift+Enter toggles individual selections; Shift+click selects a range; install, remove and upgrade act on all selected packages after review. F1 explains selection controls. Expanded details scroll with all four arrow keys.
-- **Manage macOS packages:** use Homebrew to search, install, remove and upgrade Formulae and Casks, with its default confirmation behavior and task-terminal input for native prompts. See [Homebrew support](crates/platform/docs/homebrew.md).
-- **Manage Windows packages:** use the same Packages page with WinGet to search, install, uninstall, upgrade one package, or upgrade all available packages from the `winget` source. App Installer and an initialized WinGet source are required; see [Windows packages](crates/platform/docs/windows-packages.md).
-- **Find page actions:** Home directly lists supported system tasks. Common operations appear at the bottom right, with the main action highlighted and destructive actions in the danger color. File operations and the editor’s save, undo and find controls remain visible. Management pages offer a persistent expert area (F3) for repeated operations; empty states and confirmations use brief messages. F1 or the title-bar Help button opens page shortcuts.
-- **Keep track of selections:** selected list rows and the current file shortcut stay highlighted when using a mouse or moving to another control. File Explorer quick access uses the same spacious rows as the application list in Settings.
-- **Follow page changes:** pages, dialogs and menus expand from their entry button's border and shrink back to it with a mouse or touchscreen; keyboard actions are immediate. Animations target 30 FPS to reduce CPU use while retaining their duration. Moving pages, panels and keyboards show their borders first; text appears together when the transition ends. Settings offers overall speed, phase times, reset and reduced motion.
-- **Set up Linux:** the clock follows system time and timezone, including existing installations. Change timezone with the map in Region & Time, and manage system automatic synchronization and timesyncd/chrony servers there. Operating System Settings contains the host name.
-- **Manage access and schedules:** inspect listening ports, manage UFW/firewalld allow rules, configure SSH with confirmation from a new connection, and manage systemd timers and existing cron schedules.
-- **Review and recover changes:** inspect grouped configuration history and restore selected operations, including local accounts and groups.
-- **Work with files:** share copied/cut files between pages in the current session and undo same-disk moves or renames with Ctrl/Cmd+Z (overwrites and merges are excluded). Browse directories with the path directly above search, perform file operations with a single confirmation dialog for deletion, and edit plain text with syntax highlighting, search and replace, soft wrap and JSON formatting. F8 switches to the bundled real Vim, with an enabled/disabled status label and rainbow text when enabled. The editor opens 106 source and configuration suffixes by default. File Explorer, Editor, Launcher, Settings, System Status, and Clock use matching themed borders. System configuration changes use a diff, a configuration check, an authorized save and recovery copies in the existing editor.
-- **Manage Linux file access:** edit permissions and ownership for selected files, with separate file/directory permissions and a reviewed recursive range. Toggle permission boxes with Space or a click.
-- **Organize Launcher:** use F2 to add custom shell commands and drag icons into a saved order. Right-click a user entry to change its name, command or icon, or remove it; click outside the menu to close it. Removing an entry preserves the other entries’ availability status. Custom commands and embedded terminal programs also offer a **Keep screen after exit** switch in this menu; system-launched programs do not. New custom commands use the same on/off switch, off by default; when on, the last screen stays until you press Enter. Text icons use a fixed frame with two editable rows of five terminal cells. Shift+Left/Right also reorders; the mouse wheel and PageUp/PageDown change pages.
-- **Open tools:** search Launcher by name or command, then press Enter to open a result. Run TUI applications in the built-in command line, or select an external Launcher item and use **Run settings (F4)** to save an embedded terminal, arguments and working directory. Embedded terminals support enhanced keyboard input and Kitty, Sixel and iTerm2 images, with character-block previews on text-only terminals. Closing a terminal stops its process tree. Move between launcher icon rows with Up/Down and between adjacent items with Left/Right.
-- **Edit and debug Linux scripts:** Script Editor reuses the text editor and bundled bashdb, with breakpoints, stepping, variables, call locations, expressions and interactive output in a tdb-style workspace. Run with the script's interpreter; debug with Bash 5.2 or newer. See the [script editor guide](docs/source-editor.md#linux-脚本工作区).
-- **Understand system activity:** view system status, resource usage, logs, notifications, and diagnostics. UX logs combine events and incidents in one list, with incidents at the highest severity and all levels shown by default. Filter by minimum level or open the log folder in File Explorer. Normal refreshes keep the panels stable.
-- **Make the interface your own:** choose English or Simplified Chinese, adjust appearance, and use the clock and weather applications. In Settings, Tab/Shift+Tab moves focus between categories and controls; arrows select a category when that region is focused and select options in the content region, and Left/Right moves between the application list and its settings. Enter or Space changes a switch; Enter or a click opens a number dialog for adjustment or direct input, followed by Enter to confirm. AA policy and screen timeout use selection dialogs. Application Settings lists File Explorer and Editor on the left and shows the selected application's options on the right. Cancel new alarms with the visible button or keyboard.
-
-See [Linux system management](crates/platform/docs/linux-management.md) for supported operations and their requirements.
-
-Use the title-bar **Tasks** button to see running or awaiting-approval work, read saved output, return to its page or request cancellation. Esc or the title-bar Back button returns from saved task output to the task list. Scheduled tasks offer guided actions and daily, weekly or one-time schedules. Configuration backups have filters, 50-record pages, retained records and a cleanup preview. See the [usability repair record](docs/ui-usability-fixes-2026-11-07.md) for validation and remaining limits.
-
-Vim mode displays Vim's own terminal interface, including Visual modes, counts, registers, macros, windows, command line and `:help`. `Ctrl+W` operates Vim windows. F8 or the VIM mode enabled button returns to the ordinary editor without saving the document; F8 again resumes the same Vim process and its existing state. Document writes such as `:w` and `:wq` use Tundra's existing save workers and protected-configuration checks; `:q!` follows Vim's discard behavior. See the [editor guide](docs/source-editor.md#真实-vim-模式).
-
-If the Vim engine is missing, enabling Vim opens a cancellable installation dialog with download progress. It downloads the matching prebuilt engine from this project's `vim-v<version>` GitHub Release into your application data. The engine release must be published first; users do not need a compiler.
-
-## Keyboard, mouse, or touchscreen
-
-Independent use of all three input methods is a core design requirement:
-
-| Input | Intended experience |
-| --- | --- |
-| **Keyboard alone** | Move between controls, select actions, enter text, and navigate with keys and shortcuts. |
-| **Mouse alone** | Use visible buttons, menus, selectors, and scrollbars without depending on keyboard shortcuts. |
-| **Touchscreen alone** | Tap controls and drag scrollbars without needing a physical keyboard or mouse. |
-
-Mouse and touch need a terminal that forwards pointer events. Packages, services, processes, scheduled tasks and files have a visible **Select multiple** button, checkboxes and a selection count. The shared screen keyboard covers built-in text fields, including setup, login, accounts, settings, the ordinary editor, search/replace and file names and paths. Opening it leaves the current form and its submit/cancel buttons above the keys. AA and embedded Command Line use the same keyboard. Real-device coverage is recorded in the [operations acceptance notes](docs/operations-usability-validation.md); see [keyboard input](crates/shell/docs/session.md#aa-与命令行的屏幕键盘) for details.
-
-Scrollbars accept clicks and drags one terminal cell to either side of the visible bar: left/right for vertical bars, above/below for horizontal bars.
-
-Built-in text fields use a blinking underscore cursor, including the login password field. Input dialogs keep the active field in the accent color. Up/Down switches fields; Left/Right moves within the text. Number dialogs retain their −/+ buttons.
-
-The QWERTY screen keyboard shows navigation keys beside the main keys when space permits. Smaller windows use **Fn / ABC** to switch between letters and function/navigation keys. Paste sends clipboard text as a paste event.
-
-Click the message area of the bottom status bar to read its full text in a popup. Long messages wrap and can be scrolled; the clock keeps its separate action. File Explorer keeps the specific error reason in the status bar when you change the selection.
-
-AA output includes a draggable scrollbar for reviewing retained output while a task runs and after it finishes.
+| Linux | Device operation and system management |
+| macOS | Terminal workspace and Homebrew package management |
+| Windows | Terminal workspace and WinGet package management |
 
 ## Get started
 
-Use an interactive terminal with at least **108 columns × 20 rows** for the default interface. Some applications, including the built-in command line, need more vertical space. Mouse and touch support depend on the terminal in use.
-
-Shrinking a running window pauses interaction behind a size reminder and preserves your work until the window is enlarged. Input forms use **Enter** to move to the next field and submit from the last field; switches use **Space** or a click. **Ctrl+Enter** submits directly, and default form buttons also provide **F10**. Search fields show when **Enter** submits a query.
+Use an interactive terminal of at least **108 columns × 20 rows**. Mouse and touch input require a terminal that forwards pointer events.
 
 ### Run a Linux portable build
 
-1. Download the Linux x86_64 portable archive from [GitHub Releases](https://github.com/peixuanthomas/TundraUX3/releases).
-2. Extract it into a directory owned by your normal Linux user.
-3. Keep `tundra-shell`, `tundra-cli`, `assets/`, `vim/`, and `tundra-installation.json` together.
-4. Open a terminal in the extracted directory and run:
+1. Download and extract the Linux x86_64 archive from [GitHub Releases](https://github.com/peixuanthomas/TundraUX3/releases).
+2. Keep the extracted files together and open a terminal in that directory.
+3. Start the application:
 
 ```sh
 ./tundra-shell
 ```
 
-To check the environment:
+To check the runtime environment:
 
 ```sh
 ./tundra-cli doctor
 ```
 
-Linux uses the account that launched the program and that account's system permissions. Run it as your normal user; operations that need additional permission request authorization through the relevant system tools. Exiting TundraUX3 closes the application and returns to your terminal.
-
-Linux releases use portable archives. In **Settings → Update**, **Release** downloads a stable portable release, while **Beta** builds the latest `master` commit with a local Rust toolchain. Self-updates require a writable, user-owned portable installation and preserve personal data and themes. See the [Linux runtime notes](docs/packaging/linux/README-LINUX.txt) for dependencies and update details.
-
-For the first upgrade from an older build using update protocol v2, fully extract the new portable archive once. Those updaters reject protocol v3, which also deploys the bundled Vim runtime.
+Run TundraUX3 as your normal user. Administrative operations ask for authorization when needed.
 
 ### Build from source
 
-Install Rust **1.95 or newer** with Cargo and the build tools required by your platform. From the repository root:
+Install **Rust 1.95 or newer**. Building the bundled Vim also requires **Python 3.12 or newer** and a native C build toolchain.
+
+From the repository root:
 
 ```sh
 cargo build --locked -p shell -p cli
@@ -113,57 +55,65 @@ python3 scripts/build-vim.py --output target/debug/vim
 cargo run --locked -p shell --bin tundra-shell
 ```
 
-Rebuild Shell and CLI after pulling updates, and rerun the Vim step when `packaging/vim.json` changes. `cargo run -p shell` alone does not rebuild the companion `tundra-cli` executable used by Command Line.
+On Windows, use `python` if `python3` is unavailable. After pulling updates, rebuild both Shell and CLI; rebuild Vim when `packaging/vim.json` changes.
 
-The Vim step explicitly downloads and builds the pinned upstream version; ordinary Cargo builds do not download Vim. It needs Python 3.12+ and native C build tools; Windows can use `python` instead of `python3`. Build prerequisites, release paths and offline source archives are described in [bundled Vim](docs/packaging/vim.md). `TUNDRA_VIM` can select another compatible full Vim executable; `TUNDRA_VIM_CLEAN=1` disables personal Vim configuration and plugins for isolated tests.
-
-Explore the companion CLI:
+To run the environment check from a source build:
 
 ```sh
-cargo run --locked -p cli --bin tundra-cli -- --help
 cargo run --locked -p cli --bin tundra-cli -- doctor
 ```
 
-Preview shared controls with `tundra-cli debug ui-test` in a terminal of at least 88 × 30 cells. F1–F6 switch pages; Esc exits. It uses built-in sample data, theme and English text without reading or writing configuration, language files, logs or saved state.
+## Using the interface
 
-The [shared UI library](crates/ui/README.md) exposes `animate` for value and Ratatui layout/style animations, including its attribute macro. Animated pages share frame snapshots and skip unnecessary image checks to reduce CPU work.
+Open supported system tasks directly from **Home**, or open applications from **Launcher**. Common file actions and editor tools stay visible. Management pages offer an expert area with F3 that stays open when you select another item.
 
-Release builds use ThinLTO and a shared TOML parser to reduce executable size. Idle Vim pages reuse terminal snapshots, and tables reuse row colors and avoid intermediate buffers to reduce CPU work. See [build and validation details](docs/README-TECHNICAL.md).
+| Input | Action |
+| --- | --- |
+| Arrow keys / Tab | Move between items and controls |
+| Enter / Space | Open, confirm, or toggle |
+| Esc / Back button | Return or close the current dialog |
+| F1 | Show help for the current page |
+| F2 | Organize Launcher entries |
+| F4 | Configure how an external Launcher item runs |
+| F8 in the editor | Switch between the standard editor and Vim |
 
-Run `tundra-cli debug test-rainbow-text` to preview flowing rainbow text. Rainbow text keeps flowing at a fixed speed regardless of animation settings or button state. Esc or the Exit button closes the demo; it uses built-in samples without saving settings.
+On the dashboard, arrow keys move between cards by their visual position, including mixed-size and staggered layouts.
 
-Build both packages: the shell uses the companion CLI for the built-in command line and Linux management tasks. For build, test, and packaging details, see the [technical documentation](docs/README-TECHNICAL.md).
+Mouse and touchscreen users can click or tap controls, scroll lists, and drag scrollbars. An on-screen keyboard is available for text fields.
 
-Automated tests focus on core workflows, data safety, and permission boundaries. They do not make HTTP requests or start HTTP test servers; see the [testing guide](docs/testing.md).
+In management lists, Ctrl/Cmd+click toggles individual selections, Shift+click selects a range, and Shift+Enter toggles the current row. Tab/Shift+Tab moves between regions and controls; arrow keys operate the focused region. See [list selection](docs/list-selection.md).
 
-## Current limits
+Use the title-bar **Tasks** button to view running work or approval requests, read saved output, return to the related page, or cancel a task. Language, appearance, animations, weather, and application options are available in **Settings**.
 
-- The terminal interface is the focus. Features that launch graphical applications or use desktop services still require those applications or services; they may be unavailable in a terminal-only session.
-- Linux management features have specific requirements, such as systemd for service control and supported distribution tools for package management. Operating-system settings explain missing systemd or system DBus capabilities in the failure details.
-- Network operations are in Launcher → Network. The unavailable Sound, Display, Wi-Fi and Bluetooth settings pages have been removed; account management is in Launcher → Users.
-- Input coverage and real-device behavior are still being refined. The project does not claim complete support for every terminal, touchscreen, or Linux distribution.
-- Vim runs as a terminal program. Linux has real PTY regression coverage; the Windows and macOS builds and runtime checks require their corresponding CI runners. Linux validation does not establish results on those platforms.
+Linux uses ASCII icons by default. If your terminal supports images, you can switch to image icons in **Settings → Appearance → Theme**.
+
+## Companion CLI
+
+`tundra-cli` provides diagnostics, configuration, logs, system-management commands, and control of a running interface:
+
+```sh
+tundra-cli --help
+tundra-cli doctor
+```
+
+To control the interface from another terminal, enable **Settings → System → External CLI control**, then use commands such as:
+
+```sh
+tundra-cli ui snapshot
+tundra-cli ui wake
+```
+
+See the [UI control guide](crates/cli/docs/ui-control.md) for click, input, scrolling, and automation examples.
 
 ## Documentation
 
-Most detailed documentation is currently in Chinese. Start with the [documentation index](docs/README.md); each crate keeps its own implementation guide.
-
-- [简体中文 README](docs/README.zh-CN.md)
-- [V1.5 release notes](docs/packaging/releases/v1.5.md) — cross-platform package management, script debugging, tasks, and terminal interactions.
-- [Technical documentation](docs/README-TECHNICAL.md) — architecture, building, testing, and packaging.
-- [Source editor](docs/source-editor.md) — search, replace, soft wrap, JSON formatting, and supported text formats.
-- [Linux system management](crates/platform/docs/linux-management.md) — services, processes, packages, networks, and disks.
-- [Windows packages](crates/platform/docs/windows-packages.md) — WinGet setup, supported operations, and verification.
-- [Operations CLI](crates/cli/docs/operations.md) — reusable commands, authorization, task IDs and exit codes.
-- [System configuration editor](crates/platform/docs/system-config.md) and [user management](crates/platform/docs/user-management.md).
-- [Configuration backups](crates/platform/docs/config-backups.md), [firewall and ports](crates/platform/docs/firewall.md), [SSH management](crates/platform/docs/ssh-management.md), and [scheduled tasks](crates/platform/docs/scheduled-tasks.md).
-- [Linux runtime notes](docs/packaging/linux/README-LINUX.txt) — runtime dependencies, permissions, and portable updates (English).
-- [Logs and diagnostics](crates/runtime-log/docs/logs.md)
-- [Localization and resource recovery](crates/i18n/docs/localization.md)
-- [Linux update tests](crates/app/docs/update-tests.md)
+- [Simplified Chinese README](docs/README.zh-CN.md)
+- [Build, architecture, testing, and packaging](docs/README-TECHNICAL.md)
+- [Linux system management](crates/platform/docs/linux-management.md)
+- [Editor and script debugging](docs/source-editor.md)
+- [CLI commands and operations](crates/cli/docs/operations.md)
+- [Documentation index](docs/README.md)
 
 ## License
 
-Copyright (c) 2026 HanPeixuan. The project's own code is licensed under [GNU GPL v3 only](LICENSE) (`GPL-3.0-only`). The Weathr component retains its [GPL-3.0-or-later license](crates/weathr/LICENSE.weathr). Check the applicable component and third-party asset licenses when redistributing or reusing them.
-
-Bundled Vim retains its upstream Vim License in `vim/LICENSE`, with its source and version recorded in `vim/UPSTREAM.json`.
+The project code is licensed under [GPL-3.0-only](LICENSE). Bundled third-party components retain their respective licenses.

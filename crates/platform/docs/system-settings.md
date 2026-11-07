@@ -1,19 +1,37 @@
-# 操作系统设置
+# Operating-system settings
 
-“操作系统设置 [F8]”只显示主机名。系统时区、自动校时和服务器在“区域与时间”设置，时区选择复用地图；Linux 时钟始终跟随系统时间和时区，已有独立时间配置也不再生效。主机名和系统时区通过 systemd 的标准 DBus 接口修改；后端使用本机时区列表校验。`SystemSettings` 默认查询主机名，`scope = "time"` 单独查询时间相关配置。
+Operating System Settings [F8] manages the hostname; Region & Time manages the system timezone, automatic time synchronization, and servers. The Linux clock follows system time and timezone directly.
 
-本页实际依赖以 systemd 为 PID 1 的 Linux 环境、系统 D-Bus，以及 `org.freedesktop.hostname1`、`org.freedesktop.timedate1` 和 systemd 管理接口。主机名直接使用 D-Bus，不依赖 `hostnamectl`；`timedatectl list-timezones` 只提供时区选项。timesyncd 配置查询还需要 `systemd-analyze cat-config`；chrony 读取其实际配置，`chronyc` 只用于查询当前来源，未取得时显示“尚未获取”。本机时间读取失败时沿用同次快照的 UTC 时间。
+## Queries and dependencies
 
-缺少 systemd 或系统总线时，不将环境限制显示为正常空数据，也不建议授权。查询失败沿管理页的 F4“查看详情”保留具体原因、受限操作和原始诊断。缺工具、明确拒绝访问和其他执行失败分别报告；时区列表或校时配置单项失败时保留已读的主机名、时区与同步状态，仅限制依赖失败项的操作。
+`SystemSettings` queries the hostname by default; `scope = "time"` queries timezone and time-synchronization configuration.
 
-校时支持 systemd-timesyncd 和 chrony，不自动安装或切换服务。多个服务同时运行、当前服务不受支持或配置归属无法确认时，相关操作会说明原因。关闭当前服务后，本页面仍记住此次操作的服务，避免再次开启时换成另一个服务。
+- The hostname uses `org.freedesktop.hostname1` and does not depend on `hostnamectl`.
+- The timezone uses `org.freedesktop.timedate1`, with options supplied by `timedatectl list-timezones`.
+- timesyncd configuration is queried through `systemd-analyze cat-config`.
+- chrony reads its actual main configuration and include directories; `chronyc` provides the current source status.
 
-服务器表单可修改、清空现有地址或添加地址。chrony 保留原有 server/pool/peer 类型及其他参数，读取实际主配置和 include/confdir/sourcedir，网络动态来源只读。timesyncd 使用独立覆盖文件，检查最终读取顺序；系统默认备用来源在未修改时保持原样。
+These features require systemd, the system D-Bus, and the corresponding service interfaces. When a query fails, F4 details show the specific reason and affected operations. Failure to read one item does not discard other data already obtained in the same snapshot.
 
-保存前分页显示完整差异，再检查候选配置；chrony 使用原生 `chronyd -p`，timesyncd 检查生成内容及合并顺序。检查进程在私有挂载空间查看候选文件，正式文件此时不变。全部版本确认后创建一份分组备份，再逐个保存；失败恢复先前已写文件，外部改动会阻止覆盖并报告冲突。恢复记录沿用“配置备份与恢复”入口。
+## Time-synchronization configuration
 
-服务原本运行时，保存后重启并重新读取状态；已停止时保持停止。配置保存成功、服务重启成功、系统时间实际同步分别报告，重启失败保留已保存配置及恢复记录。程序读取系统时钟，系统校时与时区修改会随之反映在显示中。
+systemd-timesyncd and chrony are supported; the user's existing configuration determines the service. The server form can change, clear, or add addresses.
 
-普通验证：`cargo test --locked -p platform --lib`。真实写入验证使用 `scripts/tests/isolated-systemd.sh TEST_BINARY UID settings CHRONY_BUNDLE`，要求 root；脚本先创建独立的挂载、PID、网络和主机名空间，并使用私有 /etc、DBus、systemd 和备份目录。chrony 检查器只从官方包解压，不安装服务。测试服务使用不校时的占位进程，验证配置、服务启停及失败处理，不验证互联网授时精度。退出后清理专用 cgroup 和临时环境。
+- chrony preserves server/pool/peer types and other parameters; dynamic network sources are read-only.
+- timesyncd uses a separate override file and checks the merged result in the final read order.
+- Show the complete diff before saving; chrony checks candidate configuration with `chronyd -p`.
+- After checking the versions of all files, create one grouped backup, then save each file. If saving fails partway through, restore the previously written files.
+- If the service was running, restart it after saving and reread its state; if it was stopped, leave it stopped.
 
-参考：[systemd 主机名接口](https://github.com/systemd/systemd/blob/main/man/org.freedesktop.hostname1.xml)、[系统时间接口](https://github.com/systemd/systemd/blob/main/man/org.freedesktop.timedate1.xml)、[chronyd 配置检查](https://chrony-project.org/doc/4.7/chronyd.html)。
+Configuration saving, service restart, and actual time synchronization are reported separately. View recovery records in Configuration Backups and Recovery.
+
+## Validation
+
+```sh
+cargo test --locked -p platform --lib
+scripts/tests/isolated-systemd.sh TEST_BINARY UID settings CHRONY_BUNDLE
+```
+
+Real write tests require root. The script creates isolated mount, PID, network, hostname, D-Bus, and systemd environments. chrony tools are extracted from official packages into a private directory; test services use placeholder processes that do not synchronize time.
+
+References: [systemd hostname interface](https://github.com/systemd/systemd/blob/main/man/org.freedesktop.hostname1.xml), [System time interface](https://github.com/systemd/systemd/blob/main/man/org.freedesktop.timedate1.xml), [chronyd](https://chrony-project.org/doc/4.7/chronyd.html).

@@ -1,196 +1,168 @@
-# Shell 会话、导航与绘制
+# Shell sessions, navigation, and rendering
 
-## 启动顺序
+This document describes startup, input, page lifecycles, and full-frame compositing in `tundra-shell`. See [UI requirements](../../../docs/UI-requirements.md) for shared visual and interaction rules.
 
-`tundra-shell` 的正常启动分为以下阶段：
+## Startup sequence
 
-0. Linux `main` 先验证 UID/EUID 相等、GID/EGID 相等；root 必须在交互终端确认警告后才能继续。随后解析当前 UID 的 NSS 记录并规范化身份环境；失败时直接退出。
-1. `main` 创建进程级 `WatchdogRuntime`，安装 `ProcessWatchdog`、终端紧急恢复函数，并检查上次未正常关闭的运行标记。
-2. 加载 `ascii-assets` 默认主题，计算共同最小终端尺寸；尺寸不够时在进入全屏前给出可操作错误。
-3. `prepare_shell_startup` 收集平台权限、存储状态和迁移/恢复结果；`storage` 创建目录、校验 schema、迁移旧用户文件，并恢复可重建的损坏文档。
-4. 播放启动 banner，并可在受监督任务中预取天气。
-5. Linux 附着当前用户并按该 UID 的完成标记进入 Appearance 或 Home。Windows/macOS 在本地用户列表为空时创建账户，否则显示锁屏与登录。
-6. 构造同时持有 `AppState` 与 `UiSessionState` 的 `ShellSession`，并建立首屏、焦点和命中表。
-7. 进入事件循环：采集终端、时间与后台任务事件，分发命令，构造 ViewModel，再布局并绘制一帧。
-8. 退出、重启和重置使用不同收尾步骤，见下文。
+1. On Linux, validate real/effective UID and GID, require interactive confirmation when starting as root, then resolve the current user through NSS.
+2. Create watchdog, emergency terminal recovery, and process supervision, and check the previous run's status.
+3. Load default assets and calculate the minimum terminal size.
+4. `prepare_shell_startup` initializes platform permissions, storage, migrations, and recovery information.
+5. Show the startup screen and prefetch weather as needed.
+6. On Linux, enter Appearance or Home according to the setup-complete marker for the current UID; on Windows/macOS, enter local account setup, the lock screen, or login.
+7. Create a `ShellSession` containing `AppState` and `UiSessionState`, and establish the first screen, focus, and hit table.
+8. The event loop reads input and background results, updates state, constructs ViewModels, and renders.
 
 ```mermaid
 flowchart TD
-    A["tundra-shell"] --> V["Linux: 普通 UID/GID 与 NSS 校验"]
-    V --> B["Watchdog、资源与存储初始化"]
-    B --> P{"身份来源"}
-    P -- "LinuxCurrentProcess" --> F{"Appearance 已完成？"}
-    F -- "否" --> G["Appearance"]
-    F -- "是" --> I["Home"]
-    G --> I
-    P -- "LocalAccount: Windows/macOS" --> L["本地账户设置 / 锁屏 / 登录"]
-    L --> I
-    I --> J["事件循环、状态转换、ViewModel、Ratatui 帧"]
-    J --> K["退出或显式重启：保存恢复数据并恢复终端"]
+    A[tundra-shell] --> B[Initialize identity, watchdog, assets, and storage]
+    B --> C{Identity source}
+    C -->|Linux current user| D{Appearance complete?}
+    D -->|No| E[Appearance]
+    D -->|Yes| H[Home]
+    E --> H
+    C -->|Windows/macOS local account| F[Setup / Lock screen / Login]
+    F --> H
+    H --> I[Event loop and full-frame rendering]
+    I --> J[Save recovery data and restore the terminal]
 ```
 
-## 输入与事件循环
+`tundra-shell --help` and `--version` only print query results; they do not enter a full-screen session.
 
-Shell 会把 crossterm 事件规范化为 `ui::InputEvent`。键盘保留完整阶段 `Press`、`Repeat`、`Release`，以及 Shift、Control、Alt、Super、Hyper、Meta 修饰键；鼠标保留移动、按下、释放、点击、双击、拖拽与四向滚动，同时还处理 resize、paste 与 focus 事件。
+First-time setup offers F9 to use the default appearance and start once required account information is valid. Appearance can be changed later; the application administrator role does not grant operating-system privileges.
 
-输入适配集中于 `src/input/`：`terminal_events.rs` 负责类型转换，`terminal_batch.rs` 负责有界采集与连续事件合并；二者不重新解析终端字节。`controller/input/preparation.rs` 为真实事件循环和 `apply_input*` 提供同一条预处理路径：同步模态焦点 → 屏幕键盘 → AA → 共享按钮捕获 → 导航规范化。消费后的事件不能再传到背景页面。运行时随后决定是否转发给子终端，普通 Shell 输入再交给语义路由和命令分发；低层 `route_input_at` 不代表完整的物理输入入口。
+## Input and event loop
 
-`controller/input/interaction.rs` 将跨帧输入方式明确分为键盘、指针和失焦状态，独立于页面逻辑焦点。它保存指针位置、点击后悬停抑制、按钮捕获及打开文本输入的快捷键重复保护。`pointer.rs` 统一实现共享按钮的按下/松开配对，捕获绑定 `PageInstanceId`、弹层标识和布局区域；页面切换、失焦、缩放及模态变化取消旧手势。合成器只读取状态并使用 Ratatui 共享控件呈现反馈。
+`src/input/` normalizes Crossterm events into `ui::InputEvent`. Keyboard input preserves Press, Repeat, Release, and modifiers; mouse input preserves movement, presses, releases, drags, and scrolling. Paste, focus, and window size are also handled.
 
-状态管理参考 [Microsoft Edit 的 `Tui` 与 `create_context`](https://github.com/microsoft/edit/blob/1be69c85a63bcd475a0b397196d0be3dbed60023/crates/edit/src/tui.rs)：跨帧保留焦点与按下目标，按模态层级决定消费归属，按下/松开目标一致才激活。这里只借鉴这些原则，不引入 Edit 的解析器、UI 树或 framebuffer。交互行为以 [TundraUX3 UI 要求](../../../docs/UI-requirements.md)为准，特别是三种输入方式独立使用、点击后清除强调和静止指针不能抢回键盘焦点。
+Input passes through the following stages:
 
 ```mermaid
 flowchart LR
-    A["Crossterm Event"] --> B["ui::InputEvent"]
-    B --> P["prepare_input<br/>输入方式、模态消费、按钮捕获"]
-    P --> C["route_input_at<br/>焦点、模态与命中测试"]
-    C --> D["ShellCommand"]
-    D --> E["apply_routed_event"]
-    E --> F["AppCommand / AppState::dispatch_at"]
-    F --> G["AppAction"]
-    F --> H["AppSnapshot"]
-    H --> I["Shell presentation"]
-    I --> J["屏幕 ViewModel"]
-    J --> K["Ratatui layout / render"]
-    K --> L["终端帧"]
+    A[Crossterm Event] --> B[ui::InputEvent]
+    B --> C[prepare_input]
+    C --> D[Modal, focus, and hit routing]
+    D --> E[ShellCommand]
+    E --> F[AppCommand / AppState]
+    F --> G[AppSnapshot]
+    G --> H[presentation]
+    H --> I[Ratatui frame]
 ```
 
-键盘优先交给活跃模态界面和当前焦点组件。鼠标从命中表中选取目标，层级由低至高严格为 `AppContent < AppOverlay < ShellChrome < ShellModal`；重叠同层目标先比较 `z_index`，仍相同时后注册者优先。这避免退出确认、通知模态等输入泄漏到下层应用。
+- `controller/input/preparation.rs` unifies the preprocessing path for real events and tests.
+- `interaction.rs` stores the input method, pointer position, button capture, and shortcut repeat protection.
+- `pointer.rs` checks the page instance, overlay, and layout region to ensure that a press and release belong to the same target.
+- The hit hierarchy is `AppContent < AppOverlay < ShellChrome < ShellModal`; input consumed by an upper layer does not reach the background.
+- The main loop handles at most 4,096 events per batch, coalescing consecutive mouse moves and resize events; background results are processed in Tick through `mpsc`.
+- Background threads do not directly modify focus, hit tables, or Ratatui frames.
 
-`UiIntent` 可表达应用命令、焦点、弹层和重绘请求；实际 Shell 主路径仍使用 `RoutedEvent`、控制器命令和 `ShellCommand`，没有全部改用 `UiIntent`。
+Unix input messages are assembled by the local Crossterm patch. A standalone Esc waits at most 50ms; ordinary messages use a 250ms idle timeout and a 4,096-byte limit; bracketed paste uses a 5-second timeout and a 1 MiB limit. Error logs record only the type and byte count, not raw input.
 
-主循环以 250 ms 为 tick 周期运行；每批最多处理 4,096 个就绪事件，并合并连续的 mouse-move 和 resize 事件，既保持其他事件顺序，也避免移动风暴淹没 UI。watchdog 管理的后台任务通过 `mpsc` 发送结果，Shell 在 Tick 中轮询；Launcher 完整性刷新最多 2 个并发任务。后台线程不持有 Ratatui frame，也不得直接更改焦点、命中表或最终绘制。
+## Page instances and background tasks
 
-Unix 终端输入先在 crossterm 本地补丁中完成报文组装与校验，再转换为 `ui::InputEvent`。单独的 ESC 最多等待 50 ms，以兼容转义前缀跨读取边界到达；普通报文使用 250 ms 空闲超时和 4,096 字节上限，括号粘贴使用 5 s 空闲超时和 1 MiB 上限。非法、超时残缺和超长报文会被丢弃，迟到尾部不会回放成快捷键；未完成的粘贴需等到结束标记才能恢复普通输入。警告写入 `ux.terminal.input`，错误码为 `UX_TERMINAL_INPUT_MALFORMED`、`UX_TERMINAL_INPUT_INCOMPLETE` 或 `UX_TERMINAL_INPUT_TOO_LONG`，只记录类型、原因与缓冲字节数，不记录原始输入。正常分段报文会继续拼接，独立 ESC 和有效快捷键仍可使用。
+`ShellSession { app, ui }` holds shared services and all page instances. `PageInstanceId` identifies one opening; `page_state.rs` and `AppPageModels` store page data, selection, scrolling, forms, dialogs, and focus under the same ID.
 
-应用的文件与启动器命令仍可能直接读写平台或存储，见 [app 分工](../../app/README.md)。
+`navigation.rs` stores the actual opening path. A covered page keeps its original instance, which is restored on return; reopening after closing creates a new instance. The task list can return to the original page if it still exists; if it has closed, it only opens the corresponding feature.
 
-## 会话状态
+`page_lifecycle.rs` handles leave checks, task choices, resource cleanup, and return navigation centrally:
 
-`ShellSession { app, ui }` 持有共享服务和全部页面实例。`PageInstanceId` 标识一次打开，关闭后不再复用。`page_state.rs` 按编号保存每页的表单、选择、滚动位置、弹窗和焦点；`AppPageModels` 按相同编号保存编辑器、文件管理、启动器、诊断和账户列表数据。终端尺寸、账户、配置、时钟调度、系统服务和更新运行对象由会话共享。
+- **Continue in the background:** destroy the page and present results through notifications and AA.
+- **Cancel the task and close:** wait for the task to stop and cleanup to finish, then destroy the page.
+- **Stay on the page:** keep the page, data, and task.
 
-## 页面与后台任务
+`tasks.rs` registers the page or session a task belongs to, its request ID, generation, and cancellation action. Results from old login sessions, closed pages, and superseded requests do not update new pages. watchdog handles execution and failure isolation; Shell handles ownership and presentation.
 
-`navigation.rs` 保存实际打开路径和实例编号，例如 `Home → Launcher A → Explorer → Launcher B`。打开新页面先建立实例，再读取数据和启动任务。覆盖页面保留原实例，返回恢复原数据；真正关闭后重新打开得到新实例。启动器中的“任务”可查看任务状态、输出和所属功能，并返回仍存在的原实例；原实例关闭后只打开所属功能，不重复执行操作。
+The title-bar Tasks button is available to logged-in non-guest users and shows running operations or pending approval; background queries are excluded. Esc or Back from saved output restores the task list and selection before leaving the task page.
 
-`page_lifecycle.rs` 统一安排离开检查、任务处理、资源清理和导航返回。Esc 和返回按钮先处理当前弹窗或表单。编辑器的未保存内容仍提供保存、丢弃、取消；保存后关闭要等保存成功，若又有新修改则继续保留页面。存在运行中的操作时提供三种选择：
+Before exit or logout, save editor recovery records, stop tasks for the current session, and revoke authorization. Task summaries and output persist across program restarts; scheduled tasks run independently through system services.
 
-- 继续后台运行：任务转交当前会话，页面销毁，结果通过通知和 AA 展示。
-- 取消任务并关闭：发出取消请求，等工作线程及清理真正完成才销毁页面。
-- 留在页面：保留页面和任务。
+## Dialogs and focus
 
-`tasks.rs` 登记任务所属页面或会话、请求编号、代次、取消动作和完成检查。刷新、读取等查询关闭时取消并立即作废结果；复制、保存、更新准备和 AA 等操作进入上述确认。结果先检查归属，再临时选择所属实例更新数据；可见页面、被覆盖页面和转入后台的操作都被轮询。旧登录会话、已关闭页面和被替代请求的结果不更新新页面。watchdog 继续负责执行、异常捕获和等待线程退出；登记表只负责归属与离页安排。
+`session/overlays.rs` brings together page dialogs, menus, notifications, exit confirmations, and AA. Input, hit testing, focus, and animations read the same layer description.
 
-编辑器异步加载会保存此前的导航路径。失败或取消只恢复该次操作保留的页面，并保留后来覆盖它的页面及焦点；不能改写关闭后重开的实例。文件选择器拥有自己的目录、选择和浏览数据，嵌套打开不会覆盖原来的文件管理页。
+`ShellOverlayManager` saves the focus from before each layer opens and restores focus to the layer below when it closes. Dialog changes clear old press and drag records; Toast only displays messages. Background AA requests appear automatically and take over input without changing the logical state of other pages.
 
-注销和退出先保存全部编辑器的恢复记录，再请求停止当前会话的用户任务，并等待实际结束后撤销授权。当前进程内的后台工作仍只运行到本次会话结束，摘要和输出跨程序重启保存；systemd 定时执行独立运行并归档。取消更新的记录无法写入时保留错误和准备目录，禁止误当作成功取消或自动重启。系统服务不因普通页面关闭而停止。保存位置、分页和清理范围见[任务历史](../../platform/docs/task-history.md)。
+## Frame compositing
 
-`ScreenCompositor` 只根据最终状态绘制页面、标题栏和弹层，不决定返回目标。页面控制器保留具体表单检查和清理动作，由页面管理器安排调用。
+presentation assembles ViewModels from `AppSnapshot` and the necessary session state. `ScreenCompositor` handles final rendering; it does not decide application state or return targets during rendering.
 
-## 弹窗和焦点
+Each frame shares `ShellFrameLayout`: the top title bar, central `main`, bottom status bar, and time button. The layout is used for rendering, mouse hit testing, PTY sizing, and effect boundaries. When the window falls below the minimum size, page input pauses and state is retained until the window is enlarged.
 
-`session/overlays.rs` 汇总当前页面的弹窗和菜单，再叠加通知、退出确认及 AA，提供统一的前后顺序。输入路由、鼠标命中、焦点和动画都读取这份描述；未显示页面中保留的表单不会接收当前页面的输入。Toast 只显示消息，不接管焦点。
+Compositing order:
 
-`session/overlay_focus.rs` 中的 `ShellOverlayManager` 记录每层弹窗打开前的焦点。打开时把焦点放入弹窗，关闭时恢复下面一层；替换通知时保留原来的恢复位置。弹窗变化会清除之前页面的按下、拖动和点击记录，防止松开鼠标时误触背景按钮。页内的 Tab 顺序继续使用 UI 的 `FocusManager`，表单字段和按钮选择仍由各页面保存。
+1. Page content;
+2. Page overlays;
+3. Shell title bar, status bar, and Toast;
+4. Shell modal dialogs;
+5. Animations and effects for the current frame.
 
-`session/overlay_input.rs` 把按键、内容区鼠标和粘贴交给最上层弹窗。鼠标转场完成前不按最终位置激活控件；实体键盘会立即结束转场并处理输入。菜单和通知会吞掉粘贴，支持粘贴的管理表单与编辑器配置表单则继续接收文字。Esc 仍走上面的导航返回规则，AA 的授权、密码和运行中交互仍由 AA 处理。后台任务继续由 watchdog 执行。页面弹窗和通知按钮携带实例编号，只在对应页面显示并接收输入；页面关闭后旧按钮命令失效。后台回调不改前台焦点和命中区。会话通知和 AA 可跨页面显示，后台任务提出密码或确认问题时 AA 自动显示并接管输入。
+The top-right Back button and Esc use the same return rules. Command Line asks whether to terminate a running process before returning, or returns directly when no process is running; its child terminal still receives physical Esc and Ctrl+Shift+X.
 
-## 帧合成
+Clicking the status message area opens the full text. The dialog retains the content from the moment of the click and supports scrolling. The clock button is handled separately.
 
-Shell presentation 只从 `AppSnapshot` 加上必要的 `UiSessionState` 组装屏幕 ViewModel。`shell::session::compositor::ScreenCompositor` 负责普通 Shell 每帧的统一合成；runtime 保留事件循环，并调用 `terminal-runtime` 管理终端生命周期。UI 通过借用 ViewModel 的 `ScreenContent` 枚举提供页面内容与页面弹层两个独立绘制阶段，不读取整个 `ShellSession`，也不在 render 中驱动领域状态转换。
+## Exit, suspend, and failures
 
-每帧以同一份 `ShellFrameLayout` 计算并共享布局：正常尺寸下顶栏与底部状态栏各占三行，中间为 `main`；顶栏最右侧为 `back_button`，底栏进一步划分 `status_message` 与 `time_button`。返回按钮使用 `crates/ui/assets/icons/back.txt` 中的实心左三角图标和共享 Button 组件，在按钮内按下并松开左键后，普通页面按 Esc 的规则先取消弹层或返回，首页沿用退出确认。Command Line 有运行进程时显示“终止并返回／继续使用”确认，确认后仅清理该实例的子进程树；没有运行进程时直接返回，有 Shell 弹窗时先处理弹窗。命令行的物理 Esc 与 Ctrl+Shift+X 交给子终端。AA 正在运行且任务归属当前页面时，返回按钮与 F12 打开页面关闭确认，物理 Esc 仍按 AA 当前输入规则处理。子终端正常 `exit` 会关闭自身页面，错误或已退出页面的 Esc 不执行返回。页面内不再放置作用相同的返回或退出按钮；弹窗里的取消、关闭按钮继续保留，文件管理器的历史后退和设置向导的上一步也保留。内容布局、鼠标命中、PTY 可用区域和效果边界使用这套几何信息。页面投影只影响内容区域，顶栏、底栏与时钟保持固定；Toast 限制在状态消息区域，不覆盖时钟按钮。小于最小终端尺寸时，紧凑布局预留顶部一行显示消息和右上角左三角，页面内容及全局弹窗均从下一行开始；无法显示内容的页面继续提示放大窗口。
-
-自定义命令快捷方式按创建时的选项处理退出：默认在成功或失败退出后立即返回原启动器；选择保留输出时，显示最终画面和退出码，等新的回车按下后返回。此时回车不重启命令，已有的滚动、缩放和返回按钮继续可用。
-
-点击底部 `status_message` 区域会打开“状态详情”，显示点击时正在绘制的完整消息，包括临时提示或错误；之后状态更新不会替换弹窗里的文本。长文本自动换行，可用滚轮、滚动条、方向键、PageUp/PageDown 和 Home/End 阅读，关闭按钮或 Esc 返回。时钟仍独立操作，已有模态弹窗不会被状态详情替换。Command Line 中打开状态详情时，键盘和粘贴交给弹窗，返回按钮先关闭弹窗。
-
-终端按键报告与恢复由 [terminal-runtime](../../terminal-runtime/README.md)负责。按钮颜色、输入方式切换、禁用、按下与松开规则集中于 [UI 要求](../../../docs/UI-requirements.md)，各页面复用共享控件。
-
-合成顺序固定为：
-
-1. 页面内容；
-2. 页面自身的弹层；
-3. Shell 顶栏、状态栏与 Toast；
-4. Shell 级模态对话框；
-5. 当前帧动画与效果。
-
-合成器集中管理原有的效果生命周期、帧缓存、减少动态效果和跳过单元格的保护逻辑；编辑器、PTY 文本及终端图片仍遵循原有保护规则。锁屏、启动画面、panic 页面和独立样式预览不进入普通 Shell 合成路径。因此领域逻辑继续与终端尺寸解耦，页面布局和合成顺序可以用固定 ViewModel、`Rect` 与测试终端验证。
-
-Home 图标由 `home_icons.toml` 同时声明 ASCII 图案和 PNG；Launcher 使用同样的图形策略。检测到 Kitty、Sixel 或 iTerm2 图形协议时，可在 **Settings → Appearance → Theme → Default theme** 选择 ASCII 或图片图标；这一选择随当前用户 Appearance 持久化。普通文本终端会禁用图片选项。PNG 缺失、损坏或无法准备时，一律自动回退到原有 ASCII 图标，且保持既有四行图标区域和等比例居中布局。
-
-不可用操作统一使用 `TundraTheme::disabled_style()` 的中性灰色，按钮文字、边框与禁用菜单项不再使用主题弱化色、警告色或额外的 DIM 效果；禁用状态优先于悬停、按下、选中和焦点状态。Settings 保留不可用操作原有的按钮与步进器形态，并将禁用状态注册到共享按钮命中区域；Launcher 的不可用图标卡片使用灰色 ASCII 图标，避免彩色图片覆盖禁用样式。操作权限与执行条件仍由原有控制器检查。
-
-## 退出、休眠与异常
-
-| 请求 | 收尾行为 |
+| Request | Behavior |
 | --- | --- |
-| 退出 | 保存恢复数据、收尾任务并恢复终端 |
-| 程序重启 | Unix 用 `exec` 保持前台终端组；Windows 原进程等待新进程并传回退出码，避免 PowerShell 抢读键盘 |
-| 重置 | 先收尾，再重建初始存储，按正常方式重启 |
-| 注销 | Windows/macOS 销毁 UI 会话并回到锁屏；Linux 没有系统注销入口 |
-| 电脑重启/关机 | 保存编辑器恢复数据、恢复终端后调用平台接口；失败返回退出菜单并显示原因 |
+| Exit | Save recovery data, finish task cleanup, and restore the terminal |
+| Restart the program | Use `exec` on Unix; wait for the new process and return its exit code on Windows |
+| Reset | Recreate initial storage after cleanup, then restart |
+| Log out | Destroy the UI session and return to the lock screen on Windows/macOS |
+| Reboot/shut down the computer | Save recovery data and restore the terminal before calling platform interfaces |
 
-`terminal_runtime::TerminalGuard` 负责 raw mode、备用屏幕、鼠标捕获、focus 事件和 bracketed paste；其 `Drop` 路径和紧急恢复路径都会还原终端。进入休眠前，Shell 保存编辑器恢复数据并退出全屏；恢复后重新建立终端、刷新平台会话、时间与终端尺寸。
+Before suspend, save editor recovery data and leave full-screen mode. On resume, reestablish the terminal, platform session, and size.
 
-Shell UI 或锁屏发生 panic 后，先恢复终端并保存事故报告，再直接显示独立的全屏 panic 页面，不重建登录界面或弹出 critical 提示框。Shell 收到后台任务的 panic 报告时也进入这个页面。页面采用黑底白字，使用代码中硬编码的叉眼、下弯嘴笔记本电脑 ASCII 图，不读取主题或资源文件；未登录、普通用户和管理员都能看到关键报错文本。页面不显示 incident 编号、恢复说明和报告路径，完整事故报告仍照常保存。按 `R` 重启程序，按 `Q`、`Esc` 或 `Ctrl-C` 退出；方向键、PageUp/PageDown、Home/End 和鼠标滚轮用于查看长报错，缩小窗口也不会触发 Shell 的最小尺寸检查。`prepare_shell_startup` 虽收集存储恢复信息，但 `restored_session_from_storage` 目前固定为 `None`；它不会恢复先前保存的页面或 Shell UI 会话。
+If Shell or a supervised background task panics, restore the terminal and save an incident report first, then show a standalone panic page. R restarts; Q, Esc, or Ctrl+C exits; arrow keys and the mouse wheel scroll long errors.
 
-## 常用交互
+## Common shortcuts
 
-| 输入 | 行为 |
+Page buttons show their shortcuts, and F1 opens complete help for the current page.
+
+| Page | Common input |
 | --- | --- |
-| Tab / Shift+Tab | 在当前焦点顺序中向前/向后移动。 |
-| Ctrl+C | 请求关闭终端会话；Editor 和 Explorer 用于复制，Command Line 则转发给子 CLI。 |
-| 右上角返回按钮（Command Line） | 有子进程时确认“终止并返回／继续使用”；无子进程时直接返回。 |
-| q 或 Esc（主页） | 打开退出确认。 |
-| L（Windows/macOS 主页） | 注销并回到 Weathr 锁屏。 |
-| F2（登录） | 临时切换密码可见性。 |
-| y（退出菜单） | 退出 TundraUX，返回终端。 |
-| r（退出菜单） | 重启 TundraUX 程序。 |
-| b / p（退出菜单） | 重启电脑 / 关闭电脑；仅在系统支持且允许请求时显示。 |
-| 方向键 / Tab / Enter（退出菜单） | 选择 / 切换 / 执行当前操作。 |
-| n / Esc（退出确认） | 取消退出。 |
+| General | Tab/Shift+Tab moves focus, Enter/Space executes, Esc returns |
+| Home | E/A/S/M/U opens Files, Launcher, Settings, Status, and Users; Q/Esc opens exit confirmation |
+| Launcher | Enter opens, V switches views, R/F5 refreshes, F2 organizes |
+| File management | S, Ctrl+F, or `/` searches; F5 refreshes; F6 sorts; Ctrl/Cmd+Z undoes a move or rename |
+| Management pages | S searches, R/F5 refreshes, F3 toggles expert actions, F4 shows details, Ctrl+Enter submits |
+| Logs | O/Enter opens, L/M/T filters, C clears, G opens the log directory, F3 toggles expert tools, F10 opens More |
+| System Status | E edits, A adds, F4 changes size, Ctrl+S saves the layout |
+| Clock | N creates, M manages |
+| Login | Enter logs in, F2 shows or hides the password |
 
-Editor、Explorer、Settings 等屏幕还按其工具栏、列表、对话框和输入模式处理方向键、Home/End、PageUp/PageDown、Enter、Space、Backspace、鼠标双击、拖拽和滚动。
+Letters typed in text fields are inserted normally and do not trigger page letter shortcuts.
 
-## 各应用快捷键
+### Page interactions
 
-页面按钮会显示对应快捷键；先用方向键或 Tab 选择项目，再按 Enter，也可执行当前按钮。主页的 E/A/S/M/U 分别打开文件管理器、启动器、设置、系统状态和用户资料；Launcher 使用 Enter 打开、V 切换视图、R/F5 刷新、Delete 移除可管理的外部项目。
+Home directly exposes supported system tasks, using compact entries in small windows. Common file actions and editor tools remain visible. Management expert areas stay expanded when switching objects; scheduled-task expert editing uses the full parameter form. Right-clicking a selected management row preserves the batch selection and uses the existing action model.
 
-新增运维页面的常用按键如下。字母快捷键只在浏览时触发；搜索框、路径框、密码框和表单输入中的字母正常输入，不执行页面操作。任务执行、确认和权限限制与点击按钮一致。
+Management lists use Ctrl/Cmd+click for individual selection, Shift+click for a range, and Shift+Enter to toggle the current row. Tab/Shift+Tab moves between workspace regions; arrows operate the focused region. Packages retains F7/F8/F6 for Installed/Updates/Search. Management search supports cursor movement, select-all replacement, and paste.
 
-| 页面 | 常用快捷键 |
-| --- | --- |
-| 文件管理器 | S、Ctrl+F 或 `/` 搜索，F6 排序，F5 刷新；保留原有文件操作快捷键 |
-| Linux 服务、进程、软件包、网络、磁盘 | S 搜索，R/F5 刷新，F4 详情，Ctrl+Enter 应用搜索或提交表单，Ctrl+U 清除输入，Ctrl+T 输出；各操作按钮标出字母或功能键，也可用 1–9、0 选择前十项操作 |
-| 日志 | O/Enter 打开，R/F5 刷新，L/M/T 按最低等级/模块/时间筛选，C 清除筛选，G 在 Explorer 打开 UX 日志根目录，I/E 打开故障报告/查看关联事件；Tab 不切换日志视图 |
-| 系统状态 | E 编辑，A 添加，F4 打开尺寸选择，S 循环尺寸，Delete 删除组件，Ctrl+S 保存布局 |
-| 设置 | Enter/空格打开，左右键调节，上下键选择，Tab/Shift+Tab 切换分类；输入弹窗 Enter 应用、Esc 取消 |
-| 时钟 | N 新建、M 管理；创建弹窗 F3 新建闹钟、F4 新建计时器、Esc 取消 |
-| 登录与账号表单 | 登录密码框按 Enter 登录，F2 显示/隐藏密码；账号表单按 Ctrl+Enter 提交，账号列表各操作按钮显示对应字母 |
-| 初始设置 | Ctrl+Enter 继续/提交/完成，时区页 Alt+Left 返回上一步 |
-| 编辑器设置弹窗 | T 开关，Tab 选择字段，左右键或 -/+ 调整，R 恢复默认，Ctrl+S 保存，Esc 取消 |
+Settings uses Tab/Shift+Tab across categories, the operating-system entry, and content controls. Arrows switch categories only while the category region is focused; Left/Right moves between the application list and its settings. Advanced animation settings show nine phase durations in one three-column form. Reset changes the draft, Save validates and writes all values, and Cancel or Esc discards it and restores focus.
 
-弹窗保留确认和取消按钮及对应提示。普通页面的右上角左三角与 Esc 作用一致；Command Line 的 Esc 交给子终端，右上角按钮用于关闭确认。
+Launcher search filters by name, path/command, and type. Ctrl/Cmd+F or Tab focuses it, Enter opens the current result, Down enters the results, and Esc clears the query before leaving the field. Filtering pauses reordering, and an empty result cannot launch or configure hidden entries. Built-in context menus provide Open and page actions; blank-area menus provide Add, Refresh, View, and Organize. Built-in entries remain protected from editing and deletion.
 
-## 退出菜单
+Explorer copy and cut are shared only within the Tundra session. Undo Move/Rename and Ctrl/Cmd+Z use the same application command and restore location without discarding later edits. Active tasks, replaced objects, or an occupied original path prevent undo. Replacements, merges, and cross-volume moves clear older history and report that they cannot be undone. Text fields retain their own shortcuts. First save and Save As keep directory browsing, filename, Save, and Cancel together; Tab changes focus, F10 saves, and Esc cancels. Existing-file conflicts and external modifications are still checked.
 
-主页的退出菜单将程序操作和电脑操作分别写明：Exit TundraUX、Restart TundraUX、Restart computer、Shut down computer，以及 Cancel。操作逐行等宽排列；窗口较矮时缩小行间空白。所有按钮在同一按钮内按下并于 500 毫秒内松开即执行，期间的定时刷新不会取消点击；拖动、移出后松开或失去窗口焦点仍会取消。macOS 暂不提供电脑电源操作；Linux 的固定电源操作由后台调用 logind 并呈现不可用或授权失败，不在绘制菜单时阻塞查询系统服务。
+The standard editor's right-click or Shift+F10 menu preserves the selection and uses existing clipboard commands; read-only text can be copied but not cut or pasted. On macOS, Command moves to line/document boundaries and Option moves or deletes by word. Vim and child terminals keep their own key handling.
 
-## AA 与命令行的屏幕键盘
+Logs keep F3 expert controls visible across row and filter changes; Tab traverses the controls and Esc leaves their focus. Delete in Trash never empties the whole Trash; its explicit Empty action, clock management, destructive confirmations, and manual AA approval default to Cancel or Deny.
 
-运行中的 AA、命令行和管理输入共用右下角、时间栏上方的键盘按钮，由最终合成器绘制，AA 弹窗内不再重复放入口。点击即可展开或收起；展开后粘贴位于键盘最底排左端，收起位于右端，使用普通按键的高度、边框和完整点击区域。虚拟按键和粘贴直接送入当前任务的输入；Ctrl、Alt、Shift、CapsLock 可以点按锁定，Ctrl+C 等组合键继续交给当前程序。
+## On-screen keyboard for AA and Command Line
 
-同一入口覆盖登录、首次设置、账户、设置文字弹窗、普通编辑器正文和查找替换、文件路径、搜索、新建和重命名，以及管理页和编辑器配置表单。打开管理页键盘时聚焦搜索，其他表单保留当前文字字段；选中的是按钮或选项时转到可输入的字段。点按字段后可输入、删除和粘贴，再使用可见的提交和取消按钮。只有鼠标或无悬停的点按使用相同处理。
+The compositor places the on-screen keyboard entry at the bottom right. It covers text input in AA, Command Line, management forms, login, first-time setup, accounts, settings, the editor, file paths, and search.
 
-键盘展开时，管理内容和表单先缩到键盘上方，滚动条及按钮命中跟随同一份布局。屏幕过小时优先保留表单按钮并显示放大提示。键盘按页面实例及独立表单编号保存归属；搜索结束、同类表单重新打开、选项列表、其他弹窗和页面切换都会清除旧按下，避免松开时误输入到新表单。
+- Virtual keys and paste enter the normal input flow of the current page or child terminal.
+- Ctrl, Alt, Shift, and CapsLock can be latched by tapping; key combinations continue to be sent to the current program.
+- On ordinary pages, expanding the keyboard collapses the title and bottom bars to leave room for the page and forms; in AA, only the topmost dialog moves.
+- Keyboard ownership is bound to the page instance and form ID; switching pages, tasks, or dialogs clears old input state.
+- When the window lacks space, keep the form and action buttons visible and prompt the user to enlarge it.
+- Keyboard text comes from language packs; layout, rendering, and clicks share the positions in the current animation frame.
 
-普通页面展开时，合成器把顶部标题栏逐渐收成一行，让状态和时间栏向下退场，再按当前可用空间绘制页面、表单和键盘，并同步调整子终端行列数。AA 是顶层弹窗，不调整灰色背景页面及顶部标题栏，只让 AA 弹窗避让键盘。上述开合共用键盘动画进度，跟随用户配置的动画速度；减少动态效果时直接切换到最终布局。连续点击时从当前位置反向移动，绘制与点击使用当前动画帧的同一份位置。小窗口无法容纳完整键盘时保留输入界面和操作按钮，提示扩大窗口。收起后恢复内容区大小；切换页面、任务结束或其他弹窗出现时收起键盘并取消尚未完成的点击。独立的 `debug screen-keyboard` 仍只输入演示文本。
+Use `tundra-cli debug screen-keyboard` for the standalone demo; see [Debug previews](previews.md#on-screen-keyboard).
 
-按键边框默认为灰色，内部字符使用配置的边框色；按下、锁定及实体按键反馈将整个按键填充为强调色，文字自动选用对比清楚的黑色或白色，松开或解除锁定后恢复普通背景。圆角或直角跟随用户配置。键盘按钮、功能键名称和提示均从当前语言包读取，包括命令行底部入口。
+## External input
 
-## 外部输入
+When `automation.enabled` is enabled, `session/automation.rs` handles local connections on the Shell thread. Clicks, drags, scrolling, keys, and text are first converted to Crossterm events and then enter the normal input flow, without directly executing page commands.
 
-启用 `automation.enabled` 后，`session/automation.rs` 在 Shell 线程上轮询本机连接。点击、拖动、滚动、按键和文字请求先转换成 Crossterm 事件，再与终端输入进入同一段处理流程，不直接执行 `ShellCommand`。拖动分帧进行，连接断开先取消尚未松开的鼠标操作，避免把断线当成按钮点击。
-
-合成器在实际布局上采集节点，并从最终帧读取画面文字。终端绘制成功后才发布快照；输入命令收到的成功结果只说明输入已经处理并绘制，不保证后台任务成功。`--snapshot` 可以拒绝读取后已经变化的界面；超时不重放输入。完整协议与示例见 [外部 CLI 控制](../../cli/docs/ui-control.md)。
+The compositor collects controls and text from the actual layout and final frame, publishing a snapshot after successful rendering. Real user actions invalidate old snapshots, and timed-out input is not replayed. See [External CLI control](../../cli/docs/ui-control.md) for the protocol and commands.

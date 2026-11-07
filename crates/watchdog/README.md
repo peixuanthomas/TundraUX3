@@ -1,18 +1,11 @@
 # watchdog
 
-[中文运行与恢复约束](docs/runtime.md) · [Workspace guide](../../docs/README-TECHNICAL.md)
+`watchdog` is a process-level supervision runtime responsible for managed tasks and threads, panic boundaries, operation journals, resource cleanup, and incident reports. Executables create one `WatchdogRuntime`; libraries use the existing instance through `AppWatchdog`.
 
-`watchdog` is the single process-level supervision runtime for TundraUX3.
-Executables own one `WatchdogRuntime`, install its `ProcessWatchdog` once, and
-register every application before starting application code. Libraries receive
-an `AppWatchdog`; they never install panic hooks or create unmanaged production
-threads/tasks.
-
-## Host setup
+## Host initialization
 
 ```rust,no_run
-use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig,
-    WatchdogRuntime};
+use watchdog::{AppCriticality, AppDescriptor, AppId, WatchdogConfig, WatchdogRuntime};
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 let (runtime, process) = WatchdogRuntime::start(WatchdogConfig::new(
@@ -26,61 +19,46 @@ let app = process.register_app(AppDescriptor::new(
     AppCriticality::Optional,
 ))?;
 
-// Give `app` (or an AppRuntimeContext containing it) to application code.
+// Pass app, or an AppRuntimeContext containing it, to application code.
 runtime.shutdown()?;
 # Ok(())
 # }
 ```
 
-The process host is the only incident consumer. It chooses the host presentation: Shell uses its independent panic page;
-other hosts may use stderr or a native critical dialog and de-duplicates by incident ID.
-The watchdog crate emits structured receipts and deliberately has no dependency
-on `platform`.
+The process host handles incident display and deduplication. Shell uses a dedicated panic page; other hosts may use stderr or native error messages. `watchdog` does not depend on `platform`.
 
-## Task and recovery rules
+## Tasks and recovery
 
-- Create production work through `ManagedTaskGroup` only.
-- Declare `ReplaySafety` for every task. `Never + RestartTask` is rejected.
-- `Idempotent` tasks may be reconstructed by their factory under the configured
-  restart window and backoff.
-- `Checkpointed` tasks restart only after a registered `RecoveryHandler`
-  establishes a safe state.
-- Mutating operations use `begin_operation` and durable checkpoints. A manual
-  outcome keeps the journal and must leave related writes disabled.
-- Shutting down a task group cancels and waits for tracked work; dropping a
-  handle alone does not stop its worker. Threads must observe cancellation and
-  bound blocking waits. Cancellation is not reported as a panic.
+- Production background work is created through `ManagedTaskGroup` and declares `ReplaySafety`.
+- `Never + RestartTask` is rejected.
+- `Idempotent` tasks can be recreated within the configured restart window and backoff policy.
+- `Checkpointed` tasks require a registered `RecoveryHandler` to restore a safe state first.
+- Modification operations use `begin_operation` and persistent checkpoints. After results are handled manually, the journal is retained and related writes are blocked.
+- Closing a task group cancels and waits for managed work; merely dropping a handle does not stop a thread.
+- Long waits must respond to cancellation; cancellation itself is not reported as a panic.
 
-Internal commands use `platform::ManagedCommand`. Their owners stop and reap
-children on errors and on drop, and register cleanup with the current watchdog.
-Process shutdown stops registered resources before waiting for worker threads;
-cleanup failures and workers that exceed the shutdown deadline return an error.
-`ManagedResource` also covers PTY children. Cleanup must have a time limit and
-must not wait for another worker that needs shutdown to finish. Successful
-cleanup unregisters the resource; failures remain registered for a later retry.
+Internal commands use `platform::ManagedCommand`; their owner stops and reaps child processes on errors and Drop. `ManagedResource` also covers PTY child processes. Resources are unregistered after successful cleanup; failed cleanup retains the registration for retry.
 
-Desktop applications use the separate external-launch path. Its reaper stops
-waiting when UX exits, while the application continues independently. Update
-replacements keep an explicit owning launcher until the replacement exits.
-System-operation helpers transfer work to their own watchdog so disconnecting
-the UI does not interrupt a package database write. The privileged authorization
-broker monitors its private connection and cancels its own work on disconnect.
+External desktop programs use a separate launch path and may continue running after Tundra exits. Update replacement retains an explicit launch owner. System-management helpers hand tasks to their own watchdog, so an interface disconnection does not directly interrupt package writes.
 
-Reports live under the configured report directory as matching JSON and text
-files. Operation journals live under
-`<data>/watchdog/operations/<app-id>/`. Active-run markers live under
-`<data>/watchdog/runs/` and allow the next launch to report exits that could not
-be observed in-process.
+## Reports and run markers
 
-## Security and hard limits
+Reports are saved as matching JSON and text files. Operation journals reside in:
 
-Never put passwords, tokens, clipboard/paste contents, or raw user input into
-panic messages, breadcrumbs, snapshots, or operation payloads. The runtime also
-applies central redaction and size limits before persistence, but callers must
-still provide minimal structured context.
+```text
+<data>/watchdog/operations/<app-id>/
+```
 
-With `panic = "unwind"`, Rust panics can be caught at declared boundaries. An
-in-process watchdog cannot recover `abort`, OOM abort, stack overflow, native
-faults, forced termination, power loss, or deadlock. Run markers provide a
-next-launch “reason unknown” report for many of those cases; immediate process
-restart requires a separate external supervisor.
+Active run markers reside in `<data>/watchdog/runs/`, allowing the next startup to record abnormal exits that were not observed.
+
+Incident context uses minimal structured metadata, without passwords, tokens, clipboard contents, pasted content, or raw user input. Centralized redaction and size limits are also applied before persistence.
+
+The runtime requires `panic = "unwind"` and catches Rust panics at declared boundaries. Process exits that cannot be caught immediately are recorded at the next startup using run markers. An external supervisor is responsible for scenarios requiring automatic restarts.
+
+See [Runtime, recovery, and reports](docs/runtime.md) for detailed rules.
+
+## Validation
+
+```sh
+cargo test --locked -p watchdog
+```

@@ -498,7 +498,17 @@ fn probed_graphics_protocol_controls_terminal_diagnostic_status() {
 
 #[test]
 fn startup_graphics_policy_only_schedules_theme_change_for_unsupported() {
-    let mut unsupported = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+    let new_state = || {
+        ShellSession::new_with_startup(
+            ShellLaunchConfig::default(),
+            (120, 30),
+            ShellStartupState::clean(
+                PlatformKind::Windows,
+                PlatformCapabilities::native_supported(),
+            ),
+        )
+    };
+    let mut unsupported = new_state();
     unsupported
         .apply_terminal_graphics_startup_policy(&ui::TerminalGraphicsProbeStatus::Unsupported);
     assert!(unsupported.pending_default_ascii_icon_fallback);
@@ -510,7 +520,7 @@ fn startup_graphics_policy_only_schedules_theme_change_for_unsupported() {
         "Terminal graphics unsupported"
     );
 
-    let mut no_response = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+    let mut no_response = new_state();
     no_response.apply_terminal_graphics_startup_policy(
         &ui::TerminalGraphicsProbeStatus::NoResponse {
             reason: "query timeout".to_string(),
@@ -523,7 +533,7 @@ fn startup_graphics_policy_only_schedules_theme_change_for_unsupported() {
     assert_eq!(notice.title, "No terminal graphics response");
     assert!(notice.message.contains("not changed"));
 
-    let mut verified = ShellSession::new(ShellLaunchConfig::default(), (120, 30));
+    let mut verified = new_state();
     verified.apply_terminal_graphics_startup_policy(&ui::TerminalGraphicsProbeStatus::Verified(
         ui::EditorGraphicsProtocol::Kitty,
     ));
@@ -595,7 +605,10 @@ fn unsupported_default_image_mode_is_persisted_as_ascii_after_login() {
             "AdminUser",
             "StrongPass123",
             None,
-            storage::AppearanceConfig::default(),
+            storage::AppearanceConfig {
+                icon_display_mode: storage::IconDisplayMode::Image,
+                ..Default::default()
+            },
         )
         .expect("bootstrap user");
     let session = SessionService::new(storage.clone())

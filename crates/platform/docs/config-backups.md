@@ -1,41 +1,44 @@
-# 配置备份与恢复
+# Configuration backups and recovery
 
-界面提示和差异标签使用当前语言；记录内的来源及待确认标识保持稳定，JSON 行身份中的 `source` 可用于脚本识别来源。密码和受保护配置继续隐藏，翻译不会改变恢复条件。
+Configuration Backups and Recovery lists time, source, related files, and results by operation. Each change first saves the originals and their attributes, then records the actual result; multiple files involved in one operation are stored in a single record.
 
-启动器的“配置备份与恢复”按操作列出时间、来源、相关文件和结果。查看完整记录需要系统授权。每次系统配置修改先保存原件和属性，再执行修改并记录实际结果；同次操作涉及多个文件时放在一条记录中。
+## Records and recovery
 
-共享记录位于 `/var/lib/tundraux3/config-backups/operations`。备份目录为 `0700`，文件为 `0600`；保留修改前内容、UID/GID、权限、ACL、扩展属性和修改后版本。旧版编辑器备份仍可查看和恢复。历史只由用户手动清理。
+Shared records are in `/var/lib/tundraux3/config-backups/operations`, with directory permissions `0700` and file permissions `0600`. They may contain pre-change text, UID/GID, permissions, ACLs, extended attributes, and post-change versions.
 
-原生工具在恢复期间生成的备份副本（例如 firewalld 的 `.xml.old`）同样保留原件。恢复只接受记录中的属性和本次已核对的候选内容，恢复原先缺失的文件后不留下副本。
+Before recovery, recheck the current version and candidate configuration, and preview the diff. Stop if later external changes are found; when no validator is available, recovery without validation must be selected explicitly. Recovery itself also saves the current originals, then rereads and checks the result after completion.
 
-恢复前先查看差异，重新检查当前版本和候选配置。相关内容已被其他程序修改时停止，不覆盖后来的修改。没有检查器时必须明确选择未检查恢复。恢复也保存原件，恢复完成后重新读取核对；“内容已恢复”和“服务已加载”分别报告。SSH 与网络恢复仍走各自的连接验证流程。
+Configuration saving, service loading, and connection verification report their results separately. SSH and network recovery continue to use their respective new-connection confirmation flows.
 
-编辑器保存、网络配置、公钥、防火墙、软件源、开机挂载、服务定义和定时任务均接入记录。软件包安装、外部程序修改、普通服务启停和整机快照不在范围内。
+The editor, networks, public keys, firewall, repositories, fstab, service definitions, and scheduled tasks all write to the shared records. Package transactions, external-program changes, and ordinary service starts and stops are outside file-configuration backups.
 
-## 浏览与清理
+## Browsing and cleanup
 
-页面显示记录数量、总占用和保留数量。搜索框按文字筛选，“筛选”设置起止日期和来源；日期使用系统时区，结束日期包括当天。每批读取 50 条，“下一批”和“首批”切换列表。点击列标题在全部匹配记录中排序，保留当前记录所在的一批。
+- The search box filters by text; the filter panel sets start/end dates and sources. Dates use the system timezone.
+- Each batch displays 50 records, with sorting across all matching records.
+- Lists read summaries; full content and diffs are read and calculated only when opening details. The summary index can be rebuilt from old records.
+- Retain/Unretain prevents records from being cleaned up; rebuilding the index does not affect retention flags.
 
-列表读取摘要，不读取每份备份的正文或计算差异；打开某条详情才读取其内容。摘要索引可以从旧记录重建。首次读取旧历史时需要建立索引，之后使用摘要；保留标记另行保存，重建不会取消保留。
+Cleanup first previews the recovery points and related files to be deleted, and the expected space savings, using the current filters. After confirmation, it rechecks the same records. Records that are in use, still needed for network/SSH confirmation, referenced by other retained records, or already changed are not deleted.
 
-在“更多”中选择“保留／取消保留”或“预览清理”。清理预览按当前筛选条件列出会失去的恢复点、相关文件和预计释放空间；确认后重新检查同一批记录。记录变化、正在修改或恢复、仍用于网络/SSH确认、被保留记录引用时拒绝删除。清理不会扩大到预览之外的新记录，失败后刷新可查看实际剩余记录。
+## Accounts and groups
 
-## 账户与用户组
+Account recovery handles only accounts, groups, and attributes affected by the selected operation. It supports creation, deletion, passwords, locking, display names, Shells, expiration, primary groups, supplementary groups, and related operations.
 
-账户记录只恢复所选操作影响的账户、用户组和属性。支持创建、删除、密码、锁定、显示名称、Shell、有效期、主组、附加组和现有用户组操作；使用系统账户工具写入，再检查账户与组数据。
+Before recovery, check current values and whether names or UID/GID values are already in use; reread system account data afterward. Restoring a Shell does not overwrite a display name changed later; restoring one user's group membership preserves other members.
 
-恢复 Shell 不覆盖后来改过的显示名称；恢复某个用户的组成员资格时保留其他成员。原名称、UID/GID 已被占用时拒绝恢复。删除账户和撤销创建都保留主目录，不删除用户文件；当前账户和 root 的既有保护继续生效。远程目录账户和组保持只读。
+Deleting accounts and undoing their creation both preserve home directories. Existing protections for the current account, root, and remote directory accounts remain in effect.
 
-密码只保留受保护的哈希，差异显示密码发生变化，不显示哈希。原件在执行账户工具前写入；未取得确定结果的记录不能直接恢复，须先检查实际状态。
+Passwords are stored only as protected hashes; diffs show only "Password changed." Records with unconfirmed results require checking the actual state before deciding whether recovery is possible.
 
-## 验证
+## Validation
 
 ```sh
 cargo test --locked -p platform management::config_backups --lib
 cargo test --locked -p platform management::users::recovery --lib
 ```
 
-账户真实恢复测试必须以 root 在独立挂载空间运行。测试先检查挂载空间与系统 PID 1 不同，再把临时目录挂到 `/etc`、`/run`、`/var/lib`、`/var/log`、`/var/spool` 和 `/home`，不操作开发机账户文件。编译后对 Cargo 返回的测试程序运行：
+Real account-recovery tests run as root in an isolated mount namespace:
 
 ```sh
 unshare --mount --propagation private --fork TEST_BINARY \
@@ -43,4 +46,4 @@ unshare --mount --propagation private --fork TEST_BINARY \
   --ignored --nocapture --test-threads=1
 ```
 
-测试覆盖密码、锁定状态恢复时保留密码日期、删除与创建撤销、用户组更名、保留主目录、保留其他字段与成员、多段容器用户编号范围（subuid/subgid），以及编号冲突。图形授权窗口、真实终端和触屏仍需要对应设备验收。
+Tests use temporary `/etc`, `/run`, `/var/lib`, `/var/log`, `/var/spool`, and `/home` directories, covering attribute recovery, home-directory preservation, group membership, UID/GID conflicts, and subuid/subgid.

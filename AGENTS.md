@@ -1,43 +1,42 @@
-# 项目约定
+# Project conventions
 
-- 回答用户问题的时候请使用简单、直白的简体中文回复，解释具体改动行为和改动原因。
-- 出现用户指令不明确，或者实际实现和用户描述的有所不同，在实施前向用户询问。
-- 如果存在多种理解方式，应该明确向用户指出，不允许擅自假设或者选择某种方案。
-- 如果有更好或者更简单的方案，向用户提出，允许向用户不合理的方案提出异议。
-- 如果编写代码过程中出现不清楚的地方，立即停止工作并向用户询问。
-- 一切从简，只写解决问题所需的最少代码，不进行推测性扩展或预留，除非用户强调。
-- 不添加用户未要求的内容。
-- 不为只使用一次的代码建立抽象层。
-- 不为不可能发生的情况编写错误处理代码。
-- 在检查代码的时候如果认为某段代码可以使用更简便的方式实现，则直接进行修改。
-- 每一段行内注释最多两行。如果需要更多注释，则表明代码本身存在补丁式设计问题，应当修正其实现，禁止使用超长注释解释这段代码的作用。
-- 编写注释的时候应当解释为什么编写代码而不是重复说明代码做了什么。(注意，导出API的文档注释，例如 `@param`, `@returns`, `@deprecated`属于文档而非注释，此处不受限制)
-- 精准修改需要的代码，不要重构没有问题的代码。
-- 遵循项目原本的代码风格，即使其不规范。
-- 每一项代码修改都应该能够对应到用户的需求。
-- 编写代码之前先将任务转换成可验证的目标，例如“修复bug”意为“编写能够复现该bug的测试，让测试通过”，“重构”意为“确保重构前后测试均通过”
-- 对于复杂任务，应当使用多个简短的计划，并为每一步列出能够验证的方式。
-- 在Windows上进行Linux相关测试，使用本机WSL，同步测试Windows功能以及Linux功能。在Linux环境里，则使用当前环境。MAC环境中，只进行MAC相关测试。
-- 编写UI相关代码的时候请参考`docs/UI-requirements.md`
-- 保持项目代码结构清晰，需要的时候新建文件、新建crate等操作，不要让负责不同模块的代码混在一起。
-- 阅读本地README，如果需要修改的某个目录中存在README，应当查找其父目录中也是否存在README，先阅读后修改。
-- 修复上游问题，不在下游打补丁。如果新功能发现现有模块的限制，指出限制其的上游模块，并向用户提出修改方案。除非用户要求，否则禁止通过只增加下游补丁的方式实现功能。
-- 工作时应当优先使用现有的库，查阅文档或直接查阅库，确认是否已经存在内置选项或者现成方案或已有的example，只有不存在足够合适的替代方案时再编写自定义代码。
-- 开发过程中使用的临时文件即使清理，例如临时验证脚本以及临时生成的文档。
+- Answer users in simple, direct Simplified Chinese, explaining the specific changes and why they were made.
+- If a user instruction is unclear, or the actual implementation differs from the user's description, ask the user before proceeding.
+- If there are multiple possible interpretations, point them out explicitly; do not assume or choose one on your own.
+- If there is a better or simpler approach, propose it to the user. You may challenge an unreasonable approach proposed by the user.
+- If anything becomes unclear while writing code, stop immediately and ask the user.
+- Keep everything simple. Write only the minimum code needed to solve the problem; do not add speculative extensions or provisions for future use unless the user emphasizes them.
+- Do not add content the user did not request.
+- Do not create abstractions for code used only once.
+- Do not write error handling for impossible cases.
+- When reviewing code, if a section can be implemented more simply, change it directly.
+- Each inline comment block may contain at most two lines. If more are needed, the code has a patchwork design problem that should be corrected; do not use long comments to explain what such code does.
+- Comments should explain why the code was written rather than repeat what it does. (Documentation comments for exported APIs, such as `@param`, `@returns`, and `@deprecated`, are documentation and are not subject to this restriction.)
+- Make targeted changes to the code that needs them; do not refactor code without a problem.
+- Follow the project's existing code style, even if it is unconventional.
+- Every code change must correspond to a user requirement.
+- Before writing code, turn the task into verifiable goals. For example, “fix a bug” means “write a test that reproduces the bug and make it pass”; “refactor” means “ensure the tests pass both before and after the refactor.”
+- For complex tasks, use several short plans and state how each step can be verified.
+- When running Linux-related tests on Windows, use local WSL and test both Windows and Linux functionality. In a Linux environment, use the current environment. In a Mac environment, run only Mac-related tests.
+- Refer to `docs/UI-requirements.md` when writing UI-related code.
+- Keep the project structure clear. Create files or crates when needed rather than mixing code responsible for different modules.
+- Read the local README. If a directory to be modified contains a README, also check its parent directories for READMEs and read them before making changes.
+- Fix upstream problems rather than patching them downstream. If a new feature exposes a limitation in an existing module, identify the upstream module responsible and propose a change to the user. Unless the user asks otherwise, do not implement the feature solely by adding a downstream patch.
+- Prefer existing libraries. Read the documentation or inspect the library to check for built-in options, existing solutions, or examples. Write custom code only when no sufficiently suitable alternative exists.
+- Promptly clean up temporary files used during development, such as temporary validation scripts and generated documents.
 
 # Git
 
-- 开始工作前，请切换至work分支，避免改动对主分支造成影响。工作结束经用户测试并同意后再合并回主分支，合并分支后删除work分支。
-- 主代理开始修改任务前，检查分支和 `git status --porcelain=v1`。没有任务开始前已有的暂存、未暂存或未跟踪文件；不满足时停止修改并报告。只读分析和审查可以继续。当前任务产生的修改不属于这项停止条件。
-- 不得替用户清理、暂存、丢弃、覆盖或提交已有修改。除非是本次工作生成的文件。
-- 每次任务产生的代码、配置和文档修改都必须提交，用户明确要求不提交的内容除外。只暂存自己负责的文件；提交前检查暂存差异，确保没有混入其他任务的内容。
-- 每个提交只包含一项连贯改动，使用 `feat:`、`fix:`、`refactor:`、`test:`、`docs:` 或 `chore:` 等前缀，并说明具体改变了什么。如果用户提出了多项改动则进行多次小范围、单一目标的提交，禁止一次提交大量不同的改动。
-- 只有获得推送授权后才推送，且只推送 `main` 或 `master`；未经明确要求不得强制推送到远端。
+- This is a personal project, so a new branch is not required for every change unless there is a special requirement or the user requests one.
+- Before the primary agent starts a modification task, check the branch and `git status --porcelain=v1`. There must be no staged, unstaged, or untracked files from before the task; otherwise, stop making changes and report the situation. Read-only analysis and review may continue. Changes produced by the current task do not trigger this stop condition.
+- Do not clean up, stage, discard, overwrite, or commit the user's existing changes, except files produced by the current task.
+- Commit all code, configuration, and documentation changes produced by each task, except anything the user explicitly asks not to commit. Stage only the files you are responsible for; inspect the staged diff before committing to ensure no other task's changes are included.
+- Each commit must contain one coherent change, use a prefix such as `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, or `chore:`, and describe the specific change. If the user requests several changes, make several small commits, each with a single purpose; do not combine many unrelated changes into one commit.
+- At the end of the task, push only the master branch to the remote unless the user requests pushing a specific branch.
+# Documentation
+- Every crate must have its own README explaining its purpose. Update the README whenever the corresponding code changes so that the documentation matches the current code.
+- Promptly summarize project-wide features in the root README, but keep the main README concise. Avoid excessive technical detail or long passages that discourage reading; ideally, combine text with illustrations.
+- When releasing a major version, record all additions and changes since the previous release in the changelog.
 
-# 文档
-- 所有crate都要拥有自己的README，用于提示此crate的作用。在进行了相应的修改之后也要一并修改README的内容，确保README和当前代码能够对上。
-- 对于整个项目的内容，即时总结功能介绍到根目录的README中，但是注意保持主要README简洁，不要列举过多技术细节，不要写大段长文让人一眼不想看，最好图文并茂。
-- 发布主要版本更新的时候需要将自上次以来的全部新增或修改内容写入changelog
-
-# 国际化
-- 所有程序内显示的文本内容都要使用i18n，支持不同宽度的字符，禁止硬编码在程序中(某些紧急处理用途除外)
+# Internationalization
+- All text displayed in the application must use i18n and support characters of different widths. Do not hardcode it in the program (except for certain emergency uses).

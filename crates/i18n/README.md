@@ -1,12 +1,10 @@
 # i18n
 
-[中文使用与资源恢复指南](docs/localization.md) · [Workspace guide](../../docs/README-TECHNICAL.md)
+`i18n` handles Fluent language-pack loading, validation, default-resource repair, and immutable language snapshots. It shares a resource root with `ascii-assets`; language packs reside in `root/locales/<code>/`.
 
-The `i18n` crate owns Fluent loading, validation, built-in English/Chinese repair, and immutable
-language snapshots. Its root argument is the same **asset root** used by
-`ascii-assets`: language packs live at `root/locales/<code>/`.
+## Language packs
 
-Each pack contains `manifest.toml`:
+Each language pack contains a `manifest.toml`:
 
 ```toml
 format_version = 1
@@ -14,12 +12,9 @@ code = "zh-CN"
 native_name = "简体中文"
 ```
 
-All `.ftl` files below the pack are read recursively (including `common`,
-`modules`, and `recovery`). `zh-Hans` is an input alias for `zh-CN`; manifests
-and directory names use canonical codes. Catalog discovery returns valid packs
-and diagnostics for invalid manifests. Embedded English is always listed.
-`LanguageCatalog::built_in()` returns English/Chinese selector metadata without
-filesystem access.
+`.ftl` files in `common`, `modules`, and `recovery` are loaded recursively. `zh-Hans` is an input alias for `zh-CN`; directories and manifests use the canonical code. `LanguageCatalog::built_in()` provides English and Chinese language choices without accessing the filesystem.
+
+## Snapshots and messages
 
 ```rust
 use std::sync::Arc;
@@ -35,79 +30,37 @@ i18n::with_snapshot(&snapshot, || {
 });
 ```
 
-`enter_snapshot(Arc<LanguageSnapshot>)` returns a thread-bound RAII guard for
-larger render/input scopes. Scopes nest, restore after unwinding, and are isolated
-between threads. Formatting outside a scope lazily initializes embedded English
-in memory. `msg!` retains a message ID and typed, serializable arguments; `tr!`
-formats immediately. Nested `LocalizedMessage` and `LocalizedText` arguments retain
-their original IDs and render through the same snapshot; nesting stops at depth
-32 with an emergency fallback. `String`/`&str` conversions to `LocalizedText` are always raw.
+- `msg!` retains a message ID and typed arguments; `tr!` formats immediately.
+- `enter_snapshot` returns a thread-bound RAII guard. Scopes can nest and are isolated between threads.
+- `current_snapshot()` clones the current thread's snapshot; background helpers can transfer language resources through `export()` / `restore()`.
+- `String` and `&str` always represent raw text when converted to `LocalizedText` and are not translated.
+- Rendering reads only memory, without disk access or log writes.
 
-`current_snapshot()` clones the current thread's `Arc<LanguageSnapshot>` (or the
-embedded English default). `snapshot.export()` returns serializable
-`LanguageSnapshotData` with the language code, generation, current Fluent text,
-and customized English fallback text. `data.restore()` validates the supplied
-resources and returns a snapshot using only memory and the receiving process's
-embedded English fallback. Resource paths are generated diagnostic labels;
-import never reads, repairs, or writes user language files. Enter the restored
-snapshot in the worker or helper thread before formatting user-visible messages.
+Snapshots separately retain the current language, English fallback, built-in English, and minimal emergency resources. Missing messages or formatting failures fall back through these layers; unknown IDs appear as `[message-id]`.
 
-`LanguageSnapshot::load` is strict for the requested pack. It rejects malformed
-manifests, invalid Fluent, duplicate message/term/attribute IDs, unresolved or
-cyclic references, unsupported functions, and changed named-argument contracts
-relative to English. Message contracts include arguments inherited through
-references. `NUMBER` is supported. Missing translations are allowed and reported
-once in load diagnostics. Startup loading additionally skips bad translation
-files and falls back to English when the requested locale cannot load.
+## Loading and validation
 
-Each snapshot owns separate current-language, English, embedded-English, and
-minimal emergency-recovery bundles. Missing messages and formatting failures fall
-through these bundles in order. Each tier uses its own locale's plural rules. A
-translated message whose reference cannot resolve falls back as a whole. Unknown
-IDs or unsatisfied arguments yield `[message-id]`. Rendering performs no file I/O
-or logging. Snapshots implement `Send + Sync`, `Debug`, and content-aware equality.
+Strict loading checks manifests, Fluent syntax, duplicate IDs, references and cycles, functions, and English argument contracts. `NUMBER` is supported. Missing translations are recorded in loading diagnostics and fall back to English.
 
-English defaults are embedded from the canonical
-`crates/ascii-assets/assets/locales/en-US` tree (relative to the repository root). The build script watches directories
-and files recursively and validates the embedded manifest and Fluent reference
-graph. Missing manifests, missing resource trees, and packs without any messages
-fail the build. Minimal recovery messages remain available as the last runtime tier.
+Startup loading can skip damaged translation files and continue with built-in English and Chinese resources. Existing snapshots remain unchanged when disk files change; after a successful reload, the caller publishes a new snapshot.
 
-The same build step generates public constants such as
-`i18n::ids::RESOURCES_RECOVERY_TITLE`, the sorted `MESSAGE_IDS` list, and
-`MESSAGE_CONTRACTS`. `message_contract(id)` returns a `MessageContract` containing
-`id` and sorted required `args`, including arguments inherited through Fluent
-references. Hyphens and attribute separators become underscores in constant names;
-case and separator collisions fail the build. These APIs describe bundled English
-and do not change when users customize disk translations.
+The build script embeds English from `crates/ascii-assets/assets/locales/en-US` and generates:
 
-Loading repairs missing or corrupt default English and Chinese files via a same-directory
-temporary file and atomic rename. Healthy files retain their bytes; missing
-entries are appended while retaining existing entries/comments. Entries moved to
-another healthy file are not duplicated. Write failures leave the corrected
-content in memory and produce structured diagnostics:
+- `i18n::ids` message constants;
+- `MESSAGE_IDS`;
+- `MESSAGE_CONTRACTS` and `message_contract(id)`.
 
-- `kind: RepairKind`
-- `path: PathBuf`
-- `message: String`
-- `repaired: bool` (whether the correction was persisted)
+Default English resources and damaged English or Chinese files are repaired using temporary files in the same directory and atomic renames. Healthy files retain their original bytes, missing entries are appended to the appropriate files, and write failures retain the in-memory corrections and return structured diagnostics.
 
-`LanguageLoad` exposes `snapshot` and `diagnostics`. A failed strict load exposes
-repairs already performed through `LanguageError::diagnostics`, allowing callers
-to report those repairs while retaining the previous snapshot. Error `Display`
-continues to contain only the original failure text. Callers own logging, recovery
-presentation, persistence of the selected language, and publication of a new
-`Arc<LanguageSnapshot>` after a successful strict reload. Existing snapshots
-remain unchanged even if asset files are edited or removed.
+`render_diagnostic` always uses built-in English and is suitable for error `Display` implementations and logs. `LocalizedError` retains a stable `event_code`, a message, and an optional cause chain.
 
-Use `render_diagnostic(&message)` for domain error `Display` implementations and
-log text. It always uses a lazily initialized immutable embedded English snapshot,
-including for nested arguments, independently of the active UI scope and editable
-English files. Both initialization and rendering are free of filesystem access.
+## Documentation and validation
 
-`LocalizedError` carries a stable `event_code`, a retained `LocalizedMessage`, and
-an optional boxed `LocalizedError` cause. Its `Display` is machine-oriented;
-render its message explicitly for user-facing presentation.
+See [Language resources and recovery](docs/localization.md) for usage and resource recovery.
 
-Run `cargo test --locked -p i18n` for catalog, repair, contracts, plural fallback, partial
-startup recovery, snapshot lifetime, thread isolation, and serialization checks.
+```sh
+cargo test --locked -p i18n
+python3 scripts/check-localization.py
+```
+
+Tests cover catalogs, repair, argument contracts, plural fallback, snapshot lifetimes, thread isolation, and serialization.

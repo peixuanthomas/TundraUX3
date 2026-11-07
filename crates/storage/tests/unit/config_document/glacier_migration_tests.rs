@@ -5,6 +5,29 @@ fn legacy() -> AppearanceConfig {
 }
 
 #[test]
+fn missing_icon_mode_uses_the_platform_default_and_saved_modes_are_preserved() {
+    let expected = if cfg!(target_os = "linux") {
+        IconDisplayMode::Ascii
+    } else {
+        IconDisplayMode::Image
+    };
+    let missing: AppearanceConfig = serde_json::from_str("{}").unwrap();
+    assert_eq!(missing.icon_display_mode, expected);
+    assert_eq!(
+        StorageConfig::default().appearance.icon_display_mode,
+        expected
+    );
+    for (value, mode) in [
+        ("ascii", IconDisplayMode::Ascii),
+        ("image", IconDisplayMode::Image),
+    ] {
+        let appearance: AppearanceConfig =
+            serde_json::from_value(serde_json::json!({ "icon_display_mode": value })).unwrap();
+        assert_eq!(appearance.icon_display_mode, mode);
+    }
+}
+
+#[test]
 fn animation_speed_defaults_and_clamps_when_loaded() {
     let missing: AppearanceConfig = serde_json::from_str("{}").expect("default appearance");
     let below: AppearanceConfig =
@@ -28,7 +51,13 @@ fn exact_legacy_config_default_migrates_to_glacier() {
         ..StorageConfig::default()
     };
     assert!(config.normalize());
-    assert_eq!(config.appearance, AppearanceConfig::default());
+    assert_eq!(
+        config.appearance,
+        AppearanceConfig {
+            icon_display_mode: IconDisplayMode::Image,
+            ..AppearanceConfig::default()
+        }
+    );
 }
 
 #[test]
