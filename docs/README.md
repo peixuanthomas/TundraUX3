@@ -11,6 +11,7 @@
 | 检查命令、PTY 和 CI | [测试指南](testing.md) |
 | 新增 Linux 管理功能的真实工具与输入验收 | [2026-10-16 验收记录](linux-administration-validation.md) |
 | 非命令行用户的运维流程、规模测量与本轮验收 | [2026-10-26 验收记录](operations-usability-validation.md) |
+| 用户交互第一阶段修复与验证 | [2026-11-07 修复记录](ui-usability-fixes-2026-11-07.md) |
 | 所有页面的共同交互要求 | [UI 要求](UI-requirements.md) |
 | 原生 UI automation 画面、按钮和文案检查 | [2026-10-31 界面验收](ui-review-2026-10-31.md) |
 | 各页面是否适合多选、管理页的多选规则 | [列表多选检查](list-selection.md) |

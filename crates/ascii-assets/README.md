@@ -2,7 +2,7 @@
 
 用户角色和时钟表单按钮使用 `modules/ui-user-management.ftl`、`modules/ui-clock.ftl` 的中英文标签。权限帮助说明统一为“空格切换、Enter 下一栏／最后一栏确认”。
 
-中英文 modules/ui-launcher.ftl 包含整理模式、新增启动命令、右键菜单、固定尺寸字符图标编辑与越界提示，以及退出选项、翻页和排序帮助。新增表单使用默认图标。modules/terminal-launcher.ftl 同步提供程序退出后按回车返回的提示。
+中英文 modules/ui-launcher.ftl 包含常驻搜索、无结果提示和搜索快捷键，以及整理模式、新增启动命令、右键菜单、固定尺寸字符图标编辑与越界提示，以及退出选项、翻页和排序帮助。新增表单使用默认图标。modules/terminal-launcher.ftl 同步提供程序退出后按回车返回的提示。
 
 `ui-launcher-keep-screen` 用于新增表单及右键菜单的“退出后保留界面”开关，“开／关”复用设置页中英文文案。
 
@@ -39,7 +39,7 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 
 软件包分栏页的主导航和高级区文字位于中英文 `modules/management-services-process-packages.ftl`；键盘操作统一放在 F1 帮助。
 
-软件包、服务、进程和计划任务的 Shift+点击、Shift+Enter、多选保留和批量操作说明位于中英文 `modules/help.ftl`；无效选择、部分项目不支持操作及批量进度提示位于 `modules/management-services-process-packages.ftl`。
+软件包、服务、进程和计划任务的 Ctrl/Cmd+点击、Shift 范围选择、Shift+Enter、多选保留和批量操作说明位于中英文 `modules/help.ftl`；无效选择、部分项目不支持操作及批量进度提示位于 `modules/management-services-process-packages.ftl`。
 
 中英文 `modules/management-homebrew.ftl` 提供 macOS Formula/Cask 类型、查询要求、原生交互和执行结果提示。
 
@@ -65,7 +65,7 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 
 动画高级选项弹窗的打开、关闭、阶段名称、毫秒说明和恢复提示位于中英文 `modules/settings.ftl`。
 
-同一资源提供设置数值弹窗的范围校验、调整、输入、确认和取消提示；`modules/help.ftl` 同步说明 Tab/Shift+Tab 切换大类、方向键移动内容区焦点与弹窗内的数值操作。
+同一资源提供设置数值弹窗的范围校验、调整、输入、确认和取消提示；`modules/help.ftl` 同步说明 Tab/Shift+Tab 遍历区域与控件、分类区方向键切类及弹窗内的数值操作。
 
 中英文 `modules/ui-logs.ftl` 提供六个日志等级、最低等级筛选和“打开文件夹”文字；`modules/help.ftl` 说明日志默认显示全部、故障最高，以及 L 筛选、G 打开 UX 日志根目录和不使用 Tab 切换日志视图。
 
@@ -94,3 +94,9 @@ AA 自动策略的显示名称统一为“一律放行” / “Always allow”�
 设置数值弹窗的中英文提示说明左右键移动光标，减号／加号按钮调整数值。
 
 管理空状态、授权和天气地点确认使用简短中英文文案；按钮直接说明操作，详细帮助按需打开。设置中的“操作系统”“调整时长”和时钟中的创建按钮明确标出目标。
+
+`modules/management-common.ftl` 提供管理页持续专家操作区的中英文名称；相关 F1 帮助与实际焦点、修饰键操作保持一致。
+
+`modules/ui-explorer.ftl` 提供保存选择器的文件名、保存与取消标签；保存用途与新建文件使用不同文案。
+
+`modules/ui-shell.ftl` 提供全局任务和待批准状态；`modules/ui-auth.ftl` 提供默认外观完成按钮及应用管理员说明。网络状态和只读配置原因位于 `modules/management-network-disks.ftl`。
