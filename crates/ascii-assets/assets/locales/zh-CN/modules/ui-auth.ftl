@@ -49,7 +49,7 @@ ui-auth-enter-apply-esc-cancel = Enter：应用    Esc：取消
 ui-auth-first-run-setup = 首次运行设置
 ui-auth-choose-a-language-then-continue = 请选择语言，然后继续。
 ui-auth-choose-a-city-or-iana-zone-then-continue = 请选择城市或 IANA 时区，然后继续。
-ui-auth-create-the-first-administrator-account = 创建首个管理员账户。
+ui-auth-create-the-first-administrator-account = 创建首个 Tundra 应用管理员账户，不会创建操作系统管理员。
 ui-auth-password-checklist = 密码要求
 ui-auth-no-password-rules-available = 没有可用的密码规则
 ui-auth-selected-language-none = 已选语言：无
@@ -101,3 +101,5 @@ ui-auth-touch-continue = Ctrl+Enter 继续
 ui-auth-touch-apply = Enter 应用
 ui-auth-touch-cancel = Esc 取消
 ui-auth-touch-create-admin = Ctrl+Enter 创建管理员
+
+ui-auth-use-defaults = F9 使用默认外观并开始

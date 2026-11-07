@@ -73,9 +73,30 @@ pub fn render_setup_content(
         context,
         |frame, area, context| render_setup_unscrolled(frame, area, model, context),
     );
+    if model.defaults_available {
+        let mut button = Button::new("setup.defaults", i18n::tr!("ui-auth-use-defaults"));
+        button.set_disabled(model.step == SetupStep::Admin && !model.can_submit);
+        button.render_inline_frame(
+            frame,
+            setup_defaults_area(area),
+            &context.compatibility_theme(),
+        );
+    }
 }
 
-pub fn setup_viewport(main: Rect, model: &SetupViewModel) -> super::AuthViewport {
+pub fn setup_defaults_area(main: Rect) -> Rect {
+    Rect::new(
+        main.x,
+        main.bottom().saturating_sub(1),
+        main.width,
+        u16::from(main.height > 0),
+    )
+}
+
+pub fn setup_viewport(mut main: Rect, model: &SetupViewModel) -> super::AuthViewport {
+    if model.defaults_available {
+        main.height = main.height.saturating_sub(2);
+    }
     let minimum = match model.step {
         SetupStep::Language => u16::try_from(model.languages.len())
             .unwrap_or(200)

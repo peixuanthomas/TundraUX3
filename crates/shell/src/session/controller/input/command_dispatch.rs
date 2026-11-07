@@ -672,6 +672,10 @@ impl ShellSession {
                 self.setup_previous_step();
                 ShellAction::Redraw
             }
+            ShellCommand::SetupUseDefaults => {
+                self.setup_use_defaults();
+                ShellAction::Redraw
+            }
             ShellCommand::SetupPrimaryAction => {
                 self.setup_primary_action();
                 ShellAction::Redraw

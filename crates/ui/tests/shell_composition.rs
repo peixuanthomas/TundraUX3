@@ -226,6 +226,7 @@ fn all_pages_and_page_overlays_leave_global_chrome_to_the_compositor() {
         password_hint: String::new(),
         focused_field: SetupField::Submit,
         can_submit: true,
+        defaults_available: false,
         border_shape: BorderShape::Rounded,
         theme_color: ratatui::style::Color::White,
         theme_color_value: "white".into(),

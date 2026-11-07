@@ -172,6 +172,7 @@ pub struct SetupViewModel {
     pub password_hint: String,
     pub focused_field: SetupField,
     pub can_submit: bool,
+    pub defaults_available: bool,
     pub border_shape: crate::BorderShape,
     pub theme_color: ratatui::style::Color,
     pub theme_color_value: String,

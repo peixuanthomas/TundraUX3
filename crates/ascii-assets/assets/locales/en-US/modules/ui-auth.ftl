@@ -49,7 +49,7 @@ ui-auth-enter-apply-esc-cancel = Enter: apply    Esc: cancel
 ui-auth-first-run-setup = First Run Setup
 ui-auth-choose-a-language-then-continue = Choose a language, then continue.
 ui-auth-choose-a-city-or-iana-zone-then-continue = Choose a city or IANA zone, then continue.
-ui-auth-create-the-first-administrator-account = Create the first administrator account.
+ui-auth-create-the-first-administrator-account = Create the first Tundra application administrator account. This does not create an operating system administrator.
 ui-auth-password-checklist = Password checklist
 ui-auth-no-password-rules-available = No password rules available
 ui-auth-selected-language-none = Selected language: none
@@ -101,3 +101,5 @@ ui-auth-touch-continue = Ctrl+Enter Next
 ui-auth-touch-apply = Enter Apply
 ui-auth-touch-cancel = Esc Cancel
 ui-auth-touch-create-admin = Ctrl+Enter Create admin
+
+ui-auth-use-defaults = F9 Use defaults and start

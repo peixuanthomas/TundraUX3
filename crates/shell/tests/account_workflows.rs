@@ -26,6 +26,25 @@ fn default_config() -> ShellLaunchConfig {
 }
 
 #[test]
+fn setup_default_action_skips_appearance_but_preserves_account_validation() {
+    let (_fixture, mut state) = fresh_setup_state("setup-defaults");
+    for key in ["F10", "F10"] {
+        state.apply_input(InputEvent::from_key_label(key));
+    }
+    assert!(state.to_setup_view_model().defaults_available);
+    state.apply_input(InputEvent::from_key_label("F9"));
+    assert_eq!(state.to_setup_view_model().step, ui::SetupStep::Admin);
+    type_text(&mut state, "AdminUser");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    type_text(&mut state, "StrongPass123");
+    state.apply_input(InputEvent::from_key_label("F9"));
+    assert_eq!(state.active_screen(), ShellScreen::Home);
+    assert_eq!(state.auth_session().unwrap().username, "AdminUser");
+}
+
+#[test]
 fn setup_f10_completes_appearance_without_relying_on_modified_enter() {
     let (_fixture, mut state) = fresh_setup_state("setup-f10");
     state.apply_input(InputEvent::from_key_label("F10"));

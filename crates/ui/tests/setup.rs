@@ -93,7 +93,8 @@ fn setup_admin_page_is_step_specific_and_masks_password() {
     let output = terminal_output(&terminal);
 
     assert!(output.contains("Step: Admin"));
-    assert!(output.contains("Create the first administrator account."));
+    assert!(output.contains("Create the first Tundra application administrator account."));
+    assert!(output.contains("This does not create an operating system administrator."));
     assert!(output.contains("Admin username"));
     assert!(output.contains("AdminUser"));
     assert!(output.contains("Admin password"));
@@ -159,6 +160,7 @@ fn sample_model_with_timezone(
         password_hint: "Stored in 1Password".to_string(),
         focused_field: SetupField::AdminPassword,
         can_submit: true,
+        defaults_available: false,
         border_shape: ui::BorderShape::Rounded,
         theme_color: Color::White,
         theme_color_value: "white".to_string(),
@@ -214,4 +216,18 @@ fn render_terminal(
         })
         .expect("render setup");
     terminal
+}
+
+#[test]
+fn defaults_action_stays_visible_below_scrolling_setup_at_minimum_size() {
+    let mut model = sample_model(SetupStep::Admin, None);
+    model.defaults_available = true;
+    let area = ratatui::layout::Rect::new(0, 0, 108, 14);
+    let button = ui::setup_defaults_area(area);
+    for scroll in [0, u16::MAX] {
+        model.scroll_offset = scroll;
+        let viewport = ui::setup_viewport(area, &model);
+        assert!(button.y >= viewport.area.bottom());
+        assert!(button.bottom() <= area.bottom());
+    }
 }

@@ -1601,6 +1601,7 @@ impl ShellSession {
             password_hint: self.pages.setup.setup_admin_password_hint.clone(),
             focused_field: self.pages.setup.setup_focused_field,
             can_submit,
+            defaults_available: self.setup_defaults_available(),
             border_shape: match self.pages.setup.setup_border_shape {
                 storage::BorderShape::Rounded => ui::BorderShape::Rounded,
                 storage::BorderShape::Square => ui::BorderShape::Square,

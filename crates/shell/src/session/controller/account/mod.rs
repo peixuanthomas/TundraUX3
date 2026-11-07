@@ -343,6 +343,36 @@ impl ShellSession {
         self.refresh_hit_map();
     }
 
+    pub(in crate::session) fn setup_defaults_available(&self) -> bool {
+        self.pages.setup.setup_custom_color_target.is_none()
+            && match self.pages.setup.setup_step {
+                ui::SetupStep::Language => {
+                    self.identity_backend == identity::IdentityBackend::Linux
+                }
+                ui::SetupStep::Timezone => self.pending_personalization_session.is_some(),
+                ui::SetupStep::Admin | ui::SetupStep::Appearance => true,
+            }
+    }
+
+    pub(in crate::session) fn setup_use_defaults(&mut self) {
+        if !self.setup_defaults_available() {
+            return;
+        }
+        match self.pages.setup.setup_step {
+            ui::SetupStep::Language | ui::SetupStep::Timezone => self.setup_continue(),
+            ui::SetupStep::Admin => self.submit_first_run_setup(),
+            ui::SetupStep::Appearance => {}
+        }
+        if self.pages.setup.setup_step != ui::SetupStep::Appearance {
+            return;
+        }
+        let defaults = storage::AppearanceConfig::default();
+        self.pages.setup.setup_border_shape = defaults.border_shape;
+        self.pages.setup.setup_theme_color = defaults.border_color;
+        self.pages.setup.setup_accent_color = defaults.accent_color;
+        self.finish_first_run_setup();
+    }
+
     pub(in crate::session) fn setup_primary_action(&mut self) {
         if self.pages.setup.setup_custom_color_target.is_some() {
             return;

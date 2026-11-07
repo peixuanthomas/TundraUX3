@@ -52,6 +52,7 @@ pub enum ShellCommand {
     SetupContinue,
     SetupPreviousStep,
     SetupPrimaryAction,
+    SetupUseDefaults,
     SetupPreviousTimezone,
     SetupNextTimezone,
     SetupPageTimezoneUp,

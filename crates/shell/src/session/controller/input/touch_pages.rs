@@ -683,6 +683,12 @@ impl ShellSession {
             }
             return;
         }
+        if self.setup_defaults_available()
+            && rect_contains(ui::setup_defaults_area(self.touch_main()), point)
+        {
+            self.setup_use_defaults();
+            return;
+        }
         let model = self.to_setup_view_model();
         let page = ui::setup_viewport(self.touch_main(), &model);
         let Some(point) = page.content_point(point) else {
