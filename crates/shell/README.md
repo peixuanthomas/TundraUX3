@@ -48,7 +48,7 @@ Opening a page creates a new `PageInstanceId`. Page data, task results, dialogs,
 
 When closing a page with running work, users can continue in the background, cancel and close, or stay on the page. watchdog handles task execution and process supervision; Shell handles the page a task belongs to, cancellation choices, and result presentation.
 
-Logged-in non-guest users can open Tasks from the global title bar and see running or awaiting-approval status. Background queries do not count as running operations. First-time setup can finish with the default appearance using F9 after required account validation; appearance remains editable later.
+Logged-in non-guest users can open Tasks from the global title bar and see running or awaiting-approval status. Pressing Tasks again closes the current task page and restores its originating page without creating another instance. Background queries do not count as running operations. First-time setup can finish with the default appearance using F9 after required account validation; appearance remains editable later.
 
 ## Interface hosting
 

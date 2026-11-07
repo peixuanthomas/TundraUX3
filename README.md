@@ -83,7 +83,7 @@ Mouse and touchscreen users can click or tap controls, scroll lists, and drag sc
 
 In management lists, Ctrl/Cmd+click toggles individual selections, Shift+click selects a range, and Shift+Enter toggles the current row. Tab/Shift+Tab moves between regions and controls; arrow keys operate the focused region. See [list selection](docs/list-selection.md).
 
-Use the title-bar **Tasks** button to view running work or approval requests, read saved output, return to the related page, or cancel a task. Language, appearance, animations, weather, and application options are available in **Settings**.
+Use the title-bar **Tasks** button to view running work or approval requests, read saved output, return to the related page, or cancel a task. Press it again to close Tasks and return to the previous page. Language, appearance, animations, weather, and application options are available in **Settings**.
 
 Linux updates default to Release with release notes and download progress. Beta adds build progress and saves complete compiler output for troubleshooting; see [application updates](crates/app/docs/update.md).
 

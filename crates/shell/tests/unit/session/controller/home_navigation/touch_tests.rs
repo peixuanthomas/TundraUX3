@@ -159,7 +159,7 @@ fn home_and_launcher_shortcuts_ignore_modified_and_repeated_actions() {
         ("S", ShellCommand::OpenSettings),
         ("M", ShellCommand::OpenSystemStatus),
         ("U", ShellCommand::OpenUserManagement),
-        ("T", ShellCommand::OpenTasks),
+        ("T", ShellCommand::ToggleTasks),
     ] {
         assert_eq!(
             state.route_key_input(&KeyInput::from_label(label)).1,
@@ -343,27 +343,59 @@ fn launcher_open_button_waits_for_release_and_drag_cancels_activation() {
 }
 
 #[test]
-fn global_tasks_entry_opens_tasks_from_another_page_at_minimum_size() {
+fn global_tasks_entry_toggles_tasks_and_restores_the_original_page() {
     for size in [(108, 20), (140, 40)] {
         let mut state = state(size);
         state.open_settings();
-        state.refresh_hit_map();
-        let area = state
-            .frame_layout
-            .unwrap()
-            .tasks_button
-            .expect("visible task entry");
-        let point = (area.x + 1, area.y + 1);
-        state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
-        state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
-        assert_eq!(state.active_screen(), ShellScreen::Management);
-        assert!(
-            state
-                .to_management_view_model()
-                .title
-                .starts_with(&i18n::tr!("tasks-title"))
-        );
+        let original_page = state.active_page_id();
+        let original_stack = state.screen_stack().to_vec();
+        for _ in 0..3 {
+            state.refresh_hit_map();
+            let area = state
+                .frame_layout
+                .unwrap()
+                .tasks_button
+                .expect("visible task entry");
+            let point = (area.x + 1, area.y + 1);
+            state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+            assert_eq!(state.active_screen(), ShellScreen::Management);
+            assert!(
+                state
+                    .to_management_view_model()
+                    .title
+                    .starts_with(&i18n::tr!("tasks-title"))
+            );
+            assert_eq!(state.screen_stack().len(), original_stack.len() + 1);
+            let tasks_page = state.active_page_id();
+            state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+            state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+            assert_eq!(state.active_page_id(), original_page);
+            assert_eq!(state.screen_stack(), original_stack);
+            assert!(state.page_screen(tasks_page).is_none());
+        }
     }
+}
+
+#[test]
+fn global_tasks_entry_closes_tasks_opened_from_home() {
+    let mut state = state((108, 20));
+    let home = state.active_page_id();
+    let index = state
+        .user_home_entries()
+        .iter()
+        .position(|entry| entry.icon_identity() == "tasks")
+        .unwrap();
+    state.select_home_entry(index);
+    state.apply_input(InputEvent::key(InputKey::Enter));
+    assert_eq!(state.active_screen(), ShellScreen::Management);
+    let area = state.frame_layout.unwrap().tasks_button.unwrap();
+    let point = (area.x + 1, area.y + 1);
+    state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
+    state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(state.active_page_id(), home);
+    assert_eq!(state.screen_stack(), &[ShellScreen::Home]);
+    assert_eq!(state.selected_home_entry_index(), index);
 }
 
 #[test]

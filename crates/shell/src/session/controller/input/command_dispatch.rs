@@ -838,8 +838,8 @@ impl ShellSession {
                 ShellAction::Redraw
             }
             ShellCommand::OpenPageHelp => self.open_page_help(),
-            ShellCommand::OpenTasks => {
-                self.open_tasks();
+            ShellCommand::ToggleTasks => {
+                self.toggle_tasks();
                 ShellAction::Redraw
             }
             ShellCommand::ClosePageHelp => self.close_page_help(),

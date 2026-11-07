@@ -25,7 +25,13 @@ impl ShellSession {
         .into()
     }
 
-    pub(in crate::session) fn open_tasks(&mut self) {
+    pub(in crate::session) fn toggle_tasks(&mut self) {
+        if self.active_screen() == ShellScreen::Management
+            && self.pages.management.management_state.kind == Some(ManagementKind::Tasks)
+        {
+            self.return_from_screen(ShellScreen::Management);
+            return;
+        }
         let mut query = ManagementQuery::new(ManagementKind::Tasks);
         if let Some(storage) = &self.storage_manager {
             query.options.insert(

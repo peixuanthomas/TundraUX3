@@ -295,7 +295,7 @@ impl ShellSession {
             "system_status" => self.open_system_status(),
             "user_management" | "user_profile" => self.open_user_management(),
             "users" => self.open_user_management(),
-            "tasks" => self.open_tasks(),
+            "tasks" => self.toggle_tasks(),
             "logs" => self.open_logs(),
             "packages" => self.open_management(platform::management::ManagementKind::Packages),
             "services" => self.open_management(platform::management::ManagementKind::Services),

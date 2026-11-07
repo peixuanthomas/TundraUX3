@@ -167,7 +167,7 @@ impl ShellSession {
                 "settings" => ShellCommand::OpenSettings,
                 "system_status" => ShellCommand::OpenSystemStatus,
                 "user_management" | "user_profile" | "users" => ShellCommand::OpenUserManagement,
-                "tasks" => ShellCommand::OpenTasks,
+                "tasks" => ShellCommand::ToggleTasks,
                 _ => ShellCommand::Noop,
             };
             return (RoutedTarget::Global, command);
@@ -216,7 +216,7 @@ impl ShellSession {
             {
                 (
                     RoutedTarget::Component(ShellComponent::TasksButton),
-                    ShellCommand::OpenTasks,
+                    ShellCommand::ToggleTasks,
                 )
             }
             _ if self.pages.common.focused_component == ShellComponent::HelpButton
@@ -672,7 +672,7 @@ impl ShellSession {
             ui::MouseEventKind::Down(PointerButton::Left)
                 if hit_target == Some(ShellComponent::TasksButton) =>
             {
-                (target, ShellCommand::OpenTasks)
+                (target, ShellCommand::ToggleTasks)
             }
             ui::MouseEventKind::Down(PointerButton::Left)
                 if hit_target == Some(ShellComponent::HelpButton) =>
