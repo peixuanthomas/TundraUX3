@@ -202,6 +202,8 @@ fn update_preparation_failures_never_touch_installation() {
         let target = root.join("target/release");
         let install = root.join("unrelated-install");
         fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(source.join("packaging")).unwrap();
+        fs::write(source.join("packaging/vim.json"), vim::UPSTREAM_MANIFEST).unwrap();
         fs::create_dir_all(&target).unwrap();
         fs::create_dir_all(&install).unwrap();
         fs::write(
@@ -227,6 +229,8 @@ fn update_preparation_failures_never_touch_installation() {
             &mut |_| {},
             &root,
             &source,
+            &[],
+            &UpdateCancellation::default(),
             &FakePreparationOperations { failure },
         )
         .unwrap_err();

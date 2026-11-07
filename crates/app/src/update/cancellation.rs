@@ -74,7 +74,6 @@ impl<R: io::Seek> io::Seek for CancellableReader<'_, R> {
     }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
 pub(super) fn copy_file(
     source: &Path,
     target: &Path,

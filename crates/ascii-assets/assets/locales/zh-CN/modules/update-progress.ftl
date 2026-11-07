@@ -3,6 +3,7 @@ progress-download-unknown = 下载：{ $size } · 总大小未知
 progress-compile-complete = 编译：100% · 已完成
 progress-compile-known = 编译：{ $percent }% · { $completed }/{ $total } 个单元
 progress-compile-preparing = 编译：正在准备构建 · 总量未知
+progress-vim-reused = Vim 未变化，直接复用已安装的引擎，跳过编译
 progress-phase-checking = 正在检查更新
 progress-phase-downloading = 正在下载更新
 progress-phase-toolchain = 正在检查构建工具

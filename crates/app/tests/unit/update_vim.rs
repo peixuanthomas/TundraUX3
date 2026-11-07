@@ -44,7 +44,7 @@ fn vim_bundle_requires_runtime_and_accepts_a_new_valid_pin() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[test]
 fn vim_bundle_copy_preserves_runtime_and_rejects_links_or_cancellation() {
     let root = update_test_root("vim-copy");
@@ -80,7 +80,76 @@ fn vim_bundle_copy_preserves_runtime_and_rejects_links_or_cancellation() {
 }
 
 #[test]
-fn beta_builds_vim_explicitly_beside_release_products() {
+fn unchanged_vim_reuses_the_complete_existing_runtime() {
+    let root = update_test_root("vim-reuse");
+    let source = root.join("source");
+    fs::create_dir_all(source.join("packaging")).unwrap();
+    fs::write(source.join("packaging/vim.json"), vim::UPSTREAM_MANIFEST).unwrap();
+    let installed = root.join("installed/vim");
+    write_bundle(&installed, b"existing Vim");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(installed.join("vim"), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::create_dir_all(installed.join("runtime/syntax")).unwrap();
+    fs::write(installed.join("runtime/syntax/rust.vim"), b"syntax fixture").unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(vim::UPSTREAM_MANIFEST).unwrap();
+    fs::write(
+        installed.join("UPSTREAM.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    let reused = root.join("reused");
+    assert!(
+        vim::reuse_bundle(
+            &source,
+            &[root.join("missing/vim"), installed.clone()],
+            &reused,
+            &UpdateCancellation::default(),
+        )
+        .unwrap()
+    );
+    vim::validate_bundle(&reused).unwrap();
+    for name in [
+        if cfg!(windows) { "vim.exe" } else { "vim" },
+        "runtime/defaults.vim",
+        "runtime/doc/help.txt",
+        "runtime/syntax/rust.vim",
+        "LICENSE",
+        "UPSTREAM.json",
+    ] {
+        assert_eq!(
+            fs::read(reused.join(name)).unwrap(),
+            fs::read(installed.join(name)).unwrap()
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(reused.join("vim"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+    }
+    let cancel = UpdateCancellation::default();
+    cancel.cancel();
+    let cancelled = root.join("cancelled");
+    assert!(
+        vim::reuse_bundle(&source, &[installed], &cancelled, &cancel)
+            .unwrap_err()
+            .is_cancelled()
+    );
+    assert!(!cancelled.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn source_updates_build_vim_only_when_its_pin_changes_or_no_complete_engine_exists() {
     struct Recording(std::cell::RefCell<Vec<(String, ProcessSpec)>>);
     impl PreparationOperations for Recording {
         fn run(&self, spec: &ProcessSpec, name: &str) -> Result<ProcessExit, UpdateError> {
@@ -95,43 +164,117 @@ fn beta_builds_vim_explicitly_beside_release_products() {
             Ok(())
         }
     }
-    let root = update_test_root("vim-beta");
-    let source = root.join("source");
-    fs::create_dir_all(&source).unwrap();
-    fs::write(
-        source.join("Cargo.toml"),
-        "[workspace.package]\nrust-version = \"1.95\"\n",
-    )
-    .unwrap();
-    let release = root.join("target/release");
-    write_bundle(&release.join("vim"), b"Vim");
-    for name in [SHELL_FILE, CLI_FILE] {
-        fs::write(release.join(name), b"program").unwrap();
+    for case in [
+        "unchanged",
+        "version",
+        "commit",
+        "source_sha256",
+        "required_features",
+        "windows_iconv",
+        "missing",
+        "incomplete",
+        "invalid-metadata",
+    ] {
+        let root = update_test_root(&format!("vim-source-{case}"));
+        let source = root.join("source");
+        fs::create_dir_all(source.join("packaging")).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            "[workspace.package]\nrust-version = \"1.95\"\n",
+        )
+        .unwrap();
+        let installed = root.join("installed/vim");
+        if case != "missing" {
+            write_bundle(&installed, b"existing Vim");
+        }
+        let mut pin: serde_json::Value = serde_json::from_str(vim::UPSTREAM_MANIFEST).unwrap();
+        match case {
+            "version" => pin["version"] = "9.3.1".into(),
+            "commit" => {
+                pin["commit"] = "b".repeat(40).into();
+                pin["source_url"] = format!(
+                    "https://codeload.github.com/vim/vim/tar.gz/{}",
+                    "b".repeat(40)
+                )
+                .into();
+            }
+            "source_sha256" => pin["source_sha256"] = "c".repeat(64).into(),
+            "required_features" => pin["required_features"]
+                .as_array_mut()
+                .unwrap()
+                .push("syntax".into()),
+            "windows_iconv" => pin["windows_iconv"]["version"] = "1.20".into(),
+            "incomplete" => fs::remove_file(installed.join("runtime/doc/help.txt")).unwrap(),
+            "invalid-metadata" => fs::write(installed.join("UPSTREAM.json"), "invalid").unwrap(),
+            _ => {}
+        }
+        let pin = serde_json::to_vec(&pin).unwrap();
+        fs::write(source.join("packaging/vim.json"), &pin).unwrap();
+        let release = root.join("target/release");
+        fs::create_dir_all(&release).unwrap();
+        let should_build = case != "unchanged";
+        if should_build {
+            write_bundle(&release.join("vim"), b"rebuilt Vim");
+            fs::write(release.join("vim/UPSTREAM.json"), &pin).unwrap();
+        }
+        for name in [SHELL_FILE, CLI_FILE] {
+            fs::write(release.join(name), b"program").unwrap();
+        }
+        let check = UpdateCheckResult {
+            release: None,
+            default_branch: "master".into(),
+            head_sha: "a".repeat(40),
+            relation: UpdateRelation::Behind { remote_ahead: 1 },
+            commits: Vec::new(),
+        };
+        let operations = Recording(Default::default());
+        let mut progress = Vec::new();
+        prepare_extracted_with_operations(
+            &check,
+            &mut |event| progress.push(event),
+            &root,
+            &source,
+            &[installed],
+            &UpdateCancellation::default(),
+            &operations,
+        )
+        .unwrap();
+        let calls = operations.0.borrow();
+        let build = calls
+            .iter()
+            .position(|(name, _)| name == "cargo build")
+            .unwrap();
+        let vim = calls.iter().position(|(name, _)| name == "Vim build");
+        assert_eq!(vim.is_some(), should_build, "Vim build for {case}");
+        if let Some(vim) = vim {
+            assert!(vim > build);
+            let args = calls[vim].1.args_slice();
+            assert_eq!(Path::new(&args[0]), source.join("scripts/build-vim.py"));
+            assert_eq!(args[1], "--output");
+            assert_eq!(Path::new(&args[2]), release.join("vim"));
+        } else {
+            assert_eq!(calls.len(), 3, "only rustc, cargo version, and cargo build");
+            assert!(
+                progress
+                    .iter()
+                    .any(|event| event.message == i18n::tr!("progress-vim-reused"))
+            );
+        }
+        assert_eq!(
+            fs::read(
+                release
+                    .join("vim")
+                    .join(if cfg!(windows) { "vim.exe" } else { "vim" })
+            )
+            .unwrap(),
+            if should_build {
+                b"rebuilt Vim".as_slice()
+            } else {
+                b"existing Vim".as_slice()
+            },
+        );
+        fs::remove_dir_all(root).unwrap();
     }
-    let check = UpdateCheckResult {
-        release: None,
-        default_branch: "master".into(),
-        head_sha: "a".repeat(40),
-        relation: UpdateRelation::Behind { remote_ahead: 1 },
-        commits: Vec::new(),
-    };
-    let operations = Recording(Default::default());
-    prepare_extracted_with_operations(&check, &mut |_| {}, &root, &source, &operations).unwrap();
-    let calls = operations.0.borrow();
-    let build = calls
-        .iter()
-        .position(|(name, _)| name == "cargo build")
-        .unwrap();
-    let vim = calls
-        .iter()
-        .position(|(name, _)| name == "Vim build")
-        .unwrap();
-    assert!(vim > build);
-    let args = calls[vim].1.args_slice();
-    assert_eq!(Path::new(&args[0]), source.join("scripts/build-vim.py"));
-    assert_eq!(args[1], "--output");
-    assert_eq!(Path::new(&args[2]), release.join("vim"));
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(any(windows, target_os = "linux"))]

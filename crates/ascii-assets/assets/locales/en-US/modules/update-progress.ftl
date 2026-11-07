@@ -3,6 +3,7 @@ progress-download-unknown = Download: { $size } · total unknown
 progress-compile-complete = Compilation: 100% · complete
 progress-compile-known = Compilation: { $percent }% · { $completed }/{ $total } units
 progress-compile-preparing = Compilation: preparing build · total unknown
+progress-vim-reused = Vim is unchanged; reusing the installed engine without rebuilding
 progress-phase-checking = Checking for updates
 progress-phase-downloading = Downloading update
 progress-phase-toolchain = Checking build tools

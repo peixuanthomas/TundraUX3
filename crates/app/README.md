@@ -38,7 +38,7 @@ Script state stores the interpreter, arguments, breakpoints, run ID, and pause I
 
 Updates prepare Shell, CLI, and the complete `vim/` together, validate assets, licenses, and upstream metadata, and roll them all back on failure or startup timeout. Vim installation packages are checked for SHA-256, directory contents, and the pinned version; Windows also checks the iconv DLL, license, and source code.
 
-Source updates save the complete Cargo and Vim build output to a private `update-*.log` in the application log directory. The file remains after build failure or cancellation, and build errors include its path.
+Source updates compile Shell and CLI, reusing a complete installed Vim when its upstream metadata matches the target source's pin. Vim is rebuilt only when that pin changes or no complete matching engine exists. Cargo and Vim build output is saved to a private `update-*.log` in the application log directory. The file remains after build failure or cancellation, and build errors include its path.
 
 Runtime logs merge failure reports that the user is authorized to access at the highest severity, `Critical`, sort them by time, and respect report access restrictions.
 

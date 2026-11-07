@@ -87,7 +87,7 @@ In management lists, Ctrl/Cmd+click toggles individual selections, Shift+click s
 
 Use the title-bar **Tasks** button to view running work or approval requests, read saved output, return to the related page, or cancel a task. Press it again to close Tasks and return to the previous page. Language, appearance, animations, weather, and application options are available in **Settings**.
 
-Linux updates default to Release with release notes and download progress. Beta adds build progress and saves complete compiler output for troubleshooting; see [application updates](crates/app/docs/update.md).
+Linux updates default to Release with release notes and download progress. Beta adds build progress and saves complete compiler output for troubleshooting. Source updates reuse a complete installed Vim when its version configuration is unchanged, compiling only Shell and CLI; see [application updates](crates/app/docs/update.md).
 
 Linux uses ASCII icons by default. If your terminal supports images, you can switch to image icons in **Settings → Appearance → Theme**.
 

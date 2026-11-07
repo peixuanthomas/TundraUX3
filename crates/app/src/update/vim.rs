@@ -88,7 +88,32 @@ pub(super) fn validate_bundle(directory: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+pub(super) fn reuse_bundle(
+    source_root: &Path,
+    candidates: &[PathBuf],
+    target: &Path,
+    cancel: &UpdateCancellation,
+) -> Result<bool, UpdateError> {
+    cancel.check()?;
+    let pin: serde_json::Value =
+        serde_json::from_slice(&fs::read(source_root.join("packaging/vim.json"))?)
+            .map_err(|error| UpdateError::new(error.to_string()))?;
+    for directory in candidates {
+        cancel.check()?;
+        if validate_bundle(directory).is_err() {
+            continue;
+        }
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(directory.join("UPSTREAM.json"))?)
+                .map_err(|error| UpdateError::new(error.to_string()))?;
+        if metadata == pin {
+            copy_directory(directory, target, cancel)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(super) fn copy_directory(
     source: &Path,
     target: &Path,

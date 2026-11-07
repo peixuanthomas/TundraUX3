@@ -7,11 +7,13 @@ The update workflow is in `app::update`. CLI runs the update helper, while Shell
 On Linux, **Settings → Update → Update mode** is saved as `linux_update_mode` in `config.toml`, with `release` as the default.
 
 - **Release:** reads the latest stable GitHub Release, downloads the Linux x86_64 portable archive, verifies SHA-256, and extracts Shell, CLI, and the complete Vim. Rust and Python are not required.
-- **Beta:** reads the latest `master` commit and displays its hash, downloads the corresponding source, builds it with local Rust, and runs `scripts/build-vim.py` to build the pinned Vim. Python 3.12 and the corresponding C build tools are required.
+- **Beta:** reads the latest `master` commit and displays its hash, downloads the corresponding source, and builds Shell and CLI with local Rust. A complete existing Vim is reused when its pin is unchanged; otherwise, `scripts/build-vim.py` builds the target Vim, requiring Python 3.12 and the corresponding C build tools.
 
 Switching modes clears old check results and checks again. The current mode is retained during a download or build. All downloaded and built files go into the user's cache directory; the update process does not install toolchains or invoke sudo.
 
 Windows builds updates from the default branch's source and does not show the Linux mode switch. macOS currently has no application self-update entry.
+
+Source updates compare the target `packaging/vim.json` with `UPSTREAM.json` in the Vim directory beside the running program, then the application data directory. Matching compares the complete parsed configuration, including the upstream commit, checksum, required features, and Windows iconv dependency. A valid match copies the executable, runtime, licenses, and metadata into the prepared update without launching Python or compiling Vim. Missing or incomplete engines are rebuilt. Copying preserves executable permissions and responds to cancellation; installation and rollback use the same complete Vim payload as before.
 
 Release shows release notes and download progress without compilation or live-output panels. Beta and Windows source updates also show compilation progress and live output.
 

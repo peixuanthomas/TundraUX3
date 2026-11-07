@@ -9,12 +9,10 @@ use http::{Client, Response};
 use platform::{Platform, PlatformKind, ProcessExit, ProcessSpec};
 mod cancellation;
 mod http;
-#[cfg(any(windows, target_os = "linux"))]
-use cancellation::copy_file;
 pub use cancellation::{
     UpdateCancellation, cleanup_update_work, discard_staged_update, mark_staged_update_cancelled,
 };
-use cancellation::{WorkDirectory, copy_stream};
+use cancellation::{WorkDirectory, copy_file, copy_stream};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -703,12 +701,18 @@ fn prepare_extracted(
         let mut log = options.open(&log_path)?;
         writeln!(log, "Update source commit: {}", check.head_sha)?;
         notify_output(progress, UpdatePhase::CheckingToolchain, &log_path_text);
+        let existing_vim = [
+            std::env::current_exe()?.with_file_name("vim"),
+            paths.data_path().join("vim"),
+        ];
         let result = toolchain::Toolchain::discover().and_then(|toolchain| {
             prepare_extracted_with_operations(
                 check,
                 progress,
                 work_dir,
                 source_root,
+                &existing_vim,
+                cancel,
                 &PlatformPreparationOperations {
                     platform,
                     cancel,
@@ -732,6 +736,8 @@ fn prepare_extracted_with_operations(
     progress: &mut dyn FnMut(UpdateProgress),
     work_dir: &Path,
     source_root: &Path,
+    existing_vim: &[PathBuf],
+    cancel: &UpdateCancellation,
     operations: &dyn PreparationOperations,
 ) -> Result<PreparedUpdate, UpdateError> {
     notify(
@@ -796,17 +802,26 @@ fn prepare_extracted_with_operations(
         },
     });
     operations.run_live(&build, "cargo build", progress)?;
-    notify(
-        progress,
-        UpdatePhase::Compiling,
-        "Building bundled Vim runtime",
-    );
-    let build_vim = ProcessSpec::new(if cfg!(windows) { "python" } else { "python3" })
-        .arg(source_root.join("scripts/build-vim.py").to_string_lossy())
-        .arg("--output")
-        .arg(target.join("release/vim").to_string_lossy())
-        .current_dir(source_root);
-    operations.run_live(&build_vim, "Vim build", progress)?;
+    let vim_target = target.join("release/vim");
+    if vim::reuse_bundle(source_root, existing_vim, &vim_target, cancel)? {
+        notify(
+            progress,
+            UpdatePhase::Compiling,
+            &i18n::tr!("progress-vim-reused"),
+        );
+    } else {
+        notify(
+            progress,
+            UpdatePhase::Compiling,
+            "Building bundled Vim runtime",
+        );
+        let build_vim = ProcessSpec::new(if cfg!(windows) { "python" } else { "python3" })
+            .arg(source_root.join("scripts/build-vim.py").to_string_lossy())
+            .arg("--output")
+            .arg(vim_target.to_string_lossy())
+            .current_dir(source_root);
+        operations.run_live(&build_vim, "Vim build", progress)?;
+    }
     progress(UpdateProgress {
         phase: UpdatePhase::Compiling,
         message: "Compilation complete".into(),
