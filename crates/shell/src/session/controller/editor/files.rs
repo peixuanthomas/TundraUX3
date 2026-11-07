@@ -801,12 +801,20 @@ impl ShellSession {
             )));
             return;
         }
-        self.pages.explorer.explorer_purpose = ExplorerPurpose::EditorSaveAs { snapshot };
+        let mut input = ui::components::TextInput::new("explorer.save.filename")
+            .with_horizontal_scroll(true)
+            .with_capture_name(i18n::tr!("ui-explorer-save-filename"));
+        input.set_value(suggested_name);
+        input.set_cursor(input.value().chars().count());
+        input.set_selection_anchor(Some(0));
+        input.set_focused(true);
+        self.pages.explorer.explorer_purpose = ExplorerPurpose::EditorSaveAs {
+            snapshot,
+            input,
+            focus: ui::ExplorerSaveFocus::Filename,
+        };
         self.pages.explorer.editor_picker_owner = owner;
         self.pages.explorer.editor_picker_save_submitted = false;
-        self.begin_explorer_input(ExplorerInputMode::NewTextFile);
-        self.pages.explorer.explorer_input = suggested_name;
-        self.pages.explorer.explorer_input_replace_all = true;
         self.notify_status(i18n::LocalizedText::from(i18n::msg!(
             "shell-save-as-enter-a-file-name-in-the-current-directory"
         )));
@@ -816,15 +824,13 @@ impl ShellSession {
         &mut self,
         platform: &dyn Platform,
     ) -> bool {
-        let ExplorerPurpose::EditorSaveAs { snapshot, .. } =
-            self.pages.explorer.explorer_purpose.clone()
+        let ExplorerPurpose::EditorSaveAs {
+            snapshot, input, ..
+        } = self.pages.explorer.explorer_purpose.clone()
         else {
             return false;
         };
-        if self.pages.explorer.explorer_input_mode != ExplorerInputMode::NewTextFile {
-            return false;
-        }
-        let name = self.pages.explorer.explorer_input.trim();
+        let name = input.value().trim();
         let name_path = std::path::Path::new(name);
         let valid_name = !name.is_empty()
             && !name_path.is_absolute()

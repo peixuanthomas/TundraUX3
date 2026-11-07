@@ -18,7 +18,11 @@ fn staying_in_explorer_preserves_its_input_purpose_model_and_alert() {
     for purpose in [
         ExplorerPurpose::DiagnosticsLogs,
         ExplorerPurpose::EditorOpen,
-        ExplorerPurpose::EditorSaveAs { snapshot },
+        ExplorerPurpose::EditorSaveAs {
+            snapshot,
+            input: ui::components::TextInput::new("save.filename"),
+            focus: ui::ExplorerSaveFocus::Filename,
+        },
     ] {
         let save_picker = matches!(purpose, ExplorerPurpose::EditorSaveAs { .. });
         let editor_picker = !matches!(purpose, ExplorerPurpose::DiagnosticsLogs);

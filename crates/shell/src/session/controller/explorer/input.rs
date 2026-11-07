@@ -102,6 +102,23 @@ impl ShellSession {
             None => {}
         }
 
+        if let ExplorerPurpose::EditorSaveAs { focus, .. } = self.pages.explorer.explorer_purpose
+            && self.pages.explorer.explorer_input_mode == ExplorerInputMode::Browse
+            && (focus != ui::ExplorerSaveFocus::Browse
+                || matches!(
+                    key.key,
+                    InputKey::Tab | InputKey::BackTab | InputKey::Escape
+                )
+                || (key.key == InputKey::F(10) && key.is_unmodified_action_key()))
+            && !(matches!(key.key, InputKey::Char('l' | 'L'))
+                && (key.modifiers.control || key.modifiers.super_key))
+        {
+            return (
+                target,
+                ShellCommand::ExplorerSavePickerInput(InputEvent::Key(key.clone())),
+            );
+        }
+
         if matches!(
             self.pages.explorer.explorer_input_mode,
             ExplorerInputMode::Address | ExplorerInputMode::Search

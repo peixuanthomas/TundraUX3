@@ -1681,6 +1681,26 @@ fn batch_copy_cut_paste_and_delete_use_the_selected_files() {
 }
 
 #[test]
+fn explorer_address_shortcut_selects_the_path_for_direct_paste() {
+    let fixture = FixtureRoot::new("address-replace");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let target = fixture.path().join("Documents/目标目录");
+    fs::create_dir_all(&target).unwrap();
+    let mut state = logged_in_state(&platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("e"), &platform);
+    state.apply_input_with_platform(ctrl_key('l'), &platform);
+    assert_eq!(state.to_explorer_view_model().address_selection_anchor, Some(0));
+    state.apply_input_with_platform(
+        InputEvent::Paste(target.to_string_lossy().into_owned()),
+        &platform,
+    );
+    assert_eq!(state.to_explorer_view_model().address_value, target.to_string_lossy());
+    state.apply_input_with_platform(InputEvent::key(InputKey::Enter), &platform);
+    assert_eq!(PathBuf::from(state.to_explorer_view_model().current_path), target);
+}
+
+#[test]
 fn explorer_address_edit_appends_mixed_separators_and_navigates() {
     let fixture = FixtureRoot::new("address-append");
     let platform = mock_platform(fixture.path());
@@ -1709,8 +1729,9 @@ fn explorer_address_edit_appends_mixed_separators_and_navigates() {
         model.address_cursor,
         Some(model.address_value.chars().count())
     );
-    assert_eq!(model.address_selection_anchor, None);
+    assert_eq!(model.address_selection_anchor, Some(0));
 
+    state.apply_input_with_platform(InputEvent::key(InputKey::End), &platform);
     type_text(&mut state, &platform, "/子目录\\child");
     assert_eq!(
         state.to_explorer_view_model().address_value,
@@ -1723,6 +1744,7 @@ fn explorer_address_edit_appends_mixed_separators_and_navigates() {
     assert_eq!(PathBuf::from(model.current_path), target);
 
     state.apply_input_with_platform(ctrl_key('l'), &platform);
+    state.apply_input_with_platform(InputEvent::key(InputKey::End), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Backspace"), &platform);
     assert_eq!(
         state.to_explorer_view_model().address_value,
@@ -1745,6 +1767,7 @@ fn explorer_address_selection_edits_unicode_and_pasted_paths() {
     state.apply_input_with_platform(ctrl_key('l'), &platform);
     let original = state.to_explorer_view_model().address_value;
     let prefix = format!("{original}{}", std::path::MAIN_SEPARATOR);
+    state.apply_input_with_platform(InputEvent::key(InputKey::End), &platform);
     type_text(&mut state, &platform, "/中文ab");
     let end = state.to_explorer_view_model().address_value.chars().count();
 
@@ -1831,13 +1854,13 @@ fn explorer_address_selection_edits_unicode_and_pasted_paths() {
     state.apply_input_with_platform(InputEvent::from_key_label("Delete"), &platform);
     assert_eq!(state.to_explorer_view_model().address_value, original);
 
-    // Escape cancels edits; reopening restores the directory with no selection.
+    // Escape cancels edits; reopening selects the current directory for replacement.
     state.apply_input_with_platform(modified_key(InputKey::Home, false, true), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     state.apply_input_with_platform(ctrl_key('l'), &platform);
     let model = state.to_explorer_view_model();
     assert_eq!(model.address_cursor, Some(original.chars().count()));
-    assert_eq!(model.address_selection_anchor, None);
+    assert_eq!(model.address_selection_anchor, Some(0));
 }
 
 #[test]
@@ -1882,7 +1905,7 @@ fn file_action_letters_are_text_in_name_search_and_address_inputs() {
     assert!(model.address_editing);
     assert_eq!(
         model.address_value,
-        format!("{}cCxXvVdDntro", documents.display())
+        "cCxXvVdDntro"
     );
     assert!(state.to_notification_view_model().is_none());
     assert!(model.operation.is_none());

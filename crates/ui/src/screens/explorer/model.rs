@@ -166,9 +166,27 @@ impl ExplorerToolbarAction {
             Self::Up => "Backspace",
             Self::Refresh => "F5",
             Self::New => "N",
-            Self::Cut => "X",
-            Self::Copy => "C",
-            Self::Paste => "V",
+            Self::Cut => {
+                if cfg!(target_os = "macos") {
+                    "Cmd+X"
+                } else {
+                    "Ctrl+X"
+                }
+            }
+            Self::Copy => {
+                if cfg!(target_os = "macos") {
+                    "Cmd+C"
+                } else {
+                    "Ctrl+C"
+                }
+            }
+            Self::Paste => {
+                if cfg!(target_os = "macos") {
+                    "Cmd+V"
+                } else {
+                    "Ctrl+V"
+                }
+            }
             Self::Rename => "F2",
             Self::Delete => "Del",
             Self::Restore => "R",
@@ -556,8 +574,23 @@ impl ExplorerSearchViewModel {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerSaveFocus {
+    Browse,
+    Filename,
+    Save,
+    Cancel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerSavePickerViewModel {
+    pub input: crate::components::TextInput,
+    pub focus: ExplorerSaveFocus,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerViewModel {
+    pub save_picker: Option<ExplorerSavePickerViewModel>,
     pub current_path: String,
     pub address_value: String,
     pub address_editing: bool,
@@ -625,6 +658,7 @@ impl ExplorerViewModel {
         let selected_count = entries.iter().filter(|entry| entry.selected).count();
         let current_path = current_path.into();
         Self {
+            save_picker: None,
             address_value: current_path.clone(),
             current_path,
             address_editing: false,

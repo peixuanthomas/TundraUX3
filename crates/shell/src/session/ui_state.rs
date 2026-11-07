@@ -506,6 +506,8 @@ pub(super) enum ExplorerPurpose {
     EditorOpen,
     EditorSaveAs {
         snapshot: app::editor::SaveSnapshot,
+        input: ui::components::TextInput,
+        focus: ui::ExplorerSaveFocus,
     },
 }
 

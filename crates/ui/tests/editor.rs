@@ -351,11 +351,11 @@ fn minimum_editor_layout_keeps_plain_text_controls_canvas_and_status_available()
     let layout = editor_layout(Rect::new(0, 0, 50, 12), &model);
 
     assert_eq!(layout.menu_bar, Rect::new(1, 1, 48, 1));
-    assert!(layout.toolbar.is_empty());
+    assert!(!layout.toolbar.is_empty());
     assert_eq!(layout.status_bar, Rect::new(1, 10, 48, 1));
-    assert!(layout.canvas.height >= 7);
+    assert!(layout.canvas.height >= 5);
     assert!(!layout.toolbar_overflow);
-    assert!(layout.toolbar_items.is_empty());
+    assert_eq!(layout.toolbar_items.len(), 6);
     assert!(layout.modes.is_empty());
 }
 
@@ -1666,4 +1666,33 @@ fn render_editor(
     let layout = ui::render_editor_contextual(frame, area, model, &context);
     ui::render_editor_overlay(frame, &layout, model, &context);
     layout
+}
+
+#[test]
+fn common_toolbar_actions_remain_visible_and_separate_from_search() {
+    for (width, height) in [(108, 14), (140, 34)] {
+        let mut model = sample_model();
+        model.search_bar = Some(ui::EditorSearchBar::default());
+        model.toolbar.can_undo = true;
+        let layout = editor_layout(Rect::new(0, 0, width, height), &model);
+        for action in [
+            ui::EditorToolbarAction::Save,
+            ui::EditorToolbarAction::Undo,
+            ui::EditorToolbarAction::Find,
+        ] {
+            let button = layout
+                .toolbar_items
+                .iter()
+                .find(|item| item.action == action)
+                .unwrap();
+            assert_eq!(
+                layout.hit_test(button.area.x, button.area.y),
+                Some(EditorHitTarget::Toolbar(action))
+            );
+            assert!(button.area.bottom() <= layout.canvas_panel.y);
+            for (_, search) in &layout.search_items {
+                assert!(!button.area.intersects(*search));
+            }
+        }
+    }
 }

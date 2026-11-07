@@ -165,6 +165,7 @@ pub enum ShellCommand {
     ExplorerContextItem(usize),
     ExplorerToggleFocused,
     ExplorerOpenSelected,
+    ExplorerSavePickerInput(InputEvent),
     ExplorerOpenParent,
     ExplorerOpenBack,
     ExplorerToolbarShortcut(ui::ExplorerToolbarAction),

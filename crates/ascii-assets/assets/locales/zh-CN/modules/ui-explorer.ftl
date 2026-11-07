@@ -83,3 +83,7 @@ ui-explorer-search-matches = { " " }（{ $count } 个匹配，{ $mode }）
 
 ui-explorer-open-selected = 打开
 ui-explorer-actions-menu = 更多操作
+ui-explorer-save-title = 保存文档
+ui-explorer-save-filename = 文件名
+ui-explorer-save-confirm = F10 保存
+ui-explorer-save-cancel = Esc 取消

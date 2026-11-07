@@ -778,7 +778,12 @@ fn plain_text_editor_omits_markdown_controls_and_preserves_markdown_syntax() {
             EditorMenu::Help
         ]
     );
-    assert!(layout.toolbar_items.is_empty());
+    assert!(
+        layout
+            .toolbar_items
+            .iter()
+            .any(|item| item.action == ui::EditorToolbarAction::Save)
+    );
 
     let coordinates = editor_canvas_point(&state);
     state.apply_input_with_platform(
@@ -1672,6 +1677,120 @@ fn save_refuses_to_overwrite_a_file_changed_outside_the_editor() {
 }
 
 #[test]
+fn save_picker_keeps_filename_visible_while_browsing_and_saves_to_the_chosen_directory() {
+    for (width, height, save_as) in [(140, 40, false), (108, 20, true)] {
+        let fixture = FixtureRoot::new("save-picker-browse");
+        let platform = mock_platform(fixture.path());
+        bootstrap_with_shell(&platform);
+        let folder = fixture.path().join("Documents/destination");
+        fs::create_dir_all(&folder).unwrap();
+        let mut state = logged_in_state(&platform);
+        state.apply_input_with_platform(InputEvent::Resize { width, height }, &platform);
+        open_editor_from_home(&mut state, &platform);
+        type_text(&mut state, &platform, "saved content");
+        state.apply_input_with_platform(
+            if save_as { ctrl_shift('s') } else { ctrl('s') },
+            &platform,
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Explorer);
+        assert!(state.to_explorer_view_model().overlay.is_none());
+        type_text(&mut state, &platform, "chosen.txt");
+        state.apply_input_with_platform(InputEvent::key(InputKey::BackTab), &platform);
+        let model = state.to_explorer_view_model();
+        assert_eq!(
+            model.save_picker.unwrap().focus,
+            ui::ExplorerSaveFocus::Browse
+        );
+        state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
+        let model = state.to_explorer_view_model();
+        assert_eq!(Path::new(&model.current_path), folder);
+        assert_eq!(
+            model.save_picker.as_ref().unwrap().input.value(),
+            "chosen.txt"
+        );
+        let ShellLayout::Full { main, .. } =
+            ui::compute_shell_layout(Rect::new(0, 0, width, height))
+        else {
+            panic!("full layout")
+        };
+        let layout = ui::explorer_layout(main, &model);
+        for area in [layout.save_name, layout.save_button, layout.save_cancel] {
+            assert!(!area.is_empty());
+            assert!(area.bottom() <= main.bottom());
+            assert!(area.right() <= main.right());
+        }
+        let point = (layout.save_button.x + 1, layout.save_button.y + 1);
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            &platform,
+        );
+        assert!(!folder.join("chosen.txt").exists());
+        state
+            .apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, point), &platform);
+        wait_for_editor_background_tasks(&mut state, &platform);
+        assert_eq!(
+            fs::read_to_string(folder.join("chosen.txt")).unwrap(),
+            "saved content"
+        );
+        assert_eq!(state.active_screen(), ShellScreen::Editor);
+        assert!(!state.to_editor_view_model().dirty);
+    }
+}
+
+#[test]
+fn save_picker_browse_shift_f10_opens_context_menu_and_f10_saves() {
+    let fixture = FixtureRoot::new("save-picker-context-shortcut");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "save only on F10");
+    state.apply_input_with_platform(ctrl('s'), &platform);
+    type_text(&mut state, &platform, "shortcut.txt");
+    state.apply_input_with_platform(InputEvent::key(InputKey::BackTab), &platform);
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::F(10),
+            InputModifiers::SHIFT,
+        )),
+        &platform,
+    );
+    assert_eq!(state.active_screen(), ShellScreen::Explorer);
+    assert!(matches!(
+        state.to_explorer_view_model().overlay,
+        Some(ui::ExplorerOverlayViewModel::ContextMenu(_))
+    ));
+    let path = fixture.path().join("Documents/shortcut.txt");
+    assert!(!path.exists());
+    state.apply_input_with_platform(InputEvent::key(InputKey::Escape), &platform);
+    state.apply_input_with_platform(InputEvent::key(InputKey::F(10)), &platform);
+    wait_for_editor_background_tasks(&mut state, &platform);
+    assert_eq!(fs::read_to_string(path).unwrap(), "save only on F10");
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert!(!state.to_editor_view_model().dirty);
+}
+
+#[test]
+fn save_picker_cancel_preserves_the_unsaved_document() {
+    let fixture = FixtureRoot::new("save-picker-cancel");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    let mut state = logged_in_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "keep this draft");
+    state.apply_input_with_platform(ctrl('s'), &platform);
+    type_text(&mut state, &platform, "cancelled.txt");
+    state.apply_input_with_platform(InputEvent::key(InputKey::Escape), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert!(state.to_editor_view_model().dirty);
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        ["keep this draft"]
+    );
+    assert!(!fixture.path().join("Documents/cancelled.txt").exists());
+}
+
+#[test]
 fn save_as_does_not_clobber_an_existing_document() {
     let fixture = FixtureRoot::new("save-as-no-clobber");
     let platform = mock_platform(fixture.path());
@@ -2199,8 +2318,7 @@ fn click_editor_setting(
 }
 
 fn open_editor_from_home(state: &mut ShellSession, platform: &MockPlatform) {
-    state.apply_input_with_platform(InputEvent::from_key_label("Right"), platform);
-    state.apply_input_with_platform(InputEvent::from_key_label("Enter"), platform);
+    state.apply_input_with_platform(InputEvent::from_key_label("A"), platform);
     assert_eq!(state.active_screen(), ShellScreen::Launcher);
     let editor_index = state
         .to_launcher_view_model()

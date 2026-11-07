@@ -1,4 +1,5 @@
 mod input;
+mod save_picker;
 pub(in crate::session) mod tasks;
 use crate::session::overlays::ResolvedExplorerOverlay;
 use crate::session::*;
@@ -457,6 +458,27 @@ impl ShellSession {
         command: ExplorerCommand,
         platform: &dyn Platform,
     ) {
+        if matches!(
+            self.pages.explorer.explorer_purpose,
+            ExplorerPurpose::EditorSaveAs { .. }
+        ) {
+            if matches!(command, ExplorerCommand::NavigateTrash) {
+                return;
+            }
+            if matches!(
+                command,
+                ExplorerCommand::Navigate(_)
+                    | ExplorerCommand::OpenParent
+                    | ExplorerCommand::OpenBack
+                    | ExplorerCommand::OpenForward
+            ) {
+                self.focus_explorer_save_picker(ui::ExplorerSaveFocus::Browse);
+            }
+        }
+        if matches!(command, ExplorerCommand::OpenSelected) && self.select_explorer_save_filename()
+        {
+            return;
+        }
         let command = if matches!(command, ExplorerCommand::OpenSelected)
             && matches!(
                 self.pages.explorer.explorer_purpose,
@@ -673,6 +695,7 @@ impl ShellSession {
         }
     }
     pub(in crate::session) fn begin_explorer_input(&mut self, mode: ExplorerInputMode) {
+        self.focus_explorer_save_picker(ui::ExplorerSaveFocus::Browse);
         self.pages.explorer.explorer_overlay_selection = 0;
         self.pages.explorer.explorer_input_mode = mode;
         self.pages.explorer.explorer_input = match mode {
@@ -696,7 +719,8 @@ impl ShellSession {
         self.pages.explorer.explorer_input_replace_all = false;
         self.pages.explorer.explorer_address_cursor =
             self.pages.explorer.explorer_input.chars().count();
-        self.pages.explorer.explorer_address_selection_anchor = None;
+        self.pages.explorer.explorer_address_selection_anchor =
+            (mode == ExplorerInputMode::Address).then_some(0);
         if mode == ExplorerInputMode::Rename {
             let entry = self
                 .app
@@ -835,9 +859,6 @@ impl ShellSession {
     }
 
     pub(in crate::session) fn submit_explorer_input(&mut self, platform: &dyn Platform) {
-        if self.submit_editor_save_as_from_explorer(platform) {
-            return;
-        }
         let raw_value = self.pages.explorer.explorer_input.clone();
         let trimmed_value = raw_value.trim().to_string();
         let command = match self.pages.explorer.explorer_input_mode {
@@ -928,6 +949,21 @@ impl ShellSession {
             self.clear_explorer_scrollbar_drag();
         }
         let index = match hit_target {
+            ui::ExplorerHitTarget::SavePicker(focus) => {
+                self.focus_explorer_save_picker(focus);
+                if focus == ui::ExplorerSaveFocus::Filename {
+                    self.handle_explorer_save_picker_input(
+                        InputEvent::mouse_down(PointerButton::Left, coordinates),
+                        platform,
+                    );
+                } else {
+                    self.handle_explorer_save_picker_input(
+                        InputEvent::key(InputKey::Enter),
+                        platform,
+                    );
+                }
+                return;
+            }
             ui::ExplorerHitTarget::Entry(index) => index,
             ui::ExplorerHitTarget::Toolbar(action) | ui::ExplorerHitTarget::PageAction(action) => {
                 self.activate_explorer_toolbar(action, coordinates, platform);
@@ -984,6 +1020,7 @@ impl ShellSession {
             }
             ui::ExplorerHitTarget::OverlaySurface => return,
         };
+        self.focus_explorer_save_picker(ui::ExplorerSaveFocus::Browse);
         let selecting = self
             .app
             .explorer_state()
@@ -1003,6 +1040,16 @@ impl ShellSession {
             ExplorerCommand::SelectIndexWithMode(index, selection_mode),
             platform,
         );
+        if matches!(
+            self.pages.explorer.explorer_purpose,
+            ExplorerPurpose::EditorSaveAs { .. }
+        ) {
+            self.select_explorer_save_filename();
+            if click == ClickKind::Double {
+                self.apply_explorer_command(ExplorerCommand::OpenSelected, platform);
+            }
+            return;
+        }
         if selecting {
             return;
         }

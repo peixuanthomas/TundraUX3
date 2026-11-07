@@ -18,6 +18,56 @@ use ui::{
 };
 
 #[test]
+fn save_picker_shows_browsable_rows_filename_and_actions_together() {
+    for (width, height) in [(140, 40), (108, 20)] {
+        let mut model = sample_model();
+        let mut input =
+            ui::components::TextInput::new("save.filename").with_horizontal_scroll(true);
+        input.set_value("中文文档.txt");
+        model.save_picker = Some(ui::ExplorerSavePickerViewModel {
+            input,
+            focus: ui::ExplorerSaveFocus::Filename,
+        });
+        let bounds = Rect::new(0, 0, width, height);
+        let ShellLayout::Full { main, .. } = compute_shell_layout(bounds) else {
+            panic!("full layout")
+        };
+        let layout = explorer_layout(main, &model);
+        assert!(layout.overlay.is_none());
+        assert!(!layout.rows.is_empty());
+        assert!(layout.table_body.bottom() <= layout.save_name.y);
+        for (area, focus) in [
+            (layout.save_name, ui::ExplorerSaveFocus::Filename),
+            (layout.save_button, ui::ExplorerSaveFocus::Save),
+            (layout.save_cancel, ui::ExplorerSaveFocus::Cancel),
+        ] {
+            assert!(!area.is_empty());
+            assert!(area.bottom() <= main.bottom());
+            assert_eq!(
+                layout.hit_test(area.x, area.y),
+                Some(ExplorerHitTarget::SavePicker(focus))
+            );
+        }
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_explorer(
+                    frame,
+                    bounds,
+                    &chrome_for("Save"),
+                    &model,
+                    &TundraTheme::default(),
+                )
+            })
+            .unwrap();
+        let screen = terminal_output(&terminal);
+        assert!(screen.contains("F10 Save"));
+        assert!(screen.contains("Esc Cancel"));
+        assert!(screen.contains("File name"));
+    }
+}
+
+#[test]
 fn quick_access_without_a_current_location_does_not_select_the_trash() {
     let mut model = sample_model();
     let mut missing =
@@ -644,4 +694,44 @@ fn page_actions_keep_primary_and_disabled_targets_visible() {
             .iter()
             .any(|b| b.action == ExplorerToolbarAction::Paste && !b.enabled)
     );
+}
+
+#[test]
+fn file_actions_keep_the_same_positions_in_empty_and_nonempty_directories() {
+    let model = sample_model();
+    let mut empty = model.clone();
+    empty.entries.clear();
+    empty.selected_index = None;
+    for (width, height) in [(108, 14), (140, 34)] {
+        let bounds = Rect::new(0, 0, width, height);
+        let populated = explorer_layout(bounds, &model);
+        let blank = explorer_layout(bounds, &empty);
+        for action in [
+            ExplorerToolbarAction::Copy,
+            ExplorerToolbarAction::Cut,
+            ExplorerToolbarAction::Paste,
+            ExplorerToolbarAction::Rename,
+        ] {
+            let button = populated
+                .page_actions
+                .iter()
+                .find(|button| button.action == action)
+                .unwrap();
+            assert!(!button.area.is_empty());
+            assert_eq!(
+                blank
+                    .page_actions
+                    .iter()
+                    .find(|button| button.action == action)
+                    .unwrap()
+                    .area,
+                button.area
+            );
+            assert_eq!(
+                populated.hit_test(button.area.x, button.area.y),
+                Some(ExplorerHitTarget::PageAction(action))
+            );
+        }
+        assert!(populated.visible_capacity > 0);
+    }
 }

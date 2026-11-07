@@ -95,6 +95,7 @@ pub struct ExplorerOverlayLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorerHitTarget {
+    SavePicker(ExplorerSaveFocus),
     Toolbar(ExplorerToolbarAction),
     PageAction(ExplorerToolbarAction),
     Address,
@@ -112,6 +113,10 @@ pub enum ExplorerHitTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorerLayout {
+    pub save_name_label: Rect,
+    pub save_name: Rect,
+    pub save_button: Rect,
+    pub save_cancel: Rect,
     pub mode: ExplorerLayoutMode,
     pub panel: Rect,
     pub toolbar: Rect,
@@ -153,6 +158,16 @@ impl ExplorerLayout {
                 return Some(ExplorerHitTarget::Overlay(control.control.clone()));
             }
             return rect_contains(overlay.area, x, y).then_some(ExplorerHitTarget::OverlaySurface);
+        }
+
+        for (area, focus) in [
+            (self.save_name, ExplorerSaveFocus::Filename),
+            (self.save_button, ExplorerSaveFocus::Save),
+            (self.save_cancel, ExplorerSaveFocus::Cancel),
+        ] {
+            if rect_contains(area, x, y) {
+                return Some(ExplorerHitTarget::SavePicker(focus));
+            }
         }
 
         if let Some(button) = self
@@ -234,7 +249,50 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         ExplorerLayoutMode::Compact
     };
     let panel = area;
-    let inner = inset_rect(panel, 1);
+    let mut inner = inset_rect(panel, 1);
+    let (save_name_label, save_name, save_button, save_cancel) = if model.save_picker.is_some() {
+        let height = 3.min(inner.height);
+        inner.height = inner.height.saturating_sub(height);
+        let row = Rect::new(inner.x, inner.bottom(), inner.width, height);
+        let cancel_width =
+            (terminal_width(&i18n::tr!("ui-explorer-save-cancel")) as u16 + 4).min(row.width);
+        let save_width = (terminal_width(&i18n::tr!("ui-explorer-save-confirm")) as u16 + 4)
+            .min(row.width.saturating_sub(cancel_width + 1));
+        let cancel = Rect::new(
+            row.right().saturating_sub(cancel_width),
+            row.y,
+            cancel_width,
+            height,
+        );
+        let save = Rect::new(
+            cancel.x.saturating_sub(save_width + 1),
+            row.y,
+            save_width,
+            height,
+        );
+        let label_width = (terminal_width(&i18n::tr!("ui-explorer-save-filename")) as u16 + 1)
+            .min(save.x.saturating_sub(row.x));
+        let label = Rect::new(
+            row.x,
+            row.y + u16::from(height > 1),
+            label_width,
+            u16::from(height > 0),
+        );
+        let input = Rect::new(
+            label.right(),
+            label.y,
+            save.x.saturating_sub(label.right() + 1),
+            label.height,
+        );
+        (label, input, save, cancel)
+    } else {
+        (
+            Rect::default(),
+            Rect::default(),
+            Rect::default(),
+            Rect::default(),
+        )
+    };
     let toolbar_rows = explorer_toolbar_rows(inner.width, model);
     let mut toolbar = Rect::new(
         inner.x,
@@ -473,6 +531,10 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     let overlay = explorer_overlay_layout(area, model);
 
     ExplorerLayout {
+        save_name_label,
+        save_name,
+        save_button,
+        save_cancel,
         mode,
         panel,
         toolbar,
@@ -883,29 +945,29 @@ fn explorer_overlay_layout(area: Rect, model: &ExplorerViewModel) -> Option<Expl
 pub(super) fn explorer_page_action_buttons(
     model: &ExplorerViewModel,
 ) -> Vec<ExplorerToolbarButtonViewModel> {
-    let wanted: &[ExplorerToolbarAction] = if model.is_trash {
+    let wanted: &[ExplorerToolbarAction] = if model.save_picker.is_some() {
+        &[ExplorerToolbarAction::Open, ExplorerToolbarAction::New]
+    } else if model.is_trash {
         &[
             ExplorerToolbarAction::Restore,
             ExplorerToolbarAction::DumpTrash,
             ExplorerToolbarAction::SelectionMode,
             ExplorerToolbarAction::Menu,
         ]
-    } else if model.entries.is_empty() {
-        &[
-            ExplorerToolbarAction::New,
-            ExplorerToolbarAction::Paste,
-            ExplorerToolbarAction::Menu,
-        ]
     } else {
         &[
             ExplorerToolbarAction::Open,
             ExplorerToolbarAction::New,
+            ExplorerToolbarAction::Copy,
+            ExplorerToolbarAction::Cut,
+            ExplorerToolbarAction::Paste,
+            ExplorerToolbarAction::Rename,
             ExplorerToolbarAction::SelectionMode,
             ExplorerToolbarAction::Delete,
             ExplorerToolbarAction::Menu,
         ]
     };
-    let mut buttons = wanted
+    wanted
         .iter()
         .filter_map(|action| {
             model
@@ -915,9 +977,5 @@ pub(super) fn explorer_page_action_buttons(
                 .find(|b| b.action == *action)
                 .cloned()
         })
-        .collect::<Vec<_>>();
-    if model.selected_entry().is_none() && !model.is_trash {
-        buttons.sort_by_key(|button| button.action != ExplorerToolbarAction::New);
-    }
-    buttons
+        .collect()
 }

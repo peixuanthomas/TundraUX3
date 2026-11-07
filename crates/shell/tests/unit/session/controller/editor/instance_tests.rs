@@ -39,6 +39,8 @@ fn a_busy_save_picker_registers_the_save_to_its_original_editor() {
     state.pages.explorer.editor_picker_owner = Some(original);
     state.pages.explorer.explorer_purpose = ExplorerPurpose::EditorSaveAs {
         snapshot: snapshot.clone(),
+        input: ui::components::TextInput::new("save.filename"),
+        focus: ui::ExplorerSaveFocus::Filename,
     };
     state.register_page_task(
         TaskDomain::Explorer,

@@ -147,6 +147,22 @@ impl ShellSession {
             ),
             InputEvent::Paste(_)
                 if self.active_screen() == ShellScreen::Explorer
+                    && self.pages.explorer.explorer_input_mode == ExplorerInputMode::Browse
+                    && matches!(
+                        self.pages.explorer.explorer_purpose,
+                        ExplorerPurpose::EditorSaveAs {
+                            focus: ui::ExplorerSaveFocus::Filename,
+                            ..
+                        }
+                    ) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::Explorer),
+                    ShellCommand::ExplorerSavePickerInput(input.clone()),
+                )
+            }
+            InputEvent::Paste(_)
+                if self.active_screen() == ShellScreen::Explorer
                     && matches!(
                         self.pages.explorer.explorer_input_mode,
                         ExplorerInputMode::Address | ExplorerInputMode::Search
@@ -1481,6 +1497,10 @@ impl ShellSession {
             }
             ShellCommand::ExplorerEditInput(input) => {
                 self.edit_explorer_input(input, platform);
+                ShellAction::Redraw
+            }
+            ShellCommand::ExplorerSavePickerInput(input) => {
+                self.handle_explorer_save_picker_input(input, platform);
                 ShellAction::Redraw
             }
             ShellCommand::SubmitExplorerInput => {

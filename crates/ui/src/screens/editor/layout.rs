@@ -554,21 +554,36 @@ pub fn editor_layout(area: Rect, model: &EditorViewModel) -> EditorLayout {
             ..Default::default()
         };
     }
-    let toolbar_height = 0;
+    let toolbar_height = if inner.height >= 10 {
+        toolbar_layout(Rect::new(0, 0, inner.width, u16::MAX), model)
+            .0
+            .iter()
+            .map(|item| item.area.bottom())
+            .max()
+            .unwrap_or(0)
+            .min(inner.height.saturating_sub(4))
+    } else {
+        0
+    };
     let status_height = u16::from(inner.height >= 3);
     let menu_bar = Rect::new(inner.x, inner.y, inner.width, menu_height);
     let search_items = editor_search_layout(
         Rect::new(
             inner.x,
-            inner.y.saturating_add(menu_height),
+            inner.y.saturating_add(menu_height + toolbar_height),
             inner.width,
-            inner.height.saturating_sub(menu_height + status_height),
+            inner
+                .height
+                .saturating_sub(menu_height + toolbar_height + status_height),
         ),
         model.search_bar.as_ref(),
     );
     let search_height = search_items
         .iter()
-        .map(|(_, rect)| rect.bottom().saturating_sub(menu_bar.bottom()))
+        .map(|(_, rect)| {
+            rect.bottom()
+                .saturating_sub(menu_bar.bottom() + toolbar_height)
+        })
         .max()
         .unwrap_or(0);
     let toolbar = Rect::new(
@@ -1369,44 +1384,28 @@ pub(super) fn toolbar_layout(
     if area.is_empty() {
         return (Vec::new(), false);
     }
-    let specs = toolbar_specs();
-    let total_width = specs.iter().map(|(_, _, width)| *width).sum::<u16>();
-    let overflow = total_width > area.width;
-    let more_width = toolbar_spec(EditorToolbarAction::More).2;
-    let available = if overflow {
-        area.width.saturating_sub(more_width)
-    } else {
-        area.width
-    };
     let mut items = Vec::new();
     let mut x = area.x;
-    for (action, _, width) in specs {
-        if action == EditorToolbarAction::More {
-            continue;
+    let mut y = area.y;
+    let mut overflow = false;
+    for (action, _, width) in toolbar_specs() {
+        let width = width.min(area.width);
+        if x > area.x && x.saturating_add(width) > area.right() {
+            x = area.x;
+            y = y.saturating_add(1);
         }
-        if x.saturating_add(width) > area.x.saturating_add(available) {
+        if y >= area.bottom() {
+            overflow = true;
             break;
         }
         items.push(EditorToolbarItemLayout {
             action,
-            area: Rect::new(x, area.y, width, 1),
+            area: Rect::new(x, y, width, 1),
             enabled: model
                 .toolbar
                 .is_enabled(action, model.read_only, model.mode),
         });
         x = x.saturating_add(width);
-    }
-    if overflow && more_width <= area.width {
-        items.push(EditorToolbarItemLayout {
-            action: EditorToolbarAction::More,
-            area: Rect::new(
-                area.right().saturating_sub(more_width),
-                area.y,
-                more_width,
-                1,
-            ),
-            enabled: true,
-        });
     }
     (items, overflow)
 }
@@ -1457,12 +1456,36 @@ pub(super) fn toolbar_label(action: EditorToolbarAction) -> String {
 
 fn toolbar_shortcut(action: EditorToolbarAction) -> Option<&'static str> {
     match action {
-        EditorToolbarAction::New => Some("Ctrl+N"),
-        EditorToolbarAction::Open => Some("Ctrl+O"),
-        EditorToolbarAction::Save => Some("Ctrl+S"),
-        EditorToolbarAction::Undo => Some("Ctrl+Z"),
-        EditorToolbarAction::Redo => Some("Ctrl+Y"),
-        EditorToolbarAction::Find => Some("Ctrl+F"),
+        EditorToolbarAction::New => Some(if cfg!(target_os = "macos") {
+            "Cmd+N"
+        } else {
+            "Ctrl+N"
+        }),
+        EditorToolbarAction::Open => Some(if cfg!(target_os = "macos") {
+            "Cmd+O"
+        } else {
+            "Ctrl+O"
+        }),
+        EditorToolbarAction::Save => Some(if cfg!(target_os = "macos") {
+            "Cmd+S"
+        } else {
+            "Ctrl+S"
+        }),
+        EditorToolbarAction::Undo => Some(if cfg!(target_os = "macos") {
+            "Cmd+Z"
+        } else {
+            "Ctrl+Z"
+        }),
+        EditorToolbarAction::Redo => Some(if cfg!(target_os = "macos") {
+            "Cmd+Y"
+        } else {
+            "Ctrl+Y"
+        }),
+        EditorToolbarAction::Find => Some(if cfg!(target_os = "macos") {
+            "Cmd+F"
+        } else {
+            "Ctrl+F"
+        }),
         _ => None,
     }
 }

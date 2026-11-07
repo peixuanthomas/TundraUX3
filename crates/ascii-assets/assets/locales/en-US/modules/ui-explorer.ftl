@@ -92,3 +92,7 @@ ui-explorer-search-matches = { " " }({ $count ->
 
 ui-explorer-open-selected = Open
 ui-explorer-actions-menu = Actions
+ui-explorer-save-title = Save document
+ui-explorer-save-filename = File name
+ui-explorer-save-confirm = F10 Save
+ui-explorer-save-cancel = Esc Cancel

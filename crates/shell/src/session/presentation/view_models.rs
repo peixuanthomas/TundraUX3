@@ -1732,6 +1732,18 @@ impl ShellSession {
             self.ascii_assets.clone(),
         );
         model.is_trash = is_trash;
+        if let ExplorerPurpose::EditorSaveAs { input, focus, .. } =
+            &self.pages.explorer.explorer_purpose
+        {
+            model.save_picker = Some(ui::ExplorerSavePickerViewModel {
+                input: input.clone(),
+                focus: if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Browse {
+                    *focus
+                } else {
+                    ui::ExplorerSaveFocus::Browse
+                },
+            });
+        }
         model.quick_location_viewport_offset = self.pages.explorer.explorer_locations_scroll;
         model.address_editing =
             self.pages.explorer.explorer_input_mode == ExplorerInputMode::Address;
@@ -1790,7 +1802,13 @@ impl ShellSession {
                 } else {
                     !is_trash && location.path == state.current_path
                 };
-                model.enabled = location.enabled && (location.is_trash() || location.path.is_dir());
+                model.enabled = location.enabled
+                    && (location.is_trash() || location.path.is_dir())
+                    && !(location.is_trash()
+                        && matches!(
+                            self.pages.explorer.explorer_purpose,
+                            ExplorerPurpose::EditorSaveAs { .. }
+                        ));
                 model.drop_target = !location.is_trash()
                     && state
                         .drag

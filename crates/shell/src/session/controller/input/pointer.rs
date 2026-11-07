@@ -213,6 +213,7 @@ impl ShellSession {
             .or_else(|| self.logs_button_at(point))
             .or_else(|| self.table_sort_button_at(point))
             .or_else(|| self.explorer_selection_button_at(point))
+            .or_else(|| self.explorer_save_button_at(point))
             .or_else(|| {
                 self.button_regions
                     .iter()

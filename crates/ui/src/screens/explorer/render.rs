@@ -23,7 +23,11 @@ pub fn render_explorer_content(
 ) {
     let theme = &context.compatibility_theme();
     Surface::new()
-        .titled(i18n::tr!("ui-explorer-explorer"))
+        .titled(i18n::tr!(if model.save_picker.is_some() {
+            "ui-explorer-save-title"
+        } else {
+            "ui-explorer-explorer"
+        }))
         .bordered(true)
         .render_frame(frame, area, context);
 
@@ -45,6 +49,41 @@ pub fn render_explorer_content(
     render_explorer_sidebar(frame, &layout, model, assets, context, theme);
     render_explorer_table(frame, &layout, model, assets, context);
     render_explorer_footer(frame, &layout, model, assets, context);
+    if let Some(picker) = &model.save_picker {
+        let focused = picker.focus == super::ExplorerSaveFocus::Filename;
+        frame.render_widget(
+            Paragraph::new(i18n::tr!("ui-explorer-save-filename")).style(if focused {
+                theme.title_style()
+            } else {
+                theme.body_style()
+            }),
+            layout.save_name_label,
+        );
+        let mut input = picker.input.clone();
+        input.set_focused(focused);
+        input.render_borderless_frame_with_prefix(frame, layout.save_name, theme, "");
+        for (area, id, label, focus) in [
+            (
+                layout.save_button,
+                "explorer.save",
+                i18n::tr!("ui-explorer-save-confirm"),
+                super::ExplorerSaveFocus::Save,
+            ),
+            (
+                layout.save_cancel,
+                "explorer.save.cancel",
+                i18n::tr!("ui-explorer-save-cancel"),
+                super::ExplorerSaveFocus::Cancel,
+            ),
+        ] {
+            let mut button = Button::new(id, label);
+            if focus == super::ExplorerSaveFocus::Save {
+                button = button.with_emphasis(crate::components::ButtonEmphasis::Primary);
+            }
+            button.set_focused(picker.focus == focus);
+            button.render_frame(frame, area, theme);
+        }
+    }
 }
 
 fn render_explorer_toolbar(

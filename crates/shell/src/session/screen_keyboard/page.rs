@@ -79,6 +79,13 @@ impl ShellSession {
             target.push_str(&self.management_keyboard_target());
         }
         match self.active_screen() {
+            ShellScreen::Explorer => {
+                if let ExplorerPurpose::EditorSaveAs { focus, .. } =
+                    self.pages.explorer.explorer_purpose
+                {
+                    target.push_str(&format!(":save:{focus:?}"));
+                }
+            }
             ShellScreen::Launcher => {
                 if let Some(editor) = &self.pages.launcher.entry_editor {
                     target.push_str(&format!(":edit:{}:{}", editor.id, editor.selected));
@@ -164,7 +171,14 @@ impl ShellSession {
             }
             ShellScreen::Explorer => {
                 if self.pages.explorer.explorer_input_mode == ExplorerInputMode::Browse {
-                    self.begin_explorer_input(ExplorerInputMode::Search);
+                    if matches!(
+                        self.pages.explorer.explorer_purpose,
+                        ExplorerPurpose::EditorSaveAs { .. }
+                    ) {
+                        self.focus_explorer_save_picker(ui::ExplorerSaveFocus::Filename);
+                    } else {
+                        self.begin_explorer_input(ExplorerInputMode::Search);
+                    }
                 }
                 self.pages.explorer.explorer_overlay_selection = 0;
                 self.pages.common.focused_component = ShellComponent::Explorer;

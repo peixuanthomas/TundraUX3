@@ -5857,7 +5857,24 @@ fn explorer_toolbar_shortcuts_route_without_shifted_symbols() {
         ),
     ] {
         let label = action.shortcut_label();
-        let key = if label == "Del" {
+        let key = if matches!(action, Action::Copy | Action::Cut | Action::Paste) {
+            let character = match action {
+                Action::Copy => 'c',
+                Action::Cut => 'x',
+                _ => 'v',
+            };
+            KeyInput::with_modifiers(
+                InputKey::Char(character),
+                if cfg!(target_os = "macos") {
+                    InputModifiers {
+                        super_key: true,
+                        ..InputModifiers::NONE
+                    }
+                } else {
+                    InputModifiers::CTRL
+                },
+            )
+        } else if label == "Del" {
             KeyInput::new(InputKey::Delete)
         } else {
             KeyInput::from_label(label)
