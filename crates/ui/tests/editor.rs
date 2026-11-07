@@ -1696,3 +1696,33 @@ fn common_toolbar_actions_remain_visible_and_separate_from_search() {
         }
     }
 }
+
+#[test]
+fn ordinary_context_menu_clamps_to_small_windows_and_keeps_clipboard_availability() {
+    for (width, height) in [(108, 30), (40, 16), (28, 10)] {
+        let area = Rect::new(2, 3, width, height);
+        let mut model = EditorViewModel::source("note.txt", "selected");
+        model.open_menu = Some(EditorMenu::Edit);
+        model.context_menu_anchor = Some((area.right() - 1, area.bottom() - 1));
+        model.read_only = true;
+        model.toolbar.can_copy = true;
+        model.toolbar.can_cut = false;
+        model.toolbar.can_paste = false;
+        let layout = ui::editor_layout(area, &model);
+        let popup = layout.menu_popup.unwrap();
+        assert_eq!(popup.intersection(area), popup);
+        for action in [
+            ui::EditorMenuAction::Copy,
+            ui::EditorMenuAction::Cut,
+            ui::EditorMenuAction::Paste,
+        ] {
+            let item = layout
+                .menu_items
+                .iter()
+                .find(|item| item.action == action)
+                .unwrap();
+            assert_eq!(item.enabled, action == ui::EditorMenuAction::Copy);
+            assert_eq!(item.area.intersection(popup), item.area);
+        }
+    }
+}

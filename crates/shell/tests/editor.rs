@@ -2555,3 +2555,131 @@ fn open_editor_preferences(state: &mut ShellSession, platform: &MockPlatform) {
         platform,
     );
 }
+
+#[test]
+fn ordinary_editor_context_menu_preserves_selection_and_reuses_clipboard_actions() {
+    let fixture = FixtureRoot::new("ordinary-editor-context");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "copy this 中文");
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    let selected = state.to_editor_view_model().selection;
+    for action in [
+        ui::EditorMenuAction::Copy,
+        ui::EditorMenuAction::Cut,
+        ui::EditorMenuAction::Paste,
+    ] {
+        let point = editor_canvas_point(&state);
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Right, point),
+            &platform,
+        );
+        let model = state.to_editor_view_model();
+        assert_eq!(model.open_menu, Some(EditorMenu::Edit));
+        assert_eq!(model.context_menu_anchor, Some(point));
+        if action == ui::EditorMenuAction::Copy {
+            assert_eq!(model.selection, selected);
+        }
+        let item = current_editor_layout(&state)
+            .menu_items
+            .into_iter()
+            .find(|item| item.action == action)
+            .unwrap();
+        assert!(item.enabled);
+        let point = (item.area.x, item.area.y);
+        state.apply_input_with_platform(
+            InputEvent::mouse_down(PointerButton::Left, point),
+            &platform,
+        );
+        state
+            .apply_input_with_platform(InputEvent::mouse_up(PointerButton::Left, point), &platform);
+        assert!(state.to_editor_view_model().open_menu.is_none());
+        assert_eq!(
+            state.to_editor_view_model().source_lines.join("\n"),
+            if action == ui::EditorMenuAction::Cut {
+                ""
+            } else {
+                "copy this 中文"
+            }
+        );
+    }
+    assert!(platform.calls().iter().any(
+        |call| matches!(call, MockCall::WriteClipboardText(text) if text == "copy this 中文")
+    ));
+    assert!(
+        platform
+            .calls()
+            .iter()
+            .any(|call| matches!(call, MockCall::ReadClipboardText))
+    );
+}
+
+#[test]
+fn readonly_editor_context_menu_allows_copy_and_keyboard_escape_restores_document() {
+    let fixture = FixtureRoot::new("readonly-editor-context");
+    let platform = mock_platform(fixture.path());
+    bootstrap_with_shell(&platform);
+    fs::write(fixture.path().join("Documents/service.log"), "read only").unwrap();
+    let mut state = logged_in_state(&platform);
+    open_only_document_in_editor(&mut state, &platform);
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    state.apply_input_with_platform(
+        InputEvent::Key(KeyInput::with_modifiers(
+            InputKey::F(10),
+            InputModifiers::SHIFT,
+        )),
+        &platform,
+    );
+    let layout = current_editor_layout(&state);
+    assert!(layout.menu_popup.is_some());
+    for action in [
+        ui::EditorMenuAction::Copy,
+        ui::EditorMenuAction::Cut,
+        ui::EditorMenuAction::Paste,
+    ] {
+        let item = layout
+            .menu_items
+            .iter()
+            .find(|item| item.action == action)
+            .unwrap();
+        assert_eq!(item.enabled, action == ui::EditorMenuAction::Copy);
+    }
+    state.apply_input_with_platform(InputEvent::key(InputKey::Escape), &platform);
+    assert_eq!(state.active_screen(), ShellScreen::Editor);
+    assert!(state.to_editor_view_model().open_menu.is_none());
+    assert_eq!(state.to_editor_view_model().source_lines, vec!["read only"]);
+}
+
+#[test]
+fn editor_context_outside_click_only_closes_menu_and_keeps_selection() {
+    let fixture = FixtureRoot::new("editor-context-outside");
+    let platform = mock_platform(fixture.path());
+    let mut state = new_user_home_state(&platform);
+    open_editor_from_home(&mut state, &platform);
+    type_text(&mut state, &platform, "keep selection");
+    state.apply_input_with_platform(ctrl('a'), &platform);
+    let selected = state.to_editor_view_model().selection;
+    let anchor = editor_canvas_point(&state);
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Right, anchor),
+        &platform,
+    );
+    let layout = current_editor_layout(&state);
+    let outside = (layout.canvas.x, layout.canvas.y);
+    assert!(!layout.menu_popup.unwrap().contains(outside.into()));
+    state.apply_input_with_platform(
+        InputEvent::mouse_down(PointerButton::Left, outside),
+        &platform,
+    );
+    state.apply_input_with_platform(
+        InputEvent::mouse_up(PointerButton::Left, outside),
+        &platform,
+    );
+    assert!(state.to_editor_view_model().open_menu.is_none());
+    assert_eq!(state.to_editor_view_model().selection, selected);
+    assert_eq!(
+        state.to_editor_view_model().source_lines,
+        vec!["keep selection"]
+    );
+}

@@ -505,6 +505,23 @@ impl ShellSession {
         }
         let coordinates = mouse.coordinates();
         let (hit, document_hit) = self.editor_hit_targets_at(coordinates);
+        if self.pages.editor.editor_context_menu_anchor.is_some()
+            && self.pages.editor.editor_open_menu.is_some()
+            && matches!(mouse.kind, ui::MouseEventKind::Down(PointerButton::Left))
+            && !matches!(
+                hit,
+                Some(
+                    ui::EditorHitTarget::MenuAction(_)
+                        | ui::EditorHitTarget::MenuPopup
+                        | ui::EditorHitTarget::MenuScroll
+                )
+            )
+        {
+            self.pages.editor.editor_open_menu = None;
+            self.pages.editor.editor_context_menu_anchor = None;
+            self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
+            return;
+        }
         if let Some(menu) = self.pages.editor.editor_open_menu {
             let count = ui::editor_menu_actions(menu).len();
             if let ui::MouseEventKind::Scroll(direction) = mouse.kind {
@@ -599,6 +616,7 @@ impl ShellSession {
                     }
                     Some(ui::EditorHitTarget::QuickMenuPopup) => {}
                     Some(ui::EditorHitTarget::Menu(menu)) => {
+                        self.pages.editor.editor_context_menu_anchor = None;
                         if menu == ui::EditorMenu::Settings {
                             self.open_editor_settings();
                         } else {
@@ -762,6 +780,21 @@ impl ShellSession {
                     self.pages.editor.editor_selected_toolbar_action = None;
                     self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
                     self.pages.editor.editor_quick_menu_anchor = Some(coordinates);
+                } else if let Some(ui::EditorHitTarget::Canvas(position)) = hit {
+                    if let Some(state) = self.app.editor_state()
+                        && !state.has_selection()
+                        && state.mode == app::editor::EditorMode::Source
+                        && let Some(offset) = state.source_offset(position.line, position.column)
+                    {
+                        self.apply_editor_command(
+                            app::editor::EditorCommand::MoveTo {
+                                position: app::editor::EditorPosition::Source(offset),
+                                extend_selection: false,
+                            },
+                            platform,
+                        );
+                    }
+                    self.open_editor_context_menu(coordinates);
                 }
             }
             MouseInput {

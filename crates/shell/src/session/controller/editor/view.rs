@@ -209,6 +209,7 @@ impl ShellSession {
         model.mode = state.mode;
         model.focus = self.pages.editor.editor_focus;
         model.open_menu = self.pages.editor.editor_open_menu;
+        model.context_menu_anchor = self.pages.editor.editor_context_menu_anchor;
         model.search_bar = self.pages.editor.editor_search_bar.clone();
         model.selected_menu = self.pages.editor.editor_selected_menu;
         model.selected_menu_action = self.pages.editor.editor_menu_index;

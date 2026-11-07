@@ -34,6 +34,7 @@ impl ShellSession {
         use app::editor::EditorCommand as Command;
         use ui::EditorMenuAction as Action;
         self.pages.editor.editor_open_menu = None;
+        self.pages.editor.editor_context_menu_anchor = None;
         self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
         let command = match action {
             Action::ScriptWorkspace => {
@@ -143,13 +144,20 @@ impl ShellSession {
             None
         };
         if let Some(menu) = menu_key {
+            self.pages.editor.editor_context_menu_anchor = None;
             self.pages.editor.editor_selected_menu = menu;
             self.pages.editor.editor_open_menu = Some(menu);
             self.pages.editor.editor_focus = ui::EditorFocus::MenuBar;
             self.pages.editor.editor_menu_index = 0;
             return true;
         }
+        if key.key == InputKey::F(10) && key.modifiers.shift && !key.has_non_shift_modifier() {
+            let layout = self.editor_current_layout();
+            self.open_editor_context_menu((layout.canvas.x, layout.canvas.y));
+            return true;
+        }
         if key.key == InputKey::F(10) {
+            self.pages.editor.editor_context_menu_anchor = None;
             self.pages.editor.editor_focus = ui::EditorFocus::MenuBar;
             self.pages.editor.editor_open_menu = None;
             self.pages.editor.editor_menu_index = 0;
@@ -197,6 +205,7 @@ impl ShellSession {
             .unwrap_or(0);
         match key.key {
             InputKey::Left | InputKey::Right | InputKey::Tab | InputKey::BackTab => {
+                self.pages.editor.editor_context_menu_anchor = None;
                 let backwards = matches!(key.key, InputKey::Left | InputKey::BackTab);
                 let menu =
                     menus[(index + if backwards { menus.len() - 1 } else { 1 }) % menus.len()];
@@ -240,12 +249,26 @@ impl ShellSession {
                 }
             }
             InputKey::Escape | InputKey::F(6) => {
+                self.pages.editor.editor_context_menu_anchor = None;
                 self.pages.editor.editor_open_menu = None;
                 self.pages.editor.editor_focus = ui::EditorFocus::Canvas;
             }
             _ => return false,
         }
         true
+    }
+
+    pub(in crate::session) fn open_editor_context_menu(&mut self, anchor: CellPosition) {
+        if self.editor_vim_terminal.is_some() {
+            return;
+        }
+        self.pages.editor.editor_quick_menu_anchor = None;
+        self.pages.editor.editor_selected_toolbar_action = None;
+        self.pages.editor.editor_selected_menu = ui::EditorMenu::Edit;
+        self.pages.editor.editor_open_menu = Some(ui::EditorMenu::Edit);
+        self.pages.editor.editor_context_menu_anchor = Some(anchor);
+        self.pages.editor.editor_menu_index = 0;
+        self.pages.editor.editor_focus = ui::EditorFocus::MenuBar;
     }
 
     fn open_edit_dialog(&mut self, action: ui::EditorMenuAction) {

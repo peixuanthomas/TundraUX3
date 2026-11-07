@@ -1102,7 +1102,13 @@ pub(super) fn menu_popup_layout(
     let Some(menu) = model.open_menu else {
         return (None, Vec::new());
     };
-    let Some(anchor) = menus.iter().find(|item| item.menu == menu) else {
+    let anchor = model.context_menu_anchor.or_else(|| {
+        menus
+            .iter()
+            .find(|item| item.menu == menu)
+            .map(|item| (item.area.x, item.area.bottom()))
+    });
+    let Some((anchor_x, anchor_y)) = anchor else {
         return (None, Vec::new());
     };
     let actions = editor_menu_actions(menu);
@@ -1113,13 +1119,22 @@ pub(super) fn menu_popup_layout(
         .unwrap_or_default()
         .saturating_add(4);
     let width = to_u16(desired_width).min(area.width);
-    let y = anchor.area.bottom();
+    let y = if model.context_menu_anchor.is_some() {
+        anchor_y
+            .min(
+                area.bottom()
+                    .saturating_sub(to_u16(actions.len().saturating_add(2)).min(area.height)),
+            )
+            .max(area.y)
+    } else {
+        anchor_y
+    };
     let available_height = area.bottom().saturating_sub(y);
     let height = to_u16(actions.len().saturating_add(2)).min(available_height);
     if width < 3 || height < 3 {
         return (None, Vec::new());
     }
-    let x = anchor.area.x.min(area.right().saturating_sub(width));
+    let x = anchor_x.min(area.right().saturating_sub(width)).max(area.x);
     let popup = Rect::new(x, y, width, height);
     let visible_items = usize::from(height.saturating_sub(2)).min(actions.len());
     let first = model

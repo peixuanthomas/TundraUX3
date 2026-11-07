@@ -393,6 +393,7 @@ pub fn page_help(screen: PageHelpScreen) -> PageHelpViewModel {
                     row("R", i18n::tr!("ui-help-editor-reload")),
                 ]),
                 advanced(vec![
+                    row("Shift+F10", i18n::tr!("ui-editor-edit")),
                     row("F8", i18n::tr!("ui-help-editor-vim")),
                     row("F6", i18n::tr!("ui-help-editor-focus")),
                     row("Tab / ←→ / Enter", i18n::tr!("ui-help-editor-settings")),
