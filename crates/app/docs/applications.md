@@ -35,7 +35,7 @@ Ctrl/Cmd+L edits the path bar, which supports selection, pasting, and automatic 
 
 Launcher stores executable targets and a fixed order, with icon and list views. Records include an absolute, non-symlink target, type, approver, and approval time. Paths and execution approval are checked again before launch; scripts and installation packages retain a second confirmation.
 
-Built-in applications are declared per platform in `BUILT_IN_LAUNCHER_APPLICATIONS` and are not written to the removable Launcher configuration. The package entry uses distribution tools on Linux, WinGet on Windows, and Homebrew on macOS.
+Built-in applications are declared per platform in `BUILT_IN_APPLICATIONS` and are not written to removable configuration. Launcher includes only entries marked `fixed_in_launcher`; system applications are opened from Home. The package entry uses distribution tools on Linux, WinGet on Windows, and Homebrew on macOS.
 
 For external programs, **Run settings (F4)** saves the choice of system launch or an embedded terminal, arguments, and working directory. Arguments are parsed into an array without variable expansion. Custom commands can return immediately after exit or retain output until Enter is pressed.
 

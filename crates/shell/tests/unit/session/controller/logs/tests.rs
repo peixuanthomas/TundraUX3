@@ -589,21 +589,19 @@ fn f5_refresh_and_clear_filters_match_their_log_buttons() {
 }
 
 #[test]
-fn logs_launcher_entry_and_direct_route_enforce_guest_gate() {
+fn logs_home_entry_and_direct_route_enforce_guest_gate() {
     for role in [UserRole::Admin, UserRole::User, UserRole::Guest] {
         let mut state = state(role);
         assert_eq!(
             state.user_home_entries().iter().any(|e| e.label == "Logs"),
             role != UserRole::Guest
         );
-        if role != UserRole::Guest {
-            assert!(
-                state
-                    .built_in_launcher_applications()
-                    .iter()
-                    .any(|entry| entry.id == "builtin.logs")
-            );
-        }
+        assert!(
+            state
+                .built_in_launcher_applications()
+                .iter()
+                .all(|entry| entry.id != "builtin.logs")
+        );
         state.open_logs();
         assert_eq!(
             state.active_screen() == ShellScreen::Logs,

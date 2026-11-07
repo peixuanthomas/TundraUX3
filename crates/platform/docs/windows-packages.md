@@ -1,6 +1,6 @@
 # Windows packages
 
-Launcher → Packages on Windows uses WinGet, offering Installed, Updates, Search, and Details, with support for installing, removing, and upgrading selected packages and upgrading all packages.
+Home → Packages on Windows uses WinGet, offering Installed, Updates, Search, and Details, with support for installing, removing, and upgrading selected packages and upgrading all packages.
 
 ## Prerequisites
 

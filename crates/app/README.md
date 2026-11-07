@@ -26,7 +26,7 @@ Explorer manages directories, filtering, sorting, multiple selection, the clipbo
 
 `ExplorerFileService` shares copied and cut files across pages in the current session and clears them when switching accounts. It records completed moves and renames within one filesystem for cross-page undo. Undo restores the location while preserving later content edits, checks the object and both parent-directory identities, and rejects replaced objects or an occupied original path without recursively scanning directories. Cross-volume moves, replacements, and directory merges cannot be undone and clear older undo records. The system file clipboard is not connected; the text clipboard does not carry file transfers.
 
-Launcher stores built-in applications, custom Shell commands, and approved external programs. Custom entries support a name, a 5×2 terminal-cell text icon, arguments, a working directory, and retained output after exit; built-in entries are not stored in removable configuration. Custom commands use `/bin/sh -c` on Unix and `cmd.exe /C` on Windows.
+The shared application catalog supplies Home and Launcher. System applications shown on Home are excluded from Launcher, which retains the editors, Command Line, custom Shell commands, and approved external programs. Custom entries support a name, a 5×2 terminal-cell text icon, arguments, a working directory, and retained output after exit; built-in entries are not stored in removable configuration. Custom commands use `/bin/sh -c` on Unix and `cmd.exe /C` on Windows.
 
 ### Editor and scripts
 

@@ -52,7 +52,7 @@ Logged-in non-guest users can open Tasks from the global title bar and see runni
 
 ## Interface hosting
 
-- **Home and Launcher:** show supported system tasks directly on Home, search Launcher by name, path/command, or type, and organize built-in applications, custom commands, and external programs. Built-in and blank-area context menus expose page actions without permitting edits or deletion of built-in entries.
+- **Home and Launcher:** show supported system tasks directly on Home and exclude those entries from Launcher. Search Launcher by name, path/command, or type, and organize its remaining built-in applications, custom commands, and external programs. Built-in and blank-area context menus expose page actions without permitting edits or deletion of built-in entries.
 - **Files:** share copied/cut files across Explorer pages and undo safe moves or renames through the shared application service. First save and Save As keep directory browsing, filename, Save, and Cancel together.
 - **Editor and scripts:** keep common editing tools visible, preserve the text selection when opening the standard editor's context menu, manage multi-document pages and Vim, and host script execution and debugging. macOS text editing follows Command and Option conventions.
 - **System management and logs:** present platform operations with AA authorization, shared focus and selection controls, and persistent expert areas opened with F3. UX logs keep expert filters and related actions visible while changing rows or filters; F10 still opens the menu.

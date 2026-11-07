@@ -1,6 +1,6 @@
 # Linux system management
 
-Open Services, Processes, Packages, Network, Disks, User Management, Firewall, SSH, and Scheduled Tasks from Launcher. The application normally runs as a regular user; operations requiring system permissions go through AutoAdmin (AA) and fixed authorization helpers.
+Open Services, Processes, Packages, Network, Disks, User Management, Firewall, SSH, and Scheduled Tasks from Home. The application normally runs as a regular user; operations requiring system permissions go through AutoAdmin (AA) and fixed authorization helpers.
 
 ## Page controls
 

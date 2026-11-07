@@ -149,7 +149,7 @@ fn catalog_localizes_presentation_without_changing_application_or_timezone_ids()
     let fixture = LocaleFixture::new();
     let english = LanguageSnapshot::embedded(1);
     let chinese = fixture.chinese();
-    for application in app::BUILT_IN_LAUNCHER_APPLICATIONS {
+    for application in app::BUILT_IN_APPLICATIONS {
         let original = *application;
         assert_eq!(
             english.render_text(&application.localized_name()),

@@ -65,7 +65,7 @@ cargo run --locked -p cli --bin tundra-cli -- doctor
 
 ## Using the interface
 
-Open supported system tasks directly from **Home**, or open applications from **Launcher**. Common file actions and editor tools stay visible. Management pages offer an expert area with F3 that stays open when you select another item.
+Open supported system tasks directly from **Home**, or open the remaining applications from **Launcher**. Applications on Home are not repeated in Launcher. Common file actions and editor tools stay visible. Management pages offer an expert area with F3 that stays open when you select another item.
 
 | Input | Action |
 | --- | --- |

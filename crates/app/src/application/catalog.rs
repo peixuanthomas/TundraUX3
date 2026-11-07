@@ -177,12 +177,12 @@ const fn management_application(
         description,
         type_label: "Built-in application",
         admin_only: false,
-        fixed_in_launcher: true,
+        fixed_in_launcher: false,
         platforms: &[PlatformKind::Linux],
     }
 }
 
-pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
+pub const BUILT_IN_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
     COMMAND_LINE_APPLICATION,
     EDITOR_APPLICATION,
     SCRIPT_EDITOR_APPLICATION,
@@ -192,7 +192,7 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         description: "Manage accounts, groups and login settings",
         type_label: "Built-in application",
         admin_only: false,
-        fixed_in_launcher: true,
+        fixed_in_launcher: false,
         platforms: ALL_PLATFORMS,
     },
     BuiltInApplicationDescriptor {
@@ -201,7 +201,7 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         description: "Inspect application and system logs",
         type_label: "Built-in application",
         admin_only: false,
-        fixed_in_launcher: true,
+        fixed_in_launcher: false,
         platforms: ALL_PLATFORMS,
     },
     management_application(
@@ -262,7 +262,7 @@ pub const BUILT_IN_LAUNCHER_APPLICATIONS: &[BuiltInApplicationDescriptor] = &[
         description: "Find running tasks and review saved results",
         type_label: "Built-in application",
         admin_only: false,
-        fixed_in_launcher: true,
+        fixed_in_launcher: false,
         platforms: &[
             PlatformKind::Linux,
             PlatformKind::Windows,

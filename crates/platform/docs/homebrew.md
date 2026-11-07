@@ -1,6 +1,6 @@
 # macOS Homebrew package management
 
-Launcher → Packages on macOS supports Homebrew Formulae (command-line software and libraries) and Casks (macOS applications), reusing the Installed, Updates, Search, and Details pages.
+Home → Packages on macOS supports Homebrew Formulae (command-line software and libraries) and Casks (macOS applications), reusing the Installed, Updates, Search, and Details pages.
 
 Homebrew must be installed and initialized before use. The application searches for an executable in `PATH`, `/opt/homebrew/bin/brew`, and `/usr/local/bin/brew`, in that order.
 

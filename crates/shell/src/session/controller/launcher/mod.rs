@@ -35,6 +35,15 @@ impl ShellSession {
     pub(in crate::session) fn built_in_launcher_applications(
         &self,
     ) -> Vec<app::BuiltInApplicationDescriptor> {
+        self.available_built_in_applications()
+            .into_iter()
+            .filter(|descriptor| descriptor.fixed_in_launcher)
+            .collect()
+    }
+
+    pub(in crate::session) fn available_built_in_applications(
+        &self,
+    ) -> Vec<app::BuiltInApplicationDescriptor> {
         let platform = if cfg!(target_os = "linux") {
             PlatformKind::Linux
         } else if cfg!(windows) {
@@ -44,7 +53,7 @@ impl ShellSession {
         } else {
             PlatformKind::Unsupported
         };
-        app::BUILT_IN_LAUNCHER_APPLICATIONS
+        app::BUILT_IN_APPLICATIONS
             .iter()
             .copied()
             .filter(|descriptor| descriptor.available_on_platform(platform))

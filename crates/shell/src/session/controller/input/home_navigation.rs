@@ -191,7 +191,7 @@ impl ShellSession {
             return Vec::new();
         }
         let mut entries = user_home_entries();
-        let applications = self.built_in_launcher_applications();
+        let applications = self.available_built_in_applications();
         let tasks = [
             "packages",
             "services",

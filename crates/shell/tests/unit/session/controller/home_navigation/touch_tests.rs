@@ -104,6 +104,25 @@ fn core_home_tasks_are_visible_and_open_without_launcher_at_minimum_size() {
 }
 
 #[test]
+fn launcher_excludes_applications_already_available_on_home() {
+    let state = state((108, 20));
+    let home = state.user_home_entries();
+    let launcher = state.to_launcher_view_model();
+    for key in ["packages", "users", "tasks", "logs"] {
+        assert!(home.iter().any(|entry| entry.icon_identity() == key));
+    }
+    for entry in &home {
+        let id = format!("builtin.{}", entry.icon_identity());
+        assert!(
+            launcher.items.iter().all(|item| item.id != id),
+            "{id} must only be shown on Home"
+        );
+    }
+    assert!(launcher.items.iter().any(|item| item.id == "builtin.editor"));
+    assert!(launcher.items.iter().any(|item| item.id == "builtin.command-line"));
+}
+
+#[test]
 fn home_has_no_page_exit_button_and_reuses_its_space_for_cards() {
     // Three card rows need 13 cells: three 3-cell cards and two 2-cell gaps.
     // At this height they fit only after the old 2-cell Exit footer is removed.
