@@ -75,9 +75,11 @@ Home cards show application names without letter shortcuts. Click a card, or sel
 | Enter / Space | Open, confirm, or toggle |
 | Esc / Back button | Return or close the current dialog |
 | F1 | Show help for the current page |
-| F2 | Organize Launcher entries |
+| F2 | Edit Home icons or organize Launcher entries |
 | F4 | Configure how an external Launcher item runs |
 | F8 in the editor | Switch between the standard editor and Vim |
+
+On Home, choose **Edit icons** or press F2 to reorder icons by dragging or with Shift+Left/Right. Choose **Done** or press Esc to finish; each user’s order is saved automatically. Esc during a drag cancels that move.
 
 On the dashboard, arrow keys move between cards by their visual position, including mixed-size and staggered layouts.
 

@@ -289,6 +289,13 @@ pub(in crate::session) fn build_shell_hit_map(
                     if content_screen == ShellScreen::Home
                         && let Some(model) = home_model
                     {
+                        if let Some(area) = ui::home_edit_area(main, model) {
+                            regions.push(ShellHitRegion {
+                                component: ShellComponent::HomeEdit,
+                                area,
+                                layer: ShellHitLayer::AppContent,
+                            });
+                        }
                         let logout = ui::home_logout_area(main, model);
                         if logout.width > 0 && logout.height > 0 {
                             regions.push(ShellHitRegion {

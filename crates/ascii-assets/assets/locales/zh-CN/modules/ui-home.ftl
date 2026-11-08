@@ -8,3 +8,6 @@ ui-home-unknown-user = 未知用户
 ui-home-logout-button = { "[" }Ctrl+L 注销]
 
 ui-home-current-user = 用户：{ $user }
+ui-home-edit = 编辑图标 F2
+ui-home-edit-done = 完成 F2
+ui-home-editing = 正在编辑主界面 · 拖动图标调整顺序

@@ -129,3 +129,6 @@ ui-help-editor-settings = 调整编辑器设置
 ui-help-logs-level = 按最低等级筛选，默认全部；故障是最高等级
 ui-help-logs-folder = 在文件浏览器中打开 UX 日志根目录
 ui-help-logs-source = 切换 UX / Linux 日志；Tab 不切换日志视图
+ui-help-home-edit = 编辑主界面 / 完成编辑
+ui-help-home-reorder = 在编辑模式下移动选中图标
+ui-help-home-edit-cancel = 取消拖拽 / 完成编辑

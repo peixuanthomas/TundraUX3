@@ -131,6 +131,7 @@ impl ShellSession {
         self.help_scrollbar_drag = None;
         self.pages.diagnostics.diagnostics_detail_drag = None;
         self.scrollbar_drag = None;
+        self.pages.home.drag = None;
         self.pages.launcher.launcher_drag = None;
         if let Some(settings) = &mut self.pages.launcher.launcher_run_settings {
             settings.interaction.cancel_pointer();

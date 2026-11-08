@@ -781,6 +781,26 @@ impl ShellSession {
                 self.activate_login(target, coordinates);
                 ShellAction::Redraw
             }
+            ShellCommand::HomeEdit => {
+                self.toggle_home_editing();
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeMove(delta) => {
+                self.move_home_entry(delta);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeCancelDrag => {
+                self.pages.home.drag = None;
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeDragUpdate(coordinates) => {
+                self.update_home_drag(coordinates);
+                ShellAction::Redraw
+            }
+            ShellCommand::HomeDrop(coordinates) => {
+                self.drop_home_drag(coordinates);
+                ShellAction::Redraw
+            }
             ShellCommand::HomeEntryLeft => {
                 self.select_home_entry_delta(-1);
                 ShellAction::Redraw
@@ -829,7 +849,11 @@ impl ShellSession {
             ShellCommand::ActivateHomeEntryAt(coordinates, _) => {
                 if let Some(index) = self.home_entry_index_at(coordinates) {
                     self.select_home_entry(index);
-                    self.activate_home_entry(index, platform);
+                    if self.pages.home.editing {
+                        self.begin_home_drag(index);
+                    } else {
+                        self.activate_home_entry(index, platform);
+                    }
                 }
                 ShellAction::Redraw
             }

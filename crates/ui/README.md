@@ -46,6 +46,7 @@ Enter moves to the next field and submits from the last field; Space or a tap to
 - `SidebarWorkspaceLayout` provides navigation, list, and detail columns, switching to top navigation and a vertical layout in narrow windows.
 - `ManagementWorkspace` organizes search, details, action bars, and expert areas that stay expanded when the selected object changes.
 - `PageActionBar` supports primary and danger colors, disabled states, and wrapping at the full button-text width in narrow windows, without fixed button-count or three-row limits. Log expert tools reuse the same layout without covering the list.
+- Home exposes an Edit icons / Done action, an edit-mode summary, and insertion indicators. Home and Launcher share grid insertion geometry, including row gaps, empty tail slots, and scrollbar exclusion.
 - `ManagementViewModel::selected_rows` represents all selected rows; `selected` represents the current position.
 - `ScrollbarOrientation::hit_test` extends pointer hit detection by one cell on either side of a vertical bar or above and below a horizontal bar, without changing the visual layout.
 

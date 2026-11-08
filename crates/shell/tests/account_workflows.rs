@@ -970,6 +970,8 @@ fn l_returns_to_weathr_while_focused_and_mouse_logout_stay_in_shell() {
     let mut focus_state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut focus_state, "AdminUser", "StrongPass123");
     focus_state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(focus_state.focused_component(), ShellComponent::HomeEdit);
+    focus_state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(focus_state.focused_component(), ShellComponent::HomeLogout);
     let action = focus_state.apply_input(InputEvent::from_key_label("Enter"));
     assert_eq!(action, ShellAction::Redraw);
@@ -1966,6 +1968,8 @@ fn expired_countdown_waits_for_initial_sync_then_is_delivered_and_removed() {
 
 fn open_clock(state: &mut ShellSession) {
     assert_eq!(state.active_screen(), ShellScreen::Home);
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::HomeEdit);
     state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::HomeLogout);
     state.apply_input(InputEvent::from_key_label("Tab"));

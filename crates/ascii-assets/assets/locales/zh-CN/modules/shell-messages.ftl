@@ -655,3 +655,4 @@ shell-linux-account-refresh-error = { $operation } 无法刷新账户列表：{ 
 shell-linux-lock-password = 锁定密码登录
 shell-linux-unlock-password = 解锁密码登录
 shell-linux-set-password-and-unlock = 设置密码并解锁
+shell-home-order-save-failed = 无法保存主界面图标顺序：{ $error }

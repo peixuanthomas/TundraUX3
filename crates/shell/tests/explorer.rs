@@ -353,6 +353,8 @@ fn explorer_uses_authenticated_account_directories_instead_of_process_directorie
     }
     state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
     state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
+    assert_eq!(state.focused_component(), ShellComponent::HomeEdit);
+    state.apply_input_with_platform(InputEvent::from_key_label("Tab"), &platform);
     assert_eq!(state.focused_component(), ShellComponent::HomeLogout);
     state.apply_input_with_platform(InputEvent::from_key_label("Enter"), &platform);
     select_login_user(&mut state, &platform, "SecondUser");

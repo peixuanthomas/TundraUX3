@@ -276,6 +276,9 @@ impl ShellSession {
         }
         self.update_button_input_mode(&input);
         let InputEvent::Mouse(mouse) = input else {
+            let cancel_home_drag = self.active_screen() == ShellScreen::Home
+                && self.pages.home.drag.is_some()
+                && matches!(&input, InputEvent::Key(key) if key.key == InputKey::Escape && key.phase.is_press_like() && !key.has_non_shift_modifier());
             let cancel_launcher_drag = self.active_screen() == ShellScreen::Launcher
                 && self.pages.launcher.launcher_drag.is_some()
                 && matches!(&input, InputEvent::Key(key) if key.key == InputKey::Escape && key.phase.is_press_like());
@@ -289,7 +292,7 @@ impl ShellSession {
                 self.cancel_pointer_gestures_for_modal();
                 self.last_click = None;
             }
-            if cancel_launcher_drag {
+            if cancel_launcher_drag || cancel_home_drag {
                 return None;
             }
             if matches!(input, InputEvent::FocusLost) {
@@ -303,6 +306,12 @@ impl ShellSession {
             return Some(input);
         };
         self.interaction.pointer_position = Some(mouse.coordinates());
+        if matches!(
+            mouse.kind,
+            ui::MouseEventKind::Scroll(_) | ui::MouseEventKind::Down(_)
+        ) {
+            self.pages.home.drag = None;
+        }
         // Wheel reports are not button releases. A wheel or a move outside
         // the captured button cancels its pending action permanently.
         if matches!(mouse.kind, ui::MouseEventKind::Scroll(_))
@@ -360,6 +369,7 @@ impl ShellSession {
                     let native_release = text_field
                         || region.id.as_str().starts_with("notification.")
                             && region.id.as_str() != "notification.page-help.action.close"
+                        || self.pages.home.editing && region.id.as_str().starts_with("home.entry.")
                         || region.id.as_str().starts_with("launcher.item.")
                         || region.id.as_str().starts_with("script.");
                     self.interaction.button_capture = Some(ButtonPointerCapture {

@@ -1182,7 +1182,7 @@ impl ShellSession {
             .current_home_username()
             .map(str::to_owned)
             .unwrap_or_else(|| i18n::tr!("shell-unauthenticated"));
-        let model = ui::HomeViewModel::user_with_selection_and_icon_assets(
+        let mut model = ui::HomeViewModel::user_with_selection_and_icon_assets(
             user,
             self.current_time_label(),
             self.user_home_entries(),
@@ -1190,6 +1190,9 @@ impl ShellSession {
             self.ascii_assets.clone(),
         )
         .with_viewport_offset(self.pages.home.home_viewport_offset);
+        model.editing = self.pages.home.editing;
+        model.edit_selected = self.pages.common.focused_component == ShellComponent::HomeEdit;
+        model.drop_target = self.pages.home.drag.as_ref().and_then(|drag| drag.target);
         let model = match self.home_mode {
             ShellHomeMode::Debug => model.with_debug_diagnostics(ui::DebugDiagnosticsViewModel {
                 tick_count: self.tick_count,

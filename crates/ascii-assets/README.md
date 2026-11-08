@@ -22,6 +22,7 @@ The default manifest contains 25 items: 20 text assets, 4 TOML art sets, and 1 c
 
 - Text assets contain only printable ASCII; TOML art sets use schema v1.
 - Images support GIF, JPEG, PNG, and WebP; paths must be relative paths within the asset root.
+- Home edit controls, drag guidance, saving errors, and F1 help ship in both English and Chinese.
 - Language resources live in `locales/<code>/`, containing `manifest.toml` and recursively read `.ftl` files.
 - Default image bytes are shared through a static asset table; validation, repair, and in-memory fallback reuse the same data.
 - Home resolves system-application icons from the existing built-in application artwork and images when no Home-specific icon is defined.

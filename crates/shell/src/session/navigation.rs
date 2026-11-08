@@ -622,6 +622,10 @@ impl ShellSession {
                 RoutedTarget::Global,
                 if key.has_non_shift_modifier() {
                     ShellCommand::RecordInput
+                } else if self.pages.home.drag.is_some() {
+                    ShellCommand::HomeCancelDrag
+                } else if self.pages.home.editing {
+                    ShellCommand::HomeEdit
                 } else {
                     ShellCommand::RequestExit
                 },
