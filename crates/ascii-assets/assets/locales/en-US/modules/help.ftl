@@ -129,3 +129,6 @@ ui-help-editor-settings = Adjust editor settings
 ui-help-logs-level = Filter by minimum level; All by default, Critical is highest
 ui-help-logs-folder = Open the UX logs root in Explorer
 ui-help-logs-source = Switch UX / Linux logs; Tab does not switch log views
+ui-help-home-edit = Edit Home / finish editing
+ui-help-home-reorder = Move selected icon in edit mode
+ui-help-home-edit-cancel = Cancel drag / finish editing

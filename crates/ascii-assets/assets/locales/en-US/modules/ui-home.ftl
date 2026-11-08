@@ -8,3 +8,6 @@ ui-home-unknown-user = Unknown user
 ui-home-logout-button = { "[" }Ctrl+L Logout]
 
 ui-home-current-user = User: { $user }
+ui-home-edit = Edit icons F2
+ui-home-edit-done = Done F2
+ui-home-editing = Editing Home · Drag icons to reorder

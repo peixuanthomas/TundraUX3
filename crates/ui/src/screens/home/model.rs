@@ -47,6 +47,9 @@ pub struct HomeViewModel {
     viewport_offset: usize,
     logout_visible: bool,
     logout_selected: bool,
+    pub editing: bool,
+    pub edit_selected: bool,
+    pub drop_target: Option<crate::components::GridDropTarget>,
 }
 
 impl PartialEq for HomeViewModel {
@@ -60,6 +63,9 @@ impl PartialEq for HomeViewModel {
             && self.viewport_offset == other.viewport_offset
             && self.logout_visible == other.logout_visible
             && self.logout_selected == other.logout_selected
+            && self.editing == other.editing
+            && self.edit_selected == other.edit_selected
+            && self.drop_target == other.drop_target
     }
 }
 
@@ -78,6 +84,9 @@ impl HomeViewModel {
             viewport_offset: 0,
             logout_visible: false,
             logout_selected: false,
+            editing: false,
+            edit_selected: false,
+            drop_target: None,
         }
     }
 
@@ -162,6 +171,9 @@ impl HomeViewModel {
             viewport_offset: 0,
             logout_visible: false,
             logout_selected: false,
+            editing: false,
+            edit_selected: false,
+            drop_target: None,
         }
     }
 

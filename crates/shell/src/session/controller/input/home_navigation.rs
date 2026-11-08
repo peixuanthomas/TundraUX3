@@ -220,6 +220,14 @@ impl ShellSession {
             )
         });
         entries.splice(1..1, tasks);
+        entries.sort_by_key(|entry| {
+            self.pages
+                .home
+                .order
+                .iter()
+                .position(|id| id == entry.icon_identity())
+                .unwrap_or(usize::MAX)
+        });
         entries
     }
 
@@ -282,6 +290,9 @@ impl ShellSession {
         index: usize,
         platform: &dyn Platform,
     ) {
+        if self.pages.home.editing {
+            return;
+        }
         let entries = self.user_home_entries();
         let Some(entry) = entries.get(index) else {
             return;
@@ -324,7 +335,7 @@ impl ShellSession {
         self.home_content_layout()?.entry_at(coordinates)
     }
 
-    fn home_content_layout(&self) -> Option<ui::HomeLayout> {
+    pub(in crate::session) fn home_content_layout(&self) -> Option<ui::HomeLayout> {
         let area = Rect::new(0, 0, self.terminal_size.0, self.terminal_size.1);
         let ui::ShellLayout::Full { main, .. } = self.shell_layout_for(area) else {
             return None;

@@ -928,6 +928,7 @@ pub(in crate::session) fn component_message(component: ShellComponent) -> i18n::
             i18n::msg!("shell-component-login-password-visibility")
         }
         ShellComponent::HomeLogout => i18n::msg!("shell-component-home-logout"),
+        ShellComponent::HomeEdit => i18n::msg!("ui-home-edit"),
         ShellComponent::SetupLanguage => i18n::msg!("shell-component-setup-language"),
         ShellComponent::SetupTimezone => i18n::msg!("shell-component-setup-timezone"),
         ShellComponent::SetupAdminUsername => i18n::msg!("shell-component-setup-admin-username"),

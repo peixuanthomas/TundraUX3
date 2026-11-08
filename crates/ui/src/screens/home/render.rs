@@ -5,7 +5,10 @@ use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::{HomeDisplayMode, HomeViewModel};
-use crate::components::{Button, ButtonEmphasis, Scrollbar, Surface};
+use crate::components::{
+    Button, ButtonEmphasis, GridDropTarget, PageAction, PageActionBar, Scrollbar, Surface,
+    grid_drop_target, render_grid_drop_indicator,
+};
 use crate::{RenderContext, TundraTheme};
 
 const HOME_SUMMARY_HEIGHT: u16 = 1;
@@ -21,6 +24,7 @@ pub struct HomeItemLayout {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HomeLayout {
+    pub content: Rect,
     pub items: Vec<HomeItemLayout>,
     pub scrollbar: Option<Rect>,
     pub visible_start: usize,
@@ -31,6 +35,15 @@ pub struct HomeLayout {
 }
 
 impl HomeLayout {
+    pub fn drop_target(&self, coordinates: (u16, u16)) -> Option<GridDropTarget> {
+        grid_drop_target(
+            self.content,
+            self.items.iter().map(|item| (item.index, item.area)),
+            self.scrollbar,
+            coordinates,
+        )
+    }
+
     pub fn entry_at(&self, coordinates: (u16, u16)) -> Option<usize> {
         self.items
             .iter()
@@ -168,6 +181,17 @@ fn render_user_main(
         }
     }
 
+    if home.editing
+        && let Some(target) = home.drop_target
+        && let Some(item) = layout
+            .items
+            .iter()
+            .find(|item| item.index == target.item_index)
+    {
+        render_grid_drop_indicator(frame, target.indicator(item.area), theme);
+    }
+    home_action_bar(home).render(frame, home_footer_area(area), context);
+
     if let Some(area) = layout.scrollbar {
         Scrollbar::new(
             layout.scroll_content_len,
@@ -197,10 +221,14 @@ fn render_home_account_summary(
     let fallback = i18n::tr!("ui-home-unknown-user");
     let user = home.current_user.as_deref().unwrap_or(&fallback);
     frame.render_widget(
-        Paragraph::new(Line::from(i18n::tr!("ui-home-current-user", user = user)))
-            .alignment(HorizontalAlignment::Left)
-            .style(theme.body_style())
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(Line::from(if home.editing {
+            i18n::tr!("ui-home-editing")
+        } else {
+            i18n::tr!("ui-home-current-user", user = user)
+        }))
+        .alignment(HorizontalAlignment::Left)
+        .style(theme.body_style())
+        .wrap(Wrap { trim: true }),
         Rect::new(summary.x, summary.y, user_width, summary.height),
     );
     if logout.width > 0 {
@@ -314,6 +342,7 @@ fn home_layout_for_entries(
             .collect()
     };
     HomeLayout {
+        content: home_entry_grid_area(main),
         items,
         scrollbar,
         visible_start: start,
@@ -432,4 +461,43 @@ fn rect_contains(rect: Rect, coordinates: (u16, u16)) -> bool {
         && coordinates.0 < right
         && coordinates.1 >= rect.y
         && coordinates.1 < bottom
+}
+
+fn home_action_bar(home: &HomeViewModel) -> PageActionBar {
+    let actions = if home.entries().is_empty() {
+        Vec::new()
+    } else {
+        vec![
+            PageAction::new(
+                "edit",
+                if home.editing {
+                    i18n::tr!("ui-home-edit-done")
+                } else {
+                    i18n::tr!("ui-home-edit")
+                },
+            )
+            .primary()
+            .latched(home.editing),
+        ]
+    };
+    PageActionBar::new("home")
+        .with_actions(actions)
+        .with_selected(home.edit_selected.then(|| "edit".into()))
+}
+
+fn home_footer_area(main: Rect) -> Rect {
+    Rect::new(
+        main.x.saturating_add(1),
+        main.bottom().saturating_sub(1),
+        main.width.saturating_sub(2),
+        u16::from(main.height > 0),
+    )
+}
+
+pub fn home_edit_area(main: Rect, home: &HomeViewModel) -> Option<Rect> {
+    home_action_bar(home)
+        .layout(home_footer_area(main))
+        .actions
+        .first()
+        .map(|action| action.area)
 }

@@ -197,26 +197,9 @@ pub struct LauncherConfirmationViewModel {
     pub confirm_selected: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LauncherDropSide {
-    Before,
-    After,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LauncherDropTarget {
-    pub item_index: usize,
-    pub side: LauncherDropSide,
-}
-
-impl LauncherDropTarget {
-    pub const fn insertion_index(self) -> usize {
-        match self.side {
-            LauncherDropSide::Before => self.item_index,
-            LauncherDropSide::After => self.item_index.saturating_add(1),
-        }
-    }
-}
+pub use crate::components::{
+    GridDropSide as LauncherDropSide, GridDropTarget as LauncherDropTarget,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherViewModel {
@@ -526,49 +509,12 @@ impl LauncherLayout {
     }
 
     pub fn large_icon_drop_target(&self, x: u16, y: u16) -> Option<LauncherDropTarget> {
-        if !contains(self.content, x, y)
-            || self.items.is_empty()
-            || self
-                .scrollbar
-                .is_some_and(|area| ScrollbarOrientation::VerticalRight.hit_test(area, (x, y)))
-        {
-            return None;
-        }
-
-        let items_on_row = self
-            .items
-            .iter()
-            .filter(|item| y >= item.area.y && y < item.area.bottom())
-            .collect::<Vec<_>>();
-        if let Some(last) = items_on_row.last() {
-            for item in &items_on_row {
-                let midpoint = item.area.x.saturating_add(item.area.width / 2);
-                if x < midpoint {
-                    return Some(LauncherDropTarget {
-                        item_index: item.index,
-                        side: LauncherDropSide::Before,
-                    });
-                }
-            }
-            return Some(LauncherDropTarget {
-                item_index: last.index,
-                side: LauncherDropSide::After,
-            });
-        }
-
-        let first = self.items.first()?;
-        let last = self.items.last()?;
-        Some(if y < first.area.y {
-            LauncherDropTarget {
-                item_index: first.index,
-                side: LauncherDropSide::Before,
-            }
-        } else {
-            LauncherDropTarget {
-                item_index: last.index,
-                side: LauncherDropSide::After,
-            }
-        })
+        crate::components::grid_drop_target(
+            self.content,
+            self.items.iter().map(|item| (item.index, item.area)),
+            self.scrollbar,
+            (x, y),
+        )
     }
 }
 
@@ -668,18 +614,7 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
             items
                 .iter()
                 .find(|item| item.index == target.item_index)
-                .map(|item| {
-                    let x = match target.side {
-                        LauncherDropSide::Before => item.area.x,
-                        LauncherDropSide::After => item.area.right().saturating_sub(1),
-                    };
-                    Rect::new(
-                        x,
-                        item.area.y,
-                        u16::from(item.area.width > 0),
-                        item.area.height,
-                    )
-                })
+                .map(|item| target.indicator(item.area))
         })
     } else {
         None
@@ -1003,22 +938,11 @@ pub fn render_launcher_content(
         }
     }
     if let Some(indicator) = layout.drop_indicator {
-        render_launcher_drop_indicator(frame, indicator, theme);
+        crate::components::render_grid_drop_indicator(frame, indicator, theme);
     }
     launcher_action_bar(model).render(frame, layout.footer, context);
     if let Some(scrollbar) = layout.scrollbar {
         render_launcher_scrollbar(frame, scrollbar, &layout, model, context);
-    }
-}
-
-fn render_launcher_drop_indicator(frame: &mut Frame<'_>, area: Rect, theme: &TundraTheme) {
-    for row in 0..area.height {
-        frame.render_widget(
-            Paragraph::new("┃")
-                .alignment(HorizontalAlignment::Left)
-                .style(theme.title_style()),
-            Rect::new(area.x, area.y.saturating_add(row), area.width, 1),
-        );
     }
 }
 

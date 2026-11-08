@@ -172,6 +172,29 @@ impl ShellSession {
         }
 
         match self.active_screen() {
+            ShellScreen::Home if key.key == InputKey::F(2) && key.phase == InputPhase::Press => (
+                RoutedTarget::Component(ShellComponent::Home),
+                ShellCommand::HomeEdit,
+            ),
+            ShellScreen::Home
+                if self.pages.common.focused_component == ShellComponent::HomeEdit
+                    && matches!(key.key, InputKey::Enter | InputKey::Char(' ')) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::HomeEdit),
+                    ShellCommand::HomeEdit,
+                )
+            }
+            ShellScreen::Home
+                if self.pages.home.editing
+                    && key.modifiers.shift
+                    && matches!(key.key, InputKey::Left | InputKey::Right) =>
+            {
+                (
+                    RoutedTarget::Component(ShellComponent::Home),
+                    ShellCommand::HomeMove(if key.key == InputKey::Left { -1 } else { 1 }),
+                )
+            }
             ShellScreen::Home
                 if self.pages.common.focused_component == ShellComponent::HomeLogout
                     && matches!(&key.key, InputKey::Enter | InputKey::Char(' ')) =>
@@ -380,6 +403,23 @@ impl ShellSession {
                     _ => {}
                 }
             }
+            if self.active_screen() == ShellScreen::Home && self.pages.home.drag.is_some() {
+                match mouse.kind {
+                    ui::MouseEventKind::Drag(PointerButton::Left) => {
+                        return (
+                            RoutedTarget::Component(ShellComponent::Home),
+                            ShellCommand::HomeDragUpdate(coordinates),
+                        );
+                    }
+                    ui::MouseEventKind::Up(PointerButton::Left) => {
+                        return (
+                            RoutedTarget::Component(ShellComponent::Home),
+                            ShellCommand::HomeDrop(coordinates),
+                        );
+                    }
+                    _ => {}
+                }
+            }
             if self.pages.launcher.launcher_drag.is_some() {
                 match mouse.kind {
                     ui::MouseEventKind::Drag(PointerButton::Left) => {
@@ -568,6 +608,9 @@ impl ShellSession {
             ui::MouseEventKind::Down(button @ PointerButton::Left) => {
                 if let Some(target) = hit_target {
                     let click = self.register_click(hit_target, coordinates, button, received_at);
+                    if target == ShellComponent::HomeEdit {
+                        return (RoutedTarget::Component(target), ShellCommand::HomeEdit);
+                    }
                     if target == ShellComponent::HomeLogout && button == PointerButton::Left {
                         return (RoutedTarget::Component(target), ShellCommand::Logout);
                     }

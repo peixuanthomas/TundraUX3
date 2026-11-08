@@ -1,6 +1,9 @@
 use super::*;
 use ratatui::{Terminal, backend::TestBackend};
 
+#[path = "editing_tests.rs"]
+mod editing_tests;
+
 fn state(size: (u16, u16)) -> ShellSession {
     let mut state =
         ShellSession::new_for_home_mode(ShellLaunchConfig::default(), size, ShellHomeMode::User);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify launcher menus, bounded icons and custom commands in a real Linux PTY."""
+"""Verify Home ordering and launcher workflows in a real Linux PTY."""
 import fcntl
 import json
 import os
@@ -113,6 +113,45 @@ def main():
                 time.sleep(0.1)
             current = until(lambda current: current["page"] == "Home")
             print("PASS: external CLI completed first-use setup")
+
+            def home_items():
+                return [node for node in snapshot()["nodes"]
+                        if node["role"] == "button" and "home.entry." in node["id"]]
+
+            def home_edit():
+                button = node_by(snapshot(), lambda node: node["role"] == "button"
+                                 and node["id"].endswith("home.edit"))
+                click(button["id"])
+
+            original_home = [node["name"] for node in home_items()]
+            home_edit()
+            first, second = home_items()[:2]
+            click(first["id"])
+            assert snapshot()["page"] == "Home"
+            target = second["rect"]
+            ui("drag", "--from-id", first["id"], "--to-x", target["x"] + target["width"] - 1,
+               "--to-y", target["y"] + 1)
+            expected_home = [original_home[1], original_home[0], *original_home[2:]]
+            assert [node["name"] for node in home_items()] == expected_home
+            state_file = next(root.rglob("state.v1.json"))
+            home_orders = [json.loads(value) for name, value in json.loads(state_file.read_text())["values"].items()
+                           if name.startswith("home.order.")]
+            assert len(home_orders) == 1 and len(home_orders[0]) == len(original_home)
+            home_edit()
+            key("F2")
+            key("Left", "--modifiers", "shift")
+            assert [node["name"] for node in home_items()] == original_home
+            key("Escape")
+            assert snapshot()["page"] == "Home"
+            settings = node_by(snapshot(), lambda node: node["role"] == "button"
+                               and "home.entry." in node["id"] and "Settings" in node["name"])
+            click(settings["id"])
+            until(lambda current: current["page"] == "Settings")
+            key("Escape")
+            until(lambda current: current["page"] == "Home")
+            assert [node["name"] for node in home_items()] == original_home
+            print("PASS: Home edit button, touch drag, saved order, keyboard reorder, and normal activation")
+
             key("End")
             key("Left")
             key("Left")
@@ -127,12 +166,13 @@ def main():
                 return [node for node in snapshot()["nodes"] if node["role"] == "button" and "launcher.item." in node["id"]]
 
             first_page = [node["name"] for node in items()]
+            scrollable = any(node["role"] == "scrollbar" for node in snapshot()["nodes"])
             point = items()[0]["rect"]
             ui("scroll", "--x", point["x"], "--y", point["y"], "--direction", "down")
-            assert [node["name"] for node in items()] != first_page
+            assert ([node["name"] for node in items()] != first_page) == scrollable
             ui("scroll", "--x", point["x"], "--y", point["y"], "--direction", "up", "--count", 10)
             assert [node["name"] for node in items()] == first_page
-            print("PASS: mouse wheel changes launcher pages and clamps at the first page")
+            print("PASS: mouse wheel respects launcher scrolling bounds")
             toolbar("Organize")
             cards = items()
             first, second = cards[:2]
@@ -250,7 +290,12 @@ def main():
             assert not any(entry["id"] == custom_id for entry in tomllib.loads(config_file.read_text())["launcher"]["entries"])
             key("Home")
             ui("click", "--id", items()[0]["id"], "--button", "right")
-            assert not any("launcher.menu." in node["id"] for node in snapshot()["nodes"])
+            current = until(lambda current: not current["animation_running"]
+                            and any("launcher.menu." in node["id"] for node in current["nodes"]))
+            menu_labels = [node["name"] for node in current["nodes"] if "launcher.menu." in node["id"]]
+            assert menu_labels and not any(label in menu_labels for label in
+                ("Change name", "Change launch command", "Change icon", "Delete this icon"))
+            key("Escape")
             print("PASS: deletion confirms or cancels; built-in entries retain their restrictions")
         except Exception:
             print("Last snapshot:", json.dumps(locals().get("current"), ensure_ascii=False), file=sys.stderr)

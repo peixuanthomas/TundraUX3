@@ -525,6 +525,12 @@ pub(super) enum LauncherPendingConfirmation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct HomeDragState {
+    pub(super) entry_id: String,
+    pub(super) target: Option<ui::components::GridDropTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LauncherDragState {
     pub(super) item_id: String,
     pub(super) target: Option<ui::LauncherDropTarget>,

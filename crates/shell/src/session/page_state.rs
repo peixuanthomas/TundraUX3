@@ -28,12 +28,20 @@ impl Default for CommonPageState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct HomePageState {
+    pub(super) editing: bool,
+    pub(super) order: Vec<String>,
+    pub(super) order_user_id: Option<String>,
+    pub(super) drag: Option<HomeDragState>,
     pub(super) selected_home_entry_index: usize,
     pub(super) home_viewport_offset: usize,
 }
 impl Default for HomePageState {
     fn default() -> Self {
         Self {
+            editing: false,
+            order: Vec::new(),
+            order_user_id: None,
+            drag: None,
             selected_home_entry_index: 0,
             home_viewport_offset: 0,
         }

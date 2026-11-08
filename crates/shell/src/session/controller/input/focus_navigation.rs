@@ -86,6 +86,9 @@ impl ShellSession {
                 ui::page_help_notification(&self.to_page_help_view_model(), self.help_scroll)
             })
         });
+        if content_screen == ShellScreen::Home {
+            self.load_home_order();
+        }
         let home_model = (content_screen == ShellScreen::Home).then(|| self.to_home_view_model());
         let clock_model =
             (content_screen == ShellScreen::Clock).then(|| self.to_clock_view_model());
@@ -274,6 +277,9 @@ impl ShellSession {
         }
 
         let mut order = vec![ShellComponent::Home];
+        if !self.user_home_entries().is_empty() {
+            order.push(ShellComponent::HomeEdit);
+        }
         if self.identity_backend != identity::IdentityBackend::Linux
             && self.app.auth_session().is_some()
         {

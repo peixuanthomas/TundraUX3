@@ -157,6 +157,8 @@ fn tab_and_shift_tab_route_to_focus_commands() {
     let mut state = ShellSession::new(debug_config(), (120, 40));
 
     state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::HomeEdit);
+    state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::ClockButton);
     assert_eq!(state.last_command(), Some(&ShellCommand::FocusNext));
 
@@ -1034,6 +1036,8 @@ fn keyboard_activation_opens_clock_and_escape_closes_it() {
         ShellSession::new_for_home_mode(build_default_config(), (120, 40), ShellHomeMode::User);
 
     state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::HomeEdit);
+    state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::ClockButton);
 
     state.apply_input(InputEvent::from_key_label("Enter"));
@@ -1373,6 +1377,8 @@ fn rect_center(area: Rect) -> (u16, u16) {
 }
 
 fn focus_clock_button(state: &mut ShellSession) {
+    state.apply_input(InputEvent::from_key_label("Tab"));
+    assert_eq!(state.focused_component(), ShellComponent::HomeEdit);
     state.apply_input(InputEvent::from_key_label("Tab"));
     assert_eq!(state.focused_component(), ShellComponent::ClockButton);
 }

@@ -16,6 +16,7 @@ mod dialog;
 mod empty_state;
 mod form_dialog;
 mod foundation;
+mod grid_reorder;
 mod list;
 mod metric_card;
 mod nav_rail;
@@ -47,6 +48,8 @@ pub use foundation::{
     ComponentEvent, ComponentId, ComponentState, ComponentTone, InputEvent, Key, KeyInput,
     KeyModifiers, MouseButton, MouseInput, MouseKind, contains_point,
 };
+pub use grid_reorder::{GridDropSide, GridDropTarget};
+pub(crate) use grid_reorder::{grid_drop_target, render_grid_drop_indicator};
 pub use list::{List, ListItem};
 pub use metric_card::MetricCard;
 pub use nav_rail::{NavRail, NavRailItem};

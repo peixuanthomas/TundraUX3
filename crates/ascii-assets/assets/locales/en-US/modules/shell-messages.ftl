@@ -655,3 +655,4 @@ shell-linux-account-refresh-error = { $operation } Could not refresh the account
 shell-linux-lock-password = Lock password login
 shell-linux-unlock-password = Unlock password login
 shell-linux-set-password-and-unlock = Set password and unlock
+shell-home-order-save-failed = Could not save Home icon order: { $error }
