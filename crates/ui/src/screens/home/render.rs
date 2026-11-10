@@ -12,6 +12,7 @@ use crate::components::{
 use crate::{RenderContext, TundraTheme};
 
 const HOME_SUMMARY_HEIGHT: u16 = 1;
+const HOME_ICON_HEIGHT: u16 = 4;
 const HOME_TILE_MAX_HEIGHT: u16 = 8;
 const HOME_TILE_MIN_HEIGHT: u16 = 3;
 const HOME_TILE_GAP: u16 = crate::SpringStyle::CARD_GAP;
@@ -116,19 +117,14 @@ fn render_user_main(
         let mut surface = Button::new(format!("home.entry.{index}"), entry.label.clone());
         surface.state.selected = index == home.selected_entry_index();
         surface.set_focused(index == home.selected_entry_index());
-        if tile.height < HOME_TILE_MIN_HEIGHT {
-            let mut compact = Button::new(format!("home.entry.{index}"), entry.label.clone());
-            compact.state.selected = index == home.selected_entry_index();
-            compact.set_focused(index == home.selected_entry_index());
-            compact.render_borderless_frame(frame, tile, theme);
+        let icon_area = home_entry_icon_area(tile);
+        if icon_area.is_empty() {
+            surface.render_borderless_frame(frame, tile, theme);
             continue;
         }
         surface.render_surface_frame(frame, tile, theme);
-        let icon_area = home_entry_icon_area(tile);
-        let rendered_graphic = icon_area.width > 0
-            && icon_area.height > 0
-            && icons
-                .is_some_and(|icons| icons.render_icon(entry.icon_identity(), frame, icon_area));
+        let rendered_graphic =
+            icons.is_some_and(|icons| icons.render_icon(entry.icon_identity(), frame, icon_area));
         if !rendered_graphic && let Some(icon) = home.home_icon_for_label(entry.icon_identity()) {
             for (row, line) in icon
                 .lines()
@@ -354,16 +350,18 @@ fn home_layout_for_entries(
 
 /// Returns the image allocation shared by Home's ASCII and graphical icons.
 ///
-/// The first four inner rows historically hold the ASCII icon. Terminal
-/// images use the same allocation and [`crate::PreparedEditorImage::render_centered`],
-/// matching Launcher icon centering without moving Home labels.
+/// Short cards use names only; icons need four rows, a name row, and borders.
+/// Image preparation and rendering both skip the empty allocation.
 pub fn home_entry_icon_area(tile: Rect) -> Rect {
     Rect::new(
         tile.x.saturating_add(1),
         tile.y.saturating_add(1),
         tile.width.saturating_sub(2),
-        // Always reserve a row for the application name on short tiles.
-        tile.height.saturating_sub(3).min(4),
+        if tile.height >= HOME_ICON_HEIGHT + 3 {
+            HOME_ICON_HEIGHT
+        } else {
+            0
+        },
     )
 }
 

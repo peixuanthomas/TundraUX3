@@ -25,14 +25,13 @@ fn undersized_runtime_keeps_the_page_draft_dialog_and_countdown() {
         .create_countdown("00 01 00", &state.app.snapshot().clock, now)
         .unwrap();
     state.clock_scheduler = Some(clock);
-    let requirement = ShellTerminalSizeRequirement {
-        width: 108,
-        height: 20,
-    };
+    let requirement = ShellTerminalSizeRequirement::from_assets(&state.ascii_assets);
 
-    assert!(resize_runtime_session(&mut state, (80, 24), &platform));
-    assert!(requirement.validate(state.terminal_size()).is_err());
-    state.apply_input_with_platform(InputEvent::Tick, &platform);
+    for size in [(107, 22), (108, 21), (108, 20), (80, 24)] {
+        assert!(resize_runtime_session(&mut state, size, &platform));
+        assert!(requirement.validate(state.terminal_size()).is_err());
+        state.apply_input_with_platform(InputEvent::Tick, &platform);
+    }
     assert_eq!(state.active_page_id(), page);
     assert_eq!(
         state.app.editor_state().unwrap().export_text(),
@@ -62,10 +61,8 @@ fn undersized_runtime_keeps_the_page_draft_dialog_and_countdown() {
 fn runtime_size_notice_renders_in_english_and_chinese_at_small_sizes() {
     let assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
     let theme = ui::TundraTheme::default_dark();
-    let requirement = ShellTerminalSizeRequirement {
-        width: 108,
-        height: 20,
-    };
+    let requirement =
+        ShellTerminalSizeRequirement::from_assets(&ui::RuntimeAsciiAssets::load_default().unwrap());
     for (language, expected) in [
         ("en-US", "Background tasks continue"),
         ("zh-CN", "后台任务继续运行"),
@@ -94,7 +91,7 @@ fn runtime_size_notice_renders_in_english_and_chinese_at_small_sizes() {
             }
             text.push('\n');
         }
-        assert!(text.contains("108x20"));
+        assert!(text.contains("108x22"));
         assert!(text.contains(expected), "{language}: {text}");
         for size in [(1, 1), (0, 0)] {
             let mut terminal =

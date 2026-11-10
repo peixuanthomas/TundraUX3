@@ -1,6 +1,6 @@
 # UI shell messages.
 
-ui-shell-tundraux-3-needs-at-least-50x12-terminal-cells = TundraUX 3 needs at least 50x12 terminal cells.
+ui-shell-minimum-terminal-size = TundraUX 3 needs at least { $width }x{ $height } terminal cells.
 ui-shell-help-button = F1 Help
 ui-shell-time-sync = Time Sync
 ui-shell-home = Home

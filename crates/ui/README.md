@@ -54,13 +54,13 @@ Selection dialogs keep this extended scrollbar hit area clear of option rows and
 
 ### Page controls
 
-- Home shows application names without letter-shortcut prefixes and uses the same system-application artwork and images as Launcher, while preserving Home-specific theme overrides.
+- Home shows application names without letter-shortcut prefixes and uses the same system-application artwork and images as Launcher, while preserving Home-specific theme overrides. Cards that cannot fit the complete four-row icon and application name show only the name, for both ASCII and image themes.
 - Explorer keeps Undo Move/Rename visible and disabled when no history is available; the context menu and platform-specific Ctrl/Cmd+Z shortcut use the same command. Save pickers keep the filename and Save/Cancel controls beside directory browsing; Tab moves between them, F10 saves, and Esc cancels.
 - The ordinary editor keeps Save, Undo, and Find visible. Its context menu reuses edit actions, enabled states, and keyboard navigation, stays inside the window, and preserves the selection; Rich Markdown keeps its selection-formatting menu.
 - Launcher search uses `TextInput` and shares its region between rendering and hit testing. Empty results show a search message; built-in and blank-area context menus reuse page actions while retaining restrictions on built-in entries.
 - Settings uses Tab/Shift+Tab across categories, the operating-system entry, and controls. Arrows switch categories when that region is focused and operate content otherwise; ordinary numeric options open the shared input dialog.
 - Update activity shows download progress for Release and adds compilation progress and live output for source builds. Hidden build panels take no space, keeping release notes close to the download meter.
-- Login keeps the password and submit controls visible at 108×20. First-time setup keeps completion with default appearance at the bottom of the visible area while its body scrolls; the administrator label identifies the role as belonging to Tundra.
+- The shared terminal minimum is 108×22, with all Home entries and the Command Line available at that size. Login keeps the password and submit controls visible. First-time setup keeps completion with default appearance at the bottom of the visible area while its body scrolls; the administrator label identifies the role as belonging to Tundra.
 
 ### Input and themes
 

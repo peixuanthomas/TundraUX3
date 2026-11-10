@@ -1624,7 +1624,7 @@ fn launcher_click_launches_only_after_matching_release_in_both_views() {
 }
 
 #[test]
-fn home_entry_single_click_expands_from_its_border_and_returns_to_it() {
+fn home_entry_single_click_expands_from_its_area_and_returns_to_it() {
     struct StorageFixtureGuard(PathBuf);
     impl Drop for StorageFixtureGuard {
         fn drop(&mut self) {
@@ -1774,7 +1774,12 @@ fn home_entry_single_click_expands_from_its_border_and_returns_to_it() {
                 .all(|position| terminal.backend().buffer()[position].symbol() == " ")
         );
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
-        assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), "╭");
+        let text = area
+            .positions()
+            .map(|position| terminal.backend().buffer()[position].symbol())
+            .collect::<String>();
+        assert!(text.contains(&i18n::tr!("shell-launcher")));
+        assert!(ui::home_entry_icon_area(area).is_empty());
     }
 }
 

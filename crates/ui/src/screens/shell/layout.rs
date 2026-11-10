@@ -1,7 +1,11 @@
 use ratatui::layout::Rect;
 
-pub const MIN_SHELL_TERMINAL_WIDTH: u16 = 50;
-pub const MIN_SHELL_TERMINAL_HEIGHT: u16 = 12;
+pub const MIN_SHELL_TERMINAL_WIDTH: u16 = 108;
+pub const MIN_SHELL_TERMINAL_HEIGHT: u16 = 22;
+
+// Compact chrome is a rendering fallback; Shell enforces the terminal minimum.
+const COMPACT_CHROME_WIDTH: u16 = 50;
+const COMPACT_CHROME_HEIGHT: u16 = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellLayout {
@@ -10,7 +14,7 @@ pub enum ShellLayout {
 }
 
 pub fn compute_shell_layout(area: Rect) -> ShellLayout {
-    if area.width < MIN_SHELL_TERMINAL_WIDTH || area.height < MIN_SHELL_TERMINAL_HEIGHT {
+    if area.width < COMPACT_CHROME_WIDTH || area.height < COMPACT_CHROME_HEIGHT {
         let header_height = area.height.min(1);
         return ShellLayout::Compact(Rect::new(
             area.x,

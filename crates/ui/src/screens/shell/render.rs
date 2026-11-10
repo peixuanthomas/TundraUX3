@@ -17,7 +17,11 @@ const STATUS_TIME_BUTTON_HORIZONTAL_CHROME: u16 = 4;
 const STATUS_TIME_BUTTON_MIN_WIDTH: u16 = 3;
 const STATUS_TIME_BUTTON_RESERVED_LEFT_WIDTH: u16 = 12;
 fn compact_terminal_message() -> String {
-    i18n::tr!("ui-shell-tundraux-3-needs-at-least-50x12-terminal-cells")
+    i18n::tr!(
+        "ui-shell-minimum-terminal-size",
+        width = super::MIN_SHELL_TERMINAL_WIDTH,
+        height = super::MIN_SHELL_TERMINAL_HEIGHT
+    )
 }
 
 pub fn render_exit_confirmation(
