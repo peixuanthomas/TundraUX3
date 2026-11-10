@@ -17,7 +17,7 @@ Build both Shell and CLI after updating the source so that the built-in command 
 
 The Vim build script downloads the pinned upstream source and places the engine and runtime beside Shell. Ordinary Cargo builds do not download Vim. See [bundled Vim](packaging/vim.md) for build dependencies, offline sources, and release procedures for all three platforms.
 
-The default interface needs at least **108 × 20** terminal cells; the built-in Command Line needs more vertical space. Mouse and touch input is forwarded by the host terminal.
+Home and the built-in Command Line share a minimum of **108 × 22** terminal cells. Home uses names only when complete icons do not fit, keeping every entry on one page at this size. Mouse and touch input is forwarded by the host terminal.
 
 ## Application architecture
 

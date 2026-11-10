@@ -66,13 +66,55 @@ fn draw_buttons(state: &mut ShellSession) {
 
 #[test]
 fn core_home_tasks_are_visible_and_open_without_launcher_at_minimum_size() {
-    for size in [(108, 20), (140, 40)] {
+    for (language, size) in ["en-US", "zh-CN"].into_iter().flat_map(|language| {
+        [
+            (ui::MIN_SHELL_TERMINAL_WIDTH, ui::MIN_SHELL_TERMINAL_HEIGHT),
+            (140, 40),
+        ]
+        .map(|size| (language, size))
+    }) {
         let mut state = state(size);
+        let assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+        state.language = Arc::new(
+            i18n::LanguageSnapshot::load(&assets, language, 1)
+                .unwrap()
+                .snapshot,
+        );
+        let _language = i18n::enter_snapshot(state.language.clone());
         draw_buttons(&mut state);
         let model = state.to_home_view_model();
-        let layout = ui::home_layout(main_area(&state), &model);
+        let main = main_area(&state);
+        let layout = ui::home_layout(main, &model);
         assert_eq!(layout.items.len(), model.entries().len());
         assert!(layout.scrollbar.is_none());
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal
+            .draw(|frame| {
+                ui::render_home_content(frame, main, &model, &ui::RenderContext::default(), None)
+            })
+            .unwrap();
+        let edit = ui::home_edit_area(main, &model).unwrap();
+        for item in &layout.items {
+            let label = &model.entries()[item.index].label;
+            let mut text = String::new();
+            for y in item.area.y..item.area.bottom() {
+                for x in item.area.x..item.area.right() {
+                    text.push_str(terminal.backend().buffer()[(x, y)].symbol());
+                }
+            }
+            assert!(
+                text.replace(' ', "").contains(&label.replace(' ', "")),
+                "{language}: {label}"
+            );
+            assert!(item.area.bottom() <= edit.y);
+            assert_eq!(
+                layout.entry_at((item.area.x, item.area.y)),
+                Some(item.index)
+            );
+            if size == (ui::MIN_SHELL_TERMINAL_WIDTH, ui::MIN_SHELL_TERMINAL_HEIGHT) {
+                assert!(ui::home_entry_icon_area(item.area).is_empty());
+            }
+        }
         for key in ["packages", "tasks", "logs", "users"] {
             let index = model
                 .entries()

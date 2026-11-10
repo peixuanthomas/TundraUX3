@@ -96,6 +96,40 @@ fn compact_threshold_keeps_escape_above_the_content() {
         }
     }
 }
+
+#[test]
+fn compact_notice_shows_the_shared_terminal_minimum_in_both_languages() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ascii-assets/assets");
+    for language in ["en-US", "zh-CN"] {
+        let language = i18n::LanguageSnapshot::load(&assets, language, 1)
+            .unwrap()
+            .snapshot;
+        let _language = i18n::enter_snapshot(std::sync::Arc::new(language));
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+        terminal
+            .draw(|frame| {
+                render_compact_home(
+                    frame,
+                    frame.area(),
+                    &chrome(80, 10),
+                    &TundraTheme::default(),
+                );
+            })
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains(&format!(
+            "{}x{}",
+            MIN_SHELL_TERMINAL_WIDTH, MIN_SHELL_TERMINAL_HEIGHT
+        )));
+        assert!(!text.contains("50x12"));
+    }
+}
 #[test]
 fn page_transition_projects_only_main_and_leaves_chrome_pixels_and_hit_regions_fixed() {
     let idle = RenderContext::default();

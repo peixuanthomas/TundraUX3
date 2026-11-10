@@ -118,6 +118,72 @@ fn home_cards_show_only_names_in_compact_and_full_layouts() {
 }
 
 #[test]
+fn short_home_cards_show_names_without_clipping_ascii_or_image_icons_after_resize() {
+    struct ImageRenderer(std::cell::Cell<usize>);
+    impl ui::HomeIconRenderer for ImageRenderer {
+        fn render_icon(&self, _: &str, frame: &mut ratatui::Frame<'_>, area: Rect) -> bool {
+            self.0.set(self.0.get() + 1);
+            frame.render_widget(ratatui::widgets::Paragraph::new("IMAGE"), area);
+            true
+        }
+    }
+
+    for label in ["Explorer", "文件管理器"] {
+        let home = HomeViewModel::user(
+            "User",
+            "Now",
+            vec![ShellEntry::new(label, "DESCRIPTION").with_icon_key("explorer")],
+        );
+        for graphical in [false, true] {
+            let images = ImageRenderer(std::cell::Cell::new(0));
+            let mut terminal = Terminal::new(TestBackend::new(108, 11)).unwrap();
+            for tile_height in [8, 6, 5, 4, 3, 2, 1, 7, 8] {
+                let height = tile_height + 3;
+                terminal.backend_mut().resize(108, height);
+                let main = Rect::new(0, 0, 108, height);
+                let tile = ui::home_layout(main, &home).items[0].area;
+                assert_eq!(tile.height, tile_height);
+                let calls = images.0.get();
+                terminal
+                    .draw(|frame| {
+                        ui::render_home_content(
+                            frame,
+                            main,
+                            &home,
+                            &ui::RenderContext::default(),
+                            graphical.then_some(&images as &dyn ui::HomeIconRenderer),
+                        )
+                    })
+                    .unwrap();
+                let text = (tile.y..tile.bottom())
+                    .map(|y| buffer_row_text(&terminal, tile.x, y, tile.width))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(text.replace(' ', "").contains(label));
+                if tile_height < 7 {
+                    assert!(ui::home_entry_icon_area(tile).is_empty());
+                    assert_eq!(images.0.get(), calls);
+                    assert!(!text.contains("IMAGE"));
+                    assert!(!text.contains("DESCRIPTION"));
+                    let icon = home.home_icon_for_label("explorer").unwrap();
+                    assert!(!text.contains(icon.lines()[0].trim()));
+                } else {
+                    assert_eq!(ui::home_entry_icon_area(tile).height, 4);
+                    if graphical {
+                        assert_eq!(images.0.get(), calls + 1);
+                        assert!(text.contains("IMAGE"));
+                    } else {
+                        for line in home.home_icon_for_label("explorer").unwrap().lines() {
+                            assert!(text.contains(line.trim()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn storage_free_debug_home_does_not_expose_logout_hit_area() {
     let home = HomeViewModel::debug(DebugDiagnosticsViewModel {
         tick_count: 0,

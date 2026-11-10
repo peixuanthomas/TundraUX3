@@ -1,6 +1,6 @@
 # UI shell messages.
 
-ui-shell-tundraux-3-needs-at-least-50x12-terminal-cells = TundraUX 3 至少需要 50x12 个终端单元格。
+ui-shell-minimum-terminal-size = TundraUX 3 至少需要 { $width }x{ $height } 个终端单元格。
 ui-shell-help-button = F1 帮助
 ui-shell-time-sync = 时间同步
 ui-shell-home = 主页

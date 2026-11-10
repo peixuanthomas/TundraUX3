@@ -112,6 +112,22 @@ def main():
                 time.sleep(0.1)
             current = until(lambda current: current["page"] == "Home")
             print("PASS: external CLI completed first-use setup")
+            home_names = {node["name"] for node in current["nodes"] if node["id"].startswith("page/home.entry.")}
+            assert home_names
+            for width, height in [(140, 48), (108, 22), (107, 22), (108, 21), (108, 22), (140, 40)]:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", height, width, 0, 0))
+                os.kill(child.pid, signal.SIGWINCH)
+                valid = width >= 108 and height >= 22
+                page = "Home" if valid else "terminal_size"
+                current = until(lambda current: current["width"] == width and current["height"] == height and current["page"] == page)
+                if valid:
+                    assert {node["name"] for node in current["nodes"] if node["id"].startswith("page/home.entry.")} == home_names
+                    text = "\n".join(current["lines"]).replace(" ", "")
+                    assert all(name.replace(" ", "") in text for name in home_names)
+                else:
+                    assert "108x22" in "\n".join(current["lines"]).replace(" ", "")
+                    assert not any(node["actionable"] for node in current["nodes"])
+            print("PASS: Home fits at 108x22; undersized terminals show the shared minimum and recover")
             packages = node_by(current, lambda node: node["role"] == "button" and "Packages" in node["name"])
             click(packages["id"], double=True)
 

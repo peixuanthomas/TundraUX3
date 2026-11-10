@@ -15,8 +15,8 @@ use crate::components::{CommandStatus, Scrollbar, Surface};
 use crate::{EditorImagePicker, RenderContext, TerminalImageCache, TundraTheme};
 
 /// Smallest outer terminal accepted by the embedded Command Line application.
-pub const MIN_COMMAND_LINE_TERMINAL_WIDTH: u16 = 108;
-pub const MIN_COMMAND_LINE_TERMINAL_HEIGHT: u16 = 22;
+pub const MIN_COMMAND_LINE_TERMINAL_WIDTH: u16 = crate::MIN_SHELL_TERMINAL_WIDTH;
+pub const MIN_COMMAND_LINE_TERMINAL_HEIGHT: u16 = crate::MIN_SHELL_TERMINAL_HEIGHT;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CommandLineColor {

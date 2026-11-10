@@ -12,19 +12,51 @@ fn terminal_size_requirement_covers_assets_shell_and_lockscreen() {
         ShellTerminalSizeRequirement::from_assets(&assets),
         ShellTerminalSizeRequirement {
             width: 108,
-            height: 20,
+            height: 22,
         }
     );
+    let minimum = (ui::MIN_SHELL_TERMINAL_WIDTH, ui::MIN_SHELL_TERMINAL_HEIGHT);
+    assert_eq!(
+        minimum,
+        (
+            ui::MIN_COMMAND_LINE_TERMINAL_WIDTH,
+            ui::MIN_COMMAND_LINE_TERMINAL_HEIGHT,
+        )
+    );
+    assert_eq!(
+        ShellTerminalSizeRequirement::from_assets(&assets).as_terminal_size(),
+        minimum
+    );
+    for size in [
+        minimum,
+        (minimum.0 - 1, minimum.1),
+        (minimum.0, minimum.1 - 1),
+    ] {
+        let valid = size == minimum;
+        assert_eq!(
+            ShellTerminalSizeRequirement::from_assets(&assets)
+                .validate(size)
+                .is_ok(),
+            valid
+        );
+        assert_eq!(
+            weathr::render::validate_terminal_size_with_minimum(
+                size.0, size.1, minimum.0, minimum.1
+            )
+            .is_ok(),
+            valid
+        );
+    }
 }
 
 #[test]
 fn terminal_size_validation_accepts_the_boundary_and_larger_sizes() {
     let requirement = ShellTerminalSizeRequirement {
         width: 108,
-        height: 20,
+        height: 22,
     };
 
-    assert!(requirement.validate((108, 20)).is_ok());
+    assert!(requirement.validate((108, 22)).is_ok());
     assert!(requirement.validate((160, 48)).is_ok());
 }
 
@@ -46,8 +78,8 @@ fn terminal_size_requirement_tracks_larger_assets_and_keeps_layout_floors() {
             height: 1,
         }),
         ShellTerminalSizeRequirement {
-            width: 70,
-            height: 20,
+            width: 108,
+            height: 22,
         }
     );
 }
@@ -56,10 +88,10 @@ fn terminal_size_requirement_tracks_larger_assets_and_keeps_layout_floors() {
 fn terminal_size_validation_rejects_each_undersized_dimension() {
     let requirement = ShellTerminalSizeRequirement {
         width: 108,
-        height: 20,
+        height: 22,
     };
 
-    for size in [(107, 20), (108, 19), (107, 19)] {
+    for size in [(107, 22), (108, 21), (107, 21)] {
         let error = requirement
             .validate(size)
             .expect_err("undersized terminal must be rejected");
@@ -72,16 +104,16 @@ fn terminal_size_validation_rejects_each_undersized_dimension() {
 fn checked_terminal_size_rejects_before_the_caller_can_render() {
     let requirement = ShellTerminalSizeRequirement {
         width: 108,
-        height: 20,
+        height: 22,
     };
 
-    let error = checked_terminal_size_with(requirement, || Ok((107, 20)))
+    let error = checked_terminal_size_with(requirement, || Ok((107, 22)))
         .expect_err("undersized detected terminal must be rejected");
     assert!(error.to_string().contains("resize"));
     assert_eq!(
-        checked_terminal_size_with(requirement, || Ok((108, 20)))
+        checked_terminal_size_with(requirement, || Ok((108, 22)))
             .expect("boundary terminal should pass"),
-        (108, 20)
+        (108, 22)
     );
 }
 
@@ -89,7 +121,7 @@ fn checked_terminal_size_rejects_before_the_caller_can_render() {
 fn checked_terminal_size_does_not_replace_detection_failures_with_a_fallback() {
     let requirement = ShellTerminalSizeRequirement {
         width: 108,
-        height: 20,
+        height: 22,
     };
     let error = checked_terminal_size_with(requirement, || {
         Err(io::Error::new(io::ErrorKind::NotConnected, "no terminal"))
@@ -150,7 +182,7 @@ fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
     }
     let requirement = ShellTerminalSizeRequirement {
         width: 108,
-        height: 20,
+        height: 22,
     };
     let error = requirement.validate((80, 18)).unwrap_err();
     let english = i18n::LanguageSnapshot::load(&root.0, "en-US", 1)
@@ -165,7 +197,7 @@ fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
     );
     assert_eq!(
         error.to_string(),
-        "terminal is too small (80x18); resize it to at least 108x20 and try again"
+        "terminal is too small (80x18); resize it to at least 108x22 and try again"
     );
     {
         let chinese = i18n::LanguageSnapshot::load(&root.0, "zh-CN", 2)
@@ -174,11 +206,11 @@ fn terminal_size_ui_localizes_while_diagnostics_and_raw_causes_stay_stable() {
         let _chinese = i18n::enter_snapshot(Arc::new(chinese));
         assert_eq!(
             error.localized_message().render_current(),
-            "终端尺寸过小（80x18）；请将终端调整为至少 108x20 后重试"
+            "终端尺寸过小（80x18）；请将终端调整为至少 108x22 后重试"
         );
         assert_eq!(
             error.to_string(),
-            "terminal is too small (80x18); resize it to at least 108x20 and try again"
+            "terminal is too small (80x18); resize it to at least 108x22 and try again"
         );
         let detected = checked_terminal_size_with(requirement, || {
             Err(io::Error::new(

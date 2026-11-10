@@ -290,11 +290,11 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
 
     # Read the button from the resized frame: common actions can move it.
     repaint_offset = len(output)
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 108, 0, 0))
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 22, 108, 0, 0))
     os.kill(child.pid, signal.SIGWINCH)
     if not wait_for_output(master, output, b"More actions", child, 5.0, repaint_offset, ignore_spaces=True):
         raise SystemExit("Network did not repaint its actions after resizing:\n" + output_diagnostic(output[repaint_offset:]))
-    more_x, more_y = painted_label_position(bytes(output[repaint_offset:]), "More actions", 108, 20)
+    more_x, more_y = painted_label_position(bytes(output[repaint_offset:]), "More actions", 108, 22)
     press_more = f"\x1b[<0;{more_x};{more_y}M".encode()
     release_more = f"\x1b[<0;{more_x};{more_y}m".encode()
     offset = len(output)
@@ -324,11 +324,11 @@ def check_management_menu(master: int, slave: int, output: bytearray, child: sub
         read_available(master, output, 0.05)
         frame = bytes(output[repaint_offset:])
         try:
-            painted_label_position(frame, "Search:", 108, 20)
+            painted_label_position(frame, "Search:", 108, 22)
         except SystemExit:
             continue
         try:
-            painted_label_position(frame, "TCP port", 108, 20)
+            painted_label_position(frame, "TCP port", 108, 22)
         except SystemExit:
             break
     else:
