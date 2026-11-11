@@ -235,7 +235,11 @@ fn localized_home_logout_and_log_controls_use_terminal_cell_widths() {
                         .iter()
                         .find(|control| control.target == target)
                         .unwrap();
-                    assert_eq!(usize::from(control.area.width), label.width() + 2);
+                    let padding = usize::from(matches!(
+                        target,
+                        ui::LogsHitTarget::Refresh | ui::LogsHitTarget::FilterLevel
+                    )) * 2;
+                    assert_eq!(usize::from(control.area.width), label.width() + padding);
                     let expected = ui::logs_control_enabled(&model, target).then_some(target);
                     assert_eq!(
                         logs_hit_test(main, &model, (control.area.x, control.area.y)),

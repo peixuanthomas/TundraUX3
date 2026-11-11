@@ -309,12 +309,17 @@ fn package_actions_remain_visible_in_real_shell_content_areas() {
                 .collect(),
             ..Default::default()
         };
-        for (width, height) in [(50, 12), (108, 20), (140, 40)] {
+        for (width, height, compact) in [
+            (50, 11, true),
+            (50, 12, false),
+            (108, 20, false),
+            (140, 40, false),
+        ] {
             let bounds = Rect::new(0, 0, width, height);
             let main = ShellFrameLayout::new(bounds, None, &context).main;
             let layout = management_layout(main, &model);
             assert_eq!(layout.actions.len(), 8);
-            assert_eq!(layout.compact_actions, width == 50);
+            assert_eq!(layout.compact_actions, compact);
             if width != 50 {
                 assert!(!layout.details_text.is_empty() && !layout.list_rows.is_empty());
             }

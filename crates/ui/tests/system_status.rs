@@ -217,9 +217,12 @@ fn dashboard_partial_scroll_clips_cards_without_overlap() {
 #[test]
 fn too_short_uses_empty_state_but_keeps_footer() {
     let m = model();
-    let l = system_status_layout(Rect::new(0, 0, 80, 8), &m);
-    assert!(l.empty_canvas);
-    assert!(l.refresh_button.width > 0);
+    for (height, empty) in [(7, true), (8, false)] {
+        let l = system_status_layout(Rect::new(0, 0, 80, height), &m);
+        assert_eq!(l.empty_canvas, empty);
+        assert_eq!(l.canvas.height, height - 3);
+        assert!(!l.refresh_button.is_empty());
+    }
 }
 
 #[test]
@@ -296,7 +299,7 @@ fn add_picker_viewport_hit_rows_match_absolute_rendered_items() {
                 enabled: true,
             })
             .collect(),
-        selected: 5,
+        selected: 9,
     });
     let main = full_main(100, 12);
     let l = system_status_layout(main, &m);
@@ -306,13 +309,13 @@ fn add_picker_viewport_hit_rows_match_absolute_rendered_items() {
             .iter()
             .map(|row| row.index)
             .collect::<Vec<_>>(),
-        vec![2, 3, 4, 5]
+        vec![2, 3, 4, 5, 6, 7, 8, 9]
     );
     assert!(!l.picker_items.iter().any(|row| row.index < 2));
-    let temperature = l.picker_items.iter().find(|row| row.index == 5).unwrap();
+    let selected = l.picker_items.iter().find(|row| row.index == 9).unwrap();
     assert_eq!(
-        system_status_hit_test(&l, (temperature.area.x, temperature.area.y)),
-        Some(SystemStatusHitTarget::PickerItem(5))
+        system_status_hit_test(&l, (selected.area.x, selected.area.y)),
+        Some(SystemStatusHitTarget::PickerItem(9))
     );
     assert!(render(100, 12, &m).contains("Temperature"));
 }

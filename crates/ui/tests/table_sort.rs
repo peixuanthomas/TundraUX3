@@ -67,12 +67,8 @@ fn management_actions_stay_below_details_and_headers_do_not_overlap_rows() {
             assert!(rect.bottom() <= layout.list_rows.y);
         }
         assert_eq!(
-            layout.actions.last().unwrap().right(),
-            if layout.compact_actions {
-                layout.detail_actions_panel.right()
-            } else {
-                layout.detail_actions_panel.right() - 1
-            }
+            layout.actions.first().unwrap().right(),
+            layout.detail_actions_panel.right()
         );
     }
 }

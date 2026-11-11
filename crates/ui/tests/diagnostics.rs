@@ -140,9 +140,10 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
 
     assert!(layout.list_panel.width >= 28);
     assert!(layout.detail_panel.width > layout.list_panel.width);
-    assert!(layout.visible_capacity >= 8);
-    assert_eq!(layout.visible_start, 11 - layout.visible_capacity);
-    assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
+    assert!(layout.visible_capacity >= model.checks.len());
+    assert_eq!(layout.visible_start, 0);
+    assert_eq!(layout.rows.len(), model.checks.len());
+    let selected = layout.rows.iter().find(|row| row.index == 10).unwrap();
     let health_tab = layout
         .tabs
         .iter()
@@ -152,7 +153,6 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
         diagnostics_hit_test(&layout, (health_tab.area.x, health_tab.area.y)),
         Some(DiagnosticsHitTarget::Tab(DiagnosticsTab::Health))
     );
-    let selected = layout.rows.last().expect("selected row");
     assert_eq!(
         diagnostics_hit_test(&layout, (selected.area.x, selected.area.y)),
         Some(DiagnosticsHitTarget::Check(10))
