@@ -44,6 +44,8 @@ fn rainbow_demo_animates_accepts_keyboard_and_touch_and_restores_terminal() {
         command.args(["debug", "test-rainbow-text"]);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        // This color test must not inherit the runner's noninteractive policy.
+        command.env("NO_COLOR", "");
         for variable in [
             "XDG_CONFIG_HOME",
             "XDG_DATA_HOME",
