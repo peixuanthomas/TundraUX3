@@ -328,10 +328,7 @@ pub(super) fn user_management_action_bar(
 }
 
 pub(super) fn user_management_action_label(action: &UserManagementActionViewModel) -> String {
-    action.shortcut.map_or_else(
-        || action.label.clone(),
-        |key| format!("{} {}", key.to_ascii_uppercase(), action.label),
-    )
+    action.button_label()
 }
 
 fn user_management_page_action_layouts(

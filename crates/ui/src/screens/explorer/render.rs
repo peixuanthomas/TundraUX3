@@ -654,7 +654,7 @@ pub fn render_explorer_overlay(
                         frame,
                         control.area,
                         "explorer.options.close",
-                        format!("[Esc {}]", options.close_label),
+                        format!("Esc {}", options.close_label),
                         model.overlay_selection == options.options.len(),
                         control.enabled,
                         theme,
@@ -706,7 +706,7 @@ pub fn render_explorer_overlay(
                     if control.control == ExplorerOverlayControl::PropertiesPermissions {
                         i18n::tr!("permissions-edit")
                     } else {
-                        format!("[Esc {}]", properties.close_label)
+                        format!("Esc {}", properties.close_label)
                     },
                     (control.control == ExplorerOverlayControl::PropertiesPermissions
                         && model.overlay_selection == 0)

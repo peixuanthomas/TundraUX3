@@ -465,11 +465,11 @@ fn form_action_sizes(form: &ManagementForm, width: u16) -> (u16, u16, u16, u16, 
     let submit_height = if submit == 0 {
         0
     } else {
-        management_wrapped_lines(&format!("[{}]", form_submit_text(form)), submit)
+        management_wrapped_lines(&form_submit_text(form), submit)
             .len()
             .min(usize::from(u16::MAX)) as u16
     };
-    let cancel_height = management_wrapped_lines(&format!("[{}]", form_cancel_text(form)), cancel)
+    let cancel_height = management_wrapped_lines(&form_cancel_text(form), cancel)
         .len()
         .min(usize::from(u16::MAX)) as u16;
     let rows = if submit > 0 && submit.saturating_add(1).saturating_add(cancel) > width {
@@ -2159,7 +2159,7 @@ pub fn render_management_overlay(
                         .collect::<Vec<_>>(),
                 )
                 .style(if form.selected == *index {
-                    theme.title_style()
+                    theme.title_style().fg(theme.accent_color)
                 } else {
                     theme.body_style()
                 }),
@@ -2267,7 +2267,7 @@ pub fn render_management_overlay(
         let action = &actions[*index];
         let mut button = Button::new(
             management_form_control_id(form, &action.id),
-            management_wrapped_lines(&format!("[{}]", action.label()), area.width).join("\n"),
+            management_wrapped_lines(&action.label(), area.width).join("\n"),
         )
         .with_bracketed_label(false);
         button.set_disabled(action.disabled);

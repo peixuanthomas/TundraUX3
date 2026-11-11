@@ -185,8 +185,8 @@ impl UserManagementActionViewModel {
 
     pub fn button_label(&self) -> String {
         match self.shortcut {
-            Some(shortcut) => format!("[{} {}]", shortcut.to_ascii_uppercase(), self.label),
-            None => format!("[{}]", self.label),
+            Some(shortcut) => format!("{} {}", shortcut.to_ascii_uppercase(), self.label),
+            None => self.label.clone(),
         }
     }
 }
