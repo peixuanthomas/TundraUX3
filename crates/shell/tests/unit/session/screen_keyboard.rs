@@ -12,6 +12,49 @@ fn session() -> ShellSession {
 }
 
 #[test]
+fn closed_keyboard_entry_uses_status_row_without_covering_page_content() {
+    for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+        let mut state = session();
+        state.terminal_size = (width, height);
+        let bounds = Rect::new(0, 0, width, height);
+        let layout = state.input_keyboard_content_layout(ui::ShellFrameLayout::new(
+            bounds,
+            state.status_time_button_label().as_deref(),
+            &ui::RenderContext::default(),
+        ));
+        let launcher = state.keyboard_launcher_area().unwrap();
+        assert_eq!(layout.keyboard_launcher, Some(launcher));
+        assert_eq!(launcher.y, height - 1);
+        assert!(layout.main.intersection(launcher).is_empty());
+        assert_eq!(layout.main, Rect::new(0, 1, width, height - 2));
+        assert!(layout.status_message.unwrap().right() <= launcher.x);
+        if let Some(time) = layout.time_button {
+            assert_eq!(launcher.right(), time.x);
+        }
+        state.toggle_input_keyboard();
+        state.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+        let shown = state.input_keyboard_content_layout(ui::ShellFrameLayout::new(
+            bounds,
+            state.status_time_button_label().as_deref(),
+            &ui::RenderContext::default(),
+        ));
+        assert_eq!(shown.main.y, 1);
+        assert_eq!(
+            shown.main.bottom(),
+            state.input_keyboard_layout().keyboard.y
+        );
+        assert!(shown.status_message.is_none());
+        assert!(shown.time_button.is_none());
+        assert!(
+            shown
+                .main
+                .intersection(state.keyboard_launcher_area().unwrap())
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn native_forms_accept_virtual_keys_spaces_and_safe_multilingual_paste() {
     for screen in [
         ShellScreen::Login,

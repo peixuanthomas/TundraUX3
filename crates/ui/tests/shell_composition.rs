@@ -43,7 +43,7 @@ fn header_keeps_help_and_back_without_a_tasks_entry() {
     terminal
         .draw(|frame| render_shell_chrome(frame, &layout, &model, &context))
         .unwrap();
-    assert!(!row(&terminal, 1).contains("Tasks"));
+    assert!(!row(&terminal, 0).contains("Tasks"));
     let collapsed = layout.with_input_keyboard(Rect::new(0, 20, 120, 20), 1000);
     assert_eq!(collapsed.help_button.unwrap().height, 1);
     assert_eq!(collapsed.back_button.unwrap().height, 1);
@@ -86,7 +86,7 @@ fn compact_threshold_keeps_escape_above_the_content() {
             assert_eq!(layout.main.y, 1);
             assert_eq!(layout.main.height, height - 1);
             assert!(row(&terminal, 0).contains("TundraUX"));
-            assert!(row(&terminal, 0).contains("[◀ Esc]"));
+            assert!(row(&terminal, 0).contains("◀ Esc"));
             assert!(row(&terminal, layout.main.y).contains("PAGE CONTENT"));
             assert_eq!(
                 layout.back_button.unwrap().intersection(layout.main).area(),
@@ -131,7 +131,7 @@ fn compact_notice_shows_the_shared_terminal_minimum_in_both_languages() {
     }
 }
 #[test]
-fn page_transition_projects_only_main_and_leaves_chrome_pixels_and_hit_regions_fixed() {
+fn page_transition_keeps_main_chrome_pixels_and_hit_regions_fixed() {
     let idle = RenderContext::default();
     let mut moving = idle.clone();
     moving.transitions.screen = Some(MotionTransition {
@@ -145,16 +145,14 @@ fn page_transition_projects_only_main_and_leaves_chrome_pixels_and_hit_regions_f
     let model = chrome(80, 24);
     let (before, base) = render(&model, &idle);
     let (during, shifted) = render(&model, &moving);
-    assert_eq!(shifted.main.y, base.main.y + 1);
-    assert_eq!(shifted.main.height, base.main.height - 1);
+    assert_eq!(shifted.main, base.main);
     assert_eq!(shifted.time_button, base.time_button);
     assert_eq!(shifted.back_button, base.back_button);
     assert_eq!(shifted.status_message, base.status_message);
-    for y in [0, 1, 2, 21, 22, 23] {
+    for y in [0, 23] {
         assert_eq!(row(&before, y), row(&during, y));
     }
     assert!(row(&during, shifted.main.y).contains("PAGE CONTENT"));
-    assert!(!row(&during, base.main.y).contains("PAGE CONTENT"));
 }
 
 #[test]
@@ -172,8 +170,8 @@ fn editor_screen_content_uses_the_shared_main_without_erasing_shell_chrome() {
             render_shell_chrome(frame, &layout, &model, &context);
         })
         .unwrap();
-    assert!(row(&terminal, 1).contains("TundraUX 3"));
-    assert!(row(&terminal, 22).contains("09:30"));
+    assert!(row(&terminal, 0).contains("TundraUX 3"));
+    assert!(row(&terminal, 23).contains("09:30"));
     assert!(
         (layout.main.y..layout.main.bottom())
             .any(|y| row(&terminal, y).contains("editor content marker"))
@@ -441,10 +439,102 @@ fn task_status_entry_stays_separate_from_help_back_and_keyboard_content() {
         terminal
             .draw(|frame| render_shell_chrome(frame, &layout, &model, &context))
             .unwrap();
-        assert!(row(&terminal, 1).replace(' ', "").contains("任务·待批准"));
+        assert!(row(&terminal, 0).replace(' ', "").contains("任务·待批准"));
         let collapsed =
             layout.with_input_keyboard(Rect::new(0, size.1 / 2, size.0, size.1 / 2), 1000);
         assert_eq!(collapsed.tasks_button.unwrap().height, 1);
         assert!(collapsed.tasks_button.unwrap().bottom() <= collapsed.main.y);
+    }
+}
+
+#[test]
+fn single_line_bars_leave_the_full_main_and_keep_control_regions_separate() {
+    for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+        for tasks in [
+            "任务 · 待批准".to_string(),
+            "任务状态与等待批准的工作".repeat(30),
+        ] {
+            let mut model = chrome(width, height);
+            model.tasks_label = Some(tasks);
+            let theme = TundraTheme::default();
+            let buttons = components::ButtonFrame::new(None, None, &theme);
+            let mut context =
+                RenderContext::from_theme(&theme, Default::default(), Default::default());
+            context.buttons = Some(buttons.clone());
+            let layout = ShellFrameLayout::new(
+                Rect::new(0, 0, width, height),
+                model.status.time_button_label.as_deref(),
+                &context,
+            )
+            .with_help_button(true)
+            .with_tasks_button(model.tasks_label.as_deref());
+            assert_eq!(layout.main, Rect::new(0, 1, width, height - 2));
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| render_shell_chrome(frame, &layout, &model, &context))
+                .unwrap();
+            let regions = buttons.regions();
+            let areas = [
+                ("shell.tasks", layout.tasks_button.unwrap()),
+                ("shell.help", layout.help_button.unwrap()),
+                ("shell.back", layout.back_button.unwrap()),
+                ("shell.status", layout.status_message.unwrap()),
+                ("shell.status.time", layout.time_button.unwrap()),
+            ];
+            for (index, (id, area)) in areas.iter().enumerate() {
+                assert_eq!(area.height, 1);
+                assert_eq!(area.intersection(layout.bounds), *area);
+                assert!(area.intersection(layout.main).is_empty());
+                assert!(
+                    regions
+                        .iter()
+                        .any(|region| region.id.as_str() == *id && region.area == *area)
+                );
+                for (_, other) in areas.iter().skip(index + 1) {
+                    assert!(area.intersection(*other).is_empty());
+                }
+            }
+            assert!(row(&terminal, 0).contains("Esc"));
+            assert!(row(&terminal, height - 1).contains("09:30"));
+        }
+    }
+}
+
+#[test]
+fn keyboard_entry_shares_status_row_and_sliding_keyboard_does_not_reserve_old_chrome() {
+    for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+        let bounds = Rect::new(0, 0, width, height);
+        let context = RenderContext::default();
+        let layout = ShellFrameLayout::new(bounds, Some("09:30"), &context)
+            .with_help_button(true)
+            .with_keyboard_launcher(true);
+        let launcher = layout.keyboard_launcher.unwrap();
+        assert_eq!(launcher.y, height - 1);
+        assert_eq!(launcher.right(), layout.time_button.unwrap().x);
+        assert_eq!(layout.status_message.unwrap().right(), launcher.x);
+        assert_eq!(layout.main, Rect::new(0, 1, width, height - 2));
+        assert_eq!(layout.with_keyboard_launcher(true), layout);
+        let hidden = screen_keyboard_input_layout(bounds, false, false);
+        assert_eq!(layout.with_input_keyboard(hidden.keyboard, 0), layout);
+        for visibility in [1, 100, 500, 999, 1_000] {
+            let keyboard = screen_keyboard_input_layout_with_visibility(
+                bounds,
+                true,
+                visibility,
+                false,
+                Default::default(),
+            );
+            let shown = layout.with_input_keyboard(keyboard.keyboard, visibility);
+            assert_eq!(shown.main.y, 1);
+            assert_eq!(shown.main.bottom(), keyboard.keyboard.y);
+            assert!(shown.status_message.is_none());
+            assert!(shown.time_button.is_none());
+            assert!(shown.keyboard_launcher.is_none());
+            for button in [shown.back_button, shown.help_button].into_iter().flatten() {
+                assert_eq!(button.height, 1);
+                assert!(button.bottom() <= shown.main.y);
+            }
+            assert_eq!(shown.modal_area(), shown.main);
+        }
     }
 }

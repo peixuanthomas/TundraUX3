@@ -88,7 +88,7 @@ pub(in crate::session) fn build_shell_hit_map(
                 },
             });
         }
-        ui::ShellLayout::Full { top, main, status } => {
+        ui::ShellLayout::Full { top, main, .. } => {
             regions.push(ShellHitRegion {
                 component: ShellComponent::TopBar,
                 area: top,
@@ -307,11 +307,13 @@ pub(in crate::session) fn build_shell_hit_map(
                     }
                 }
             }
-            regions.push(ShellHitRegion {
-                component: ShellComponent::StatusBar,
-                area: status,
-                layer: ShellHitLayer::ShellChrome,
-            });
+            if let Some(area) = frame_layout.status_message {
+                regions.push(ShellHitRegion {
+                    component: ShellComponent::StatusBar,
+                    area,
+                    layer: ShellHitLayer::ShellChrome,
+                });
+            }
             if clock_button_active_for_screen(content_screen)
                 && let Some(button) = frame_layout.time_button
             {
