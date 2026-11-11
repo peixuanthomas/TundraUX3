@@ -36,3 +36,41 @@ pub fn morph_surface(source: &Buffer, area: Rect) -> Buffer {
     }
     result
 }
+
+/// A light fixed-layout transition; text and image protocol cells remain intact.
+pub fn light_surface(source: &Buffer, amount: u16) -> Buffer {
+    use animate::Interpolate;
+    use ratatui::{buffer::CellDiffOption, style::Color};
+    let mut result = source.clone();
+    for cell in &mut result.content {
+        if cell.diff_option == CellDiffOption::Skip {
+            continue;
+        }
+        if let Color::Rgb(r, g, b) = cell.bg {
+            let raised = Color::Rgb(
+                r.saturating_add(8),
+                g.saturating_add(8),
+                b.saturating_add(8),
+            );
+            cell.bg = Color::lerp(&raised, &cell.bg, f32::from(amount.min(1_000)) / 1_000.0);
+        }
+    }
+    result
+}
+
+/// Fade a closing surface into the live underlay without changing its geometry.
+pub fn fade_surface(source: &Buffer, underlay: &Buffer, amount: u16) -> Buffer {
+    use animate::Interpolate;
+    use ratatui::buffer::CellDiffOption;
+    let mut result = source.clone();
+    let alpha = f32::from(amount.min(1_000)) / 1_000.0;
+    for position in source.area.intersection(underlay.area).positions() {
+        let cell = &mut result[position];
+        if cell.diff_option != CellDiffOption::Skip {
+            let backdrop = &underlay[position];
+            cell.fg = ratatui::style::Color::lerp(&backdrop.bg, &cell.fg, alpha);
+            cell.bg = ratatui::style::Color::lerp(&backdrop.bg, &cell.bg, alpha);
+        }
+    }
+    result
+}

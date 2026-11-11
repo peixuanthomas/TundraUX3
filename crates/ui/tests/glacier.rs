@@ -39,7 +39,7 @@ fn pure_motion_schedule_covers_start_mid_end_interruption_reversal_and_idle() {
             && start.focus_transition
             && start.overlay_transition
     );
-    assert_eq!(start.next_redraw_in, Duration::from_nanos(33_333_334));
+    assert_eq!(start.next_redraw_in, ui::ANIMATION_FRAME_INTERVAL);
     let dialog_start = start.transitions.overlay.expect("dialog transition");
     assert_eq!(dialog_start.kind, MotionTransitionKind::Dialog);
     assert_eq!(dialog_start.direction, MotionDirection::Entering);
@@ -178,7 +178,7 @@ fn ranged_motion_is_continuous_and_overlay_exit_projection_is_endpoint_neutral()
             )
         };
         assert_eq!(context(0).page_area(area), area);
-        assert_eq!(context(90).page_area(area), Rect::new(0, 1, 80, 23));
+        assert_eq!(context(90).page_area(area), area);
         assert_eq!(context(500).page_area(area), area);
     }
 }
@@ -207,7 +207,7 @@ fn animation_speed_scales_transition_duration_and_effect_delta() {
     assert!(transition(220, 50).active);
     assert_eq!(
         MotionTimings::resolve(frame(0, 200), MotionTimings::PAGE),
-        Duration::from_millis(110)
+        Duration::from_millis(80)
     );
     assert_eq!(frame(0, 200).scaled_delta(), Duration::from_millis(32));
     assert_eq!(
@@ -217,7 +217,7 @@ fn animation_speed_scales_transition_duration_and_effect_delta() {
 }
 
 #[test]
-fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
+fn replacement_interaction_is_available_during_every_lifecycle_phase() {
     let frame = |millis| MotionFrame {
         now: Duration::from_millis(millis),
         delta: Duration::ZERO,
@@ -233,7 +233,7 @@ fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
         frame(10),
     );
     assert_eq!((start.progress, start.phase_progress), (800, 0));
-    assert!(!start.interaction_ready());
+    assert!(start.interaction_ready());
 
     let before = ui::MotionTransition {
         phase_progress: 499,
@@ -243,7 +243,7 @@ fn replacement_interaction_uses_lifecycle_phase_not_carried_visible_progress() {
         phase_progress: 500,
         ..start
     };
-    assert!(!before.interaction_ready());
+    assert!(before.interaction_ready());
     assert!(threshold.interaction_ready());
 
     let reduced = schedule_motion_range(

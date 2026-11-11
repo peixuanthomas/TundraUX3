@@ -7,8 +7,8 @@ use std::time::Duration;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, BorderType};
 
-/// Animated frames target 30 FPS; input-driven redraws keep their own deadlines.
-pub const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(33_333_334);
+/// Active UI transitions target 60 FPS; idle frames remain event-driven.
+pub const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 
 /// Shared compact spacing for page compositions.
 pub struct SpringStyle;
@@ -252,9 +252,9 @@ pub struct MotionTimings;
 
 impl MotionTimings {
     pub const FOCUS: Duration = Duration::from_millis(120);
-    pub const POPOVER: Duration = Duration::from_millis(160);
+    pub const POPOVER: Duration = Duration::from_millis(120);
     pub const DIALOG: Duration = Duration::from_millis(180);
-    pub const PAGE: Duration = Duration::from_millis(220);
+    pub const PAGE: Duration = Duration::from_millis(160);
     pub const TOAST_ENTER: Duration = Duration::from_millis(200);
     pub const TOAST_EXIT: Duration = Duration::from_millis(150);
 
@@ -269,7 +269,7 @@ impl MotionTimings {
 
 /// A small transition tracker for hosts that request redraws. It reports an
 /// active transition only until its deadline; callers therefore schedule at
-/// most 30 FPS while active and do not keep an idle timer alive.
+/// most 60 FPS while active and do not keep an idle timer alive.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrostMotion {
     started_at: Option<Duration>,
@@ -333,9 +333,7 @@ pub struct MotionTransition {
 
 impl MotionTransition {
     pub const fn interaction_ready(self) -> bool {
-        !self.active
-            || matches!(self.direction, MotionDirection::Exiting)
-            || self.phase_progress >= 500
+        true
     }
 }
 
@@ -530,7 +528,17 @@ impl FrostMotion {
     /// Returns whether the host should request another animation redraw. It
     /// becomes false immediately for Reduced Motion and after the end frame.
     pub fn requests_redraw(&self, frame: MotionFrame) -> bool {
-        !frame.reduced_motion && self.is_active(frame)
+        self.next_redraw_in(frame).is_some()
+    }
+
+    pub fn next_redraw_in(&self, frame: MotionFrame) -> Option<Duration> {
+        if frame.reduced_motion {
+            return None;
+        }
+        let remaining = self
+            .duration
+            .saturating_sub(frame.now.saturating_sub(self.started_at?));
+        (!remaining.is_zero()).then_some(remaining.min(ANIMATION_FRAME_INTERVAL))
     }
 
     pub fn progress(&self, frame: MotionFrame, entering: bool) -> u16 {
@@ -624,34 +632,9 @@ impl RenderContext {
         context
     }
 
-    /// Moves an entering page by one terminal row for the first half of its
-    /// transition. The shell uses this same projection for its hit map.
+    /// Light transitions preserve the same content and hit-test geometry.
     pub fn page_area(&self, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
-        let entering_page = self.transitions.screen.is_some_and(|transition| {
-            transition.active
-                && !matches!(transition.direction, MotionDirection::Exiting)
-                && transition.phase_progress < 500
-        });
-        let exiting_overlay = self.transitions.overlay.is_some_and(|transition| {
-            transition.active
-                && matches!(transition.direction, MotionDirection::Exiting)
-                && matches!(
-                    transition.kind,
-                    MotionTransitionKind::Dialog | MotionTransitionKind::Popover
-                )
-                && (250..750).contains(&transition.phase_progress)
-        });
-        let shifted = entering_page || exiting_overlay;
-        if shifted && area.height > 0 {
-            ratatui::layout::Rect::new(
-                area.x,
-                area.y.saturating_add(1),
-                area.width,
-                area.height.saturating_sub(1),
-            )
-        } else {
-            area
-        }
+        area
     }
 
     pub fn overlay_interaction_ready(&self) -> bool {

@@ -87,6 +87,10 @@ impl PanelMotion {
         self.value
     }
 
+    pub fn next_redraw_in(self, frame: MotionFrame) -> Option<Duration> {
+        self.motion.next_redraw_in(frame)
+    }
+
     pub fn update(&mut self, target: u16, frame: MotionFrame, duration: Duration) -> bool {
         self.update_with_phases(target, frame, MotionPhases::for_duration(duration))
     }
@@ -166,13 +170,15 @@ pub fn expand_trailing_pane(list: Rect, details: Rect, amount: u16) -> (Rect, Re
     let mut list = list;
     let mut details = details;
     if list.x < details.x {
-        let shift = (u32::from(list.width) * amount / 1_000) as u16;
-        list.width -= shift;
+        let distance = details.x.saturating_sub(list.x);
+        let shift = (u32::from(distance) * amount / 1_000) as u16;
+        list.width = list.width.saturating_sub(shift);
         details.x -= shift;
         details.width += shift;
     } else {
-        let shift = (u32::from(list.height) * amount / 1_000) as u16;
-        list.height -= shift;
+        let distance = details.y.saturating_sub(list.y);
+        let shift = (u32::from(distance) * amount / 1_000) as u16;
+        list.height = list.height.saturating_sub(shift);
         details.y -= shift;
         details.height += shift;
     }
