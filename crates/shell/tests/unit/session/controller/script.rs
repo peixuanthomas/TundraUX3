@@ -628,3 +628,19 @@ fn vim_launch_keeps_its_export_owner_when_another_document_becomes_visible() {
     assert!(!state.pages.editor.get(other).unwrap().script.vim_pending);
     assert!(state.app.storage_config().editor.vim_mode_enabled);
 }
+
+#[test]
+fn focus_loss_finishes_script_pane_motion_after_unifying_input_methods() {
+    let mut state = session();
+    saved_script(&mut state);
+    let mut frame = ui::MotionFrame::default();
+    state.advance_script_details(frame);
+    state.pages.editor.script.detail = Pane::Variables;
+    state.advance_script_details(frame);
+    frame.now = Duration::from_millis(60);
+    assert!(state.advance_script_details(frame));
+    assert!((1..1_000).contains(&state.pages.editor.script.detail_motion.value()));
+    state.apply_input(InputEvent::FocusLost);
+    assert_eq!(state.pages.editor.script.detail_motion.value(), 1_000);
+    assert!(!state.advance_script_details(frame));
+}

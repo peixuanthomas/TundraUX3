@@ -43,10 +43,12 @@ impl ShellSession {
                 self.interaction.pointer_motion = false;
                 self.details_motion = None;
                 self.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+                self.advance_script_details(ui::MotionFrame::reduced(Duration::ZERO));
             }
             InputEvent::Resize { .. } => {
                 self.details_motion = None;
                 self.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
+                self.advance_script_details(ui::MotionFrame::reduced(Duration::ZERO));
             }
             _ => {}
         }
