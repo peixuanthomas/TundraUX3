@@ -359,3 +359,28 @@ fn tea_preview_at_minimum_size_keeps_single_line_actions_and_input_boundary() {
     assert_eq!(title.fg, context.theme.text);
     assert!(title.modifier.contains(Modifier::BOLD));
 }
+
+#[test]
+fn neutral_titles_do_not_remove_accent_from_the_active_text_field_or_cursor() {
+    let theme = TundraTheme::default().with_accent_color(Color::Magenta);
+    let area = Rect::new(0, 0, 12, 3);
+    let mut input = ui::components::TextInput::new("name");
+    input.set_value("value");
+    input.set_focused(true);
+    let mut buffer = Buffer::empty(area);
+    input.render(area, &mut buffer, &theme);
+    let text_cell = buffer
+        .content()
+        .iter()
+        .find(|cell| cell.symbol() == "v")
+        .unwrap();
+    let cursor = buffer
+        .content()
+        .iter()
+        .find(|cell| cell.symbol() == "_")
+        .unwrap();
+    assert_eq!(text_cell.fg, theme.accent_color);
+    assert_eq!(cursor.fg, theme.accent_color);
+    assert!(cursor.modifier.contains(Modifier::SLOW_BLINK));
+    assert_eq!(theme.title_style().fg, Some(theme.foreground));
+}
