@@ -48,6 +48,7 @@ The English and Chinese `modules/` files include:
 | `ui-shell.ftl`, `ui-auth.ftl` | Global tasks and approval status, the shared terminal-size prompt, completion with default appearance, and the application administrator's scope |
 | `management-network-disks.ftl` | Connection states and reasons configuration is unavailable or read-only |
 | `settings.ftl` | Animation phase fields, validation, reset, save, and cancel actions |
+| `ui-style-preview.ftl`, `ui-test.ftl` | Neutral compact Tea preview, one-character task feedback, and primary and danger sample-action labels |
 | `update-progress.ftl` | Update stages and confirmation that an unchanged Vim engine is reused without rebuilding |
 
 ## Default asset repair
