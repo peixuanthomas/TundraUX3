@@ -2331,7 +2331,7 @@ impl ShellSession {
                         .get(id)
                         .and_then(|page| page.command_line_external.as_ref())
                         .map_or_else(
-                            || i18n::tr!("shell-command-line"),
+                            || i18n::tr!("app-catalog-command-line-name"),
                             ExternalTerminalLaunch::title,
                         ),
                     ShellScreen::Editor => i18n::tr!("shell-editor"),
