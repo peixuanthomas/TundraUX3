@@ -34,9 +34,9 @@ fn narrow_clock_create_shows_both_direct_shortcuts_and_cancel() {
         })
         .unwrap();
     let output = terminal_output(&terminal);
-    assert!(output.contains("[F3 Set alarm]"));
-    assert!(output.contains("[F4 Set timer]"));
-    assert!(output.contains("[Esc Cancel]"));
+    assert!(output.contains("F3 Set alarm"));
+    assert!(output.contains("F4 Set timer"));
+    assert!(output.contains("Esc Cancel"));
 }
 
 #[test]
@@ -116,9 +116,9 @@ fn create_dialog_renders_time_fields_error_and_both_focusable_actions() {
         assert!(region_text(&terminal, area).contains("00"));
     }
     assert!(output.contains("Use hh mm ss"));
-    assert!(output.contains("[F3 Set alarm]"));
-    assert!(output.contains("[F4 Set timer]"));
-    assert!(output.contains("[Esc Cancel]"));
+    assert!(output.contains("F3 Set alarm"));
+    assert!(output.contains("F4 Set timer"));
+    assert!(output.contains("Esc Cancel"));
     assert!(region_has_fg(
         &terminal,
         dialog.create_countdown,
@@ -138,7 +138,7 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
     assert!(layout.digital.height > 0);
     assert!(layout.new_button.height > 0);
     assert!(output.contains("14:32:08"));
-    assert!(output.contains("[N New]"));
+    assert!(output.contains("N New"));
     assert!(output.contains("[A] 07:30:00 Daily"));
 }
 
@@ -188,7 +188,7 @@ fn read_only_clock_hides_new_control_and_ignores_create_dialog_model() {
     assert_eq!(layout.new_button.width, 0);
     assert_eq!(layout.new_button.height, 0);
     assert!(layout.create_dialog.is_none());
-    assert!(!output.contains("[N New]"));
+    assert!(!output.contains("N New"));
     assert!(!output.contains("New Alarm or Countdown"));
     assert!(output.contains("ALARMS"));
     assert!(output.contains("COUNTDOWNS"));

@@ -97,7 +97,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
                 panel_width,
                 main.height,
             );
-            let inner = inset_rect(clock, 1);
+            let inner = clock_content_area(clock);
             let digital_height = 2.min(inner.height);
             let digital = Rect::new(
                 inner.x,
@@ -128,7 +128,7 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
                     main.width,
                     main.height.saturating_sub(clock.height),
                 );
-                (clock, None, inset_rect(clock, 1), panel)
+                (clock, None, clock_content_area(clock), panel)
             } else {
                 let panel_width = (main.width / 2)
                     .clamp(CLOCK_PANEL_MIN_WIDTH, CLOCK_PANEL_MAX_WIDTH)
@@ -146,13 +146,13 @@ pub fn clock_page_layout(main: Rect, model: &ClockViewModel) -> ClockPageLayout 
                     panel_width,
                     main.height,
                 );
-                let digital = inset_rect(clock, 1);
+                let digital = clock_content_area(clock);
                 (clock, None, digital, panel)
             }
         }
     };
 
-    let mut panel_inner = inset_rect(panel, 1);
+    let mut panel_inner = clock_content_area(panel);
     let bar = clock_action_bar(model);
     let bar_height = bar.height(panel_inner.width).min(panel_inner.height);
     let action_bar = bar.layout(Rect::new(
@@ -315,16 +315,6 @@ fn clock_create_dialog_layout(
     }
 }
 
-fn inset_rect(area: Rect, margin: u16) -> Rect {
-    let doubled = margin.saturating_mul(2);
-    Rect::new(
-        area.x.saturating_add(margin.min(area.width)),
-        area.y.saturating_add(margin.min(area.height)),
-        area.width.saturating_sub(doubled),
-        area.height.saturating_sub(doubled),
-    )
-}
-
 fn line_in_rect(area: Rect, y: u16) -> Rect {
     if area.width == 0 || area.height == 0 || y < area.y || y >= area.y.saturating_add(area.height)
     {
@@ -350,5 +340,14 @@ pub(super) fn clock_action_bar(model: &ClockViewModel) -> crate::components::Pag
     ])
     .with_selected(
         (model.selected_entry_id.is_none() && model.create_dialog.is_none()).then(|| "new".into()),
+    )
+}
+
+fn clock_content_area(area: Rect) -> Rect {
+    Rect::new(
+        area.x,
+        area.y.saturating_add(u16::from(area.height > 0)),
+        area.width,
+        area.height.saturating_sub(1),
     )
 }
