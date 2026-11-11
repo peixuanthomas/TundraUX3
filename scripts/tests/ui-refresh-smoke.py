@@ -104,7 +104,19 @@ def run_case(binary, language, color, motion, sizes, samples):
             for _ in range(12):
                 if current["page"] == "Home" and not has_modal(current):
                     break
-                send(b"\x1b[21~" if current["page"] == "FirstRunSetup" and not has_modal(current) else b"\r")
+                if current["page"] == "FirstRunSetup" and not has_modal(current):
+                    choice = next((item for item in current["nodes"]
+                                   if "/setup.language." in item["id"]
+                                   and f"({language})" in item["name"]), None)
+                    if choice is not None:
+                        if not choice["selected"]:
+                            tap(current, choice["id"])
+                        until(lambda frame: node(frame, choice["id"])["selected"])
+                        send(b"\r")
+                    else:
+                        send(b"\x1b[21~")
+                else:
+                    send(b"\r")
                 smoke.read_available(master, output, 0.1)
                 current = snapshot()
             current = until(lambda frame: frame["page"] == "Home" and not has_modal(frame))
