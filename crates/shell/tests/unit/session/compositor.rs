@@ -929,7 +929,7 @@ fn live_keyboard_animation_keeps_aa_and_cli_content_above_visible_keys() {
 }
 
 #[test]
-fn auto_admin_pointer_entry_honors_speed_and_keyboard_close_is_immediate() {
+fn auto_admin_entry_and_exit_honor_motion_speed_without_hiding_text() {
     for (speed, reduced) in [(50, false), (100, false), (200, false), (100, true)] {
         let mut state = session();
         state.interaction.pointer_motion = true;
@@ -944,24 +944,17 @@ fn auto_admin_pointer_entry_honors_speed_and_keyboard_close_is_immediate() {
         state
             .begin_auto_admin("Review target".into(), true, responses)
             .unwrap();
-        let dialog =
-            ui::auto_admin_layout(Rect::new(0, 0, 120, 40), &state.auto_admin_view().unwrap())
-                .dialog;
+        let dialog = ui::auto_admin_layout_in(
+            state.auto_admin_available_area(),
+            &state.auto_admin_view().unwrap(),
+        )
+        .dialog;
         assert_eq!(
             draw(&mut compositor, &mut terminal, &mut state, &prepared),
             !reduced
         );
         let entering = terminal.backend().buffer().clone();
-        if !reduced {
-            let position = state.interaction.pointer_position;
-            compositor.prepare_input(
-                &mut state,
-                InputEvent::mouse_down(PointerButton::Left, (dialog.x + 1, dialog.y + 1)),
-                &platform::mock::UnsupportedPlatform,
-                Instant::now(),
-            );
-            assert_eq!(state.interaction.pointer_position, position);
-        }
+        assert!(text(&entering, dialog).contains("Review target"));
         let mut frames = 0;
         while compositor.motion.is_running() {
             frames += 1;
@@ -977,9 +970,10 @@ fn auto_admin_pointer_entry_honors_speed_and_keyboard_close_is_immediate() {
                 terminal.backend().buffer()[(dialog.x, dialog.y)]
             );
         }
+        let settled = terminal.backend().buffer().clone();
         for position in base.area.positions().filter(|p| !main.contains(*p)) {
             assert_eq!(
-                entering[position], base[position],
+                entering[position], settled[position],
                 "AA motion changed Shell chrome"
             );
         }
@@ -987,8 +981,27 @@ fn auto_admin_pointer_entry_honors_speed_and_keyboard_close_is_immediate() {
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
         state.apply_input(InputEvent::key(InputKey::F(12)));
         assert!(!state.auto_admin_visible());
-        assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
-        assert!(!compositor.motion.is_running());
+        assert_eq!(
+            draw(&mut compositor, &mut terminal, &mut state, &prepared),
+            !reduced
+        );
+        if !reduced {
+            assert!(text(terminal.backend().buffer(), dialog).contains("Review target"));
+        }
+        let mut exit_frames = 0;
+        while compositor.motion.is_running() {
+            exit_frames += 1;
+            assert!(exit_frames <= 10);
+            draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        }
+        assert_eq!(
+            exit_frames,
+            if reduced {
+                0
+            } else {
+                (18000_u32).div_ceil(50 * u32::from(speed))
+            }
+        );
         assert_eq!(
             terminal.backend().buffer(),
             &base,
@@ -2064,5 +2077,45 @@ fn visible_busy_state_requests_only_its_shared_interval_and_reduced_motion_is_st
         }
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &frame));
         assert_eq!(compositor.next_redraw_in(), None);
+    }
+}
+
+#[test]
+fn auto_admin_entry_accepts_keyboard_and_pointer_operations_on_its_first_frame() {
+    for keyboard in [false, true] {
+        let mut state = session();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let prepared = home_frame(&state, 0, false);
+        draw(&mut compositor, &mut terminal, &mut state, &prepared);
+        let (responses, _inputs) = mpsc::channel();
+        state
+            .begin_auto_admin("Immediate operation".into(), true, responses)
+            .unwrap();
+        assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        let dialog = ui::auto_admin_layout_in(
+            state.auto_admin_available_area(),
+            &state.auto_admin_view().unwrap(),
+        )
+        .dialog;
+        let point = (dialog.x + 1, dialog.y + 1);
+        let input = if keyboard {
+            InputEvent::key(InputKey::Tab)
+        } else {
+            InputEvent::mouse_down(PointerButton::Left, point)
+        };
+        compositor.prepare_input(
+            &mut state,
+            input,
+            &platform::mock::UnsupportedPlatform,
+            Instant::now(),
+        );
+        assert!(!compositor.motion.is_running());
+        assert!(state.auto_admin_visible());
+        if !keyboard {
+            assert_eq!(state.interaction.pointer_position, Some(point));
+        }
+        assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
+        assert!(text(terminal.backend().buffer(), dialog).contains("Immediate operation"));
     }
 }

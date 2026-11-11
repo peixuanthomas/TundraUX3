@@ -280,9 +280,10 @@ fn wide_detail_tabs_open_and_close_without_hover_and_output_keeps_primary_keyboa
     let mut state = session();
     saved_script(&mut state);
     let platform = platform::mock::UnsupportedPlatform;
-    state.advance_script_details(ui::MotionFrame::default());
+    let mut frame = ui::MotionFrame::default();
+    state.advance_script_details(frame);
     let source_width = state.script_layout().editor_area.width;
-    for _ in 0..2 {
+    for expected in [Pane::Variables, Pane::Output] {
         let (_, tab) = state
             .script_layout()
             .tabs
@@ -294,8 +295,16 @@ fn wide_detail_tabs_open_and_close_without_hover_and_output_keeps_primary_keyboa
             &platform,
         );
         state.handle_script_pointer(MouseInput::up(tab.x, tab.y, PointerButton::Left), &platform);
-        state.advance_script_details(ui::MotionFrame::default());
+        assert_eq!(state.pages.editor.script.detail, expected);
+        let before = state.script_layout().editor_area;
+        state.advance_script_details(frame);
+        assert_eq!(state.script_layout().editor_area, before);
+        frame.now += Duration::from_millis(90);
+        assert!(state.advance_script_details(frame));
+        assert!(state.script_layout().editor_area.width < source_width);
         assert!(!state.script_layout().output_area.is_empty());
+        frame.now += Duration::from_millis(90);
+        assert!(!state.advance_script_details(frame));
         if state.pages.editor.script.detail == Pane::Variables {
             assert!(state.script_layout().editor_area.width < source_width);
         } else {
