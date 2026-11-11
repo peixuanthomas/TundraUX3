@@ -7,7 +7,7 @@ use crate::components::{
     Button, ComponentTone, DataTable, PageAction, PageActionBar, PageActionStatus, Scrollbar,
     ScrollbarOrientation, Surface, terminal_width, truncate_to_terminal_width,
 };
-use crate::{AssetError, RenderContext, RuntimeAsciiAssets, TundraTheme};
+use crate::{AssetError, RenderContext, RuntimeAsciiAssets};
 
 mod edit;
 pub use edit::*;
