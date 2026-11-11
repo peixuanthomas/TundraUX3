@@ -1002,7 +1002,11 @@ fn confirmation_entry_keeps_covered_search_unfocused_and_cancel_ready() {
         ShellComponent::Launcher
     );
     assert_eq!(fixture.platform.calls(), calls_before);
-    fixture.input(InputEvent::from_key_label("Ctrl+f"));
+    fixture.input(InputEvent::key_with_modifiers(
+        InputKey::Char('f'),
+        InputModifiers::CTRL,
+    ));
+    assert!(fixture.state.pages.launcher.search.state.focused);
     fixture.input(InputEvent::Paste("program.exe".into()));
     assert_eq!(fixture.state.pages.launcher.search.value(), "program.exe");
 }
