@@ -84,11 +84,11 @@ fn entry_window_slices_alarms_then_countdowns_and_preserves_ids() {
         .map(|row| row.id)
         .collect::<Vec<_>>();
 
-    assert_eq!(layout.entry_capacity, 13);
-    assert_eq!(layout.entry_window_start, 7);
-    assert_eq!(ids, (8..=20).collect::<Vec<_>>());
+    assert_eq!(layout.entry_capacity, 14);
+    assert_eq!(layout.entry_window_start, 6);
+    assert_eq!(ids, (7..=20).collect::<Vec<_>>());
     assert_eq!(layout.entry_rows[0].kind, ClockEntryKind::Alarm);
-    assert_eq!(layout.entry_rows[3].kind, ClockEntryKind::Countdown);
+    assert_eq!(layout.entry_rows[4].kind, ClockEntryKind::Countdown);
     assert!(layout.alarms_heading.y < layout.countdowns_heading.y);
 }
 
@@ -143,7 +143,7 @@ fn narrow_layout_keeps_digital_time_and_operable_panel_without_panicking() {
 }
 
 #[test]
-fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
+fn small_fallback_keeps_entries_and_compacts_dialog_controls() {
     let mut model = clock_model();
     model.create_dialog = Some(ClockCreateDialogViewModel {
         interaction: Default::default(),
@@ -161,8 +161,15 @@ fn minimum_full_shell_keeps_an_operable_entry_and_compacts_dialog_controls() {
     assert_eq!(layout.mode, ClockPageMode::DigitalOnly);
     assert!(layout.new_button.width > 0);
     assert!(layout.new_button.height > 0);
-    assert_eq!(layout.entry_capacity, 1);
-    assert_eq!(layout.entry_rows.first().map(|row| row.id), Some(10));
+    assert_eq!(layout.entry_capacity, 6);
+    assert_eq!(
+        layout
+            .entry_rows
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
+        [10, 20, 30]
+    );
     assert!(dialog.error.bottom() <= dialog.input.y);
     assert!(dialog.input.bottom() <= dialog.create_alarm.y);
     assert_eq!(dialog.create_alarm.y, dialog.create_countdown.y);
