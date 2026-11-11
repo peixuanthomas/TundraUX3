@@ -92,8 +92,8 @@ fn named_accents_survive_terminal_capability_and_legacy_theme_resolution() {
 }
 
 #[test]
-fn ansi_components_render_user_accent_in_titles_selections_and_focus() {
-    for (accent, focus) in ANSI_ACCENTS {
+fn ansi_components_keep_titles_neutral_and_use_user_accent_for_focus() {
+    for (accent, _) in ANSI_ACCENTS {
         let theme = TundraTheme::default()
             .with_border_color(Color::White)
             .with_accent_color(accent);
@@ -107,14 +107,14 @@ fn ansi_components_render_user_accent_in_titles_selections_and_focus() {
             .bordered(true)
             .render(area, &mut buffer, &context);
         assert_eq!(buffer[(1, 0)].symbol(), "P");
-        assert_eq!(buffer[(1, 0)].fg, accent);
+        assert_eq!(buffer[(1, 0)].fg, context.theme.text);
 
         let mut list = List::new("sections", vec![ListItem::new("appearance", "Appearance")])
             .titled("Sections");
         list.set_focused(true);
         list.render_with_context(area, &mut buffer, &context);
         assert_eq!(buffer[(1, 0)].symbol(), "S");
-        assert_eq!(buffer[(1, 0)].fg, accent);
+        assert_eq!(buffer[(1, 0)].fg, context.theme.text);
         assert_eq!(buffer[(1, 1)].symbol(), ">");
         assert_eq!(buffer[(1, 1)].fg, accent);
 
@@ -123,7 +123,10 @@ fn ansi_components_render_user_accent_in_titles_selections_and_focus() {
             rail.state.focused = focused;
             rail.render(area, &mut buffer, &context);
             assert_eq!(buffer[(2, 0)].symbol(), "S");
-            assert_eq!(buffer[(2, 0)].fg, if focused { focus } else { accent });
+            assert_eq!(
+                buffer[(2, 0)].fg,
+                if focused { accent } else { context.theme.text }
+            );
         }
 
         let mut button = Button::new("save", "Save");

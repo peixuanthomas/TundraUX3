@@ -11,11 +11,15 @@ fn render(button: &Button, width: u16) -> Buffer {
 }
 
 #[test]
-fn primary_normal_uses_accent_label_and_border() {
+fn primary_normal_uses_readable_text_on_accent_fill_and_border() {
     let theme = TundraTheme::default_dark();
     let button = Button::new("save", "Save").with_emphasis(ButtonEmphasis::Primary);
     let buffer = render(&button, 12);
-    assert_eq!(buffer[(1, 1)].fg, theme.accent_color);
+    assert_eq!(
+        buffer[(1, 1)].fg,
+        theme.tokens().filled_style(theme.accent_color).fg.unwrap()
+    );
+    assert_eq!(buffer[(1, 1)].bg, theme.accent_color);
     assert_eq!(buffer[(0, 1)].fg, theme.accent_color);
     assert!(
         buffer[(1, 1)]

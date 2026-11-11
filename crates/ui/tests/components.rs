@@ -78,14 +78,21 @@ fn button_keyboard_and_mouse_activate_the_same_component() {
     let mut buffer = Buffer::empty(area);
     button.render(area, &mut buffer, &TundraTheme::default());
     assert_regular_weight_vertical_border(&buffer, area);
-    assert!(buffer_text(&buffer).contains("[Save]"));
+    assert!(buffer_text(&buffer).contains("Save"));
+    assert!(!buffer_text(&buffer).contains("[Save]"));
 }
 
 #[test]
 fn literal_button_labels_preserve_text_width_and_shared_interaction_styles() {
     let area = Rect::new(0, 0, 16, 3);
     let theme = TundraTheme::default().with_accent_color(Color::Rgb(100, 140, 180));
-    assert_eq!(Button::new("key", "Q").rendered_label_width(), 3);
+    assert_eq!(Button::new("key", "Q").rendered_label_width(), 1);
+    assert_eq!(
+        Button::new("key", "Q")
+            .with_bracketed_label(true)
+            .rendered_label_width(),
+        3
+    );
     for label in ["Q", "[", "]", "Shift*", "界"] {
         let mut button = Button::new("key", label).with_bracketed_label(false);
         assert_eq!(

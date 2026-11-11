@@ -344,22 +344,40 @@ fn toast_resume_reverses_from_the_visible_progress_in_full_and_reduced_motion() 
 
 #[test]
 fn data_table_render_and_hit_rows_agree_with_or_without_title() {
-    for titled in [false, true] {
-        let area = Rect::new(0, 0, 14, 5);
-        let mut table = DataTable::new("table", ["Name"], [["First"], ["Second"]]);
-        if titled {
-            table = table.titled("Data");
+    for bordered in [false, true] {
+        for titled in [false, true] {
+            let area = Rect::new(0, 0, 14, 5);
+            let mut table =
+                DataTable::new("table", ["Name"], [["First"], ["Second"]]).bordered(bordered);
+            if titled {
+                table = table.titled("Data");
+            }
+            let mut buffer = Buffer::empty(area);
+            table.render(area, &mut buffer, &RenderContext::default());
+            let x = u16::from(bordered);
+            let first_y = u16::from(bordered || titled) + 1;
+            assert_eq!(buffer[(x, first_y)].symbol(), "F");
+            assert_eq!(
+                table.handle_event(
+                    InputEvent::mouse(MouseEvent::down(x, first_y + 1, MouseButton::Left)),
+                    area
+                ),
+                ComponentEvent::Selected("table".into(), 1)
+            );
+            if bordered {
+                assert_eq!(
+                    table.handle_event(
+                        InputEvent::mouse(MouseEvent::down(
+                            area.right() - 1,
+                            first_y,
+                            MouseButton::Left
+                        )),
+                        area
+                    ),
+                    ComponentEvent::None
+                );
+            }
         }
-        let mut buffer = Buffer::empty(area);
-        table.render(area, &mut buffer, &RenderContext::default());
-        assert_eq!(buffer[(1, 2)].symbol(), "F");
-        assert_eq!(
-            table.handle_event(
-                InputEvent::mouse(MouseEvent::down(1, 3, MouseButton::Left)),
-                area
-            ),
-            ComponentEvent::Selected("table".into(), 1)
-        );
     }
 }
 
@@ -403,15 +421,15 @@ fn data_table_padding_uses_terminal_cell_width_for_cjk_and_emoji() {
     let table = DataTable::new("table", ["甲", "B"], [["中", "🙂"]]);
     let mut buffer = Buffer::empty(area);
     table.render(area, &mut buffer, &RenderContext::default());
-    assert_eq!(buffer[(6, 2)].symbol(), "🙂");
+    assert_eq!(buffer[(7, 1)].symbol(), "🙂");
 }
 
 #[test]
 fn data_table_clips_and_pads_graphemes_with_explicit_and_fallback_widths() {
     for (width, widths, expected) in [
-        (12, None, "A中 e\u{301}🙂 end "),
-        (9, Some(vec![3, 4, 2]), "A中e\u{301}🙂zen"),
-        (8, Some(vec![0, 2]), "e\u{301} en    "),
+        (12, None, "A   e\u{301}   en  "),
+        (9, Some(vec![3, 4, 2]), "A  e\u{301}   en"),
+        (8, Some(vec![0, 2]), "  en    "),
         (1, None, " "),
     ] {
         let area = Rect::new(0, 0, width, 1);
