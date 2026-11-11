@@ -144,14 +144,13 @@ pub(super) fn layout(
         )
     };
     let mut actions = vec![Rect::default(); model.actions.len()];
+    let mut action_canvases = vec![Rect::default(); model.actions.len()];
     let bar = primary_action_bar(model, &workspace.primary_actions);
-    let bar_area = if layout.compact_actions {
-        layout.detail_actions_panel
-    } else {
-        inner(layout.detail_actions_panel)
-    };
+    let bar_area = layout.detail_actions_canvas;
     layout.primary_action_bar = bar.layout(bar_area);
-    for rect in &layout.primary_action_bar.actions {
+    for rect in &mut layout.primary_action_bar.actions {
+        action_canvases[workspace.primary_actions[rect.index]] = rect.area;
+        rect.area = rect.area.intersection(layout.detail_actions_panel);
         actions[workspace.primary_actions[rect.index]] = rect.area;
     }
     for (index, rect) in workspace
@@ -160,6 +159,7 @@ pub(super) fn layout(
         .zip(&navigation.navigation)
     {
         actions[*index] = *rect;
+        action_canvases[*index] = *rect;
     }
     if package_workspace {
         let rects = if compact {
@@ -169,13 +169,16 @@ pub(super) fn layout(
         };
         for (index, rect) in advanced_indices.iter().zip(rects) {
             actions[*index] = rect;
+            action_canvases[*index] = rect;
         }
     } else {
         for rect in advanced_bar.layout(advanced).actions {
             actions[advanced_indices[rect.index]] = rect.area;
+            action_canvases[advanced_indices[rect.index]] = rect.area;
         }
     }
     layout.actions = actions;
+    layout.action_canvases = action_canvases;
     layout.action_start = 0;
     layout.actions_panel = advanced;
     layout.status = Rect::new(
