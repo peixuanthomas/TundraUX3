@@ -1,11 +1,20 @@
 use std::collections::{HashMap, HashSet};
 
-use ui::{MotionFrame, SettingsViewModel, SpringValue, SystemStatusViewModel};
+use std::time::Duration;
+use ui::animate::{Time, Tween};
+use ui::{MotionFrame, SettingsViewModel, SystemStatusViewModel};
 
 /// Frame-persistent visual state, kept out of AppState and persisted preferences.
 #[derive(Default)]
 pub(super) struct SpringProgress {
-    values: HashMap<String, SpringValue>,
+    values: HashMap<String, ProgressValue>,
+}
+
+#[derive(Default)]
+struct ProgressValue {
+    tween: Tween<f64>,
+    target: f64,
+    ends_at: Duration,
 }
 
 #[cfg(test)]
@@ -50,7 +59,20 @@ impl SpringProgress {
         }
         // Leaving a screen or losing a sample cancels its animations and timer demand.
         self.values.retain(|key, _| seen.contains(key));
-        self.values.values().any(SpringValue::is_running)
+        self.values.values().any(|value| value.tween.is_running())
+    }
+
+    pub(super) fn next_redraw_in(&self, frame: MotionFrame) -> Option<Duration> {
+        self.values
+            .values()
+            .filter(|value| value.tween.is_running())
+            .map(|value| {
+                value
+                    .ends_at
+                    .saturating_sub(frame.now)
+                    .min(ui::ANIMATION_FRAME_INTERVAL)
+            })
+            .min()
     }
 
     fn present(
@@ -64,18 +86,18 @@ impl SpringProgress {
         let first_visit = seen.insert(key.clone());
         let value = self.values.entry(key).or_default();
         if first_visit {
-            let changed = value.target() != target;
-            value.retarget(target);
-            // A new target starts now, not at the time of the previous idle frame.
-            value.advance(
-                if changed {
-                    std::time::Duration::ZERO
-                } else {
-                    frame.scaled_delta()
-                },
-                frame.reduced_motion,
-            );
+            let duration = ui::MotionTimings::resolve(frame, Duration::from_millis(200));
+            value.tween.spec.duration = duration;
+            if value.target != target {
+                value.ends_at = frame.now.saturating_add(duration);
+                value.target = target;
+            }
+            value.tween.to(target);
+            value.tween.advance(Time::new(frame.now, frame.delta));
+            if frame.reduced_motion || target == 1.0 {
+                value.tween.finish();
+            }
         }
-        Some((value.value().clamp(0.0, 1.0) * 10_000.0).round() as u16)
+        Some(((*value.tween).clamp(0.0, 1.0) * 10_000.0).round() as u16)
     }
 }
