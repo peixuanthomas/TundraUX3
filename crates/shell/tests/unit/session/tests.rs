@@ -4657,6 +4657,59 @@ fn explorer_semantic_replacements_route_input_immediately_to_the_active_popup() 
 }
 
 #[test]
+fn explorer_popover_wheel_and_right_click_keep_the_covered_list_unchanged() {
+    for mode in [
+        ExplorerOverlayMode::Sort { anchor: (3, 3) },
+        ExplorerOverlayMode::Options,
+        ExplorerOverlayMode::Properties,
+        ExplorerOverlayMode::ContextMenu { anchor: (3, 3) },
+    ] {
+        let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+        let row = explorer_test_layout(&state).rows[0].area;
+        state.open_explorer_popup(mode, (3, 3));
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                kind: ui::MotionTransitionKind::Popover,
+                direction: ui::MotionDirection::Replacing,
+                progress: 0,
+                phase_progress: 0,
+                active: true,
+                next_redraw_in: Duration::from_millis(16),
+            }),
+            ..Default::default()
+        });
+        let before = state.app.explorer_state().cloned();
+        let overlay = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        let surface = explorer_overlay_surface(&state);
+        for point in [
+            (row.right() - 1, row.y),
+            (
+                surface.x + surface.width / 2,
+                surface.y + surface.height / 2,
+            ),
+        ] {
+            for input in [
+                InputEvent::mouse_scroll(ScrollDirection::Down, point),
+                InputEvent::mouse_scroll(ScrollDirection::Up, point),
+                InputEvent::mouse_down(PointerButton::Right, point),
+                InputEvent::mouse_up(PointerButton::Right, point),
+            ] {
+                state.apply_input_with_platform(input, &platform);
+                assert_eq!(state.app.explorer_state(), before.as_ref());
+                assert_eq!(state.active_overlay_descriptor(), overlay);
+                assert_eq!(state.pages.explorer.explorer_overlay_mode, Some(mode));
+                assert_eq!(platform.calls(), calls_before);
+            }
+        }
+        assert_eq!(state.focus_order(), vec![ShellComponent::Explorer]);
+        state.apply_input_with_platform(InputEvent::from_key_label("Esc"), &platform);
+        assert!(state.resolved_explorer_overlay().is_none());
+        assert_eq!(state.app.explorer_state(), before.as_ref());
+    }
+}
+
+#[test]
 fn exit_confirmation_distinguishes_program_and_computer_actions() {
     let root = std::env::temp_dir().join(format!(
         "tundra-shell-poweroff-label-{}",
