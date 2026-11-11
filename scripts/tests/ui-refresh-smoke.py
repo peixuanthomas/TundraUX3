@@ -108,9 +108,22 @@ def run_case(binary, language, color, motion, sizes, samples):
                 smoke.read_available(master, output, 0.1)
                 current = snapshot()
             current = until(lambda frame: frame["page"] == "Home" and not has_modal(frame))
-            home_ids = {item["id"] for item in current["nodes"] if "home.entry." in item["id"]}
             settings_label, launcher_label = (("设置", "启动器") if language == "zh-CN"
                                                else ("Settings", "Launcher"))
+            tap(current, home_entry(current, settings_label))
+            current = until(lambda frame: frame["page"] == "Settings")
+            motion_id = "page/settings.field.motionpreference"
+            current = until(lambda frame: any(item["id"] == motion_id and item["actionable"]
+                                              for item in frame["nodes"]))
+            expected_motion = ({"full": "完整", "reduced": "减少"} if language == "zh-CN"
+                               else {"full": "Full", "reduced": "Reduced"})[motion]
+            if node(current, motion_id)["text"].strip() != expected_motion:
+                tap(current, motion_id)
+            current = until(lambda frame: node(frame, motion_id)["text"].strip() == expected_motion)
+            assert node(current, "page/settings.field.animationspeed")["enabled"] == (motion == "full")
+            tap(current, "chrome/shell.back")
+            current = until(lambda frame: frame["page"] == "Home")
+            home_ids = {item["id"] for item in current["nodes"] if "home.entry." in item["id"]}
             for columns, rows in sizes:
                 until(lambda frame: not frame["animation_running"])
                 frame_offset = len(output)
@@ -186,6 +199,8 @@ def run_case(binary, language, color, motion, sizes, samples):
                     "motion": motion, "samples": samples, "input_to_output_echo_ms_p95": round(p95, 3),
                     "input_to_output_echo_ms_max": round(max(latencies), 3),
                 })
+                send(b"\x15\t")
+                until(lambda frame: not node(frame, "page/launcher.search")["focused"])
                 send(b"\x1b")
                 current = until(lambda frame: frame["page"] == "Home")
                 print(f"PASS: {columns}x{rows} {language} {color} {motion}; PTY echo P95 {p95:.3f}ms", flush=True)
@@ -229,6 +244,7 @@ def main():
     report = {
         "binary": str(binary), "binary_size": stat.st_size, "binary_mtime_ns": stat.st_mtime_ns,
         "platform": platform.platform(), "python": platform.python_version(),
+        "terminal": "xterm-256color", "automation_enabled": True,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "measurement": "raw PTY search input to matching UTF-8 output; excludes later snapshot verification",
         "input_to_render_note": "PTY echo timing does not isolate application input-to-render duration.",
