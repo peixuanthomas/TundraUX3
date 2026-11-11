@@ -790,8 +790,13 @@ fn completed_notification_exit_schedules_promoted_notification_enter() {
         .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
     assert_eq!(
         motion.intercept_input(&activate),
-        MotionInputDisposition::Block
+        MotionInputDisposition::Apply
     );
+    assert_eq!(
+        activate.target,
+        state.active_overlay_descriptor().unwrap().target.unwrap()
+    );
+    assert_ne!(activate.command, ShellCommand::Noop);
     let mut second_frame = Buffer::filled(full, Cell::new("B"));
     motion.test_frame(Duration::from_secs(1), &mut second_frame, &state);
     assert!(motion.manager.is_running());
@@ -1273,22 +1278,33 @@ fn phased_capture_reveals_current_underlay_without_rewinding_chrome() {
 #[test]
 fn snapshot_exit_protects_wide_glyphs_overlapping_image_cells() {
     let area = Rect::new(0, 0, 3, 1);
-    let mut old = Buffer::filled(area, Cell::new("O"));
-    old[(0, 0)].set_symbol("界");
-    let snapshot = snapshot_normal_cells(&old, area).unwrap();
-    let mut current = Buffer::filled(area, Cell::new("N"));
-    current[(1, 0)].diff_option = CellDiffOption::Skip;
-    outgoing_snapshot_effect(snapshot, None, ui::MotionOverlayKind::Dialog).process(
-        Duration::ZERO,
-        &mut current,
-        area,
-    );
-    assert_eq!(current[(0, 0)].symbol(), " ");
-    assert_eq!(current[(1, 0)].symbol(), "N");
-    assert_eq!(current[(1, 0)].diff_option, CellDiffOption::Skip);
-    old[(1, 0)].diff_option = CellDiffOption::Skip;
-    let captured = snapshot_normal_cells(&old, area).unwrap();
-    assert!(captured.cells.iter().all(|(position, _)| position.x == 2));
+    for symbol in ["界", "🙂"] {
+        let mut old = Buffer::filled(area, Cell::new("O"));
+        old[(0, 0)].set_symbol(symbol);
+        let snapshot = snapshot_normal_cells(&old, area).unwrap();
+        let mut current = Buffer::filled(area, Cell::new("N"));
+        current[(1, 0)].diff_option = CellDiffOption::Skip;
+        let natural = current.clone();
+        outgoing_snapshot_effect(snapshot, None, ui::MotionOverlayKind::Dialog).process(
+            Duration::ZERO,
+            &mut current,
+            area,
+        );
+        assert_eq!(
+            current[(0, 0)],
+            natural[(0, 0)],
+            "wide glyph must not reach the image cell"
+        );
+        assert_eq!(
+            current[(1, 0)],
+            natural[(1, 0)],
+            "image protocol cell stays intact"
+        );
+        assert_eq!(current[(2, 0)].symbol(), "O");
+        old[(1, 0)].diff_option = CellDiffOption::Skip;
+        let captured = snapshot_normal_cells(&old, area).unwrap();
+        assert!(captured.cells.iter().all(|(position, _)| position.x == 2));
+    }
 }
 
 #[test]
