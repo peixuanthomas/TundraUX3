@@ -1636,8 +1636,8 @@ fn user_management_mouse_uses_shared_rows_actions_forms_and_scroll_geometry() {
     let mut state = ShellSession::new_with_startup(default_config(), (120, 40), startup);
     login(&mut state, "AdminUser", "StrongPass123");
     open_users_from_home(&mut state);
-    for username in ["mouse1", "mouse2", "mouse3", "mouse4"] {
-        create_managed_user(&mut state, username, false);
+    for index in 1..=12 {
+        create_managed_user(&mut state, &format!("mouse{index}"), false);
     }
 
     state.apply_input(InputEvent::Resize {
@@ -2168,11 +2168,12 @@ fn finish_user_management_aa(state: &mut ShellSession, approve: bool) {
 }
 
 fn user_management_layout_for(state: &ShellSession) -> ui::UserManagementLayout {
+    let _language = i18n::enter_snapshot(state.language_snapshot());
     let area = ratatui::layout::Rect::new(0, 0, state.terminal_size().0, state.terminal_size().1);
-    let main = match ui::compute_shell_layout(area) {
-        ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
-    };
-    ui::user_management_layout(main, &state.to_user_management_view_model())
+    let model = state.to_user_management_view_model();
+    let frame = ui::ShellFrameLayout::new(area, None, &ui::RenderContext::default())
+        .with_keyboard_launcher(model.form.is_some());
+    ui::user_management_layout(frame.main, &model)
 }
 
 fn rect_center(area: ratatui::layout::Rect) -> (u16, u16) {
