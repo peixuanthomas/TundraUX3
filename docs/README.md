@@ -50,5 +50,5 @@ See the [complete responsibility table](README-TECHNICAL.md#crate-responsibiliti
 
 The following files preserve the state at the time and are not current usage guides:
 
-- [CHANGELOG](CHANGELOG.md) and [release notes](packaging/releases/v1.5.md)
+- [CHANGELOG](CHANGELOG.md) and [release notes](packaging/releases/v1.5.1.md)
 - [Historical Linux portable-build validation](packaging/linux/VALIDATION-2026-09-18.md)

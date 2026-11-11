@@ -4,6 +4,22 @@
 
 版本名称保留 Git 标签原有写法，日期采用标签所指提交的日期（UTC+8），不代表 GitHub Release 的实际发布时间。`archive/` 等归档标签不作为发布版本。旧版本条目描述当时的行为；当前使用方式见 [项目说明](README.zh-CN.md)。
 
+## v1.5.1 — 2026-11-11
+
+标签：[`v1.5.1`](https://github.com/peixuanthomas/TundraUX3/tree/v1.5.1)。[查看提交差异](https://github.com/peixuanthomas/TundraUX3/compare/v1.5...v1.5.1) · [发布说明](packaging/releases/v1.5.1.md)。
+
+### 新增与调整
+
+- **Home 和启动器：**可编辑并保存 Home 图标顺序；小窗口使用紧凑布局，Home 中的应用不再重复出现在启动器。启动器增加持久搜索和内置应用的操作菜单。
+- **文件与编辑：**文件剪贴板可在页面间共享，支持撤销同一文件系统内的移动和重命名；保存对话框可浏览目标，编辑器右键操作保留当前选择。
+- **任务与更新：**标题栏持续显示任务状态并可打开或关闭任务列表；源码更新保存完整编译日志，并在 Vim 版本未变化时复用现有引擎。
+- **操作与文档：**改进管理页面的可见操作、多选、危险操作确认、设置导航和 macOS 文本快捷键；整理并翻译项目文档。
+
+### 修复
+
+- 修复首次设置、网络状态本地化、防火墙授权提示、仪表盘方向导航和日志专家工具等问题。
+- Linux 新用户默认使用 ASCII 图标，最低终端尺寸统一为 108 列 × 22 行。
+
 ## v1.5 — 2026-10-31
 
 标签：[`v1.5`](https://github.com/peixuanthomas/TundraUX3/tree/v1.5)。[查看提交差异](https://github.com/peixuanthomas/TundraUX3/compare/v1.4.1...v1.5) · [发布说明](packaging/releases/v1.5.md)。
