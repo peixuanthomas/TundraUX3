@@ -441,10 +441,23 @@ fn running_task_cannot_be_closed_or_hidden_before_it_finishes() {
         assert_eq!(job.phase(), RUNNING);
         assert_eq!(state.active_screen(), old_screen);
     }
-    assert!(
-        matches!(rx.try_recv().unwrap(), OperationInput::Terminal { bytes } if bytes == b"\x1b")
-    );
-    assert!(rx.try_recv().is_err());
+    let model = state.auto_admin_view().unwrap();
+    let terminal = ui::auto_admin_layout_in(state.auto_admin_available_area(), &model).terminal;
+    let terminal_inputs = rx
+        .try_iter()
+        .filter_map(|input| match input {
+            OperationInput::Resize { columns, rows } => {
+                assert_eq!(
+                    (columns, rows),
+                    (terminal.width.max(1), terminal.height.max(1))
+                );
+                None
+            }
+            OperationInput::Terminal { bytes } => Some(bytes),
+            other => panic!("running task received an unexpected operation: {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(terminal_inputs, vec![b"\x1b".to_vec()]);
 
     job.finish(Ok("Done".into()));
     state.close_auto_admin();
