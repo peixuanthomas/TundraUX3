@@ -297,7 +297,13 @@ pub fn render_command_line_content_with_images(
 
     let output_area = model.output_area(terminal_area);
     let content_area = command_line_content_area(output_area, model.terminal.as_ref());
-    let message = command_line_process_message(model, theme);
+    let message = command_line_process_message(model, theme).map(|(message, style)| {
+        let message = match &model.title {
+            Some(title) => format!("{title} · {message}"),
+            None => message,
+        };
+        (message, style)
+    });
     render_terminal_snapshot_cells(frame, content_area, model.terminal.as_ref(), theme);
     images.render(frame, content_area, model.terminal.as_ref(), picker);
     render_command_line_scrollbar(frame, output_area, model.terminal.as_ref(), context);
