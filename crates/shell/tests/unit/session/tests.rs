@@ -3700,11 +3700,7 @@ fn rendered_overlay_resolver_ids_are_variant_stable_and_precedence_is_preserved(
 
 #[test]
 fn newly_tracked_overlay_groups_keep_keyboard_mouse_focus_ready_during_entry() {
-    let mut launcher = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
+    let (mut launcher, platform, _guard) = explorer_terminal_test_fixture();
     launcher.set_navigation_path(vec![ShellScreen::Launcher]);
     launcher.pages.launcher.launcher_pending_confirmation =
         Some(LauncherPendingConfirmation::Launch {
@@ -3719,6 +3715,12 @@ fn newly_tracked_overlay_groups_keep_keyboard_mouse_focus_ready_during_entry() {
         ShellHomeMode::User,
     );
     editor.set_navigation_path(vec![ShellScreen::Editor]);
+    editor.app.dispatch_at(
+        app::AppCommand::SetEditorState(Some(EditorState::untitled(
+            app::editor::DocumentKind::PlainText,
+        ))),
+        Instant::now(),
+    );
     editor.pages.editor.editor_open_menu = Some(ui::EditorMenu::File);
 
     let mut users = ShellSession::new_for_home_mode(
@@ -3782,21 +3784,7 @@ fn newly_tracked_overlay_groups_keep_keyboard_mouse_focus_ready_during_entry() {
             state.hit_map().regions().iter().any(|region| {
                 region.layer == ShellHitLayer::AppOverlay && region.component == owner
             });
-        if owner == ShellComponent::Editor {
-            assert!(!has_surface, "unrendered Editor menu has no layout surface");
-        } else {
-            assert!(has_surface, "missing overlay surface for {owner:?}");
-        }
-        assert_eq!(
-            state
-                .route_input_at(
-                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
-                    Instant::now(),
-                )
-                .command,
-            ShellCommand::CaptureOverlayInput
-        );
-
+        assert!(has_surface, "missing overlay surface for {owner:?}");
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(ui::MotionTransition {
                 progress: 1_000,
@@ -3818,6 +3806,37 @@ fn newly_tracked_overlay_groups_keep_keyboard_mouse_focus_ready_during_entry() {
             state.overlay_interaction_ready,
             "Reduced/inactive motion settles ready"
         );
+
+        state.refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(entering),
+            ..ui::MotionTransitions::default()
+        });
+        let launcher_before = state.pages.launcher.clone();
+        let editor_before = state.app.editor_state().cloned();
+        let users_before = state.pages.user_management.user_management_mode.clone();
+        let overlay_before = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        let now = Instant::now();
+        state.apply_input_with_platform_at(
+            InputEvent::mouse_down(PointerButton::Left, (1, 1)),
+            &platform,
+            now,
+        );
+        state.apply_input_with_platform_at(
+            InputEvent::mouse_up(PointerButton::Left, (1, 1)),
+            &platform,
+            now + Duration::from_millis(20),
+        );
+        assert_eq!(state.pages.launcher, launcher_before);
+        assert_eq!(state.app.editor_state(), editor_before.as_ref());
+        assert_eq!(
+            state.pages.user_management.user_management_mode,
+            users_before
+        );
+        assert_eq!(platform.calls(), calls_before);
+        if owner != ShellComponent::Editor {
+            assert_eq!(state.active_overlay_descriptor(), overlay_before);
+        }
     }
 }
 
@@ -4345,7 +4364,8 @@ fn explorer_dialogs_accept_input_during_entry_and_keep_their_hit_maps_isolated()
         ExplorerInputMode::Rename,
         ExplorerInputMode::RestoreDestination,
     ] {
-        let mut state = explorer_routing_test_state();
+        let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+        let covered = explorer_test_layout(&state).rows[0].area;
         state.pages.explorer.explorer_input_mode = mode;
         state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
@@ -4387,15 +4407,29 @@ fn explorer_dialogs_accept_input_during_entry_and_keep_their_hit_maps_isolated()
                 .collect::<Vec<_>>(),
             vec![explorer_overlay_surface(&state)]
         );
-        assert_eq!(
-            state
-                .route_input_at(
-                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
-                    Instant::now(),
-                )
-                .command,
-            ShellCommand::CaptureOverlayInput
-        );
+        let explorer_before = state.app.explorer_state().cloned();
+        let overlay_before = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        for point in [(1, 1), (covered.right() - 1, covered.y)] {
+            assert!(!rect_contains(explorer_overlay_surface(&state), point));
+            let now = Instant::now();
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+                now,
+            );
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+                now + Duration::from_millis(20),
+            );
+            assert_eq!(state.app.explorer_state(), explorer_before.as_ref());
+            assert_eq!(state.pages.explorer.explorer_input_mode, mode);
+            assert_eq!(state.active_overlay_descriptor(), overlay_before);
+            assert_eq!(platform.calls(), calls_before);
+        }
+        state.apply_input_with_platform(InputEvent::Paste("新名字".into()), &platform);
+        assert_eq!(state.pages.explorer.explorer_input, "新名字");
         state.refresh_hit_map_with_motion(ui::MotionTransitions {
             overlay: Some(ui::MotionTransition {
                 progress: 1_000,
@@ -4458,7 +4492,8 @@ fn explorer_semantic_replacements_route_input_immediately_to_the_active_popup() 
         ExplorerOverlayMode::Options,
         ExplorerOverlayMode::Properties,
     ] {
-        let mut state = explorer_routing_test_state();
+        let (mut state, platform, _guard) = explorer_terminal_test_fixture();
+        let covered = explorer_test_layout(&state).rows[0].area;
         state.pages.common.active_popup = Some(ShellPopup {
             owner: Some(ShellComponent::Explorer),
             anchor: (1, 1),
@@ -4511,15 +4546,27 @@ fn explorer_semantic_replacements_route_input_immediately_to_the_active_popup() 
                 .collect::<Vec<_>>(),
             vec![explorer_overlay_surface(&state)]
         );
-        assert_eq!(
-            state
-                .route_input_at(
-                    InputEvent::mouse_down(PointerButton::Left, (1, 1)),
-                    Instant::now(),
-                )
-                .command,
-            ShellCommand::CaptureOverlayInput
-        );
+        let explorer_before = state.app.explorer_state().cloned();
+        let overlay_before = state.active_overlay_descriptor();
+        let calls_before = platform.calls();
+        for point in [(1, 1), (covered.right() - 1, covered.y)] {
+            assert!(!rect_contains(explorer_overlay_surface(&state), point));
+            let now = Instant::now();
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+                now,
+            );
+            state.apply_input_with_platform_at(
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+                now + Duration::from_millis(20),
+            );
+            assert_eq!(state.app.explorer_state(), explorer_before.as_ref());
+            assert_eq!(state.pages.explorer.explorer_overlay_mode, Some(mode));
+            assert_eq!(state.active_overlay_descriptor(), overlay_before);
+            assert_eq!(platform.calls(), calls_before);
+        }
     }
 
     for dialog in [
