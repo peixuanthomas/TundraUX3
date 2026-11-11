@@ -41,6 +41,29 @@ fn model(advanced_open: bool) -> ManagementViewModel {
 }
 
 #[test]
+fn borderless_details_keep_a_keyboard_focus_marker_separate_from_selection() {
+    let mut model = model(false);
+    model.workspace.as_mut().unwrap().focus = WorkspaceFocus::Details;
+    let main = Rect::new(0, 0, 120, 30);
+    let layout = management_layout(main, &model);
+    let theme = TundraTheme::default_dark();
+    let mut terminal = Terminal::new(TestBackend::new(main.width, main.height)).unwrap();
+    for keyboard in [true, false] {
+        let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+        let mut buttons = ButtonFrame::new(None, None, &theme);
+        buttons.keyboard_focus_visible = keyboard;
+        context.buttons = Some(buttons);
+        terminal
+            .draw(|frame| render_management_content(frame, main, &model, &context))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(layout.details.x, layout.details.y)].symbol() == ">",
+            keyboard
+        );
+    }
+}
+
+#[test]
 fn workspace_actions_stay_separate_from_search_list_and_details() {
     for open in [false, true] {
         let model = model(open);
