@@ -70,6 +70,8 @@ Ordinary workspaces use headings, backgrounds, and whitespace instead of complet
 
 The default palette is canvas `#101010`, surface `#181818`, raised surface `#242424`, text `#E6E6E6`, muted text `#999999`, accent `#63D3E5`, and border `#383838`. Ordinary buttons use plain text; primary actions use accent fill, while danger actions retain semantic color. Current-item and multi-selection backgrounds remain independent of keyboard focus. Explicit saved appearance settings remain supported.
 
+Compatibility themes retain the frame's terminal color capability when rebuilding surface and semantic colors, so shared buttons and legacy renderers keep ANSI output free of RGB colors.
+
 ## Animations
 
 Shared animations include:

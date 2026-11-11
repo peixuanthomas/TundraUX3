@@ -1,7 +1,10 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-use ui::components::{Button, List, ListItem, NavRail, NavRailItem, Surface};
+use ui::components::{
+    Button, ButtonEmphasis, ButtonFrame, ButtonRegion, List, ListItem, NavRail, NavRailItem,
+    Surface,
+};
 use ui::{MotionFrame, RenderCapabilities, RenderContext, TundraTheme};
 
 const ANSI_ACCENTS: [(Color, Color); 16] = [
@@ -87,6 +90,113 @@ fn named_accents_survive_terminal_capability_and_legacy_theme_resolution() {
                 RenderContext::from_theme(&legacy, MotionFrame::default(), capabilities);
             assert_eq!(resolved_again.theme.accent, accent);
             assert_eq!(resolved_again.theme.focus, focus);
+        }
+    }
+}
+
+#[test]
+fn compatibility_tokens_retain_resolved_surfaces_and_semantic_colors() {
+    let theme = TundraTheme::default()
+        .with_accent_color(Color::Magenta)
+        .with_border_color(Color::Blue);
+    for capabilities in [RenderCapabilities::ansi(), RenderCapabilities::default()] {
+        let context = RenderContext::from_theme(&theme, MotionFrame::default(), capabilities);
+        let tokens = context.compatibility_theme().tokens();
+        assert_eq!(tokens, context.theme);
+        assert_eq!(tokens.accent, Color::Magenta);
+        assert_eq!(tokens.border, Color::Blue);
+        if capabilities == RenderCapabilities::ansi() {
+            assert_eq!(tokens.surface, Color::Black);
+            assert_eq!(tokens.raised, Color::Black);
+            assert_eq!(tokens.success, Color::Green);
+            assert_eq!(tokens.danger, Color::LightRed);
+        } else {
+            assert_eq!(tokens.surface, Color::Rgb(24, 24, 24));
+            assert_eq!(tokens.raised, Color::Rgb(36, 36, 36));
+            assert_eq!(tokens.success, Color::Rgb(121, 214, 155));
+            assert_eq!(tokens.danger, Color::Rgb(242, 125, 137));
+        }
+    }
+}
+
+#[test]
+fn shared_button_frames_keep_terminal_colors_in_every_interaction_state() {
+    let area = Rect::new(0, 0, 12, 3);
+    for capabilities in [RenderCapabilities::ansi(), RenderCapabilities::default()] {
+        for state in [
+            "normal", "hovered", "pressed", "focused", "current", "disabled",
+        ] {
+            for emphasis in [
+                ButtonEmphasis::Normal,
+                ButtonEmphasis::Primary,
+                ButtonEmphasis::Danger,
+            ] {
+                let mut context = RenderContext::from_theme(
+                    &TundraTheme::default(),
+                    MotionFrame::default(),
+                    capabilities,
+                );
+                let region = ButtonRegion {
+                    id: "save".into(),
+                    area,
+                    disabled: state == "disabled",
+                };
+                let hovered = matches!(state, "hovered" | "pressed" | "disabled");
+                let pressed = matches!(state, "pressed" | "disabled");
+                let mut buttons = ButtonFrame::new(
+                    hovered.then(|| region.clone()),
+                    pressed.then_some(region),
+                    &context.compatibility_theme(),
+                );
+                buttons.keyboard_focus_visible = state == "focused";
+                context.buttons = Some(buttons.clone());
+                let theme = context.compatibility_theme();
+                let mut button = Button::new("save", "Save")
+                    .with_current(state == "current")
+                    .with_emphasis(emphasis);
+                button.set_focused(matches!(state, "focused" | "disabled"));
+                button.set_disabled(state == "disabled");
+                for variant in 0..3 {
+                    let mut buffer = Buffer::empty(area);
+                    match variant {
+                        0 => button.render(area, &mut buffer, &theme),
+                        1 => button.render_borderless(area, &mut buffer, &theme),
+                        _ => button.render_surface(area, &mut buffer, &theme),
+                    }
+                    if capabilities == RenderCapabilities::ansi() {
+                        for cell in buffer.content() {
+                            assert!(
+                                !matches!(cell.fg, Color::Rgb(..))
+                                    && !matches!(cell.bg, Color::Rgb(..))
+                                    && !matches!(cell.underline_color, Color::Rgb(..)),
+                                "{state}, {emphasis:?}, variant={variant}: {cell:?}"
+                            );
+                        }
+                    }
+                    if emphasis == ButtonEmphasis::Normal && variant == 2 {
+                        let expected = match state {
+                            "normal" => context.theme.surface,
+                            "current" => context.theme.raised,
+                            "disabled" => context.theme.canvas,
+                            _ => context.theme.accent_soft,
+                        };
+                        assert_eq!(buffer[(1, 1)].bg, expected, "{state}, {capabilities:?}");
+                    }
+                    if emphasis == ButtonEmphasis::Normal && variant == 1 {
+                        let expected = match state {
+                            "hovered" | "focused" => context.theme.accent,
+                            "pressed" if capabilities == RenderCapabilities::ansi() => {
+                                Color::LightCyan
+                            }
+                            "pressed" => Color::Rgb(153, 226, 238),
+                            "disabled" => Color::DarkGray,
+                            _ => context.theme.text,
+                        };
+                        assert_eq!(buffer[(1, 1)].fg, expected, "{state}, {capabilities:?}");
+                    }
+                }
+                assert_eq!(buttons.regions().len(), 3);
+            }
         }
     }
 }

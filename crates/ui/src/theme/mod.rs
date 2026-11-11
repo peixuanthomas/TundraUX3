@@ -841,7 +841,7 @@ impl TundraTheme {
         tokens.muted = self.muted;
         tokens.border = self.border_color;
         tokens.danger = self.error;
-        tokens
+        tokens.for_capability(self.color_capability)
     }
 
     pub const fn border_type(&self) -> BorderType {
