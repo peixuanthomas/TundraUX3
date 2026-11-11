@@ -112,12 +112,16 @@ fn details_fold_the_list_into_the_shared_edge_on_wide_and_narrow_pages() {
         let mid = ui::management_layout(area, &model);
         if width >= 90 {
             assert!(start.list.width > mid.list.width && mid.list.width > end.list.width);
-            assert_eq!(mid.list.right(), mid.details.x);
+            let gap = start.details.x - start.list.right();
+            assert_eq!(gap, 2);
+            assert_eq!(mid.list.right() + gap, mid.details.x);
             assert!(start.details.x > mid.details.x && mid.details.x > end.details.x);
             assert_eq!(start.details.right(), mid.details.right());
         } else {
             assert!(start.list.height > mid.list.height && mid.list.height > end.list.height);
-            assert_eq!(mid.list.bottom(), mid.details.y);
+            let gap = start.details.y - start.list.bottom();
+            assert_eq!(gap, 1);
+            assert_eq!(mid.list.bottom() + gap, mid.details.y);
             assert!(start.details.y > mid.details.y && mid.details.y > end.details.y);
         }
         model.details_expansion = Some(1_000);
