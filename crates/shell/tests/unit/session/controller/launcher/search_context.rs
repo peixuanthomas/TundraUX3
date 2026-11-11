@@ -60,9 +60,13 @@ fn launcher_search_filters_real_targets_and_zero_results_cannot_launch_hidden_it
         expected_ids,
     );
     assert_eq!(
-        fixture.state.selected_launcher_id().as_deref(),
+        fixture
+            .state
+            .selected_built_in_launcher_application()
+            .map(|application| application.id),
         Some(app::EDITOR_APPLICATION.id)
     );
+    assert!(fixture.state.selected_launcher_id().is_none());
     fixture.input(InputEvent::key(InputKey::Enter));
     assert_eq!(fixture.state.active_screen(), ShellScreen::Editor);
 }
