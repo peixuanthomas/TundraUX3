@@ -358,6 +358,9 @@ fn wide_detail_motion_keeps_source_output_and_hits_on_the_same_frame() {
     assert_eq!(state.script_layout().editor_area, before_reverse);
     assert!(state.script_layout().editor_area.width < initial.width);
     state.interaction.pointer_motion = false;
+    assert!(state.advance_script_details(frame));
+    assert_eq!(state.script_layout().editor_area, before_reverse);
+    frame.now = Duration::from_millis(260);
     assert!(!state.advance_script_details(frame));
     assert_eq!(state.script_layout().editor_area.width, initial.width);
     assert_eq!(state.pages.editor.script.closing_detail, None);

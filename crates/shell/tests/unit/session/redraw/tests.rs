@@ -83,9 +83,9 @@ fn independent_widget_animation_can_request_the_next_frame() {
     scheduler.request_animation_frame(origin);
     assert_eq!(
         scheduler.poll_timeout(origin, Duration::MAX),
-        Duration::from_nanos(33_333_334)
+        FRAME_INTERVAL
     );
-    assert!(!scheduler.is_due(origin + Duration::from_millis(33)));
+    assert!(!scheduler.is_due(origin + Duration::from_millis(16)));
     assert!(scheduler.is_due(origin + FRAME_INTERVAL));
 }
 
@@ -102,15 +102,15 @@ fn continuous_color_frames_keep_their_clock_when_motion_is_reduced() {
     );
 
     for frame_number in 0..3 {
-        let now = origin + FRAME_INTERVAL * frame_number;
+        let now = origin + CONTINUOUS_FRAME_INTERVAL * frame_number;
         scheduler.request_continuous_frame(now);
         scheduler.observe(now, identity.clone(), true);
         assert_eq!(
             scheduler.poll_timeout(now, Duration::MAX),
-            Duration::from_nanos(33_333_334)
+            CONTINUOUS_FRAME_INTERVAL
         );
         assert!(!scheduler.is_due(now + Duration::from_millis(33)));
-        let next = now + FRAME_INTERVAL;
+        let next = now + CONTINUOUS_FRAME_INTERVAL;
         assert!(scheduler.is_due(next));
         for speed in [0, 25, 100, 200] {
             let frame = scheduler.frame(next, speed);
@@ -119,5 +119,59 @@ fn continuous_color_frames_keep_their_clock_when_motion_is_reduced() {
         }
         scheduler.did_draw(next);
     }
-    assert!(!scheduler.is_due(origin + FRAME_INTERVAL * 4));
+    assert!(!scheduler.is_due(origin + CONTINUOUS_FRAME_INTERVAL * 4));
+}
+
+#[test]
+fn urgent_input_bypasses_animation_budget_while_background_updates_coalesce() {
+    let origin = Instant::now();
+    let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
+    scheduler.did_draw(origin);
+    scheduler.request_animation_frame(origin);
+    scheduler.request_redraw();
+    assert!(!scheduler.is_due(origin + Duration::from_millis(1)));
+    scheduler.request_input_redraw();
+    assert!(scheduler.is_due(origin + Duration::from_millis(1)));
+    assert_eq!(
+        scheduler.poll_timeout(origin, Duration::MAX),
+        Duration::ZERO
+    );
+}
+
+#[test]
+fn demand_uses_nearest_deadline_and_slow_output_never_replays_frame_backlog() {
+    let origin = Instant::now();
+    let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
+    scheduler.did_draw(origin);
+    let completed = origin + Duration::from_millis(80);
+    scheduler.request_animation_frame_in(completed, Duration::from_millis(2));
+    scheduler.request_frame_after(completed, Duration::from_millis(80));
+    assert_eq!(
+        scheduler.poll_timeout(completed, Duration::MAX),
+        Duration::from_millis(2)
+    );
+    assert!(!scheduler.is_due(completed));
+    assert!(scheduler.is_due(completed + Duration::from_millis(2)));
+    scheduler.did_draw(completed + Duration::from_millis(2));
+    assert_eq!(
+        scheduler.poll_timeout(completed + Duration::from_millis(2), Duration::MAX),
+        Duration::from_millis(918)
+    );
+}
+
+#[test]
+fn slow_output_skips_missed_state_clock_ticks_but_preserves_elapsed_motion_time() {
+    let origin = Instant::now();
+    let mut scheduler = RedrawScheduler::new(origin, id("home", "one", None), false);
+    scheduler.did_draw_finished(origin, origin + Duration::from_millis(2_500));
+    let next = origin + Duration::from_millis(2_500) + FRAME_INTERVAL;
+    scheduler.request_animation_frame(origin + Duration::from_millis(2_500));
+    assert_eq!(
+        scheduler.poll_timeout(origin + Duration::from_millis(2_500), Duration::MAX),
+        FRAME_INTERVAL
+    );
+    assert_eq!(
+        scheduler.frame(next, 100).delta,
+        Duration::from_millis(2_500) + FRAME_INTERVAL
+    );
 }

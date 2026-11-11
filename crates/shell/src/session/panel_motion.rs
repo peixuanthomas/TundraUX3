@@ -8,8 +8,7 @@ impl ShellSession {
             .unwrap_or_default()
     }
 
-    pub(super) fn interaction_motion_frame(&self, mut frame: ui::MotionFrame) -> ui::MotionFrame {
-        frame.reduced_motion |= !self.interaction.pointer_motion;
+    pub(super) fn interaction_motion_frame(&self, frame: ui::MotionFrame) -> ui::MotionFrame {
         frame
     }
 

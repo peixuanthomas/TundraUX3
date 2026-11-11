@@ -409,7 +409,7 @@ fn settings_nested_dialogs_keep_parents_visible_when_opening_and_closing() {
 }
 
 #[test]
-fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() {
+fn keyboard_and_pointer_open_the_same_readable_transition_and_navigation_interrupts_it() {
     let platform = platform::mock::UnsupportedPlatform;
     for (pointer, aa) in [(false, false), (true, false), (true, true)] {
         let mut state = session();
@@ -420,8 +420,7 @@ fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() 
         let send = |state: &mut ShellSession, compositor: &mut ScreenCompositor, input| {
             let now = Instant::now();
             if let Some(input) = compositor.prepare_input(state, input, &platform, now) {
-                let (_, blocked) = compositor.dispatch_input(state, input, &platform, now);
-                assert!(!blocked);
+                compositor.dispatch_input(state, input, &platform, now);
             }
         };
         if aa {
@@ -432,7 +431,7 @@ fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() 
                 .unwrap();
         } else if pointer {
             let area = state.frame_layout.unwrap().back_button.unwrap();
-            let point = (area.x + 1, area.y + 1);
+            let point = (area.x + 1, area.y);
             send(
                 &mut state,
                 &mut compositor,
@@ -459,7 +458,7 @@ fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() 
         frame.notification = state.to_notification_view_model();
         assert_eq!(
             draw(&mut compositor, &mut terminal, &mut state, &frame),
-            pointer
+            true
         );
         send(&mut state, &mut compositor, InputEvent::key(InputKey::Tab));
         send(&mut state, &mut compositor, InputEvent::mouse_moved((1, 0)));
@@ -476,6 +475,12 @@ fn physical_keyboard_finishes_pointer_motion_and_never_waits_to_open_or_close() 
                 InputKey::Escape
             }),
         );
+        compositor
+            .motion
+            .finish_before_input(&InputEvent::key(InputKey::Tab));
+        if let Some(close) = compositor.take_deferred_close(&state) {
+            state.apply_routed_event(close, &platform, Instant::now());
+        }
         assert_eq!(state.active_screen(), ShellScreen::Home);
         assert!(!state.auto_admin_visible());
         assert_eq!(state.notification_has_active_modal(), aa);
@@ -1627,7 +1632,7 @@ fn launcher_click_launches_only_after_matching_release_in_both_views() {
 }
 
 #[test]
-fn home_entry_single_click_expands_from_its_area_and_returns_to_it() {
+fn home_entry_single_click_shows_complete_page_immediately_and_returns_without_morph() {
     struct StorageFixtureGuard(PathBuf);
     impl Drop for StorageFixtureGuard {
         fn drop(&mut self) {
@@ -1704,7 +1709,7 @@ fn home_entry_single_click_expands_from_its_area_and_returns_to_it() {
             .find(|r| r.id.as_str() == launcher_id)
             .unwrap()
             .area;
-        let point = (area.x + 1, area.y + 1);
+        let point = (area.x + 1, area.y);
         assert_eq!(state.home_entry_index_at(point), Some(launcher_index));
         if hover {
             state.apply_input_with_platform(InputEvent::mouse_moved(point), &platform);
@@ -1735,12 +1740,9 @@ fn home_entry_single_click_expands_from_its_area_and_returns_to_it() {
         let mut prepared = home_frame(&state, 1, false);
         prepared.page = ScreenViewModel::Launcher(Box::new(state.to_launcher_view_model()));
         assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
-        assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), "╭");
-        assert!(
-            area.inner(ratatui::layout::Margin::new(1, 1))
-                .positions()
-                .all(|position| terminal.backend().buffer()[position].symbol() == " ")
-        );
+        let first_main = state.frame_layout.unwrap().main;
+        let first_text = text(terminal.backend().buffer(), first_main);
+        assert!(first_text.chars().any(char::is_alphanumeric));
         prepared.context.motion.delta = ui::MotionTimings::PAGE;
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
         let main = state.frame_layout.unwrap().main;
@@ -1753,7 +1755,7 @@ fn home_entry_single_click_expands_from_its_area_and_returns_to_it() {
                     .any(char::is_alphanumeric))
         );
         let back = state.frame_layout.unwrap().back_button.unwrap();
-        let point = (back.x + 1, back.y + 1);
+        let point = (back.x + 1, back.y);
         state.apply_input_with_platform(
             InputEvent::mouse_down(PointerButton::Left, point),
             &platform,
@@ -1765,16 +1767,11 @@ fn home_entry_single_click_expands_from_its_area_and_returns_to_it() {
         assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
         prepared.context.motion.delta = ui::MotionTimings::PAGE / 2;
         assert!(draw(&mut compositor, &mut terminal, &mut state, &prepared));
-        let current = ui::reveal_rect(main, 500, ui::RevealOrigin::Button(area));
-        assert_eq!(
-            terminal.backend().buffer()[(current.x, current.y)].symbol(),
-            "╭"
-        );
+        assert_eq!(state.frame_layout.unwrap().main, main);
         assert!(
-            current
-                .inner(ratatui::layout::Margin::new(1, 1))
-                .positions()
-                .all(|position| terminal.backend().buffer()[position].symbol() == " ")
+            text(terminal.backend().buffer(), main)
+                .chars()
+                .any(char::is_alphanumeric)
         );
         assert!(!draw(&mut compositor, &mut terminal, &mut state, &prepared));
         let text = area
@@ -1782,7 +1779,6 @@ fn home_entry_single_click_expands_from_its_area_and_returns_to_it() {
             .map(|position| terminal.backend().buffer()[position].symbol())
             .collect::<String>();
         assert!(text.contains(&i18n::tr!("shell-launcher")));
-        assert!(ui::home_entry_icon_area(area).is_empty());
     }
 }
 
@@ -1952,4 +1948,96 @@ fn animation_form_screen_keyboard_targets_the_current_numeric_field() {
             .selected,
         0
     );
+}
+
+#[test]
+fn closing_modal_keeps_next_text_input_and_ignores_the_old_mouse_release() {
+    let platform = platform::mock::UnsupportedPlatform;
+    for input in [
+        InputEvent::key(InputKey::Char('7')),
+        InputEvent::Paste("7".into()),
+    ] {
+        let mut state = session();
+        state.set_navigation_path(vec![ShellScreen::Clock]);
+        state.pages.clock.clock_create_state = Some(ClockCreateState::default());
+        state.refresh_hit_map();
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut frame = home_frame(&state, 0, false);
+        frame.page = ScreenViewModel::Clock(Box::new(state.to_clock_view_model()));
+        draw(&mut compositor, &mut terminal, &mut state, &frame);
+        state.notify_modal("Review", "Body", ui::NotificationTone::Info, Vec::new());
+        state.refresh_hit_map();
+        frame.notification = state.to_notification_view_model();
+        draw(&mut compositor, &mut terminal, &mut state, &frame);
+        let now = Instant::now();
+        let cancel = compositor
+            .prepare_input(
+                &mut state,
+                InputEvent::key(InputKey::Escape),
+                &platform,
+                now,
+            )
+            .unwrap();
+        assert!(
+            compositor
+                .dispatch_input(&mut state, cancel, &platform, now)
+                .1
+        );
+        assert!(state.notification_has_active_modal());
+        assert!(
+            compositor
+                .prepare_input(
+                    &mut state,
+                    InputEvent::mouse_up(PointerButton::Left, (40, 20)),
+                    &platform,
+                    now
+                )
+                .is_none()
+        );
+        assert!(state.pages.clock.clock_create_state.is_some());
+        let prepared = compositor
+            .prepare_input(&mut state, input, &platform, now)
+            .expect("new text remains routable");
+        compositor.dispatch_input(&mut state, prepared, &platform, now);
+        assert!(!state.notification_has_active_modal());
+        assert_ne!(
+            state
+                .pages
+                .clock
+                .clock_create_state
+                .as_ref()
+                .unwrap()
+                .values,
+            [0; 3]
+        );
+        assert!(compositor.take_deferred_close(&state).is_none());
+    }
+}
+
+#[test]
+fn visible_busy_state_requests_only_its_shared_interval_and_reduced_motion_is_static() {
+    for reduced in [false, true] {
+        let mut state = session();
+        state.set_navigation_path(vec![ShellScreen::Diagnostics]);
+        let mut compositor = ScreenCompositor::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        let mut frame = home_frame(&state, 0, reduced);
+        let mut diagnostics = state.to_diagnostics_view_model();
+        diagnostics.scanning = true;
+        frame.page = ScreenViewModel::Diagnostics(Box::new(diagnostics));
+        assert_eq!(
+            draw(&mut compositor, &mut terminal, &mut state, &frame),
+            !reduced
+        );
+        assert_eq!(
+            compositor.next_redraw_in(),
+            (!reduced).then_some(ui::BusyIndicator::FRAME_INTERVAL)
+        );
+        if let ScreenViewModel::Diagnostics(model) = &mut frame.page {
+            model.scanning = false;
+        }
+        assert!(!draw(&mut compositor, &mut terminal, &mut state, &frame));
+        assert_eq!(compositor.next_redraw_in(), None);
+    }
 }

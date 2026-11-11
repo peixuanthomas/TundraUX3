@@ -126,6 +126,7 @@ pub(crate) struct ScreenCompositor {
     pub(super) capture_enabled: bool,
     pub(super) snapshot: Option<shell_control::Snapshot>,
     sensitive_frame: bool,
+    next_redraw_in: Option<Duration>,
 }
 
 impl ScreenCompositor {
@@ -352,7 +353,7 @@ impl ScreenCompositor {
         let icons = icons.filter(|_| state.graphical_icons_enabled());
         if visible_content {
             // Raster cells compose safely while modal surfaces or layouts move.
-            let picker = (overlays.is_empty() && !self.motion.is_running() && !keyboard_animating)
+            let picker = (overlays.is_empty() && !keyboard_animating)
                 .then_some(self.terminal_image_picker.as_ref())
                 .flatten();
             let page = state.content_page_id();
@@ -519,7 +520,7 @@ impl ScreenCompositor {
                         frame,
                         terminal_area,
                         &auto_admin.terminal,
-                        (!self.motion.is_running() && !keyboard_animating)
+                        (!keyboard_animating)
                             .then_some(self.terminal_image_picker.as_ref())
                             .flatten(),
                     );
@@ -531,8 +532,38 @@ impl ScreenCompositor {
             images.clear();
         }
         self.motion.capture_overlay(frame.buffer_mut(), state);
-        self.motion
-            .process(context.motion.scaled_delta(), frame.buffer_mut(), state);
+        let mut terminal_areas = Vec::new();
+        match content {
+            ui::ScreenContent::CommandLine(_) => {
+                terminal_areas.extend(ui::command_line_terminal_area_in(&layout))
+            }
+            ui::ScreenContent::Editor(model) if model.vim_terminal.is_some() => {
+                terminal_areas.push(ui::editor_vim_terminal_area(layout.main));
+            }
+            ui::ScreenContent::Script(model) => {
+                let script = ui::script_layout(layout.main, model);
+                if model.editor.vim_terminal.is_some() {
+                    terminal_areas.push(script.editor.canvas);
+                }
+                if model.output.is_some() {
+                    terminal_areas.push(script.output_area);
+                }
+            }
+            ui::ScreenContent::Management(model) if model.terminal => {
+                terminal_areas.push(ui::management_layout(layout.main, model).output_text);
+            }
+            _ => {}
+        }
+        if let Some(model) = state.auto_admin_view() {
+            terminal_areas
+                .push(ui::auto_admin_layout_in(state.auto_admin_available_area(), &model).terminal);
+        }
+        self.motion.process_host(
+            context.motion.scaled_delta(),
+            frame.buffer_mut(),
+            state,
+            &terminal_areas,
+        );
         if let Some(capture) = &mut capture
             && let Some(launcher) = state.keyboard_launcher_area()
         {
@@ -546,16 +577,33 @@ impl ScreenCompositor {
         }
         self.render_input_keyboard(frame, state, context);
         state.button_regions = buttons.regions();
-        let animation_running = prepared.progress_running
-            || prepared.rainbow_running()
-            || keyboard_animating
-            || details_animating
-            || script_animating
-            || self.motion.is_running()
-            || self
-                .toast
+        self.next_redraw_in = [
+            prepared
+                .progress_running
+                .then(|| self.progress.next_redraw_in(context.motion))
+                .flatten(),
+            keyboard_animating
+                .then(|| state.screen_keyboard.motion.next_redraw_in(context.motion))
+                .flatten(),
+            state
+                .details_motion
                 .as_ref()
-                .is_some_and(|toast| toast.requests_redraw(context.motion));
+                .and_then(|(_, motion)| motion.next_redraw_in(context.motion)),
+            script_animating.then_some(ui::ANIMATION_FRAME_INTERVAL),
+            self.motion.next_redraw_in(context.motion),
+            (!context.motion.reduced_motion
+                && overlays.is_empty()
+                && content.busy_visible(layout.main))
+            .then_some(ui::BusyIndicator::FRAME_INTERVAL),
+            self.toast
+                .as_ref()
+                .filter(|toast| toast.requests_redraw(context.motion))
+                .map(|_| ui::ANIMATION_FRAME_INTERVAL),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        let animation_running = self.next_redraw_in.is_some() || prepared.rainbow_running();
         self.snapshot = capture.map(|capture| {
             let mut snapshot = capture.finish(frame.buffer_mut());
             snapshot.animation_running = animation_running;
@@ -577,10 +625,7 @@ impl ScreenCompositor {
                     node.actions.clear();
                 }
             }
-            let layout_animating = keyboard_animating
-                || details_animating
-                || script_animating
-                || self.motion.is_running();
+            let layout_animating = keyboard_animating || details_animating || script_animating;
             let sensitive = snapshot.nodes.iter().any(|node| node.sensitive);
             if layout_animating {
                 for node in &mut snapshot.nodes {
@@ -600,6 +645,10 @@ impl ScreenCompositor {
             snapshot
         });
         animation_running
+    }
+
+    pub(super) fn next_redraw_in(&self) -> Option<Duration> {
+        self.next_redraw_in
     }
 
     fn synchronize_toast(&mut self, chrome: &ui::ShellChromeViewModel, motion: ui::MotionFrame) {
@@ -678,20 +727,22 @@ impl ScreenCompositor {
         if state.screen_saver.active {
             return state.prepare_input(input, platform, received_at);
         }
-        if matches!(
-            input,
-            InputEvent::Key(_) | InputEvent::Paste(_) | InputEvent::FocusLost
-        ) {
+        if matches!(input, InputEvent::FocusLost | InputEvent::Resize { .. }) {
             if let Some(close) = self.motion.cancel_for_suspend(state) {
                 state.apply_routed_event(close, platform, received_at);
             }
-            self.motion.remember(
-                state,
-                Rect::new(0, 0, state.terminal_size.0, state.terminal_size.1),
-            );
+        } else {
+            self.motion.finish_before_input(&input);
+            if let Some(close) = self.motion.take_deferred_close(state) {
+                state.apply_routed_event(close, platform, received_at);
+                if input.is_mouse()
+                    || matches!(&input, InputEvent::Key(key) if key.label() == "Esc")
+                {
+                    return None;
+                }
+            }
         }
-        // AA consumes pointer events before ordinary routing, so gate them here.
-        if input.is_mouse() && self.motion.blocks_before_route(&input) {
+        if self.motion.blocks_before_route(&input) {
             return None;
         }
         state.prepare_input(input, platform, received_at)

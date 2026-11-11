@@ -67,7 +67,7 @@ fn clock_dialog_motion_surface_preserves_input_and_button_hit_targets() {
 }
 
 #[test]
-fn motion_dispatch_consumes_weather_wakeup_before_deferral_and_pre_route_blocking() {
+fn motion_dispatch_consumes_weather_wakeup_and_leaves_entering_surfaces_interactive() {
     fn login_exit_fixture(now: Instant) -> (ShellSession, ShellMotionEffects) {
         let full = Rect::new(0, 0, 120, 40);
         let theme = ui::ThemeTokens::glacier_night();
@@ -115,9 +115,12 @@ fn motion_dispatch_consumes_weather_wakeup_before_deferral_and_pre_route_blockin
         &platform,
         now,
     );
-    assert!(!motion_blocked);
+    assert!(motion_blocked);
     assert_eq!(active.screen_saver.last_activity, now);
-    assert!(active_motion.deferred_close.is_none());
+    assert!(active_motion.deferred_close.is_some());
+    active_motion.finish_before_input(&InputEvent::from_key_label("Tab"));
+    let close = active_motion.take_deferred_close(&active).unwrap();
+    active.apply_routed_event(close, &platform, now);
     assert_ne!(active.active_screen(), ShellScreen::ExitConfirm);
 
     let (mut clicked, mut clicked_motion) = login_exit_fixture(now);
@@ -150,7 +153,8 @@ fn motion_dispatch_consumes_weather_wakeup_before_deferral_and_pre_route_blockin
         &platform,
         now + Duration::from_millis(1),
     );
-    assert!(motion_blocked);
+    assert!(!motion_blocked);
+    assert_eq!(active_motion.outgoing_block_remaining, Duration::ZERO);
     assert_eq!(active.last_click, previous_click);
 }
 
@@ -845,7 +849,7 @@ fn asynchronous_overlay_preserves_remaining_visual_outgoing() {
 }
 
 #[test]
-fn generic_and_explorer_menus_both_animate_and_gate_pointer_input() {
+fn generic_and_explorer_menus_keep_text_and_accept_input_during_entry() {
     let full = Rect::new(0, 0, 120, 40);
     let theme = ui::ThemeTokens::glacier_night();
     let mut state = ShellSession::new_for_home_mode(
@@ -872,19 +876,19 @@ fn generic_and_explorer_menus_both_animate_and_gate_pointer_input() {
         .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
     assert_eq!(
         motion.intercept_input(&generic_input),
-        MotionInputDisposition::Block
+        MotionInputDisposition::Apply
     );
     motion.test_frame(Duration::from_millis(16), &mut buffer, &state);
-    assert_eq!(buffer[(20, 10)].symbol(), " ");
+    assert_eq!(buffer[(20, 10)].symbol(), "N");
     assert!(
         full.positions()
             .filter(|position| *position != Position::new(20, 10))
             .all(|position| buffer[position] == natural[position])
     );
     assert!(motion.manager.is_running());
-    assert_eq!(motion.overlay_gate, Duration::from_millis(160));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(120));
     buffer.clone_from(&natural);
-    motion.test_frame(Duration::from_millis(160), &mut buffer, &state);
+    motion.test_frame(Duration::from_millis(120), &mut buffer, &state);
     assert_eq!(buffer, natural);
     state.pages.common.active_popup = None;
     state.pages.common.focused_component = ShellComponent::Home;
@@ -892,7 +896,7 @@ fn generic_and_explorer_menus_both_animate_and_gate_pointer_input() {
     motion.update(&state, full, full, None, theme, false);
     assert!(motion.manager.is_running());
     motion.test_frame(Duration::ZERO, &mut buffer, &state);
-    motion.test_frame(Duration::from_millis(160), &mut buffer, &state);
+    motion.test_frame(Duration::from_millis(120), &mut buffer, &state);
 
     state.set_navigation_path(vec![ShellScreen::Explorer]);
     state.replace_explorer_state(Some(ExplorerState::new(".", false)));
@@ -913,11 +917,11 @@ fn generic_and_explorer_menus_both_animate_and_gate_pointer_input() {
     assert_eq!(overlay_area(&state), Some(expected));
     motion.update(&state, full, full, None, theme, false);
     assert!(motion.manager.is_running());
-    assert_eq!(motion.overlay_gate, Duration::from_millis(160));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(120));
 }
 
 #[test]
-fn identity_sync_gates_confirm_before_first_render() {
+fn identity_sync_accepts_confirm_before_first_render_and_keeps_modal_routing() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -951,7 +955,7 @@ fn identity_sync_gates_confirm_before_first_render() {
         .route_input_at(InputEvent::from_key_label("Enter"), Instant::now());
     assert_eq!(
         motion.intercept_input(&confirm),
-        MotionInputDisposition::Block
+        MotionInputDisposition::Apply
     );
     let outside = state.clone().route_input_at(
         InputEvent::mouse_down(PointerButton::Left, (0, 0)),
@@ -959,7 +963,7 @@ fn identity_sync_gates_confirm_before_first_render() {
     );
     assert_eq!(
         motion.intercept_input(&outside),
-        MotionInputDisposition::Block
+        MotionInputDisposition::Apply
     );
 }
 
@@ -1025,7 +1029,7 @@ fn exit_buffer(kind: ui::MotionOverlayKind, elapsed: Duration) -> Buffer {
 }
 
 #[test]
-fn dialog_and_popover_snapshot_exits_are_spatial_single_stage_and_end_natural() {
+fn dialog_and_popover_exits_keep_their_text_at_fixed_positions_and_end_natural() {
     let full = Rect::new(0, 0, 11, 7);
     let area = Rect::new(2, 1, 7, 5);
     for kind in [
@@ -1037,7 +1041,7 @@ fn dialog_and_popover_snapshot_exits_are_spatial_single_stage_and_end_natural() 
         assert!(
             area.inner(ratatui::layout::Margin::new(1, 1))
                 .positions()
-                .all(|position| start[position].symbol() == " ")
+                .all(|position| start[position].symbol() == "O")
         );
         assert!(
             full.positions()
@@ -1071,11 +1075,13 @@ fn dialog_and_popover_snapshot_exits_are_spatial_single_stage_and_end_natural() 
         ui::MotionOverlayKind::Popover,
         overlay_duration(ui::MotionOverlayKind::Popover) / 2,
     );
-    assert_ne!(dialog_mid, popover_mid);
+    assert_eq!(dialog_mid, popover_mid);
+    assert_eq!(dialog_mid[(area.x, area.y)].symbol(), "╭");
+    assert_eq!(dialog_mid[(area.x + 1, area.y + 1)].symbol(), "O");
 }
 
 #[test]
-fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
+fn post_mutation_outgoing_does_not_lock_subsequent_navigation() {
     let mut state = ShellSession::new_for_home_mode(
         ShellLaunchConfig::default(),
         (120, 40),
@@ -1152,7 +1158,7 @@ fn post_mutation_outgoing_blocks_second_escape_only_for_old_phase() {
         .route_input_at(InputEvent::from_key_label("Esc"), Instant::now());
     assert_eq!(
         motion.intercept_input(&second_escape),
-        MotionInputDisposition::Block
+        MotionInputDisposition::Apply
     );
     let screen = state.content_screen();
     let mut natural = Buffer::filled(Rect::new(0, 0, 120, 40), Cell::new("N"));
@@ -1431,7 +1437,7 @@ fn new_page_overlay_after_shell_close_still_enters() {
     state.pages.editor.editor_open_menu = Some(ui::EditorMenu::Edit);
     state.refresh_hit_map();
     motion.update_layout(&state, &layout, ui::ThemeTokens::glacier_night(), false);
-    assert_eq!(motion.overlay_gate, Duration::from_millis(340));
+    assert_eq!(motion.overlay_gate, Duration::from_millis(300));
     assert!(motion.active_visual_outgoing.is_some());
 }
 
@@ -1465,4 +1471,63 @@ fn changing_pages_cancels_old_outgoing_cells_but_keeps_new_page_entry() {
     .process(Duration::ZERO, &mut expected, layout.bounds);
     motion.process(Duration::ZERO, &mut actual, &state);
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn hover_and_release_keep_the_transition_while_new_navigation_finishes_it() {
+    let area = Rect::new(0, 0, 40, 10);
+    let mut motion = ShellMotionEffects::default();
+    motion.schedule(
+        MotionEffectId::Page,
+        page_effect(
+            area,
+            None,
+            false,
+            ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+            ui::RevealOrigin::Center,
+        ),
+    );
+    for input in [
+        InputEvent::mouse_moved((2, 2)),
+        InputEvent::mouse_up(PointerButton::Left, (2, 2)),
+    ] {
+        motion.finish_before_input(&input);
+        assert!(motion.is_running());
+        assert!(!motion.blocks_before_route(&input));
+    }
+    motion.finish_before_input(&InputEvent::key(InputKey::Tab));
+    assert!(!motion.is_running());
+}
+
+#[test]
+fn host_effects_leave_child_terminal_text_and_images_exactly_unchanged() {
+    let state = ShellSession::new(ShellLaunchConfig::default(), (40, 10));
+    let area = Rect::new(0, 0, 40, 10);
+    let child = Rect::new(2, 2, 30, 5);
+    let mut buffer = Buffer::filled(
+        area,
+        Cell::new("T")
+            .set_fg(ratatui::style::Color::Rgb(200, 200, 200))
+            .set_bg(ratatui::style::Color::Rgb(20, 20, 20))
+            .clone(),
+    );
+    buffer[(child.x, child.y)].set_symbol("界");
+    buffer[(child.x + 3, child.y)].diff_option = CellDiffOption::Skip;
+    let original = buffer.clone();
+    let mut motion = ShellMotionEffects::default();
+    motion.schedule(
+        MotionEffectId::Page,
+        page_effect(
+            area,
+            None,
+            false,
+            ui::MotionPhases::for_duration(ui::MotionTimings::PAGE),
+            ui::RevealOrigin::Center,
+        ),
+    );
+    motion.process_host(Duration::ZERO, &mut buffer, &state, &[child]);
+    for point in child.positions() {
+        assert_eq!(buffer[point], original[point]);
+    }
+    assert_ne!(buffer[(0, 0)].bg, original[(0, 0)].bg);
 }

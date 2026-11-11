@@ -36,13 +36,13 @@ impl ShellSession {
                 if mouse.kind == ui::MouseEventKind::Moved
                     && self.interaction.pointer_position == Some(mouse.coordinates()) => {}
             InputEvent::Mouse(_) => self.interaction.pointer_motion = true,
-            InputEvent::Key(_) | InputEvent::Paste(_) | InputEvent::FocusLost => {
+            InputEvent::Key(_) | InputEvent::Paste(_) => {
+                self.interaction.pointer_motion = false;
+            }
+            InputEvent::FocusLost => {
                 self.interaction.pointer_motion = false;
                 self.details_motion = None;
-                let target = if self.input_keyboard_open() { 1_000 } else { 0 };
-                if self.screen_keyboard.visibility != target {
-                    self.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
-                }
+                self.advance_input_keyboard(ui::MotionFrame::reduced(Duration::ZERO));
             }
             InputEvent::Resize { .. } => {
                 self.details_motion = None;

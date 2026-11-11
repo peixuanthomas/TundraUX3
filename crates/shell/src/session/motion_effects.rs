@@ -561,8 +561,42 @@ impl ShellMotionEffects {
         }
     }
 
+    pub(super) fn process_host(
+        &mut self,
+        delta: Duration,
+        buffer: &mut Buffer,
+        state: &ShellSession,
+        terminal_areas: &[Rect],
+    ) {
+        if !self.is_running() {
+            self.process(delta, buffer, state);
+            return;
+        }
+        let mut cells = Vec::new();
+        for area in terminal_areas {
+            for position in area.intersection(buffer.area).positions() {
+                if buffer[position].diff_option != CellDiffOption::Skip {
+                    cells.push((position, buffer[position].clone()));
+                    buffer[position].diff_option = CellDiffOption::Skip;
+                }
+            }
+        }
+        self.process(delta, buffer, state);
+        for (position, cell) in cells {
+            buffer[position] = cell;
+        }
+    }
+
     pub(super) fn is_running(&self) -> bool {
         !self.reduced && self.manager.is_running()
+    }
+
+    pub(super) fn next_redraw_in(&self, frame: ui::MotionFrame) -> Option<Duration> {
+        if !self.is_running() {
+            return None;
+        }
+        let remaining = self.overlay_gate.max(self.page_gate);
+        Some(ui::MotionTimings::resolve(frame, remaining).min(ui::ANIMATION_FRAME_INTERVAL))
     }
 
     pub(super) fn cancel_for_bounds_change(&mut self) {
@@ -575,35 +609,35 @@ impl ShellMotionEffects {
         self.take_deferred_close(state)
     }
 
-    // Escape is the one cancellation path identifiable before controller mutation at
-    // this boundary. Other close buttons use the localized post-action snapshot path.
+    /// Only an already-committed modal close retains input isolation.
     pub(super) fn blocks_before_route(&self, input: &InputEvent) -> bool {
-        if self.reduced
-            || matches!(input, InputEvent::Tick | InputEvent::Shutdown)
-            || matches!(
-                input,
-                InputEvent::Resize { .. } | InputEvent::FocusGained | InputEvent::FocusLost
-            )
-            || self
-                .overlay
-                .as_ref()
-                .is_some_and(|overlay| overlay.immediate)
-        {
-            return false;
-        }
-        if self.page_gate > Duration::ZERO && input.is_mouse() {
-            return true;
-        }
-        if self.outgoing_block_remaining > Duration::ZERO
+        self.exiting
             && (input.is_keyboard() || input.is_mouse())
-        {
-            return true;
+            && !matches!(input, InputEvent::Tick | InputEvent::Shutdown)
+    }
+
+    pub(super) fn finish_before_input(&mut self, input: &InputEvent) {
+        let interrupt = match input {
+            InputEvent::Key(key) => key.phase.is_press_like(),
+            InputEvent::Paste(_) => true,
+            InputEvent::Mouse(mouse) => matches!(
+                mouse.kind,
+                ui::MouseEventKind::Down(_)
+                    | ui::MouseEventKind::ScrollUp
+                    | ui::MouseEventKind::ScrollDown
+                    | ui::MouseEventKind::ScrollLeft
+                    | ui::MouseEventKind::ScrollRight
+            ),
+            _ => false,
+        };
+        if interrupt {
+            self.manager = EffectManager::default();
+            self.effects_scheduled_since_process = false;
+            self.overlay_gate = Duration::ZERO;
+            self.page_gate = Duration::ZERO;
+            self.outgoing_block_remaining = Duration::ZERO;
+            self.active_visual_outgoing = None;
         }
-        if self.exiting {
-            return true;
-        }
-        let escape = matches!(input, InputEvent::Key(key) if key.label() == "Esc");
-        self.overlay_gate > Duration::ZERO && !escape && (input.is_keyboard() || input.is_mouse())
     }
 
     pub(super) fn intercept_input(&mut self, routed: &RoutedEvent) -> MotionInputDisposition {
@@ -839,54 +873,30 @@ pub(super) enum MotionInputDisposition {
 fn overlay_duration(kind: ui::MotionOverlayKind) -> Duration {
     Duration::from_millis(match kind {
         ui::MotionOverlayKind::Dialog => 180,
-        ui::MotionOverlayKind::Popover => 160,
+        ui::MotionOverlayKind::Popover => 120,
         ui::MotionOverlayKind::Toast => 0,
     })
 }
 
 fn page_effect(
     area: Rect,
-    old: Option<BaseFrameSnapshot>,
-    returning: bool,
+    _old: Option<BaseFrameSnapshot>,
+    _returning: bool,
     phases: ui::MotionPhases,
-    origin: ui::RevealOrigin,
+    _origin: ui::RevealOrigin,
 ) -> Effect {
     fx::effect_fn_buf(
-        old,
+        (),
         (phases.duration(), Interpolation::Linear),
-        move |old, context, buffer| {
-            let Some(old) = old else {
-                return;
-            };
+        move |_, context, buffer| {
             let amount = phases.progress((context.alpha() * 1_000.0).round() as u16);
-            if amount == 1_000 {
-                return;
-            }
-            let panel = if returning {
-                buffer_from_cells(area, &old.cells)
-            } else {
-                let Some(snapshot) = snapshot_normal_cells(buffer, area) else {
-                    return;
-                };
-                buffer_from_cells(area, &snapshot.cells)
-            };
             let protected = protected_skip_positions(buffer);
-            if !returning {
-                for (position, cell) in old.cells.iter() {
-                    if area.contains(*position)
-                        && !cell_overlaps_protected(*position, cell, &protected)
-                    {
-                        buffer[*position] = cell.clone();
-                    }
-                }
-            }
-            paint_morph(
-                &panel,
-                ui::reveal_rect(
-                    area,
-                    if returning { 1_000 - amount } else { amount },
-                    origin,
-                ),
+            let Some(snapshot) = snapshot_normal_cells(buffer, area) else {
+                return;
+            };
+            paint_light(
+                &buffer_from_cells(area, &snapshot.cells),
+                amount,
                 buffer,
                 &protected,
             );
@@ -907,48 +917,12 @@ fn overlay_origin(state: &ShellSession, area: Rect) -> ui::RevealOrigin {
 fn overlay_enter_effect(
     _kind: ui::MotionOverlayKind,
     area: Rect,
-    theme: ui::ThemeTokens,
-    origin: ui::RevealOrigin,
-    base: Arc<Mutex<Option<BaseFrameSnapshot>>>,
+    _theme: ui::ThemeTokens,
+    _origin: ui::RevealOrigin,
+    _base: Arc<Mutex<Option<BaseFrameSnapshot>>>,
     phases: ui::MotionPhases,
 ) -> Effect {
-    fx::effect_fn_buf(
-        base,
-        (phases.duration(), Interpolation::Linear),
-        move |base, context, buffer| {
-            let amount = phases.progress((context.alpha() * 1_000.0).round() as u16);
-            if amount == 1_000 {
-                return;
-            }
-            let visible = ui::reveal_rect(area, amount, origin);
-            let protected = protected_skip_positions(buffer);
-            let Some(snapshot) = snapshot_normal_cells(buffer, area) else {
-                return;
-            };
-            let panel = buffer_from_cells(area, &snapshot.cells);
-            let base = base.lock().expect("motion base lock");
-            let cells = base.as_ref().map(|base| {
-                base.cells
-                    .iter()
-                    .map(|(point, cell)| (*point, cell))
-                    .collect::<HashMap<_, _>>()
-            });
-            for position in area.intersection(buffer.area).positions() {
-                if !cell_overlaps_protected(position, &buffer[position], &protected) {
-                    if let Some(cell) = cells.as_ref().and_then(|cells| cells.get(&position)) {
-                        buffer[position] = (*cell).clone();
-                    } else {
-                        buffer[position]
-                            .set_symbol(" ")
-                            .set_fg(theme.text)
-                            .set_bg(theme.canvas);
-                    }
-                }
-            }
-            paint_morph(&panel, visible, buffer, &protected);
-        },
-    )
-    .with_area(area)
+    page_effect(area, None, false, phases, ui::RevealOrigin::Center)
 }
 
 #[cfg(test)]
@@ -981,7 +955,7 @@ fn outgoing_snapshot_effect_from(
     start_progress: f32,
     duration: Duration,
     live_base: Option<Arc<Mutex<Option<BaseFrameSnapshot>>>>,
-    origin: ui::RevealOrigin,
+    _origin: ui::RevealOrigin,
     phases: ui::MotionPhases,
 ) -> Effect {
     let panel_area = snapshot.area;
@@ -1023,9 +997,9 @@ fn outgoing_snapshot_effect_from(
             let amount = phases.progress((progress * 1_000.0).round() as u16);
             let protected = exit_protected_positions(state, buffer);
             restore_underlay(state, buffer, &protected);
-            let visible = ui::reveal_rect(panel_area, 1_000 - amount, origin);
             if amount < 1_000 {
-                paint_morph(&state.panel, visible, buffer, &protected);
+                let faded = ui::fade_surface(&state.panel, buffer, 1_000 - amount);
+                paint_cells(&faded, buffer, &protected);
             }
         },
     )
@@ -1045,9 +1019,13 @@ fn buffer_from_cells(area: Rect, cells: &[(Position, Cell)]) -> Buffer {
     buffer
 }
 
-fn paint_morph(source: &Buffer, area: Rect, buffer: &mut Buffer, protected: &HashSet<Position>) {
-    let projected = ui::morph_surface(source, area);
-    for position in area.intersection(buffer.area).positions() {
+fn paint_light(source: &Buffer, amount: u16, buffer: &mut Buffer, protected: &HashSet<Position>) {
+    let projected = ui::light_surface(source, amount);
+    paint_cells(&projected, buffer, protected);
+}
+
+fn paint_cells(projected: &Buffer, buffer: &mut Buffer, protected: &HashSet<Position>) {
+    for position in projected.area.intersection(buffer.area).positions() {
         let cell = &projected[position];
         if cell.diff_option != CellDiffOption::Skip
             && !cell_overlaps_protected(position, cell, protected)

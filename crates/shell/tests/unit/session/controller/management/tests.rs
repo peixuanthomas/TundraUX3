@@ -290,7 +290,7 @@ fn backup_filters_keep_valid_dates_and_reject_reversed_ranges_without_querying()
 }
 
 #[test]
-fn mouse_movement_before_redraw_does_not_animate_keyboard_details() {
+fn mouse_movement_before_redraw_keeps_keyboard_details_motion() {
     let mut session = shortcut_action_state(ManagementKind::Services, "inspect");
     session
         .pages
@@ -303,16 +303,20 @@ fn mouse_movement_before_redraw_does_not_animate_keyboard_details() {
     session.apply_input(InputEvent::key(InputKey::F(4)));
     assert!(session.to_management_view_model().details_only);
     session.apply_input(InputEvent::mouse_moved((1, 0)));
-    assert!(!session.advance_management_details(ui::MotionFrame::default()));
+    assert!(session.advance_management_details(ui::MotionFrame::default()));
+    assert!(session.advance_management_details(ui::MotionFrame {
+        now: Duration::from_millis(60),
+        ..Default::default()
+    }));
     let layout = ui::management_layout(
         session.management_main(),
         &session.to_management_view_model(),
     );
-    assert!(layout.list.is_empty());
+    assert!(!layout.list.is_empty());
 }
 
 #[test]
-fn management_details_only_animate_pointer_actions_without_requery() {
+fn management_details_animate_all_input_methods_without_requery() {
     for kind in [
         ManagementKind::Services,
         ManagementKind::Packages,
@@ -348,17 +352,14 @@ fn management_details_only_animate_pointer_actions_without_requery() {
                     .query_job
                     .is_none()
             );
-            assert_eq!(
-                session.advance_management_details(frame),
-                pointer && !reduced
-            );
+            assert_eq!(session.advance_management_details(frame), !reduced);
             frame.now = Duration::from_millis(60);
             session.advance_management_details(frame);
             let mid = ui::management_layout(
                 session.management_main(),
                 &session.to_management_view_model(),
             );
-            if pointer && !reduced {
+            if !reduced {
                 assert!(mid.details.x < original.details.x);
                 assert!(mid.list.width > 0 && mid.list.width < original.list.width);
             } else {

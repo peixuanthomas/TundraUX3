@@ -1817,7 +1817,7 @@ impl ShellSession {
             details_horizontal_scroll: s.details_horizontal_scroll,
             details_only: s.details_only,
             details_expansion: self.details_motion.as_ref()
-                .filter(|(page, _)| *page == self.active_page_id() && self.interaction.pointer_motion)
+                .filter(|(page, _)| *page == self.active_page_id())
                 .map(|(_, motion)| motion.value()),
             terminal: s.terminal_mode,
             terminal_snapshot: if s.terminal_mode {
