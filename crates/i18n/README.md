@@ -14,6 +14,8 @@ native_name = "简体中文"
 
 `.ftl` files in `common`, `modules`, and `recovery` are loaded recursively. `zh-Hans` is an input alias for `zh-CN`; directories and manifests use the canonical code. `LanguageCatalog::built_in()` provides English and Chinese language choices without accessing the filesystem.
 
+The bundled Chinese and English packs include compact-interface preview descriptions, primary and danger action labels, and terminal-size messages with interpolated minimum dimensions. Keep both languages and their argument contracts in sync when changing these shared UI resources.
+
 ## Snapshots and messages
 
 ```rust
