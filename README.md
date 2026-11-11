@@ -69,6 +69,8 @@ Open supported system tasks directly from **Home**, or open the remaining applic
 
 Home cards show application names without letter shortcuts. Small terminals use names only so every entry fits on one page at the minimum size. Click a card, or select it with the arrow keys and press Enter/Space.
 
+The interface uses neutral dark surfaces, compact rows, and visible actions. One-row title and status bars leave 18 content rows at 108 × 20. Keyboard, mouse, and touch share short, interruptible transitions; enable reduced motion in Settings to show changes immediately.
+
 | Input | Action |
 | --- | --- |
 | Arrow keys / Tab | Move between items and controls |

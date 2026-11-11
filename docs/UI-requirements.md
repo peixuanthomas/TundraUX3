@@ -106,7 +106,7 @@ Use one three-column form with direct input and Tab navigation. Each phase accep
 
 ## Screen keyboard, forms, and selection dialogs
 
-- Keep the screen-keyboard entry in the status row before the clock, without consuming a content row. On ordinary pages, opening it collapses the title bar, hides the status bar, and makes room for content; AA adjusts only the topmost dialog.
+- Keep the screen-keyboard entry in the status row before the clock, without consuming a content row. On ordinary pages, opening it preserves the one-row title bar, hides the status bar, and makes room for content; AA adjusts only the topmost dialog.
 - Keep forms and action buttons above the keyboard. If the terminal cannot fit them, ask the user to enlarge it instead of covering required fields.
 - Place Paste at the left end of the keyboard's bottom row and Hide at the right. Physical-key feedback and mouse-latched modifiers use separate state; clear both on focus loss or resize.
 - Keyboard keys use neutral boundaries and text contrast of at least 4.5:1. Pressed or latched keys use accent fill.

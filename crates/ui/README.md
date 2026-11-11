@@ -17,7 +17,7 @@
 
 Pages render only the content in `ShellFrameLayout.main` and their own overlays. Shell handles the global title bar, status bar, Toast, and modal dialogs, using the same layout for rendering and clicks.
 
-The global title bar exposes Tasks for logged-in non-guest users, including running and awaiting-approval status. Tasks, Help, and Back keep separate borders.
+The global title bar exposes Tasks for logged-in non-guest users, including running and awaiting-approval status. Title and status bars each use one row; Tasks, Help, Back, the clock, and the screen-keyboard entry share their actual render and hit-test geometry.
 
 ## Shared controls
 
@@ -52,9 +52,11 @@ Enter moves to the next field and submits from the last field; Space or a tap to
 
 Selection dialogs keep this extended scrollbar hit area clear of option rows and the Close button, including the last row of long paths.
 
+Ordinary workspaces use headings, backgrounds, and whitespace instead of complete frames. Navigation entries and table rows use one line. Shared spacing is one row between groups, two columns between groups, and one cell between grid items; full rows remain clickable. A modal, menu, or input may retain one boundary.
+
 ### Page controls
 
-- Home shows application names without letter-shortcut prefixes and uses the same system-application artwork and images as Launcher, while preserving Home-specific theme overrides. Cards that cannot fit the complete four-row icon and application name show only the name, for both ASCII and image themes.
+- Home and Launcher show entries without permanent frames, with one-cell gaps and current-item emphasis separate from keyboard focus. Home shows application names without letter-shortcut prefixes and uses name-only entries when four icon rows plus a label do not fit; larger layouts retain artwork and theme overrides.
 - Explorer keeps Undo Move/Rename visible and disabled when no history is available; the context menu and platform-specific Ctrl/Cmd+Z shortcut use the same command. Save pickers keep the filename and Save/Cancel controls beside directory browsing; Tab moves between them, F10 saves, and Esc cancels.
 - The ordinary editor keeps Save, Undo, and Find visible. Its context menu reuses edit actions, enabled states, and keyboard navigation, stays inside the window, and preserves the selection; Rich Markdown keeps its selection-formatting menu.
 - Launcher search uses `TextInput` and shares its region between rendering and hit testing. Empty results show a search message; built-in and blank-area context menus reuse page actions while retaining restrictions on built-in entries.
@@ -66,14 +68,16 @@ Selection dialogs keep this extended scrollbar hit area clear of option rows and
 
 `TextInput` provides a cursor, selection, scrolling, and password masking. Button hover, pressed, focused, current-item, and disabled styles are calculated centrally by `TundraTheme` and `RenderContext`. See [UI requirements](../../docs/UI-requirements.md) for keyboard, mouse, and touchscreen rules.
 
+The default palette is canvas `#101010`, surface `#181818`, raised surface `#242424`, text `#E6E6E6`, muted text `#999999`, accent `#63D3E5`, and border `#383838`. Ordinary buttons use plain text; primary actions use accent fill, while danger actions retain semantic color. Current-item and multi-selection backgrounds remain independent of keyboard focus. Explicit saved appearance settings remain supported.
+
 ## Animations
 
 Shared animations include:
 
 - `ease_in_out_cruise` and `MotionPhases`: three phase durations and a continuous velocity curve.
-- `reveal_rect`, `morph_surface`: expand or collapse pages, dialogs, and menus from their entry points.
-- `PanelMotion`, `expand_trailing_pane`: detail panes, the on-screen keyboard, and reversal during a transition.
-- `ANIMATION_FRAME_INTERVAL`: animation scheduling at 30 FPS.
+- Pages, dialogs, and menus keep their final layout and readable body from the first frame, using short color transitions.
+- `PanelMotion`, `expand_trailing_pane`: clipped details and on-screen keyboard expansion, with shared geometry during reversal.
+- Active UI transitions schedule at 60 FPS; weather and continuous rainbow effects retain their separate 30 FPS cadence.
 - `RainbowText`: continuous rainbow text colored by terminal character width.
 
 `ui::animate` exports `Tween`, `Spring`, `Clock`, and macros from animate 0.8, with support for Ratatui types such as `Rect`, `Color`, and `Style`:
@@ -82,15 +86,21 @@ Shared animations include:
 use ui::animate::{self, Clock};
 ```
 
-Callers retain animation state and advance the clock with the same `MotionFrame` for each frame; keyboard actions or reduced motion go directly to the target.
+Callers retain animation state and advance the clock with the same `MotionFrame` for each frame. Keyboard and pointer actions share transitions and take effect immediately. New navigation, reversal, or resize interrupts active motion; reduced motion goes directly to the target. Idle UI has no animation timer, and slow output skips missed frames instead of catching up.
+
+Defaults are 160ms for pages, 180ms for dialogs and details, and 120ms for menus. The keyboard expands over 160ms. Progress graphics interpolate for 200ms without overshoot while numeric values update immediately; busy indicators occupy one character with an 80ms step.
 
 Advanced animation settings reuse `FormDialog` for nine numeric fields in three columns, Tab navigation, range checks, and small-window scrolling. Reset changes the draft; Save validates and commits all values together, while Cancel leaves configuration unchanged. Reset, Save, and Cancel remain visible.
+
+Default acceleration/constant-speed/deceleration phases are page `[40, 80, 40]`, dialog `[45, 90, 45]`, and menu `[30, 60, 30]` milliseconds. Explicit saved timing values and speed settings remain effective.
 
 ## Child terminals and images
 
 `TerminalImageFragment` describes RGBA data, source cropping, content-area coordinates, pixel margins, and layers. `TerminalImageCache` clips and caches Kitty, Sixel, and iTerm2 images by viewport.
 
 Text terminals, dialog occlusion, layout transitions, and transparent or overlapping images use character-block compositing. Snapshots preserve wide characters, italics, and native cursor shapes; the editor's Vim region shares rendering, PTY sizing, and mouse coordinates through `editor_vim_terminal_area`.
+
+Vim reserves one row for its editor-mode switch and gives the rest to the native terminal. Command Line uses the entire main region. Script output reuses Command Line terminal geometry, reserving a scrollbar column only when history is present.
 
 ## Automation snapshots
 

@@ -50,6 +50,8 @@ When closing a page with running work, users can continue in the background, can
 
 Logged-in non-guest users can open Tasks from the global title bar and see running or awaiting-approval status. Pressing Tasks again closes the current task page and restores its originating page without creating another instance. Background queries do not count as running operations. First-time setup can finish with the default appearance using F9 after required account validation; appearance remains editable later.
 
+The title and status bars each occupy one row, preserving 18 content rows at the 108 × 20 minimum. The status row holds the keyboard entry before the clock. Shared layouts provide painting, focus, hit testing, and automation coordinates; opening the keyboard keeps the title row and hides the status row.
+
 ## Interface hosting
 
 - **Home:** The minimum terminal size is 108×22, shared by startup, runtime resizing, the lockscreen, and Command Line. At that size all Home entries fit on one page as names only; smaller terminals show an error. F2 or the Edit icons button enters edit mode. Pointer drops and Shift+Left/Right save icon order in each user’s `home.order.<user_id>` state entry. Esc cancels a drag first, then finishes editing; focus loss, resizing, overlays, and navigation cancel pending drops.
@@ -60,6 +62,8 @@ Logged-in non-guest users can open Tasks from the global title bar and see runni
 - **Settings and status:** use Tab to move between regions and controls and arrows within the focused region. Advanced animation timings use one three-column form with a draft and a single save/cancel operation. New Linux profiles use ASCII icons. On a terminal with image support, users can switch to image icons in Settings → Appearance → Theme.
 - **Updates:** Linux defaults to Release, showing release notes and download progress. Beta additionally shows compilation progress and live output; Windows source updates retain those build details.
 - **Child terminals:** each page has an independent PTY, continues reading output while covered, and cleans up its process tree when closed.
+
+Keyboard, mouse, and touch use the same interruptible transitions. Page, dialog, and menu bodies remain readable at fixed final coordinates from the first frame; details and the keyboard use clipped expansion. The event loop prioritizes immediate input, schedules active UI motion at 60 FPS, retains the separate 30 FPS weather/rainbow policy and 80ms busy cadence, and stops animation deadlines at rest. Slow terminal writes advance from elapsed time without replaying missed frames. Reduced motion renders the final state directly.
 
 See [UI requirements](../../docs/UI-requirements.md) for shared buttons, forms, animations, and layouts. See [Editor and script workspace](../../docs/source-editor.md) for editor operations and [List selection](../../docs/list-selection.md) for page multi-selection.
 
