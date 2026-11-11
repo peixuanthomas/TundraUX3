@@ -12,8 +12,8 @@ use ui::{
     BusyIndicator, MotionFrame, RenderContext, TundraTheme,
     automation::FrameCapture,
     components::{
-        Button, ButtonEmphasis, ButtonFrame, ComponentEvent, DataTable, InputEvent, List, ListItem,
-        MouseButton, NavRail, NavRailItem, SidebarWorkspaceLayout, Surface,
+        Button, ButtonEmphasis, ButtonFrame, ComponentEvent, ComponentTone, DataTable, InputEvent,
+        List, ListItem, MouseButton, NavRail, NavRailItem, SidebarWorkspaceLayout, Surface,
     },
 };
 
@@ -426,5 +426,54 @@ fn focused_bordered_buttons_keep_the_underline_on_text_without_underlining_the_f
                 .unwrap();
             assert!(label.modifier.contains(Modifier::UNDERLINED));
         }
+    }
+}
+
+#[test]
+fn selected_status_rows_keep_semantic_colors_while_focus_and_input_mode_change() {
+    let area = Rect::new(0, 0, 18, 3);
+    let theme = TundraTheme::default();
+    let mut context = RenderContext::from_theme(&theme, Default::default(), Default::default());
+    let mut table = DataTable::new("states", ["State"], [["Ready"], ["Attention"], ["Failed"]])
+        .show_header(false)
+        .with_row_tones(vec![
+            ComponentTone::Success,
+            ComponentTone::Warning,
+            ComponentTone::Danger,
+        ])
+        .with_selected_rows(vec![0, 1, 2]);
+    table.state.focused = true;
+    for current in 0..3 {
+        table.selected = Some(current);
+        for keyboard in [true, false, true] {
+            let mut buttons = ButtonFrame::new(None, None, &theme);
+            buttons.keyboard_focus_visible = keyboard;
+            context.buttons = Some(buttons);
+            let mut buffer = Buffer::empty(area);
+            table.render(area, &mut buffer, &context);
+            for (index, color) in [
+                context.theme.success,
+                context.theme.warning,
+                context.theme.danger,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let cell = &buffer[(0, index as u16)];
+                assert_eq!(cell.fg, color);
+                assert_eq!(cell.bg, context.theme.raised);
+                assert_eq!(
+                    cell.modifier.contains(Modifier::UNDERLINED),
+                    keyboard && current == index
+                );
+            }
+            assert_eq!(table.selected, Some(current));
+        }
+    }
+    table.state.disabled = true;
+    let mut buffer = Buffer::empty(area);
+    table.render(area, &mut buffer, &context);
+    for y in 0..area.height {
+        assert_eq!(buffer[(0, y)].fg, Color::DarkGray);
     }
 }

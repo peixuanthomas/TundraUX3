@@ -224,15 +224,10 @@ impl DataTable {
             );
             self.capture_cells("cell", "cell", row, row_area);
             let mut style = interactive_style(state, &theme);
-            if !selected && !state.focused && !state.disabled {
-                style = style
-                    .fg(self
-                        .row_tones
-                        .get(index)
-                        .copied()
-                        .unwrap_or_default()
-                        .color(&row_tokens))
-                    .bg(tokens.surface);
+            let tone = self.row_tones.get(index).copied().unwrap_or_default();
+            if !state.disabled && (tone != ComponentTone::Default || (!selected && !state.focused))
+            {
+                style = style.fg(tone.color(&row_tokens));
             }
             Paragraph::new(join_row(row, inner.width, self.column_widths.as_deref()))
                 .alignment(HorizontalAlignment::Left)
