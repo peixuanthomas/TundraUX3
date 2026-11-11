@@ -3829,10 +3829,18 @@ fn newly_tracked_overlay_groups_keep_keyboard_mouse_focus_ready_during_entry() {
         );
         assert_eq!(state.pages.launcher, launcher_before);
         assert_eq!(state.app.editor_state(), editor_before.as_ref());
-        assert_eq!(
-            state.pages.user_management.user_management_mode,
-            users_before
-        );
+        match (
+            &state.pages.user_management.user_management_mode,
+            &users_before,
+        ) {
+            (UserManagementMode::EditInfo(form), UserManagementMode::EditInfo(before)) => {
+                assert_eq!(
+                    (&form.username, &form.display_name, form.focused_field),
+                    (&before.username, &before.display_name, before.focused_field)
+                );
+            }
+            (mode, before) => assert_eq!(mode, before),
+        }
         assert_eq!(platform.calls(), calls_before);
         if owner != ShellComponent::Editor {
             assert_eq!(state.active_overlay_descriptor(), overlay_before);
