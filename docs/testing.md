@@ -115,7 +115,7 @@ TUNDRA_TEST_VIM="$PWD/target/debug/vim/vim" cargo test --locked -p vim-runtime -
 python3 scripts/tests/editor-vim-smoke.py target/debug/tundra-shell target/debug/vim/vim
 ```
 
-Runtime tests check buffer synchronization, undo, encoding, save failures, `:wq`, forced discard, and read-only protection. Shell smoke tests check the native display, Visual mode, registers, macros, multiple buffers, resizing, F8 synchronization, and terminal restoration.
+Runtime tests check buffer synchronization, undo, encoding, save failures, `:wq`, forced discard, and read-only protection. Shell smoke tests check the native display, Visual mode, registers, macros, multiple buffers, F8 synchronization, and terminal restoration. They compare Vim's dimensions with its terminal control at 108 × 20 and 140 × 45, including the bottom command row and SGR mouse rows and columns.
 
 On Windows, use `python scripts/build-vim.py --output target/debug/vim` and set the following in PowerShell:
 

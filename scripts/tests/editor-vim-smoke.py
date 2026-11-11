@@ -2,6 +2,7 @@
 """Exercise the real Vim editor through the Shell on a Unix PTY.
 
 Usage: python3 scripts/tests/editor-vim-smoke.py [tundra-shell] [vim]
+Build the matching tundra-cli next to Shell for viewport snapshots.
 The optional Vim executable overrides TUNDRA_VIM. All files and XDG state are
 temporary; TUNDRA_VIM_CLEAN disables personal Vim configuration for this test.
 """
@@ -62,6 +63,13 @@ class ShellPty:
             directory.mkdir(mode=0o700, exist_ok=True)
             key = f"XDG_{name}_HOME" if name != "RUNTIME" else "XDG_RUNTIME_DIR"
             env[key] = str(directory)
+        self.cli = binary.with_name("tundra-cli")
+        configured = subprocess.run(
+            [str(self.cli), "config", "set", "automation.enabled", "true"],
+            env=env, capture_output=True, text=True, timeout=15,
+        )
+        assert configured.returncode == 0, configured.stderr
+        self.env = env
         self.master, self.slave = pty.openpty()
         self.columns, self.rows = 140, 45
         self.output = bytearray()
@@ -123,6 +131,14 @@ class ShellPty:
 
     def ex(self, command: str):
         self.keys("<Esc>" + ":" + command + "<Enter>")
+
+    def terminal_area(self):
+        snapshot = shell_smoke.control_snapshot(
+            self.master, self.output, self.child, self.cli, self.env, timeout=15,
+        )
+        terminals = [node for node in snapshot["nodes"] if node["role"] == "terminal"]
+        assert len(terminals) == 1, terminals
+        return terminals[0]["rect"]
 
     def close(self):
         if self.closed:
@@ -319,15 +335,39 @@ def main():
             print("PASS: :edit! refreshes an externally changed file before :write", flush=True)
 
             path = open_file("resize")
-            shell.resize(108, 30)
-            shell.drain(0.3)
-            shell.keys("gg0iRESIZED-<Esc>")
-            shell.resize(140, 45)
-            shell.drain(0.3)
+            probe = files / "native-viewport.txt"
+            shell.ex("set mouse=a nonumber norelativenumber nowrap")
+            for columns, rows in [(108, 20), (140, 45)]:
+                shell.resize(columns, rows)
+                shell.drain(0.3)
+                area = shell.terminal_area()
+                assert (area["x"], area["y"], area["width"], area["height"]) == (
+                    0, 2, columns, rows - 3,
+                ), area
+                shell.ex("call writefile([printf('%d %d', &columns, &lines)], "
+                         + vim_string(probe) + ")")
+                assert_file(shell, probe, f"{area['width']} {area['height']}\n")
+                marker = f"VIM-GEOMETRY-{columns}x{rows}"
+                shell.ex(f"echo '{marker}'")
+                shell.wait(marker)
+                painted = shell_smoke.painted_screen_lines(shell.output, columns, rows)
+                assert marker in painted[area["y"] + area["height"] - 1]
+                for line, column in [(1, 6), (2, 7), (3, 5)]:
+                    shell.keys("gg0")
+                    x, y = area["x"] + column, area["y"] + line
+                    shell.send(f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode())
+                    shell.ex("call writefile([printf('%d %d', line('.'), col('.'))], "
+                             + vim_string(probe) + ")")
+                    assert_file(shell, probe, f"{line} {column}\n")
+                if columns == 108:
+                    shell.keys("gg0iRESIZED-<Esc>")
             shell.ex("write")
             assert_file(shell, path, "RESIZED-" + BASE)
             checks += 1
-            print("PASS: native resize and continued editing", flush=True)
+            print("PASS: 108x20 native viewport, bottom command row and continued editing", flush=True)
+
+            checks += 1
+            print("PASS: native Vim SGR mouse rows and columns match both terminal sizes", flush=True)
 
             path = open_file("toggle-dirty")
             shell.keys("gg0iDRAFT-<Esc><F8>")
@@ -402,7 +442,12 @@ def main():
             checks += 1
             print("PASS: F8 keeps registers, macros and undo across ordinary-editor changes", flush=True)
 
-            path = open_file("quit-discard")
+            # Native :q! protects other hidden dirty buffers, so isolate this scenario.
+            shell.ex("qall!")
+            shell.wait("Quick access")
+            path = files / "zz-quit-discard.txt"
+            path.write_text(BASE)
+            editor_from_explorer(path)
             shell.keys("gg0iDISCARD-<Esc>")
             shell.ex("quit")
             shell.wait("E37")
@@ -439,9 +484,9 @@ def main():
                 shell.wait("any other key cancels:")
                 shell.send(b"y")
             shell.wait("Explorer", timeout=25)
-            shell.wait("No terminal graphics response")
-            shell.send(b"\r")
-            shell.wait("No terminal graphics response", present=False)
+            if "No terminal graphics response" in shell.screen():
+                shell.send(b"\r")
+                shell.wait("No terminal graphics response", present=False)
             shell.send(b"\x1b[F\x1b[D\x1b[D\r")
             shell.wait("Home > Launcher")
             shell.send(b"\x1b[H")
