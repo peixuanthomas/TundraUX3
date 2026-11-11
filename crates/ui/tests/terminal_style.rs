@@ -6,7 +6,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier},
-    widgets::Paragraph,
+    widgets::{Paragraph, Widget},
 };
 use ui::{
     BusyIndicator, MotionFrame, RenderContext, TundraTheme,
@@ -383,4 +383,48 @@ fn neutral_titles_do_not_remove_accent_from_the_active_text_field_or_cursor() {
     assert_eq!(cursor.fg, theme.accent_color);
     assert!(cursor.modifier.contains(Modifier::SLOW_BLINK));
     assert_eq!(theme.title_style().fg, Some(theme.foreground));
+}
+
+#[test]
+fn focused_bordered_buttons_keep_the_underline_on_text_without_underlining_the_frame() {
+    let theme = TundraTheme::default();
+    let area = Rect::new(0, 0, 12, 3);
+    for emphasis in [
+        ButtonEmphasis::Normal,
+        ButtonEmphasis::Primary,
+        ButtonEmphasis::Danger,
+    ] {
+        let mut button = Button::new("save", "Save").with_emphasis(emphasis);
+        button.set_focused(true);
+        for rich_content in [false, true] {
+            let mut buffer = Buffer::empty(area);
+            if rich_content {
+                button.render_surface(area, &mut buffer, &theme);
+                Paragraph::new("Save")
+                    .style(button.surface_style(area, &theme))
+                    .render(Rect::new(1, 1, 10, 1), &mut buffer);
+            } else {
+                button.render(area, &mut buffer, &theme);
+            }
+            for y in area.y..area.bottom() {
+                for x in area.x..area.right() {
+                    if x == area.x || x + 1 == area.right() || y == area.y || y + 1 == area.bottom()
+                    {
+                        assert!(
+                            !buffer[(x, y)]
+                                .modifier
+                                .intersects(Modifier::BOLD | Modifier::UNDERLINED),
+                            "frame at ({x}, {y}): {emphasis:?}, rich={rich_content}"
+                        );
+                    }
+                }
+            }
+            let label = buffer
+                .content()
+                .iter()
+                .find(|cell| cell.symbol() == "S")
+                .unwrap();
+            assert!(label.modifier.contains(Modifier::UNDERLINED));
+        }
+    }
 }

@@ -347,8 +347,10 @@ fn assert_regular_weight_vertical_border(buffer: &Buffer, area: Rect) {
             let cell = buffer.cell((x, y)).expect("vertical border cell");
             assert_eq!(cell.symbol(), "│", "border at ({x}, {y}) must stay solid");
             assert!(
-                !cell.modifier.contains(Modifier::BOLD),
-                "border at ({x}, {y}) must use regular weight"
+                !cell
+                    .modifier
+                    .intersects(Modifier::BOLD | Modifier::UNDERLINED),
+                "border at ({x}, {y}) must keep text focus modifiers off its glyphs"
             );
         }
     }
