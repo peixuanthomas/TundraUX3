@@ -768,7 +768,9 @@ fn live_keyboard_types_into_child_pty_and_resize_reaches_the_child() {
     } else {
         "echo KEYBOARDOK"
     };
-    for ch in command.chars().chain(std::iter::once('\n')) {
+    let pointer_start = std::time::Instant::now();
+    for (index, ch) in command.chars().chain(std::iter::once('\n')).enumerate() {
+        let pressed_at = pointer_start + Duration::from_millis(index as u64 * 10);
         use ui::ScreenKeyboardAction as A;
         let action = match ch {
             '\n' => A::Enter,
@@ -790,20 +792,20 @@ fn live_keyboard_types_into_child_pty_and_resize_reaches_the_child() {
                 .prepare_input(
                     InputEvent::mouse_down(ui::MouseButton::Left, point),
                     platform.as_ref(),
-                    std::time::Instant::now()
+                    pressed_at
                 )
                 .is_none()
         );
         // Fast pointer typing can include held motion before each release.
         let moved = (key.x + 1, key.y);
         assert!(key.width > 1);
-        for position in [point, moved] {
+        for (offset, position) in [point, moved].into_iter().enumerate() {
             assert!(
                 state
                     .prepare_input(
                         InputEvent::mouse_drag(ui::MouseButton::Left, position),
                         platform.as_ref(),
-                        std::time::Instant::now(),
+                        pressed_at + Duration::from_millis(offset as u64 + 1),
                     )
                     .is_none()
             );
@@ -812,9 +814,9 @@ fn live_keyboard_types_into_child_pty_and_resize_reaches_the_child() {
             .prepare_input(
                 InputEvent::mouse_up(ui::MouseButton::Left, moved),
                 platform.as_ref(),
-                std::time::Instant::now(),
+                pressed_at + Duration::from_millis(3),
             )
-            .unwrap();
+            .unwrap_or_else(|| panic!("virtual key {action:?} did not activate at {moved:?}"));
         host.handle_input(&event, Some(area));
     }
     let deadline = std::time::Instant::now() + Duration::from_secs(8);
