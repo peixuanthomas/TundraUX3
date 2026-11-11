@@ -572,9 +572,22 @@ impl ShellMotionEffects {
             self.process(delta, buffer, state);
             return;
         }
+        let overlay = current_overlay(state).and_then(|_| overlay_area(state));
+        let outgoing = self
+            .active_visual_outgoing
+            .as_ref()
+            .map(|visual| visual.old.area);
+        let overlay_terminal = state.auto_admin_view().map(|model| {
+            ui::auto_admin_layout_in(state.auto_admin_available_area(), &model).terminal
+        });
         let mut cells = Vec::new();
         for area in terminal_areas {
             for position in area.intersection(buffer.area).positions() {
+                let covered = overlay.is_some_and(|area| area.contains(position))
+                    || outgoing.is_some_and(|area| area.contains(position));
+                if covered && !overlay_terminal.is_some_and(|area| area.contains(position)) {
+                    continue;
+                }
                 if buffer[position].diff_option != CellDiffOption::Skip {
                     cells.push((position, buffer[position].clone()));
                     buffer[position].diff_option = CellDiffOption::Skip;

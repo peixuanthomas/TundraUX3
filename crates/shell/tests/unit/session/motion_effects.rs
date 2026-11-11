@@ -1531,3 +1531,52 @@ fn host_effects_leave_child_terminal_text_and_images_exactly_unchanged() {
     }
     assert_ne!(buffer[(0, 0)].bg, original[(0, 0)].bg);
 }
+
+#[test]
+fn host_overlay_above_a_child_terminal_fades_without_tinting_exposed_terminal_cells() {
+    use ratatui::style::Color;
+    let mut state = ShellSession::new_for_home_mode(
+        ShellLaunchConfig::default(),
+        (120, 40),
+        ShellHomeMode::User,
+    );
+    while state.notification_dismiss_active_modal_without_response() {}
+    state.set_navigation_path(vec![ShellScreen::Clock]);
+    state.pages.clock.clock_create_state = Some(ClockCreateState::default());
+    state.refresh_hit_map();
+    let bounds = Rect::new(0, 0, 120, 40);
+    let area = overlay_area(&state).unwrap();
+    let underlay = Buffer::filled(
+        bounds,
+        Cell::new("T")
+            .set_fg(Color::Rgb(200, 200, 200))
+            .set_bg(Color::Rgb(20, 20, 20))
+            .clone(),
+    );
+    let panel = Buffer::filled(
+        area,
+        Cell::new("D")
+            .set_fg(Color::Rgb(230, 230, 230))
+            .set_bg(Color::Rgb(30, 30, 30))
+            .clone(),
+    );
+    let mut motion = ShellMotionEffects::default();
+    motion.schedule(
+        MotionEffectId::Overlay,
+        outgoing_snapshot_effect(
+            snapshot_normal_cells(&panel, area).unwrap(),
+            snapshot_normal_cells(&underlay, area),
+            ui::MotionOverlayKind::Dialog,
+        ),
+    );
+    let mut current = underlay.clone();
+    motion.process_host(Duration::ZERO, &mut current, &state, &[bounds]);
+    current.clone_from(&underlay);
+    motion.process_host(Duration::from_millis(90), &mut current, &state, &[bounds]);
+    assert_eq!(current[(area.x, area.y)].symbol(), "D");
+    assert_eq!(current[(area.x, area.y)].fg, Color::Rgb(125, 125, 125));
+    assert_eq!(current[(0, 0)], underlay[(0, 0)]);
+    current.clone_from(&underlay);
+    motion.process_host(Duration::from_millis(90), &mut current, &state, &[bounds]);
+    assert_eq!(current, underlay);
+}
