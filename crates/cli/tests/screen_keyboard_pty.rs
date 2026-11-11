@@ -23,8 +23,9 @@ const ACCENT: vt100::Color = vt100::Color::Rgb(12, 34, 56);
 const PRESSED: vt100::Color = vt100::Color::Idx(15);
 const TEXT: vt100::Color = vt100::Color::Rgb(140, 160, 180);
 // The demo's surrounding AA controls retain ordinary page button colors.
-const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 241, 244);
+const PAGE_TEXT: vt100::Color = vt100::Color::Rgb(230, 230, 230);
 const PAGE_PRESSED: vt100::Color = vt100::Color::Rgb(97, 111, 125);
+const CANVAS: vt100::Color = vt100::Color::Rgb(16, 16, 16);
 const SEEDED_CLIPBOARD: &str = "Seed中文\nλZ\u{1}";
 const COPIED_TEXT: &str = "Seed中文\nλZ\nΩ\nTail\nPaste汉!";
 
@@ -646,7 +647,23 @@ fn screen_keyboard_aa_popup_moves_above_keyboard_and_survives_resize() {
                 button_position(screen, false, ScreenKeyboardAction::Letter('w')),
             ) == PRESSED
     });
-    terminal.resize(17, 60);
+    terminal.resize(16, 60);
+    terminal.wait_for("minimum AA keyboard stays above its keys", |screen| {
+        let layout = layout(screen, false);
+        layout.usable
+            && layout.aa_dialog.bottom() <= layout.keyboard.y
+            && screen.contents().contains("AutoAdmin (AA)")
+            && !screen.contents().contains("Enlarge")
+            && typed_text(screen, false) == "qw"
+            && text_in(
+                screen,
+                button_area(screen, false, ScreenKeyboardAction::Letter('q')),
+            )
+            .concat()
+            .trim()
+                == "q"
+    });
+    terminal.resize(15, 60);
     terminal.wait_for("small terminal keeps AA visible", |screen| {
         screen.contents().contains("AutoAdmin (AA)")
             && screen.contents().contains("Enlarge")
@@ -868,9 +885,12 @@ fn screen_keyboard_localized_keycaps_use_configured_colors_and_corner_shapes() {
         });
         terminal.mouse(0, position, true);
         terminal.wait_for("keycap release and real text input", |screen| {
+            let area = button_area(screen, false, ScreenKeyboardAction::Letter('a'));
             color_at(screen, position) == TEXT
-                && screen.cell(position.0, position.1).unwrap().bgcolor()
-                    == vt100::Color::Rgb(7, 17, 22)
+                && (area.y..area.bottom()).all(|row| {
+                    (area.x..area.right())
+                        .all(|col| screen.cell(row, col).unwrap().bgcolor() == CANVAS)
+                })
                 && typed_text(screen, false) == "a"
         });
         terminal.send(b"\x1b");
@@ -1225,8 +1245,12 @@ fn text_in(screen: &vt100::Screen, area: Rect) -> Vec<String> {
 }
 
 fn typed_lines(screen: &vt100::Screen, collapsed: bool) -> Vec<String> {
-    let text = layout(screen, collapsed).text;
-    text_in(screen, Surface::new().bordered(true).inner(text))
+    let layout = layout(screen, collapsed);
+    let text = layout.text;
+    let surface = Surface::new()
+        .bordered(text.height >= 3 && (!layout.aa_dialog.is_empty() || text.width >= 3))
+        .titled(i18n::tr!("screen-keyboard-text"));
+    text_in(screen, surface.inner(text))
 }
 
 fn typed_text(screen: &vt100::Screen, collapsed: bool) -> String {

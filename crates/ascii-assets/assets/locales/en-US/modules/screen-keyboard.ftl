@@ -20,7 +20,7 @@ screen-keyboard-test-aa = Test AA
 screen-keyboard-aa-back = Esc Back to demo
 screen-keyboard-aa-safe = AA input test · No commands or authorization are performed
 screen-keyboard-aa-hint = Show keyboard to test input · Esc: back to demo
-screen-keyboard-aa-small = Enlarge to at least 60 × 18 to show the keyboard without covering AA.
+screen-keyboard-aa-small = Enlarge to at least 60 × 16 to show the keyboard without covering AA.
 
 screen-keyboard-input-small = Enlarge the window to show the keyboard.
 screen-keyboard-function = F{ $number }
