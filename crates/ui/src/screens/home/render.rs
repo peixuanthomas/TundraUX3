@@ -13,9 +13,9 @@ use crate::{RenderContext, TundraTheme};
 
 const HOME_SUMMARY_HEIGHT: u16 = 1;
 const HOME_ICON_HEIGHT: u16 = 4;
-const HOME_TILE_MAX_HEIGHT: u16 = 8;
-const HOME_TILE_MIN_HEIGHT: u16 = 3;
-const HOME_TILE_GAP: u16 = crate::SpringStyle::CARD_GAP;
+const HOME_TILE_MAX_HEIGHT: u16 = 6;
+const HOME_TILE_MIN_HEIGHT: u16 = 2;
+const HOME_TILE_GAP: u16 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HomeItemLayout {
@@ -106,25 +106,25 @@ fn render_user_main(
         let index = item.index;
         let entry = &home.entries()[index];
         let tile = item.area;
-        let selected = theme.keyboard_focus_visible() && index == home.selected_entry_index();
-        let style = if selected {
-            theme.title_style()
-        } else {
-            theme.body_style()
-        }
-        .bg(context.theme.raised);
-        let content_width = usize::from(tile.width.saturating_sub(2));
-        let mut surface = Button::new(format!("home.entry.{index}"), entry.label.clone());
-        surface.state.selected = index == home.selected_entry_index();
-        surface.set_focused(index == home.selected_entry_index());
+        let current = index == home.selected_entry_index();
+        let mut surface = Button::new(format!("home.entry.{index}"), entry.label.clone())
+            .with_current(current)
+            .with_surface_border(false);
+        surface.set_focused(current && !home.logout_selected() && !home.edit_selected);
         let icon_area = home_entry_icon_area(tile);
         if icon_area.is_empty() {
-            surface.render_borderless_frame(frame, tile, theme);
+            surface
+                .with_centered_label(true)
+                .render_borderless_frame(frame, tile, theme);
             continue;
         }
         surface.render_surface_frame(frame, tile, theme);
-        let rendered_graphic =
-            icons.is_some_and(|icons| icons.render_icon(entry.icon_identity(), frame, icon_area));
+        let style = surface.surface_style(tile, theme);
+        let content_width = usize::from(tile.width);
+        let rendered_graphic = icon_area.width > 0
+            && icon_area.height > 0
+            && icons
+                .is_some_and(|icons| icons.render_icon(entry.icon_identity(), frame, icon_area));
         if !rendered_graphic && let Some(icon) = home.home_icon_for_label(entry.icon_identity()) {
             for (row, line) in icon
                 .lines()
@@ -148,12 +148,7 @@ fn render_user_main(
             }
         }
 
-        let inner = Rect::new(
-            tile.x.saturating_add(1),
-            tile.y.saturating_add(1),
-            tile.width.saturating_sub(2),
-            tile.height.saturating_sub(2),
-        );
+        let inner = tile;
         let label_y = icon_area.bottom();
         if label_y < inner.bottom() {
             frame.render_widget(
@@ -349,15 +344,12 @@ fn home_layout_for_entries(
 }
 
 /// Returns the image allocation shared by Home's ASCII and graphical icons.
-///
-/// Short cards use names only; icons need four rows, a name row, and borders.
-/// Image preparation and rendering both skip the empty allocation.
 pub fn home_entry_icon_area(tile: Rect) -> Rect {
     Rect::new(
-        tile.x.saturating_add(1),
-        tile.y.saturating_add(1),
-        tile.width.saturating_sub(2),
-        if tile.height >= HOME_ICON_HEIGHT + 3 {
+        tile.x,
+        tile.y,
+        tile.width,
+        if tile.height > HOME_ICON_HEIGHT {
             HOME_ICON_HEIGHT
         } else {
             0
@@ -407,9 +399,9 @@ pub fn home_logout_area(main: Rect, home: &HomeViewModel) -> Rect {
 
 fn home_content_area(main: Rect) -> Rect {
     Rect::new(
-        main.x.saturating_add(1),
-        main.y.saturating_add(1),
-        main.width.saturating_sub(2),
+        main.x,
+        main.y.saturating_add(u16::from(main.height > 0)),
+        main.width,
         main.height.saturating_sub(2),
     )
 }
@@ -485,9 +477,9 @@ fn home_action_bar(home: &HomeViewModel) -> PageActionBar {
 
 fn home_footer_area(main: Rect) -> Rect {
     Rect::new(
-        main.x.saturating_add(1),
+        main.x,
         main.bottom().saturating_sub(1),
-        main.width.saturating_sub(2),
+        main.width,
         u16::from(main.height > 0),
     )
 }

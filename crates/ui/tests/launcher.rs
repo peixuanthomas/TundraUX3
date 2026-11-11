@@ -60,7 +60,7 @@ fn launcher_context_menu_fits_complete_button_labels_in_both_languages() {
                         })
                     )
                 } else {
-                    format!("[{}]", action.label())
+                    action.label()
                 };
                 let mut rendered = String::new();
                 let mut x = row.x;
@@ -540,8 +540,8 @@ fn confirmation_overlay_takes_precedence_in_hit_testing_and_rendering() {
     assert!(output.contains("Launch application?"));
     for width in [50, 100] {
         let output = render(&model, width, 30);
-        assert!(output.contains("[Y Launch]"));
-        assert!(output.contains("[Esc Cancel]"));
+        assert!(output.contains("Y Launch"));
+        assert!(output.contains("Esc Cancel"));
     }
 }
 
@@ -568,4 +568,43 @@ fn launcher_search_is_always_visible_and_empty_results_do_not_offer_an_unrelated
         );
         assert!(layout.content.y >= layout.search.bottom());
     }
+}
+
+#[test]
+fn launcher_grid_uses_whole_tiles_and_keeps_one_cell_drop_gaps() {
+    let model = LauncherViewModel::new(
+        (0..10)
+            .map(|index| item(index, LauncherItemStatus::Ready))
+            .collect(),
+        Some(0),
+        LauncherViewMode::LargeIcons,
+        true,
+    );
+    let main = Rect::new(3, 2, 108, 26);
+    let layout = launcher_layout(main, &model);
+    assert_eq!(layout.search.x, main.x);
+    assert_eq!(layout.search.width, main.width);
+    for item in &layout.items {
+        assert_eq!(
+            (item.icon_area.x, item.icon_area.y, item.icon_area.width),
+            (item.area.x, item.area.y, item.area.width)
+        );
+        assert_eq!(
+            layout.hit_test(item.area.x, item.area.y),
+            Some(LauncherHitTarget::Item(item.index))
+        );
+    }
+    let first = layout.items[0].area;
+    assert_eq!(layout.items[1].area.x - first.right(), 1);
+    let next_row = layout
+        .items
+        .iter()
+        .find(|item| item.area.y > first.y)
+        .unwrap()
+        .area;
+    assert_eq!(next_row.y - first.bottom(), 1);
+    let target = layout
+        .large_icon_drop_target(first.x, first.bottom())
+        .unwrap();
+    assert_eq!(target.insertion_index(), layout.columns);
 }

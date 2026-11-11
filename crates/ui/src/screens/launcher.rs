@@ -13,7 +13,8 @@ mod edit;
 pub use edit::*;
 
 const GRID_TILE_MIN_WIDTH: u16 = 20;
-const GRID_TILE_HEIGHT: u16 = 9;
+const GRID_TILE_HEIGHT: u16 = 7;
+const GRID_TILE_GAP: u16 = 1;
 fn empty_message() -> String {
     i18n::tr!("ui-launcher-empty")
 }
@@ -520,7 +521,12 @@ impl LauncherLayout {
 
 pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout {
     let panel = main;
-    let inner = inset(panel, 1);
+    let inner = Rect::new(
+        panel.x,
+        panel.y.saturating_add(u16::from(panel.height > 0)),
+        panel.width,
+        panel.height.saturating_sub(1),
+    );
     let bar = launcher_action_bar(model);
     let bar_height = bar.height(inner.width).min(inner.height.saturating_sub(1));
     let footer = Rect::new(
@@ -568,11 +574,8 @@ pub fn launcher_layout(main: Rect, model: &LauncherViewModel) -> LauncherLayout 
             area: Rect::new(
                 inner.x,
                 inner.y,
-                (terminal_width(&format!(
-                    "[{} {}]",
-                    refresh.action.shortcut(),
-                    refresh.label
-                )) as u16)
+                (terminal_width(&format!("{} {}", refresh.action.shortcut(), refresh.label))
+                    as u16)
                     .min(inner.width),
                 u16::from(inner.height > 0),
             ),
@@ -747,16 +750,12 @@ fn launcher_grid_layout(
         let area = Rect::new(
             x,
             y,
-            width.saturating_sub(if columns > 1 {
-                crate::SpringStyle::CARD_GAP
-            } else {
-                0
-            }),
+            width.saturating_sub(if columns > 1 { GRID_TILE_GAP } else { 0 }),
             GRID_TILE_HEIGHT
-                .saturating_sub(1)
+                .saturating_sub(GRID_TILE_GAP)
                 .min(content.bottom().saturating_sub(y)),
         );
-        let inner = inset(area, 1);
+        let inner = area;
         let icon_area = Rect::new(
             inner.x,
             inner.y,
@@ -915,7 +914,7 @@ pub fn render_launcher_content(
                 launcher_view_mode_label(model.view_mode)
             }
         ))
-        .bordered(true)
+        .bordered(false)
         .render_frame(frame, layout.panel, context);
     render_launcher_toolbar(frame, &layout, model, context);
     model.search.render_borderless_frame_with_prefix(
@@ -967,7 +966,7 @@ fn render_launcher_toolbar(
         };
         let mut component = Button::new(
             format!("launcher.toolbar.{:?}", button.action),
-            format!("[{} {}]", button.action.shortcut(), button.label),
+            format!("{} {}", button.action.shortcut(), button.label),
         );
         component.set_disabled(!button.enabled);
         component.render_borderless_frame(frame, button_layout.area, theme);
@@ -1013,24 +1012,19 @@ fn render_launcher_grid(
             continue;
         };
         let selected = model.selected_index == Some(item_layout.index) || item.selected;
-        let style = item_style(item.status, selected, theme).bg(theme.tokens().raised);
         let mut surface = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
-            .with_current(selected);
+            .with_current(selected)
+            .with_surface_border(false);
         surface.set_disabled(!model.organizing && item.status != LauncherItemStatus::Ready);
         surface.set_focused(
             !model.search.state.focused && model.selected_index == Some(item_layout.index),
         );
-        if item_layout.area.height < 3 {
-            let mut compact = Button::new(format!("launcher.item.{}", item.id), item.name.clone())
-                .with_current(selected);
-            compact.set_disabled(!model.organizing && item.status != LauncherItemStatus::Ready);
-            compact.set_focused(
-                !model.search.state.focused && model.selected_index == Some(item_layout.index),
-            );
-            compact.render_borderless_frame(frame, item_layout.area, theme);
+        if item_layout.area.height < 2 {
+            surface.render_borderless_frame(frame, item_layout.area, theme);
             continue;
         }
         surface.render_surface_frame(frame, item_layout.area, theme);
+        let style = surface.surface_style(item_layout.area, theme);
         let rendered_native = item.custom_icon.is_none()
             && !surface.state.disabled
             && item_layout.icon_area.width > 0
@@ -1039,7 +1033,7 @@ fn render_launcher_grid(
         if !rendered_native {
             render_default_ascii_icon(frame, item_layout.icon_area, model, item, context, style);
         }
-        let inner = inset(item_layout.area, 1);
+        let inner = item_layout.area;
         let name_y = item_layout
             .icon_area
             .bottom()
@@ -1047,11 +1041,7 @@ fn render_launcher_grid(
             .max(inner.y);
         frame.render_widget(
             Paragraph::new(fit_text(&item.name, inner.width))
-                .style(if selected && !surface.state.disabled {
-                    theme.title_style().bg(theme.tokens().raised)
-                } else {
-                    style
-                })
+                .style(style)
                 .alignment(HorizontalAlignment::Center),
             Rect::new(inner.x, name_y, inner.width, u16::from(inner.height > 0)),
         );
@@ -1252,27 +1242,17 @@ fn render_launcher_confirmation(
     );
     let mut confirm = Button::new(
         "launcher.confirmation.confirm",
-        format!("[Y {}]", dialog.confirm_label),
+        format!("Y {}", dialog.confirm_label),
     );
     confirm.state.selected = dialog.confirm_selected;
     confirm.render_borderless_frame(frame, layout.confirm, theme);
 
     let mut cancel = Button::new(
         "launcher.confirmation.cancel",
-        format!("[Esc {}]", dialog.cancel_label),
+        format!("Esc {}", dialog.cancel_label),
     );
     cancel.state.selected = !dialog.confirm_selected;
     cancel.render_borderless_frame(frame, layout.cancel, theme);
-}
-
-fn item_style(status: LauncherItemStatus, selected: bool, theme: &TundraTheme) -> Style {
-    if status != LauncherItemStatus::Ready {
-        theme.disabled_style()
-    } else if selected {
-        theme.title_style()
-    } else {
-        theme.body_style()
-    }
 }
 
 fn launcher_view_mode_label(mode: LauncherViewMode) -> String {
