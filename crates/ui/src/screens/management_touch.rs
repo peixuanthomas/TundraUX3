@@ -239,6 +239,25 @@ pub fn management_wrapped_lines(text: &str, width: u16) -> Vec<String> {
     }
     lines
 }
+fn management_clipped_line(text: &str, hidden: usize, width: u16) -> String {
+    let mut cells = 0;
+    let span = Span::raw(text);
+    let clipped = span
+        .styled_graphemes(Style::default())
+        .filter_map(|glyph| {
+            let start = cells;
+            cells += glyph.symbol.width();
+            if start >= hidden {
+                Some(glyph.symbol.to_string())
+            } else if cells > hidden {
+                Some(" ".repeat(cells - hidden))
+            } else {
+                None
+            }
+        })
+        .collect::<String>();
+    crate::components::truncate_to_terminal_width(&clipped, usize::from(width))
+}
 fn inner(area: Rect) -> Rect {
     Rect::new(
         area.x.saturating_add(1),
@@ -1899,27 +1918,35 @@ pub fn render_management_content(
                     .find(|bar| bar.target == target)
                     .map_or(0, |bar| bar.offset.min(u16::MAX as usize) as u16)
             };
+            let rows = usize::from(offset(ManagementScrollTarget::Details))
+                + usize::from(
+                    layout
+                        .details_text
+                        .y
+                        .saturating_sub(layout.details_canvas.y),
+                );
+            let columns = usize::from(offset(ManagementScrollTarget::DetailsColumns))
+                + usize::from(
+                    layout
+                        .details_text
+                        .x
+                        .saturating_sub(layout.details_canvas.x),
+                );
             frame.render_widget(
                 Paragraph::new(
                     management_wrapped_lines(&model.details, u16::MAX)
                         .into_iter()
-                        .map(Line::from)
+                        .skip(rows)
+                        .take(usize::from(layout.details_text.height))
+                        .map(|line| {
+                            Line::from(management_clipped_line(
+                                &line,
+                                columns,
+                                layout.details_text.width,
+                            ))
+                        })
                         .collect::<Vec<_>>(),
                 )
-                .scroll((
-                    offset(ManagementScrollTarget::Details).saturating_add(
-                        layout
-                            .details_text
-                            .y
-                            .saturating_sub(layout.details_canvas.y),
-                    ),
-                    offset(ManagementScrollTarget::DetailsColumns).saturating_add(
-                        layout
-                            .details_text
-                            .x
-                            .saturating_sub(layout.details_canvas.x),
-                    ),
-                ))
                 .style(theme.body_style()),
                 layout.details_text,
             );
@@ -1930,21 +1957,35 @@ pub fn render_management_content(
                     .len()
                     .saturating_sub(usize::from(layout.details_canvas.height)),
             );
+            let rows = offset
+                + usize::from(
+                    layout
+                        .details_text
+                        .y
+                        .saturating_sub(layout.details_canvas.y),
+                );
+            let columns = usize::from(
+                layout
+                    .details_text
+                    .x
+                    .saturating_sub(layout.details_canvas.x),
+            );
             frame.render_widget(
-                Paragraph::new(lines.into_iter().map(Line::from).collect::<Vec<_>>())
-                    .scroll((
-                        (offset.min(usize::from(u16::MAX)) as u16).saturating_add(
-                            layout
-                                .details_text
-                                .y
-                                .saturating_sub(layout.details_canvas.y),
-                        ),
-                        layout
-                            .details_text
-                            .x
-                            .saturating_sub(layout.details_canvas.x),
-                    ))
-                    .style(theme.body_style()),
+                Paragraph::new(
+                    lines
+                        .into_iter()
+                        .skip(rows)
+                        .take(usize::from(layout.details_text.height))
+                        .map(|line| {
+                            Line::from(management_clipped_line(
+                                &line,
+                                columns,
+                                layout.details_text.width,
+                            ))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .style(theme.body_style()),
                 layout.details_text,
             );
         }
@@ -1964,23 +2005,7 @@ pub fn render_management_content(
                 let label = management_wrapped_lines(label, canvas.width)
                     .into_iter()
                     .skip(usize::from(area.y.saturating_sub(canvas.y)))
-                    .map(|line| {
-                        let mut cells = 0;
-                        Span::raw(line)
-                            .styled_graphemes(Style::default())
-                            .filter_map(|glyph| {
-                                let start = cells;
-                                cells += glyph.symbol.width();
-                                if start >= hidden {
-                                    Some(glyph.symbol.to_string())
-                                } else if cells > hidden {
-                                    Some(" ".repeat(cells - hidden))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<String>()
-                    })
+                    .map(|line| management_clipped_line(&line, hidden, area.width))
                     .collect::<Vec<_>>()
                     .join("\n");
                 let mut button = Button::new(management_action_id(model, index), label)

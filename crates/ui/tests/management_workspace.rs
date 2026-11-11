@@ -197,7 +197,7 @@ fn workspace_wraps_long_action_labels_without_losing_their_shortcuts() {
 
 #[test]
 fn expanded_details_scroll_to_clipped_text_without_covering_it_with_scrollbars() {
-    for (width, height) in [(108, 20), (160, 40)] {
+    for (width, height) in [(108, 20), (109, 20), (160, 40)] {
         let mut model = model(false);
         model.details_only = true;
         model.details = (0..80)
@@ -228,6 +228,14 @@ fn expanded_details_scroll_to_clipped_text_without_covering_it_with_scrollbars()
             .draw(|frame| render_management_content(frame, main, &model, &context))
             .unwrap();
         let area = layout.details_text;
+        let columns = layout
+            .scrollbars
+            .iter()
+            .find(|bar| bar.target == ManagementScrollTarget::DetailsColumns)
+            .unwrap();
+        if columns.offset % 2 == 1 {
+            assert_eq!(terminal.backend().buffer()[(area.x, area.y)].symbol(), " ");
+        }
         let last_line = (area.x..area.right())
             .map(|x| terminal.backend().buffer()[(x, area.bottom() - 1)].symbol())
             .collect::<String>();
