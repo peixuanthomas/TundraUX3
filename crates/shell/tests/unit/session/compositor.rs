@@ -557,11 +557,13 @@ fn aa_keyboard_keeps_background_layout_and_places_one_global_launcher_on_every_p
             let launcher = state
                 .keyboard_launcher_area()
                 .expect("AA shares the global launcher");
-            assert_eq!(launcher.right(), width);
+            assert_eq!(original.keyboard_launcher, Some(launcher));
             assert_eq!(
-                launcher.bottom(),
-                original.status_message.map_or(height, |r| r.y)
+                launcher.right(),
+                original.time_button.map_or(width, |time| time.x)
             );
+            assert_eq!(launcher.bottom(), height);
+            assert!(launcher.intersection(original.main).is_empty());
             assert!(
                 !state
                     .button_regions
@@ -600,12 +602,8 @@ fn page_keyboard_animates_chrome_and_content_together_and_restores_them() {
         let original = state.frame_layout.unwrap();
         let original_launcher = state.keyboard_launcher_area().unwrap();
         assert_eq!(original_launcher.right(), 120);
-        assert_eq!(
-            original_launcher.bottom(),
-            original.status_message.unwrap().y
-        );
+        assert_eq!(original_launcher.y, original.status_message.unwrap().y);
         state.toggle_input_keyboard();
-        let mut previous_top = 3;
         for millis in [0, 55, 110, 165, 220] {
             let prepared = home_frame(&state, millis, false);
             draw(&mut compositor, &mut terminal, &mut state, &prepared);
@@ -614,8 +612,7 @@ fn page_keyboard_animates_chrome_and_content_together_and_restores_them() {
                 panic!("full layout");
             };
             assert_eq!(main, layout.main);
-            assert!(top.height <= previous_top);
-            previous_top = top.height;
+            assert_eq!(top.height, 1);
             let launcher = state.keyboard_launcher_area().unwrap();
             if let Some(hide) = state
                 .input_keyboard_layout()
@@ -628,7 +625,12 @@ fn page_keyboard_animates_chrome_and_content_together_and_restores_them() {
                 assert_eq!(launcher.height, 1);
             }
             assert!(main.bottom() <= state.input_keyboard_layout().keyboard.y);
-            assert!(launcher.bottom() <= status.y);
+            assert!(launcher.bottom() <= status.bottom());
+            assert!(launcher.intersection(main).is_empty());
+            if state.screen_keyboard.visibility > 0 {
+                assert_eq!(status.height, 0);
+                assert_eq!(main.bottom(), state.input_keyboard_layout().keyboard.y);
+            }
         }
         let layout = state.frame_layout.unwrap();
         assert_eq!(layout.back_button.unwrap().height, 1);
@@ -1119,7 +1121,7 @@ fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
         ));
         draw(&mut compositor, &mut terminal, &mut state, &prepared);
         let back = state.frame_layout.unwrap().back_button.unwrap();
-        assert!(text(terminal.backend().buffer(), back).contains("[◀ Esc]"));
+        assert!(text(terminal.backend().buffer(), back).contains("◀ Esc"));
         assert_eq!(
             back.intersection(state.frame_layout.unwrap().main).area(),
             0
@@ -1147,7 +1149,7 @@ fn compact_escape_button_closes_pages_and_modals_only_on_matching_release() {
         let mut prepared = home_frame(&state, 0, true);
         prepared.notification = state.to_notification_view_model();
         draw(&mut compositor, &mut terminal, &mut state, &prepared);
-        assert!(text(terminal.backend().buffer(), back).contains("[◀ Esc]"));
+        assert!(text(terminal.backend().buffer(), back).contains("◀ Esc"));
         assert_eq!(
             state.hit_map().target_at(point),
             Some(ShellComponent::BackButton)
@@ -1215,7 +1217,8 @@ fn compositor_resize_uses_actual_frame_geometry_for_chrome_and_hit_map() {
     let layout = state.frame_layout.unwrap();
     assert_eq!(layout.bounds, Rect::new(0, 0, 90, 25));
     assert_eq!(state.hit_map().terminal_size(), (90, 25));
-    assert!(text(terminal.backend().buffer(), Rect::new(0, 0, 90, 3)).contains("90x25"));
+    assert_eq!(layout.main, Rect::new(0, 1, 90, 23));
+    assert!(text(terminal.backend().buffer(), Rect::new(0, 0, 90, 1)).contains("TundraUX"));
     for region in state.hit_map().regions() {
         assert_eq!(region.area.intersection(layout.bounds), region.area);
     }
@@ -1347,7 +1350,7 @@ fn rendered_chrome_buttons_hover_press_and_activate_only_on_release() {
         .find(|r| r.id.as_str() == "shell.back")
         .unwrap()
         .clone();
-    let point = (back.area.x + 3, back.area.y + 1);
+    let point = (back.area.x + 3, back.area.y);
     let theme = prepared.context.compatibility_theme();
     state.apply_input(InputEvent::mouse_moved(point));
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
@@ -1381,7 +1384,7 @@ fn button_capture_cancels_outside_on_focus_loss_resize_and_page_change() {
             .find(|r| r.id.as_str() == "shell.back")
             .unwrap()
             .area;
-        let point = (back.x + 3, back.y + 1);
+        let point = (back.x + 3, back.y);
         state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
         match cancel {
             0 => {
