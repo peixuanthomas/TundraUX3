@@ -250,12 +250,20 @@ fn render_top(
     if info_width == 0 || chrome.screen_stack.is_empty() {
         return;
     }
+    let mut path = truncate_status_text(chrome.screen_stack.last().unwrap(), info_width);
+    for parent in chrome.screen_stack[..chrome.screen_stack.len() - 1]
+        .iter()
+        .rev()
+    {
+        let candidate = format!("{parent} > {path}");
+        if terminal_width(&candidate) > usize::from(info_width) {
+            break;
+        }
+        path = candidate;
+    }
     frame.render_widget(
-        Paragraph::new(Line::styled(
-            truncate_status_text(&chrome.screen_stack.join(" > "), info_width),
-            theme.muted_style(),
-        ))
-        .alignment(HorizontalAlignment::Right),
+        Paragraph::new(Line::styled(path, theme.muted_style()))
+            .alignment(HorizontalAlignment::Right),
         Rect::new(
             area.right().saturating_sub(info_width),
             area.y,
