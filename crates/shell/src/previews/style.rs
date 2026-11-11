@@ -369,12 +369,7 @@ impl PreviewModel {
             self.progress
                 .retarget((self.list.selected_index().unwrap_or(0) + 1) as f64 / 4.0);
         }
-        if borderless {
-            self.input
-                .handle_event_borderless(input.clone(), layout.input);
-        } else {
-            self.input.handle_event(input.clone(), layout.input);
-        }
+        self.input.handle_event(input.clone(), layout.input);
         if matches!(
             self.replay.handle_event(input.clone(), layout.replay),
             ComponentEvent::Activated(_)
@@ -401,6 +396,29 @@ impl PreviewModel {
             self.reveal = true;
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn tea_pointer_editing_uses_the_bordered_text_field_geometry() {
+        let mut model = PreviewModel::new(UiStyleVersion::Tea, false);
+        model.input.set_value("abcd");
+        let layout = preview_layout(ratatui::layout::Rect::new(0, 0, 108, 20), model.version);
+        model.update(Message::Input(
+            InputEvent::mouse(ui::MouseEvent::down(
+                layout.input.x + 3,
+                layout.input.y + 1,
+                ui::MouseButton::Left,
+            )),
+            layout,
+        ));
+        assert_eq!(model.input.cursor(), 2);
+        model.update(Message::Input(InputEvent::key(Key::Char('X')), layout));
+        assert_eq!(model.input.value(), "abXcd");
     }
 }
 
