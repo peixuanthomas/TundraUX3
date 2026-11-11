@@ -62,7 +62,7 @@ Ordinary workspaces use headings, backgrounds, and whitespace instead of complet
 - Launcher search uses `TextInput` and shares its region between rendering and hit testing. Empty results show a search message; built-in and blank-area context menus reuse page actions while retaining restrictions on built-in entries.
 - Settings uses Tab/Shift+Tab across categories, the operating-system entry, and controls. Arrows switch categories when that region is focused and operate content otherwise; ordinary numeric options open the shared input dialog.
 - Update activity shows download progress for Release and adds compilation progress and live output for source builds. Hidden build panels take no space, keeping release notes close to the download meter.
-- The shared terminal minimum is 108×22, with all Home entries and the Command Line available at that size. Login keeps the password and submit controls visible. First-time setup keeps completion with default appearance at the bottom of the visible area while its body scrolls; the administrator label identifies the role as belonging to Tundra.
+- The shared terminal minimum is 108×20, with all Home entries and the Command Line available at that size. Login keeps the password and submit controls visible. First-time setup keeps completion with default appearance at the bottom of the visible area while its body scrolls; the administrator label identifies the role as belonging to Tundra.
 
 ### Input and themes
 

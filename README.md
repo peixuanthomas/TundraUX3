@@ -23,7 +23,7 @@ TundraUX3 brings system tools, files, editors, and everyday utilities into one t
 
 ## Get started
 
-Use an interactive terminal of at least **108 columns × 22 rows**. Mouse and touch input require a terminal that forwards pointer events.
+Use an interactive terminal of at least **108 columns × 20 rows**. Mouse and touch input require a terminal that forwards pointer events.
 
 ### Run a Linux portable build
 

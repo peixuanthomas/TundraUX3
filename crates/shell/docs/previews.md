@@ -62,7 +62,7 @@ tundra-cli debug view-ui-style 2
 /debug view-ui-style 2
 ```
 
-The preview requires at least 60 × 24; 100 × 35 or larger is recommended.
+Tea requires at least 60 × 20; Glacier and Spring require 60 × 24. A 100 × 35 terminal or larger is recommended for comparing all styles.
 
 | Version | Style |
 | --- | --- |
