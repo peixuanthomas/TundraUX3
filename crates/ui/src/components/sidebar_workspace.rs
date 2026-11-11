@@ -57,7 +57,9 @@ impl SidebarWorkspaceLayout {
 
     fn layout(area: Rect, labels: &[String], active: Option<usize>) -> Self {
         let capacity = usize::from(area.height).min(labels.len());
-        let vertical = area.width >= 92 && capacity > 0;
+        let vertical = area.width >= 92
+            && capacity > 0
+            && (active.is_some() || usize::from(area.height) >= labels.len());
         let mut navigation = Vec::new();
         let content = if vertical {
             let width = labels

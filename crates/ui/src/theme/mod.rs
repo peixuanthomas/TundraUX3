@@ -137,7 +137,7 @@ impl ThemeTokens {
             editor_canvas: Color::Black,
             surface: Color::Rgb(0x18, 0x18, 0x18),
             raised: Color::Rgb(0x24, 0x24, 0x24),
-            border: Color::Rgb(0x3A, 0x3A, 0x3A),
+            border: Color::Rgb(0x38, 0x38, 0x38),
             text: Color::Rgb(0xE6, 0xE6, 0xE6),
             muted: Color::Rgb(0x99, 0x99, 0x99),
             accent: Color::Rgb(0x63, 0xD3, 0xE5),
