@@ -45,10 +45,22 @@ fn debug_override_selects_debug_home() {
     assert_eq!(state.focused_component(), ShellComponent::Home);
     assert_eq!(state.hovered_component(), None);
     assert_eq!(state.active_popup(), None);
-    assert_eq!(state.hit_target_at((1, 1)), Some(ShellComponent::TopBar));
-    assert_eq!(state.hit_target_at((1, 4)), Some(ShellComponent::Home));
+    let (width, height) = state.terminal_size();
+    let ui::ShellLayout::Full { top, main, status } =
+        ui::compute_shell_layout(Rect::new(0, 0, width, height))
+    else {
+        panic!("full shell layout expected");
+    };
     assert_eq!(
-        state.hit_target_at((1, 38)),
+        state.hit_target_at((top.x + 1, top.y)),
+        Some(ShellComponent::TopBar)
+    );
+    assert_eq!(
+        state.hit_target_at((main.x + 1, main.y)),
+        Some(ShellComponent::Home)
+    );
+    assert_eq!(
+        state.hit_target_at((status.x + 1, status.y)),
         Some(ShellComponent::StatusBar)
     );
     assert!(!state.shutdown_requested());
@@ -174,13 +186,25 @@ fn tab_and_shift_tab_route_to_focus_commands() {
 #[test]
 fn mouse_move_updates_hover_from_hit_map() {
     let mut state = ShellSession::new(debug_config(), (120, 40));
+    let (width, height) = state.terminal_size();
+    let ui::ShellLayout::Full { top, main, .. } =
+        ui::compute_shell_layout(Rect::new(0, 0, width, height))
+    else {
+        panic!("full shell layout expected");
+    };
 
-    state.apply_input(InputEvent::mouse_moved((2, 1)));
+    state.apply_input(InputEvent::mouse_moved((top.x + 1, top.y)));
 
     assert_eq!(state.hovered_component(), Some(ShellComponent::TopBar));
     assert_eq!(
         state.last_command(),
         Some(&ShellCommand::Hover(Some(ShellComponent::TopBar)))
+    );
+    state.apply_input(InputEvent::mouse_moved((main.x + 1, main.y)));
+    assert_eq!(state.hovered_component(), Some(ShellComponent::Home));
+    assert_eq!(
+        state.last_command(),
+        Some(&ShellCommand::Hover(Some(ShellComponent::Home)))
     );
 }
 
