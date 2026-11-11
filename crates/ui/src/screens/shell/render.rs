@@ -291,7 +291,8 @@ fn render_status(
         let mut message_theme = theme.clone();
         message_theme.foreground = style.fg.unwrap_or(theme.foreground);
         let mut button = Button::new("shell.status", truncate_status_text(&text, message.width))
-            .with_bracketed_label(false);
+            .with_bracketed_label(false)
+            .with_label_alignment(HorizontalAlignment::Left);
         button.set_focused(status_focused);
         button.render_borderless_frame(frame, message, &message_theme);
     }
