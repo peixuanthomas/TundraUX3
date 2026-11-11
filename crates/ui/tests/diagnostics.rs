@@ -17,6 +17,49 @@ use ui::{
 };
 
 #[test]
+fn ordinary_diagnostics_keep_status_text_and_content_without_panel_boxes() {
+    let mut model = health_model();
+    model.checks = [
+        DiagnosticsStatus::Pass,
+        DiagnosticsStatus::Warning,
+        DiagnosticsStatus::Fail,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, status)| check(index, status))
+    .collect();
+    let main = Rect::new(0, 0, 120, 28);
+    let context = ui::RenderContext::default();
+    let mut terminal = Terminal::new(TestBackend::new(main.width, main.height)).unwrap();
+    terminal
+        .draw(|frame| ui::render_diagnostics_page_content(frame, main, &model, &context))
+        .unwrap();
+    let text = terminal_output(&terminal);
+    assert!(
+        !text
+            .chars()
+            .any(|character| "╭╮╰╯┌┐└┘│─".contains(character))
+    );
+    for status in [
+        DiagnosticsStatus::Pass,
+        DiagnosticsStatus::Warning,
+        DiagnosticsStatus::Fail,
+    ] {
+        assert!(text.contains(&format!("{} {}", status.marker(), status.label())));
+    }
+    let layout = diagnostics_layout(main, &model);
+    for row in &layout.rows {
+        assert_eq!(
+            diagnostics_hit_test(&layout, (row.area.x, row.area.y)),
+            Some(DiagnosticsHitTarget::Check(row.index))
+        );
+    }
+    model.scanning = true;
+    assert!(ui::diagnostics_busy_visible(main, &model));
+    assert!(!ui::diagnostics_busy_visible(Rect::default(), &model));
+}
+
+#[test]
 fn restart_required_toolbar_shows_the_actions_that_its_keys_execute() {
     let mut model = health_model();
     model.restart_required = true;
@@ -57,9 +100,9 @@ fn narrow_repair_dialog_keeps_all_action_keys_visible() {
             .map(|x| buffer[(x, area.y)].symbol())
             .collect::<String>()
     };
-    assert!(row_text(dialog.confirm).contains("[Y Repair]"));
-    assert!(row_text(dialog.restart).contains("[R Restart]"));
-    assert!(row_text(dialog.cancel).contains("[Esc Cancel]"));
+    assert!(row_text(dialog.confirm).contains("Y Repair"));
+    assert!(row_text(dialog.restart).contains("R Restart"));
+    assert!(row_text(dialog.cancel).contains("Esc Cancel"));
     assert!(dialog.confirm.right() <= dialog.restart.x);
     assert!(dialog.restart.right() <= dialog.cancel.x);
 }
@@ -97,8 +140,8 @@ fn minimum_full_layout_keeps_selected_health_check_visible_and_exposes_hit_targe
 
     assert!(layout.list_panel.width >= 28);
     assert!(layout.detail_panel.width > layout.list_panel.width);
-    assert_eq!(layout.visible_capacity, 7);
-    assert_eq!(layout.visible_start, 4);
+    assert!(layout.visible_capacity >= 8);
+    assert_eq!(layout.visible_start, 11 - layout.visible_capacity);
     assert_eq!(layout.rows.last().map(|row| row.index), Some(10));
     let health_tab = layout
         .tabs

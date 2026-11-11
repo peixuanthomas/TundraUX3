@@ -18,12 +18,23 @@ use crate::components::{
 use crate::screens::clock::render_clock_line;
 use crate::screens::shell::fit_cell;
 use crate::{RenderContext, TundraTheme};
+pub fn diagnostics_busy_visible(main: Rect, model: &DiagnosticsViewModel) -> bool {
+    model.scanning
+        && model.repair_dialog.is_none()
+        && !diagnostics_layout(main, model).header.is_empty()
+}
+
 pub fn render_diagnostics_page_content(
     frame: &mut Frame<'_>,
     main: Rect,
     model: &DiagnosticsViewModel,
     context: &RenderContext,
 ) {
+    let mut content_context = context.clone();
+    if model.repair_dialog.is_some() {
+        content_context.buttons = None;
+    }
+    let context = &content_context;
     let theme = &context.compatibility_theme();
     let layout = diagnostics_layout(main, model);
     Surface::new()
@@ -31,7 +42,7 @@ pub fn render_diagnostics_page_content(
         .bordered(false)
         .render_frame(frame, layout.panel, context);
 
-    render_diagnostics_header(frame, layout.header, model, theme);
+    render_diagnostics_header(frame, layout.header, model, context);
     render_diagnostics_tabs(frame, &layout, model, context);
     render_diagnostics_content(frame, &layout.content_layout(), model, theme, context);
     render_diagnostics_footer(frame, layout.footer, model, context);
@@ -41,8 +52,9 @@ pub(crate) fn render_diagnostics_header(
     frame: &mut Frame<'_>,
     area: Rect,
     model: &DiagnosticsViewModel,
-    theme: &TundraTheme,
+    context: &RenderContext,
 ) {
+    let theme = &context.compatibility_theme();
     let warning_count = model
         .checks
         .iter()
@@ -66,7 +78,7 @@ pub(crate) fn render_diagnostics_header(
     } else if model.scanning {
         (
             i18n::tr!("ui-diagnostics-scanning-health-checks"),
-            theme.title_style(),
+            Style::default().fg(crate::components::tone_color(ComponentTone::Warning, theme)),
         )
     } else if failure_count > 0 {
         (
@@ -98,20 +110,31 @@ pub(crate) fn render_diagnostics_header(
     } else {
         (
             i18n::tr!("ui-diagnostics-system-healthy"),
-            theme.title_style(),
+            Style::default().fg(crate::components::tone_color(ComponentTone::Success, theme)),
         )
     };
     let scanned_at = model
         .scanned_at
         .clone()
         .unwrap_or_else(|| i18n::tr!("ui-diagnostics-not-yet-scanned"));
+    let marker = if model.scanning {
+        crate::components::BusyIndicator::from_motion(context.motion).symbol()
+    } else if failure_count > 0 {
+        DiagnosticsStatus::Fail.marker()
+    } else if model.restart_required || warning_count > 0 {
+        DiagnosticsStatus::Warning.marker()
+    } else if model.checks.is_empty() || unsupported_count > 0 {
+        DiagnosticsStatus::Unsupported.marker()
+    } else {
+        DiagnosticsStatus::Pass.marker()
+    };
     render_clock_line(
         frame,
         area,
         fit_cell(
             &i18n::tr!(
                 "ui-diagnostics-last-scan",
-                state = state,
+                state = format!("{marker} {state}"),
                 scanned_at = scanned_at
             ),
             usize::from(area.width),
@@ -148,11 +171,9 @@ pub(crate) fn render_diagnostics_content_titled(
 ) {
     Surface::new()
         .titled(title)
-        .bordered(true)
         .render_frame(frame, layout.list_panel, context);
     Surface::new()
         .titled(i18n::tr!("ui-diagnostics-details"))
-        .bordered(true)
         .render_frame(frame, layout.detail_panel, context);
     crate::render_table_headers(
         frame,
@@ -174,7 +195,7 @@ pub(crate) fn render_diagnostics_content_titled(
                 Paragraph::new(detail_message)
                     .style(theme.muted_style())
                     .wrap(Wrap { trim: true }),
-                Surface::new().bordered(true).inner(layout.detail_panel),
+                Surface::new().titled("").inner(layout.detail_panel),
             );
             return;
         }
@@ -204,7 +225,11 @@ fn render_diagnostics_rows(
 ) {
     if model.item_count() == 0 {
         let text = if model.scanning && model.tab == DiagnosticsTab::Health {
-            i18n::tr!("ui-diagnostics-scanning-padded")
+            format!(
+                "{} {}",
+                crate::components::BusyIndicator::from_motion(context.motion).symbol(),
+                i18n::tr!("ui-diagnostics-scanning-padded")
+            )
         } else {
             match model.tab {
                 DiagnosticsTab::Health => i18n::tr!("ui-diagnostics-no-checks-available-padded"),
@@ -287,7 +312,7 @@ fn render_diagnostics_detail(
     model: &DiagnosticsViewModel,
     theme: &TundraTheme,
 ) {
-    let inner = Surface::new().bordered(true).inner(layout.detail_panel);
+    let inner = Surface::new().titled("").inner(layout.detail_panel);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
@@ -320,7 +345,7 @@ pub fn diagnostics_detail_scroll_metrics(
     panel: Rect,
     model: &DiagnosticsViewModel,
 ) -> (Rect, usize, usize) {
-    let inner = Surface::new().bordered(true).inner(panel);
+    let inner = Surface::new().titled("").inner(panel);
     let count = wrapped_detail_lines(
         model,
         &TundraTheme::default_dark(),
@@ -774,7 +799,9 @@ fn diagnostics_status_style(
     selected: bool,
 ) -> Style {
     let style = match status {
-        DiagnosticsStatus::Pass => theme.title_style(),
+        DiagnosticsStatus::Pass => {
+            Style::default().fg(crate::components::tone_color(ComponentTone::Success, theme))
+        }
         DiagnosticsStatus::Unsupported => theme.muted_style(),
         DiagnosticsStatus::Warning => diagnostics_warning_style(theme),
         DiagnosticsStatus::Fail => theme.error_style(),
@@ -797,7 +824,7 @@ fn diagnostics_status_tone(status: DiagnosticsStatus) -> ComponentTone {
 
 fn diagnostics_warning_style(theme: &TundraTheme) -> Style {
     Style::default()
-        .fg(theme.accent_color)
+        .fg(crate::components::tone_color(ComponentTone::Warning, theme))
         .bg(theme.background)
         .add_modifier(Modifier::BOLD)
 }

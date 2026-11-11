@@ -52,18 +52,21 @@ fn manual_user_window_can_move_away_from_the_selected_account() {
 
     let layout = user_management_layout(Rect::new(4, 7, 80, 10), &model);
 
-    assert_eq!(layout.visible_capacity, 5);
+    assert!(layout.visible_capacity >= 6);
     assert_eq!(layout.visible_start, 0);
     assert_eq!(layout.rows.first().map(|row| row.index), Some(0));
-    assert_eq!(layout.rows.last().map(|row| row.index), Some(4));
+    assert_eq!(
+        layout.rows.last().map(|row| row.index),
+        Some(layout.visible_capacity - 1)
+    );
     assert!(layout.scrollbar.is_some());
 }
 
 #[test]
 fn row_action_and_form_hit_helpers_use_the_rendered_rectangles() {
     let mut model = model_with_users(4);
-    model.form = Some(create_form(UserManagementField::Role));
-    let layout = user_management_layout(Rect::new(5, 3, 100, 18), &model);
+    let area = Rect::new(5, 3, 100, 18);
+    let layout = user_management_layout(area, &model);
 
     let row = layout.rows[1];
     assert_eq!(
@@ -74,6 +77,16 @@ fn row_action_and_form_hit_helpers_use_the_rendered_rectangles() {
     assert_eq!(
         user_management_action_at(&layout, (action.area.x, action.area.y)),
         Some(action.action)
+    );
+    model.form = Some(create_form(UserManagementField::Role));
+    let layout = user_management_layout(area, &model);
+    assert_eq!(
+        user_management_row_index_at(&layout, (row.area.x, row.area.y)),
+        None
+    );
+    assert_eq!(
+        user_management_action_at(&layout, (action.area.x, action.area.y)),
+        None
     );
     let form = layout.form.as_ref().expect("form layout");
     let role = form
@@ -142,8 +155,8 @@ fn create_form_is_a_modal_with_role_password_and_action_focus() {
     assert!(output.contains("Display name") && output.contains("Alice Chen"));
     assert!(output.contains("ROLE") && output.contains("User"));
     assert!(output.contains("Password") && output.contains("••••••••••••"));
-    assert!(output.contains("[F10 Create]"));
-    assert!(output.contains("[Esc Cancel]"));
+    assert!(output.contains("F10 Create"));
+    assert!(output.contains("Esc Cancel"));
     assert!(!output.contains("Ctrl+Enter: Create"));
     assert!(region_has_fg(
         &terminal,

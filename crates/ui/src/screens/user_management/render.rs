@@ -17,6 +17,11 @@ pub fn render_user_management_content(
     model: &UserManagementViewModel,
     context: &RenderContext,
 ) {
+    let mut content_context = context.clone();
+    if model.form.is_some() || model.more_open {
+        content_context.buttons = None;
+    }
+    let context = &content_context;
     let theme = &context.compatibility_theme();
     let layout = user_management_layout(main, model);
     Surface::new()
@@ -38,7 +43,6 @@ pub fn render_user_management_content(
     render_user_management_table(frame, &layout, model, context);
     if !layout.details.is_empty() {
         Surface::new()
-            .bordered(true)
             .titled(i18n::tr!("management-touch-details"))
             .render_frame(frame, layout.details, context);
         let details = model
@@ -69,12 +73,11 @@ pub fn render_user_management_content(
             Paragraph::new(details)
                 .wrap(Wrap { trim: false })
                 .style(theme.body_style()),
-            crate::screens::shell::inset_rect(layout.details, 1),
+            Surface::new().titled("").inner(layout.details),
         );
     }
     if !layout.actions_panel.is_empty() {
         Surface::new()
-            .bordered(true)
             .titled(i18n::tr!("management-touch-actions"))
             .render_frame(frame, layout.actions_panel, context);
     }
@@ -176,10 +179,16 @@ fn render_user_management_feedback(
     let (text, style) = if let Some(message) = &model.message {
         let style = match model.feedback_tone {
             UserManagementFeedbackTone::Info => theme.body_style(),
-            UserManagementFeedbackTone::Success => theme.title_style(),
+            UserManagementFeedbackTone::Success => ratatui::style::Style::default()
+                .fg(crate::components::tone_color(ComponentTone::Success, theme)),
             UserManagementFeedbackTone::Error => theme.error_style(),
         };
-        (message.clone(), style)
+        let text = match model.feedback_tone {
+            UserManagementFeedbackTone::Success => format!("✓ {message}"),
+            UserManagementFeedbackTone::Error => format!("× {message}"),
+            UserManagementFeedbackTone::Info => message.clone(),
+        };
+        (text, style)
     } else if let UserManagementFocus::Action(focused) = model.focus {
         let Some(reason) = model
             .actions

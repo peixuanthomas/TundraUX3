@@ -52,10 +52,10 @@ impl DiagnosticsStatus {
 
     pub const fn marker(self) -> &'static str {
         match self {
-            Self::Pass => "[OK]",
-            Self::Unsupported => "[-]",
-            Self::Warning => "[!]",
-            Self::Fail => "[X]",
+            Self::Pass => "✓",
+            Self::Unsupported => "–",
+            Self::Warning => "!",
+            Self::Fail => "×",
         }
     }
 }
@@ -146,7 +146,13 @@ impl DiagnosticsViewModel {
                 ],
                 self.checks
                     .iter()
-                    .map(|r| vec![r.label.clone(), r.category.clone(), r.status.label()])
+                    .map(|r| {
+                        vec![
+                            r.label.clone(),
+                            r.category.clone(),
+                            format!("{} {}", r.status.marker(), r.status.label()),
+                        ]
+                    })
                     .collect(),
             ),
             DiagnosticsTab::Logs => (

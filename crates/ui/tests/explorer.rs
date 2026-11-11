@@ -18,6 +18,36 @@ use ui::{
 };
 
 #[test]
+fn ordinary_explorer_keeps_common_actions_and_rows_without_an_outer_box() {
+    let model = sample_model();
+    let area = Rect::new(0, 0, 108, 20);
+    let context = RenderContext::default();
+    let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+    terminal
+        .draw(|frame| ui::render_explorer_content(frame, area, &model, &context))
+        .unwrap();
+    let output = terminal_output(&terminal);
+    assert!(
+        !output
+            .chars()
+            .any(|character| "╭╮╰╯┌┐└┘│─".contains(character))
+    );
+    let layout = explorer_layout(area, &model);
+    for row in &layout.rows {
+        assert_eq!(
+            layout.hit_test(row.area.x, row.area.y),
+            Some(ExplorerHitTarget::Entry(row.index))
+        );
+    }
+    assert!(
+        layout
+            .page_actions
+            .iter()
+            .any(|button| button.action == ExplorerToolbarAction::Undo)
+    );
+}
+
+#[test]
 fn save_picker_shows_browsable_rows_filename_and_actions_together() {
     for (width, height) in [(140, 40), (108, 20)] {
         let mut model = sample_model();

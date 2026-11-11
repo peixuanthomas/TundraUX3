@@ -249,7 +249,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
         ExplorerLayoutMode::Compact
     };
     let panel = area;
-    let mut inner = inset_rect(panel, 1);
+    let mut inner = crate::components::Surface::new().titled("").inner(panel);
     let (save_name_label, save_name, save_button, save_cancel) = if model.save_picker.is_some() {
         let height = 3.min(inner.height);
         inner.height = inner.height.saturating_sub(height);
@@ -388,7 +388,7 @@ pub fn explorer_layout(area: Rect, model: &ExplorerViewModel) -> ExplorerLayout 
     }
     let (sidebar, table) = if mode.shows_sidebar() {
         let sidebar_width = EXPLORER_SIDEBAR_WIDTH.min(body.width);
-        let gap = u16::from(body.width > sidebar_width);
+        let gap = 2.min(body.width.saturating_sub(sidebar_width));
         (
             Some(Rect::new(body.x, body.y, sidebar_width, body.height)),
             Rect::new(
