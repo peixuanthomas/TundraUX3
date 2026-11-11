@@ -1736,17 +1736,12 @@ pub fn render_management_content(
             model.workspace.as_ref().is_some_and(|workspace| {
                 workspace.focus == crate::components::WorkspaceFocus::Details
             }) && model.form.is_none();
-        let details_title = i18n::tr!("management-touch-details");
         Surface::new()
             .titled(i18n::tr!("management-touch-items"))
             .render_frame(frame, layout.list, context);
         Surface::new()
             .focused(details_focused)
-            .titled(if details_focused && theme.keyboard_focus_visible() {
-                format!("> {details_title}")
-            } else {
-                details_title
-            })
+            .titled(i18n::tr!("management-touch-details"))
             .render_frame(frame, layout.details, context);
         let table_line = |cells: &[String]| {
             cells

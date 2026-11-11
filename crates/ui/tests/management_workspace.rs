@@ -41,7 +41,7 @@ fn model(advanced_open: bool) -> ManagementViewModel {
 }
 
 #[test]
-fn borderless_details_keep_a_keyboard_focus_marker_separate_from_selection() {
+fn borderless_details_use_the_shared_keyboard_focus_style() {
     let mut model = model(false);
     model.workspace.as_mut().unwrap().focus = WorkspaceFocus::Details;
     let main = Rect::new(0, 0, 120, 30);
@@ -57,7 +57,9 @@ fn borderless_details_keep_a_keyboard_focus_marker_separate_from_selection() {
             .draw(|frame| render_management_content(frame, main, &model, &context))
             .unwrap();
         assert_eq!(
-            terminal.backend().buffer()[(layout.details.x, layout.details.y)].symbol() == ">",
+            terminal.backend().buffer()[(layout.details.x, layout.details.y)]
+                .modifier
+                .contains(ratatui::style::Modifier::UNDERLINED),
             keyboard
         );
     }
