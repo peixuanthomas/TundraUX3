@@ -481,16 +481,17 @@ fn diagnostics_check_detail_lines(
             "ui-diagnostics-category",
             category = check.category.clone()
         )),
-        Line::from(i18n::tr!(
+        Line::from(Span::raw(i18n::tr!(
             "ui-diagnostics-summary",
             summary = check.summary.clone()
-        )),
+        ))),
     ];
     if model.can_view_details {
-        lines.push(Line::from(i18n::tr!(
+        // Preserve newlines until wrapped_detail_lines splits the styled spans.
+        lines.push(Line::from(Span::raw(i18n::tr!(
             "ui-diagnostics-detail",
             detail = check.detail.clone()
-        )));
+        ))));
     } else {
         lines.push(Line::styled(
             i18n::tr!("ui-diagnostics-detail-restricted-to-administrators"),
@@ -498,10 +499,10 @@ fn diagnostics_check_detail_lines(
         ));
     }
     if !check.remediation.is_empty() {
-        lines.push(Line::from(i18n::tr!(
+        lines.push(Line::from(Span::raw(i18n::tr!(
             "ui-diagnostics-recommended",
             remediation = check.remediation.clone()
-        )));
+        ))));
     }
     if check.repairable {
         let (message, style) = if model.restart_required {
@@ -555,21 +556,21 @@ fn diagnostics_incident_detail_lines(
             "ui-diagnostics-application",
             app = incident.app.clone()
         )),
-        Line::from(i18n::tr!(
+        Line::from(Span::raw(i18n::tr!(
             "ui-diagnostics-recovery",
             recovery = incident.recovery.clone()
-        )),
+        ))),
     ];
     if model.can_view_details && !incident.restricted {
         lines.extend([
-            Line::from(i18n::tr!(
+            Line::from(Span::raw(i18n::tr!(
                 "ui-diagnostics-summary",
                 summary = incident.summary.clone()
-            )),
-            Line::from(i18n::tr!(
+            ))),
+            Line::from(Span::raw(i18n::tr!(
                 "ui-diagnostics-detail",
                 detail = incident.detail.clone()
-            )),
+            ))),
             Line::from(i18n::tr!(
                 "ui-diagnostics-report",
                 path = incident.report_path.clone()

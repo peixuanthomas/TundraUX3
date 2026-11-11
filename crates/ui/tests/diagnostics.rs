@@ -108,6 +108,49 @@ fn narrow_repair_dialog_keeps_all_action_keys_visible() {
 }
 
 #[test]
+fn multiline_check_and_incident_fields_preserve_blank_lines_and_line_boundaries() {
+    for tab in [DiagnosticsTab::Health, DiagnosticsTab::Incidents] {
+        let mut model = health_model();
+        model.can_view_details = true;
+        model.tab = tab;
+        model.checks[0].detail = "FIRST_DETAIL\n\nLAST_DETAIL".into();
+        model.checks[0].remediation = "FIRST_REMEDIATION\n\nLAST_REMEDIATION".into();
+        let mut record = incident(false);
+        record.summary = "FIRST_SUMMARY\n\nLAST_SUMMARY".into();
+        record.detail = "FIRST_DETAIL\n\nLAST_DETAIL".into();
+        record.recovery = "FIRST_RECOVERY\n\nLAST_RECOVERY".into();
+        model.incidents = vec![record];
+        let main = full_main(140, 32);
+        let panel = diagnostics_layout(main, &model).detail_panel;
+        let body = ui::components::Surface::new().titled("").inner(panel);
+        let terminal = render(140, 32, &model);
+        let rows = (body.y..body.bottom())
+            .map(|y| {
+                (body.x..body.right())
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let fields = if tab == DiagnosticsTab::Health {
+            vec!["DETAIL", "REMEDIATION"]
+        } else {
+            vec!["RECOVERY", "SUMMARY", "DETAIL"]
+        };
+        for field in fields {
+            let start = rows
+                .iter()
+                .position(|row| row.contains(&format!("FIRST_{field}")))
+                .unwrap();
+            assert_eq!(rows[start + 1].trim(), "", "{tab:?} {field}");
+            assert!(
+                rows[start + 2].contains(&format!("LAST_{field}")),
+                "{tab:?} {field}"
+            );
+        }
+    }
+}
+
+#[test]
 fn long_diagnostic_details_can_show_the_last_line_with_a_scrollbar() {
     let mut model = health_model();
     model.can_view_details = true;
@@ -119,7 +162,7 @@ fn long_diagnostic_details_can_show_the_last_line_with_a_scrollbar() {
     let layout = diagnostics_layout(full_main(108, 25), &model);
     let (track, total, viewport) =
         ui::diagnostics_detail_scroll_metrics(layout.detail_panel, &model);
-    assert!(total > viewport);
+    assert!(total > 100);
     assert!(track.height > 0);
     model.detail_scroll = total.saturating_sub(viewport);
     let terminal = render(108, 25, &model);
