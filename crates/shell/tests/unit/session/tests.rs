@@ -5248,35 +5248,43 @@ fn compact_clock_keeps_visible_controls_and_keyboard_access() {
 
 #[test]
 fn focus_navigation_cycles_the_dynamic_home_order_in_both_directions() {
-    let mut state = ShellSession::new_for_home_mode(
-        ShellLaunchConfig::default(),
-        (120, 40),
-        ShellHomeMode::User,
-    );
-    state.set_navigation_path(vec![ShellScreen::Home]);
-    state.pages.common.focused_component = ShellComponent::Home;
-    state.refresh_hit_map();
+    for size in [(108, 20), (120, 40)] {
+        let mut state = ShellSession::new_for_home_mode(
+            ShellLaunchConfig::default(),
+            size,
+            ShellHomeMode::User,
+        );
+        state.set_navigation_path(vec![ShellScreen::Home]);
+        state.pages.common.focused_component = ShellComponent::Home;
+        state.refresh_hit_map();
 
-    assert_eq!(
-        state.focus_order(),
-        vec![
+        let expected = [
             ShellComponent::Home,
+            ShellComponent::HomeEdit,
             ShellComponent::ClockButton,
             ShellComponent::HelpButton,
             ShellComponent::StatusBar,
             ShellComponent::TopBar,
-        ]
-    );
+        ];
+        assert_eq!(state.focus_order(), expected);
+        let main = state.frame_layout.unwrap().main;
+        let edit = ui::home_edit_area(main, &state.to_home_view_model()).unwrap();
+        assert!(!edit.is_empty());
+        assert!(
+            state.hit_map.regions().iter().any(|region| {
+                region.component == ShellComponent::HomeEdit && region.area == edit
+            })
+        );
 
-    state.move_focus(ui::FocusDirection::Previous);
-    assert_eq!(state.pages.common.focused_component, ShellComponent::TopBar);
-    state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(state.pages.common.focused_component, ShellComponent::Home);
-    state.move_focus(ui::FocusDirection::Next);
-    assert_eq!(
-        state.pages.common.focused_component,
-        ShellComponent::ClockButton
-    );
+        for component in expected.into_iter().skip(1).chain([ShellComponent::Home]) {
+            state.move_focus(ui::FocusDirection::Next);
+            assert_eq!(state.pages.common.focused_component, component);
+        }
+        for component in expected.into_iter().rev() {
+            state.move_focus(ui::FocusDirection::Previous);
+            assert_eq!(state.pages.common.focused_component, component);
+        }
+    }
 }
 
 #[test]
