@@ -270,6 +270,15 @@ impl ShellSession {
     pub(in crate::session) fn cancel_management_pointer_gesture(&mut self) {
         self.pages.management.management_state.scrollbar_grab = None;
     }
+    pub(in crate::session) fn management_pointer_drag_area(&self) -> Option<Rect> {
+        let (target, _) = self.pages.management.management_state.scrollbar_grab?;
+        let layout =
+            ui::management_layout(self.management_main(), &self.to_management_view_model());
+        self.visible_management_bars(&layout)
+            .into_iter()
+            .find(|bar| bar.target == target)
+            .map(|bar| bar.track)
+    }
     pub(in crate::session) fn management_pointer_drag_active(&self) -> bool {
         (self.active_screen() == ShellScreen::Management || self.config_editor_form_visible())
             && self

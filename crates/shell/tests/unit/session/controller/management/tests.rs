@@ -4071,3 +4071,191 @@ fn scheduled_task_name_and_account_source_keep_their_context_in_chinese() {
         assert!(!model.details.contains("软件源"));
     });
 }
+
+#[test]
+fn stable_toolbar_presses_survive_detail_and_keyboard_motion_frames() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let platform = platform::mock::UnsupportedPlatform;
+    let host = CommandLineHost::new(default_editor_watchdog().unwrap());
+    let render = |session: &mut ShellSession,
+                  compositor: &mut ScreenCompositor,
+                  terminal: &mut Terminal<TestBackend>,
+                  millis| {
+        let context = ui::RenderContext::from_theme(
+            &ui::TundraTheme::default(),
+            ui::MotionFrame {
+                now: Duration::from_millis(millis),
+                delta: Duration::from_millis(16),
+                ..Default::default()
+            },
+            Default::default(),
+        );
+        let prepared = compositor.prepare(
+            session,
+            &host,
+            Instant::now(),
+            Default::default(),
+            context,
+            None,
+        );
+        terminal
+            .draw(|frame| {
+                compositor.render(frame, session, &prepared, None);
+            })
+            .unwrap();
+    };
+    for keyboard in [false, true] {
+        for help in [false, true] {
+            let mut session = shortcut_action_state(ManagementKind::Services, "inspect");
+            while session.notification_dismiss_active_modal_without_response() {}
+            session
+                .pages
+                .management
+                .management_state
+                .snapshot
+                .details_complete = true;
+            let mut compositor = ScreenCompositor::default();
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            render(&mut session, &mut compositor, &mut terminal, 0);
+            if keyboard {
+                session.toggle_input_keyboard();
+                assert!(session.input_keyboard_open());
+            } else {
+                session.apply_input(InputEvent::key(InputKey::F(4)));
+                assert!(session.to_management_view_model().details_only);
+            }
+            render(&mut session, &mut compositor, &mut terminal, 0);
+            render(&mut session, &mut compositor, &mut terminal, 60);
+            let amount = if keyboard {
+                session.screen_keyboard.visibility
+            } else {
+                session.details_motion.unwrap().1.value()
+            };
+            assert!((1..1_000).contains(&amount));
+            let layout = session.frame_layout.unwrap();
+            let area = if help {
+                layout.help_button.unwrap()
+            } else {
+                layout.back_button.unwrap()
+            };
+            let point = (area.x + area.width / 2, area.y);
+            let now = Instant::now();
+            if let Some(input) = compositor.prepare_input(
+                &mut session,
+                InputEvent::mouse_down(PointerButton::Left, point),
+                &platform,
+                now,
+            ) {
+                compositor.dispatch_input(&mut session, input, &platform, now);
+            }
+            let capture = session
+                .interaction
+                .button_capture
+                .clone()
+                .expect("stable toolbar press captured");
+            render(&mut session, &mut compositor, &mut terminal, 76);
+            assert_eq!(
+                session.interaction.button_capture.as_ref(),
+                Some(&capture),
+                "keyboard={keyboard}, help={help}"
+            );
+            assert_eq!(session.button_at(point).unwrap().area, area);
+            if let Some(input) = compositor.prepare_input(
+                &mut session,
+                InputEvent::mouse_up(PointerButton::Left, point),
+                &platform,
+                now + Duration::from_millis(16),
+            ) {
+                compositor.dispatch_input(
+                    &mut session,
+                    input,
+                    &platform,
+                    now + Duration::from_millis(16),
+                );
+            }
+            if help {
+                assert!(session.help_open);
+                session.sync_input_keyboard();
+                assert!(!session.input_keyboard_open());
+                let before = session
+                    .pages
+                    .management
+                    .management_state
+                    .filter_input
+                    .clone();
+                session.apply_input(InputEvent::Paste("covered".into()));
+                assert_eq!(
+                    session.pages.management.management_state.filter_input,
+                    before
+                );
+            } else if keyboard {
+                assert!(!session.to_management_view_model().filtering);
+            } else {
+                assert!(!session.to_management_view_model().details_only);
+            }
+        }
+    }
+}
+
+#[test]
+fn physical_shortcut_reverses_detail_motion_before_its_deadline() {
+    let mut session = shortcut_action_state(ManagementKind::Services, "inspect");
+    while session.notification_dismiss_active_modal_without_response() {}
+    session
+        .pages
+        .management
+        .management_state
+        .snapshot
+        .details_complete = true;
+    let mut frame = ui::MotionFrame::default();
+    session.advance_management_details(frame);
+    session.apply_input(InputEvent::key(InputKey::F(4)));
+    session.advance_management_details(frame);
+    frame.now = Duration::from_millis(60);
+    assert!(session.advance_management_details(frame));
+    let current = session.details_motion.unwrap().1.value();
+    session.apply_input(InputEvent::key(InputKey::F(4)));
+    assert!(!session.to_management_view_model().details_only);
+    assert!(session.advance_management_details(frame));
+    assert_eq!(session.details_motion.unwrap().1.value(), current);
+    frame.now = Duration::from_millis(76);
+    assert!(session.advance_management_details(frame));
+    assert!(session.details_motion.unwrap().1.value() < current);
+}
+
+#[test]
+fn detail_motion_only_cancels_scrollbar_drags_whose_track_moves() {
+    for target in [
+        ui::ManagementScrollTarget::Rows,
+        ui::ManagementScrollTarget::Details,
+    ] {
+        let mut session = shortcut_action_state(ManagementKind::Services, "inspect");
+        while session.notification_dismiss_active_modal_without_response() {}
+        let row = session.pages.management.management_state.snapshot.rows[0].clone();
+        session.pages.management.management_state.snapshot.rows = vec![row; 200];
+        session
+            .pages
+            .management
+            .management_state
+            .snapshot
+            .details_complete = true;
+        session.pages.management.management_state.snapshot.details =
+            vec![("Detail".into(), "line\n".repeat(200))];
+        let mut frame = ui::MotionFrame::default();
+        session.advance_management_details(frame);
+        session.apply_input(InputEvent::key(InputKey::F(4)));
+        session.advance_management_details(frame);
+        session.pages.management.management_state.scrollbar_grab = Some((target, 0));
+        let before = session
+            .management_pointer_drag_area()
+            .expect("visible scrollbar");
+        frame.now = Duration::from_millis(60);
+        assert!(session.advance_management_details(frame));
+        if target == ui::ManagementScrollTarget::Details {
+            assert_eq!(session.management_pointer_drag_area(), Some(before));
+            assert!(session.management_pointer_drag_active());
+        } else {
+            assert!(!session.management_pointer_drag_active());
+        }
+    }
+}
