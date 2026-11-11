@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import platform
 import pty
+import re
 import signal
 import struct
 import subprocess
@@ -40,6 +41,7 @@ def run_case(binary, language, color, motion, sizes, samples):
             env["COLORTERM"] = "truecolor"
         else:
             env.pop("COLORTERM", None)
+            env.pop("WT_SESSION", None)
         for name in ("CONFIG", "DATA", "CACHE", "STATE", "RUNTIME"):
             folder = Path(temporary) / name.lower()
             folder.mkdir(mode=0o700)
@@ -106,22 +108,30 @@ def run_case(binary, language, color, motion, sizes, samples):
                 smoke.read_available(master, output, 0.1)
                 current = snapshot()
             current = until(lambda frame: frame["page"] == "Home" and not has_modal(frame))
+            home_ids = {item["id"] for item in current["nodes"] if "home.entry." in item["id"]}
             settings_label, launcher_label = (("设置", "启动器") if language == "zh-CN"
                                                else ("Settings", "Launcher"))
             for columns, rows in sizes:
+                until(lambda frame: not frame["animation_running"])
+                frame_offset = len(output)
                 current = resize(columns, rows)
+                smoke.read_available(master, output, 0.02)
+                rgb = re.search(rb"\x1b\[[0-9;]*(?:38|48);2;", bytes(output[frame_offset:]))
+                assert bool(rgb) == (color == "truecolor"), f"unexpected {color} color output"
                 ids = [item["id"] for item in current["nodes"]]
                 assert len(ids) == len(set(ids)), "duplicate automation IDs"
+                visible_home = [item for item in current["nodes"] if "home.entry." in item["id"]]
+                assert {item["id"] for item in visible_home} == home_ids, "resize lost a Home entry"
+                for item in visible_home:
+                    rect = item["rect"]
+                    assert item["actionable"] and rect["y"] >= 1
+                    assert rect["y"] + rect["height"] <= rows - 1, "Home entry overlaps status"
                 for identifier in ("chrome/shell.back", "chrome/shell.help", "chrome/shell.tasks"):
                     rect = node(current, identifier)["rect"]
                     assert rect["height"] == 1 and rect["y"] == 0, (identifier, rect)
                 for identifier in ("chrome/shell.status", "chrome/shell.status.time"):
                     rect = node(current, identifier)["rect"]
                     assert rect["height"] == 1 and rect["y"] == rows - 1, (identifier, rect)
-                keyboard = next(item for item in current["nodes"] if item["id"].endswith("/input.keyboard"))
-                assert keyboard["rect"]["y"] == rows - 1
-                assert keyboard["rect"]["x"] < node(current, "chrome/shell.status.time")["rect"]["x"]
-
                 tap(current, home_entry(current, settings_label))
                 send(b"\x1bOP")
                 current = until(lambda frame: frame["page"] == "Settings" and has_modal(frame))
@@ -138,6 +148,22 @@ def run_case(binary, language, color, motion, sizes, samples):
                 tap(current, home_entry(current, launcher_label))
                 current = until(lambda frame: frame["page"] == "Launcher")
                 tap(current, "page/launcher.search")
+                current = until(lambda frame: node(frame, "page/launcher.search")["focused"])
+                keyboard = next(item for item in current["nodes"] if item["id"].endswith("/input.keyboard"))
+                assert keyboard["rect"]["y"] == rows - 1
+                assert keyboard["rect"]["x"] < node(current, "chrome/shell.status.time")["rect"]["x"]
+                tap(current, keyboard["id"])
+                current = until(lambda frame: not frame["animation_running"] and
+                                any(item["id"] == "keyboard/screen-keyboard.letter.a"
+                                    for item in frame["nodes"]))
+                assert node(current, "chrome/shell.back")["rect"]["y"] == 0
+                assert not any(item["id"].startswith("chrome/shell.status") for item in current["nodes"])
+                assert node(current, "page/launcher.search")["actionable"]
+                toggle = next(item for item in current["nodes"] if item["id"].endswith("/screen-keyboard.toggle"))
+                tap(current, toggle["id"])
+                current = until(lambda frame: not frame["animation_running"] and
+                                any(item["id"].endswith("/input.keyboard") for item in frame["nodes"]))
+                assert node(current, "chrome/shell.status")["rect"]["y"] == rows - 1
                 wide = "中文e\u0301😀"
                 send(b"\x1b[200~" + wide.encode() + b"\x1b[201~")
                 current = until(lambda frame: wide in node(frame, "page/launcher.search")["text"])
