@@ -9,15 +9,21 @@ impl TestEditorTaskDriver {
     }
 
     fn complete_next_load(&self, state: &mut ShellSession) {
-        for _ in 0..400 {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
             state.poll_editor_background_tasks(&platform::mock::UnsupportedPlatform);
-            if state.pages.editor.editor_load_state.is_none() {
+            let Some(load) = state.pages.editor.editor_load_state.as_ref() else {
                 return;
-            }
-            std::thread::yield_now();
+            };
+            assert!(
+                Instant::now() < deadline,
+                "Editor load task did not finish: stage={:?}, completed_bytes={}, total_bytes={:?}",
+                load.stage,
+                load.completed_bytes,
+                load.total_bytes
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
-        panic!("Editor load task did not finish in time");
     }
 }
 
