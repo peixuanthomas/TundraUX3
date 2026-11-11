@@ -700,7 +700,8 @@ def check_animation_settings(master, output, child, cli, env):
     wait_frame("Invalid animation duration was not rejected",
                lambda frame: (item := node(frame, fields[0])) is not None
                and item["focused"] and value(item) == "99999"
-               and any("2000" in line for line in frame["lines"]))
+               and any(all(part in line for part in ("Range:", "1", "2000"))
+                       for line in frame["lines"]))
     changed = (41, 82, 43, 46, 92, 47, 31, 62, 33)
     for index, suffix in enumerate(fields):
         wait_frame(f"Tab did not focus phase {index}",
