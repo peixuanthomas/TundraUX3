@@ -1958,13 +1958,13 @@ fn closing_modal_keeps_next_text_input_and_ignores_the_old_mouse_release() {
         InputEvent::Paste("7".into()),
     ] {
         let mut state = session();
-        state.set_navigation_path(vec![ShellScreen::Clock]);
-        state.pages.clock.clock_create_state = Some(ClockCreateState::default());
+        state.set_navigation_path(vec![ShellScreen::Launcher]);
+        state.pages.launcher.search.set_focused(true);
         state.refresh_hit_map();
         let mut compositor = ScreenCompositor::default();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         let mut frame = home_frame(&state, 0, false);
-        frame.page = ScreenViewModel::Clock(Box::new(state.to_clock_view_model()));
+        frame.page = ScreenViewModel::Launcher(Box::new(state.to_launcher_view_model()));
         draw(&mut compositor, &mut terminal, &mut state, &frame);
         state.notify_modal("Review", "Body", ui::NotificationTone::Info, Vec::new());
         state.refresh_hit_map();
@@ -1995,22 +1995,13 @@ fn closing_modal_keeps_next_text_input_and_ignores_the_old_mouse_release() {
                 )
                 .is_none()
         );
-        assert!(state.pages.clock.clock_create_state.is_some());
+        assert_eq!(state.pages.launcher.search.value(), "");
         let prepared = compositor
             .prepare_input(&mut state, input, &platform, now)
             .expect("new text remains routable");
         compositor.dispatch_input(&mut state, prepared, &platform, now);
         assert!(!state.notification_has_active_modal());
-        assert_ne!(
-            state
-                .pages
-                .clock
-                .clock_create_state
-                .as_ref()
-                .unwrap()
-                .values,
-            [0; 3]
-        );
+        assert_eq!(state.pages.launcher.search.value(), "7");
         assert!(compositor.take_deferred_close(&state).is_none());
     }
 }
