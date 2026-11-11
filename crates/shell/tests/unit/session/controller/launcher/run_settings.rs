@@ -1069,5 +1069,63 @@ fn confirmation_entry_does_not_scroll_or_open_covered_launcher_items() {
     );
 }
 
+#[test]
+fn confirmation_press_waits_for_release_and_launches_once() {
+    let mut fixture = Fixture::new();
+    let path = fixture.root.join("program.exe");
+    std::fs::write(&path, "mock launcher target").unwrap();
+    fixture.draw();
+    fixture.state.pages.launcher.launcher_pending_confirmation =
+        Some(LauncherPendingConfirmation::Launch {
+            id: "tui".into(),
+            path: path.clone(),
+            kind: LauncherExecutableKind::NativeBinary,
+        });
+    fixture
+        .state
+        .refresh_hit_map_with_motion(ui::MotionTransitions {
+            overlay: Some(ui::MotionTransition {
+                kind: ui::MotionTransitionKind::Dialog,
+                direction: ui::MotionDirection::Entering,
+                progress: 0,
+                phase_progress: 0,
+                active: true,
+                next_redraw_in: Duration::from_millis(16),
+            }),
+            ..Default::default()
+        });
+    let confirm = ui::launcher_layout(fixture.main_area(), &fixture.state.to_launcher_view_model())
+        .confirmation
+        .unwrap()
+        .confirm;
+    let point = (confirm.x, confirm.y);
+    let data_before = fixture.state.app.launcher_state().cloned();
+    let mut expected_calls = fixture.platform.calls();
+    fixture.input(InputEvent::mouse_down(PointerButton::Left, point));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_some()
+    );
+    assert_eq!(fixture.state.app.launcher_state(), data_before.as_ref());
+    assert_eq!(fixture.platform.calls(), expected_calls);
+    fixture.input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert!(
+        fixture
+            .state
+            .pages
+            .launcher
+            .launcher_pending_confirmation
+            .is_none()
+    );
+    expected_calls.push(platform::mock::MockCall::OpenPath(path));
+    assert_eq!(fixture.platform.calls(), expected_calls);
+    fixture.input(InputEvent::mouse_up(PointerButton::Left, point));
+    assert_eq!(fixture.platform.calls(), expected_calls);
+}
+
 #[path = "search_context.rs"]
 mod search_context;
