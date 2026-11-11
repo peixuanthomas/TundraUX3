@@ -269,7 +269,6 @@ fn multiple_selected_rows_and_the_current_keyboard_row_are_distinct() {
 #[test]
 fn package_actions_remain_visible_in_real_shell_content_areas() {
     let theme = TundraTheme::default_dark();
-    let context = RenderContext::from_theme(&theme, Default::default(), Default::default());
     for labels in [
         [
             "Refresh repositories",
@@ -310,11 +309,15 @@ fn package_actions_remain_visible_in_real_shell_content_areas() {
             ..Default::default()
         };
         for (width, height, compact) in [
-            (50, 11, true),
+            (50, 10, true),
+            (50, 11, false),
             (50, 12, false),
             (108, 20, false),
             (140, 40, false),
         ] {
+            let mut context =
+                RenderContext::from_theme(&theme, Default::default(), Default::default());
+            context.buttons = Some(ui::components::ButtonFrame::new(None, None, &theme));
             let bounds = Rect::new(0, 0, width, height);
             let main = ShellFrameLayout::new(bounds, None, &context).main;
             let layout = management_layout(main, &model);
@@ -336,13 +339,26 @@ fn package_actions_remain_visible_in_real_shell_content_areas() {
                         .iter()
                         .any(|region| region.area == *area && region.disabled == (index == 5))
                 );
-                let painted = (area.x..area.right())
-                    .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
+                let painted = area
+                    .positions()
+                    .map(|point| terminal.backend().buffer()[point].symbol())
                     .collect::<String>();
-                assert!(
-                    painted.contains(shortcuts[index]),
-                    "{width}x{height} action {index}: {painted}"
+                assert_eq!(
+                    painted.split_whitespace().collect::<String>(),
+                    model.actions[index]
+                        .0
+                        .split_whitespace()
+                        .collect::<String>(),
+                    "{width}x{height} action {index}"
                 );
+                let buttons = context.buttons.as_ref().unwrap().regions();
+                let id = management_action_id(&model, index);
+                let button = buttons
+                    .iter()
+                    .find(|button| button.id.as_str() == id)
+                    .unwrap();
+                assert_eq!(button.area, *area);
+                assert_eq!(button.disabled, index == 5);
                 for other in layout.actions.iter().skip(index + 1) {
                     assert!(area.intersection(*other).is_empty());
                 }

@@ -544,7 +544,7 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     assert_eq!(layout.message, Rect::new(12, 10, 62, 4));
     assert_eq!(layout.actions.len(), 2);
     assert_eq!(layout.actions[0].area, Rect::new(12, 15, 62, 2));
-    assert_eq!(layout.actions[1].area, Rect::new(22, 17, 42, 1));
+    assert_eq!(layout.actions[1].area, Rect::new(23, 17, 40, 1));
     let NotificationLayout::Dialog(scrolled) = notification_layout(Rect::new(0, 0, 64, 9), &model)
     else {
         panic!("long messages should scroll while their actions remain visible");
@@ -559,11 +559,29 @@ fn notification_layout_and_renderer_share_wrapped_message_and_stacked_action_rec
     );
 
     let mut terminal = Terminal::new(TestBackend::new(86, 28)).expect("test terminal");
+    let mut theme = TundraTheme::default_dark();
+    theme.buttons = Some(ui::components::ButtonFrame::new(None, None, &theme));
     terminal
-        .draw(|frame| {
-            render_notification_overlay(frame, area, &model, &TundraTheme::default_dark())
-        })
+        .draw(|frame| render_notification_overlay(frame, area, &model, &theme))
         .expect("render long notification");
+    let buttons = theme.buttons.as_ref().unwrap().regions();
+    for action in &layout.actions {
+        let label = &model.actions[action.index];
+        let text = action
+            .area
+            .positions()
+            .map(|point| terminal.backend().buffer()[point].symbol())
+            .collect::<String>()
+            .replace(' ', "");
+        assert_eq!(text, label.label);
+        let id = format!("notification.long.action.{}", label.id);
+        let button = buttons
+            .iter()
+            .find(|button| button.id.as_str() == id)
+            .unwrap();
+        assert_eq!(button.area, action.area);
+        assert!(!button.disabled);
+    }
     assert!(region_has_bg(
         &terminal,
         layout.actions[0].area,
