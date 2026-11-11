@@ -29,9 +29,6 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 MOUSE_CAPTURE_SEQUENCE = b"\x1b[?1003h"
-# The startup animation never renders the final boxed Status panel. Matching
-# its UTF-8 border/title survives Ratatui's debug/release diff differences.
-SHELL_READY_SEQUENCE = "╭Status".encode()
 # Type one ordinary character into the existing Appearance color input. Ratatui
 # may emit only changed cells, so a multi-character value is not a reliable byte
 # marker. Keep this deadline independent of saving preferences and loading Home.
@@ -185,14 +182,50 @@ def signal_process_group(child: subprocess.Popen, signal_number: int) -> None:
         pass
 
 
-def check_status_details(master: int, output: bytearray, child: subprocess.Popen) -> None:
-    # A 40-row Shell keeps its status message at row 39 (SGR is one-based).
+def control_snapshot(master, output, child, cli, env, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        request = subprocess.Popen(
+            [str(cli), "ui", "snapshot", "--timeout", "500"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            while True:
+                try:
+                    stdout, stderr = request.communicate(timeout=0.02)
+                    break
+                except subprocess.TimeoutExpired:
+                    read_available(master, output, 0)
+                if child.poll() is not None or time.monotonic() >= deadline:
+                    raise SystemExit("Shell snapshot timed out:\n" + output_diagnostic(output))
+            last = json.loads(stdout) if stdout else {"stderr": stderr.decode(errors="replace")}
+            if request.returncode == 0 and last.get("ok") and last.get("snapshot", {}).get("nodes"):
+                return last["snapshot"]
+            read_available(master, output, 0.05)
+        finally:
+            if request.poll() is None:
+                request.kill()
+                request.communicate()
+    raise SystemExit(f"Shell did not publish a usable snapshot: {last}")
+
+
+def control_position(snapshot, identifier):
+    node = next((node for node in snapshot["nodes"] if node["id"] == identifier), None)
+    if node is None or not node["actionable"]:
+        raise SystemExit(f"Control {identifier!r} is unavailable on {snapshot['page']}")
+    rect = node["rect"]
+    return rect["x"] + rect["width"] // 2 + 1, rect["y"] + rect["height"] // 2 + 1
+
+
+def check_status_details(master, output, child, cli, env):
+    x, y = control_position(control_snapshot(master, output, child, cli, env), "chrome/shell.status")
     offset = len(output)
-    os.write(master, b"\x1b[<0;12;39M")
+    os.write(master, f"\x1b[<0;{x};{y}M".encode())
     read_available(master, output, 0.1)
     if b"Status details" in output[offset:]:
         raise SystemExit("status details opened before mouse release")
-    os.write(master, b"\x1b[<0;12;39m")
+    os.write(master, f"\x1b[<0;{x};{y}m".encode())
     if not wait_for_output(master, output, b"Status details", child, 5.0, offset):
         raise SystemExit("status message did not open its details:\n" + output_diagnostic(output[offset:]))
     # Let modal entry finish before testing its keyboard dismissal.
@@ -421,30 +454,35 @@ def check_package_and_log_views(master: int, slave: int, output: bytearray, chil
     print("PASS: all six package views, detail return, visible log filters, and log menu keyboard/outside-click dismissal")
 
 
-def check_keyboard_paste(master: int, output: bytearray, child: subprocess.Popen, start: int) -> None:
+def check_keyboard_paste(master, output, child, start, cli, env):
     """The isolated child has no desktop clipboard; failed reads must be harmless."""
-    def click(label: str) -> None:
-        x, y = painted_label_position(bytes(output[start:]), label, 140, 40)
+    def click(*suffixes) -> None:
+        current = control_snapshot(master, output, child, cli, env)
+        identifier = next(node["id"] for node in current["nodes"]
+                          if any(node["id"].endswith("/" + suffix) for suffix in suffixes))
+        x, y = control_position(current, identifier)
         os.write(master, f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode())
         deadline = time.monotonic() + 0.7
         while time.monotonic() < deadline:
             read_available(master, output, 0.05)
 
-    click("Show keyboard")
+    click("input.keyboard", "screen-keyboard.toggle")
     # Send the next clicks in one burst, including held movement inside each
     # keycap. The real CLI must receive every letter, including the repeated s.
-    positions = {
-        letter: painted_label_position(bytes(output[start:]), f" {letter} ", 140, 40, first_row=20)
-        for letter in "asd"
-    }
+    current = control_snapshot(master, output, child, cli, env)
+    positions = {}
+    for letter in "asd":
+        identifier = f"keyboard/screen-keyboard.letter.{letter}"
+        x, y = control_position(current, identifier)
+        rect = next(node["rect"] for node in current["nodes"] if node["id"] == identifier)
+        positions[letter] = x, y, min(x + 1, rect["x"] + rect["width"])
     os.write(master, b"printf 'RAPID_%s\\n' ")
     reports = bytearray()
     for letter in "assd":
-        x, y = positions[letter]
-        x += 1  # Move from the surrounding space to the key's legend.
+        x, y, moved_x = positions[letter]
         reports.extend(
             f"\x1b[<0;{x};{y}M\x1b[<32;{x};{y}M"
-            f"\x1b[<32;{x + 1};{y}M\x1b[<0;{x + 1};{y}m".encode()
+            f"\x1b[<32;{moved_x};{y}M\x1b[<0;{moved_x};{y}m".encode()
         )
     offset = len(output)
     os.write(master, reports + b"\r")
@@ -453,8 +491,8 @@ def check_keyboard_paste(master: int, output: bytearray, child: subprocess.Popen
     if not wait_for_output(master, output, b"[system exit code: 0]", child, 5.0, offset, ignore_spaces=True):
         raise SystemExit("rapid keyboard command did not complete")
     for _ in range(3):
-        click("Paste")
-    click("Hide keyboard")
+        click("screen-keyboard.paste")
+    click("input.keyboard", "screen-keyboard.toggle")
     if not wait_for_output(master, output, b"Clipboard unavailable", child, 5.0, start, ignore_spaces=True):
         raise SystemExit("failed paste did not show a clipboard message:\n" + output_diagnostic(output[start:]))
     offset = len(output)
@@ -586,8 +624,8 @@ def check_animation_settings(master, output, child):
     os.write(master, b"\x1b[B" * 5 + b"\r\x1b[C\r\x1b[B\r")
     if not wait_for_painted_text(master, output, "Acceleration", child):
         raise SystemExit("Animation advanced options did not open as a dialog")
-    os.write(master, b"\r56\r")
-    if not wait_for_painted_text(master, output, "56 ms", child):
+    os.write(master, b"\r41\r")
+    if not wait_for_painted_text(master, output, "41 ms", child):
         raise SystemExit("Page acceleration did not increase by one millisecond")
     os.write(master, b"\x1b[F\x1b[A\r\x1b")
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
@@ -595,7 +633,7 @@ def check_animation_settings(master, output, child):
     if not wait_for_painted_text(master, output, "100%", child):
         raise SystemExit("Restore animation defaults did not restore the percentage")
     os.write(master, b"\x1b[B\r")
-    if not wait_for_painted_text(master, output, "55 ms", child):
+    if not wait_for_painted_text(master, output, "40 ms", child):
         raise SystemExit("Restore animation defaults did not restore phase times")
     os.write(master, b"\x1b")
     wait_for_output_quiet(master, output, child, quiet_period=0.2)
@@ -770,6 +808,9 @@ def main() -> int:
     binary = Path(sys.argv[1] if len(sys.argv) == 2 else "target/debug/tundra-shell")
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise SystemExit(f"shell binary is not executable: {binary}")
+    cli = binary.resolve().with_name("tundra-cli")
+    if not cli.is_file() or not os.access(cli, os.X_OK):
+        raise SystemExit(f"companion CLI is not executable: {cli}")
 
     isolated = Path(tempfile.mkdtemp(prefix="tundraux3-pty-"))
     env = os.environ.copy()
@@ -781,6 +822,12 @@ def main() -> int:
         directory = isolated / name.lower()
         directory.mkdir(mode=0o700)
         env[name] = str(directory)
+    configured = subprocess.run(
+        [str(cli), "config", "set", "automation.enabled", "true"],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    if configured.returncode != 0:
+        raise SystemExit("could not enable isolated UI control: " + configured.stderr)
 
     master, slave = pty.openpty()
     # The real shell enforces its minimum terminal size before entering the
@@ -823,21 +870,7 @@ def main() -> int:
                 f"{output_diagnostic(output)}"
             )
 
-        # Mouse capture begins before the first-run animation. Wait for an
-        # explicit status line from the real Shell instead of assuming a fixed
-        # animation duration, which varies substantially on WSL/NTFS.
-        if not wait_for_output(
-            master,
-            output,
-            SHELL_READY_SEQUENCE,
-            child,
-            SHELL_READY_TIMEOUT,
-        ):
-            raise SystemExit(
-                "tundra-shell did not reach its ready event loop within "
-                f"{SHELL_READY_TIMEOUT:.1f}s; output:\n"
-                f"{output_diagnostic(output)}"
-        )
+        control_snapshot(master, output, child, cli, env, timeout=SHELL_READY_TIMEOUT)
         if not wait_for_output_quiet(master, output, child):
             raise SystemExit(
                 "tundra-shell output did not become idle after the ready frame; "
@@ -936,7 +969,7 @@ def main() -> int:
         check_animation_settings(master, output, child)
         check_editor_resize(master, slave, output, child, isolated)
         check_system_settings_environment(master, output, child)
-        check_status_details(master, output, child)
+        check_status_details(master, output, child, cli, env)
 
         # Exercise the companion CLI launched by the real Shell, not just a
         # standalone REPL. Rebuilding Shell alone can leave an older CLI beside it.
@@ -959,8 +992,8 @@ def main() -> int:
         if "○".encode() not in output[prompt_offset:]:
             raise SystemExit("embedded CLI did not render a pending command marker")
         if CHECK_CRASH_SCREEN:
-            check_keyboard_paste(master, output, child, prompt_offset)
-        check_status_details(master, output, child)
+            check_keyboard_paste(master, output, child, prompt_offset, cli, env)
+        check_status_details(master, output, child, cli, env)
         command_directory = isolated / "command path 中文 $; ' [x]"
         command_directory.mkdir()
         os.write(master, ("cd " + shlex.quote(str(command_directory)) + "\r").encode())
@@ -1107,13 +1140,13 @@ def main() -> int:
         if not wait_for_output_quiet(master, output, child, quiet_period=0.2):
             raise SystemExit("Home did not settle after input validation")
 
-        # The 140-column frame places the shared Back button at x=133..139.
-        # SGR coordinates are one-based. Hover/hold must only repaint the button;
-        # the power dialog opens after release and a drag-out must cancel it.
+        back_x, back_y = control_position(
+            control_snapshot(master, output, child, cli, env), "chrome/shell.back"
+        )
         pointer_offset = len(output)
-        os.write(master, b"\x1b[<35;137;2M")
+        os.write(master, f"\x1b[<35;{back_x};{back_y}M".encode())
         read_available(master, output, 0.2)
-        os.write(master, b"\x1b[<0;137;2M")
+        os.write(master, f"\x1b[<0;{back_x};{back_y}M".encode())
         read_available(master, output, 0.2)
         if not wait_for_painted_text(master, output, "Exit TundraUX", child, present=False, timeout=0):
             raise SystemExit("Back activated on mouse-down instead of release")
@@ -1122,11 +1155,11 @@ def main() -> int:
             raise SystemExit("drag cancellation did not settle")
         if not wait_for_painted_text(master, output, "Exit TundraUX", child, present=False, timeout=0):
             raise SystemExit("dragging out of Back activated it")
-        os.write(master, b"\x1b[<0;137;2M")
+        os.write(master, f"\x1b[<0;{back_x};{back_y}M".encode())
         read_available(master, output, 0.2)
         if not wait_for_painted_text(master, output, "Exit TundraUX", child, present=False, timeout=0):
             raise SystemExit("second press activated Back before release")
-        os.write(master, b"\x1b[<0;137;2m")
+        os.write(master, f"\x1b[<0;{back_x};{back_y}m".encode())
         if not wait_for_painted_text(master, output, "Exit TundraUX", child):
             raise SystemExit("releasing Back did not open the power dialog")
 
