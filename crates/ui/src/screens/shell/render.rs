@@ -181,7 +181,18 @@ pub fn render_shell_chrome_with_status_focus(
             .map_or(top.width, |button| button.x.saturating_sub(top.x)),
         top.height,
     );
-    render_top(frame, title_area, chrome, context);
+    if layout.is_compact() && (chrome.status.error.is_some() || chrome.status.toast.is_some()) {
+        let (message, style) = status_presentation(&chrome.status, &theme);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                truncate_status_text(&message, title_area.width),
+                style,
+            )),
+            title_area,
+        );
+    } else {
+        render_top(frame, title_area, chrome, context);
+    }
     if let Some(area) = layout.back_button {
         let mut button = Button::new(
             "shell.back",

@@ -200,9 +200,16 @@ fn system_and_update_settings_keep_errors_in_footer_without_description_pane() {
                 SettingsControlKind::ReadOnly,
             )],
         )];
-        for (height, needs_scroll) in [(7, true), (15, false)] {
+        for (width, height, needs_scroll) in [
+            (60, 5, true),
+            (60, 7, false),
+            (60, 15, false),
+            (108, 18, false),
+            (120, 34, false),
+            (180, 48, false),
+        ] {
             model.scroll_offset = 0;
-            let area = Rect::new(0, 0, 60, height);
+            let area = Rect::new(0, 0, width, height);
             let layout = settings_layout(area, &model);
             assert_eq!(layout.scrollbar.is_some(), needs_scroll);
             assert_eq!(layout.max_scroll_offset > 0, needs_scroll);

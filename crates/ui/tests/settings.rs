@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use support::terminal_output;
 use ui::{
-    BorderShape, HomeDisplayMode, NotificationTone, SettingsCardViewModel, SettingsCategory,
+    HomeDisplayMode, NotificationTone, SettingsCardViewModel, SettingsCategory,
     SettingsColorEditorViewModel, SettingsControlKind, SettingsField,
     SettingsFileExtensionsEditorViewModel, SettingsHitTarget, SettingsItemViewModel,
     SettingsPickerKind, SettingsPickerOptionViewModel, SettingsPickerViewModel,
