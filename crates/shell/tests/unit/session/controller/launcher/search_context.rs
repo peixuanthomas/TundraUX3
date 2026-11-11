@@ -46,7 +46,23 @@ fn launcher_search_filters_real_targets_and_zero_results_cannot_launch_hidden_it
         .name
         .clone();
     fixture.input(InputEvent::Paste(editor_name));
-    assert_eq!(fixture.state.to_launcher_view_model().items.len(), 1);
+    let filtered = fixture.state.to_launcher_view_model();
+    let mut expected_ids = vec![app::EDITOR_APPLICATION.id];
+    if cfg!(target_os = "linux") {
+        expected_ids.push(app::SCRIPT_EDITOR_APPLICATION.id);
+    }
+    assert_eq!(
+        filtered
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<Vec<_>>(),
+        expected_ids,
+    );
+    assert_eq!(
+        fixture.state.selected_launcher_id().as_deref(),
+        Some(app::EDITOR_APPLICATION.id)
+    );
     fixture.input(InputEvent::key(InputKey::Enter));
     assert_eq!(fixture.state.active_screen(), ShellScreen::Editor);
 }
