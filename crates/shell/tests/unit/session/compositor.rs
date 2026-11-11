@@ -251,6 +251,7 @@ fn open_test_number_editor(state: &mut ShellSession) {
 fn settings_number_dialog_captures_only_its_buttons_and_waits_for_release() {
     let platform = platform::mock::UnsupportedPlatform;
     let mut state = animation_settings_session();
+    let saved_timings = state.app.active_appearance().unwrap().animation_timings;
     let mut compositor = ScreenCompositor::default();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
     let mut prepared = home_frame(&state, 0, true);
@@ -312,13 +313,8 @@ fn settings_number_dialog_captures_only_its_buttons_and_waits_for_release() {
     assert!(model.number_editor.is_none());
     assert_eq!(model.animation_editor.unwrap().selected, 0);
     assert_eq!(
-        state
-            .app
-            .active_appearance()
-            .unwrap()
-            .animation_timings
-            .page[0],
-        55
+        state.app.active_appearance().unwrap().animation_timings,
+        saved_timings
     );
 }
 
@@ -606,7 +602,11 @@ fn page_keyboard_animates_chrome_and_content_together_and_restores_them() {
         draw(&mut compositor, &mut terminal, &mut state, &prepared);
         let original = state.frame_layout.unwrap();
         let original_launcher = state.keyboard_launcher_area().unwrap();
-        assert_eq!(original_launcher.right(), 120);
+        assert_eq!(
+            original_launcher.right(),
+            original.time_button.map_or(120, |clock| clock.x)
+        );
+        assert_eq!(original.keyboard_launcher, Some(original_launcher));
         assert_eq!(original_launcher.y, original.status_message.unwrap().y);
         state.toggle_input_keyboard();
         for millis in [0, 55, 110, 165, 220] {
@@ -662,7 +662,7 @@ fn status_details_capture_the_drawn_debug_text_before_click_diagnostics_change()
     draw(&mut compositor, &mut terminal, &mut state, &prepared);
     let expected = state.displayed_status.clone().unwrap();
     let area = state.frame_layout.unwrap().status_message.unwrap();
-    let point = (area.x + 1, area.y + 1);
+    let point = (area.x + 1, area.y);
     state.apply_input(InputEvent::mouse_down(PointerButton::Left, point));
     state.apply_input(InputEvent::mouse_up(PointerButton::Left, point));
     assert_eq!(
@@ -714,14 +714,32 @@ fn auto_admin_keeps_shell_title_and_status_visible_after_resize() {
             panic!("full shell layout expected");
         };
         let title_before = text(terminal.backend().buffer(), top);
-        let status_before = text(terminal.backend().buffer(), status);
+        let original = state.frame_layout.unwrap();
+        let status_before = text(
+            terminal.backend().buffer(),
+            original.status_message.unwrap(),
+        );
+        let clock = original.time_button.unwrap();
+        let clock_before = text(terminal.backend().buffer(), clock);
         let (responses, _inputs) = mpsc::channel();
         state
             .begin_auto_admin("Remove neofetch".into(), false, responses)
             .unwrap();
         draw(&mut compositor, &mut terminal, &mut state, &prepared);
         assert_eq!(text(terminal.backend().buffer(), top), title_before);
-        assert_eq!(text(terminal.backend().buffer(), status), status_before);
+        let layout = state.frame_layout.unwrap();
+        let message = layout.status_message.unwrap();
+        assert_eq!(
+            text(terminal.backend().buffer(), message).trim(),
+            status_before.trim()
+        );
+        assert_eq!(layout.time_button, Some(clock));
+        assert_eq!(text(terminal.backend().buffer(), clock), clock_before);
+        let keyboard = layout.keyboard_launcher.unwrap();
+        assert!(message.intersection(keyboard).is_empty());
+        assert!(keyboard.intersection(clock).is_empty());
+        assert!(text(terminal.backend().buffer(), keyboard).contains("Show keyboard"));
+        assert_eq!(keyboard.intersection(status), keyboard);
         assert!(text(terminal.backend().buffer(), main).contains("AutoAdmin (AA)"));
     }
 }
