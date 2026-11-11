@@ -4,7 +4,7 @@ use ratatui::text::Line;
 
 use super::common::render_auth_screen;
 use super::{AuthField, BootstrapAdminViewModel};
-use crate::components::{Button, Surface, TextInput};
+use crate::components::{Button, TextInput};
 use crate::{RenderContext, TundraTheme};
 
 pub fn render_bootstrap_admin_content(
@@ -26,7 +26,7 @@ pub fn bootstrap_viewport(main: Rect, model: &BootstrapAdminViewModel) -> super:
 }
 
 pub fn bootstrap_submit_area(main: Rect) -> Rect {
-    let inner = Surface::new().bordered(true).inner(main);
+    let inner = super::common::auth_content_area(main);
     let y = inner.bottom().saturating_sub(1);
     Rect::new(inner.x, y, inner.width, u16::from(inner.height > 0))
 }
@@ -47,7 +47,7 @@ fn render_bootstrap_unscrolled(
     );
 
     let main = area;
-    let inner = Surface::new().bordered(true).inner(main);
+    let inner = super::common::auth_content_area(main);
     render_bootstrap_input(
         frame,
         Rect::new(

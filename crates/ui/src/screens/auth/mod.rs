@@ -10,7 +10,7 @@ pub use bootstrap::{bootstrap_submit_area, bootstrap_viewport, render_bootstrap_
 pub use login::{
     LoginLayout, login_layout, login_list_scrollbar, login_password_area,
     login_password_visibility_area, login_selected_username_area, login_user_list_area,
-    login_user_list_visible_rows, login_viewport, render_login_content,
+    login_user_list_rows_area, login_user_list_visible_rows, login_viewport, render_login_content,
 };
 pub use model::*;
 pub use setup::{

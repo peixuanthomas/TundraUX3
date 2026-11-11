@@ -24,12 +24,12 @@ const SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH: u16 = 68;
 const SETUP_ADMIN_CHECKLIST_WIDTH: u16 = 32;
 const SETUP_ADMIN_COLUMN_GAP: u16 = 2;
 const SETUP_ADMIN_USERNAME_LINE: u16 = 2;
-const SETUP_ADMIN_PASSWORD_LINE: u16 = 6;
-const SETUP_ADMIN_CONFIRM_PASSWORD_LINE: u16 = 10;
-const SETUP_ADMIN_HINT_LINE: u16 = 14;
-const SETUP_ADMIN_SUBMIT_LINE: u16 = 18;
-const SETUP_ADMIN_ERROR_LINE: u16 = 20;
-const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 20;
+const SETUP_ADMIN_PASSWORD_LINE: u16 = 5;
+const SETUP_ADMIN_CONFIRM_PASSWORD_LINE: u16 = 8;
+const SETUP_ADMIN_HINT_LINE: u16 = 11;
+const SETUP_ADMIN_SUBMIT_LINE: u16 = 14;
+const SETUP_ADMIN_ERROR_LINE: u16 = 16;
+const SETUP_ADMIN_STACKED_CHECKLIST_LINE: u16 = 18;
 const SETUP_APPEARANCE_HEADER_HEIGHT: u16 = 2;
 const SETUP_APPEARANCE_SHAPE_LINE: u16 = 2;
 const SETUP_APPEARANCE_SHAPE_HEIGHT: u16 = 3;
@@ -95,7 +95,7 @@ pub fn setup_defaults_area(main: Rect) -> Rect {
 
 pub fn setup_viewport(mut main: Rect, model: &SetupViewModel) -> super::AuthViewport {
     if model.defaults_available {
-        main.height = main.height.saturating_sub(2);
+        main.height = main.height.saturating_sub(1);
     }
     let minimum = match model.step {
         SetupStep::Language => u16::try_from(model.languages.len())
@@ -105,9 +105,9 @@ pub fn setup_viewport(mut main: Rect, model: &SetupViewModel) -> super::AuthView
         SetupStep::Timezone => 15,
         SetupStep::Admin => {
             if main.width >= SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH + 3 {
-                26
+                20
             } else {
-                32
+                26
             }
         }
         SetupStep::Appearance => 29,
@@ -116,7 +116,7 @@ pub fn setup_viewport(mut main: Rect, model: &SetupViewModel) -> super::AuthView
 }
 
 pub fn setup_navigation_areas(main: Rect) -> [Rect; 2] {
-    let inner = setup_inner_area(main);
+    let inner = super::common::auth_content_area(main);
     if inner.width < 40 && inner.height > 1 {
         return [
             Rect::new(inner.x, inner.bottom() - 2, inner.width, 1),
@@ -245,7 +245,7 @@ fn render_setup_language_page(
     let theme = &context.compatibility_theme();
     render_setup_surface(frame, area, context, model.border_shape);
 
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     frame.render_widget(
         Paragraph::new(setup_language_header_lines(model, theme))
             .alignment(HorizontalAlignment::Left)
@@ -313,7 +313,7 @@ fn render_setup_timezone_page(
     let theme = &context.compatibility_theme();
     render_setup_surface(frame, area, context, model.border_shape);
 
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     let list_area = setup_timezone_list_area(main);
     let visible_rows = setup_timezone_visible_rows(main);
     let (start, _) = setup_timezone_window_bounds(model, visible_rows);
@@ -389,7 +389,7 @@ fn render_setup_admin_page(
     let theme = &context.compatibility_theme();
     render_setup_surface(frame, area, context, model.border_shape);
 
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     let header = Rect::new(
         content.x,
         content.y,
@@ -482,7 +482,7 @@ fn render_setup_appearance_page(
     let theme = &context.compatibility_theme();
     render_setup_surface(frame, area, context, model.border_shape);
 
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     let header = Rect::new(
         content.x,
         content.y,
@@ -816,8 +816,7 @@ fn render_setup_surface(
 ) {
     Surface::new()
         .titled(i18n::tr!("ui-auth-first-run-setup"))
-        .bordered(true)
-        .raised(true)
+        .bordered(false)
         .border_shape(border_shape)
         .render_frame(frame, area, context);
 }
@@ -846,7 +845,7 @@ fn render_focused_surface(
 ) {
     Surface::new()
         .titled(title)
-        .bordered(true)
+        .bordered(false)
         .border_shape(border_shape)
         .render_frame(frame, area, &focused_context(context, focused));
 }
@@ -1009,7 +1008,7 @@ fn render_setup_password_checklist(
 
     let surface = Surface::new()
         .titled(i18n::tr!("ui-auth-password-checklist"))
-        .bordered(true)
+        .bordered(false)
         .border_shape(model.border_shape);
     let inner = surface.inner(checklist_area);
     surface.render_frame(frame, checklist_area, context);
@@ -1038,7 +1037,7 @@ fn append_setup_error(lines: &mut Vec<Line<'static>>, model: &SetupViewModel, th
 
 pub fn setup_timezone_list_area(main: Rect) -> Rect {
     let controls = setup_timezone_controls_area(main);
-    let content = setup_inner_area(controls);
+    let content = super::common::auth_content_area(controls);
     let reserved_height = SETUP_TIMEZONE_HEADER_HEIGHT
         .saturating_add(SETUP_TIMEZONE_TOP_GAP_HEIGHT)
         .saturating_add(SETUP_TIMEZONE_BOTTOM_GAP_HEIGHT)
@@ -1107,7 +1106,7 @@ pub fn setup_appearance_field_area(main: Rect, field: SetupField) -> Rect {
 
 pub fn setup_appearance_shape_option_areas(main: Rect) -> [(crate::BorderShape, Rect); 2] {
     let outer = setup_appearance_field_area(main, SetupField::AppearanceShape);
-    let inner = setup_inner_area(outer);
+    let inner = super::common::auth_content_area(outer);
     let rounded_width = 13.min(inner.width);
     let square_x = inner
         .x
@@ -1135,7 +1134,7 @@ pub fn setup_appearance_palette_option_areas(main: Rect, field: SetupField) -> V
     }
 
     let outer = setup_appearance_field_area(main, field);
-    let inner = setup_inner_area(outer);
+    let inner = super::common::auth_content_area(outer);
     if inner.width == 0 || inner.height == 0 {
         return Vec::new();
     }
@@ -1197,7 +1196,7 @@ pub fn setup_custom_color_input_area(main: Rect) -> Rect {
 }
 
 fn setup_admin_form_area(area: Rect) -> Rect {
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     if content.width < SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH {
         return content;
     }
@@ -1213,7 +1212,7 @@ fn setup_admin_form_area(area: Rect) -> Rect {
 }
 
 fn setup_admin_checklist_area(area: Rect) -> Rect {
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     if content.width >= SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH {
         let form = setup_admin_form_area(area);
         let x = form
@@ -1238,7 +1237,7 @@ fn setup_admin_checklist_area(area: Rect) -> Rect {
 }
 
 fn setup_admin_error_area(area: Rect) -> Rect {
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     if content.width >= SETUP_ADMIN_SIDE_CHECKLIST_MIN_WIDTH {
         return setup_admin_line_area(area, SETUP_ADMIN_ERROR_LINE, 2);
     }
@@ -1286,7 +1285,7 @@ fn setup_inner_area(area: Rect) -> Rect {
 }
 
 fn setup_line_area(area: Rect, line: u16, desired_height: u16) -> Rect {
-    let content = setup_inner_area(area);
+    let content = super::common::auth_content_area(area);
     if line >= content.height || desired_height == 0 {
         return Rect::new(
             content.x,

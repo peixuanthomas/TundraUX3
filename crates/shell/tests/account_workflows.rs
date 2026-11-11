@@ -2298,8 +2298,8 @@ fn login_user_row_coordinates(state: &ShellSession, row: u16) -> (u16, u16) {
         ui::ShellLayout::Full { main, .. } | ui::ShellLayout::Compact(main) => main,
     };
     let page = ui::login_viewport(main, &state.to_login_view_model());
-    let list = ui::login_layout(page.content).user_list;
-    let content_height = list.height.saturating_sub(2);
+    let list = ui::login_user_list_rows_area(page.content);
+    let content_height = list.height;
     assert!(
         row < content_height,
         "row {row} outside login user list content height {content_height}"
@@ -2307,9 +2307,9 @@ fn login_user_row_coordinates(state: &ShellSession, row: u16) -> (u16, u16) {
 
     let row = page
         .project(ratatui::layout::Rect::new(
-            list.x + 1,
-            list.y + 1 + row,
-            list.width.saturating_sub(2),
+            list.x,
+            list.y + row,
+            list.width,
             1,
         ))
         .expect("login row must be visible");
