@@ -36,7 +36,7 @@ spec.loader.exec_module(smoke)
 def run_case(binary, language, color, motion, sizes, samples):
     cli = binary.with_name("tundra-cli")
     with tempfile.TemporaryDirectory(prefix="tundra-ui-refresh-") as temporary:
-        env = dict(os.environ, TERM="xterm-256color", LC_ALL="C.UTF-8")
+        env = dict(os.environ, TERM="xterm-256color", LC_ALL="C.UTF-8", NO_COLOR="")
         if color == "truecolor":
             env["COLORTERM"] = "truecolor"
         else:
