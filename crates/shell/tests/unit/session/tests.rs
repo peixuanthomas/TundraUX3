@@ -7206,6 +7206,11 @@ fn launcher_confirmation_buttons_support_keyboard_and_mouse_cancellation() {
                 PointerButton::Left,
                 (cancel.x, cancel.y),
             ));
+            assert!(state.pages.launcher.launcher_pending_confirmation.is_some());
+            state.apply_input(InputEvent::mouse_up(
+                PointerButton::Left,
+                (cancel.x, cancel.y),
+            ));
             assert!(state.pages.launcher.launcher_pending_confirmation.is_none());
         }
     }
