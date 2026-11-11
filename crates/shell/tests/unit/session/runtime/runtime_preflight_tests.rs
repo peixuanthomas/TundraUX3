@@ -896,7 +896,7 @@ fn theme_reloader_switches_from_custom_admin_theme_to_managed_user_defaults() {
     assert_eq!(theme.border_shape, ui::BorderShape::Rounded);
     assert_eq!(
         theme.border_color,
-        ratatui::style::Color::Rgb(0x29, 0x43, 0x4E)
+        ratatui::style::Color::Rgb(0x38, 0x38, 0x38)
     );
     assert_eq!(
         theme.accent_color,

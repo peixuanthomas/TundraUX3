@@ -1045,8 +1045,14 @@ fn pointer_input_hides_home_focus_but_keeps_launcher_selection() {
                 .unwrap()
                 .area
         };
-        let border = (area.x, area.y);
-        let focused_color = terminal.backend().buffer()[border].fg;
+        let point = (area.x, area.y);
+        let focused_cell = terminal.backend().buffer()[point].clone();
+        assert!(
+            focused_cell
+                .modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+        );
+        let item_text = text(terminal.backend().buffer(), area);
         let selection = if launcher {
             state.pages.launcher.launcher_selected_index
         } else {
@@ -1059,11 +1065,14 @@ fn pointer_input_hides_home_focus_but_keeps_launcher_selection() {
             state.apply_input(pointer);
             assert!(!state.interaction.keyboard_focus_visible());
             render(&mut state, &mut compositor, &mut terminal);
-            if launcher {
-                assert_eq!(terminal.backend().buffer()[border].fg, focused_color);
-            } else {
-                assert_ne!(terminal.backend().buffer()[border].fg, focused_color);
-            }
+            let current_cell = &terminal.backend().buffer()[point];
+            assert_eq!(current_cell.bg, ui::ThemeTokens::default().raised);
+            assert!(
+                !current_cell
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+            );
+            assert_eq!(text(terminal.backend().buffer(), area), item_text);
             assert_eq!(
                 if launcher {
                     state.pages.launcher.launcher_selected_index
@@ -1083,7 +1092,14 @@ fn pointer_input_hides_home_focus_but_keeps_launcher_selection() {
             }
             state.apply_input(InputEvent::key(InputKey::Home));
             render(&mut state, &mut compositor, &mut terminal);
-            assert_eq!(terminal.backend().buffer()[border].fg, focused_color);
+            let restored = &terminal.backend().buffer()[point];
+            assert_eq!(restored.fg, focused_cell.fg);
+            assert_eq!(restored.bg, focused_cell.bg);
+            assert!(
+                restored
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+            );
         }
         state.apply_input(InputEvent::FocusLost);
         assert!(!state.interaction.keyboard_focus_visible());
