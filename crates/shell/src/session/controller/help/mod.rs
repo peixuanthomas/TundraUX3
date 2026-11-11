@@ -6,7 +6,6 @@ impl ShellSession {
         if self.help_open
             || !self.help_button_available()
             || self.auto_admin_visible()
-            || self.input_keyboard_open()
             || self
                 .interactive_overlays()
                 .iter()

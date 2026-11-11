@@ -653,10 +653,50 @@ fn keyboard_closes_for_an_overlay_and_never_reappears_for_a_different_page() {
 }
 
 #[test]
-fn physical_f1_does_not_open_help_over_the_screen_keyboard() {
+fn physical_f1_opens_help_and_dismisses_the_screen_keyboard() {
+    let mut state = session();
+    state.enter_screen(ShellScreen::Launcher);
+    state.pages.launcher.search.set_focused(true);
+    state.toggle_input_keyboard();
+    assert!(state.input_keyboard_open());
+    state.apply_input(InputEvent::key(InputKey::F(1)));
+    state.sync_input_keyboard();
+    assert!(!state.input_keyboard_open());
+    assert!(state.help_open);
+    state.apply_input(InputEvent::key(InputKey::Char('a')));
+    state.apply_input(InputEvent::Paste("covered".into()));
+    assert_eq!(state.pages.launcher.search.value(), "");
+    assert!(state.help_open);
+}
+
+#[test]
+fn moving_keycaps_do_not_activate_from_a_press_at_their_old_coordinates() {
     let mut state = session();
     state.toggle_input_keyboard();
-    state.apply_input(InputEvent::key(InputKey::F(1)));
-    assert!(state.input_keyboard_open());
-    assert!(!state.help_open);
+    let mut frame = ui::MotionFrame::default();
+    state.advance_input_keyboard(frame);
+    frame.now = Duration::from_millis(60);
+    state.advance_input_keyboard(frame);
+    let button = state
+        .input_keyboard_layout()
+        .buttons
+        .into_iter()
+        .find(|button| matches!(button.action, Action::Letter(_)) && !button.area.is_empty())
+        .unwrap();
+    let point = (button.area.x, button.area.y);
+    assert!(
+        route(
+            &mut state,
+            InputEvent::mouse_down(PointerButton::Left, point)
+        )
+        .is_none()
+    );
+    assert!(state.screen_keyboard.pressed.is_some());
+    frame.now = Duration::from_millis(90);
+    state.advance_input_keyboard(frame);
+    assert!(state.screen_keyboard.pressed.is_none());
+    assert!(!matches!(
+        route(&mut state, InputEvent::mouse_up(PointerButton::Left, point)),
+        Some(InputEvent::Key(_))
+    ));
 }
