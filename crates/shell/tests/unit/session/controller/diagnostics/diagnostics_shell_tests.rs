@@ -347,6 +347,7 @@ fn system_status_refresh_aliases_respect_the_busy_state_in_dashboard_and_details
 #[test]
 fn diagnostics_detail_drag_reaches_last_line_without_changing_selection() {
     let mut state = state(UserRole::Admin);
+    let _language = i18n::enter_snapshot(state.language_snapshot());
     update_diagnostics_snapshot(&mut state, |snapshot| {
         snapshot.checks[0].detail = (0..80)
             .map(|i| format!("Detail {i}"))
@@ -360,9 +361,14 @@ fn diagnostics_detail_drag_reaches_last_line_without_changing_selection() {
     };
     let layout = ui::system_status_layout(main, &state.to_system_status_view_model().unwrap());
     let panel = layout.diagnostics_content.unwrap().detail_panel;
-    let (track, count, viewport) =
-        ui::diagnostics_detail_scroll_metrics(panel, &state.to_diagnostics_view_model());
-    assert!(count > viewport);
+    let model = state.to_diagnostics_view_model();
+    assert!(model.can_view_details);
+    assert!(model.selected_check().unwrap().detail.contains("Detail 79"));
+    let (track, count, viewport) = ui::diagnostics_detail_scroll_metrics(panel, &model);
+    assert!(
+        count > viewport,
+        "panel={panel:?} lines={count} viewport={viewport}"
+    );
     state.apply_input(InputEvent::mouse_down(
         PointerButton::Left,
         (track.x, track.y),
