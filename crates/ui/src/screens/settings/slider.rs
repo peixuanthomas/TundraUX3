@@ -18,9 +18,8 @@ impl SettingsSliderLayout {
             + 4;
         let width = viewport
             .width
-            .saturating_sub(2)
             .min(u16::try_from(option_width * item.options.len()).unwrap_or(u16::MAX));
-        let (area, skipped_rows) = visible_scrolled_rect(viewport.x + 1, y, width, 2, viewport)?;
+        let (area, skipped_rows) = visible_scrolled_rect(viewport.x, y, width, 2, viewport)?;
         let options = Layout::horizontal(vec![Constraint::Fill(1); item.options.len()])
             .split(area)
             .to_vec();

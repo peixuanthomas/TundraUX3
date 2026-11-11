@@ -483,15 +483,11 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
         .iter()
         .position(|category| *category == model.selected_category)
         .unwrap_or(0);
-    let inner = inset(area, 1, 1);
-    let system_height = if inner.height >= 7 {
-        3
-    } else {
-        inner.height.min(1)
-    };
+    let inner = area;
+    let system_height = inner.height.min(1);
     let navigation_height = inner
         .height
-        .saturating_sub(system_height + u16::from(inner.height >= 7));
+        .saturating_sub(system_height + u16::from(inner.height > 1));
     let mut workspace = SidebarWorkspaceLayout::scrollable(
         Rect::new(inner.x, inner.y, inner.width, navigation_height),
         &labels,
@@ -606,12 +602,7 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
             if row_y >= i32::from(detail_area.y) && row_y < i32::from(detail_area.bottom()) {
                 fields.push(SettingsFieldLayout {
                     field: item.field,
-                    area: Rect::new(
-                        detail_area.x.saturating_add(1),
-                        row_y as u16,
-                        detail_area.width.saturating_sub(2),
-                        1,
-                    ),
+                    area: Rect::new(detail_area.x, row_y as u16, detail_area.width, 1),
                 });
             }
             row_y += i32::from(item_height);
@@ -662,17 +653,18 @@ pub fn settings_layout(area: Rect, model: &SettingsViewModel) -> SettingsLayout 
     let (update_confirm_button, update_cancel_button) = confirmation
         .zip(update_confirmation)
         .map(|(confirmation, dialog)| {
-            let confirm_width =
-                u16::try_from(terminal_width(&format!("[{}]", confirmation.confirm_label)))
-                    .unwrap_or(u16::MAX);
-            let [_, confirm, _, cancel, _] = Layout::horizontal([
+            let confirm_width = u16::try_from(terminal_width(&confirmation.confirm_label))
+                .unwrap_or(u16::MAX)
+                .saturating_add(2);
+            let [_, cancel, _, confirm, _] = Layout::horizontal([
                 Constraint::Fill(1),
-                Constraint::Length(confirm_width),
-                Constraint::Length(2),
                 Constraint::Length(
-                    u16::try_from(terminal_width(&i18n::tr!("ui-settings-cancel-button")))
-                        .unwrap_or(u16::MAX),
+                    u16::try_from(terminal_width(&i18n::tr!("ui-settings-touch-cancel")))
+                        .unwrap_or(u16::MAX)
+                        .saturating_add(2),
                 ),
+                Constraint::Length(2),
+                Constraint::Length(confirm_width),
                 Constraint::Fill(1),
             ])
             .areas(Rect::new(
@@ -880,10 +872,7 @@ pub fn render_settings_content(
     context: &RenderContext,
 ) {
     let theme = &context.compatibility_theme();
-    Surface::new()
-        .titled(i18n::tr!("ui-settings-settings-padded"))
-        .bordered(true)
-        .render_frame(frame, layout.main, context);
+    Surface::new().render_frame(frame, layout.main, context);
 
     let buttons = SettingsCategory::ALL
         .into_iter()
@@ -913,11 +902,7 @@ pub fn render_settings_content(
         .with_centered_label(true)
         .with_bracketed_label(false);
     button.set_focused(model.focus == SettingsFocus::OperatingSystem);
-    if layout.workspace.vertical && layout.operating_system.height >= 3 {
-        button.render_frame(frame, layout.operating_system, theme);
-    } else {
-        button.render_borderless_frame(frame, layout.operating_system, theme);
-    }
+    button.render_borderless_frame(frame, layout.operating_system, theme);
     if let Some(track) = layout.category_scrollbar {
         Scrollbar::new(
             SettingsCategory::ALL.len(),
@@ -1031,16 +1016,18 @@ fn render_cards(
     let mut y = i32::from(detail_area.y) - i32::from(scroll_offset);
     for (card_index, card) in model.cards.iter().enumerate() {
         let height = settings_card_height(card);
-        Surface::new()
-            .titled(format!(" {} ", card.title))
-            .bordered(true)
-            .raised(true)
-            .render_scrolled_frame(frame, detail_area, y, height, context);
-        let rows_height = height.saturating_sub(2);
+        Surface::new().titled(&card.title).render_scrolled_frame(
+            frame,
+            detail_area,
+            y,
+            height,
+            context,
+        );
+        let rows_height = height.saturating_sub(1);
         let Some((visible_rows, skipped_rows)) = visible_scrolled_rect(
-            detail_area.x.saturating_add(1),
+            detail_area.x,
             y + 1,
-            detail_area.width.saturating_sub(2),
+            detail_area.width,
             rows_height,
             detail_area,
         ) else {
@@ -1224,15 +1211,15 @@ fn update_commit_lines(update: &SettingsUpdateViewModel) -> Vec<String> {
 }
 
 fn update_commits_height(detail_width: u16, lines: &[String]) -> u16 {
-    let width = detail_width.saturating_sub(4).max(1);
+    let width = detail_width.max(1);
     let content_height = lines
         .iter()
         .map(|line| crate::management_wrapped_lines(line, width).len())
         .sum::<usize>();
     u16::try_from(content_height)
         .unwrap_or(u16::MAX)
-        .saturating_add(2)
-        .max(3)
+        .saturating_add(1)
+        .max(2)
 }
 
 fn render_update_commits(
@@ -1245,11 +1232,6 @@ fn render_update_commits(
     let theme = &context.compatibility_theme();
     let lines = update_commit_lines(update);
     let height = update_commits_height(detail_area.width, &lines);
-    let Some((visible, _)) =
-        visible_scrolled_rect(detail_area.x, y, detail_area.width, height, detail_area)
-    else {
-        return;
-    };
     Surface::new()
         .titled(
             update
@@ -1257,23 +1239,19 @@ fn render_update_commits(
                 .clone()
                 .unwrap_or_else(|| i18n::tr!("ui-settings-commits-padded")),
         )
-        .bordered(true)
-        .raised(true)
-        .render_frame(frame, visible, context);
+        .render_scrolled_frame(frame, detail_area, y, height, context);
     if let Some((content, skipped)) = visible_scrolled_rect(
-        detail_area.x.saturating_add(2),
+        detail_area.x,
         y + 1,
-        detail_area.width.saturating_sub(4),
-        height.saturating_sub(2),
+        detail_area.width,
+        height.saturating_sub(1),
         detail_area,
     ) {
         frame.render_widget(
             Paragraph::new(
                 lines
                     .iter()
-                    .flat_map(|line| {
-                        crate::management_wrapped_lines(line, detail_area.width.saturating_sub(4))
-                    })
+                    .flat_map(|line| crate::management_wrapped_lines(line, detail_area.width))
                     .collect::<Vec<_>>()
                     .join("\n"),
             )
@@ -1313,18 +1291,20 @@ fn render_update_confirmation(
         ),
     );
     if let Some(area) = layout.update_confirm_button {
-        let mut button = Button::new(
-            "settings.update.confirm",
-            format!("[{}]", confirmation.confirm_label),
-        );
+        let mut button = Button::new("settings.update.confirm", &confirmation.confirm_label)
+            .with_bracketed_label(false)
+            .with_centered_label(true)
+            .with_emphasis(crate::components::ButtonEmphasis::Primary);
         button.state.selected = confirmation.confirm_selected;
         button.render_borderless_frame(frame, area, theme);
     }
     if let Some(area) = layout.update_cancel_button {
         let mut button = Button::new(
             "settings.update.cancel",
-            i18n::tr!("ui-settings-cancel-button"),
-        );
+            i18n::tr!("ui-settings-touch-cancel"),
+        )
+        .with_bracketed_label(false)
+        .with_centered_label(true);
         button.state.selected = !confirmation.confirm_selected;
         button.render_borderless_frame(frame, area, theme);
     }
@@ -1502,6 +1482,7 @@ fn render_settings_control(
         format!("settings.field.{:?}", item.field).to_ascii_lowercase(),
         item.value.clone(),
     )
+    .with_bracketed_label(false)
     .with_capture_name(&item.label);
     if item.kind == SettingsControlKind::Toggle {
         button = button
@@ -1521,8 +1502,8 @@ fn settings_control_width(item: &SettingsItemViewModel) -> u16 {
         SettingsControlKind::Cycle
         | SettingsControlKind::Picker
         | SettingsControlKind::Palette
-        | SettingsControlKind::Action => 4,
-        SettingsControlKind::Stepper => 4,
+        | SettingsControlKind::Action => 2,
+        SettingsControlKind::Stepper => 2,
         SettingsControlKind::ReadOnly => 0,
         SettingsControlKind::Slider { .. } => return 0,
     };
@@ -1542,8 +1523,8 @@ fn settings_card_height(card: &SettingsCardViewModel) -> u16 {
         .iter()
         .map(settings_item_height)
         .sum::<u16>()
-        .saturating_add(2)
-        .max(3)
+        .saturating_add(1)
+        .max(1)
 }
 
 fn picker_list_area(dialog: Rect, timezone: bool, searchable: bool) -> Rect {

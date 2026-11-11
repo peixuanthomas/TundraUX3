@@ -269,7 +269,7 @@ fn unavailable_settings_retain_gray_buttons_and_register_disabled_hit_regions() 
                 let label: String = (region.area.x..region.area.right())
                     .map(|x| terminal.backend().buffer()[(x, region.area.y)].symbol())
                     .collect();
-                assert!(label.contains('[') && label.contains(']'), "{label}");
+                assert_eq!(label.trim(), "55");
                 if !enabled {
                     for x in region.area.x..region.area.right() {
                         let cell = &terminal.backend().buffer()[(x, region.area.y)];
@@ -300,7 +300,7 @@ fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
             layout
                 .fields
                 .iter()
-                .all(|field| field.area.x == layout.detail.x + 1)
+                .all(|field| field.area.x == layout.detail.x)
         );
         for expected in [SettingsField::BorderColor, SettingsField::ShowHidden] {
             assert!(layout.fields.iter().any(|field| field.field == expected));
@@ -311,6 +311,7 @@ fn full_layout_keeps_categories_and_fields_visible_at_supported_sizes() {
 #[test]
 fn settings_scrollbar_only_appears_when_content_overflows() {
     let mut model = sample_model();
+    model.cards.extend(model.cards.clone());
     model.scroll_offset = u16::MAX;
 
     let fitting = settings_layout(Rect::new(0, 0, 120, 32), &model);
@@ -323,7 +324,7 @@ fn settings_scrollbar_only_appears_when_content_overflows() {
     assert_eq!(no_viewport.scroll_offset, 0);
     assert!(no_viewport.scrollbar.is_none());
 
-    let overflowing = settings_layout(Rect::new(0, 0, 80, 12), &model);
+    let overflowing = settings_layout(Rect::new(0, 0, 80, 6), &model);
     let track = overflowing.scrollbar.expect("settings scrollbar");
     assert!(overflowing.max_scroll_offset > 0);
     assert_eq!(overflowing.scroll_offset, overflowing.max_scroll_offset);
@@ -385,7 +386,10 @@ fn field_and_category_hit_targets_match_their_visible_areas() {
         settings_hit_test(&layout, (field.area.x, field.area.y)),
         Some(SettingsHitTarget::Field(SettingsField::ShowHidden))
     );
-    assert_eq!(settings_hit_test(&layout, (0, 0)), None);
+    assert_eq!(
+        settings_hit_test(&layout, (0, 0)),
+        Some(SettingsHitTarget::Category(SettingsCategory::Appearance)),
+    );
 }
 
 #[test]
@@ -693,7 +697,7 @@ fn update_commits_wrap_complete_messages_and_follow_detail_scroll() {
     let detail = settings_layout(main, &model).detail;
     let content = (detail.y..detail.bottom())
         .map(|y| {
-            (detail.x + 1..detail.right() - 1)
+            (detail.x..detail.right())
                 .map(|x| terminal.backend().buffer()[(x, y)].symbol())
                 .collect::<String>()
         })
@@ -804,8 +808,8 @@ fn update_confirmation_draws_complete_buttons_and_blocks_underlying_hits() {
                 })
                 .unwrap();
             for (button, label) in [
-                (confirm, format!("[{confirm_label}]")),
-                (cancel, "[Esc Cancel]".into()),
+                (confirm, confirm_label.to_string()),
+                (cancel, "Esc Cancel".into()),
             ] {
                 let rendered: String = (button.x..button.right())
                     .map(|x| terminal.backend().buffer()[(x, button.y)].symbol())
@@ -964,7 +968,7 @@ fn chrome() -> ShellChromeViewModel {
 
 #[test]
 fn scrolled_categories_render_and_hit_the_same_rows() {
-    for (width, height) in [(80, 12), (120, 18)] {
+    for (width, height) in [(80, 12), (120, 5)] {
         for category in SettingsCategory::ALL {
             let mut model = sample_model();
             model.selected_category = category;
@@ -1002,9 +1006,10 @@ fn scrolled_categories_render_and_hit_the_same_rows() {
                     "{category:?}: {line}"
                 );
             }
-            if layout.workspace.vertical {
-                assert!(layout.category_scrollbar.is_some());
+            if let Some(track) = layout.category_scrollbar {
+                assert!(layout.workspace.vertical);
                 assert!(layout.category_cards.len() < SettingsCategory::ALL.len());
+                assert_eq!(track.intersection(layout.category), track);
             }
         }
     }
@@ -1174,6 +1179,118 @@ fn number_dialog_renders_shared_controls_and_blocks_the_underlying_dialog() {
                     rect
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn settings_groups_use_titles_and_spacing_without_page_or_group_frames() {
+    for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+        let model = sample_model();
+        let context = ui::RenderContext::default();
+        let main = ui::ShellFrameLayout::new(Rect::new(0, 0, width, height), None, &context).main;
+        let layout = settings_layout(main, &model);
+        assert_eq!(layout.main, main);
+        assert_eq!(layout.workspace.navigation[0].y, main.y);
+        assert!(
+            layout
+                .category_cards
+                .iter()
+                .all(|category| category.area.height == 1)
+        );
+        assert_eq!(layout.operating_system.height, 1);
+        assert_eq!(layout.content_height, 6);
+        assert_eq!(layout.fields[0].area.y, layout.detail.y + 1);
+        assert_eq!(layout.fields[2].area.y, layout.detail.y + 5);
+        assert_eq!(layout.max_scroll_offset, 0);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| ui::render_settings_content(frame, &layout, &model, &context))
+            .unwrap();
+        for point in main.positions() {
+            let symbol = terminal.backend().buffer()[point].symbol();
+            assert!(!matches!(
+                symbol,
+                "╭" | "╮" | "╰" | "╯" | "┌" | "┐" | "└" | "┘" | "─" | "│"
+            ));
+        }
+    }
+}
+
+#[test]
+fn long_chinese_setting_groups_scroll_without_moving_titles_onto_control_rows() {
+    for (width, height) in [(108, 20), (120, 36), (180, 50)] {
+        let mut model = sample_model();
+        let fields = [
+            SettingsField::BorderShape,
+            SettingsField::BorderColor,
+            SettingsField::ShowHidden,
+        ];
+        model.cards = (0..30)
+            .map(|index| {
+                SettingsCardViewModel::new(
+                    format!("第{index}组设置与中文长标题"),
+                    fields
+                        .into_iter()
+                        .map(|field| {
+                            SettingsItemViewModel::new(
+                                field,
+                                "需要安全截断且不能覆盖右侧值的中文设置选项名称".repeat(4),
+                                "确认可见",
+                                "",
+                                SettingsControlKind::Action,
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        let theme = TundraTheme::default();
+        let main = ui::ShellFrameLayout::new(
+            Rect::new(0, 0, width, height),
+            None,
+            &ui::RenderContext::default(),
+        )
+        .main;
+        let max_scroll = settings_layout(main, &model).max_scroll_offset;
+        assert!(max_scroll > 0);
+        for offset in [0, 1, max_scroll] {
+            model.scroll_offset = offset;
+            let buttons = ui::components::ButtonFrame::new(None, None, &theme);
+            let mut context =
+                ui::RenderContext::from_theme(&theme, Default::default(), Default::default());
+            context.buttons = Some(buttons.clone());
+            let layout = settings_layout(main, &model);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| ui::render_settings_content(frame, &layout, &model, &context))
+                .unwrap();
+            assert!(!layout.fields.is_empty());
+            for field in &layout.fields {
+                assert_eq!(field.area.intersection(layout.detail), field.area);
+                assert_eq!(
+                    settings_hit_test(&layout, (field.area.x, field.area.y)),
+                    Some(SettingsHitTarget::Field(field.field))
+                );
+                let rendered: String = (field.area.x..field.area.right())
+                    .map(|x| terminal.backend().buffer()[(x, field.area.y)].symbol())
+                    .collect();
+                assert!(rendered.replace(' ', "").contains("确认可见"));
+                assert!(!rendered.contains("组设置与中文长标题"));
+            }
+            assert!(
+                buttons
+                    .regions()
+                    .iter()
+                    .filter(|region| region.id.as_str().starts_with("settings.field."))
+                    .all(|region| {
+                        region.area.intersection(layout.detail) == region.area
+                            && layout
+                                .fields
+                                .iter()
+                                .any(|field| region.area.intersection(field.area) == region.area)
+                    })
+            );
         }
     }
 }
