@@ -2318,15 +2318,10 @@ impl ShellSession {
                     ShellScreen::Clock => i18n::tr!("shell-clock"),
                     ShellScreen::Diagnostics => i18n::tr!("shell-diagnostics"),
                     ShellScreen::Logs => i18n::tr!("shell-logs"),
-                    ShellScreen::Management => self
-                        .pages
-                        .management
-                        .get(id)
-                        .and_then(|page| page.management_state.kind)
-                        .map_or_else(
-                            || i18n::tr!("management-title"),
-                            super::super::controller::management::management_title,
-                        ),
+                    ShellScreen::Management => self.pages.management.get(id).map_or_else(
+                        || i18n::tr!("management-title"),
+                        |page| page.management_state.title(),
+                    ),
                     ShellScreen::SystemStatus => i18n::tr!("shell-system-status"),
                     ShellScreen::Explorer => i18n::tr!("shell-explorer"),
                     ShellScreen::Launcher => i18n::tr!("shell-launcher"),

@@ -139,6 +139,7 @@ fn chrome_paths_localize_page_names_without_changing_navigation_or_page_ids() {
             ),
             (ShellScreen::BootstrapAdmin, "Create Admin", "创建管理员"),
             (ShellScreen::CommandLine, "Command Line", "命令行"),
+            (ShellScreen::Management, "Linux Management", "Linux 运维"),
             (ShellScreen::SystemStatus, "System Status", "系统状态"),
             (ShellScreen::UserManagement, "User Management", "用户管理"),
         ] {

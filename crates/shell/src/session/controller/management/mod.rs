@@ -208,6 +208,11 @@ pub(in crate::session) struct ManagementState {
 }
 
 impl ManagementState {
+    pub(in crate::session) fn title(&self) -> String {
+        self.kind
+            .map_or_else(|| i18n::tr!("management-title"), management_title)
+    }
+
     fn can_show_details(&self) -> bool {
         !self.snapshot.rows.is_empty()
             || self.problem.is_some()
